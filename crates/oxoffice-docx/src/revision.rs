@@ -2919,6 +2919,9 @@ impl<'a> XmlTree<'a> {
                 // the chain (see `control_last_paragraph_takes_merge`).
                 let mut merged_control = None;
                 let mut crossed_ends = Vec::new();
+                // The range markers crossed after each paragraph of the
+                // chain, which the merged paragraph keeps at that join.
+                let mut joins = HashMap::<usize, Vec<usize>>::new();
                 loop {
                     // The end of the body after a table that stays: as before
                     // a table, the paragraphs go, and the body ends with that
@@ -2935,7 +2938,9 @@ impl<'a> XmlTree<'a> {
                             && self.body_end_goes(
                                 element,
                                 child_index,
-                                siblings.len() > paragraphs.len(),
+                                siblings.iter().any(|sibling| {
+                                    matches!(self.elements[*sibling].local.as_str(), "tbl" | "sdt")
+                                }),
                                 state,
                             )
                         {
@@ -2992,11 +2997,14 @@ impl<'a> XmlTree<'a> {
                         break;
                     }
                     // A range marker between the paragraphs, as Google Docs
-                    // writes a heading's bookmark, is crossed as a control's
-                    // markers are: a start stays before the merged
-                    // paragraph, an end follows it.
+                    // writes a heading's bookmark, is crossed: the merged
+                    // paragraph keeps it where the two join, as Word does.
                     if next_element.word && range_marker(&next_element.local) {
                         siblings.push(next);
+                        joins
+                            .entry(*paragraphs.last().expect("paragraph chain exists"))
+                            .or_default()
+                            .push(next);
                         next_index += 1;
                         continue;
                     }
@@ -3047,20 +3055,18 @@ impl<'a> XmlTree<'a> {
                         crossed_ends.extend_from_slice(&ends);
                     } else if self.elements[pair[1]].local == "tbl" {
                         self.render(pair[1], state, false)?;
-                    } else if range_marker(&self.elements[pair[1]].local) {
-                        let marker = self.render(pair[1], state, false)?;
-                        if self.elements[pair[1]].local.ends_with("End") {
-                            crossed_ends.extend_from_slice(&marker);
-                        } else {
-                            output.extend_from_slice(&marker);
-                        }
+                    } else if before_table && range_marker(&self.elements[pair[1]].local) {
+                        // The paragraphs go and nothing merges: the marker
+                        // stays in place.
+                        output.extend_from_slice(&self.render(pair[1], state, false)?);
                     }
                 }
                 if before_table {
                     self.validate_removed_paragraphs(&paragraphs, state)?;
                 } else {
                     let leaf_mark = state.leaf_updates.len();
-                    let merged = self.render_merged_paragraphs(&paragraphs, state, destination)?;
+                    let merged =
+                        self.render_merged_paragraphs(&paragraphs, &joins, state, destination)?;
                     state.shift_leaves(leaf_mark, output.len());
                     output.extend_from_slice(&merged);
                 }
@@ -3942,6 +3948,7 @@ impl<'a> XmlTree<'a> {
     fn render_merged_paragraphs(
         &self,
         paragraphs: &[usize],
+        joins: &HashMap<usize, Vec<usize>>,
         state: &mut RenderState<'_>,
         destination: &[(String, String)],
     ) -> Result<Vec<u8>> {
@@ -3985,6 +3992,14 @@ impl<'a> XmlTree<'a> {
                     state.shift_leaves(leaf_mark, output.len());
                     output.extend_from_slice(&rendered);
                 }
+            }
+            for marker in joins.get(paragraph).into_iter().flatten() {
+                output.extend_from_slice(&self.render_with_namespaces(
+                    *marker,
+                    state,
+                    false,
+                    &current_scope,
+                )?);
             }
         }
         output.extend_from_slice(&self.source[current_element.close_start..current_element.end]);

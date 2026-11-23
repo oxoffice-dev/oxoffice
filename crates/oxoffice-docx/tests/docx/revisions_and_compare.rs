@@ -289,7 +289,7 @@ fn a_property_change_with_no_prior_value_resolves_as_one_from_no_properties() {
 }
 
 #[test]
-fn a_range_marker_between_merged_paragraphs_stays_around_the_merged_paragraph() {
+fn a_range_marker_between_merged_paragraphs_stays_where_they_join() {
     let attributes = r#"w:author="Ada" w:date="2026-01-01T00:00:00Z""#;
     // A paragraph added before a heading whose bookmark starts between the
     // two, as Google Docs writes a heading's bookmark: rejecting it merges
@@ -320,14 +320,14 @@ fn a_range_marker_between_merged_paragraphs_stays_around_the_merged_paragraph() 
             false,
             vec!["Heading", "after"],
             "_Toc1",
-            r#"<w:bookmarkStart w:id="7" w:name="_Toc1"/><w:p>"#,
+            r#"<w:bookmarkStart w:id="7" w:name="_Toc1"/><w:r><w:t>Heading</w:t>"#,
         ),
         (
             &removed,
             true,
             vec!["firstsecond"],
             "kept",
-            r#"</w:p><w:bookmarkEnd w:id="8"/><w:sectPr"#,
+            r#"<w:t>first</w:t></w:r><w:bookmarkEnd w:id="8"/><w:r><w:t>second</w:t>"#,
         ),
     ] {
         let mut doc = doc_with_body(body);
@@ -352,6 +352,33 @@ fn a_range_marker_between_merged_paragraphs_stays_around_the_merged_paragraph() 
 }
 
 #[test]
+fn a_range_marker_crossed_by_a_merge_does_not_stand_for_a_crossed_table() {
+    // An inserted last paragraph mark cannot go; a bookmark start crossed
+    // on the way changes nothing to that.
+    let attributes = r#"w:author="Ada" w:date="2026-01-01T00:00:00Z""#;
+    let body = |marker: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:r><w:t>kept</w:t></w:r></w:p>"#,
+                r#"<w:p><w:pPr><w:rPr><w:ins w:id="1" {0}/></w:rPr></w:pPr></w:p>{1}"#,
+                r#"<w:p><w:pPr><w:rPr><w:ins w:id="2" {0}/></w:rPr></w:pPr></w:p>"#,
+            ),
+            attributes, marker
+        )
+    };
+    let outcome = |marker: &str| {
+        let mut doc = doc_with_body(&body(marker));
+        doc.reject_all()
+            .map(|_| texts(&reopen(&mut doc)))
+            .map_err(|error| error.to_string())
+    };
+    assert_eq!(
+        outcome(r#"<w:bookmarkStart w:id="7" w:name="mark"/>"#),
+        outcome("")
+    );
+}
+
+#[test]
 fn every_producer_copy_with_tracked_changes_accepts_and_rejects_them_all() {
     // The LibreOffice contract on a pull request (empty prior run
     // properties); every contract and record copy with `OXOFFICE_WORKFLOWS=full`.
@@ -364,6 +391,23 @@ fn every_producer_copy_with_tracked_changes_accepts_and_rejects_them_all() {
         let doc = Document::from_bytes(&source).expect("corpus copy opens");
         assert!(!doc.revisions().is_empty(), "{path} has tracked changes");
         let shown = doc.text();
+        // Each body insertion and deletion, by its text: rejecting takes the
+        // inserted text out of the text shown and brings the deleted back.
+        let changes = doc
+            .story_revisions()
+            .expect("story revisions")
+            .into_iter()
+            .filter(|revision| {
+                revision.story().kind() == StoryKind::Body
+                    && matches!(
+                        revision.kind(),
+                        RevisionKind::Insertion | RevisionKind::Deletion
+                    )
+                    && !revision.text().trim().is_empty()
+            })
+            .map(|revision| (revision.kind(), revision.text().to_owned()))
+            .collect::<Vec<_>>();
+        assert!(!changes.is_empty(), "{path} has body text changes");
         for accept in [true, false] {
             let mut copy = Document::from_bytes(&source).unwrap();
             let resolved = if accept {
@@ -374,8 +418,21 @@ fn every_producer_copy_with_tracked_changes_accepts_and_rejects_them_all() {
             resolved.unwrap_or_else(|error| panic!("{path} accept={accept}: {error}"));
             let copy = reopen(&mut copy);
             assert!(copy.revisions().is_empty(), "{path} accept={accept}");
+            let text = copy.text();
             if accept {
-                assert_eq!(copy.text(), shown, "{path}: accepting keeps the text shown");
+                assert_eq!(text, shown, "{path}: accepting keeps the text shown");
+                continue;
+            }
+            for (kind, change) in &changes {
+                let (before, after) = (
+                    shown.matches(change.as_str()).count(),
+                    text.matches(change.as_str()).count(),
+                );
+                if *kind == RevisionKind::Insertion {
+                    assert!(after < before, "{path}: rejecting takes out {change:?}");
+                } else {
+                    assert!(after > before, "{path}: rejecting brings back {change:?}");
+                }
             }
         }
     });
