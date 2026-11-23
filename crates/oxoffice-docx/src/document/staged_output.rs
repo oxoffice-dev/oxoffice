@@ -49,9 +49,19 @@ impl Document {
     /// any story names one the document does not define, as `add_hyperlink`
     /// and [`crate::Paragraph::add_footnote_ref`] do. The stories are
     /// scanned once for both.
+    ///
+    /// On a localized file, a run that names one of those built-in ids the
+    /// styles part does not define takes the id of the style carrying its
+    /// built-in name (`Lienhypertexte` for `Hyperlink` in French), and no
+    /// second style of that name is added: the session's runs of the body
+    /// and of the notes are renamed here, the other stories' as they are
+    /// edited.
     fn ensure_referenced_character_styles(&mut self) -> Result<()> {
+        self.rename_localized_run_styles();
         let mut missing = Vec::new();
-        if self.styles.get_by_id("Hyperlink").is_none() {
+        if self.styles.get_by_id("Hyperlink").is_none()
+            && built_in_character_style_id(&self.styles, "Hyperlink", "Hyperlink").is_none()
+        {
             missing.push((
                 "Hyperlink",
                 StyleBuilder::character("Hyperlink", "Hyperlink").run_properties(CT_RPr {
@@ -65,7 +75,8 @@ impl Document {
         // that already names it without defining it (Google Docs does, in its
         // notes) keeps its styles as written: only a reference this session
         // added brings the style.
-        if self.styles.get_by_id("FootnoteReference").is_none()
+        if built_in_character_style_id(&self.styles, "FootnoteReference", "footnote reference")
+            .is_none()
             && self
                 .footnotes
                 .footnotes
@@ -146,6 +157,57 @@ impl Document {
             }
         }
         Ok(())
+    }
+
+    /// Give the body's and the notes model's runs that name a built-in
+    /// style id the styles part does not define the localized id, as
+    /// [`localized_run_style_ids`] finds it. The body is scanned first, so
+    /// that a body with nothing to rename keeps its opened model.
+    fn rename_localized_run_styles(&mut self) {
+        let renames = localized_run_style_ids(&self.styles);
+        if renames.is_empty() {
+            return;
+        }
+        let mut named = false;
+        walkers::visit_body_paragraphs(&self.document.body.content, false, &mut |paragraph| {
+            named |= names_renamed_run_style(paragraph, &renames);
+        });
+        if named {
+            walkers::visit_body_paragraphs_mut(&mut self.document.body.content, &mut |paragraph| {
+                rename_run_styles(paragraph, &renames)
+            });
+        }
+        if self
+            .footnotes
+            .footnotes
+            .iter()
+            .flat_map(|note| &note.paragraphs)
+            .any(|paragraph| names_renamed_run_style(paragraph, &renames))
+        {
+            for paragraph in self
+                .footnotes
+                .footnotes
+                .iter_mut()
+                .flat_map(|note| &mut note.paragraphs)
+            {
+                rename_run_styles(paragraph, &renames);
+            }
+            self.footnotes_dirty = true;
+        }
+    }
+
+    /// Give the runs of `paragraph`, about to join a story that the save
+    /// does not rename, the localized ids [`Self::rename_localized_run_styles`]
+    /// gives the body's.
+    /// The id of the Hyperlink character style: the style with its built-in
+    /// name, else `Hyperlink`, which the save adds when it is missing.
+    pub(crate) fn hyperlink_style_id(&self) -> String {
+        built_in_character_style_id(&self.styles, "Hyperlink", "Hyperlink")
+            .unwrap_or_else(|| "Hyperlink".to_owned())
+    }
+
+    pub(crate) fn localize_run_styles(&self, paragraph: &mut CT_P) {
+        rename_run_styles(paragraph, &localized_run_style_ids(&self.styles));
     }
 
     pub(crate) fn prepare_staged_package(&mut self) -> Result<bool> {
