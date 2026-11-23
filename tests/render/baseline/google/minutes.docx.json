@@ -1,12 +1,12 @@
 {
   "file": "google/minutes.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "febb9283c3aa84125a1e66b42567e91dc01176ebf0e38ee36694e16dcfe0f368",
-  "outline_and_tags": "1156cad6adc00fee6cc96c5b7a07fe43de3ac8e874e1fb5163f628d72405f77b",
+  "outline_and_tags": "a09264ea3b646313b4d89d45ebd1b429ee69af8dc367217b8559933a35bbe938",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
-    {"page": 1, "pixels": "950905ee94236fcf73e3e22b4edb00827d34aff9ebcd9b156e2130399179fd1a", "content": "65ceeace6c81848461af17468067b16269c2d5d84b9b6484251c27e41938ab69", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "18eb5a37bfb62a91045d76306e45097f22e1594d95c2ddcab52686feaf39d550", "content": "b2efdd93edf173c5db4a90f6a780f5a8ad63baa490fc7e8edf18878a3dbdab93", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "53e7c2ab23f463477935efb3f604aaf4dbcb153d63914798e1b327ce52ca787c", "content": "7d9aed08beab7236ae089c20bd2047ba0398abfc80547bfd05fe32d1b0d1ea77", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+    {"page": 1, "pixels": "0949730277510031c719fe5eed50926eff2de77a72975938568a3bbfa4efc930", "content": "1cafab0656f955a08e00f6d1c78fe9962e13df4c6944e79fabc9f13186fcb3e1", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "b1377cb105b2be2735ab2c6ba013f710708c456621f72eba99ad1d773b137f2e", "content": "29bad480dd8697c4021f82295b0f738a9e5a93b68ecd5a3076d7f17cc001d1ee", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "86afdd1bdb3b0fbb6e77406454528e61e7ae5d88e3baa21cd2090c75b8673fe7", "content": "2e6f0834d2266906db7119a4ba1db71651bce6359f823800655a1c827552669c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }

@@ -2,11 +2,11 @@
   "file": "word/minutes.docx",
   "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "ea06cf1a6609bff51fd9cc60bd795c6ef98e2ead1478c51262e50a72cc1d740a",
-  "outline_and_tags": "f9ae4d8275aa2a789a7c385df71d7ec171d25bc9a4dc59db8e093b82e9841ab1",
+  "outline_and_tags": "f1f5a61e3be2499ee1ca55cc6031b64ca28fe1f2f5f626976d6acb6846a62486",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
-    {"page": 1, "pixels": "1b143366ce00fe855061607e74cbfe95c06bcebb19bdd0a37f5f9481ea59825f", "content": "1f46e03b3a8faacd09834b1724e063328c9c4fb07792d1a9cf96098fc431670a", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "b61bb6d25417771150cae3223a0d743186e307be31b644975cb0c969add42c1a", "content": "72cd3cdc7388184f997b4741fd25e2e3151d83efd89068ab6f30c75e46337ff0", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "521ccdc89c322803b6c2bf78f16a569b37c9119ce532acae6e02a308ee2c96b9", "content": "676e82ce8822d5779b6f323e2a6015a25fb502305d3e2feefe65f8ba88adf274", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+    {"page": 1, "pixels": "036c18de5f945e6151c4b28f4fb970cacdd2b9110f6d4c9c555d9e5c2e744316", "content": "0f36a1e220e26f61c2d98db1500d937bbc4a64a452815c53259feab607b70699", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "5e000fc4ffe25778971d9e05200bc389317a94c6e770385a1b5bcf14f63e9cd4", "content": "7dddb4da596ea8580e3c0527f9345eff07a9d81d000109e9440cf33cbb7bb881", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "a5efa1c6ebfcb15258282e8eaffe5d237d5c799c96439a9e69ef299314b40390", "content": "6d0d8e5854384a8328122c5944510fa3aeb5aef7cec388f0ce4897b9b0860d66", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }

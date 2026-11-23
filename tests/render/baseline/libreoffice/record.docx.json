@@ -2,10 +2,10 @@
   "file": "libreoffice/record.docx",
   "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "f837c9590baa0a5ae33609cc68dc6084a55581d2cd7b445e65090377b95b778f",
-  "outline_and_tags": "e2acba137d3dc6853ab0eb06fe42f4070681da1162764691153aaa5e88195131",
+  "outline_and_tags": "de857451cf5f62756a07b0ec232dd2f3a9fea0300083ddf10ddcaf83e83f2d83",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
-    {"page": 1, "pixels": "5cd8a8286ff9a0e8efde1cda7106b50600f189d50a33ada6ae9c926e9c29fb6c", "content": "1301d12e4c70388262ba1b2af718638366e13a80f8fc474005a60219c77102fb", "annotations": "56181fccc88d644ba271cfe584ae46e22c983b55eecc9823513c120ab8c406f9", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
+    {"page": 1, "pixels": "8adf4b6ef1852881d0e2c990431b5e87a3a90e5daadd30268b57238d95037668", "content": "90321daa15f244438436ce962f9b3c170b5c822e8de0a831a7b5ac1c559969f0", "annotations": "ec8c11c4352c06005efbba2392f05ee66418f4bf56178e8862e881c663aa54a8", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "1b14d45c2da7e2944151378bdc8f0b0790e259b634c16c698929ac6ab4434704", "content": "94dbcfab31686989cf3088c12e2f0afbcfc39e80b314769d74b725d32dd2bf57", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
     {"page": 3, "pixels": "e2c9f32b692b4dc09c851629c46dd60e59a0d0d44f495809d206345039076075", "content": "2d38cba36db62a4e88ba0aa7c0822184d9c2e5f09d2cb1c4536d166647e0dcdb", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]

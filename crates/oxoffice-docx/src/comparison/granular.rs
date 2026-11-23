@@ -756,7 +756,7 @@ pub(super) fn hyperlink_shells(paragraph: &CT_P, options: &ComparisonOptions) ->
         .map(|link| {
             format!(
                 "{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
-                link.rel_id,
+                super::signatures::classified_hyperlink(link).rel_id,
                 link.anchor,
                 link.tooltip,
                 link.doc_location,
