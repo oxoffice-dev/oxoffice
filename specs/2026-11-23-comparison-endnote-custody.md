@@ -77,8 +77,9 @@ Two pull requests, each with the full corpus walk
 
 1. `refactor(compare)`: the note kind through the custody, footnotes only,
    no behaviour change. Checked by the existing footnote tests and the
-   corpus walk unchanged; `revision.rs` resolves custody per kind.
-2. `fix(compare)`: endnotes go through the custody. Behaviour tests in
+   corpus walk unchanged.
+2. `fix(compare)`: endnotes go through the custody, and `revision.rs`
+   resolves custody per kind. Behaviour tests in
    `tests/docx/revisions_and_compare.rs`, the footnote set run for endnotes
    (added, removed, the first endnote, moved within and across paragraphs,
    moved and edited, numbered by position, a paragraph moved with its
