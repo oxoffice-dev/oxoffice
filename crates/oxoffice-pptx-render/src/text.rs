@@ -420,6 +420,7 @@ fn shape_run(
         direction: oxoffice_layout::TextDirection::Auto,
         source: None,
         font_id,
+        measure_font: None,
         font_size,
         glyph_ids: shaped.glyph_ids,
         advances: shaped.advances,
