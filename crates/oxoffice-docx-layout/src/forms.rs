@@ -605,6 +605,12 @@ const VERTICAL_SECTION: &str = "its section's text is vertical";
 /// Why a control in a rotated cell stays static.
 const ROTATED_CELL: &str = "its cell's text is rotated";
 
+/// Why a control in a text box stays static.
+const TURNED_TEXT_BOX: &str = "its text box is turned";
+const VERTICAL_TEXT_BOX: &str = "its text box's text is vertical";
+const NESTED_TEXT_BOX: &str = "its text box sits in another text box";
+const TABLE_IN_TEXT_BOX: &str = "it sits in a table inside a text box";
+
 /// Whether each body layout item lies in a section of vertical text, each
 /// item in its own section as layout reads it.
 fn vertical_sections(
@@ -636,8 +642,8 @@ enum Source<'a> {
     Legacy,
 }
 
-/// One mapped control or legacy form field of the main body or the notes,
-/// in document order.
+/// One mapped control or legacy form field of the main body, its text
+/// boxes or the notes, in document order.
 struct Entry<'a> {
     source: Source<'a>,
     field: FormField,
@@ -682,6 +688,13 @@ impl Entry<'_> {
 enum Inline<'a> {
     Control(u32, &'a CT_Sdt),
     Legacy(u32, &'a Field),
+    /// A text box the paragraph anchors, with its story.
+    TextBox(
+        &'a oxoffice_docx_oxml::drawing::CT_Anchor,
+        &'a oxoffice_docx_oxml::drawing::CT_Shape,
+        &'a CT_Body,
+        crate::WordStory,
+    ),
 }
 
 /// The mapped controls and legacy form fields of the main body, then of
@@ -705,6 +718,8 @@ struct Inventory<'a> {
     /// The notes the main story references, in the order of their first
     /// reference, while the main story is walked.
     notes: Option<Vec<oxoffice_layout::NoteRef>>,
+    /// Whether the walk is inside a text box.
+    in_text_box: bool,
 }
 
 impl<'a> Inventory<'a> {
@@ -720,6 +735,7 @@ impl<'a> Inventory<'a> {
             block_fields: HashMap::new(),
             refused: std::collections::HashSet::new(),
             notes: Some(Vec::new()),
+            in_text_box: false,
         };
         let body = &input.document.body;
         let items = crate::engine::body_layout_items(body);
@@ -751,7 +767,7 @@ impl<'a> Inventory<'a> {
                     let in_vertical_block = block
                         .is_some_and(|block| vertical_blocks.contains(&std::ptr::from_ref(block)));
                     let reason = (vertical[index] || in_vertical_block).then_some(VERTICAL_SECTION);
-                    inventory.paragraph(input, paragraph, node, block, reason);
+                    inventory.paragraph(input, sources, paragraph, node, block, reason);
                 }
                 crate::engine::MainStoryLayoutItem::Table(table, path) => {
                     let reason = vertical[index].then_some(VERTICAL_SECTION);
@@ -804,7 +820,7 @@ impl<'a> Inventory<'a> {
                         let node = sources.id(&story, &path);
                         let block = enclosing_block_field(body, &path, &mut self.block_fields);
                         self.note_block_faults(body, &path);
-                        self.paragraph(input, paragraph, node, block, None);
+                        self.paragraph(input, sources, paragraph, node, block, None);
                     }
                     crate::engine::MainStoryLayoutItem::Table(table, path) => {
                         self.table(input, sources, &story, table, &path, None);
@@ -823,7 +839,7 @@ impl<'a> Inventory<'a> {
         };
         for (index, paragraph) in note.paragraphs.iter().enumerate() {
             let node = sources.id(&story, &[index]);
-            self.paragraph(input, paragraph, node, None, None);
+            self.paragraph(input, sources, paragraph, node, None, None);
         }
     }
 
@@ -853,7 +869,7 @@ impl<'a> Inventory<'a> {
                     match content {
                         CellContent::Paragraph(paragraph) => {
                             let node = sources.id(story, &content_path);
-                            self.paragraph(input, paragraph, node, None, reason);
+                            self.paragraph(input, sources, paragraph, node, None, reason);
                         }
                         CellContent::ContentControl(control) => {
                             self.cell_control(
@@ -900,7 +916,7 @@ impl<'a> Inventory<'a> {
             match item {
                 SdtContent::Paragraph(paragraph) => {
                     let node = sources.id(story, &inner_path);
-                    self.paragraph(input, paragraph, node, block, reason);
+                    self.paragraph(input, sources, paragraph, node, block, reason);
                 }
                 SdtContent::ContentControl(nested) => {
                     self.cell_control(input, sources, story, nested, &inner_path, block, reason);
@@ -926,6 +942,7 @@ impl<'a> Inventory<'a> {
     fn paragraph(
         &mut self,
         input: &'a crate::input::LayoutInput,
+        sources: &crate::engine::SourceRegistry,
         paragraph: &'a CT_P,
         node: Option<oxoffice_layout::SourceNodeId>,
         block: Option<&'a CT_Sdt>,
@@ -954,17 +971,24 @@ impl<'a> Inventory<'a> {
         if let Some(control) = block {
             if let Some(reason) = reason {
                 self.note_static(control, reason);
-                return;
+            } else {
+                let index = self.add(control, true, alignment, || block_text(control));
+                if let (Some(index), Some(node)) = (index, node) {
+                    self.keys.insert(
+                        oxoffice_layout::FormMark {
+                            node,
+                            field: BLOCK_FIELD,
+                        },
+                        index,
+                    );
+                }
             }
-            let index = self.add(control, true, alignment, || block_text(control));
-            if let (Some(index), Some(node)) = (index, node) {
-                self.keys.insert(
-                    oxoffice_layout::FormMark {
-                        node,
-                        field: BLOCK_FIELD,
-                    },
-                    index,
-                );
+            // A text box floats out of the block field: its controls are
+            // fields of their own, after the block's.
+            for (_, item) in Self::anchored_text_boxes(input, sources, paragraph, node) {
+                if let Inline::TextBox(anchor, shape, body, story) = item {
+                    self.text_box(input, sources, anchor, shape, body, &story, reason);
+                }
             }
             return;
         }
@@ -1050,8 +1074,15 @@ impl<'a> Inventory<'a> {
                 ));
             }
         }
+        // Text boxes, at their anchoring run: a text box's controls sit in
+        // that run in the document.
+        inline.extend(Self::anchored_text_boxes(input, sources, paragraph, node));
         inline.sort_by_key(|(at, _)| *at);
         for (_, item) in inline {
+            if let Inline::TextBox(anchor, shape, body, story) = item {
+                self.text_box(input, sources, anchor, shape, body, &story, reason);
+                continue;
+            }
             if let Some(reason) = reason {
                 match item {
                     Inline::Control(_, control) => self.note_static(control, reason),
@@ -1059,6 +1090,7 @@ impl<'a> Inventory<'a> {
                         "form field {:?} stays static: {reason}",
                         legacy_name(field)
                     )),
+                    Inline::TextBox(..) => {}
                 }
                 continue;
             }
@@ -1083,12 +1115,88 @@ impl<'a> Inventory<'a> {
                     }),
                     legacy_mark(index),
                 ),
+                Inline::TextBox(..) => continue,
             };
             if let (Some(index), Some(node)) = (index, node) {
                 self.keys
                     .insert(oxoffice_layout::FormMark { node, field }, index);
             }
         }
+    }
+
+    /// The text boxes a paragraph anchors, each at the position of its
+    /// anchoring run among the paragraph's source runs.
+    fn anchored_text_boxes(
+        input: &'a crate::input::LayoutInput,
+        sources: &crate::engine::SourceRegistry,
+        paragraph: &'a CT_P,
+        node: Option<oxoffice_layout::SourceNodeId>,
+    ) -> Vec<(usize, Inline<'a>)> {
+        let Some(owner) = node else {
+            return Vec::new();
+        };
+        let runs = paragraph.source_runs();
+        let mut boxes = Vec::new();
+        for (index, anchored) in crate::engine::paragraph_anchors(paragraph, input.revision_view)
+            .into_iter()
+            .enumerate()
+        {
+            let (Some(shape), Some(story)) = (anchored.shape, sources.text_box_story(owner, index))
+            else {
+                continue;
+            };
+            let Some(body) = shape.text_body.as_ref() else {
+                continue;
+            };
+            let at = runs
+                .iter()
+                .position(|run| std::ptr::eq(*run, anchored.run))
+                .unwrap_or(0);
+            boxes.push((
+                at,
+                Inline::TextBox(anchored.anchor, shape, body, story.clone()),
+            ));
+        }
+        boxes
+    }
+
+    /// A text box's paragraphs and tables, as text box layout walks them,
+    /// numbered where the box is anchored. A box turned, with vertical
+    /// text, or inside another box stays static, and so does a table in it.
+    #[allow(clippy::too_many_arguments)]
+    fn text_box(
+        &mut self,
+        input: &'a crate::input::LayoutInput,
+        sources: &crate::engine::SourceRegistry,
+        anchor: &oxoffice_docx_oxml::drawing::CT_Anchor,
+        shape: &oxoffice_docx_oxml::drawing::CT_Shape,
+        body: &'a CT_Body,
+        story: &crate::WordStory,
+        reason: Option<&'static str>,
+    ) {
+        let turned = anchor
+            .shape_rotation_degrees()
+            .is_some_and(|degrees| degrees.rem_euclid(360.0).abs() > 0.01);
+        let reason = reason
+            .or(self.in_text_box.then_some(NESTED_TEXT_BOX))
+            .or(turned.then_some(TURNED_TEXT_BOX))
+            .or(shape.vertical_text.then_some(VERTICAL_TEXT_BOX));
+        let outer = std::mem::replace(&mut self.in_text_box, true);
+        for item in crate::engine::body_layout_items(body) {
+            match item {
+                crate::engine::MainStoryLayoutItem::Paragraph(paragraph, path) => {
+                    let node = sources.id(story, &path);
+                    let block = enclosing_block_field(body, &path, &mut self.block_fields);
+                    self.note_block_faults(body, &path);
+                    self.paragraph(input, sources, paragraph, node, block, reason);
+                }
+                crate::engine::MainStoryLayoutItem::Table(table, path) => {
+                    let reason = reason.or(Some(TABLE_IN_TEXT_BOX));
+                    self.table(input, sources, story, table, &path, reason);
+                }
+            }
+        }
+        self.in_text_box = outer;
     }
 
     fn note_fault(&mut self, control: &CT_Sdt) {
@@ -1201,6 +1309,24 @@ pub(crate) fn body_form_paragraph(
         return None;
     }
     input.form_paragraphs.as_ref()?.nodes.get(&node?).copied()
+}
+
+/// The form identity of a paragraph of a text box anchored in the paragraph
+/// `owner` names, laid out under its local source `node`: only when the
+/// inventory walks the owner. The node becomes the registry's, marks
+/// included, when the text box binds its sources.
+pub(crate) fn text_box_form_paragraph(
+    input: &crate::input::LayoutInput,
+    owner: Option<oxoffice_layout::SourceNodeId>,
+    body: &CT_Body,
+    path: &[usize],
+    node: Option<oxoffice_layout::SourceNodeId>,
+) -> Option<FormParagraph> {
+    body_form_paragraph(input, owner)?;
+    Some(FormParagraph {
+        node: node?,
+        block: enclosing_block_field(body, path, &mut HashMap::new()).is_some(),
+    })
 }
 
 /// The form identity of a note or table cell paragraph: only for the
@@ -1412,6 +1538,35 @@ fn gather(
     tracks: &mut HashMap<u32, Vec<f64>>,
 ) {
     use oxoffice_layout::{FormFieldFragment, FormFieldId, PositionedElement as E};
+    // An anchored drawing wraps each element it paints in marked content of
+    // its own, a marker of its text box's lines included: the marker joins
+    // its neighbours here, as a body line's does. It draws nothing, so the
+    // wrapper tags nothing. A text box with a description is a figure: its
+    // marker may still gather what that figure paints, as its own.
+    let mut lifted: HashMap<usize, oxoffice_layout::StructureId> = HashMap::new();
+    for (index, element) in elements.iter_mut().enumerate() {
+        if let E::MarkedContent {
+            children,
+            structure,
+        } = element
+            && let [
+                E::FormField(FormFieldFragment {
+                    mark: Some(_),
+                    children: captured,
+                    ..
+                }),
+            ] = children.as_slice()
+            && captured.is_empty()
+        {
+            let structure = *structure;
+            if let Some(marker) = children.pop() {
+                if let Some(id) = structure {
+                    lifted.insert(index, id);
+                }
+                *element = marker;
+            }
+        }
+    }
     for element in elements.iter_mut() {
         match element {
             E::MarkedContent { children, .. } => gather(children, resolve, figure, tracks),
@@ -1460,13 +1615,14 @@ fn gather(
         return;
     }
     let mut owner: Vec<Option<usize>> = vec![None; elements.len()];
-    for (marker_index, (_, rect, field, _, node)) in markers.iter().enumerate() {
+    for (marker_index, (at, rect, field, _, node)) in markers.iter().enumerate() {
         if field.is_none() {
             continue;
         }
+        let own_figure = lifted.get(at).copied();
         for (index, element) in elements.iter().enumerate() {
-            let tagged_figure =
-                matches!(element, E::MarkedContent { structure: Some(id), .. } if figure(*id));
+            let tagged_figure = matches!(element, E::MarkedContent { structure: Some(id), .. }
+                    if figure(*id) && Some(*id) != own_figure);
             // A link stays on the page, bare or in its paragraph's marked
             // content, and so does a destination.
             let link = |element: &E| matches!(element, E::LinkAnnotation { .. });

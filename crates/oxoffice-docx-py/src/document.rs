@@ -22,6 +22,7 @@ use crate::paragraph::{
 use crate::table::{PyTable, PyTableCollection};
 
 mod annotations;
+mod bibliography;
 mod charts;
 mod content_controls;
 mod conversions;
@@ -44,6 +45,11 @@ mod templates;
 
 pub use annotations::{PyComment, PyRevision};
 use annotations::{revision_kind_name, story_link_layout};
+pub use bibliography::{
+    PyBibliographyContributor, PyBibliographyPerson, PyBibliographySource,
+    PyBibliographySourceInfo, PyBibliographyStyleInfo, PyBibliographyUpdateReport,
+    PyCitationSource,
+};
 use charts::checked_chart_inputs;
 pub use content_controls::PyContentControl;
 use content_controls::{

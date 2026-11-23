@@ -214,8 +214,8 @@ enum Command {
         /// Preserve unpainted PNG pixels as transparent
         #[arg(long)]
         transparent: bool,
-        /// Export the content controls and legacy form fields of the body and
-        /// the notes as fillable PDF form fields (PDF only, accepted view). A control tagged `signature` or
+        /// Export the content controls and legacy form fields of the body, its
+        /// text boxes and the notes as fillable PDF form fields (PDF only, accepted view). A control tagged `signature` or
         /// `signature:<name>` becomes an empty signature field.
         #[arg(long)]
         fillable_forms: bool,

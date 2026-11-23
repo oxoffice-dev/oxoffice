@@ -76,10 +76,10 @@ with open("report.pdf", "wb") as output:
   Legal styling requires the tracked view and leaves stored formatting intact.
 - Fillable PDF forms: `to_pdf(fillable_forms=True)` and
   `to_pdfa_deterministic(fillable_forms=True)` export the content controls and
-  legacy form fields of the body and the notes as form fields, text, check boxes, lists and dates with their
+  legacy form fields of the body, its text boxes and the notes as form fields, text, check boxes, lists and dates with their
   values. A control tagged `signature` or `signature:<name>` becomes an empty
   signature field. It needs the accepted view, and
-  `to_pdf_with_diagnostics` names each control of the body or the notes that would be a
+  `to_pdf_with_diagnostics` names each control of the body, a text box or a note that would be a
   field but is left static (a picture control without a signature tag or a
   group control is no field).
 - Python collections with negative indexes, slices, iteration, and explicit
