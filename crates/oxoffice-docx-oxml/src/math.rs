@@ -294,6 +294,7 @@ impl OfficeMath {
 
 /// One expression in the normalized OfficeMath tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MathExpression {
     Run(MathRun),
     Fraction(MathFraction),
@@ -308,11 +309,18 @@ pub enum MathExpression {
     Nary(MathNary),
     Delimiter(MathDelimiter),
     Accent(MathAccent),
+    Function(MathFunction),
+    Bar(MathBar),
+    Box(MathBox),
+    BorderBox(MathBorderBox),
+    GroupCharacter(MathGroupCharacter),
+    Phantom(MathPhantom),
+    EquationArray(MathEquationArray),
 }
 
 impl MathExpression {
     /// The arguments of this expression, in document order: a matrix's
-    /// cells row by row.
+    /// cells row by row, an equation array's rows.
     pub fn arguments(&self) -> Vec<&MathArgument> {
         match self {
             Self::Run(_) => Vec::new(),
@@ -330,6 +338,61 @@ impl MathExpression {
             Self::Nary(value) => vec![&value.subscript, &value.superscript, &value.base],
             Self::Delimiter(value) => value.arguments.iter().collect(),
             Self::Accent(value) => vec![&value.base],
+            Self::Function(value) => vec![&value.name, &value.argument],
+            Self::Bar(value) => vec![&value.base],
+            Self::Box(value) => vec![&value.base],
+            Self::BorderBox(value) => vec![&value.base],
+            Self::GroupCharacter(value) => vec![&value.base],
+            Self::Phantom(value) => vec![&value.base],
+            Self::EquationArray(value) => value.rows.iter().collect(),
+        }
+    }
+
+    /// [`Self::arguments`], to change them.
+    pub fn arguments_mut(&mut self) -> Vec<&mut MathArgument> {
+        match self {
+            Self::Run(_) => Vec::new(),
+            Self::Fraction(value) => vec![&mut value.numerator, &mut value.denominator],
+            Self::Subscript(value) | Self::Superscript(value) => {
+                vec![&mut value.base, &mut value.script]
+            }
+            Self::SubSuperscript(value) => {
+                vec![
+                    &mut value.base,
+                    &mut value.subscript,
+                    &mut value.superscript,
+                ]
+            }
+            Self::PreSubSuperscript(value) => {
+                vec![
+                    &mut value.subscript,
+                    &mut value.superscript,
+                    &mut value.base,
+                ]
+            }
+            Self::Radical(value) => vec![&mut value.degree, &mut value.base],
+            Self::Matrix(value) => value
+                .rows
+                .iter_mut()
+                .flat_map(|row| &mut row.cells)
+                .collect(),
+            Self::LowerLimit(value) | Self::UpperLimit(value) => {
+                vec![&mut value.base, &mut value.limit]
+            }
+            Self::Nary(value) => vec![
+                &mut value.subscript,
+                &mut value.superscript,
+                &mut value.base,
+            ],
+            Self::Delimiter(value) => value.arguments.iter_mut().collect(),
+            Self::Accent(value) => vec![&mut value.base],
+            Self::Function(value) => vec![&mut value.name, &mut value.argument],
+            Self::Bar(value) => vec![&mut value.base],
+            Self::Box(value) => vec![&mut value.base],
+            Self::BorderBox(value) => vec![&mut value.base],
+            Self::GroupCharacter(value) => vec![&mut value.base],
+            Self::Phantom(value) => vec![&mut value.base],
+            Self::EquationArray(value) => value.rows.iter_mut().collect(),
         }
     }
 
@@ -402,6 +465,32 @@ impl MathExpression {
                     || property_container_has_unsupported_content(&value.preservation, "accPr")
                     || value.base.has_unsupported_content()
             }
+            Self::Function(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_container_has_unsupported_content(&value.preservation, "funcPr")
+                    || value.name.has_unsupported_content()
+                    || value.argument.has_unsupported_content()
+            }
+            Self::Bar(value) => {
+                based_has_unsupported_content(&value.preservation, "barPr", &value.base)
+            }
+            Self::Box(value) => {
+                based_has_unsupported_content(&value.preservation, "boxPr", &value.base)
+            }
+            Self::BorderBox(value) => {
+                based_has_unsupported_content(&value.preservation, "borderBoxPr", &value.base)
+            }
+            Self::GroupCharacter(value) => {
+                based_has_unsupported_content(&value.preservation, "groupChrPr", &value.base)
+            }
+            Self::Phantom(value) => {
+                based_has_unsupported_content(&value.preservation, "phantPr", &value.base)
+            }
+            Self::EquationArray(value) => {
+                preservation_has_unsupported_content(&value.preservation)
+                    || property_container_has_unsupported_content(&value.preservation, "eqArrPr")
+                    || value.rows.iter().any(MathArgument::has_unsupported_content)
+            }
         }
     }
 
@@ -427,6 +516,17 @@ impl MathExpression {
             Some("nary") => Some(Self::Nary(MathNary::from_raw(raw, inherited)?)),
             Some("d") => Some(Self::Delimiter(MathDelimiter::from_raw(raw, inherited)?)),
             Some("acc") => Some(Self::Accent(MathAccent::from_raw(raw, inherited)?)),
+            Some("func") => Some(Self::Function(MathFunction::from_raw(raw, inherited)?)),
+            Some("bar") => Some(Self::Bar(MathBar::from_raw(raw, inherited)?)),
+            Some("box") => Some(Self::Box(MathBox::from_raw(raw, inherited)?)),
+            Some("borderBox") => Some(Self::BorderBox(MathBorderBox::from_raw(raw, inherited)?)),
+            Some("groupChr") => Some(Self::GroupCharacter(MathGroupCharacter::from_raw(
+                raw, inherited,
+            )?)),
+            Some("phant") => Some(Self::Phantom(MathPhantom::from_raw(raw, inherited)?)),
+            Some("eqArr") => Some(Self::EquationArray(MathEquationArray::from_raw(
+                raw, inherited,
+            )?)),
             _ => None,
         })
     }
@@ -450,6 +550,13 @@ impl MathExpression {
             Self::Nary(value) => value.write_xml_in(writer, emission),
             Self::Delimiter(value) => value.write_xml_in(writer, emission),
             Self::Accent(value) => value.write_xml_in(writer, emission),
+            Self::Function(value) => value.write_xml_in(writer, emission),
+            Self::Bar(value) => value.write_xml_in(writer, emission),
+            Self::Box(value) => value.write_xml_in(writer, emission),
+            Self::BorderBox(value) => value.write_xml_in(writer, emission),
+            Self::GroupCharacter(value) => value.write_xml_in(writer, emission),
+            Self::Phantom(value) => value.write_xml_in(writer, emission),
+            Self::EquationArray(value) => value.write_xml_in(writer, emission),
         }
     }
 }
@@ -477,6 +584,44 @@ impl MathArgument {
 
     pub fn text(text: impl Into<String>) -> Self {
         Self::new(vec![MathRun::new(text).into()])
+    }
+
+    /// The expressions of an equation array's row before and after its
+    /// first `&`, the column the rows align on, with every `&` left out of
+    /// the run text. A row with no `&` is all after it.
+    pub fn split_at_alignment(&self) -> (MathArgument, MathArgument) {
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        let mut aligned = false;
+        for expression in &self.expressions {
+            match expression {
+                MathExpression::Run(run) if run.text.contains('&') => {
+                    let with_text = |text: &str| {
+                        let mut part = run.clone();
+                        part.text = text.replace('&', "");
+                        MathExpression::Run(part)
+                    };
+                    if aligned {
+                        after.push(with_text(&run.text));
+                        continue;
+                    }
+                    let (head, tail) = run.text.split_once('&').unwrap_or_default();
+                    if !head.is_empty() {
+                        before.push(with_text(head));
+                    }
+                    if !tail.is_empty() {
+                        after.push(with_text(tail));
+                    }
+                    aligned = true;
+                }
+                other if aligned => after.push(other.clone()),
+                other => before.push(other.clone()),
+            }
+        }
+        if !aligned {
+            return (MathArgument::default(), MathArgument::new(before));
+        }
+        (MathArgument::new(before), MathArgument::new(after))
     }
 
     /// Whether this argument retains content outside the typed OfficeMath subset.
@@ -1346,8 +1491,21 @@ impl MatrixBaseJustification {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MathMatrixProperties {
     pub base_justification: Option<MatrixBaseJustification>,
+    pub hide_placeholders: Option<bool>,
+    pub row_spacing_rule: Option<u8>,
+    pub column_gap_rule: Option<u8>,
     pub row_spacing: Option<u16>,
     pub column_spacing: Option<u32>,
+    pub column_gap: Option<u32>,
+}
+
+/// How a matrix column aligns its cells (`m:mcJc`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MatrixColumnJustification {
+    Left,
+    #[default]
+    Center,
+    Right,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1380,6 +1538,30 @@ impl MathMatrix {
         }
     }
 
+    /// How column `column` (from 0) aligns its cells, read from the
+    /// column properties (`m:mcs`) the matrix was read with: centred when
+    /// they say nothing of it.
+    pub fn column_justification(&self, column: usize) -> MatrixColumnJustification {
+        let Some(properties) = self
+            .preservation
+            .modeled_children
+            .iter()
+            .find(|child| child.name == "mPr")
+        else {
+            return MatrixColumnJustification::default();
+        };
+        matrix_columns(&properties.raw, &properties.bindings)
+            .and_then(|columns| {
+                columns
+                    .into_iter()
+                    .flat_map(|(count, justification)| {
+                        std::iter::repeat_n(justification, count as usize)
+                    })
+                    .nth(column)
+            })
+            .unwrap_or_default()
+    }
+
     fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
         let mut parsed = parse_element(raw, inherited)?;
         let mut properties = MathMatrixProperties::default();
@@ -1396,6 +1578,17 @@ impl MathMatrix {
                             .and_then(|value| value.parse().ok());
                     properties.column_spacing =
                         child_property_value(&child, &parsed.bindings, "mPr", "cSp")?
+                            .and_then(|value| value.parse().ok());
+                    properties.hide_placeholders =
+                        child_on_off_value(&child, &parsed.bindings, "plcHide")?;
+                    properties.row_spacing_rule =
+                        child_property_value(&child, &parsed.bindings, "mPr", "rSpRule")?
+                            .and_then(|value| value.parse().ok());
+                    properties.column_gap_rule =
+                        child_property_value(&child, &parsed.bindings, "mPr", "cGpRule")?
+                            .and_then(|value| value.parse().ok());
+                    properties.column_gap =
+                        child_property_value(&child, &parsed.bindings, "mPr", "cGp")?
                             .and_then(|value| value.parse().ok());
                     preserve_modeled_child(
                         &mut parsed.preservation,
@@ -1429,6 +1622,18 @@ impl MathMatrix {
                 "OfficeMath matrix requires at least one nonempty row".to_owned(),
             ));
         }
+        if [
+            self.properties.row_spacing_rule,
+            self.properties.column_gap_rule,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|rule| rule > 4)
+        {
+            return Err(OxmlError::InvalidValue(
+                "OfficeMath matrix spacing rules go up to 4".to_owned(),
+            ));
+        }
         write_container(
             writer,
             "m",
@@ -1439,11 +1644,23 @@ impl MathMatrix {
                         .base_justification
                         .map(|value| Property::text("baseJc", value.as_str())),
                     self.properties
+                        .hide_placeholders
+                        .map(|value| Property::boolean("plcHide", value)),
+                    self.properties
+                        .row_spacing_rule
+                        .map(|value| Property::unsigned("rSpRule", value.into())),
+                    self.properties
+                        .column_gap_rule
+                        .map(|value| Property::unsigned("cGpRule", value.into())),
+                    self.properties
                         .row_spacing
                         .map(|value| Property::unsigned("rSp", value.into())),
                     self.properties
                         .column_spacing
                         .map(|value| Property::unsigned("cSp", value.into())),
+                    self.properties
+                        .column_gap
+                        .map(|value| Property::unsigned("cGp", value.into())),
                 ]
                 .into_iter()
                 .flatten()
@@ -1624,6 +1841,8 @@ pub struct MathNary {
     pub limit_location: Option<LimitLocation>,
     subscript_present: bool,
     superscript_present: bool,
+    // Google Docs writes an n-ary without its m:e.
+    base_present: bool,
     preservation: Preservation,
 }
 
@@ -1640,6 +1859,7 @@ impl MathNary {
             limit_location: None,
             subscript_present: false,
             superscript_present: false,
+            base_present: true,
             preservation: Preservation::default(),
         }
     }
@@ -1649,6 +1869,7 @@ impl MathNary {
         let mut value = Self::new("∫", MathArgument::default());
         value.hide_subscript = false;
         value.hide_superscript = false;
+        value.base_present = false;
         let mut modeled = 0usize;
         for child in parsed.children {
             match math_local_name(&child, &parsed.bindings)?.as_deref() {
@@ -1684,6 +1905,7 @@ impl MathNary {
                 }
                 Some("e") => {
                     value.base = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    value.base_present = true;
                     modeled += 1;
                 }
                 _ => parsed.preservation.raw_children.push((modeled, child)),
@@ -1746,9 +1968,15 @@ impl MathNary {
                     self.superscript.write_xml_in(writer, "sup", emission)?;
                 }
                 write_raw_slot(writer, &self.preservation, modeled)?;
-                self.base.write_xml_in(writer, "e", emission)?;
-                modeled += 1;
-                write_raw_slot(writer, &self.preservation, modeled)
+                if self.base_present
+                    || !self.base.expressions.is_empty()
+                    || self.base.has_unsupported_content()
+                {
+                    self.base.write_xml_in(writer, "e", emission)?;
+                    modeled += 1;
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                }
+                Ok(())
             },
             emission,
         )
@@ -1948,6 +2176,680 @@ impl MathAccent {
             emission,
         )
     }
+}
+
+/// Above or below: where a bar or a group character sits (`ST_TopBot`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathVerticalPosition {
+    Top,
+    Bottom,
+}
+
+impl MathVerticalPosition {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "top" => Some(Self::Top),
+            "bot" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Bottom => "bot",
+        }
+    }
+}
+
+/// A function apply, `m:func`: a function name such as "log" and its argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathFunction {
+    pub name: MathArgument,
+    pub argument: MathArgument,
+    preservation: Preservation,
+}
+
+impl MathFunction {
+    pub fn new(name: MathArgument, argument: MathArgument) -> Self {
+        Self {
+            name,
+            argument,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut name = MathArgument::default();
+        let mut argument = MathArgument::default();
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("funcPr") if modeled == 0 => {
+                    preserve_modeled_child(
+                        &mut parsed.preservation,
+                        "funcPr",
+                        &child,
+                        &parsed.bindings,
+                    );
+                    modeled += 1;
+                }
+                Some("fName") => {
+                    name = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                Some("e") => {
+                    argument = MathArgument::from_raw(&child, &parsed.bindings)?;
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        Ok(Self {
+            name,
+            argument,
+            preservation: parsed.preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        write_container(
+            writer,
+            "func",
+            &self.preservation,
+            |writer| {
+                let emit = has_preserved_modeled_child(&self.preservation, "funcPr");
+                let mut modeled = write_leading_property_container(
+                    writer,
+                    "funcPr",
+                    &[],
+                    &self.preservation,
+                    emit,
+                    emission,
+                )?;
+                self.name.write_xml_in(writer, "fName", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)?;
+                self.argument.write_xml_in(writer, "e", emission)?;
+                modeled += 1;
+                write_raw_slot(writer, &self.preservation, modeled)
+            },
+            emission,
+        )
+    }
+}
+
+/// A bar over or under its base, `m:bar`. Without a position it is below.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathBar {
+    pub position: Option<MathVerticalPosition>,
+    pub base: MathArgument,
+    preservation: Preservation,
+}
+
+impl MathBar {
+    pub fn new(position: Option<MathVerticalPosition>, base: MathArgument) -> Self {
+        Self {
+            position,
+            base,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut position = None;
+        let (base, preservation) =
+            parse_based_construct(raw, inherited, "barPr", |raw, bindings| {
+                position = child_property_value(raw, bindings, "barPr", "pos")?
+                    .and_then(|value| MathVerticalPosition::parse(&value));
+                Ok(())
+            })?;
+        Ok(Self {
+            position,
+            base,
+            preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let properties = self
+            .position
+            .map(|value| Property::text("pos", value.as_str()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        write_based_construct(
+            writer,
+            "bar",
+            "barPr",
+            &properties,
+            &self.base,
+            &self.preservation,
+            emission,
+        )
+    }
+}
+
+/// A box, `m:box`: its base drawn as is, the flags change how it breaks and
+/// aligns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathBox {
+    pub operator_emulator: Option<bool>,
+    pub no_break: Option<bool>,
+    pub differential: Option<bool>,
+    pub alignment: Option<bool>,
+    pub base: MathArgument,
+    preservation: Preservation,
+}
+
+impl MathBox {
+    pub fn new(base: MathArgument) -> Self {
+        Self {
+            operator_emulator: None,
+            no_break: None,
+            differential: None,
+            alignment: None,
+            base,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut flags = [None; 4];
+        let (base, preservation) =
+            parse_based_construct(raw, inherited, "boxPr", |raw, bindings| {
+                for (flag, name) in flags.iter_mut().zip(["opEmu", "noBreak", "diff", "aln"]) {
+                    *flag = child_on_off_value(raw, bindings, name)?;
+                }
+                Ok(())
+            })?;
+        let [operator_emulator, no_break, differential, alignment] = flags;
+        Ok(Self {
+            operator_emulator,
+            no_break,
+            differential,
+            alignment,
+            base,
+            preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let properties = on_off_properties(&[
+            ("opEmu", self.operator_emulator),
+            ("noBreak", self.no_break),
+            ("diff", self.differential),
+            ("aln", self.alignment),
+        ]);
+        write_based_construct(
+            writer,
+            "box",
+            "boxPr",
+            &properties,
+            &self.base,
+            &self.preservation,
+            emission,
+        )
+    }
+}
+
+/// A border around its base, `m:borderBox`, with sides hidden and strikes
+/// drawn across as its flags say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathBorderBox {
+    pub hide_top: Option<bool>,
+    pub hide_bottom: Option<bool>,
+    pub hide_left: Option<bool>,
+    pub hide_right: Option<bool>,
+    pub strike_horizontal: Option<bool>,
+    pub strike_vertical: Option<bool>,
+    pub strike_bottom_left_to_top_right: Option<bool>,
+    pub strike_top_left_to_bottom_right: Option<bool>,
+    pub base: MathArgument,
+    preservation: Preservation,
+}
+
+const BORDER_BOX_FLAGS: [&str; 8] = [
+    "hideTop",
+    "hideBot",
+    "hideLeft",
+    "hideRight",
+    "strikeH",
+    "strikeV",
+    "strikeBLTR",
+    "strikeTLBR",
+];
+
+impl MathBorderBox {
+    pub fn new(base: MathArgument) -> Self {
+        Self::with_flags([None; 8], base, Preservation::default())
+    }
+
+    fn with_flags(
+        flags: [Option<bool>; 8],
+        base: MathArgument,
+        preservation: Preservation,
+    ) -> Self {
+        let [
+            hide_top,
+            hide_bottom,
+            hide_left,
+            hide_right,
+            strike_horizontal,
+            strike_vertical,
+            strike_bottom_left_to_top_right,
+            strike_top_left_to_bottom_right,
+        ] = flags;
+        Self {
+            hide_top,
+            hide_bottom,
+            hide_left,
+            hide_right,
+            strike_horizontal,
+            strike_vertical,
+            strike_bottom_left_to_top_right,
+            strike_top_left_to_bottom_right,
+            base,
+            preservation,
+        }
+    }
+
+    fn flags(&self) -> [Option<bool>; 8] {
+        [
+            self.hide_top,
+            self.hide_bottom,
+            self.hide_left,
+            self.hide_right,
+            self.strike_horizontal,
+            self.strike_vertical,
+            self.strike_bottom_left_to_top_right,
+            self.strike_top_left_to_bottom_right,
+        ]
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut flags = [None; 8];
+        let (base, preservation) =
+            parse_based_construct(raw, inherited, "borderBoxPr", |raw, bindings| {
+                for (flag, name) in flags.iter_mut().zip(BORDER_BOX_FLAGS) {
+                    *flag = child_on_off_value(raw, bindings, name)?;
+                }
+                Ok(())
+            })?;
+        Ok(Self::with_flags(flags, base, preservation))
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let flags = BORDER_BOX_FLAGS
+            .into_iter()
+            .zip(self.flags())
+            .collect::<Vec<_>>();
+        write_based_construct(
+            writer,
+            "borderBox",
+            "borderBoxPr",
+            &on_off_properties(&flags),
+            &self.base,
+            &self.preservation,
+            emission,
+        )
+    }
+}
+
+/// A character stretched over or under its base, `m:groupChr`: by default a
+/// bottom curly bracket (U+23DF) below.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathGroupCharacter {
+    pub character: Option<String>,
+    pub position: Option<MathVerticalPosition>,
+    pub vertical_justification: Option<MathVerticalPosition>,
+    pub base: MathArgument,
+    preservation: Preservation,
+}
+
+impl MathGroupCharacter {
+    pub fn new(base: MathArgument) -> Self {
+        Self {
+            character: None,
+            position: None,
+            vertical_justification: None,
+            base,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let (mut character, mut position, mut vertical_justification) = (None, None, None);
+        let (base, preservation) =
+            parse_based_construct(raw, inherited, "groupChrPr", |raw, bindings| {
+                character = child_property_value(raw, bindings, "groupChrPr", "chr")?;
+                position = child_property_value(raw, bindings, "groupChrPr", "pos")?
+                    .and_then(|value| MathVerticalPosition::parse(&value));
+                vertical_justification =
+                    child_property_value(raw, bindings, "groupChrPr", "vertJc")?
+                        .and_then(|value| MathVerticalPosition::parse(&value));
+                Ok(())
+            })?;
+        Ok(Self {
+            character,
+            position,
+            vertical_justification,
+            base,
+            preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self
+            .character
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 1)
+        {
+            return Err(OxmlError::InvalidValue(
+                "OfficeMath group character must contain at most one Unicode scalar".to_owned(),
+            ));
+        }
+        let properties = [
+            self.character
+                .as_deref()
+                .map(|value| Property::text("chr", value)),
+            self.position
+                .map(|value| Property::text("pos", value.as_str())),
+            self.vertical_justification
+                .map(|value| Property::text("vertJc", value.as_str())),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        write_based_construct(
+            writer,
+            "groupChr",
+            "groupChrPr",
+            &properties,
+            &self.base,
+            &self.preservation,
+            emission,
+        )
+    }
+}
+
+/// A phantom, `m:phant`: its base takes room, drawn only when `show` is on,
+/// each dimension zeroed when asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathPhantom {
+    pub show: Option<bool>,
+    pub zero_width: Option<bool>,
+    pub zero_ascent: Option<bool>,
+    pub zero_descent: Option<bool>,
+    pub transparent: Option<bool>,
+    pub base: MathArgument,
+    preservation: Preservation,
+}
+
+const PHANTOM_FLAGS: [&str; 5] = ["show", "zeroWid", "zeroAsc", "zeroDesc", "transp"];
+
+impl MathPhantom {
+    pub fn new(base: MathArgument) -> Self {
+        Self {
+            show: None,
+            zero_width: None,
+            zero_ascent: None,
+            zero_descent: None,
+            transparent: None,
+            base,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut flags = [None; 5];
+        let (base, preservation) =
+            parse_based_construct(raw, inherited, "phantPr", |raw, bindings| {
+                for (flag, name) in flags.iter_mut().zip(PHANTOM_FLAGS) {
+                    *flag = child_on_off_value(raw, bindings, name)?;
+                }
+                Ok(())
+            })?;
+        let [show, zero_width, zero_ascent, zero_descent, transparent] = flags;
+        Ok(Self {
+            show,
+            zero_width,
+            zero_ascent,
+            zero_descent,
+            transparent,
+            base,
+            preservation,
+        })
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        let flags = [
+            self.show,
+            self.zero_width,
+            self.zero_ascent,
+            self.zero_descent,
+            self.transparent,
+        ];
+        let flags = PHANTOM_FLAGS.into_iter().zip(flags).collect::<Vec<_>>();
+        write_based_construct(
+            writer,
+            "phant",
+            "phantPr",
+            &on_off_properties(&flags),
+            &self.base,
+            &self.preservation,
+            emission,
+        )
+    }
+}
+
+/// Equations stacked and aligned on their `&` marks, `m:eqArr`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathEquationArray {
+    pub base_justification: Option<MatrixBaseJustification>,
+    pub max_distribution: Option<bool>,
+    pub object_distribution: Option<bool>,
+    pub row_spacing_rule: Option<u8>,
+    pub row_spacing: Option<u16>,
+    pub rows: Vec<MathArgument>,
+    preservation: Preservation,
+}
+
+impl MathEquationArray {
+    pub fn new(rows: Vec<MathArgument>) -> Self {
+        Self {
+            base_justification: None,
+            max_distribution: None,
+            object_distribution: None,
+            row_spacing_rule: None,
+            row_spacing: None,
+            rows,
+            preservation: Preservation::default(),
+        }
+    }
+
+    fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
+        let mut parsed = parse_element(raw, inherited)?;
+        let mut value = Self::new(Vec::new());
+        let mut modeled = 0usize;
+        for child in parsed.children {
+            match math_local_name(&child, &parsed.bindings)?.as_deref() {
+                Some("eqArrPr") if modeled == 0 => {
+                    let bindings = &parsed.bindings;
+                    value.base_justification =
+                        child_property_value(&child, bindings, "eqArrPr", "baseJc")?
+                            .and_then(|value| MatrixBaseJustification::parse(&value));
+                    value.max_distribution = child_on_off_value(&child, bindings, "maxDist")?;
+                    value.object_distribution = child_on_off_value(&child, bindings, "objDist")?;
+                    value.row_spacing_rule =
+                        child_property_value(&child, bindings, "eqArrPr", "rSpRule")?
+                            .and_then(|value| value.parse().ok());
+                    value.row_spacing = child_property_value(&child, bindings, "eqArrPr", "rSp")?
+                        .and_then(|value| value.parse().ok());
+                    preserve_modeled_child(&mut parsed.preservation, "eqArrPr", &child, bindings);
+                    modeled += 1;
+                }
+                Some("e") => {
+                    value
+                        .rows
+                        .push(MathArgument::from_raw(&child, &parsed.bindings)?);
+                    modeled += 1;
+                }
+                _ => parsed.preservation.raw_children.push((modeled, child)),
+            }
+        }
+        value.preservation = parsed.preservation;
+        Ok(value)
+    }
+
+    fn write_xml_in<W: Write>(
+        &self,
+        writer: &mut Writer<W>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self.rows.is_empty() || self.row_spacing_rule.is_some_and(|rule| rule > 4) {
+            return Err(OxmlError::InvalidValue(
+                "OfficeMath equation array requires rows and a row spacing rule up to 4".to_owned(),
+            ));
+        }
+        write_container(
+            writer,
+            "eqArr",
+            &self.preservation,
+            |writer| {
+                let mut properties = Vec::new();
+                if let Some(value) = self.base_justification {
+                    properties.push(Property::text("baseJc", value.as_str()));
+                }
+                properties.extend(on_off_properties(&[
+                    ("maxDist", self.max_distribution),
+                    ("objDist", self.object_distribution),
+                ]));
+                if let Some(value) = self.row_spacing_rule {
+                    properties.push(Property::unsigned("rSpRule", value.into()));
+                }
+                if let Some(value) = self.row_spacing {
+                    properties.push(Property::unsigned("rSp", value.into()));
+                }
+                let emit = !properties.is_empty()
+                    || has_preserved_modeled_child(&self.preservation, "eqArrPr");
+                let mut modeled = write_leading_property_container(
+                    writer,
+                    "eqArrPr",
+                    &properties,
+                    &self.preservation,
+                    emit,
+                    emission,
+                )?;
+                for row in &self.rows {
+                    row.write_xml_in(writer, "e", emission)?;
+                    modeled += 1;
+                    write_raw_slot(writer, &self.preservation, modeled)?;
+                }
+                write_raw_tail(writer, &self.preservation, modeled + 1)
+            },
+            emission,
+        )
+    }
+}
+
+/// Reads a construct made of the property container `property_tag` and one
+/// base `m:e`, handing the container to `properties`.
+fn parse_based_construct(
+    raw: &[u8],
+    inherited: &[(String, String)],
+    property_tag: &str,
+    mut properties: impl FnMut(&[u8], &[(String, String)]) -> Result<()>,
+) -> Result<(MathArgument, Preservation)> {
+    let mut parsed = parse_element(raw, inherited)?;
+    let mut base = MathArgument::default();
+    let mut modeled = 0usize;
+    for child in parsed.children {
+        match math_local_name(&child, &parsed.bindings)?.as_deref() {
+            Some(local) if local == property_tag && modeled == 0 => {
+                properties(&child, &parsed.bindings)?;
+                preserve_modeled_child(
+                    &mut parsed.preservation,
+                    property_tag,
+                    &child,
+                    &parsed.bindings,
+                );
+                modeled += 1;
+            }
+            Some("e") => {
+                base = MathArgument::from_raw(&child, &parsed.bindings)?;
+                modeled += 1;
+            }
+            _ => parsed.preservation.raw_children.push((modeled, child)),
+        }
+    }
+    Ok((base, parsed.preservation))
+}
+
+/// Writes what [`parse_based_construct`] reads: the property container when
+/// it was in the source or holds a property, then the base.
+fn write_based_construct<W: Write>(
+    writer: &mut Writer<W>,
+    tag: &str,
+    property_tag: &str,
+    properties: &[Property<'_>],
+    base: &MathArgument,
+    preservation: &Preservation,
+    emission: Option<&crate::text::FieldXmlEmission>,
+) -> Result<()> {
+    write_container(
+        writer,
+        tag,
+        preservation,
+        |writer| {
+            let emit =
+                !properties.is_empty() || has_preserved_modeled_child(preservation, property_tag);
+            let mut modeled = write_leading_property_container(
+                writer,
+                property_tag,
+                properties,
+                preservation,
+                emit,
+                emission,
+            )?;
+            base.write_xml_in(writer, "e", emission)?;
+            modeled += 1;
+            write_raw_slot(writer, preservation, modeled)
+        },
+        emission,
+    )
+}
+
+/// The on/off properties that are set, in the order given.
+fn on_off_properties<'a>(flags: &[(&'a str, Option<bool>)]) -> Vec<Property<'a>> {
+    flags
+        .iter()
+        .filter_map(|(name, value)| value.map(|value| Property::boolean(name, value)))
+        .collect()
 }
 
 /// Document-wide defaults from `w:settings/m:mathPr`.
@@ -2411,9 +3313,10 @@ fn property_container_has_unsupported_content(preservation: &Preservation, tag: 
         // The control properties format the construct's own characters with
         // the run properties Word writes in every construct: understood.
         let bindings = element_bindings(&value);
-        value
-            .property_raw_children
-            .retain(|(_, raw)| !is_control_properties(raw, &bindings));
+        value.property_raw_children.retain(|(_, raw)| {
+            !is_control_properties(raw, &bindings)
+                && !(tag == "mPr" && matrix_column_properties(raw, &bindings).is_some())
+        });
         property_preservation_has_unsupported_content(&value, tag)
     })
 }
@@ -2518,6 +3421,89 @@ fn is_untracked_word_run_properties(raw: &[u8], inherited: &[(String, String)]) 
         })
 }
 
+/// The columns of a matrix's `m:mPr`, as (count, justification) per `m:mc`
+/// of its `m:mcs`; `None` when it has no well-formed `m:mcs`.
+fn matrix_columns(
+    raw: &[u8],
+    inherited: &[(String, String)],
+) -> Option<Vec<(u32, MatrixColumnJustification)>> {
+    let parsed = parse_element(raw, inherited).ok()?;
+    parsed.children.iter().find_map(|child| {
+        (math_local_name(child, &parsed.bindings).ok()?.as_deref() == Some("mcs"))
+            .then(|| matrix_column_properties(child, &parsed.bindings))
+            .flatten()
+    })
+}
+
+/// Reads an `m:mcs`: every child an `m:mc` holding an `m:mcPr` of an
+/// `m:count` (1 to 64, 1 by default) and an `m:mcJc` (`left`, `center` or
+/// `right`), with nothing else.
+fn matrix_column_properties(
+    raw: &[u8],
+    inherited: &[(String, String)],
+) -> Option<Vec<(u32, MatrixColumnJustification)>> {
+    fn only_namespaces(preservation: &Preservation) -> bool {
+        preservation
+            .attributes
+            .iter()
+            .all(|(name, _)| name == "xmlns" || name.starts_with("xmlns:"))
+    }
+    let named = |raw: &[u8], bindings: &[(String, String)], name: &str| {
+        math_local_name(raw, bindings).ok().flatten().as_deref() == Some(name)
+    };
+    if !named(raw, inherited, "mcs") {
+        return None;
+    }
+    let mcs = parse_element(raw, inherited).ok()?;
+    if !only_namespaces(&mcs.preservation) {
+        return None;
+    }
+    let mut columns = Vec::new();
+    for mc in &mcs.children {
+        let column = parse_element(mc, &mcs.bindings).ok()?;
+        let [properties] = column.children.as_slice() else {
+            return None;
+        };
+        if !named(mc, &mcs.bindings, "mc")
+            || !only_namespaces(&column.preservation)
+            || !named(properties, &column.bindings, "mcPr")
+        {
+            return None;
+        }
+        let leaves = parse_element(properties, &column.bindings).ok()?;
+        if !only_namespaces(&leaves.preservation) {
+            return None;
+        }
+        let (mut count, mut justification) = (1, MatrixColumnJustification::default());
+        for leaf in &leaves.children {
+            let parsed = parse_element(leaf, &leaves.bindings).ok()?;
+            if !parsed.children.is_empty() {
+                return None;
+            }
+            let value = root_value(leaf, &leaves.bindings).ok()??;
+            match math_local_name(leaf, &leaves.bindings).ok()?.as_deref() {
+                Some("count") => {
+                    count = value
+                        .parse()
+                        .ok()
+                        .filter(|count| (1..=64).contains(count))?
+                }
+                Some("mcJc") => {
+                    justification = match value.as_str() {
+                        "left" => MatrixColumnJustification::Left,
+                        "center" => MatrixColumnJustification::Center,
+                        "right" => MatrixColumnJustification::Right,
+                        _ => return None,
+                    }
+                }
+                _ => return None,
+            }
+        }
+        columns.push((count, justification));
+    }
+    Some(columns)
+}
+
 /// Whether `raw` is an `m:ctrlPr` holding only untracked run properties.
 fn is_control_properties(raw: &[u8], inherited: &[(String, String)]) -> bool {
     parse_element(raw, inherited).is_ok_and(|parsed| {
@@ -2574,6 +3560,16 @@ fn three_argument_script_has_unsupported_content(
         || base.has_unsupported_content()
         || subscript.has_unsupported_content()
         || superscript.has_unsupported_content()
+}
+
+fn based_has_unsupported_content(
+    preservation: &Preservation,
+    property_tag: &str,
+    base: &MathArgument,
+) -> bool {
+    preservation_has_unsupported_content(preservation)
+        || property_container_has_unsupported_content(preservation, property_tag)
+        || base.has_unsupported_content()
 }
 
 fn limit_has_unsupported_content(value: &MathLimit, property_tag: &str) -> bool {
@@ -2819,11 +3815,20 @@ fn supported_properties(tag: &str) -> &'static [&'static str] {
         "fPr" => &["type"],
         "sSubPr" | "sSupPr" | "sSubSupPr" | "sPrePr" => &["alnScr"],
         "radPr" => &["degHide"],
-        "mPr" => &["baseJc", "rSp", "cSp"],
+        "mPr" => &[
+            "baseJc", "plcHide", "rSpRule", "cGpRule", "rSp", "cSp", "cGp",
+        ],
         "limLowPr" | "limUppPr" => &[],
         "naryPr" => &["chr", "limLoc", "grow", "subHide", "supHide"],
         "dPr" => &["begChr", "sepChr", "endChr", "grow"],
         "accPr" => &["chr"],
+        "funcPr" => &[],
+        "barPr" => &["pos"],
+        "boxPr" => &["opEmu", "noBreak", "diff", "aln"],
+        "borderBoxPr" => &BORDER_BOX_FLAGS,
+        "groupChrPr" => &["chr", "pos", "vertJc"],
+        "phantPr" => &PHANTOM_FLAGS,
+        "eqArrPr" => &["baseJc", "maxDist", "objDist", "rSpRule", "rSp"],
         "oMathParaPr" => &["jc"],
         "mathPr" => &[
             "mathFont",
@@ -2853,6 +3858,8 @@ fn property_value_default(container: &str, property: &str) -> Option<&'static st
         ("mPr", "rSp" | "cSp") => Some("0"),
         ("naryPr" | "accPr", "chr") => Some(""),
         ("naryPr", "limLoc") => Some("undOvr"),
+        // Google Docs writes a bar's position with no value.
+        ("barPr" | "groupChrPr", "pos") => Some("bot"),
         ("dPr", "begChr" | "sepChr" | "endChr") => Some(""),
         ("oMathParaPr", "jc") => Some("centerGroup"),
         ("mathPr", "defJc") => Some("centerGroup"),
@@ -2884,6 +3891,23 @@ fn full_property_order(tag: &str) -> &'static [&'static str] {
         "naryPr" => &["chr", "limLoc", "grow", "subHide", "supHide", "ctrlPr"],
         "dPr" => &["begChr", "sepChr", "endChr", "grow", "shp", "ctrlPr"],
         "accPr" => &["chr", "ctrlPr"],
+        "funcPr" => &["ctrlPr"],
+        "barPr" => &["pos", "ctrlPr"],
+        "boxPr" => &["opEmu", "noBreak", "diff", "brk", "aln", "ctrlPr"],
+        "borderBoxPr" => &[
+            "hideTop",
+            "hideBot",
+            "hideLeft",
+            "hideRight",
+            "strikeH",
+            "strikeV",
+            "strikeBLTR",
+            "strikeTLBR",
+            "ctrlPr",
+        ],
+        "groupChrPr" => &["chr", "pos", "vertJc", "ctrlPr"],
+        "phantPr" => &["show", "zeroWid", "zeroAsc", "zeroDesc", "transp", "ctrlPr"],
+        "eqArrPr" => &["baseJc", "maxDist", "objDist", "rSpRule", "rSp", "ctrlPr"],
         "oMathParaPr" => &["jc"],
         "mathPr" => &[
             "mathFont",
@@ -3347,6 +4371,13 @@ fn valid_expression_shape(raw: &[u8], inherited: &[(String, String)]) -> Result<
         "nary" => Some("naryPr"),
         "d" => Some("dPr"),
         "acc" => Some("accPr"),
+        "func" => Some("funcPr"),
+        "bar" => Some("barPr"),
+        "box" => Some("boxPr"),
+        "borderBox" => Some("borderBoxPr"),
+        "groupChr" => Some("groupChrPr"),
+        "phant" => Some("phantPr"),
+        "eqArr" => Some("eqArrPr"),
         _ => None,
     };
     if let Some(property_tag) = property_tag {
@@ -3381,6 +4412,13 @@ fn valid_expression_shape(raw: &[u8], inherited: &[(String, String)]) -> Result<
         "nary" => &["naryPr", "sub", "sup", "e"],
         "d" => &["dPr", "e"],
         "acc" => &["accPr", "e"],
+        "func" => &["funcPr", "fName", "e"],
+        "bar" => &["barPr", "e"],
+        "box" => &["boxPr", "e"],
+        "borderBox" => &["borderBoxPr", "e"],
+        "groupChr" => &["groupChrPr", "e"],
+        "phant" => &["phantPr", "e"],
+        "eqArr" => &["eqArrPr", "e"],
         _ => return Ok(true),
     };
     let sequence = parsed
@@ -3404,10 +4442,22 @@ fn valid_expression_shape(raw: &[u8], inherited: &[(String, String)]) -> Result<
         "rad" => sequence_matches_with_optional(&sequence, "radPr", &["deg"], &["e"]),
         "limLow" => sequence_matches(&sequence, "limLowPr", &["e", "lim"]),
         "limUpp" => sequence_matches(&sequence, "limUppPr", &["e", "lim"]),
-        "nary" => sequence_matches_with_optional(&sequence, "naryPr", &["sub", "sup"], &["e"]),
+        // Google Docs writes an n-ary without its m:e, the summand after it.
+        "nary" => {
+            sequence_matches_with_optional(&sequence, "naryPr", &["sub", "sup"], &["e"])
+                || sequence_matches_with_optional(&sequence, "naryPr", &["sub", "sup"], &[])
+        }
         "acc" => sequence_matches(&sequence, "accPr", &["e"]),
-        "d" => {
-            let argument_start = usize::from(sequence.first().is_some_and(|value| value == "dPr"));
+        "func" => sequence_matches(&sequence, "funcPr", &["fName", "e"]),
+        "bar" => sequence_matches(&sequence, "barPr", &["e"]),
+        "box" => sequence_matches(&sequence, "boxPr", &["e"]),
+        "borderBox" => sequence_matches(&sequence, "borderBoxPr", &["e"]),
+        "groupChr" => sequence_matches(&sequence, "groupChrPr", &["e"]),
+        "phant" => sequence_matches(&sequence, "phantPr", &["e"]),
+        "d" | "eqArr" => {
+            let property = if root == "d" { "dPr" } else { "eqArrPr" };
+            let argument_start =
+                usize::from(sequence.first().is_some_and(|value| value == property));
             sequence.len() > argument_start
                 && sequence[argument_start..].iter().all(|value| value == "e")
         }
@@ -3498,7 +4548,12 @@ fn property_leaf_is_valid(
         | ("sSubPr" | "sSupPr" | "sSubSupPr" | "sPrePr", "alnScr")
         | ("radPr", "degHide")
         | ("naryPr", "grow" | "subHide" | "supHide")
-        | ("dPr", "grow") => value
+        | ("dPr", "grow")
+        | ("boxPr", "opEmu" | "noBreak" | "diff" | "aln")
+        | ("borderBoxPr", _)
+        | ("phantPr", _)
+        | ("eqArrPr", "maxDist" | "objDist")
+        | ("mPr", "plcHide") => value
             .as_deref()
             .is_none_or(|value| crate::shared::ST_OnOff::parse(value).is_some()),
         ("rPr", "scr") => value
@@ -3522,15 +4577,32 @@ fn property_leaf_is_valid(
         ("mPr", "cSp") => value
             .as_deref()
             .is_some_and(|value| value.parse::<u32>().is_ok()),
+        ("barPr" | "groupChrPr", "pos") | ("groupChrPr", "vertJc") => value
+            .as_deref()
+            .is_some_and(|value| MathVerticalPosition::parse(value).is_some()),
+        ("eqArrPr", "baseJc") => value
+            .as_deref()
+            .is_some_and(|value| MatrixBaseJustification::parse(value).is_some()),
+        ("eqArrPr" | "mPr", "rSpRule") | ("mPr", "cGpRule") => value
+            .as_deref()
+            .is_some_and(|value| value.parse::<u8>().is_ok_and(|value| value <= 4)),
+        ("eqArrPr", "rSp") => value
+            .as_deref()
+            .is_some_and(|value| value.parse::<u16>().is_ok()),
+        ("mPr", "cGp") => value
+            .as_deref()
+            .is_some_and(|value| value.parse::<u32>().is_ok()),
         ("naryPr", "limLoc") => value
             .as_deref()
             .is_some_and(|value| LimitLocation::parse(value).is_some()),
         ("oMathParaPr", "jc") => value
             .as_deref()
             .is_some_and(|value| MathJustification::parse(value).is_some()),
-        ("naryPr" | "accPr", "chr") | ("dPr", "begChr" | "sepChr" | "endChr") => value
-            .as_deref()
-            .is_none_or(|value| value.chars().count() <= 1),
+        ("naryPr" | "accPr" | "groupChrPr", "chr") | ("dPr", "begChr" | "sepChr" | "endChr") => {
+            value
+                .as_deref()
+                .is_none_or(|value| value.chars().count() <= 1)
+        }
         ("mathPr", "mathFont") => value.as_deref().is_some_and(|value| !value.is_empty()),
         ("mathPr", "smallFrac" | "dispDef") => value
             .as_deref()
@@ -3978,13 +5050,163 @@ fn parse_u32(value: Option<String>) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::canonical_element;
+    use super::{
+        CT_OMath, MathExpression, MathVerticalPosition, MatrixBaseJustification,
+        MatrixColumnJustification, canonical_element,
+    };
 
     const M: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
     const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
     fn canonical(xml: &str) -> Vec<u8> {
         canonical_element(xml.as_bytes()).unwrap()
+    }
+
+    /// An equation of `body`, read, checked to hold nothing unsupported and
+    /// to write itself back as it was read.
+    fn round_trip(body: &str) -> MathExpression {
+        let xml = format!(r#"<m:oMath xmlns:m="{M}" xmlns:w="{W}">{body}</m:oMath>"#);
+        let equation = CT_OMath::from_xml(xml.as_bytes()).unwrap();
+        assert!(!equation.has_unsupported_content(), "{body}");
+        assert_eq!(
+            String::from_utf8(canonical(
+                &String::from_utf8(equation.to_xml().unwrap()).unwrap()
+            ))
+            .unwrap(),
+            String::from_utf8(canonical(&xml)).unwrap(),
+            "{body}"
+        );
+        let [expression] = equation.expressions.as_slice() else {
+            panic!("one expression: {body}");
+        };
+        expression.clone()
+    }
+
+    #[test]
+    fn every_officemath_object_is_typed_and_written_back_as_read() {
+        let control = r#"<m:ctrlPr><w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr></m:ctrlPr>"#;
+        let x = r#"<m:e><m:r><m:t>x</m:t></m:r></m:e>"#;
+        let MathExpression::Function(function) = round_trip(&format!(
+            r#"<m:func><m:funcPr>{control}</m:funcPr><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>log</m:t></m:r></m:fName>{x}</m:func>"#
+        )) else {
+            panic!("a function");
+        };
+        assert_eq!(function.name.expressions.len(), 1);
+        let MathExpression::Bar(bar) = round_trip(&format!(
+            r#"<m:bar><m:barPr><m:pos m:val="top"/>{control}</m:barPr>{x}</m:bar>"#
+        )) else {
+            panic!("a bar");
+        };
+        assert_eq!(bar.position, Some(MathVerticalPosition::Top));
+        let MathExpression::Box(boxed) = round_trip(&format!(
+            r#"<m:box><m:boxPr><m:opEmu m:val="1"/></m:boxPr>{x}</m:box>"#
+        )) else {
+            panic!("a box");
+        };
+        assert_eq!(boxed.operator_emulator, Some(true));
+        let MathExpression::BorderBox(border) = round_trip(&format!(
+            r#"<m:borderBox><m:borderBoxPr><m:hideTop m:val="1"/><m:strikeBLTR m:val="1"/></m:borderBoxPr>{x}</m:borderBox>"#
+        )) else {
+            panic!("a border box");
+        };
+        assert_eq!(
+            (
+                border.hide_top,
+                border.hide_left,
+                border.strike_bottom_left_to_top_right
+            ),
+            (Some(true), None, Some(true))
+        );
+        let MathExpression::GroupCharacter(group) = round_trip(&format!(
+            r#"<m:groupChr><m:groupChrPr><m:chr m:val="⏞"/><m:pos m:val="top"/><m:vertJc m:val="bot"/></m:groupChrPr>{x}</m:groupChr>"#
+        )) else {
+            panic!("a group character");
+        };
+        assert_eq!(
+            (
+                group.character.as_deref(),
+                group.position,
+                group.vertical_justification
+            ),
+            (
+                Some("⏞"),
+                Some(MathVerticalPosition::Top),
+                Some(MathVerticalPosition::Bottom)
+            )
+        );
+        let MathExpression::Phantom(phantom) = round_trip(&format!(
+            r#"<m:phant><m:phantPr><m:show m:val="0"/><m:zeroWid m:val="1"/></m:phantPr>{x}</m:phant>"#
+        )) else {
+            panic!("a phantom");
+        };
+        assert_eq!(
+            (phantom.show, phantom.zero_width),
+            (Some(false), Some(true))
+        );
+        let MathExpression::EquationArray(array) = round_trip(&format!(
+            r#"<m:eqArr><m:eqArrPr><m:baseJc m:val="top"/><m:rSpRule m:val="3"/><m:rSp m:val="120"/></m:eqArrPr>{x}<m:e><m:r><m:t>y&amp;=1</m:t></m:r></m:e></m:eqArr>"#
+        )) else {
+            panic!("an equation array");
+        };
+        assert_eq!(
+            (
+                array.rows.len(),
+                array.base_justification,
+                array.row_spacing_rule,
+                array.row_spacing
+            ),
+            (2, Some(MatrixBaseJustification::Top), Some(3), Some(120))
+        );
+        let (before, after) = array.rows[1].split_at_alignment();
+        let text = |argument: &super::MathArgument| match argument.expressions.as_slice() {
+            [MathExpression::Run(run)] => run.text.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            (text(&before), text(&after)),
+            ("y".to_owned(), "=1".to_owned())
+        );
+        let MathExpression::Matrix(matrix) = round_trip(
+            r#"<m:m><m:mPr><m:plcHide m:val="1"/><m:cGpRule m:val="2"/><m:cGp m:val="60"/><m:mcs><m:mc><m:mcPr><m:count m:val="2"/><m:mcJc m:val="left"/></m:mcPr></m:mc><m:mc><m:mcPr><m:mcJc m:val="right"/></m:mcPr></m:mc></m:mcs></m:mPr><m:mr><m:e/><m:e/><m:e/></m:mr></m:m>"#,
+        ) else {
+            panic!("a matrix");
+        };
+        assert_eq!(
+            (
+                matrix.properties.hide_placeholders,
+                matrix.properties.column_gap_rule,
+                matrix.properties.column_gap
+            ),
+            (Some(true), Some(2), Some(60))
+        );
+        assert_eq!(
+            (0..4)
+                .map(|column| matrix.column_justification(column))
+                .collect::<Vec<_>>(),
+            [
+                MatrixColumnJustification::Left,
+                MatrixColumnJustification::Left,
+                MatrixColumnJustification::Right,
+                MatrixColumnJustification::Center,
+            ]
+        );
+        // Google Docs writes an n-ary with no m:e and a bar position with no
+        // value; Word's default places a bar below.
+        let MathExpression::Nary(nary) = round_trip(
+            r#"<m:nary><m:naryPr><m:chr m:val="∑"/><m:subHide m:val="0"/><m:supHide m:val="0"/></m:naryPr><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>N</m:t></m:r></m:sup></m:nary>"#,
+        ) else {
+            panic!("an n-ary");
+        };
+        assert!(nary.base.expressions.is_empty());
+        let xml = format!(
+            r#"<m:oMath xmlns:m="{M}"><m:bar><m:barPr><m:pos/></m:barPr>{x}</m:bar></m:oMath>"#
+        );
+        let equation = CT_OMath::from_xml(xml.as_bytes()).unwrap();
+        assert!(!equation.has_unsupported_content());
+        assert!(matches!(
+            equation.expressions.as_slice(),
+            [MathExpression::Bar(bar)] if bar.position == Some(MathVerticalPosition::Bottom)
+        ));
     }
 
     #[test]

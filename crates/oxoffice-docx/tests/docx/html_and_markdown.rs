@@ -1986,11 +1986,71 @@ fn every_equation_of_the_word_paper_reaches_both_exports() {
 }
 
 #[test]
+fn every_officemath_object_reaches_mathml_and_latex() {
+    let x = "<m:e><m:r><m:t>x</m:t></m:r></m:e>";
+    for (body, mathml, latex) in [
+        (
+            format!(r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>log</m:t></m:r></m:fName>{x}</m:func>"#),
+            "<mi mathvariant=\"normal\">log</mi></mrow><mo>\u{2061}</mo><mrow><mi>x</mi>",
+            "\\,",
+        ),
+        (
+            format!(r#"<m:bar><m:barPr><m:pos m:val="top"/></m:barPr>{x}</m:bar>"#),
+            "<mover accent=\"true\"><mrow><mi>x</mi></mrow><mo>\u{203e}</mo></mover>",
+            "\\overline{x}",
+        ),
+        (
+            format!("<m:bar>{x}</m:bar>"),
+            "<munder accentunder=\"true\"><mrow><mi>x</mi></mrow><mo>_</mo></munder>",
+            "\\underline{x}",
+        ),
+        (
+            format!(r#"<m:box><m:boxPr><m:opEmu m:val="1"/></m:boxPr>{x}</m:box>"#),
+            "<mrow><mi>x</mi></mrow>",
+            "{x}",
+        ),
+        (
+            format!("<m:borderBox>{x}</m:borderBox>"),
+            "<menclose notation=\"box\"><mrow><mi>x</mi></mrow></menclose>",
+            "\\boxed{x}",
+        ),
+        (
+            format!("<m:groupChr>{x}</m:groupChr>"),
+            "<munder><mrow><mi>x</mi></mrow><mo stretchy=\"true\">\u{23df}</mo></munder>",
+            "\\underbrace{x}",
+        ),
+        (
+            format!(r#"<m:phant><m:phantPr><m:show m:val="0"/></m:phantPr>{x}</m:phant>"#),
+            "<mphantom><mrow><mi>x</mi></mrow></mphantom>",
+            "\\phantom{x}",
+        ),
+        (
+            "<m:eqArr><m:e><m:r><m:t>x&amp;=1</m:t></m:r></m:e><m:e><m:r><m:t>y&amp;=2</m:t></m:r></m:e></m:eqArr>".to_owned(),
+            "<mtable columnalign=\"right left\"><mtr><mtd><mi>x</mi></mtd><mtd>",
+            "\\begin{aligned}x&=1\\\\y&=2\\end{aligned}",
+        ),
+    ] {
+        let equation = oxoffice_docx::CT_OMath::from_xml(
+            format!(r#"<m:oMath xmlns:m="{MATH_NAMESPACE}">{body}</m:oMath>"#).as_bytes(),
+        )
+        .unwrap();
+        let argument = oxoffice_docx::MathArgument::new(equation.expressions.clone());
+        let converted = oxoffice_docx::equation_to_mathml(&argument);
+        assert!(converted.diagnostics.is_empty(), "{body}: {:?}", converted.diagnostics);
+        assert!(converted.value.contains(mathml), "{body}: {}", converted.value);
+        let converted = oxoffice_docx::equation_to_latex(&argument);
+        assert!(converted.diagnostics.is_empty(), "{body}: {:?}", converted.diagnostics);
+        assert!(converted.value.contains(latex), "{body}: {}", converted.value);
+    }
+}
+
+#[test]
 fn equation_content_outside_the_supported_subset_is_reported() {
-    // m:func (sin x) is kept as preserved XML, not as a typed expression.
+    // A tracked insertion around a math run is kept as preserved XML, not as
+    // a typed expression.
     let func = concat!(
-        r#"<m:func><m:funcPr/><m:fName><m:r><m:t>sin</m:t></m:r></m:fName>"#,
-        r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:func>"#
+        r#"<w:ins w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z">"#,
+        r#"<m:r><m:t>sin x</m:t></m:r></w:ins>"#
     );
     let doc = reopen(&mut doc_with_body(&format!(
         concat!(

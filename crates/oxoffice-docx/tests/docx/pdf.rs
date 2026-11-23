@@ -1039,6 +1039,193 @@ fn an_equation_whose_runs_all_carry_one_size_and_colour_draws_its_rules_so() {
     );
 }
 
+/// Where an equation of `body` (math markup inside `m:oMath`) draws: its
+/// glyph runs as (text, left, baseline, right) and its rules as (start,
+/// end), in page points, and the layout's diagnostics.
+#[allow(clippy::type_complexity)]
+fn equation_ink(
+    body: &str,
+) -> (
+    Vec<(String, f64, f64, f64)>,
+    Vec<((f64, f64), (f64, f64))>,
+    Vec<String>,
+) {
+    let doc = doc_with_body(&format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}">{body}</m:oMath></w:p>"#
+    ));
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut glyphs = Vec::new();
+    let mut rules = Vec::new();
+    oxoffice_layout::walk(
+        &result.layout.pages[0].elements,
+        &mut |element, transform| match element {
+            oxoffice_layout::PositionedElement::Text(run) => {
+                let start = transform.apply(run.origin);
+                let end = transform.apply(oxoffice_layout::Point {
+                    x: run.origin.x + run.advances.iter().sum::<f64>(),
+                    y: run.origin.y,
+                });
+                glyphs.push((run.text.clone(), start.x, start.y, end.x));
+            }
+            oxoffice_layout::PositionedElement::Line { start, end, .. } => {
+                let (start, end) = (transform.apply(*start), transform.apply(*end));
+                rules.push(((start.x, start.y), (end.x, end.y)));
+            }
+            _ => {}
+        },
+    );
+    let diagnostics = result
+        .layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect();
+    (glyphs, rules, diagnostics)
+}
+
+fn glyph<'a>(glyphs: &'a [(String, f64, f64, f64)], text: &str) -> &'a (String, f64, f64, f64) {
+    glyphs
+        .iter()
+        .find(|glyph| glyph.0 == text)
+        .unwrap_or_else(|| panic!("{text} drawn: {glyphs:?}"))
+}
+
+const X: &str = "<m:e><m:r><m:t>x</m:t></m:r></m:e>";
+
+// Each OfficeMath object Word writes is drawn, where Word draws it, with no
+// diagnostic.
+#[test]
+fn a_function_draws_its_name_then_its_argument() {
+    let (glyphs, _, diagnostics) = equation_ink(&format!(
+        r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>log</m:t></m:r></m:fName>{X}</m:func>"#
+    ));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let (name, argument) = (glyph(&glyphs, "log"), glyph(&glyphs, "x"));
+    assert!(argument.1 > name.3, "{glyphs:?}");
+    assert!((argument.2 - name.2).abs() < 0.01, "{glyphs:?}");
+}
+
+#[test]
+fn a_bar_is_drawn_over_or_under_its_base() {
+    for (position, over) in [
+        (r#"<m:pos m:val="top"/>"#, true),
+        ("", false),
+        ("<m:pos/>", false),
+    ] {
+        let (glyphs, rules, diagnostics) = equation_ink(&format!(
+            r#"<m:bar><m:barPr>{position}</m:barPr>{X}</m:bar>"#
+        ));
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let base = glyph(&glyphs, "x");
+        let [(start, end)] = rules.as_slice() else {
+            panic!("one rule: {rules:?}");
+        };
+        // Page y grows downward: a bar over the base is above its baseline
+        // by more than an x-height, one under it below the baseline.
+        assert!((start.1 - end.1).abs() < 0.01, "{rules:?}");
+        assert!(
+            if over {
+                start.1 < base.2 - 5.0
+            } else {
+                start.1 > base.2
+            },
+            "{position}: {rules:?} against {base:?}"
+        );
+        assert!(
+            start.0 <= base.1 + 0.01 && end.0 >= base.3 - 0.01,
+            "{rules:?}"
+        );
+    }
+}
+
+#[test]
+fn a_border_box_draws_the_sides_and_strikes_its_flags_ask_for() {
+    let (_, rules, diagnostics) = equation_ink(&format!("<m:borderBox>{X}</m:borderBox>"));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(rules.len(), 4, "{rules:?}");
+    let (_, rules, _) = equation_ink(&format!(
+        r#"<m:borderBox><m:borderBoxPr><m:hideTop m:val="1"/><m:hideLeft m:val="1"/><m:strikeH m:val="1"/></m:borderBoxPr>{X}</m:borderBox>"#
+    ));
+    // Bottom, right and the horizontal strike.
+    assert_eq!(rules.len(), 3, "{rules:?}");
+}
+
+#[test]
+fn a_group_character_stretches_under_its_base() {
+    let (glyphs, _, diagnostics) =
+        equation_ink("<m:groupChr><m:e><m:r><m:t>a+b+c</m:t></m:r></m:e></m:groupChr>");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let base = glyph(&glyphs, "a+b+c");
+    let brace = glyph(&glyphs, "\u{23df}");
+    assert!(brace.2 > base.2, "{glyphs:?}");
+    assert!((brace.3 - brace.1) >= (base.3 - base.1) - 0.5, "{glyphs:?}");
+}
+
+#[test]
+fn a_hidden_phantom_takes_the_room_of_its_base_and_draws_nothing() {
+    let hidden = r#"<m:phant><m:phantPr><m:show m:val="0"/></m:phantPr><m:e><m:r><m:t>www</m:t></m:r></m:e></m:phant>"#;
+    let (glyphs, _, diagnostics) = equation_ink(&format!(
+        r#"<m:r><m:t>a</m:t></m:r>{hidden}<m:r><m:t>c</m:t></m:r>"#
+    ));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(glyphs.iter().all(|glyph| glyph.0 != "www"), "{glyphs:?}");
+    let (shown, _, _) =
+        equation_ink(r#"<m:r><m:t>a</m:t></m:r><m:r><m:t>www</m:t></m:r><m:r><m:t>c</m:t></m:r>"#);
+    assert!(
+        (glyph(&glyphs, "c").1 - glyph(&shown, "c").1).abs() < 0.5,
+        "{glyphs:?} against {shown:?}"
+    );
+}
+
+#[test]
+fn the_rows_of_an_equation_array_align_on_their_marks() {
+    let (glyphs, _, diagnostics) = equation_ink(
+        r#"<m:eqArr><m:e><m:r><m:t>x&amp;=1</m:t></m:r></m:e><m:e><m:r><m:t>yyy&amp;=22</m:t></m:r></m:e></m:eqArr>"#,
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let (first, second) = (glyph(&glyphs, "=1"), glyph(&glyphs, "=22"));
+    assert!((first.1 - second.1).abs() < 0.01, "{glyphs:?}");
+    assert!(second.2 > first.2, "{glyphs:?}");
+    assert!(
+        glyphs.iter().all(|glyph| !glyph.0.contains('&')),
+        "{glyphs:?}"
+    );
+}
+
+#[test]
+fn matrix_columns_align_their_cells_as_their_properties_say() {
+    let matrix = |properties: &str| {
+        equation_ink(&format!(
+            r#"<m:m><m:mPr>{properties}</m:mPr><m:mr><m:e><m:r><m:t>a</m:t></m:r></m:e></m:mr><m:mr><m:e><m:r><m:t>bbbb</m:t></m:r></m:e></m:mr></m:m>"#
+        ))
+    };
+    let (left, _, diagnostics) = matrix(
+        r#"<m:mcs><m:mc><m:mcPr><m:count m:val="1"/><m:mcJc m:val="left"/></m:mcPr></m:mc></m:mcs>"#,
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(
+        (glyph(&left, "a").1 - glyph(&left, "bbbb").1).abs() < 0.01,
+        "{left:?}"
+    );
+    let (centred, _, _) = matrix("");
+    assert!(
+        glyph(&centred, "a").1 > glyph(&centred, "bbbb").1 + 1.0,
+        "{centred:?}"
+    );
+}
+
+// Google Docs writes an n-ary with no m:e, its summand after it.
+#[test]
+fn an_nary_with_no_base_draws_its_sign_and_limits() {
+    let (glyphs, _, diagnostics) = equation_ink(
+        r#"<m:nary><m:naryPr><m:chr m:val="∑"/></m:naryPr><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>N</m:t></m:r></m:sup></m:nary><m:r><m:t>h</m:t></m:r>"#,
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    for text in ["∑", "i", "N", "h"] {
+        glyph(&glyphs, text);
+    }
+}
+
 // A phonetic guide as Word writes it, inside a run, draws its base text in
 // the line and its phonetic line above, as the same guide read in its
 // paragraph does.
