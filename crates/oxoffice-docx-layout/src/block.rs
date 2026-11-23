@@ -75,6 +75,12 @@ pub enum AnchoredContent {
         fill: Option<Color>,
         /// Laid-out paragraphs of the shape's text box.
         text: Vec<ParagraphBlock>,
+        /// Whether the shape keeps its extent whatever its text: then the
+        /// lines that do not fit are hidden, whole.
+        fixed_height: bool,
+        /// Space between the shape's edges and its text, in points: left,
+        /// top, right, bottom.
+        insets: [f64; 4],
     },
 }
 
@@ -1977,6 +1983,10 @@ pub struct ParagraphBlock {
     /// Vertical space kept clear above the first line, for a drawing this
     /// paragraph must clear rather than flow beside.
     pub content_offset_top: f64,
+    /// Whether a following section break absorbs this paragraph's end: its
+    /// last page break is dropped and what follows it takes no room, again
+    /// after any re-break around a floating drawing.
+    pub absorbed_by_section_break: bool,
 }
 
 /// Complete painted width of a supported paragraph border edge.
@@ -2161,6 +2171,7 @@ pub fn build_paragraph_block(
         structure_id: None,
         reflow: None,
         content_offset_top: 0.0,
+        absorbed_by_section_break: false,
     };
     block.add_border_padding();
     block

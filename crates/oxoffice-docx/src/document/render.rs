@@ -1692,6 +1692,10 @@ impl Document {
                 .as_ref()
                 .and_then(CT_Settings::mirror_margins)
                 .unwrap_or(false),
+            even_and_odd_headers: self
+                .settings
+                .as_ref()
+                .is_some_and(CT_Settings::even_and_odd_headers),
             gutter_at_top: self
                 .settings
                 .as_ref()

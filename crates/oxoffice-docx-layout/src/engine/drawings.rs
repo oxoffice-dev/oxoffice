@@ -190,7 +190,15 @@ pub(super) fn collect_anchored_drawings(
             } else {
                 match shape {
                     Some(shape) => {
-                        // A shape's text box wraps at the shape width.
+                        // A shape's text box wraps at the shape width less
+                        // the insets between its edges and its text.
+                        let insets = shape.text_insets;
+                        let text_width =
+                            (anchor.extent_cx.to_pt() - insets.left.to_pt() - insets.right.to_pt())
+                                .max(0.0);
+                        let text_height =
+                            (anchor.extent_cy.to_pt() - insets.top.to_pt() - insets.bottom.to_pt())
+                                .max(0.0);
                         let mut text = Vec::new();
                         let mut paragraph_paints = Vec::new();
                         if let Some(body) = &shape.text_body {
@@ -225,7 +233,7 @@ pub(super) fn collect_anchored_drawings(
                                         let (mut block, _, mut paint) =
                                             layout_paragraph_with_source_and_direction(
                                                 paragraph,
-                                                anchor.extent_cx.to_pt(),
+                                                text_width,
                                                 styles,
                                                 input,
                                                 media,
@@ -248,7 +256,7 @@ pub(super) fn collect_anchored_drawings(
                                         let (table, semantics) =
                                             table::layout_table_with_provenance(
                                                 table,
-                                                anchor.extent_cx.to_pt(),
+                                                text_width,
                                                 styles,
                                                 input,
                                                 media,
@@ -261,8 +269,8 @@ pub(super) fn collect_anchored_drawings(
                                                 None,
                                             )?;
                                         let geometry = PageGeometry {
-                                            page_width: anchor.extent_cx.to_pt(),
-                                            page_height: anchor.extent_cy.to_pt(),
+                                            page_width: text_width,
+                                            page_height: text_height,
                                             ..PageGeometry::default()
                                         };
                                         for (block, paint) in paginator::story_table_rows(
@@ -288,7 +296,7 @@ pub(super) fn collect_anchored_drawings(
                             for p in &shape.text {
                                 let (block, _, paint) = layout_paragraph_with_source_and_direction(
                                     p,
-                                    anchor.extent_cx.to_pt(),
+                                    text_width,
                                     styles,
                                     input,
                                     media,
@@ -311,6 +319,16 @@ pub(super) fn collect_anchored_drawings(
                             preset: block::ShapePreset::from_prst(shape.preset.as_deref()),
                             fill: shape.solid_fill.as_deref().map(Color::from_hex),
                             text,
+                            // Vertical text is still laid out across the
+                            // box, so its lines are not measured against the
+                            // box's height.
+                            fixed_height: !shape.grows_to_fit_text && !shape.vertical_text,
+                            insets: [
+                                insets.left.to_pt(),
+                                insets.top.to_pt(),
+                                insets.right.to_pt(),
+                                insets.bottom.to_pt(),
+                            ],
                         }
                     }
                     None if anchor.embed_id.is_empty() => continue,

@@ -1283,34 +1283,362 @@ fn a_moved_footnote_reference_with_footnotes_ignored_is_refused() {
     assert!(doc.revisions().is_empty());
 }
 
+/// A new document holding these paragraphs, each with a footnote when the
+/// first note is given and an endnote when the second is. The notes of each
+/// kind are created in paragraph order, as Word numbers them when it saves.
+fn doc_with_both_notes(paragraphs: &[(&str, Option<&str>, Option<&str>)]) -> Document {
+    let mut doc = Document::new();
+    for (text, footnote, _) in paragraphs {
+        let id = footnote.map(|note| doc.add_footnote(note));
+        let mut paragraph = doc.add_paragraph(text);
+        if let Some(id) = id {
+            paragraph.add_footnote_ref(id);
+        }
+    }
+    for (index, (_, _, endnote)) in paragraphs.iter().enumerate() {
+        if let Some(note) = endnote {
+            let location = doc
+                .paragraph_story_location(index)
+                .expect("paragraph location resolves")
+                .expect("paragraph exists");
+            doc.create_endnote(&location, note)
+                .expect("endnote is created");
+        }
+    }
+    doc
+}
+
+/// A new document holding these paragraphs, each with its endnote if any,
+/// created in paragraph order.
+fn doc_with_endnote_texts(paragraphs: &[(&str, Option<&str>)]) -> Document {
+    doc_with_both_notes(
+        &paragraphs
+            .iter()
+            .map(|&(text, note)| (text, None, note))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The text of endnote `id`, or `?` when the document has none.
+fn endnote_text(doc: &Document, id: i32) -> String {
+    let Some(story) = doc.endnote_story(id).expect("endnote lookup succeeds") else {
+        return "?".to_owned();
+    };
+    doc.story_items(&story)
+        .expect("endnote story reads")
+        .iter()
+        .map(|item| item.text().expect("endnote item reads").unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_owned()
+}
+
+/// Each body paragraph's text with its note references shown where they sit,
+/// whatever their ids: a footnote as `[text]`, an endnote as `{text}`.
+fn note_marked_texts(doc: &Document) -> Vec<String> {
+    let footnotes = doc.footnotes().into_iter().collect::<HashMap<_, _>>();
+    doc.paragraphs()
+        .iter()
+        .map(|paragraph| {
+            let mut text = String::new();
+            for run in paragraph.runs() {
+                for item in run.items() {
+                    match item {
+                        RunItemRef::Text(part) => text.push_str(part),
+                        RunItemRef::FootnoteReference(id) => {
+                            let note = footnotes.get(&id).map_or("?", |note| note.trim());
+                            text.push_str(&format!("[{note}]"));
+                        }
+                        RunItemRef::EndnoteReference(id) => {
+                            text.push_str(&format!("{{{}}}", endnote_text(doc, id)));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            text
+        })
+        .collect()
+}
+
+/// The texts of every normal footnote and endnote the document holds, in
+/// file order, so that a note left behind without its reference shows.
+fn held_note_texts(doc: &Document) -> (Vec<String>, Vec<String>) {
+    let footnotes = doc
+        .footnotes()
+        .into_iter()
+        .map(|(_, text)| text.trim().to_owned())
+        .collect();
+    let endnotes = doc
+        .stories()
+        .expect("stories are listed")
+        .into_iter()
+        .filter(|story| story.kind() == StoryKind::Endnote)
+        .map(|story| {
+            doc.story_items(&story)
+                .expect("endnote story reads")
+                .iter()
+                .map(|item| item.text().expect("endnote item reads").unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_owned()
+        })
+        .collect();
+    (footnotes, endnotes)
+}
+
+/// The redline of `original` into `edited`, checked: accepting it gives the
+/// edited version and rejecting it the original, each body paragraph with
+/// its notes, and the notes each version holds.
+fn checked_note_redline(original: Document, edited: &Document) -> Document {
+    let wanted = |doc: &Document| (note_marked_texts(doc), held_note_texts(doc));
+    let (before, after) = (wanted(&original), wanted(edited));
+    let mut doc = redline(original, edited);
+    assert_eq!(wanted(&accepted(&mut doc)), after, "accepting the redline");
+    assert_eq!(wanted(&rejected(&mut doc)), before, "rejecting the redline");
+    doc
+}
+
 #[test]
-fn a_paragraph_moved_with_its_endnote_is_refused() {
-    // Both ends of the move would name the endnote.
-    let document = |swapped: bool| {
+fn an_added_endnote_is_inserted_with_its_reference() {
+    let original = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", None)]);
+    let edited = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
+    let doc = checked_note_redline(original, &edited);
+    // The note's text is inserted, and nothing is deleted.
+    let inserted = revision_texts(&doc, RevisionKind::Insertion);
+    assert!(
+        inserted.iter().any(|text| text.trim() == "B"),
+        "{inserted:?}"
+    );
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Deletion),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_removed_endnote_is_deleted_with_its_reference() {
+    let original = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
+    let edited = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", None)]);
+    checked_note_redline(original, &edited);
+}
+
+#[test]
+fn the_first_endnote_of_a_document_creates_its_endnotes_part() {
+    // The original has no endnotes part: accepting creates it, rejecting
+    // leaves none.
+    let original = doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", None)]);
+    let edited = doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", Some("A"))]);
+    let mut doc = checked_note_redline(original, &edited);
+    assert_eq!(
+        endnote_parts(&mut accepted(&mut doc)),
+        ["word/endnotes.xml"]
+    );
+    assert!(endnote_parts(&mut rejected(&mut doc)).is_empty());
+}
+
+/// The names of the endnotes parts of the saved package.
+fn endnote_parts(doc: &mut Document) -> Vec<String> {
+    crate::support::package_parts(&doc.to_bytes().expect("document saves"))
+        .into_keys()
+        .filter(|name| name.contains("endnotes"))
+        .collect()
+}
+
+#[test]
+fn the_last_endnote_of_a_document_removed_takes_its_endnotes_part() {
+    let original = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", None)]);
+    let edited = doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", None)]);
+    let mut doc = checked_note_redline(original, &edited);
+    assert!(endnote_parts(&mut accepted(&mut doc)).is_empty());
+    assert_eq!(
+        endnote_parts(&mut rejected(&mut doc)),
+        ["word/endnotes.xml"]
+    );
+}
+
+#[test]
+fn an_endnote_reference_moved_to_another_paragraph_is_compared() {
+    let original = doc_with_endnote_texts(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited = doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", Some("Source"))]);
+    checked_note_redline(original, &edited);
+}
+
+#[test]
+fn an_endnote_reference_moved_within_its_paragraph_is_compared() {
+    let document = |run_index: usize| {
         let mut doc = Document::new();
-        let (first, second) = if swapped {
-            ("Other.", "Claim.")
-        } else {
-            ("Claim.", "Other.")
-        };
-        doc.add_paragraph(first);
-        doc.add_paragraph(second);
-        let claim = usize::from(swapped);
-        let location = doc.paragraph_story_location(claim).unwrap().unwrap();
-        doc.create_endnote(&location, "Source").unwrap();
+        doc.add_paragraph("Claim ").add_run("one.");
+        let location = doc.paragraph_story_location(0).unwrap().unwrap();
+        doc.create_endnote_at(
+            &oxoffice_docx::StoryRunPosition {
+                location,
+                run_index,
+            },
+            "Source",
+        )
+        .expect("endnote is created");
         doc
     };
-    let mut doc = document(false);
-    let error = doc.compare(&document(true), AUTHOR, DATE).unwrap_err();
-    let message = error.to_string();
-    assert!(
-        message.contains("comparison would give endnote ")
-            && message.contains(
-                " 2 references where each input has at most 1: its reference moved to another site, or what holds it was deleted and inserted again"
-            ),
-        "{message}"
+    let original = document(1);
+    let edited = document(2);
+    assert_eq!(note_marked_texts(&original), ["Claim {Source}one."]);
+    checked_note_redline(original, &edited);
+}
+
+#[test]
+fn a_moved_endnote_whose_text_changed_is_compared() {
+    let original = doc_with_endnote_texts(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited =
+        doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", Some("Source, p. 4"))]);
+    checked_note_redline(original, &edited);
+}
+
+#[test]
+fn an_endnote_added_before_others_is_the_only_endnote_change() {
+    // Endnotes are numbered by position: the new first endnote takes the id
+    // of the old first one, and every later one moves up one.
+    let original = doc_with_endnote_texts(&[
+        ("One.", Some("A")),
+        ("Two.", Some("B")),
+        ("Three.", Some("C")),
+    ]);
+    let edited = doc_with_endnote_texts(&[
+        ("Zero.", Some("N")),
+        ("One.", Some("A")),
+        ("Two.", Some("B")),
+        ("Three.", Some("C")),
+    ]);
+    let doc = checked_note_redline(original, &edited);
+    assert_eq!(
+        revision_texts(&doc, RevisionKind::Deletion),
+        Vec::<String>::new()
     );
-    assert!(doc.revisions().is_empty());
+    let inserted = revision_texts(&doc, RevisionKind::Insertion);
+    assert!(
+        !inserted
+            .iter()
+            .any(|text| ["A", "B", "C"].contains(&text.trim())),
+        "an unchanged endnote is not revised: {inserted:?}"
+    );
+}
+
+#[test]
+fn a_paragraph_moved_with_its_endnote_is_compared() {
+    let document = |swapped: bool| {
+        let paragraphs = [("Claim.", Some("Source")), ("Other.", None)];
+        let mut ordered = paragraphs.to_vec();
+        if swapped {
+            ordered.reverse();
+        }
+        doc_with_endnote_texts(&ordered)
+    };
+    checked_note_redline(document(false), &document(true));
+}
+
+#[test]
+fn a_table_replaced_whole_with_the_endnote_it_holds_is_compared() {
+    // A column added replaces the table whole: its endnote reference is
+    // deleted with the old table and inserted with the new one.
+    let document = |columns: usize| {
+        let mut doc = doc_with_endnote_texts(&[("Cell.", Some("Source")), ("After.", None)]);
+        with_part(&mut doc, "document.xml", |xml| {
+            // The paragraph holding the endnote reference.
+            let at = xml.find("<w:endnoteReference").expect("endnote reference");
+            let start = xml[..at]
+                .rfind("<w:p>")
+                .max(xml[..at].rfind("<w:p "))
+                .expect("its paragraph");
+            let end = start + xml[start..].find("</w:p>").expect("its end") + "</w:p>".len();
+            let grid = "<w:gridCol w:w=\"2000\"/>".repeat(columns);
+            let extra = "<w:tc><w:p><w:r><w:t>More.</w:t></w:r></w:p></w:tc>".repeat(columns - 1);
+            format!(
+                "{}<w:tbl><w:tblPr/><w:tblGrid>{grid}</w:tblGrid><w:tr><w:tc>{}</w:tc>{extra}</w:tr></w:tbl>{}",
+                &xml[..start],
+                &xml[start..end],
+                &xml[end..]
+            )
+        })
+    };
+    // The cells, the endnote references and the notes held.
+    let shape = |doc: &mut Document| {
+        let xml = main_part_xml(doc);
+        (
+            xml.matches("<w:tc>").count() + xml.matches("<w:tc ").count(),
+            xml.matches("<w:endnoteReference ").count(),
+            held_note_texts(doc),
+        )
+    };
+    let (mut original, mut edited) = (document(1), document(2));
+    let (before, after) = (shape(&mut original), shape(&mut edited));
+    assert_eq!(before, (1, 1, (Vec::new(), vec!["Source".to_owned()])));
+    let mut doc = redline(original, &edited);
+    // Both tables are in the redline, each with its own reference.
+    assert_eq!(shape(&mut doc).1, 2);
+    assert_eq!(shape(&mut accepted(&mut doc)), after);
+    assert_eq!(shape(&mut rejected(&mut doc)), before);
+}
+
+#[test]
+fn a_footnote_and_an_endnote_changed_at_once_are_both_compared() {
+    let original = doc_with_both_notes(&[
+        ("Claim one.", Some("Foot A"), Some("End A")),
+        ("Claim two.", None, Some("End B")),
+        ("Claim three.", Some("Foot C"), None),
+    ]);
+    let edited = doc_with_both_notes(&[
+        ("Claim one.", Some("Foot A"), None),
+        ("Claim two.", Some("Foot B"), Some("End B")),
+        ("Claim three.", Some("Foot C"), Some("End C")),
+    ]);
+    let mut doc = checked_note_redline(original, &edited);
+    // Each kind's custody pairs carry its own letter.
+    let xml = main_part_xml(&mut doc);
+    assert!(xml.contains("_rdocxCmpNoteF"), "{xml}");
+    assert!(xml.contains("_rdocxCmpNoteE"), "{xml}");
+}
+
+#[test]
+fn a_footnote_and_an_endnote_moved_at_once_are_both_compared() {
+    // Each moved note makes the comparison start again with it under a new
+    // id; the ids an earlier pass gave are kept per kind.
+    let original = doc_with_both_notes(&[
+        ("Claim one.", Some("Foot"), Some("End")),
+        ("Claim two.", None, None),
+    ]);
+    let edited = doc_with_both_notes(&[
+        ("Claim one.", None, None),
+        ("Claim two.", Some("Foot"), Some("End")),
+    ]);
+    checked_note_redline(original, &edited);
+}
+
+#[test]
+fn endnotes_ignored_keep_the_original_endnotes() {
+    // The edited version rewrites the endnote and the body: ignoring
+    // endnotes compares the body and keeps the original's endnote whole.
+    let mut doc = doc_with_endnote_texts(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited =
+        doc_with_endnote_texts(&[("Claim one.", Some("Other")), ("Claim two, edited.", None)]);
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Endnote],
+        ..Default::default()
+    };
+    let diagnostics = doc
+        .compare_with_options(&edited, AUTHOR, DATE, &options)
+        .expect("comparison");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        note_marked_texts(&accepted(&mut doc)),
+        ["Claim one.{Source}", "Claim two, edited."]
+    );
+    assert_eq!(
+        note_marked_texts(&rejected(&mut doc)),
+        ["Claim one.{Source}", "Claim two."]
+    );
 }
 
 #[test]
@@ -1328,9 +1656,293 @@ fn an_endnote_the_original_lacks_is_refused_while_endnotes_are_ignored() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        format!("ignored endnotes cannot supply the edited reference to endnote {added}")
+        format!("ignored endnotes cannot supply reference {added}")
     );
     assert!(doc.revisions().is_empty());
+}
+
+#[test]
+fn a_moved_endnote_reference_with_endnotes_ignored_is_refused() {
+    // Ignored endnotes keep the original's, so the moved reference cannot
+    // get its own endnote: the redline would name one endnote from both
+    // places.
+    let mut doc = doc_with_endnote_texts(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited = doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", Some("Source"))]);
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Endnote],
+        ..Default::default()
+    };
+    let error = doc
+        .compare_with_options(&edited, AUTHOR, DATE, &options)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("endnote") && error.to_string().contains("moved"),
+        "{error}"
+    );
+    assert!(doc.revisions().is_empty());
+}
+
+/// `doc` saved with `edit` applied to the XML of `part`, a package path
+/// such as `word/endnotes.xml`, then reopened: markup Word writes that the
+/// facade would not.
+fn with_part_edited(doc: &mut Document, part: &str, edit: impl FnOnce(&str) -> String) -> Document {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
+    let name = format!("/{part}");
+    let xml = std::str::from_utf8(package.get_part(&name).expect("part exists"))
+        .expect("part is UTF-8")
+        .to_owned();
+    package.set_part(&name, edit(&xml).into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("edited document opens")
+}
+
+/// `xml` with `edit` applied to the content of its note `<w:{owner} w:id="{id}">`.
+fn with_note_edited(xml: &str, owner: &str, id: i32, edit: impl FnOnce(&str) -> String) -> String {
+    let start = xml
+        .find(&format!(r#"<w:{owner} w:id="{id}""#))
+        .expect("note owner");
+    let open = start + xml[start..].find('>').expect("owner start tag") + 1;
+    let close = open
+        + xml[open..]
+            .find(&format!("</w:{owner}>"))
+            .expect("owner end tag");
+    format!(
+        "{}{}{}",
+        &xml[..open],
+        edit(&xml[open..close]),
+        &xml[close..]
+    )
+}
+
+/// `xml` with every run wrapped in its own tracked insertion, ids from `id`.
+fn runs_inserted(xml: &str, id: &mut i32) -> String {
+    let mut out = String::new();
+    let mut rest = xml;
+    while let Some(start) = ["<w:r>", "<w:r "]
+        .iter()
+        .filter_map(|tag| rest.find(tag))
+        .min()
+    {
+        let end = start + rest[start..].find("</w:r>").expect("run end") + "</w:r>".len();
+        out.push_str(&rest[..start]);
+        out.push_str(&format!(
+            r#"<w:ins w:id="{id}" w:author="{AUTHOR}" w:date="{DATE}">{}</w:ins>"#,
+            &rest[start..end]
+        ));
+        *id += 1;
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `doc` with note `id` of this kind (`footnote` or `endnote`) inserted as
+/// Word tracks a note typed with track changes on: its reference run and
+/// every run of the note in a tracked insertion, the note's paragraph mark
+/// inserted.
+fn with_tracked_note_insertion(doc: &mut Document, owner: &str, id: i32) -> Document {
+    let mut revision = 900;
+    let reference = format!(r#"<w:{owner}Reference w:id="{id}"/></w:r>"#);
+    let mut doc = with_part_edited(doc, "word/document.xml", |xml| {
+        let end = xml.find(&reference).expect("note reference") + reference.len();
+        let start = xml[..end].rfind("<w:r>").expect("reference run");
+        format!(
+            "{}{}{}",
+            &xml[..start],
+            runs_inserted(&xml[start..end], &mut revision),
+            &xml[end..]
+        )
+    });
+    with_part_edited(&mut doc, &format!("word/{owner}s.xml"), |xml| {
+        with_note_edited(xml, owner, id, |content| {
+            let content = runs_inserted(content, &mut revision);
+            content.replacen(
+                "<w:p>",
+                &format!(
+                    r#"<w:p><w:pPr><w:rPr><w:ins w:id="{revision}" w:author="{AUTHOR}" w:date="{DATE}"/></w:rPr></w:pPr>"#
+                ),
+                1,
+            )
+        })
+    })
+}
+
+#[test]
+fn rejecting_a_tracked_endnote_insertion_removes_the_endnote_whole() {
+    // Not a comparison: Word tracked the endnote typed at the end of the
+    // second claim. Rejecting removes its definition with its reference.
+    let mut doc = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
+    let (_, id) = endnote_references(&doc)[1];
+    let mut doc = with_tracked_note_insertion(&mut doc, "endnote", id);
+    let wanted = |doc: &Document| (note_marked_texts(doc), held_note_texts(doc));
+    assert_eq!(
+        wanted(&accepted(&mut doc)),
+        (
+            vec!["Claim one.{A}".to_owned(), "Claim two.{B}".to_owned()],
+            (vec![], vec!["A".to_owned(), "B".to_owned()])
+        )
+    );
+    assert_eq!(
+        wanted(&rejected(&mut doc)),
+        (
+            vec!["Claim one.{A}".to_owned(), "Claim two.".to_owned()],
+            (vec![], vec!["A".to_owned()])
+        )
+    );
+}
+
+#[test]
+fn rejecting_a_tracked_footnote_insertion_removes_the_footnote_whole() {
+    // The footnote twin of the endnote case above.
+    let mut doc = doc_with_notes_in_order(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
+    let id = doc.footnotes().last().expect("second footnote").0;
+    let mut doc = with_tracked_note_insertion(&mut doc, "footnote", id);
+    let wanted = |doc: &Document| (note_marked_texts(doc), held_note_texts(doc));
+    assert_eq!(
+        wanted(&accepted(&mut doc)),
+        (
+            vec!["Claim one.[A]".to_owned(), "Claim two.[B]".to_owned()],
+            (vec!["A".to_owned(), "B".to_owned()], vec![])
+        )
+    );
+    assert_eq!(
+        wanted(&rejected(&mut doc)),
+        (
+            vec!["Claim one.[A]".to_owned(), "Claim two.".to_owned()],
+            (vec!["A".to_owned()], vec![])
+        )
+    );
+}
+
+#[test]
+fn a_tracked_change_beside_an_endnote_reference_without_endnotes_resolves() {
+    // No endnotes part, so no endnote to settle: the stray reference stays
+    // and the insertion beside it resolves as in any paragraph.
+    let body = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Claim </w:t></w:r><w:ins w:id="1" w:author="{AUTHOR}" w:date="{DATE}"><w:r><w:t>added</w:t></w:r></w:ins><w:r><w:endnoteReference w:id="2"/></w:r></w:p>"#
+    );
+    let mut doc = doc_with_body(&body);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Claim added"]);
+    assert_eq!(endnote_references(&copy), [(0, 2)]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Claim "]);
+    assert_eq!(endnote_references(&copy), [(0, 2)]);
+}
+
+#[test]
+fn a_tracked_change_in_a_text_box_of_an_added_note_resolves_with_the_note() {
+    // The added note holds a text box, and the text box a tracked insertion
+    // of its own, in both the DrawingML and the VML copy. Accepting keeps
+    // the note, rejecting removes it whole, and one revision alone is a
+    // partial selection of the note, for either kind.
+    for owner in ["footnote", "endnote"] {
+        let (original, mut edited) = if owner == "footnote" {
+            (
+                doc_with_notes_in_order(&[("Claim one.", Some("A")), ("Claim two.", None)]),
+                doc_with_notes_in_order(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]),
+            )
+        } else {
+            (
+                doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", None)]),
+                doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]),
+            )
+        };
+        let part = format!("word/{owner}s.xml");
+        let inside = "<w:r><w:t>Inside</w:t></w:r>";
+        let edited = with_part_edited(&mut edited, &part, |xml| {
+            with_note_edited(xml, owner, 3, |content| {
+                let text_box = crate::support::text_box_run(7, &format!("<w:p>{inside}</w:p>"));
+                content.replacen("</w:p>", &format!("{text_box}</w:p>"), 1)
+            })
+        });
+        let mut doc = redline(original, &edited);
+        let mut doc = with_part_edited(&mut doc, &part, |xml| {
+            xml.replace(
+                inside,
+                &format!(
+                    r#"<w:ins w:id="901" w:author="{AUTHOR}" w:date="{DATE}">{inside}</w:ins>"#
+                ),
+            )
+        });
+        let mark = |text: &str| {
+            if owner == "footnote" {
+                format!("[{text}]")
+            } else {
+                format!("{{{text}}}")
+            }
+        };
+        let notes = |texts: &[&str]| {
+            let texts = texts.iter().map(|text| (*text).to_owned()).collect();
+            if owner == "footnote" {
+                (texts, vec![])
+            } else {
+                (vec![], texts)
+            }
+        };
+        let wanted = |doc: &Document| (note_marked_texts(doc), held_note_texts(doc));
+        let note_part = |doc: &Document| doc.part_xml(&part).expect("note part reads");
+        let copy = accepted(&mut doc);
+        assert_eq!(
+            wanted(&copy),
+            (
+                vec![
+                    format!("Claim one.{}", mark("A")),
+                    format!("Claim two.{}", mark("B"))
+                ],
+                notes(&["A", "B"])
+            ),
+            "{owner}"
+        );
+        assert!(
+            copy.story_revisions().expect("revisions").is_empty(),
+            "{owner}"
+        );
+        let xml = note_part(&copy);
+        assert_eq!(xml.matches(">Inside<").count(), 2, "{owner}: {xml}");
+        // Footnotes leave the VML copy's insertion in the part, outside
+        // the revisions they list; endnotes resolve every copy, as the body.
+        if owner == "endnote" {
+            assert!(!xml.contains("<w:ins "), "{xml}");
+        }
+        let copy = rejected(&mut doc);
+        assert_eq!(
+            wanted(&copy),
+            (
+                vec![format!("Claim one.{}", mark("A")), "Claim two.".to_owned()],
+                notes(&["A"])
+            ),
+            "{owner}"
+        );
+        assert!(!note_part(&copy).contains("Inside"), "{owner}");
+        let ids = doc
+            .story_revisions()
+            .expect("revisions")
+            .iter()
+            .map(|revision| revision.id())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(ids.contains(&901), "{owner}: {ids:?}");
+        for id in ids {
+            for accept in [true, false] {
+                let mut copy = reopen(&mut doc);
+                let error = if accept {
+                    copy.accept_revision_id(id)
+                } else {
+                    copy.reject_revision_id(id)
+                }
+                .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("partial {owner} custody selection")),
+                    "{owner} {id}: {error}"
+                );
+            }
+        }
+    }
 }
 
 /// `body` with every revision accepted, and the main part the resolution
@@ -1997,47 +2609,110 @@ fn a_simple_field_the_reader_keeps_raw_keeps_a_refusal_when_its_paragraph_goes_w
 }
 
 #[test]
-fn a_simple_field_inside_a_hyperlink_keeps_the_whole_paragraph_refusal() {
-    let linked = r#"<w:p><w:hyperlink w:anchor="_Top"><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:hyperlink></w:p>"#;
+fn a_simple_field_inside_a_hyperlink_is_tracked_whole_with_its_paragraph() {
+    let linked = r#"<w:p><w:hyperlink w:anchor="_Top"><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:hyperlink></w:p>"#;
     let after = plain("After.");
-    let refused = |original: &str, edited: &str| {
-        let mut doc = doc_with_body(original);
-        let error = doc
-            .compare(&doc_with_body(edited), AUTHOR, DATE)
-            .expect_err("refused");
-        assert!(
-            error
-                .to_string()
-                .contains("cannot track a whole paragraph's simple field"),
-            "{error}"
-        );
-    };
-    // Inserted and deleted whole.
-    refused(&after, &format!("{linked}{after}"));
-    refused(&format!("{linked}{after}"), &after);
+    // Inserted and deleted whole, before a paragraph and as the last one.
+    check_both_ways(
+        || doc_with_body(&after),
+        || doc_with_body(&format!("{linked}{after}")),
+        "document.xml",
+        [false, true],
+    );
+    check_both_ways(
+        || doc_with_body(&plain("Before.")),
+        || doc_with_body(&format!("{}{linked}", plain("Before."))),
+        "document.xml",
+        [false, true],
+    );
     // Paired, its hyperlink pointing elsewhere: written as a deleted and an
-    // inserted paragraph, refused the same way.
+    // inserted paragraph.
     let relinked = linked.replace("_Top", "_Bottom");
-    refused(&format!("{linked}{after}"), &format!("{relinked}{after}"));
+    check_both_ways(
+        || doc_with_body(&format!("{linked}{after}")),
+        || doc_with_body(&format!("{relinked}{after}")),
+        "document.xml",
+        [true, true],
+    );
+    // The field, from begin to end, in one wrapper inside the hyperlink.
+    let mut doc = redline(
+        doc_with_body(&after),
+        &doc_with_body(&format!("{linked}{after}")),
+    );
+    let xml = main_part_xml(&mut doc);
+    assert!(!xml.contains("fldSimple"), "{xml}");
+    let link = &xml[xml.find("<w:hyperlink").unwrap()..xml.find("</w:hyperlink>").unwrap()];
+    let field = &link
+        [link.find(r#"fldCharType="begin""#).unwrap()..link.rfind(r#"fldCharType="end""#).unwrap()];
+    assert!(
+        !field.contains("<w:ins ") && !field.contains("</w:ins>"),
+        "{xml}"
+    );
 }
 
 #[test]
-fn a_simple_field_nested_in_another_keeps_a_refusal_when_its_paragraph_goes_whole() {
-    // The conversion writes one complex field; a simple field in its result
-    // has no qualified place there, and the comparison says so.
-    let nested = r#"<w:p><w:fldSimple w:instr=" IF 1 = 1 "><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:fldSimple></w:p>"#;
+fn a_simple_field_nested_in_another_is_tracked_whole_with_its_paragraph() {
+    // The nested field is written as a complex field too, in the result of
+    // the outer one: Word nests complex fields only.
+    let nested = r#"<w:p><w:r><w:t xml:space="preserve">Page </w:t></w:r><w:fldSimple w:instr=" IF 1 = 1 "><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:fldSimple></w:p>"#;
     let after = plain("After.");
-    for (original, edited) in [
-        (after.clone(), format!("{nested}{after}")),
-        (format!("{nested}{after}"), after.clone()),
-    ] {
-        let mut doc = doc_with_body(&original);
-        let error = doc
-            .compare(&doc_with_body(&edited), AUTHOR, DATE)
-            .expect_err("refused");
-        assert!(error.to_string().contains("fldSimple"), "{error}");
-        assert!(doc.revisions().is_empty());
-    }
+    // Inserted before a paragraph, and as the last paragraph of the body.
+    check_both_ways(
+        || doc_with_body(&after),
+        || doc_with_body(&format!("{nested}{after}")),
+        "document.xml",
+        [false, true],
+    );
+    check_both_ways(
+        || doc_with_body(&plain("Before.")),
+        || doc_with_body(&format!("{}{nested}", plain("Before."))),
+        "document.xml",
+        [false, true],
+    );
+    // Paired, its text now linked: written as a deleted and an inserted
+    // paragraph.
+    let linked = nested.replace(
+        r#"<w:r><w:t xml:space="preserve">Page </w:t></w:r>"#,
+        r#"<w:hyperlink w:anchor="_Top"><w:r><w:t xml:space="preserve">Page </w:t></w:r></w:hyperlink>"#,
+    );
+    check_both_ways(
+        || doc_with_body(&format!("{nested}{after}")),
+        || doc_with_body(&format!("{linked}{after}")),
+        "document.xml",
+        [true, true],
+    );
+    // Both fields from the first begin to the last end in one wrapper.
+    let mut doc = redline(
+        doc_with_body(&after),
+        &doc_with_body(&format!("{nested}{after}")),
+    );
+    let xml = main_part_xml(&mut doc);
+    assert!(!xml.contains("fldSimple"), "{xml}");
+    let field = &xml
+        [xml.find(r#"fldCharType="begin""#).unwrap()..xml.rfind(r#"fldCharType="end""#).unwrap()];
+    assert!(
+        !field.contains("<w:ins ") && !field.contains("</w:ins>"),
+        "{xml}"
+    );
+    assert_eq!(field.matches(r#"fldCharType="begin""#).count(), 2, "{xml}");
+    assert!(
+        field.find(" IF 1 = 1 ").unwrap() < field.find(" PAGE ").unwrap(),
+        "{xml}"
+    );
+    // Deleted, every text of both fields is deleted text, which Word
+    // requires.
+    let mut doc = redline(
+        doc_with_body(&format!("{nested}{after}")),
+        &doc_with_body(&after),
+    );
+    let xml = main_part_xml(&mut doc);
+    let field = &xml
+        [xml.find(r#"fldCharType="begin""#).unwrap()..xml.rfind(r#"fldCharType="end""#).unwrap()];
+    assert_eq!(field.matches("<w:delInstrText").count(), 2, "{xml}");
+    assert!(
+        !field.contains("<w:instrText") && !field.contains("<w:t>") && !field.contains("<w:t "),
+        "{xml}"
+    );
 }
 
 /// A document of these Heading 1 paragraphs under a table of contents that
@@ -2717,6 +3392,105 @@ fn a_bookmark_both_versions_hold_ending_inside_a_replaced_paragraph_is_refused()
         .compare(&edited, AUTHOR, DATE)
         .expect_err("the end cannot be kept inside the text");
     assert!(error.to_string().contains("over the same text"), "{error}");
+}
+
+#[test]
+fn a_changed_field_holding_a_nested_field_is_deleted_as_deleted_text() {
+    // The outer instruction changes: the field is deleted and inserted
+    // whole, and the deletion holds the nested field's text too.
+    let field = |known: &str| {
+        format!(
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Smith</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "Smith" "{known}" "Unknown" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{known}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
+        )
+    };
+    let edited = doc_with_body(&field("Yes"));
+    let mut doc = redline(doc_with_body(&field("Known")), &edited);
+    let xml = main_part_xml(&mut doc);
+    let deletions = xml
+        .split("<w:del ")
+        .skip(1)
+        .map(|tail| &tail[..tail.find("</w:del>").unwrap()])
+        .collect::<Vec<_>>();
+    assert!(
+        deletions
+            .iter()
+            .any(|deletion| deletion.matches("<w:delInstrText").count() == 3),
+        "the deletion holds both instructions: {xml}"
+    );
+    for deletion in deletions {
+        assert!(
+            !deletion.contains("<w:instrText")
+                && !deletion.contains("<w:t>")
+                && !deletion.contains("<w:t "),
+            "{xml}"
+        );
+    }
+    assert!(xml.contains("MERGEFIELD"), "{xml}");
+    assert_eq!(texts(&accepted(&mut doc)), texts(&edited));
+    assert_eq!(
+        texts(&rejected(&mut doc)),
+        texts(&doc_with_body(&field("Known")))
+    );
+}
+
+#[test]
+fn a_field_whose_result_changes_beside_a_nested_field_is_compared() {
+    // The result of the outer field starts after its own separate, not
+    // after the one of a field nested in its instruction, and ends at its
+    // own end, not at the one of a field nested in its result.
+    let begin = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#;
+    let separate = r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#;
+    let end = r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let instruction = |text: &str| {
+        format!(r#"<w:r><w:instrText xml:space="preserve">{text}</w:instrText></w:r>"#)
+    };
+    let text = |text: &str| format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#);
+    let merge = format!(
+        "{begin}{}{separate}{}{end}",
+        instruction(" MERGEFIELD Name "),
+        text("Smith")
+    );
+    let in_instruction = |shown: &str| {
+        format!(
+            "<w:p>{begin}{}{merge}{}{separate}{}{end}</w:p>",
+            instruction(r#" IF ""#),
+            instruction(r#"" = "Smith" "Known" "Unknown" "#),
+            text(shown)
+        )
+    };
+    let in_result = |shown: &str| {
+        format!(
+            "<w:p>{begin}{}{separate}{}{merge}{end}</w:p>",
+            instruction(" QUOTE "),
+            text(shown)
+        )
+    };
+    for field in [&in_instruction as &dyn Fn(&str) -> String, &in_result] {
+        let (original, edited) = (field("Unknown"), field("Known"));
+        let mut doc = redline(doc_with_body(&original), &doc_with_body(&edited));
+        assert_eq!(texts(&accepted(&mut doc)), texts(&doc_with_body(&edited)));
+        assert_eq!(texts(&rejected(&mut doc)), texts(&doc_with_body(&original)));
+    }
+}
+
+#[test]
+fn a_simple_field_nested_through_a_control_in_another_keeps_a_refusal_when_its_paragraph_goes_whole()
+ {
+    // Nested through an inline content control, it would stay a simple
+    // field inside the deletion, whose text Word requires as deleted text.
+    let nested = r#"<w:p><w:fldSimple w:instr=" IF 1 = 1 "><w:sdt><w:sdtPr/><w:sdtContent><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:sdtContent></w:sdt></w:fldSimple></w:p>"#;
+    let after = plain("After.");
+    for (original, edited) in [
+        (after.clone(), format!("{nested}{after}")),
+        (format!("{nested}{after}"), after.clone()),
+    ] {
+        let mut doc = doc_with_body(&original);
+        let error = doc
+            .compare(&doc_with_body(&edited), AUTHOR, DATE)
+            .expect_err("refused");
+        assert!(error.to_string().contains("simple field nested"), "{error}");
+        assert!(doc.revisions().is_empty());
+    }
 }
 
 #[test]

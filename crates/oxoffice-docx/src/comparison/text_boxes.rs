@@ -329,11 +329,14 @@ pub(super) fn comparison_text_box_markers(
             text_box_marker_local(original_xml, edited_xml, &prefix)?,
         );
     }
-    if !story_ignored(options, ComparisonStoryKind::Footnote) {
-        let left = FootnotePart::of(original)?;
-        let right = FootnotePart::of(edited)?;
+    for kind in NoteKind::ALL {
+        if story_ignored(options, kind.story_kind()) {
+            continue;
+        }
+        let left = NotePart::of(original, kind)?;
+        let right = NotePart::of(edited, kind)?;
         if let Some(part) = left.as_ref().or(right.as_ref()) {
-            let prefix = root_prefix(&part.xml, "footnotes")?;
+            let prefix = root_prefix(&part.xml, kind.part_root())?;
             let marker = text_box_marker_local(
                 left.as_ref().map_or("", |part| part.xml.as_str()),
                 right.as_ref().map_or("", |part| part.xml.as_str()),

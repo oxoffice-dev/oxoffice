@@ -1197,7 +1197,7 @@ pub(super) fn ruby_inline_item(
 /// Priority: solid text fill > resolved theme color > literal fallback > `automatic`, the
 /// automatic colour that [`automatic_text_color`] gives for the fill behind
 /// the text.
-pub(super) fn resolve_run_color(
+pub(crate) fn resolve_run_color(
     rpr: &oxoffice_docx_oxml::properties::CT_RPr,
     theme: Option<&oxoffice_docx_oxml::theme::Theme>,
     automatic: Color,

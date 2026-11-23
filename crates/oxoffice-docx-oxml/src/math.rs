@@ -6,7 +6,8 @@ use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
-use crate::namespace::M_NS;
+use crate::namespace::{M_NS, W_NS};
+use crate::properties::CT_RPr;
 use crate::raw_xml::capture_element;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -310,11 +311,33 @@ pub enum MathExpression {
 }
 
 impl MathExpression {
+    /// The arguments of this expression, in document order: a matrix's
+    /// cells row by row.
+    pub fn arguments(&self) -> Vec<&MathArgument> {
+        match self {
+            Self::Run(_) => Vec::new(),
+            Self::Fraction(value) => vec![&value.numerator, &value.denominator],
+            Self::Subscript(value) | Self::Superscript(value) => vec![&value.base, &value.script],
+            Self::SubSuperscript(value) => {
+                vec![&value.base, &value.subscript, &value.superscript]
+            }
+            Self::PreSubSuperscript(value) => {
+                vec![&value.subscript, &value.superscript, &value.base]
+            }
+            Self::Radical(value) => vec![&value.degree, &value.base],
+            Self::Matrix(value) => value.rows.iter().flat_map(|row| &row.cells).collect(),
+            Self::LowerLimit(value) | Self::UpperLimit(value) => vec![&value.base, &value.limit],
+            Self::Nary(value) => vec![&value.subscript, &value.superscript, &value.base],
+            Self::Delimiter(value) => value.arguments.iter().collect(),
+            Self::Accent(value) => vec![&value.base],
+        }
+    }
+
     /// Whether this expression or one of its arguments retains unsupported content.
     pub fn has_unsupported_content(&self) -> bool {
         match self {
             Self::Run(value) => {
-                preservation_has_unsupported_content(&value.preservation)
+                run_preservation_has_unsupported_content(&value.preservation)
                     || property_preservation_has_unsupported_content(
                         &value.properties.preservation,
                         "rPr",
@@ -458,7 +481,13 @@ impl MathArgument {
 
     /// Whether this argument retains content outside the typed OfficeMath subset.
     pub fn has_unsupported_content(&self) -> bool {
-        preservation_has_unsupported_content(&self.preservation)
+        // An argument may end with the control properties of its construct.
+        let bindings = element_bindings(&self.preservation);
+        let mut preservation = self.preservation.clone();
+        preservation
+            .raw_children
+            .retain(|(_, raw)| !is_control_properties(raw, &bindings));
+        preservation_has_unsupported_content(&preservation)
             || self
                 .expressions
                 .iter()
@@ -599,6 +628,16 @@ impl MathRun {
             text: text.into(),
             ..Self::default()
         }
+    }
+
+    /// The WordprocessingML run properties (`w:rPr`) of this run, which Word
+    /// writes in every math run: its font, size and colour.
+    pub fn word_properties(&self) -> Option<CT_RPr> {
+        let bindings = element_bindings(&self.preservation);
+        self.preservation
+            .raw_children
+            .iter()
+            .find_map(|(_, raw)| word_run_properties(raw, &bindings))
     }
 
     fn from_raw(raw: &[u8], inherited: &[(String, String)]) -> Result<Self> {
@@ -2368,8 +2407,130 @@ fn property_container_has_unsupported_content(preservation: &Preservation, tag: 
         tag,
         supported_properties(tag),
     )
-    .map_or(true, |value| {
+    .map_or(true, |mut value| {
+        // The control properties format the construct's own characters with
+        // the run properties Word writes in every construct: understood.
+        let bindings = element_bindings(&value);
+        value
+            .property_raw_children
+            .retain(|(_, raw)| !is_control_properties(raw, &bindings));
         property_preservation_has_unsupported_content(&value, tag)
+    })
+}
+
+/// [`preservation_has_unsupported_content`] for a math run, whose `w:rPr`
+/// is understood (see [`MathRun::word_properties`]).
+fn run_preservation_has_unsupported_content(preservation: &Preservation) -> bool {
+    let bindings = element_bindings(preservation);
+    let mut word_properties = 0;
+    let other_raw_child = preservation.raw_children.iter().any(|(_, raw)| {
+        if is_untracked_word_run_properties(raw, &bindings) {
+            word_properties += 1;
+            false
+        } else {
+            true
+        }
+    });
+    other_raw_child
+        || word_properties > 1
+        || !preservation.property_raw_children.is_empty()
+        || preservation
+            .attributes
+            .iter()
+            .any(|(name, _)| name != "xmlns" && !name.starts_with("xmlns:"))
+}
+
+/// The namespace bindings in scope inside an element: those it inherits and
+/// those it declares.
+fn element_bindings(preservation: &Preservation) -> Vec<(String, String)> {
+    let mut bindings = preservation.inherited_bindings.clone();
+    for (name, value) in &preservation.attributes {
+        let prefix = if name == "xmlns" {
+            ""
+        } else if let Some(prefix) = name.strip_prefix("xmlns:") {
+            prefix
+        } else {
+            continue;
+        };
+        bindings.retain(|(candidate, _)| candidate != prefix);
+        bindings.push((prefix.to_owned(), value.clone()));
+    }
+    bindings
+}
+
+/// Parses `raw` when it is a WordprocessingML `w:rPr` with no attribute.
+fn word_run_properties(raw: &[u8], inherited: &[(String, String)]) -> Option<CT_RPr> {
+    let mut bindings = inherited.to_vec();
+    let mut reader = Reader::from_reader(raw);
+    let mut buffer = Vec::new();
+    loop {
+        let (element, empty) = match reader.read_event_into(&mut buffer).ok()? {
+            Event::Start(element) => (element.into_owned(), false),
+            Event::Empty(element) => (element.into_owned(), true),
+            Event::Eof => return None,
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        merge_bindings(&mut bindings, &element).ok()?;
+        let (namespace, local) = expanded_name(element.name().as_ref(), &bindings)?;
+        let attributed = extra_attributes(&element)
+            .ok()?
+            .iter()
+            .any(|(name, _)| name != "xmlns" && !name.starts_with("xmlns:"));
+        if namespace != W_NS || local != b"rPr" || attributed {
+            return None;
+        }
+        if empty {
+            return Some(CT_RPr::default());
+        }
+        let prefixes: Vec<String> = bindings
+            .iter()
+            .filter(|(_, namespace)| namespace == W_NS)
+            .map(|(prefix, _)| prefix.clone())
+            .collect();
+        return CT_RPr::from_xml_with_prefixes_and_owner_bindings(
+            &mut reader,
+            &prefixes,
+            &bindings,
+        )
+        .ok();
+    }
+}
+
+/// Whether `raw` is a `w:rPr` the layout reads: run properties that track
+/// no insertion, deletion or move.
+fn is_untracked_word_run_properties(raw: &[u8], inherited: &[(String, String)]) -> bool {
+    word_run_properties(raw, inherited).is_some()
+        && parse_element(raw, inherited).is_ok_and(|parsed| {
+            parsed.children.iter().all(|child| {
+                root_name(child, &parsed.bindings).is_ok_and(|name| {
+                    name.is_some_and(|(namespace, local)| {
+                        namespace != W_NS
+                            || !matches!(
+                                local.as_slice(),
+                                b"ins" | b"del" | b"moveFrom" | b"moveTo"
+                            )
+                    })
+                })
+            })
+        })
+}
+
+/// Whether `raw` is an `m:ctrlPr` holding only untracked run properties.
+fn is_control_properties(raw: &[u8], inherited: &[(String, String)]) -> bool {
+    parse_element(raw, inherited).is_ok_and(|parsed| {
+        math_local_name(raw, inherited).is_ok_and(|name| name.as_deref() == Some("ctrlPr"))
+            && parsed
+                .preservation
+                .attributes
+                .iter()
+                .all(|(name, _)| name == "xmlns" || name.starts_with("xmlns:"))
+            && parsed
+                .children
+                .iter()
+                .all(|child| is_untracked_word_run_properties(child, &parsed.bindings))
     })
 }
 
