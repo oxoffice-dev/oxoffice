@@ -3072,6 +3072,108 @@ fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_rend
 }
 
 #[test]
+fn a_positional_tab_aligns_the_text_after_it_where_word_does() {
+    // Letter, one-inch margins (72 and 540); the indented paragraphs have
+    // one-inch indents (144 and 468). Positions as Word 16 draws them.
+    let tab = |align: &str, relative: &str, leader: &str| {
+        format!(
+            r#"<w:r><w:ptab w:relativeTo="{relative}" w:alignment="{align}" w:leader="{leader}"/></w:r>"#
+        )
+    };
+    let run = |text: &str| format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#);
+    let indented = r#"<w:pPr><w:ind w:left="1440" w:right="1440"/></w:pPr>"#;
+    let paragraph =
+        |properties: &str, parts: &[String]| format!("<w:p>{properties}{}</w:p>", parts.concat());
+    let doc = doc_with_body(
+        &[
+            paragraph(
+                "",
+                &[
+                    run("Left"),
+                    tab("center", "margin", "none"),
+                    run("Middle"),
+                    tab("right", "margin", "dot"),
+                    run("Edge"),
+                ],
+            ),
+            paragraph(
+                indented,
+                &[
+                    run("One"),
+                    tab("right", "margin", "none"),
+                    run("ClampedRight"),
+                ],
+            ),
+            paragraph(
+                indented,
+                &[
+                    run("Two"),
+                    tab("center", "indent", "hyphen"),
+                    run("IndentCentre"),
+                ],
+            ),
+            paragraph(
+                "",
+                &[
+                    run("Text that runs well past the left edge"),
+                    tab("left", "margin", "none"),
+                    run("NextLine"),
+                ],
+            ),
+            // A right-to-left paragraph measures from its start, the right
+            // margin: the middle of the margins is the same.
+            paragraph(
+                r#"<w:pPr><w:bidi/><w:ind w:end="1440"/></w:pPr>"#,
+                &[tab("center", "margin", "none"), run("RtlCentre")],
+            ),
+            paragraph(
+                "",
+                &[
+                    run("A long sentence that runs well beyond the middle of this line"),
+                    tab("center", "margin", "none"),
+                    run("CentreBelow"),
+                ],
+            ),
+        ]
+        .concat(),
+    );
+    let drawn = pdf_of(&doc).drawn(0);
+    let piece = |text: &str| {
+        drawn
+            .iter()
+            .find(|piece| piece.text.contains(text))
+            .unwrap_or_else(|| panic!("{text} is drawn: {drawn:?}"))
+            .clone()
+    };
+    let near = |value: f64, expected: f64| (value - expected).abs() < 1.0;
+    let middle = piece("Middle");
+    assert!(near((middle.x + middle.end) / 2.0, 306.0), "{middle:?}");
+    assert!(near(piece("Edge").end, 540.0));
+    assert!(
+        drawn.iter().any(|piece| piece.text.starts_with("....")),
+        "{drawn:?}"
+    );
+    // A right tab relative to the margin still stops at the right indent.
+    assert!(near(piece("ClampedRight").end, 468.0));
+    // Relative to the indents: from the left indent to the right margin.
+    let centre = piece("IndentCentre");
+    assert!(near((centre.x + centre.end) / 2.0, 342.0), "{centre:?}");
+    assert!(
+        drawn.iter().any(|piece| piece.text.starts_with("----")),
+        "{drawn:?}"
+    );
+    // A tab its line has passed takes the text to the next line, at its stop.
+    let next = piece("NextLine");
+    assert!(near(next.x, 72.0), "{next:?}");
+    assert!(next.y < piece("past").y - 1.0);
+    let rtl = piece("RtlCentre");
+    assert!(near((rtl.x + rtl.end) / 2.0, 306.0), "{rtl:?}");
+    let below = piece("CentreBelow");
+    assert!(near((below.x + below.end) / 2.0, 306.0), "{below:?}");
+    assert!(below.y < piece("beyond").y - 1.0);
+}
+
+#[test]
 fn a_picture_wider_than_the_line_after_a_bookmark_start_keeps_its_line() {
     // A bookmark a PAGEREF points at puts a zero-width marker before the
     // picture. The picture is wider than the line, but the marker alone is no

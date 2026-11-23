@@ -17,6 +17,19 @@ pub struct TabStop {
     pub leader: Option<TabLeader>,
 }
 
+/// A positional tab, Word's alignment tab: the text after it is aligned on
+/// the left margin (the left indent when relative to the indents), on the
+/// right margin, or halfway between the two, whatever the paragraph's own
+/// stops. The text never passes the right indent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PositionalTab {
+    /// [`TabAlign::Left`], [`TabAlign::Center`] or [`TabAlign::Right`].
+    pub align: TabAlign,
+    /// Starts from the left indent rather than the left margin.
+    pub relative_to_indent: bool,
+    pub leader: Option<TabLeader>,
+}
+
 /// Paragraph alignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Align {
@@ -86,8 +99,12 @@ pub enum InlineItem {
         language: String,
     },
     /// A tab character, and the fill its run draws behind it (a highlight
-    /// or shading) across the tab's width.
-    Tab { fill: Option<Color> },
+    /// or shading) across the tab's width. A positional tab takes its stop
+    /// from `positional` instead of the paragraph's stops.
+    Tab {
+        fill: Option<Color>,
+        positional: Option<PositionalTab>,
+    },
     /// A forced line break, and where the text after it restarts beside
     /// floating objects.
     LineBreak(LineClear),
@@ -615,15 +632,19 @@ fn break_into_lines_recorded(
             BreakableSegment::Items(seg_items, _)
                 if matches!(seg_items[..], [InlineItem::Tab { .. }]) =>
             {
-                let [InlineItem::Tab { fill }] = seg_items[..] else {
+                let [InlineItem::Tab { fill, positional }] = seg_items[..] else {
                     unreachable!("matched a lone tab");
                 };
                 line.settle_tab(fm);
-                let mut tab = line.next_tab(params);
+                let resolve = |line: &LineState| match positional {
+                    Some(positional) => line.positional_tab(positional, params),
+                    None => line.next_tab(params),
+                };
+                let mut tab = resolve(&line);
                 if params.wrap && tab.wraps && !line.items.is_empty() {
                     // A tab with no stop left on its line starts the next one.
                     push_layout_line(&mut lines, &mut origins, &mut line, params, fm, false, None)?;
-                    tab = line.next_tab(params);
+                    tab = resolve(&line);
                 }
                 line.push_tab(tab, fm, font_ctx, fill);
             }
@@ -1193,6 +1214,43 @@ impl LineState {
                 fill,
             });
             self.width += width;
+        }
+    }
+
+    /// The stop of a positional tab, measured as `next_tab` measures stops,
+    /// as Word places it: the left margin, or the left indent for one
+    /// relative to the indents; the right margin; or the middle of the two.
+    /// Text after it never passes the end of its line, the right indent, and
+    /// a tab its line has already passed moves to the next line.
+    fn positional_tab(&self, tab: PositionalTab, params: &LineBreakParams) -> ResolvedTab {
+        // Measured from the start margin, then put on the line, as in
+        // `next_tab`: a right-to-left line takes its stops from the right.
+        let margin = params.available_width;
+        let gap = if params.first_line_at_right {
+            margin - (self.start + self.available)
+        } else {
+            self.start
+        };
+        let on_line = |distance: f64| distance - gap + self.start;
+        let line_end = gap + self.available;
+        let start = match (tab.relative_to_indent, params.first_line_at_right) {
+            (false, _) => 0.0,
+            (true, false) => params.ind_left,
+            (true, true) => params.ind_right,
+        };
+        let stop = match tab.align {
+            TabAlign::Center => (start + margin) / 2.0,
+            TabAlign::Right => margin,
+            _ => start,
+        };
+        ResolvedTab {
+            stop: on_line(stop),
+            align: tab.align,
+            leader: leader_char(tab.leader),
+            wraps: gap + self.width > stop + 0.01,
+            reach: on_line(line_end),
+            shift_limit: Some(on_line(line_end)),
+            mirrored: params.first_line_at_right,
         }
     }
 
@@ -2655,7 +2713,7 @@ fn inline_to_line_item(item: &InlineItem) -> LineItem {
         InlineItem::MultilingualText(seg) => LineItem::MultilingualText(seg.clone()),
         InlineItem::Marker(seg) => LineItem::Marker(seg.clone()),
         // `LineState::push_tab` places tabs, so this is only a placeholder.
-        InlineItem::Tab { fill } => LineItem::Tab {
+        InlineItem::Tab { fill, .. } => LineItem::Tab {
             width: 0.0,
             leader: None,
             align: TabAlign::Left,

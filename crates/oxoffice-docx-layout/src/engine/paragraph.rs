@@ -588,7 +588,10 @@ fn layout_paragraph_with_source_and_table(
                 }
 
                 match marker.suffix {
-                    ST_LvlSuffix::Tab => inline_items.push(InlineItem::Tab { fill: None }),
+                    ST_LvlSuffix::Tab => inline_items.push(InlineItem::Tab {
+                        fill: None,
+                        positional: None,
+                    }),
                     ST_LvlSuffix::Space => {
                         multilingual_styles.insert(
                             inline_items.len(),
@@ -1374,7 +1377,10 @@ fn layout_paragraph_with_source_and_table(
                 }
                 // A tab in a filled run is filled across its width.
                 RunContent::Tab => {
-                    inline_items.push(InlineItem::Tab { fill: highlight });
+                    inline_items.push(InlineItem::Tab {
+                        fill: highlight,
+                        positional: None,
+                    });
                 }
                 // Word drops a page or column break inside a table cell, so
                 // the text on either side of it joins on one line.
@@ -1622,6 +1628,7 @@ fn layout_paragraph_with_source_and_table(
                             let control = match character {
                                 '\t' => Some(InlineItem::Tab {
                                     fill: segment_highlight,
+                                    positional: None,
                                 }),
                                 '\n' => Some(InlineItem::LineBreak(LineClear::None)),
                                 '\u{000c}' => Some(InlineItem::PageBreak),
@@ -1927,10 +1934,17 @@ fn layout_paragraph_with_source_and_table(
                     // the line breaker has no discretionary-break input, so it
                     // is round-tripped without a render projection.
                     SpecialCharacter::SoftHyphen => {}
-                    // The absolute position is a paragraph-relative tab stop
-                    // the tab resolver already places.
-                    SpecialCharacter::PositionalTab { .. } => {
-                        inline_items.push(InlineItem::Tab { fill: highlight });
+                    // Word's alignment tab: a stop of its own on the margins or
+                    // the indents, whatever the paragraph's stops.
+                    SpecialCharacter::PositionalTab {
+                        alignment,
+                        relative_to,
+                        leader,
+                    } => {
+                        inline_items.push(InlineItem::Tab {
+                            fill: highlight,
+                            positional: Some(positional_tab(*alignment, *relative_to, *leader)),
+                        });
                     }
                 },
                 RunContent::CommentReference { .. } => {}
@@ -2553,4 +2567,29 @@ fn push_structural_field_marker(
     } else {
         InlineItem::Text(segment)
     });
+}
+
+/// A `w:ptab` as the line breaker's positional tab.
+fn positional_tab(
+    alignment: oxoffice_docx_oxml::text::ST_PTabAlignment,
+    relative_to: oxoffice_docx_oxml::text::ST_PTabRelativeTo,
+    leader: oxoffice_docx_oxml::text::ST_PTabLeader,
+) -> oxoffice_layout::PositionalTab {
+    use oxoffice_docx_oxml::text::{ST_PTabAlignment, ST_PTabLeader, ST_PTabRelativeTo};
+    use oxoffice_layout::{TabAlign, TabLeader};
+    oxoffice_layout::PositionalTab {
+        align: match alignment {
+            ST_PTabAlignment::Left => TabAlign::Left,
+            ST_PTabAlignment::Center => TabAlign::Center,
+            ST_PTabAlignment::Right => TabAlign::Right,
+        },
+        relative_to_indent: relative_to == ST_PTabRelativeTo::Indent,
+        leader: match leader {
+            ST_PTabLeader::None => None,
+            ST_PTabLeader::Dot => Some(TabLeader::Dot),
+            ST_PTabLeader::Hyphen => Some(TabLeader::Hyphen),
+            ST_PTabLeader::Underscore => Some(TabLeader::Underscore),
+            ST_PTabLeader::MiddleDot => Some(TabLeader::MiddleDot),
+        },
+    }
 }
