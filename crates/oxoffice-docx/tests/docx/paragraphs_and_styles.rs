@@ -1342,6 +1342,43 @@ fn rtf_export_lists_paragraph_styles_and_restates_their_formatting() {
 }
 
 #[test]
+fn rtf_export_asks_for_the_paragraph_spacing_of_a_docx_file() {
+    // Without \htmautsp Word reads an RTF file with the HTML auto spacing of
+    // older versions, which adds space around every heading.
+    let doc = doc_with_rtf_styles();
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    let header_end = rtf.find(r"\sectd").unwrap_or_else(|| panic!("{rtf}"));
+    let stylesheet_end = rtf
+        .find(r"{\stylesheet")
+        .map_or(0, |start| start + rtf[start..].find(";}}").unwrap() + 3);
+    assert!(
+        rtf[stylesheet_end..header_end].contains(r"\htmautsp"),
+        "{rtf}"
+    );
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
+    assert!(
+        !read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("htmautsp")),
+        "{:?}",
+        read.diagnostics
+    );
+}
+
+#[test]
+fn rtf_export_keeps_the_old_paragraph_spacing_a_docx_file_asks_for() {
+    let mut doc = doc_with_rtf_styles();
+    doc.set_compatibility_option(
+        oxoffice_docx::CompatibilityOption::DoNotUseHTMLParagraphAutoSpacing,
+        true,
+    )
+    .unwrap();
+    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
+    assert!(!rtf.contains(r"\htmautsp"), "{rtf}");
+}
+
+#[test]
 fn rtf_round_trip_keeps_paragraph_styles_without_direct_formatting() {
     let doc = doc_with_rtf_styles();
     let rtf = doc.to_rtf_bytes().unwrap().bytes;

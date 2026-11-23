@@ -251,6 +251,15 @@ impl<'a> RtfWriter<'a> {
         self.write_color_table(&mut output)?;
         self.write_stylesheet(&mut output)?;
         self.write_list_tables(&mut output)?;
+        // Paragraph spacing as the docx file asks: without \htmautsp, Word reads an RTF
+        // file with the HTML auto spacing of older versions, which moves every heading.
+        if self
+            .document
+            .compatibility_option(crate::CompatibilityOption::DoNotUseHTMLParagraphAutoSpacing)
+            != Some(true)
+        {
+            write!(output, "\\htmautsp")?;
+        }
         // The document's page is its first section's, as Word writes it.
         if let Some(section) = self.sections.first() {
             write_page_layout(&mut output, section, "")?;
@@ -4323,7 +4332,8 @@ impl Parser {
                     message: format!("RTF list property \\{name} was dropped"),
                 });
             }
-            "viewkind" | "viewscale" | "fet" | "nouicompat" | "listtemplateid" | "listname" => {}
+            "viewkind" | "viewscale" | "fet" | "nouicompat" | "htmautsp" | "listtemplateid"
+            | "listname" => {}
             name if is_unsupported_destination(name) => {
                 self.states.last_mut().unwrap().destination = Destination::Skip(name.to_owned());
                 self.diagnostics.push(RtfDiagnostic {
