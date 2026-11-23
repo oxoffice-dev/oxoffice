@@ -196,9 +196,6 @@ impl Document {
         }
     }
 
-    /// Give the runs of `paragraph`, about to join a story that the save
-    /// does not rename, the localized ids [`Self::rename_localized_run_styles`]
-    /// gives the body's.
     /// The id of the Hyperlink character style: the style with its built-in
     /// name, else `Hyperlink`, which the save adds when it is missing.
     pub(crate) fn hyperlink_style_id(&self) -> String {
@@ -206,6 +203,9 @@ impl Document {
             .unwrap_or_else(|| "Hyperlink".to_owned())
     }
 
+    /// Give the runs of `paragraph`, about to join a story that the save
+    /// does not rename, the localized ids [`Self::rename_localized_run_styles`]
+    /// gives the body's.
     pub(crate) fn localize_run_styles(&self, paragraph: &mut CT_P) {
         rename_run_styles(paragraph, &localized_run_style_ids(&self.styles));
     }

@@ -1107,6 +1107,21 @@ fn with_french_character_styles(doc: &mut Document) -> Document {
 fn links_and_note_marks_a_session_adds_take_a_localized_file_s_own_styles() {
     let mut doc = doc_with(&["body"]);
     doc.set_header("head");
+    // A table in the header, for the table edit route.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let header =
+        String::from_utf8(package.get_part("/word/header1.xml").unwrap().to_vec()).unwrap();
+    let header = header.replace(
+        "</w:hdr>",
+        concat!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
+            r#"<w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:hdr>"#
+        ),
+    );
+    package.set_part("/word/header1.xml", header.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
     let mut doc = with_french_character_styles(&mut doc);
     let relationship = doc.add_hyperlink_relationship("https://example.com/");
     let note = doc.add_footnote("note");
@@ -1124,6 +1139,51 @@ fn links_and_note_marks_a_session_adds_take_a_localized_file_s_own_styles() {
         .unwrap();
     doc.add_hyperlink_to_story(&header, "head link", "https://example.com/head")
         .unwrap();
+    // The routes Python's paragraph and table edits take in a header.
+    let item = |doc: &Document, kind: oxoffice_docx::StoryItemKind, text: Option<&str>| {
+        let header = doc
+            .stories()
+            .unwrap()
+            .into_iter()
+            .find(|story| story.kind() == oxoffice_docx::StoryKind::Header)
+            .unwrap();
+        doc.story_items(&header)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.kind() == kind && item.text().unwrap().as_deref() == text)
+            .unwrap()
+            .location()
+            .clone()
+    };
+    let paragraph = item(&doc, oxoffice_docx::StoryItemKind::Paragraph, Some("head"));
+    doc.edit_story_paragraph(&paragraph, |paragraph| {
+        paragraph.add_internal_hyperlink("head top", "_top", None);
+        Ok(())
+    })
+    .unwrap();
+    // HTML inserted into the header.
+    let paragraph = item(
+        &doc,
+        oxoffice_docx::StoryItemKind::Paragraph,
+        Some("headhead top"),
+    );
+    doc.insert_html_fragment(
+        &paragraph,
+        r#"<p><a href="https://example.com/html">html link</a></p>"#,
+        &[],
+    )
+    .unwrap();
+    let table = item(&doc, oxoffice_docx::StoryItemKind::Table, None);
+    doc.edit_story_table(&table, |table| {
+        table
+            .cell(0, 0)
+            .unwrap()
+            .paragraph_mut(0)
+            .unwrap()
+            .add_internal_hyperlink("cell top", "_top", None);
+        Ok(())
+    })
+    .unwrap();
 
     let mut doc = reopen(&mut doc);
     let names = |name: &str| {
@@ -1141,7 +1201,7 @@ fn links_and_note_marks_a_session_adds_take_a_localized_file_s_own_styles() {
     assert_eq!(names("footnote reference"), ["Appelnotedebasdep"]);
     let bytes = doc.to_bytes().unwrap();
     let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-    for (part, count) in [("/word/document.xml", 3), ("/word/header1.xml", 1)] {
+    for (part, count) in [("/word/document.xml", 3), ("/word/header1.xml", 4)] {
         let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
         assert!(!xml.contains(r#"w:val="Hyperlink""#), "{part}: {xml}");
         assert!(
