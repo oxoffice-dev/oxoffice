@@ -803,6 +803,13 @@ fn layout_paragraph_with_source_and_table(
         };
         stored_caches.push(cache);
     }
+    // The fields of the paragraph by source index, which a stored run names
+    // as the field that displays it.
+    let paragraph_fields = if source_node.is_some() {
+        source_fields(para)
+    } else {
+        Vec::new()
+    };
     let mut expanded = Vec::new();
     for (index, (projected, cache)) in projected_runs.into_iter().zip(&stored_caches).enumerate() {
         let start = projection_char_offset;
@@ -884,6 +891,28 @@ fn layout_paragraph_with_source_and_table(
                     .hyperlink_index
                     .and_then(|index| para.hyperlinks.get(index))
                     .and_then(|hyperlink| hyperlink_target(hyperlink, input))
+            })
+            .or_else(|| {
+                // The stored result of a cross-reference or a hyperlink
+                // field, drawn as the runs it caches, links as the field
+                // that displays the run (a page reference nested in a table
+                // of contents), else as the field the run belongs to.
+                if !stored_cache {
+                    return None;
+                }
+                let nested = stored_source
+                    .and_then(|source| paragraph_fields.get(source.index as usize))
+                    .and_then(|field| field_link(&field.effective_instruction()));
+                let owner = prepared_runs[projected_index]
+                    .as_ref()
+                    .unwrap_or(original_runs[projected_index].run);
+                let outer = || match owner.content.as_slice() {
+                    [RunContent::Field(field)] => field_link(&field.effective_instruction()),
+                    _ => None,
+                };
+                nested
+                    .or_else(outer)
+                    .and_then(|link| hyperlink_url_of_field(&link, input))
             });
 
         // Word writes each entry of a table of contents as a hyperlink to a
@@ -1450,6 +1479,13 @@ fn layout_paragraph_with_source_and_table(
                     };
                     for (value, stored_properties, display_owner) in segments {
                         let value = value.as_ref();
+                        // A cross-reference or a hyperlink field links its
+                        // result, unless a hyperlink around the run does.
+                        let segment_hyperlink_url = current_hyperlink_url.clone().or_else(|| {
+                            field_link(&display_owner.effective_instruction())
+                                .or_else(|| field_link(&field.effective_instruction()))
+                                .and_then(|link| hyperlink_url_of_field(&link, input))
+                        });
                         let segment_field_source = source_node
                             .zip(
                                 field_indices
@@ -1666,7 +1702,7 @@ fn layout_paragraph_with_source_and_table(
                                     dstrike: segment_dstrike,
                                     highlight: segment_highlight,
                                     baseline_offset: segment_baseline_offset,
-                                    hyperlink_url: current_hyperlink_url.clone(),
+                                    hyperlink_url: segment_hyperlink_url.clone(),
                                     field_kind: segment_field_kind,
                                     field_source: segment_field_source,
                                     note: None,
@@ -2214,6 +2250,18 @@ fn layout_paragraph_with_source_and_table(
     result.right_to_left = right_to_left;
     result.heading_level = heading_level;
     result.heading_text = heading_level.map(|_| heading_text);
+    // A bookmark that starts inside the paragraph and that a field or a link
+    // targets has a marker there: it lands where the marker is drawn. The
+    // others land at the top of the paragraph.
+    result.bookmark_targets = para
+        .bookmark_markers
+        .iter()
+        .filter(|bookmark| bookmark.is_start())
+        .filter_map(|bookmark| bookmark.name())
+        .filter_map(|name| page_ref_id(input, name).map(|target| (target, name)))
+        .filter(|(_, name)| bookmark_exists(input, name))
+        .map(|(target, name)| (target, name.to_owned()))
+        .collect();
     result.bookmarks = para
         .bookmark_markers
         .iter()
@@ -2221,6 +2269,12 @@ fn layout_paragraph_with_source_and_table(
         .chain(block_after)
         .filter(|bookmark| bookmark.is_start())
         .filter_map(|bookmark| bookmark.name())
+        .filter(|name| {
+            !result
+                .bookmark_targets
+                .iter()
+                .any(|(_, marked)| marked.as_str() == *name)
+        })
         .map(str::to_owned)
         .collect();
     result.change_bar = change_bar_color(para, input);
@@ -2305,11 +2359,28 @@ fn hyperlink_target(
 ) -> Option<String> {
     match hyperlink.rel_id.as_deref() {
         Some(rel_id) => input.hyperlink_urls.get(rel_id).cloned(),
+        // The link names its bookmark as the bookmark's start does.
         None => hyperlink
             .anchor
             .as_deref()
             .filter(|anchor| !anchor.is_empty())
-            .map(|anchor| format!("#{anchor}")),
+            .map(|anchor| {
+                let name = bookmark_spelling(input, anchor);
+                format!("#{}", name.as_deref().unwrap_or(anchor))
+            }),
+    }
+}
+
+/// The link a field's result makes in the output: an internal link to a
+/// bookmark of the document, or an external target. An internal link to no
+/// bookmark makes none.
+fn hyperlink_url_of_field(link: &str, input: &LayoutInput) -> Option<String> {
+    match link.strip_prefix('#') {
+        Some(name) => bookmark_exists(input, name)
+            .then(|| bookmark_spelling(input, name))
+            .flatten()
+            .map(|name| format!("#{name}")),
+        None => Some(link.to_owned()),
     }
 }
 
