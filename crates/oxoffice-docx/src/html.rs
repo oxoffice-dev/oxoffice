@@ -416,6 +416,7 @@ pub(crate) fn project_html_fragment(
     importer.record_head_resources()?;
     importer.collect_styles()?;
     importer.project()?;
+    importer.report_unanchored_links()?;
     Ok(HtmlFragmentProjection {
         content: importer.output,
         diagnostics: importer.diagnostics,
@@ -647,13 +648,13 @@ fn project_markdown(markdown: &str, limits: Limits) -> Result<MarkdownHtmlProjec
         // `<a id="name"></a>`, is the one raw HTML read: as a bookmark.
         if let Event::InlineHtml(html) = &event {
             let html = html.trim();
-            if markdown_anchor_open(html).is_some() {
+            if image_depth == 0 && markdown_anchor_open(html).is_some() {
                 source_elements.push(("a", range.clone()));
                 raw_anchor_open = !html.ends_with("</a>");
                 events.push(event);
                 continue;
             }
-            if raw_anchor_open && html == "</a>" {
+            if image_depth == 0 && raw_anchor_open && html == "</a>" {
                 raw_anchor_open = false;
                 events.push(event);
                 continue;
@@ -691,13 +692,13 @@ fn project_markdown(markdown: &str, limits: Limits) -> Result<MarkdownHtmlProjec
 }
 
 /// The name of a raw `<a id="name">` (or `<a id="name"></a>`) as the
-/// Markdown export writes it, the name one Word accepts for a bookmark.
+/// Markdown export writes it.
 fn markdown_anchor_open(html: &str) -> Option<&str> {
     let rest = html.strip_prefix("<a id=\"")?;
     let (name, rest) = rest.split_once('"')?;
     matches!(rest, ">" | "></a>")
         .then_some(name)
-        .filter(|name| internal_link_target(&format!("#{name}")).is_some())
+        .filter(|name| anchor_name(name) == Some(*name))
 }
 
 fn html_style_id(document: &Document, id: &str) -> String {
@@ -2523,7 +2524,7 @@ fn add_text_run<'p>(
     relationships: &HashMap<String, String>,
 ) -> Run<'p> {
     match style.hyperlink.as_deref() {
-        Some(url) => match internal_link_target(url) {
+        Some(url) => match url.strip_prefix('#') {
             Some(name) => paragraph.add_internal_hyperlink(text, name, None),
             None => paragraph.add_hyperlink(text, &relationships[url]),
         },
@@ -2936,38 +2937,85 @@ struct Importer<'a> {
     cells: usize,
     projection: Option<&'a HtmlProjection>,
     embedded_images: HashMap<String, String>,
-    /// The names `#name` links of the input target, by `bookmark_name_key`:
-    /// an element with one of them as its id becomes a bookmark.
+    /// The names `#name` links of the input target and one of its elements
+    /// carries, by `bookmark_name_key`: such a link is a link to a bookmark,
+    /// and the element with that id becomes the bookmark.
     link_targets: HashSet<String>,
     /// The bookmark names the document holds or the import wrote, by
     /// `bookmark_name_key`.
     bookmark_names: HashSet<String>,
 }
 
-/// The bookmark a `#name` link targets: a name Word accepts for a bookmark
-/// (40 ASCII letters, digits or underscores, not starting with a digit),
-/// the hidden `_Toc` and `_Ref` names included.
-fn internal_link_target(href: &str) -> Option<&str> {
-    let name = href.strip_prefix('#')?;
-    (!name.is_empty()
-        && name.len() <= 40
-        && !name.starts_with(|character: char| character.is_ascii_digit())
-        && name
+/// An id or anchor name that can name a bookmark: not empty, without
+/// whitespace or control characters. Other tools' ids are kept as they are
+/// (pandoc's `getting-started`, Google Docs' `_heading=h.gjdgxs`), as the
+/// exports write a bookmark's name as it is.
+fn anchor_name(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()
+        && value.len() <= 255
+        && !value
             .chars()
-            .all(|character| character == '_' || character.is_ascii_alphanumeric()))
-    .then_some(name)
+            .any(|character| character.is_whitespace() || character.is_control()))
+    .then_some(value)
 }
 
-/// The names the `#name` links of `dom` target, by `bookmark_name_key`.
+/// The names the `#name` links of `dom` target that an element of `dom`
+/// carries as its id (or, on `a`, its legacy `name`), by
+/// `bookmark_name_key`: those links stay in the document.
 fn dom_link_targets(dom: &Html) -> HashSet<String> {
-    let selector = Selector::parse("a[href]").expect("static selector");
-    dom.select(&selector)
-        .filter_map(|anchor| internal_link_target(anchor.attr("href")?.trim()))
-        .map(oxoffice_docx_oxml::text::bookmark_name_key)
+    use oxoffice_docx_oxml::text::bookmark_name_key;
+    let ids = Selector::parse("[id], a[name]").expect("static selector");
+    let ids = dom
+        .select(&ids)
+        .flat_map(|element| {
+            let name = (element.value().name() == "a")
+                .then(|| element.attr("name"))
+                .flatten();
+            [element.attr("id"), name]
+        })
+        .flatten()
+        .filter_map(anchor_name)
+        .map(bookmark_name_key)
+        .collect::<HashSet<_>>();
+    let links = Selector::parse("a[href]").expect("static selector");
+    dom.select(&links)
+        .filter_map(|anchor| anchor_name(anchor.attr("href")?.trim().strip_prefix('#')?))
+        .map(bookmark_name_key)
+        .filter(|name| ids.contains(name))
         .collect()
 }
 
 impl Importer<'_> {
+    /// The bookmark an `href` links to, when it is `#name` and an element
+    /// of the input carries `name`.
+    fn internal_target<'h>(&self, href: &'h str) -> Option<&'h str> {
+        let name = anchor_name(href.trim().strip_prefix('#')?)?;
+        self.link_targets
+            .contains(&oxoffice_docx_oxml::text::bookmark_name_key(name))
+            .then_some(name)
+    }
+
+    /// Report each link target whose element the import did not keep as a
+    /// bookmark (an id on a block it does not write as a paragraph): its
+    /// links point to no bookmark.
+    fn report_unanchored_links(&mut self) -> Result<()> {
+        let mut missing = self
+            .link_targets
+            .difference(&self.bookmark_names)
+            .cloned()
+            .collect::<Vec<_>>();
+        missing.sort();
+        for name in missing {
+            self.diagnostic(
+                "html",
+                None,
+                format!("HTML link target `{name}` is on an element the import does not keep, so its links point to no bookmark"),
+            )?;
+        }
+        Ok(())
+    }
+
     fn existing_bookmark_names(&self) -> HashSet<String> {
         self.document
             .bookmarks()
@@ -2985,7 +3033,7 @@ impl Importer<'_> {
                 .then(|| element.attr("name"))
                 .flatten()
         });
-        if let Some(id) = id.map(str::trim)
+        if let Some(id) = id.and_then(anchor_name)
             && self
                 .link_targets
                 .contains(&oxoffice_docx_oxml::text::bookmark_name_key(id))
@@ -3554,6 +3602,7 @@ impl Importer<'_> {
             let start = self.output.len();
             let mut first = true;
             let mut pieces = Vec::new();
+            self.push_anchor(item, &mut pieces);
             for child in item.children() {
                 match child.value() {
                     Node::Text(text) => pieces.push(InlinePiece::Text(
@@ -3655,6 +3704,7 @@ impl Importer<'_> {
         {
             let item_style = self.computed_style(item, &style)?;
             let mut pieces = Vec::new();
+            self.push_anchor(item, &mut pieces);
             self.collect_inline_children(item, &item_style, false, &mut pieces)?;
             models.push(ParagraphModel {
                 pieces,
@@ -3893,6 +3943,7 @@ impl Importer<'_> {
     ) -> Result<Vec<ParagraphModel>> {
         let mut paragraphs = Vec::new();
         let mut inline_group = Vec::new();
+        self.push_anchor(cell, &mut inline_group);
         for child in cell.children() {
             match child.value() {
                 Node::Text(text) => inline_group.push(InlinePiece::Text(
@@ -3913,6 +3964,7 @@ impl Importer<'_> {
                         }
                         let style = self.computed_style(element, inherited)?;
                         let mut pieces = Vec::new();
+                        self.push_anchor(element, &mut pieces);
                         self.collect_inline_children(
                             element,
                             &style,
@@ -4168,7 +4220,22 @@ impl Importer<'_> {
             }
             "a" if element
                 .attr("href")
-                .is_some_and(|href| internal_link_target(href.trim()).is_none()) =>
+                .is_some_and(|href| href.trim().starts_with('#'))
+                && element
+                    .attr("href")
+                    .and_then(|href| self.internal_target(href))
+                    .is_none() =>
+            {
+                self.diagnostic(
+                    &location,
+                    None,
+                    "dropped HTML link to an id no element of the input has and retained anchor text"
+                        .to_string(),
+                )?;
+            }
+            "a" if element
+                .attr("href")
+                .is_some_and(|href| !href.trim().starts_with('#')) =>
             {
                 let href = element.attr("href").expect("anchor href checked");
                 if self.projection.is_none()
@@ -4204,12 +4271,14 @@ impl Importer<'_> {
         if name == "a"
             && let Some(name) = element
                 .attr("href")
-                .and_then(|href| internal_link_target(href.trim()))
+                .and_then(|href| self.internal_target(href))
         {
-            // A link to a bookmark of the same document.
+            // A link to a bookmark of the same document: the only hyperlink
+            // value that starts with `#`.
             style.hyperlink = Some(format!("#{name}"));
         } else if name == "a"
             && let Some(href) = element.attr("href")
+            && !href.trim().starts_with('#')
             && let Some(projection) = self.projection
         {
             if let Some(target) = projection.hyperlinks.get(href) {
@@ -4286,7 +4355,7 @@ impl Importer<'_> {
         for piece in &model.pieces {
             if let InlinePiece::Text(_, style, _) = piece
                 && let Some(url) = &style.hyperlink
-                && internal_link_target(url).is_none()
+                && !url.starts_with('#')
                 && !hyperlink_ids.contains_key(url)
             {
                 let relationship_id = if let Some(story) = self.story {
@@ -4516,6 +4585,7 @@ impl Importer<'_> {
     }
 
     fn finish(mut self) -> Result<HtmlReadResult> {
+        self.report_unanchored_links()?;
         self.document.document.body.content.append(&mut self.output);
         let bytes = self.document.to_bytes()?;
         let document = Document::from_bytes(&bytes)?;

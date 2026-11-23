@@ -1223,27 +1223,92 @@ fn internal_links_and_their_bookmarks_survive_a_round_trip_through_html_markdown
     let mhtml = Document::from_mhtml_bytes(&doc.to_mhtml_bytes().unwrap().bytes).unwrap();
     check(&mhtml.document, "MHTML");
 
-    // A heading or a legacy named anchor that a link targets is a bookmark
-    // too; an id no link targets is not, and a name Word refuses stays text.
+    // A heading, a list item or a legacy named anchor that a link targets is
+    // a bookmark, whatever tool named it (pandoc writes `getting-started`);
+    // an id no link targets is not. A link to an id no element has, or to
+    // one on a block the import does not keep, says so.
     let read = Document::from_html(concat!(
-        r#"<h2 id="results">Results</h2><p><a name="old"></a>Old</p><p id="unlinked">Plain</p>"#,
-        r##"<p><a href="#results">up</a> <a href="#old">old</a> <a href="#a b">bad</a></p>"##,
+        r#"<h2 id="getting-started">Start</h2><p><a name="old"></a>Old</p><p id="unlinked">Plain</p>"#,
+        r#"<ul><li id="item">Item</li></ul><div id="block"><p>Block</p></div>"#,
+        r#"<p><a id="Dup"></a>One <a id="dup"></a>Two</p>"#,
+        r##"<p><a href="#getting-started">up</a> <a href="#old">old</a> <a href="#item">item</a>"##,
+        r##" <a href="#dup">dup</a> <a href="#top">top</a> <a href="#block">block</a></p>"##,
     ))
-    .unwrap()
-    .document;
+    .unwrap();
     let mut names = read
+        .document
         .bookmarks()
         .iter()
         .filter_map(|bookmark| bookmark.name().map(str::to_owned))
         .collect::<Vec<_>>();
     names.sort();
-    assert_eq!(names, ["old", "results"]);
-    let anchors = read
+    // One bookmark per name, as Word compares them, the first one kept.
+    assert_eq!(names, ["Dup", "getting-started", "item", "old"]);
+    let links = read
+        .document
         .links()
         .into_iter()
-        .filter_map(|link| link.anchor)
+        .map(|link| (link.text, link.anchor, link.rel_id))
         .collect::<Vec<_>>();
-    assert_eq!(anchors, ["results", "old"]);
+    assert_eq!(
+        links,
+        [
+            ("up".to_owned(), Some("getting-started".to_owned()), None),
+            ("old".to_owned(), Some("old".to_owned()), None),
+            ("item".to_owned(), Some("item".to_owned()), None),
+            ("dup".to_owned(), Some("dup".to_owned()), None),
+            ("block".to_owned(), Some("block".to_owned()), None),
+        ]
+    );
+    assert!(texts(&read.document).last().unwrap().contains(" top "));
+    let messages = read
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        messages.contains(
+            &"dropped HTML link to an id no element of the input has and retained anchor text"
+        ),
+        "{messages:?}"
+    );
+    assert!(
+        messages.contains(
+            &"HTML link target `block` is on an element the import does not keep, so its links point to no bookmark"
+        ),
+        "{messages:?}"
+    );
+
+    // Raw HTML in an image's alternate text is not an anchor: the import
+    // goes on, with its diagnostic.
+    let read = Document::from_markdown(r#"![<a id="x"></a>](p.png) text"#).unwrap();
+    assert!(read.document.bookmarks().is_empty());
+
+    // A fragment inserted in a document keeps a name the document holds.
+    let mut doc = reopen(&mut doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Kept</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+    ));
+    let end = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.insert_html_fragment(
+        &end,
+        r##"<p><a id="kept"></a>Again <a id="fresh"></a>New</p><p><a href="#fresh">to new</a></p>"##,
+        &[],
+    )
+    .unwrap();
+    let mut names = doc
+        .bookmarks()
+        .iter()
+        .filter_map(|bookmark| bookmark.name().map(str::to_owned))
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["Kept", "fresh"]);
+    assert_eq!(
+        doc.links()
+            .into_iter()
+            .map(|link| (link.anchor, link.rel_id))
+            .collect::<Vec<_>>(),
+        [(Some("fresh".to_owned()), None)]
+    );
 }
 
 #[test]
