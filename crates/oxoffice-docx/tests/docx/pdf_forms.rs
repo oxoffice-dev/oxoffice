@@ -906,7 +906,7 @@ fn legacy_form_fields_saved_by_libreoffice_become_the_fields_word_saves() {
 }
 
 #[test]
-fn a_legacy_field_whose_form_data_does_not_read_stays_static_and_says_so() {
+fn a_legacy_field_whose_form_data_does_not_read_stays_static_and_says_its_name() {
     // The selected entry is past the end of the list.
     let size = legacy(
         0,
@@ -927,7 +927,7 @@ fn a_legacy_field_whose_form_data_does_not_read_stays_static_and_says_so() {
         .collect();
     assert_eq!(
         said,
-        ["form field \"untitled\" stays static: its form data does not read"]
+        ["form field \"Size\" stays static: its form data does not read"]
     );
 }
 
@@ -1014,6 +1014,21 @@ fn a_control_whose_text_is_only_a_tracked_insertion_follows_a_legacy_field_befor
         r#"<w:p>{first}<w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="late"/><w:text/></w:sdtPr><w:sdtContent><w:ins w:id="9" w:author="a" w:date="2026-01-01T00:00:00Z"><w:r><w:t>two</w:t></w:r></w:ins></w:sdtContent></w:sdt></w:p>"#
     ));
     assert_eq!(names_of(&doc), ["First", "late"]);
+}
+
+#[test]
+fn a_control_with_no_run_after_a_legacy_field_takes_the_later_name() {
+    let first = legacy(
+        0,
+        "First",
+        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+        "FORMTEXT",
+        Some("one"),
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{first}<w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="later"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt></w:p>"#
+    ));
+    assert_eq!(names_of(&doc), ["First", "later"]);
 }
 
 /// The fields' names with the value each shows, or the kind of a field

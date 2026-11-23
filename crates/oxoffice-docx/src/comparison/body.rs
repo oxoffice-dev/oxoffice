@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// Compare the owners of one story and return the tracked story content.
+///
+/// `held` names the owners of each side that hold an existing modeled
+/// revision. Such an owner is kept only when both sides hold it unchanged,
+/// and then its original bytes are emitted. Any other change that would
+/// revise, delete, insert or move it, or mark its paragraph mark, is refused.
+// Frames contain only live immutable parse owners. Nested body calls push a
+// separate frame, and pop on every Result exit before their owners can drop.
 pub(super) fn compare_body(
     documents: [&CT_Document; 2],
     location: &str,
@@ -948,5 +956,14 @@ fn moved_row(row: &CT_Row, kind: &str, id: i32, metadata: &Metadata<'_>) -> Resu
                 .ids
                 .generated(format!("<w:trPr>{marker}</w:trPr>"))?,
         )?)
+    }
+}
+
+pub(super) fn body_location(location: &str, content: &BodyContent, index: usize) -> String {
+    match content {
+        BodyContent::Paragraph(_) => format!("{location}/paragraph[{index}]"),
+        BodyContent::Table(_) => format!("{location}/table[{index}]"),
+        BodyContent::ContentControl(_) => format!("{location}/content-control[{index}]"),
+        BodyContent::RawXml(_) => format!("{location}/raw[{index}]"),
     }
 }
