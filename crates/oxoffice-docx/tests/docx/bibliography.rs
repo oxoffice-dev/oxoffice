@@ -647,7 +647,7 @@ fn an_apa_citation_names_the_title_only_beside_another_work_of_its_author() {
     cite.pages = Some("12".into());
     let alone = source("Smith20", GUID, BibliographySourceKind::Book);
     let mut doc = cited(
-        &[alone.clone()],
+        std::slice::from_ref(&alone),
         vec![cite.clone()],
         BibliographyStyle::ApaSixthEdition,
     );

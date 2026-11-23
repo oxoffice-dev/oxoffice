@@ -1,6 +1,6 @@
 ---
 date: 2026-11-23
-status: accepted
+status: shipped
 scope: docx, cli, python
 ---
 
@@ -182,6 +182,23 @@ Steps 3 to 7 change `bibliography/` only, and each closes its rows of the
 oracle's known list. Steps 8 and 9 build on the facade's signatures, which
 steps 3 to 7 do not change, so they can run in parallel with them.
 `insert_citation_after_text` lands in step 8.
+
+## Outcome
+
+Stopped after step 2 by the maintainer's decision (2026-11-23): steps 3 to
+10 are not done, and an issue will be opened if the features are needed.
+
+- Step 1 ([#578](https://github.com/oxoffice-dev/oxoffice/pull/578)):
+  behaviour tests, and every refusal names its style, source and locale.
+- Step 2 ([#589](https://github.com/oxoffice-dev/oxoffice/pull/589)): the
+  Word oracle, with APA fixed to match it. Word for Mac 16.115 ships exactly
+  our 12 styles, but it renders a document in the style set in the
+  application, not the file's, and the maintainer ruled out macros and
+  manual passes. Only APA 6th in en-US is therefore recorded and checked;
+  of its 60 fields, all match Word except a patent entry's trailing space,
+  and the entry order differs for a case and a person sharing a name.
+- The limitation `docx-bibliography-word-check` and the README row say
+  what is covered and checked.
 
 ## Links
 
