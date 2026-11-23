@@ -7,7 +7,7 @@ use std::io::Cursor;
 use oxoffice_docx::paragraph::ParagraphItemRef;
 use oxoffice_docx::{
     CommentDate, CommentRef, ContentLocation, Document, HalfPoint, RunItemRef, RunPosition,
-    RunRange, StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
+    RunRange, StoryKind, StoryRangeKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
     TextCommentOptions, Twips,
 };
 use oxoffice_opc::OpcPackage;
@@ -1149,4 +1149,135 @@ fn a_comment_on_part_of_a_tracked_insertion_stays_inside_it() {
     let revisions = doc.story_revisions().unwrap();
     assert_eq!(revisions.len(), 1);
     assert_eq!(revisions[0].text(), "new words here");
+}
+
+/// The name or comment id of each story range, with its run boundaries.
+fn listed_ranges(doc: &Document) -> Vec<(String, usize, usize)> {
+    doc.story_ranges()
+        .unwrap()
+        .iter()
+        .map(|range| {
+            let label = match range.kind() {
+                StoryRangeKind::Bookmark { name, .. } => name.clone(),
+                StoryRangeKind::Comment { id } => format!("comment {id}"),
+                other => format!("{other:?}"),
+            };
+            (
+                label,
+                range.range().start.run_index,
+                range.range().end.run_index,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn overlapping_bookmarks_are_each_listed_with_their_own_edges() {
+    // Word writes two overlapping bookmarks with crossing markers.
+    let mut doc = doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="first"/><w:r><w:t>one </w:t></w:r><w:bookmarkStart w:id="2" w:name="second"/><w:r><w:t>two </w:t></w:r><w:bookmarkEnd w:id="1"/><w:r><w:t>three</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
+    );
+    let mut ranges = listed_ranges(&doc);
+    ranges.sort();
+    assert_eq!(
+        ranges,
+        [("first".to_owned(), 0, 2), ("second".to_owned(), 1, 3)]
+    );
+    // Removing one leaves the other on its own runs.
+    let first = doc
+        .story_ranges()
+        .unwrap()
+        .into_iter()
+        .find(|range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "first"))
+        .unwrap();
+    assert!(doc.remove_story_range(&first).unwrap());
+    let doc = reopen(&mut doc);
+    assert_eq!(listed_ranges(&doc), [("second".to_owned(), 1, 3)]);
+}
+
+#[test]
+fn overlapping_comments_leave_every_range_listed_and_editable() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>one </w:t></w:r><w:r><w:t>two </w:t></w:r><w:r><w:t>three</w:t></w:r></w:p>"#,
+    );
+    // The later range first, so that its reference run, at the end, moves
+    // no boundary of the earlier one.
+    let second = doc
+        .add_comment_with_date(
+            run_range(0, 1, 0, 3),
+            REVIEWER,
+            None,
+            "B",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let first = doc
+        .add_comment_with_date(
+            run_range(0, 0, 0, 2),
+            REVIEWER,
+            None,
+            "A",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        comment(&doc, first).anchor_text().unwrap().as_deref(),
+        Some("one two ")
+    );
+    assert_eq!(
+        comment(&doc, second).anchor_text().unwrap().as_deref(),
+        Some("two three")
+    );
+    // Both ranges are listed, whatever the order of their markers.
+    let labels = listed_ranges(&doc)
+        .into_iter()
+        .map(|(label, _, _)| label)
+        .collect::<Vec<_>>();
+    assert_eq!(labels.len(), 2, "{labels:?}");
+    for id in [first, second] {
+        assert!(labels.contains(&format!("comment {id}")), "{labels:?}");
+    }
+    // An edit that checks the ranges first still works on the document.
+    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.add_story_bookmark("after", story_range(&paragraph, 0, 1))
+        .unwrap();
+    assert!(
+        listed_ranges(&doc)
+            .iter()
+            .any(|(label, _, _)| label == "after")
+    );
+}
+
+#[test]
+fn every_corpus_document_lists_its_story_ranges() {
+    // Word, Google Docs and LibreOffice all write overlapping comments or
+    // bookmarks with crossing markers in some of these files.
+    let files = crate::support::corpus_files("docx");
+    let outcomes = crate::support::map_in_parallel(&files, |file| {
+        Document::from_bytes(&file.bytes())
+            .and_then(|doc| doc.story_ranges().map(|_| ()))
+            .map_err(|error| error.to_string())
+    });
+    let failures = files
+        .iter()
+        .zip(outcomes)
+        .filter_map(|(file, outcome)| match outcome {
+            // Known failure #595: LibreOffice's form has bookmark starts with
+            // no end. Once it lists its ranges, drop this arm.
+            Some(Err(error))
+                if file.path == "libreoffice/form.docx" && error.contains("unmatched start") =>
+            {
+                None
+            }
+            Some(Ok(())) if file.path == "libreoffice/form.docx" => Some(format!(
+                "{}: lists its ranges now, drop its known failure (#595)",
+                file.path
+            )),
+            Some(Ok(())) => None,
+            Some(Err(error)) => Some(format!("{}: {error}", file.path)),
+            None => Some(format!("{}: panicked", file.path)),
+        })
+        .collect::<Vec<_>>();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
