@@ -684,6 +684,91 @@ fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
 
 // ---- Pictures ----
 
+/// A paragraph anchoring, at the top left of the text area, a text box of
+/// one inch by `height` EMU holding `lines` short paragraphs, with this
+/// `wps:bodyPr` content.
+fn text_box_of_lines(height: u32, lines: usize, body_pr: &str) -> String {
+    let content = (1..=lines)
+        .map(|line| format!("<w:p><w:pPr><w:spacing w:after=\"0\"/></w:pPr><w:r><w:t>Line {line}</w:t></w:r></w:p>"))
+        .collect::<String>();
+    format!(
+        concat!(
+            r#"<w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" "#,
+            r#"relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">"#,
+            r#"<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+            r#"<wp:positionV relativeFrom="margin"><wp:posOffset>0</wp:posOffset></wp:positionV>"#,
+            r#"<wp:extent cx="914400" cy="{height}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>"#,
+            r#"<wp:docPr id="7" name="Text Box"/><wp:cNvGraphicFramePr/>"#,
+            r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+            r#"<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="{height}"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{content}"#,
+            r#"</w:txbxContent></wps:txbx>{body_pr}</wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#,
+        ),
+        height = height,
+        content = content,
+        body_pr = body_pr
+    )
+}
+
+// Word 16.115 draws a text box that keeps its size line by line: the first
+// line that does not fit inside it, insets included, is hidden whole, and so
+// is every line after it; nothing is cut at the edge (the newsletter's
+// "Dates for your diary" box). A box that grows to fit its text shows it all.
+#[test]
+fn a_text_box_of_fixed_size_hides_the_lines_that_do_not_fit_whole() {
+    // 0.6 inch: 43.2 pt, less 7.2 pt of insets, holds two lines of 11 pt
+    // text (about 14.5 pt each), not three.
+    let fixed = pdf_of(&doc_with_body(&text_box_of_lines(
+        548640,
+        6,
+        r#"<wps:bodyPr><a:noAutofit/></wps:bodyPr>"#,
+    )));
+    let text = squeeze(&fixed.page_text(0));
+    assert!(text.contains("Line1") && text.contains("Line2"), "{text}");
+    for hidden in 3..=6 {
+        assert!(!text.contains(&format!("Line{hidden}")), "{text}");
+    }
+    // Without an autofit element the size is fixed too.
+    let unstated = pdf_of(&doc_with_body(&text_box_of_lines(
+        548640,
+        6,
+        "<wps:bodyPr/>",
+    )));
+    assert_eq!(squeeze(&unstated.page_text(0)), text);
+
+    let grows = pdf_of(&doc_with_body(&text_box_of_lines(
+        548640,
+        6,
+        r#"<wps:bodyPr><a:spAutoFit/></wps:bodyPr>"#,
+    )));
+    let text = squeeze(&grows.page_text(0));
+    assert!(
+        (1..=6).all(|line| text.contains(&format!("Line{line}"))),
+        "{text}"
+    );
+}
+
+// A text box's text starts its insets away from the box's edges: Word's
+// 0.1 inch on the left by default, or what `wps:bodyPr` says.
+#[test]
+fn a_text_box_text_starts_its_insets_from_the_box_edges() {
+    let left_of = |body_pr: &str| {
+        let pdf = pdf_of(&doc_with_body(&text_box_of_lines(914400, 1, body_pr)));
+        (
+            line_of(&pdf, 0, "Line 1").left,
+            line_of(&pdf, 0, "Line 1").y,
+        )
+    };
+    let (default_left, default_y) = left_of("<wps:bodyPr/>");
+    assert!((default_left - (72.0 + 7.2)).abs() < 0.5, "{default_left}");
+    let (left, y) = left_of(r#"<wps:bodyPr lIns="0" tIns="91440"/>"#);
+    assert!((left - 72.0).abs() < 0.5, "{left}");
+    // 0.1 inch of top inset rather than 0.05: the line is 3.6 pt lower.
+    assert!((default_y - y - 3.6).abs() < 0.5, "{default_y} {y}");
+}
+
 /// A paragraph that starts with a text box it must clear, Word's "top and
 /// bottom" wrapping, anchored at the paragraph's top.
 fn paragraph_below_its_text_box(text: &str) -> String {

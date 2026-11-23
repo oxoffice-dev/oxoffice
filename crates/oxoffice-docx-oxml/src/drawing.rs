@@ -485,12 +485,60 @@ pub struct CT_Shape {
     pub solid_fill: Option<String>,
     /// Paragraphs of the shape's text box, from `wps:txbx/w:txbxContent`.
     pub text: Vec<crate::text::CT_P>,
+    /// Whether the shape grows to fit its text (`a:spAutoFit` in
+    /// `wps:bodyPr`). Otherwise its extent is fixed, and Word hides the
+    /// lines that do not fit.
+    pub grows_to_fit_text: bool,
+    /// Space between the shape's edges and its text, from `wps:bodyPr`.
+    pub text_insets: TextInsets,
     /// Authoritative parsed block body, including tables and modeled controls.
     /// The paragraph-only projection is used for authored legacy shapes when absent.
     pub text_body: Option<crate::document::CT_Body>,
     /// Physical selected text-box owner ordinal in the source OPC part.
     /// Assigned by the document projection, never by renderer traversal order.
     pub source_text_box_owner: Option<usize>,
+}
+
+/// Space between a shape's edges and its text (`lIns`, `tIns`, `rIns` and
+/// `bIns` of `wps:bodyPr`). An absent side is Word's default: 0.1 inch left
+/// and right, 0.05 inch top and bottom.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextInsets {
+    pub left: Emu,
+    pub top: Emu,
+    pub right: Emu,
+    pub bottom: Emu,
+}
+
+impl Default for TextInsets {
+    fn default() -> Self {
+        Self {
+            left: Emu(91440),
+            top: Emu(45720),
+            right: Emu(91440),
+            bottom: Emu(45720),
+        }
+    }
+}
+
+/// Read the insets a `wps:bodyPr` states; an unreadable value keeps the
+/// default.
+fn read_text_insets(element: &BytesStart<'_>, insets: &mut TextInsets) {
+    for attribute in element.attributes().flatten() {
+        let side = match attribute.key.as_ref() {
+            b"lIns" => &mut insets.left,
+            b"tIns" => &mut insets.top,
+            b"rIns" => &mut insets.right,
+            b"bIns" => &mut insets.bottom,
+            _ => continue,
+        };
+        if let Some(value) = std::str::from_utf8(&attribute.value)
+            .ok()
+            .and_then(|value| value.parse().ok())
+        {
+            *side = Emu(value);
+        }
+    }
 }
 
 /// Parse the DrawingML held inside a captured `mc:AlternateContent` block.
@@ -1076,6 +1124,14 @@ impl CT_Anchor {
                         // Ignore simplePos
                     } else if let DrawingChildAction::Wrap(parsed) = action {
                         wrap = parsed;
+                    } else if let Some(shape) = shape.as_mut() {
+                        // Inside the shape's `wps:bodyPr`, or `wps:bodyPr`
+                        // itself when it has no children.
+                        if matches_local_name(ename.as_ref(), b"spAutoFit") {
+                            shape.grows_to_fit_text = true;
+                        } else if matches_local_name(ename.as_ref(), b"bodyPr") {
+                            read_text_insets(e, &mut shape.text_insets);
+                        }
                     }
                 }
                 Ok(Event::Start(ref e)) => {
@@ -1092,6 +1148,13 @@ impl CT_Anchor {
                         canonical_wp_element(reader, e, b"docPr"),
                         is_word_text_box,
                     );
+                    // A shape's `wps:bodyPr` follows its `wps:spPr`, which
+                    // made the shape.
+                    if matches_local_name(ename.as_ref(), b"bodyPr")
+                        && let Some(shape) = shape.as_mut()
+                    {
+                        read_text_insets(e, &mut shape.text_insets);
+                    }
                     if action == DrawingChildAction::SourceRect {
                         source_rect = Some(parse_source_rect(e)?);
                         reader.read_to_end_into(ename, &mut Vec::new())?;

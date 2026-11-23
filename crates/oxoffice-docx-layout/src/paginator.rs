@@ -3974,7 +3974,13 @@ fn anchored_elements(
             };
         }
         (
-            AnchoredContent::Shape { preset, fill, text },
+            AnchoredContent::Shape {
+                preset,
+                fill,
+                text,
+                fixed_height,
+                insets,
+            },
             owner @ (AnchorPaintOwner::Neutral
             | AnchorPaintOwner::Word(WordAnchorPaint::Shape { .. })),
         ) => {
@@ -4008,8 +4014,20 @@ fn anchored_elements(
                 }
                 _ => None,
             };
+            let [left, top, right, bottom] = *insets;
+            let text_rect = Rect {
+                x: rect.x + left,
+                y: rect.y + top,
+                width: (rect.width - left - right).max(0.0),
+                height: (rect.height - top - bottom).max(0.0),
+            };
             produced.append(&mut render_shape_text(
-                text, paragraphs, geometry, rect, media,
+                text,
+                paragraphs,
+                geometry,
+                text_rect,
+                fixed_height.then_some(text_rect.height),
+                media,
             )?)?;
         }
         _ => {
@@ -4958,16 +4976,20 @@ fn translate_element_shallow(element: &mut PositionedElement, dx: f64, dy: f64) 
     }
 }
 
-/// Render a shape's text box inside `rect`.
+/// Render a shape's text box inside `rect`, the shape less its insets.
 ///
 /// The paragraphs arrive already laid out at the shape's width. They are
 /// rendered as if they sat at the left margin and then translated onto the
 /// shape, which keeps all the justification and indent handling in one place.
+///
+/// A shape whose extent is fixed shows `height` of text: Word hides the first
+/// line that does not fit whole, and every line after it.
 fn render_shape_text(
     text: &[ParagraphBlock],
     owners: Option<&[WordParagraphPaint]>,
     geometry: &PageGeometry,
     rect: Rect,
+    height: Option<f64>,
     media: &HashMap<MediaId, ImageData>,
 ) -> oxoffice_layout::Result<PaintedElements> {
     if owners.is_some_and(|owners| owners.len() != text.len()) {
@@ -4978,11 +5000,36 @@ fn render_shape_text(
     let mut local = PaintLayers::default();
     let mut y = 0.0;
     for (index, para) in text.iter().enumerate() {
+        let mut bottom = y + para.content_offset_top;
+        let fit = height.map_or(para.lines.len(), |height| {
+            para.lines
+                .iter()
+                .take_while(|line| {
+                    bottom += line.height;
+                    bottom <= height + 0.01
+                })
+                .count()
+        });
+        let (kept, kept_paint);
+        let (para, paint) = if fit < para.lines.len() {
+            if fit == 0 {
+                break;
+            }
+            let mut lines = para.clone();
+            lines.lines.truncate(fit);
+            kept = lines;
+            kept_paint = owners
+                .map(|owners| owners[index].for_line_range(&para.lines, 0..fit))
+                .transpose()?;
+            (&kept, kept_paint.as_ref())
+        } else {
+            (para, owners.map(|owners| &owners[index]))
+        };
         local.append(&mut render_paragraph_lines(
             &para.lines,
             ParagraphView {
                 line_start: 0,
-                paint: owners.map(|owners| &owners[index]),
+                paint,
                 baseline_policy: None,
                 line_gaps: &[],
                 border_group_before: false,
@@ -4996,6 +5043,9 @@ fn render_shape_text(
             (true, true, 0.0),
             media,
         )?)?;
+        if fit < text[index].lines.len() {
+            break;
+        }
         y += para.content_height();
     }
     let dx = rect.x - geometry.margin_left;

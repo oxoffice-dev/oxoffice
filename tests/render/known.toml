@@ -22,21 +22,31 @@ issue = 156
 
 [[known]]
 file = "authored/newsletter.docx"
-check = "overlap"
-pages = [3]
-issue = 226
+check = "text"
+pages = [0]
+finding = "10 words"
+by_design = "the \"Dates for your diary\" text box keeps its size and its last lines do not fit: Word 16.115 hides them whole"
+
+[[known]]
+file = "google/newsletter.docx"
+check = "text"
+pages = [0]
+finding = "10 words"
+by_design = "the \"Dates for your diary\" text box keeps its size and its last lines do not fit: Word 16.115 hides them whole"
 
 [[known]]
 file = "libreoffice/newsletter.docx"
-check = "overlap"
-pages = [3]
-issue = 226
+check = "text"
+pages = [0]
+finding = "10 words"
+by_design = "the \"Dates for your diary\" text box keeps its size and its last lines do not fit: Word 16.115 hides them whole"
 
 [[known]]
 file = "word/newsletter.docx"
-check = "overlap"
-pages = [3]
-issue = 226
+check = "text"
+pages = [0]
+finding = "10 words"
+by_design = "the \"Dates for your diary\" text box keeps its size and its last lines do not fit: Word 16.115 hides them whole"
 
 [[known]]
 file = "authored/minutes.docx"
