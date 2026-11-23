@@ -398,8 +398,9 @@ pub struct LineBreakParams {
     pub ind_first_line: f64,
     /// Hanging indent in points (positive = text lines indented relative to first).
     pub ind_hanging: f64,
-    /// Whether the first-line and hanging indents apply at the right edge,
-    /// where a right-to-left paragraph starts.
+    /// Whether the paragraph starts at the right edge, as a right-to-left
+    /// one does: its first-line and hanging indents apply there, and its tab
+    /// stops are measured from the right margin.
     pub first_line_at_right: bool,
     /// Tab stops.
     pub tab_stops: Vec<TabStop>,
@@ -931,18 +932,34 @@ impl LineState {
     ///
     /// The first explicit stop past the tab wins, in the order the stops are
     /// listed as Word reads them, bar stops excepted. A hanging indent adds a
-    /// left stop at the left indent, which is where the tab after a list
+    /// left stop at the start indent, which is where the tab after a list
     /// number goes. Past the last explicit stop the tab takes the next
     /// multiple of the default interval.
+    ///
+    /// Word measures every stop from the margin the paragraph starts at,
+    /// whatever its indents: the left one, or the right one in a paragraph
+    /// that starts at the right edge. The stops are found in that measure,
+    /// the distance from the start margin, and the result is given in the
+    /// line's own coordinates, where the line runs from `start` for
+    /// `available` points: a line that starts at the right edge is laid out
+    /// from its end and then mirrored, so its start edge lies `gap` points
+    /// from the right margin. On a left-to-right line both measures agree.
     fn next_tab(&self, params: &LineBreakParams) -> ResolvedTab {
-        let x = self.start + self.width;
-        let line_end = self.start + self.available;
         let margin = params.available_width;
-        // At the right edge, the first line starts at the left indent, so the
-        // number's stop is the hanging indent past it.
+        let gap = if params.first_line_at_right {
+            margin - (self.start + self.available)
+        } else {
+            self.start
+        };
+        // From the distance to the start margin to the line's coordinates.
+        let on_line = |distance: f64| distance - gap + self.start;
+        let x = gap + self.width;
+        let line_end = gap + self.available;
+        // The number's stop is the start indent: the first line of a hanging
+        // indent starts before it, and the lines after it start on it.
         let hanging = (params.ind_hanging > 0.0).then_some(TabStop {
             pos_pt: if params.first_line_at_right {
-                params.ind_left + params.ind_hanging
+                params.ind_right
             } else {
                 params.ind_left
             },
@@ -964,12 +981,12 @@ impl LineState {
             (listed, hanging) => listed.or(hanging),
         };
         if let Some(stop) = next {
-            // Word 2013 and later move a stop past the right margin to the
-            // end of the line. Earlier versions keep it, and the text after a
+            // Word 2013 and later move a stop past the far margin to the end
+            // of the line. Earlier versions keep it, and the text after a
             // stop at or past the margin then runs on past it. A stop past the
-            // right indent lets the text run to the margin. Text after a
-            // right, centre or decimal stop is pushed back so it ends at the
-            // margin, unless an earlier version keeps the stop at or past it.
+            // end indent lets the text run to the margin. Text after a right,
+            // centre or decimal stop is pushed back so it ends at the margin,
+            // unless an earlier version keeps the stop at or past it.
             let past_margin = stop.pos_pt > margin;
             let pos = if past_margin && params.clamp_tabs_past_margin {
                 line_end
@@ -984,7 +1001,7 @@ impl LineState {
                 line_end
             };
             return ResolvedTab {
-                stop: pos,
+                stop: on_line(pos),
                 align: stop.align,
                 leader: leader_char(stop.leader),
                 // Word 2013 moves a left tab that reaches the end of its line
@@ -992,9 +1009,10 @@ impl LineState {
                 wraps: params.clamp_tabs_past_margin
                     && stop.align == TabAlign::Left
                     && pos > reach - 0.01,
-                reach,
+                reach: on_line(reach),
                 shift_limit: (params.clamp_tabs_past_margin || pos < margin)
-                    .then_some(margin.max(line_end)),
+                    .then_some(on_line(margin.max(line_end))),
+                mirrored: params.first_line_at_right,
             };
         }
         let interval = if params.default_tab_interval_pt > 0.0 {
@@ -1008,14 +1026,15 @@ impl LineState {
             .fold(f64::NEG_INFINITY, f64::max);
         let pos = ((x.max(last) / interval).floor() + 1.0) * interval;
         ResolvedTab {
-            stop: pos,
+            stop: on_line(pos),
             align: TabAlign::Left,
             leader: None,
             // A default stop at or past the end of the line is no stop, unless
             // an earlier stop took the line past its end.
-            wraps: pos > self.start + self.limit - 0.01,
-            reach: line_end,
+            wraps: pos > gap + self.limit - 0.01,
+            reach: on_line(line_end),
             shift_limit: None,
+            mirrored: params.first_line_at_right,
         }
     }
 
@@ -1040,6 +1059,7 @@ impl LineState {
                 in_number: false,
                 shift_limit: tab.shift_limit.map(|limit| limit - self.start),
                 font_ctx,
+                mirrored: tab.mirrored,
             };
             self.width = start + pending.width();
             self.pending = Some(pending);
@@ -1126,6 +1146,9 @@ struct ResolvedTab {
     reach: f64,
     /// The position text after a right, centre or decimal tab may not pass.
     shift_limit: Option<f64>,
+    /// Whether the line starts at the right edge, so that it is mirrored once
+    /// laid out (see [`PendingTab::mirrored`]).
+    mirrored: bool,
 }
 
 /// A right, centre or decimal tab, which takes its width from the text after
@@ -1150,6 +1173,11 @@ struct PendingTab {
     in_number: bool,
     shift_limit: Option<f64>,
     font_ctx: Option<(FontId, f64)>,
+    /// Whether the line is mirrored once laid out, as a line that starts at
+    /// the right edge is. A number keeps its left-to-right order on it, so
+    /// the part of a number a decimal stop puts before it, on the side the
+    /// line starts from, is the part after its decimal point.
+    mirrored: bool,
 }
 
 impl PendingTab {
@@ -1178,8 +1206,12 @@ impl PendingTab {
         };
         if self.align == TabAlign::Decimal && !self.aligned_found {
             match decimal_alignment_offset(item, &mut self.in_number, fm)? {
-                Some(offset) => {
-                    self.aligned += offset;
+                Some((offset, in_number)) => {
+                    self.aligned += if self.mirrored && in_number {
+                        width - offset
+                    } else {
+                        offset
+                    };
                     self.aligned_found = true;
                 }
                 None => self.aligned += width,
@@ -1217,7 +1249,8 @@ impl PendingTab {
     }
 }
 
-/// Where a decimal tab aligns within one item, as a width from its start.
+/// Where a decimal tab aligns within one item, as a width from its start,
+/// and whether that point is in a number.
 ///
 /// Word aligns the first full stop, or else the end of the first number, a
 /// comma inside a number belonging to it whatever the document's decimal
@@ -1226,18 +1259,19 @@ fn decimal_alignment_offset(
     item: &InlineItem,
     in_number: &mut bool,
     fm: &FontManager,
-) -> Result<Option<f64>> {
+) -> Result<Option<(f64, bool)>> {
     let segment = match item {
         InlineItem::Text(segment) | InlineItem::HyphenatedText { segment, .. } => segment,
-        InlineItem::MultilingualText(segment) if segment.uses_legacy_shaping() => segment.base(),
-        _ => return Ok(in_number.then_some(0.0)),
+        InlineItem::MultilingualText(segment) => segment.base(),
+        _ => return Ok(in_number.then_some((0.0, true))),
     };
     for (index, ch) in segment.text.char_indices() {
         if ch == '.' || (*in_number && !ch.is_ascii_digit() && ch != ',') {
-            return Ok(Some(match item {
+            let offset = match item {
                 InlineItem::MultilingualText(span) => fm.context_prefix_width(span, index)?,
                 _ => text_prefix_width(segment, index, fm),
-            }));
+            };
+            return Ok(Some((offset, *in_number)));
         }
         *in_number |= ch.is_ascii_digit();
     }

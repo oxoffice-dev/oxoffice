@@ -542,6 +542,131 @@ fn a_right_to_left_paragraph_reads_left_and_right_as_start_and_end() {
     assert!(near(next.right, right - 36.0), "{next:?}");
 }
 
+// Word 16.115 measures every tab stop of a right-to-left paragraph from the
+// right margin, whatever its indents, as it measures a left-to-right one's
+// from the left margin: the text after a 2 in start stop ends 2 in from the
+// right margin with a start indent, an end indent, both, or a hanging indent
+// (its second stop too), the default stops are counted from there, a line
+// after the first of a hanging indent does not stop at the hanging stop, and
+// a decimal stop puts the number's decimal point on the stop.
+#[test]
+fn tab_stops_in_a_right_to_left_paragraph_are_measured_from_the_right_margin() {
+    let rtl = |ppr: &str, runs: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:bidi/>{ppr}<w:spacing w:before="0" w:after="120"/></w:pPr>{runs}</w:p>"#
+        )
+    };
+    let text = |value: &str| format!(r#"<w:r><w:t xml:space="preserve">{value}</w:t></w:r>"#);
+    let tab = r#"<w:r><w:tab/></w:r>"#;
+    let stops = |stops: &[(&str, u32)]| {
+        let stops = stops
+            .iter()
+            .map(|(kind, pos)| format!(r#"<w:tab w:val="{kind}" w:pos="{pos}"/>"#))
+            .collect::<String>();
+        format!("<w:tabs>{stops}</w:tabs>")
+    };
+    let start_stop = stops(&[("left", 2880)]);
+    let mut body = String::new();
+    for (case, indent) in [
+        ("Plain", ""),
+        ("Start", r#"<w:ind w:left="1440"/>"#),
+        ("End", r#"<w:ind w:right="1440"/>"#),
+        ("Both", r#"<w:ind w:left="720" w:right="1440"/>"#),
+    ] {
+        body.push_str(&rtl(
+            &format!("{start_stop}{indent}"),
+            &[
+                text(&format!("{case}A")),
+                tab.to_owned(),
+                text(&format!("{case}B")),
+            ]
+            .concat(),
+        ));
+    }
+    body.push_str(&rtl(
+        &format!(
+            r#"{}<w:ind w:left="720" w:hanging="360"/>"#,
+            stops(&[("left", 2880), ("left", 5040)])
+        ),
+        &[
+            text("HangA"),
+            tab.to_owned(),
+            text("HangB"),
+            tab.to_owned(),
+            text("HangC"),
+        ]
+        .concat(),
+    ));
+    body.push_str(&rtl(
+        "",
+        &[
+            text("DefA"),
+            tab.to_owned(),
+            text("DefB"),
+            tab.to_owned(),
+            text("DefC"),
+        ]
+        .concat(),
+    ));
+    body.push_str(&rtl(
+        r#"<w:ind w:left="1440" w:hanging="720"/>"#,
+        &[
+            text("WrapA"),
+            r#"<w:r><w:br/></w:r>"#.to_owned(),
+            text("WrapB"),
+            tab.to_owned(),
+            text("WrapC"),
+        ]
+        .concat(),
+    ));
+    let decimal = stops(&[("decimal", 4320)]);
+    body.push_str(&rtl(
+        &decimal,
+        &[text("NumA"), tab.to_owned(), text("12.50")].concat(),
+    ));
+    body.push_str(&format!(
+        r#"<w:p><w:pPr>{decimal}</w:pPr>{}{tab}{}</w:p>"#,
+        text("LtrA"),
+        text("12.50")
+    ));
+    let pdf = pdf_of(&doc_with_body(&body));
+    let drawn = pdf.drawn(0);
+    let piece = |label: &str| {
+        drawn
+            .iter()
+            .find(|piece| piece.text.trim() == label)
+            .unwrap_or_else(|| panic!("{label} is not drawn: {drawn:#?}"))
+    };
+    let right = 540.0;
+    for (label, from_right) in [
+        ("PlainB", 144.0),
+        ("StartB", 144.0),
+        ("EndB", 144.0),
+        ("BothB", 144.0),
+        ("HangB", 144.0),
+        ("HangC", 252.0),
+        ("DefC", 72.0),
+        ("WrapC", 108.0),
+    ] {
+        let end = piece(label).end;
+        assert!(
+            (end - (right - from_right)).abs() < 1.0,
+            "{label} ends at {end:.1}, Word at {:.1}",
+            right - from_right
+        );
+    }
+    // The decimal point sits 216 pt from the margin the paragraph starts at:
+    // 324 here and 288 in the left-to-right paragraph, so the number lies 36
+    // pt further right.
+    let shift = piece("12.50").x
+        - drawn
+            .iter()
+            .rfind(|piece| piece.text.trim() == "12.50")
+            .unwrap()
+            .x;
+    assert!((shift - 36.0).abs() < 0.5, "the number moves {shift:.1}");
+}
+
 // Word and LibreOffice align a right-to-left paragraph on the right margin,
 // with no alignment set and with the `jc="left"` (start) LibreOffice writes.
 /// A paragraph holding one display equation, alone, under `ppr`.
