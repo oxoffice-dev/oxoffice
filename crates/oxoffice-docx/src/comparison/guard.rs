@@ -458,7 +458,7 @@ pub(super) fn guard_source_body_at(
     let mut cleaned = model.clone();
     // The snapshots refer to the still-live, source-faithful model. Only its
     // explicitly corresponding analysis clone receives canonical graph values.
-    normalize_drawing_relationships(&mut cleaned, document, owner)?;
+    normalize_relationship_identities(&mut cleaned, document, owner)?;
     let mut identities = Vec::new();
     let mut state = GuardProjection {
         document,
@@ -702,7 +702,7 @@ pub(super) fn normalized_story_part(
             let root_bindings = root_namespace_bindings(xml, kind.root_local(), &[])?;
             let owner_bindings = root_namespace_bindings(owner_xml, owner_local, &root_bindings)?;
             let mut model = story_document(&owner_xml[inner.clone()], &owner_bindings)?;
-            normalize_drawing_relationships(&mut model, document, physical_owner)?;
+            normalize_relationship_identities(&mut model, document, physical_owner)?;
             normalized.extend(project_source_body(
                 &model,
                 &owner_xml[inner],
@@ -715,7 +715,7 @@ pub(super) fn normalized_story_part(
     } else {
         let bindings = root_namespace_bindings(xml, kind.root_local(), &[])?;
         let mut model = story_document(&xml[root.clone()], &bindings)?;
-        normalize_drawing_relationships(&mut model, document, physical_owner)?;
+        normalize_relationship_identities(&mut model, document, physical_owner)?;
         project_source_body(&model, &xml[root], &bindings, options, story_projection)
     }
 }
@@ -893,6 +893,9 @@ fn normalize_drawing_identity(
     if let Some(inline) = &mut drawing.inline {
         inline.doc_pr_id = 0;
         normalize_relationship_id(&mut inline.embed_id, document, owner)?;
+        if let Some(id) = &mut inline.link_id {
+            normalize_relationship_id(id, document, owner)?;
+        }
         if let Some(id) = &mut inline.chart_rel_id {
             normalize_relationship_id(id, document, owner)?;
         }
@@ -900,6 +903,9 @@ fn normalize_drawing_identity(
     if let Some(anchor) = &mut drawing.anchor {
         anchor.doc_pr_id = 0;
         normalize_relationship_id(&mut anchor.embed_id, document, owner)?;
+        if let Some(id) = &mut anchor.link_id {
+            normalize_relationship_id(id, document, owner)?;
+        }
         if let Some(id) = &mut anchor.chart_rel_id {
             normalize_relationship_id(id, document, owner)?;
         }
@@ -907,7 +913,9 @@ fn normalize_drawing_identity(
     Ok(())
 }
 
-fn normalize_drawing_relationships(
+/// Every picture, chart and hyperlink of `model` names its relationship by
+/// what it names, so another relationship to the same payload is no change.
+fn normalize_relationship_identities(
     model: &mut CT_Document,
     document: &Document,
     owner: &str,
@@ -916,6 +924,17 @@ fn normalize_drawing_relationships(
     crate::document::visit_all_drawings_mut(&mut model.body.content, &mut |drawing| {
         if result.is_ok() {
             result = normalize_drawing_identity(drawing, document, owner);
+        }
+    });
+    crate::document::visit_body_paragraphs_mut(&mut model.body.content, &mut |paragraph| {
+        for id in paragraph
+            .hyperlinks
+            .iter_mut()
+            .filter_map(|link| link.rel_id.as_mut())
+        {
+            if result.is_ok() {
+                result = normalize_relationship_id(id, document, owner);
+            }
         }
     });
     result
