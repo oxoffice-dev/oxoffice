@@ -994,6 +994,7 @@ impl<'a> EpubWriter<'a> {
                     // A Chicago item writes its level text, unless it holds
                     // another level's number.
                     let own_marker_written = level.num_fmt == Some(ST_NumberFormat::Chicago)
+                        && level.legal != Some(true)
                         && (1..=9)
                             .filter(|other| *other != level.ilvl + 1)
                             .all(|other| !marker.contains(&format!("%{other}")));

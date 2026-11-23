@@ -1379,11 +1379,20 @@ fn a_chicago_list_numbered_through_its_style_gets_its_marks_in_epub_and_legal_nu
         .add_numbering_definition(&[oxoffice_docx::ListLevel::new(
             oxoffice_docx::ListNumberFormat::Chicago,
         )
+        .level_text("%1)")
         .legal_numbering(true)])
         .unwrap();
     let list = legal.add_numbering_instance(definition, &[]).unwrap();
     legal.add_paragraph("One").numbering(list, 0);
-    let chapters = epub_chapters(legal.to_epub_bytes().unwrap().bytes);
+    let epub = legal.to_epub_bytes().unwrap();
+    // Its own marker text is not written, which is reported.
+    assert!(
+        epub.diagnostics.iter().any(|diagnostic| diagnostic.message
+            == "custom list marker text was replaced by EPUB list semantics"),
+        "{:?}",
+        epub.diagnostics
+    );
+    let chapters = epub_chapters(epub.bytes);
     assert!(!chapters.contains("list-style-type:'"), "{chapters}");
     assert!(chapters.contains("<ol>"), "{chapters}");
 }
