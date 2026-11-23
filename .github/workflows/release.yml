@@ -84,7 +84,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          green="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?head_sha=$GITHUB_SHA&status=success" --jq '.total_count > 0')"
+          # Filter on each run's own conclusion (its latest attempt): the API's
+          # status=success filter lagged behind a run that had just turned green
+          # (0.3.0, a re-run that had finished 45 s before), and refused it.
+          green="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
+            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length > 0')"
           if [ "$green" != true ]; then
             echo "::error::no green Full checks run on $GITHUB_SHA: run nightly.yml on that commit (gh workflow run nightly.yml --ref main if main is still there, about 30 minutes), then re-run the failed jobs of this run"
             exit 1
