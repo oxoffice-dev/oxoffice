@@ -187,21 +187,6 @@ impl<'a> Pager<'a> {
 }
 
 impl<'a> Pager<'a> {
-    pub(super) fn accept_layers(&mut self, result: oxoffice_layout::Result<PaintLayers>) {
-        let result = result.and_then(|layers| {
-            self.element_policies
-                .append(&mut self.elements, layers.regular)?;
-            self.behind_policies
-                .append(&mut self.behind_elements, layers.behind)?;
-            self.front_policies
-                .append(&mut self.front_elements, layers.front)
-        });
-        if let Err(error) = result {
-            self.pending_furniture_failure
-                .get_or_insert(error.to_string());
-        }
-    }
-
     /// Place a floating table at its resolved anchor, leaving the flow alone.
     ///
     /// A float is positioned, not flowed, so `cursor_y` is untouched and every

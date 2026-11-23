@@ -392,6 +392,23 @@ impl<'a> Pager<'a> {
 }
 
 impl<'a> Pager<'a> {
+    pub(super) fn accept_layers(&mut self, result: oxoffice_layout::Result<PaintLayers>) {
+        let result = result.and_then(|layers| {
+            self.element_policies
+                .append(&mut self.elements, layers.regular)?;
+            self.behind_policies
+                .append(&mut self.behind_elements, layers.behind)?;
+            self.front_policies
+                .append(&mut self.front_elements, layers.front)
+        });
+        if let Err(error) = result {
+            self.pending_furniture_failure
+                .get_or_insert(error.to_string());
+        }
+    }
+}
+
+impl<'a> Pager<'a> {
     /// Make room for the block at `next_block_index`.
     ///
     /// Content that simply ran out of room flows into the next column track

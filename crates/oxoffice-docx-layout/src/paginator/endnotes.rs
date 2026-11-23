@@ -512,39 +512,3 @@ pub(super) fn append_ordered_endnote_pages(
         note_top: content_height + offset,
     }))
 }
-
-pub(super) fn table_note_references(table: &crate::table::TableBlock) -> Vec<NoteRef> {
-    let mut references = Vec::new();
-    for row in &table.rows {
-        for cell in &row.cells {
-            for block in &cell.blocks {
-                match block {
-                    crate::table::CellBlock::Paragraph(paragraph) => {
-                        references.extend(paragraph.lines.iter().flat_map(notes_in_line))
-                    }
-                    crate::table::CellBlock::Table(table) => {
-                        references.extend(table_note_references(table))
-                    }
-                }
-            }
-        }
-    }
-    references
-}
-
-/// The notes referenced by the segments on one line.
-pub(super) fn notes_in_line(line: &LayoutLine) -> impl Iterator<Item = NoteRef> + '_ {
-    line.items.iter().filter_map(|item| match item {
-        LineItem::Text(seg) | LineItem::Marker(seg) => seg.note,
-        LineItem::MultilingualText(seg) => seg.base().note,
-        _ => None,
-    })
-}
-
-/// The notes on one line that belong at the foot of its page.
-///
-/// Endnotes are excluded. They are emitted at the document end and take no
-/// height from the page their reference sits on.
-pub(super) fn page_foot_notes_in_line(line: &LayoutLine) -> impl Iterator<Item = NoteRef> + '_ {
-    notes_in_line(line).filter(|note| note.stream == NoteStream::Footnote)
-}

@@ -1,4 +1,4 @@
-//! Sections: pagination across section breaks, continuous sections and recorded checkpoints.
+//! Sections: pagination across section breaks and continuous sections, page paint records, checkpoints and the entry points.
 
 use super::*;
 

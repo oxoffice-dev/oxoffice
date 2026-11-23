@@ -55,17 +55,15 @@ mod table_rows;
 mod wraps;
 
 use anchors::{
-    AnchorPaintOwner, anchored_elements, resolve_anchor_h, resolve_anchor_v, translate_element_tree,
+    AnchorPaintOwner, anchored_elements, anchored_rect, resolve_anchor_h, resolve_anchor_v,
+    translate_element_tree,
 };
 use borders::{render_border_edges, render_cell_borders, render_paragraph_border_edges};
 pub use endnotes::append_endnote_pages;
 pub(crate) use endnotes::{
     EndnoteFurniture, append_endnote_pages_at_document_end, append_endnote_pages_for_references,
 };
-use endnotes::{
-    append_ordered_endnote_pages, collect_endnote_refs, notes_in_line, page_foot_notes_in_line,
-    table_note_references,
-};
+use endnotes::{append_ordered_endnote_pages, collect_endnote_refs};
 use frames::{frame_rect, render_hf_blocks};
 pub use furniture::HeaderFooterContent;
 pub(crate) use furniture::{
@@ -74,7 +72,7 @@ pub(crate) use furniture::{
 use furniture::{StoryVariant, prepare_furniture};
 pub use geometry::{ColumnTrack, LineNumbering, PageBorderFrame, PageGeometry};
 use page_finish::NumberedLine;
-use page_notes::draw_note;
+use page_notes::{draw_note, notes_in_line, page_foot_notes_in_line, table_note_references};
 use paragraph_lines::{
     ReflowTextProvenanceKind, render_change_bar, render_change_bar_at, render_paragraph_lines,
 };
@@ -93,32 +91,13 @@ pub use sections::{Section, paginate, paginate_sections};
 use sections::{absorb_into_section_break, takes_no_room};
 pub(crate) use table_rows::story_table_rows;
 use table_rows::{
-    anchored_rect, paint_flowed_table_row, place_cell_anchored, render_table_row,
-    repeat_table_headers, split_simple_table_row, wrap_paint_suffix,
+    paint_flowed_table_row, place_cell_anchored, render_table_row, repeat_table_headers,
+    split_simple_table_row, wrap_paint_suffix,
 };
 use wraps::{
     ResolvedWraps, WrapReflowPolicy, floating_wrap, has_paragraph_relative_wrap,
     is_paragraph_relative_float, is_paragraph_relative_wrap, reflow_around_wraps, settle_float,
 };
-
-/// Private source line ranges, shared by note prediction and publication.
-struct NoteFragmentPlan {
-    placed: Vec<(NoteRef, usize, usize, bool)>,
-    carried: Vec<(NoteRef, usize)>,
-    height: f64,
-    accepts_fresh: bool,
-}
-
-impl Default for NoteFragmentPlan {
-    fn default() -> Self {
-        Self {
-            placed: Vec::new(),
-            carried: Vec::new(),
-            height: 0.0,
-            accepts_fresh: true,
-        }
-    }
-}
 
 /// A wrapping drawing that has been placed on the page being built.
 #[derive(Debug, Clone, Copy)]
@@ -142,9 +121,6 @@ impl PlacedWrap {
         self.rect.y + self.rect.height + self.dist_bottom
     }
 }
-
-/// A resolved border edge: (thickness in pt, color, optional dash pattern as (dash, gap)).
-type BorderEdge = (f64, Color, Option<(f64, f64)>);
 
 /// One selected story at one demonstrated origin. The same prepared blocks and
 /// placements price the body band and paint the page. Cached source blocks stay

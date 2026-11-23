@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// A resolved border edge: (thickness in pt, color, optional dash pattern as (dash, gap)).
+type BorderEdge = (f64, Color, Option<(f64, f64)>);
+
 /// Render borders for a table cell.
 pub(super) fn render_cell_borders(
     x: f64,

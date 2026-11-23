@@ -380,3 +380,36 @@ pub(super) fn resolve_anchor_v(
         None => start + off,
     }
 }
+
+pub(super) fn anchored_rect(
+    anchor: &AnchoredDrawing,
+    page: &PageGeometry,
+    paragraph: &PageGeometry,
+    top: f64,
+    indent: f64,
+) -> Rect {
+    let horizontal = match anchor.rel_h {
+        ST_RelativeFromH::Column | ST_RelativeFromH::Character => paragraph,
+        _ => page,
+    };
+    Rect {
+        x: resolve_anchor_h(
+            anchor.rel_h,
+            anchor.off_h,
+            anchor.align_h,
+            anchor.width,
+            horizontal,
+            indent,
+        ),
+        y: resolve_anchor_v(
+            anchor.rel_v,
+            anchor.off_v,
+            anchor.align_v,
+            anchor.height,
+            page,
+            paragraph.margin_top + top - page.margin_top,
+        ),
+        width: anchor.width,
+        height: anchor.height,
+    }
+}
