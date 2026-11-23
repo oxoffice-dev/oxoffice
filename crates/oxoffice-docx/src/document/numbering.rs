@@ -677,12 +677,8 @@ impl Document {
                 // A `w:numId` without `w:ilvl` numbers at the level its style
                 // chain gives, else 0, as the layout reads it.
                 let shown = properties.num_ilvl.unwrap_or_else(|| {
-                    super::numbering_types::effective_numbering_reference(
-                        self.numbering.as_ref(),
-                        &self.styles,
-                        properties,
-                    )
-                    .map_or(0, |(_, level)| level)
+                    super::numbering_types::effective_numbering_reference(&self.styles, properties)
+                        .map_or(0, |(_, level)| level)
                 });
                 if shown != level {
                     return None;
@@ -766,12 +762,8 @@ impl Document {
             .num_id
             .map(|id| {
                 let level = properties.num_ilvl.unwrap_or_else(|| {
-                    super::numbering_types::effective_numbering_reference(
-                        self.numbering.as_ref(),
-                        &self.styles,
-                        properties,
-                    )
-                    .map_or(0, |(_, level)| level)
+                    super::numbering_types::effective_numbering_reference(&self.styles, properties)
+                        .map_or(0, |(_, level)| level)
                 });
                 (id, level)
             })
@@ -1220,7 +1212,7 @@ impl Document {
                 if properties.num_id != Some(id) {
                     return None;
                 }
-                let level = properties.num_ilvl.unwrap_or(0);
+                let level = style_numbering_level(&self.styles, style).1.unwrap_or(0);
                 let named = instance
                     .level_overrides
                     .iter()
@@ -1397,7 +1389,7 @@ impl Document {
             if num_id == 0 {
                 continue;
             }
-            let level = properties.num_ilvl.unwrap_or(0);
+            let level = style_numbering_level(&self.styles, style).1.unwrap_or(0);
             let instance = numbering
                 .nums
                 .iter()
@@ -1533,9 +1525,9 @@ impl Document {
                 (candidate.numbering.as_ref(), &*candidate.styles)
             };
             for direct in xml_paragraph_numbering_properties(xml)? {
-                if let Some((num_id, level)) = super::numbering_types::effective_numbering_reference(
-                    numbering, styles, &direct,
-                ) {
+                if let Some((num_id, level)) =
+                    super::numbering_types::effective_numbering_reference(styles, &direct)
+                {
                     references.push((
                         num_id,
                         level,
@@ -1710,7 +1702,8 @@ impl Document {
                 Error::Other(format!("numbering instance {num_id} has no level {level}"))
             })?;
 
-        let style_numbering = style_numbering_level(&candidate.styles.styles[style_index]);
+        let style_numbering =
+            style_numbering_level(&candidate.styles, &candidate.styles.styles[style_index]);
         // A `w:ilvl` without a `w:numId` owns no link, so the link replaces it.
         if style_numbering.0.is_some() && style_numbering != (Some(num_id), Some(level)) {
             return Err(Error::Other(format!(
@@ -1767,7 +1760,7 @@ impl Document {
             .get_or_insert_with(CT_PPr::default);
         // A style already numbered at this level without `w:ilvl` keeps its
         // form; otherwise the link writes both.
-        if !(properties.num_id == Some(num_id) && properties.num_ilvl.unwrap_or(0) == level) {
+        if style_numbering != (Some(num_id), Some(level)) {
             properties.num_id = Some(num_id);
             properties.num_ilvl = Some(level);
         }
@@ -1853,7 +1846,8 @@ impl Document {
                 Error::Other(format!("numbering instance {num_id} has no level {level}"))
             })?;
 
-        let style_numbering = style_numbering_level(&candidate.styles.styles[style_index]);
+        let style_numbering =
+            style_numbering_level(&candidate.styles, &candidate.styles.styles[style_index]);
         let target_style = override_index
             .and_then(|index| {
                 numbering.nums[instance_index].level_overrides[index]
@@ -1984,21 +1978,26 @@ fn numbering_reference_error_in(
     })
 }
 
-/// A style's direct numbering as `(numId, level)`. A `w:numId` without a
-/// `w:ilvl`, as Word and python-docx write List Bullet and List Number, is
-/// read at level 0, as the graph check reads it (a `w:ilvl` the style
-/// inherits through `w:basedOn` is not looked at).
+/// A style's own numbering as `(numId, level)`, the level read as Word,
+/// LibreOffice and layout read it: the style's `w:ilvl`, else one its
+/// `w:basedOn` chain gives, else 0, as Word and python-docx write List
+/// Bullet and List Number (a `w:numId` without `w:ilvl`). A style holding
+/// only a `w:ilvl` gives that level and no `numId`. `styles` resolves the
+/// chain, so a style about to replace one of the same id is resolved in the
+/// table it joins.
 pub(super) fn style_numbering_level(
+    styles: &CT_Styles,
     style: &oxoffice_docx_oxml::styles::CT_Style,
 ) -> (Option<u32>, Option<u32>) {
-    style
-        .ppr
-        .as_ref()
-        .map(|properties| {
-            (
-                properties.num_id,
-                properties.num_ilvl.or(properties.num_id.map(|_| 0)),
-            )
+    let Some(properties) = style.ppr.as_ref() else {
+        return (None, None);
+    };
+    let level = properties.num_ilvl.or_else(|| {
+        properties.num_id.map(|_| {
+            style::resolve_paragraph_properties(Some(&style.style_id), styles)
+                .num_ilvl
+                .unwrap_or(0)
         })
-        .unwrap_or((None, None))
+    });
+    (properties.num_id, level)
 }

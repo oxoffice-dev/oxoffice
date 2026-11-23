@@ -701,19 +701,24 @@ impl Document {
         }
         let old_link = existing.linked_style.clone();
         merge_style_update(existing, &mut authored, cleared, &removed_regions);
-        // A `w:numId` without `w:ilvl` is level 0: writing it as `w:ilvl 0`
-        // changes no numbering.
-        let existing_numbering = super::numbering::style_numbering_level(existing);
-        let authored_numbering = super::numbering::style_numbering_level(&authored);
-        if authored_numbering != existing_numbering {
-            return Err(Error::Other(format!(
-                "style '{}' numbering must be changed with link_style_to_numbering or unlink_style_from_numbering",
-                authored.style_id
-            )));
-        }
+        // The levels are read as layout reads them, the new style's in the
+        // table it joins: writing the level a `w:numId` without `w:ilvl`
+        // shows, or a new `w:basedOn` that gives the same level, changes no
+        // numbering.
+        let existing_numbering =
+            super::numbering::style_numbering_level(&candidate.styles, existing);
         let style_id = authored.style_id.clone();
         let new_link = authored.linked_style.clone();
         Arc::make_mut(&mut candidate.styles).styles[index] = authored;
+        let authored_numbering = super::numbering::style_numbering_level(
+            &candidate.styles,
+            &candidate.styles.styles[index],
+        );
+        if authored_numbering != existing_numbering {
+            return Err(Error::Other(format!(
+                "style '{style_id}' numbering must be changed with link_style_to_numbering or unlink_style_from_numbering"
+            )));
+        }
         update_reciprocal_style_link(
             Arc::make_mut(&mut candidate.styles),
             &style_id,
@@ -820,7 +825,7 @@ impl Document {
 
     /// Clear the `w:pStyle` of each numbering level that one of `styles`
     /// points at and that names that style back, returning whether any was
-    /// cleared. A style without `w:ilvl` points at level 0.
+    /// cleared. A style without `w:ilvl` points at the level layout reads.
     fn release_numbering_levels_naming(&mut self, styles: &[String]) -> bool {
         let pointers: Vec<(String, u32, u32)> = self
             .styles
@@ -828,12 +833,8 @@ impl Document {
             .iter()
             .filter(|style| styles.contains(&style.style_id))
             .filter_map(|style| {
-                let properties = style.ppr.as_ref()?;
-                Some((
-                    style.style_id.clone(),
-                    properties.num_id?,
-                    properties.num_ilvl.unwrap_or(0),
-                ))
+                let (num_id, level) = super::numbering::style_numbering_level(&self.styles, style);
+                Some((style.style_id.clone(), num_id?, level.unwrap_or(0)))
             })
             .collect();
         let Some(numbering) = self.numbering.as_mut() else {
@@ -1181,7 +1182,14 @@ impl Document {
                     .map(|style| style.style_id.as_str())
             });
         let mut effective = style::resolve_paragraph_properties(style_id, &self.styles);
-        self.apply_effective_numbering(&mut effective, direct, style_id);
+        // `w:numId` and `w:ilvl` merge on their own: a direct `w:numId` keeps
+        // the level the style chain gives.
+        effective.num_id = direct
+            .and_then(|properties| properties.num_id)
+            .or(effective.num_id);
+        effective.num_ilvl = direct
+            .and_then(|properties| properties.num_ilvl)
+            .or(effective.num_ilvl);
 
         // A `w:numId` without `w:ilvl` numbers at level 0, as Word reads it.
         if let Some(num_id) = effective.num_id
@@ -1195,25 +1203,6 @@ impl Document {
             effective.merge_from(properties);
         }
         effective
-    }
-
-    pub(super) fn apply_effective_numbering(
-        &self,
-        effective: &mut CT_PPr,
-        direct: Option<&CT_PPr>,
-        style_id: Option<&str>,
-    ) {
-        effective.num_id = direct
-            .and_then(|properties| properties.num_id)
-            .or(effective.num_id);
-        effective.num_ilvl = direct
-            .and_then(|properties| properties.num_ilvl)
-            .or(effective.num_ilvl);
-        if let Some(num_id) = effective.num_id {
-            effective.num_ilvl = effective
-                .num_ilvl
-                .or_else(|| self.numbering_level_for_style(num_id, style_id));
-        }
     }
 
     /// Resolve the effective run properties for the given paragraph and character styles,
@@ -1282,15 +1271,6 @@ impl Document {
             .levels
             .iter()
             .find(|definition| definition.ilvl == level)
-    }
-
-    fn numbering_level_for_style(&self, num_id: u32, style_id: Option<&str>) -> Option<u32> {
-        super::numbering_types::numbering_level_for_style(
-            self.numbering.as_ref(),
-            &self.styles,
-            num_id,
-            style_id,
-        )
     }
 }
 
