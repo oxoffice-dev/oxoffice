@@ -1599,21 +1599,30 @@ fn a_bound_date_and_time_stores_what_its_mapping_asks() {
 
 #[test]
 fn a_date_control_on_the_us_gregorian_calendar_is_set_and_checked() {
-    let mut doc = date_control("due", "MMMM d, yyyy", Some("en-US"));
-    let mut doc = with_main_part_edit(
-        &mut doc,
-        r#"<w:calendar w:val="gregorian"/>"#,
-        r#"<w:calendar w:val="gregorianUs"/>"#,
-    );
-    for by_form in [false, true] {
-        set_value(&mut doc, "due", "2015-01-02", by_form);
-        assert_eq!(value(&doc, "due"), "January 2, 2015", "{}", way(by_form));
+    // The calendar is Gregorian in US English: English names, whatever the
+    // control's language, also one oxoffice has no names for.
+    for lid in ["fr-FR", "ja-JP"] {
+        let mut doc = date_control("due", "MMMM d, yyyy", Some(lid));
+        let mut doc = with_main_part_edit(
+            &mut doc,
+            r#"<w:calendar w:val="gregorian"/>"#,
+            r#"<w:calendar w:val="gregorianUs"/>"#,
+        );
+        for by_form in [false, true] {
+            set_value(&mut doc, "due", "2015-01-02", by_form);
+            assert_eq!(
+                value(&doc, "due"),
+                "January 2, 2015",
+                "{lid} {}",
+                way(by_form)
+            );
+        }
+        let doc = reopen(&mut doc);
+        let issues = doc
+            .validate_form(&[prompt(target("due"), false, "")])
+            .unwrap();
+        assert!(issues.is_empty(), "{lid}: {issues:?}");
     }
-    let doc = reopen(&mut doc);
-    let issues = doc
-        .validate_form(&[prompt(target("due"), false, "")])
-        .unwrap();
-    assert!(issues.is_empty(), "{issues:?}");
 }
 
 #[test]

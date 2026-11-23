@@ -16,8 +16,8 @@ left of #149:
   (`2015-01-02T15:05:00Z`). oxoffice writes midnight only: `validate_form`
   reports such a control as "unsupported date metadata", and no setter can
   give it a time.
-- Word's calendar list has `gregorianUs` (Gregorian, US English), the same
-  calendar as `gregorian`; it is refused as an "unsupported date calendar".
+- Word's calendar list has `gregorianUs` (Gregorian, US English): the
+  Gregorian calendar with English names; it is refused as an "unsupported date calendar".
 - The rest is refused on purpose, see Decision.
 
 ## Decision
@@ -30,11 +30,14 @@ left of #149:
   `YYYY-MM-DDTHH:MM:SSZ`, as Word writes it, and a binding stores what
   `w:storeMappedDataAs` asks (the shown text, the date, or the full value).
   A plain date still shows midnight. A time given to a control whose format
-  shows none is refused (the control could not show it).
+  shows none is refused (the control could not show it), and so are hours,
+  minutes or seconds the format does not show: they would be saved unseen.
 - **`validate_form` checks a saved time** as it checks a date: the shown
   text and the binding must be what that time gives in the format. A time in
   `w:fullDate` of a control whose format shows none stays a wrong value.
-- **`gregorianUs` is read as `gregorian`.**
+- **`gregorianUs` is the Gregorian calendar in US English**: its month and
+  day names are English whatever `w:lid` says (Windows' calendar data); the
+  day period stays the language's (Windows' locale data).
 - **Refused on purpose**, the named limitation `docx-date-control-names`
   (issue #149 is closed with this list): month and day names in a language
   other than English, French, German, Spanish, Italian, Portuguese and Dutch

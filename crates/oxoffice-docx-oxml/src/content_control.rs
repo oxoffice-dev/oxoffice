@@ -1,6 +1,6 @@
 //! WordprocessingML structured document tags (`w:sdt`).
 
-use crate::date_format::{WordDateTime, word_date_format_shows_time};
+use crate::date_format::WordDateTime;
 use crate::text::XmlWriteRole;
 use std::io::Write;
 use std::ops::Range;
@@ -344,10 +344,8 @@ impl CT_SdtPr {
                     }
                     Ok(first.and_then(|child| child.value.as_deref()))
                 };
-                if !matches!(
-                    metadata(b"calendar")?,
-                    None | Some("gregorian" | "gregorianUs")
-                ) {
+                let calendar = metadata(b"calendar")?;
+                if !matches!(calendar, None | Some("gregorian" | "gregorianUs")) {
                     return Err(OxmlError::InvalidValue(
                         "unsupported date calendar".to_owned(),
                     ));
@@ -355,12 +353,9 @@ impl CT_SdtPr {
                 let Some(pattern) = metadata(b"dateFormat")? else {
                     return Err(OxmlError::InvalidValue("missing date format".to_owned()));
                 };
-                if !at.is_midnight() && !word_date_format_shows_time(pattern) {
-                    return Err(OxmlError::InvalidValue(format!(
-                        "date format {pattern:?} shows no time, give a date without one"
-                    )));
-                }
-                let display = crate::date_format::format_word_date(pattern, metadata(b"lid")?, at)?;
+                crate::date_format::check_time_shown(pattern, at)?;
+                let display =
+                    crate::date_format::format_word_date(pattern, metadata(b"lid")?, calendar, at)?;
                 let full_date = at.full_date();
                 let bound = match metadata(b"storeMappedDataAs")? {
                     None | Some("text") => display.clone(),

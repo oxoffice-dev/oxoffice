@@ -11,7 +11,8 @@
 //! versions outside English. The day period is the locale's designator whatever
 //! the token's case, known for United States English only (`AM`): other
 //! English locales write `am`. Any other letter, or a name in another language,
-//! is refused.
+//! is refused. On the `gregorianUs` calendar (Gregorian, US English) names are
+//! English whatever the language; the day period stays the language's.
 
 use crate::error::{OxmlError, Result};
 
@@ -441,12 +442,19 @@ fn civil_date(value: &str) -> Option<(u16, u8, u8)> {
 }
 
 /// Show the checked date and time `at` in the Word date pattern `pattern`,
-/// with the names of the language `language` (`w:lid`).
+/// with the names of the language `language` (`w:lid`), or English ones on
+/// the `gregorianUs` calendar (`w:calendar`).
 pub(crate) fn format_word_date(
     pattern: &str,
     language: Option<&str>,
+    calendar: Option<&str>,
     at: WordDateTime,
 ) -> Result<String> {
+    let names_language = if calendar == Some("gregorianUs") {
+        Some("en-US")
+    } else {
+        language
+    };
     let WordDateTime {
         year,
         month,
@@ -458,7 +466,7 @@ pub(crate) fn format_word_date(
     let unsupported =
         |why: &str| OxmlError::InvalidValue(format!("unsupported date format {pattern:?}: {why}"));
     let names = |kind: &str| {
-        names_of(language).ok_or_else(|| {
+        names_of(names_language).ok_or_else(|| {
             unsupported(&format!(
                 "{kind} in language {:?} cannot be shown, numeric formats can",
                 language.unwrap_or_default()
@@ -566,24 +574,61 @@ fn twelve_hour(hour: u8) -> u8 {
     }
 }
 
-/// Whether the date pattern `pattern` shows a time (an hour, minute, second
-/// or day period token outside quotes).
-pub fn word_date_format_shows_time(pattern: &str) -> bool {
+/// Whether the date pattern `pattern` holds, outside quotes, one of `tokens`.
+fn pattern_holds(pattern: &str, tokens: &[char]) -> bool {
     let mut quoted = false;
     pattern.chars().any(|c| {
         if c == '\'' {
             quoted = !quoted;
         }
-        !quoted && matches!(c, 'h' | 'H' | 'm' | 's' | 'A' | 'a')
+        !quoted && tokens.contains(&c)
     })
 }
 
-/// Refuse a pattern Word date controls cannot show in `language`.
-pub fn check_word_date_format(pattern: &str, language: Option<&str>) -> Result<()> {
+/// Whether the date pattern `pattern` shows a time (an hour, minute, second
+/// or day period token outside quotes).
+pub fn word_date_format_shows_time(pattern: &str) -> bool {
+    pattern_holds(pattern, &['h', 'H', 'm', 's', 'A', 'a'])
+}
+
+/// Refuse a time whose hours, minutes or seconds the pattern `pattern`
+/// would not show: they would be saved in `w:fullDate` and a binding,
+/// unseen in the control.
+pub(crate) fn check_time_shown(pattern: &str, at: WordDateTime) -> Result<()> {
+    if at.is_midnight() {
+        return Ok(());
+    }
+    if !word_date_format_shows_time(pattern) {
+        return Err(OxmlError::InvalidValue(format!(
+            "date format {pattern:?} shows no time, give a date without one"
+        )));
+    }
+    for (value, tokens, part) in [
+        (at.hour, &['h', 'H'][..], "hours"),
+        (at.minute, &['m'][..], "minutes"),
+        (at.second, &['s'][..], "seconds"),
+    ] {
+        if value != 0 && !pattern_holds(pattern, tokens) {
+            return Err(OxmlError::InvalidValue(format!(
+                "date format {pattern:?} does not show the {part}, give a time without them"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a pattern Word date controls cannot show in `language` on
+/// `calendar`.
+pub fn check_word_date_format(
+    pattern: &str,
+    language: Option<&str>,
+    calendar: Option<&str>,
+) -> Result<()> {
     // A Wednesday in September: every token and name kind is exercised.
     format_word_date(
         pattern,
         language,
+        calendar,
         WordDateTime::parse_value("2026-09-30").expect("a valid date"),
     )
     .map(|_| ())
@@ -642,7 +687,7 @@ mod tests {
             ("'Day' d 'of' MMMM", "Day 2 of January"),
         ] {
             assert_eq!(
-                format_word_date(pattern, Some("en-US"), at("2015-01-02")).unwrap(),
+                format_word_date(pattern, Some("en-US"), None, at("2015-01-02")).unwrap(),
                 shown,
                 "{pattern}"
             );
@@ -670,10 +715,81 @@ mod tests {
             ("d MMMM yyyy HH:mm", "2015-01-02", "2 January 2015 00:00"),
         ] {
             assert_eq!(
-                format_word_date(pattern, Some("en-US"), at(value)).unwrap(),
+                format_word_date(pattern, Some("en-US"), None, at(value)).unwrap(),
                 shown,
                 "{pattern} {value}"
             );
+        }
+    }
+
+    #[test]
+    fn names_on_the_us_gregorian_calendar_are_english_whatever_the_language() {
+        assert_eq!(
+            format_word_date(
+                "dddd d MMMM yyyy",
+                Some("fr-FR"),
+                Some("gregorianUs"),
+                at("2015-01-02")
+            )
+            .unwrap(),
+            "Friday 2 January 2015"
+        );
+        assert_eq!(
+            format_word_date(
+                "ddd d MMM",
+                Some("ja-JP"),
+                Some("gregorianUs"),
+                at("2015-01-02")
+            )
+            .unwrap(),
+            "Fri 2 Jan"
+        );
+        // The day period is the language's, not the calendar's.
+        assert!(
+            format_word_date(
+                "h AM/PM",
+                Some("fr-FR"),
+                Some("gregorianUs"),
+                at("2015-01-02")
+            )
+            .is_err()
+        );
+        assert_eq!(
+            format_word_date(
+                "dddd d MMMM",
+                Some("fr-FR"),
+                Some("gregorian"),
+                at("2015-01-02")
+            )
+            .unwrap(),
+            "vendredi 2 janvier"
+        );
+    }
+
+    #[test]
+    fn a_time_part_the_format_does_not_show_is_refused() {
+        for (pattern, value) in [
+            ("M/d/yyyy h:mm AM/PM", "2015-01-02T15:05"),
+            ("M/d/yyyy h:mm AM/PM", "2015-01-02T15:05:00"),
+            ("HH:mm:ss", "2015-01-02T15:05:09"),
+            ("d MMMM yyyy", "2015-01-02T00:00"),
+        ] {
+            assert!(
+                check_time_shown(pattern, at(value)).is_ok(),
+                "{pattern} {value}"
+            );
+        }
+        for (pattern, value, reason) in [
+            ("d MMMM yyyy", "2015-01-02T15:05", "shows no time"),
+            ("M/d/yyyy h:mm AM/PM", "2015-01-02T15:05:09", "the seconds"),
+            ("h AM/PM", "2015-01-02T15:05", "the minutes"),
+            ("mm:ss", "2015-01-02T15:05:09", "the hours"),
+            ("'hh:mm' d", "2015-01-02T15:05", "shows no time"),
+        ] {
+            let error = check_time_shown(pattern, at(value))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(reason), "{pattern} {value}: {error}");
         }
     }
 
@@ -731,7 +847,7 @@ mod tests {
             ("en-GB", "Friday 2 January"),
         ] {
             assert_eq!(
-                format_word_date("dddd d MMMM", Some(language), at("2015-01-02")).unwrap(),
+                format_word_date("dddd d MMMM", Some(language), None, at("2015-01-02")).unwrap(),
                 shown,
                 "{language}"
             );
@@ -773,7 +889,7 @@ mod tests {
             ("gg yyyy", None, "unknown token \"gg\""),
             ("", None, "empty"),
         ] {
-            let error = check_word_date_format(pattern, language)
+            let error = check_word_date_format(pattern, language, None)
                 .unwrap_err()
                 .to_string();
             assert!(error.contains(reason), "{pattern}: {error}");

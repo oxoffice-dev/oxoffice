@@ -3796,7 +3796,7 @@ fn word_paragraph_in_span(xml: &[u8], span: Range<usize>) -> Result<bool> {
 fn validate_type_payload(payload: &ContentControlTypePayload) -> Result<()> {
     match payload {
         // The control is written without a language (`w:lid`): English names.
-        ContentControlTypePayload::Date { format } => check_word_date_format(format, None)?,
+        ContentControlTypePayload::Date { format } => check_word_date_format(format, None, None)?,
         ContentControlTypePayload::ComboBox { items }
         | ContentControlTypePayload::DropDownList { items } => validate_list_items(items)?,
         ContentControlTypePayload::Picture { relationship_id } => {
@@ -5797,7 +5797,7 @@ fn date_format_issue(facts: &DateFacts) -> Option<String> {
     let Some(format) = facts.format.as_deref() else {
         return Some("missing date format".to_owned());
     };
-    check_word_date_format(format, facts.language.as_deref())
+    check_word_date_format(format, facts.language.as_deref(), facts.calendar.as_deref())
         .err()
         .map(|error| error.to_string())
 }
