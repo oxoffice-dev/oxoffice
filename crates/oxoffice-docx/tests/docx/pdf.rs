@@ -10,6 +10,7 @@ use oxoffice_docx::paragraph::Alignment;
 use oxoffice_docx::{
     CT_RPr, Document, Length, ListLevel, PdfConformance, PictureOptions, RenderOptions, StoryKind,
 };
+use oxoffice_docx_oxml::shared::ST_SectionType;
 use oxoffice_docx_oxml::table::ST_VerticalJc;
 use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf};
@@ -236,6 +237,124 @@ fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
     assert_eq!(pdf.page_count(), 3);
     assert_eq!(pdf.page_text(1), "After the break");
     assert_eq!(pdf.page_text(2), "Next section");
+}
+
+// A page break beside a drawing the text wraps around, just before a
+// next-page section break, starts no page of its own either: wrapping the
+// paragraph around the drawing breaks its lines again, and must not bring the
+// break back.
+#[test]
+fn a_page_break_beside_a_wrapping_drawing_before_a_section_break_adds_no_blank_page() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let drawing = |wrap: &str, offset: u32, height: u32| {
+        format!(
+            concat!(
+                r#"<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" "#,
+                r#"relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">"#,
+                r#"<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+                r#"<wp:positionV relativeFrom="paragraph"><wp:posOffset>{offset}</wp:posOffset></wp:positionV>"#,
+                r#"<wp:extent cx="1828800" cy="{height}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>"#,
+                r#"{wrap}<wp:docPr id="7" name="Text Box"/><wp:cNvGraphicFramePr/>"#,
+                r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+                r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+                r#"<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/>"#,
+                r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="{height}"/></a:xfrm>"#,
+                r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>"#,
+                r#"<w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>"#,
+                r#"</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"#,
+            ),
+            wrap = wrap,
+            offset = offset,
+            height = height
+        )
+    };
+    let square = drawing(r#"<wp:wrapSquare wrapText="bothSides"/>"#, 0, 2743200);
+    // A drawing the text clears above and below, anchored in the break's
+    // paragraph a little below it and reaching the bottom margin: the empty
+    // paragraph holding the section break would start below it.
+    let top_and_bottom = drawing("<wp:wrapTopAndBottom/>", 182880, 8046720);
+    // The break in a paragraph of its own, and at the end of the text.
+    for (first, page_break) in [
+        (
+            format!("<w:p>{square}<w:r><w:t>First section</w:t></w:r></w:p>"),
+            r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#.to_owned(),
+        ),
+        (
+            format!(
+                r#"<w:p>{square}<w:r><w:t>First section</w:t><w:br w:type="page"/></w:r></w:p>"#
+            ),
+            String::new(),
+        ),
+        (
+            "<w:p><w:r><w:t>First section</w:t></w:r></w:p>".to_owned(),
+            format!(r#"<w:p><w:r><w:br w:type="page"/></w:r>{top_and_bottom}</w:p>"#),
+        ),
+    ] {
+        let doc = doc_with_body(&format!(
+            r#"{first}{page_break}<w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Second section</w:t></w:r></w:p>"#
+        ));
+        let pdf = pdf_of(&doc);
+        assert_eq!(pdf.page_count(), 2, "{first}{page_break}");
+        assert_eq!(page_with(&pdf, "Second section"), 1);
+    }
+}
+
+// A section that prints its endnotes at its end keeps a page break before
+// its section break: the break ends the text's page and the endnotes fill
+// the page it opens, then the next section starts its own. No page is blank.
+#[test]
+fn a_page_break_before_a_section_printing_its_endnotes_opens_their_page() {
+    let section = r#"<w:sectPr><w:endnotePr><w:pos w:val="sectEnd"/></w:endnotePr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First section</w:t></w:r></w:p><w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Second section</w:t></w:r></w:p>"#
+    ));
+    let cited = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_endnote(&cited, "Endnote text.").unwrap();
+    let pdf = pdf_of(&reopen(&mut doc));
+    assert_eq!(pdf.page_count(), 3);
+    assert_eq!(page_with(&pdf, "First section"), 0);
+    assert_eq!(page_with(&pdf, "Endnote text."), 1);
+    assert_eq!(page_with(&pdf, "Second section"), 2);
+}
+
+// With even and odd headers on, Word keeps odd page numbers on right-hand
+// pages: a next-page section whose numbering restarts at 1 after an odd page
+// starts after an empty page (Word 16.115 on the Google thesis: an empty page
+// 6 between "List of Figures" on page 5 and chapter 1, numbered 1). A
+// restart that keeps the alternation, or none, adds nothing.
+#[test]
+fn a_restarted_odd_number_after_an_odd_page_starts_after_an_empty_page_with_even_and_odd_headers() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let render = |restart: u32, even_and_odd: bool, start: Option<ST_SectionType>| {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:p><w:r><w:t>Front</w:t></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Chapter</w:t></w:r></w:p>"#
+        ));
+        let mut chapter = doc.section_mut(1).unwrap();
+        chapter.set_page_number_start(restart).unwrap();
+        if let Some(start) = start {
+            chapter.set_break_type(start);
+        }
+        doc.set_even_and_odd_headers(even_and_odd).unwrap();
+        doc.set_footer("Footer");
+        pdf_of(&reopen(&mut doc))
+    };
+    let pages = |restart, even_and_odd| {
+        let pdf = render(restart, even_and_odd, None);
+        (pdf.page_count(), page_with(&pdf, "Chapter"))
+    };
+    // Front ends on page 1; the chapter restarts at 1, odd again.
+    assert_eq!(pages(1, true), (3, 2), "an empty page 2 before the chapter");
+    assert_eq!(pages(1, false), (2, 1), "only with even and odd headers");
+    assert_eq!(pages(2, true), (2, 1), "an even restart alternates");
+    // The empty page draws nothing, not even the footer the pages around
+    // it have.
+    let pdf = render(1, true, None);
+    assert_eq!(pdf.page_text(1), "");
+    assert!(pdf.page_text(2).contains("Footer"), "{}", pdf.page_text(2));
+    // An even-page section keeps the physical rule: page 2 is even, so the
+    // chapter starts there, numbered 1, with no empty page.
+    let pdf = render(1, true, Some(ST_SectionType::EvenPage));
+    assert_eq!((pdf.page_count(), page_with(&pdf, "Chapter")), (2, 1));
 }
 
 #[test]

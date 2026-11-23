@@ -739,6 +739,10 @@ pub(crate) struct SharedSection {
     pub modern_footnote_layout: bool,
     pub footnote_layout_like_word8: bool,
     pub continuous: bool,
+    /// Word's `w:evenAndOddHeaders`: a section starting on a new page whose
+    /// first displayed number has the parity of the page before it starts
+    /// after an empty page, so odd numbers stay on right-hand pages.
+    pub odd_numbers_on_right_pages: bool,
     pub parity: Option<SectionParity>,
     pub blocks: Vec<SharedLayoutBlock>,
     pub geometry: PageGeometry,
@@ -1079,19 +1083,41 @@ fn absorb_page_break_before_section_break(blocks: &mut [SharedLayoutBlock]) {
         return;
     }
     let paragraph = shared_paragraph_mut(&mut blocks[last]);
-    paragraph.lines[last_break].forced_break_after = None;
     // Nothing that takes room follows it on its page, and Word drops the
     // space after a paragraph at the foot of a page.
     paragraph.space_after = 0.0;
-    paragraph.lines[last_break + 1..]
-        .iter_mut()
-        .for_each(take_no_room);
+    absorb_into_section_break(paragraph);
     for block in &mut blocks[last + 1..] {
         let paragraph = shared_paragraph_mut(block);
         paragraph.space_before = 0.0;
         paragraph.space_after = 0.0;
-        paragraph.lines.iter_mut().for_each(take_no_room);
+        absorb_into_section_break(paragraph);
     }
+}
+
+/// Drop the last page break of a paragraph a following section break absorbs,
+/// and make the lines after it take no room; an empty paragraph after it has
+/// no break, so all its lines take no room. A re-break around a floating
+/// drawing starts from the paragraph's items, which still hold the break, so
+/// it applies this again.
+fn absorb_into_section_break(paragraph: &mut ParagraphBlock) {
+    let rest = match paragraph
+        .lines
+        .iter()
+        .rposition(|line| line.forced_break_after.is_some())
+    {
+        Some(last_break) => {
+            paragraph.lines[last_break].forced_break_after = None;
+            last_break + 1
+        }
+        None => {
+            // Nothing of it is drawn, so nothing must clear a drawing.
+            paragraph.content_offset_top = 0.0;
+            0
+        }
+    };
+    paragraph.lines[rest..].iter_mut().for_each(take_no_room);
+    paragraph.absorbed_by_section_break = true;
 }
 
 /// The paragraph of a shared block found to hold one, made this block's own.
@@ -1334,11 +1360,23 @@ pub(crate) fn paginate_shared_sections(
         // It takes the number the next section would continue from, and
         // nothing is painted on it: no header, footer, border, line number or
         // page colour.
-        if let Some(next) = sections.get(group_end)
-            && let Some(parity) = next.parity
-        {
+        //
+        // With Word's even and odd headers on, odd numbers stay on right-hand
+        // pages: a new-page section whose first number restarts with the
+        // parity of the page before it starts after such a blank page too.
+        if let Some(next) = sections.get(group_end) {
             let physical = page_offset + result.pages.len() + 1;
-            if (physical % 2 == 1) != (parity == SectionParity::Odd) {
+            let wrong_side = match next.parity {
+                Some(parity) => (physical % 2 == 1) != (parity == SectionParity::Odd),
+                None => {
+                    next.odd_numbers_on_right_pages
+                        && !next.continuous
+                        && next.page_number_start.zip(result.pages.last()).is_some_and(
+                            |(start, last)| start % 2 == last.displayed_page_number % 2,
+                        )
+                }
+            };
+            if wrong_side {
                 let continued = result.pages.last().map_or(section_page_number, |page| {
                     page.displayed_page_number.saturating_add(1)
                 });
@@ -5475,6 +5513,9 @@ fn reflow_around_wraps(
     let mut adjusted = para.clone();
     adjusted.lines = lines;
     adjusted.content_offset_top = offset_top;
+    if adjusted.absorbed_by_section_break {
+        absorb_into_section_break(&mut adjusted);
+    }
     // Raw Word metrics stay unchanged. The prepared furniture owner carries
     // proved later gaps separately to both occupied-band paint and pricing.
     adjusted.add_border_padding();
@@ -5924,6 +5965,7 @@ fn render_para_split(
             // extraction. `reflow_allowed` below prevents a second break.
             reflow: para.reflow.clone(),
             content_offset_top: 0.0,
+            absorbed_by_section_break: para.absorbed_by_section_break,
         };
         let continuation_paint = para
             .paint

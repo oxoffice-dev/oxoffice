@@ -138,6 +138,12 @@ pages = [6]
 by_design = "the blank page that sends the odd-page first chapter to a right-hand page, as LibreOffice prints it"
 
 [[known]]
+file = "google/thesis.docx"
+check = "empty-page"
+pages = [6]
+by_design = "the empty page Word 16.115 leaves before chapter 1: with even and odd headers on, its numbering restarts at 1 after page 5, and odd numbers stay on right-hand pages"
+
+[[known]]
 file = "authored/minutes.docx"
 check = "dropped"
 pages = [0]
