@@ -850,6 +850,39 @@ fn layout_paragraph_with_source_and_table(
         .map(|_| crate::forms::InlineControls::new(para));
     // A paragraph inside a block control field: all it draws is the field's.
     let form_block = form_paragraph.is_some_and(|paragraph| paragraph.block);
+    // An empty control draws no run: an anchor where it starts, in the
+    // paragraph mark's font, gives its field a place on the line.
+    let mut form_anchors: HashMap<usize, Vec<oxoffice_layout::FormMark>> = HashMap::new();
+    let mut trailing_form_anchors = Vec::new();
+    if let (Some(controls), Some(form)) = (&inline_controls, form_paragraph) {
+        let runs = para.source_runs();
+        // By the source run, not the prepared one: a run holding a field is
+        // laid out from a prepared copy.
+        let mut projected_at: HashMap<*const CT_R, usize> = HashMap::new();
+        for (index, projected) in original_runs.iter().enumerate() {
+            projected_at
+                .entry(std::ptr::from_ref(projected.run))
+                .or_insert(index);
+        }
+        for (control, start) in para.source_control_starts() {
+            let Some(field) = controls.empty_field(control) else {
+                continue;
+            };
+            let mark = oxoffice_layout::FormMark {
+                node: form.node,
+                field,
+            };
+            match runs
+                .get(start..)
+                .unwrap_or_default()
+                .iter()
+                .find_map(|run| projected_at.get(&std::ptr::from_ref(*run)))
+            {
+                Some(index) => form_anchors.entry(*index).or_default().push(mark),
+                None => trailing_form_anchors.push(mark),
+            }
+        }
+    }
     for (
         projected_index,
         projected,
@@ -873,6 +906,32 @@ fn layout_paragraph_with_source_and_table(
                 source_node,
                 projected_run_start,
             )?;
+            for mark in form_anchors.remove(&projected_index).unwrap_or_default() {
+                let (anchor, kern) = paragraph_mark_segment(
+                    para_style_id,
+                    styles,
+                    table_run_properties,
+                    direct_ppr,
+                    input,
+                    fm,
+                    source_node,
+                    automatic_color,
+                    Some(mark),
+                )?;
+                let anchor = TextSegment {
+                    ascent: 0.0,
+                    descent: 0.0,
+                    ..anchor
+                };
+                multilingual_styles.insert(
+                    inline_items.len(),
+                    WordMultilingualStyle {
+                        kern,
+                        ..Default::default()
+                    },
+                );
+                inline_items.push(InlineItem::Text(anchor));
+            }
         }
 
         let current_form_mark = inline_controls
@@ -1185,6 +1244,21 @@ fn layout_paragraph_with_source_and_table(
                 }
             }
             let Some(content) = content else {
+                // A drawing Word writes in `mc:AlternateContent`, as it does
+                // every text box, is its run's only content.
+                for inline in run.alt_drawings.iter().filter_map(|d| d.inline.as_ref()) {
+                    super::inline_drawings::push_inline_drawing(
+                        inline,
+                        current_form_mark,
+                        &mut inline_items,
+                        styles,
+                        input,
+                        media,
+                        fm,
+                        num_state,
+                        diagnostics,
+                    )?;
+                }
                 break;
             };
             let content_char_start = projected_run_start + content_char_starts[content_index];
@@ -1396,49 +1470,17 @@ fn layout_paragraph_with_source_and_table(
                 },
                 RunContent::Drawing(drawing) => {
                     if let Some(ref inline) = drawing.inline {
-                        let width = inline.extent_cx.to_pt();
-                        let height = inline.extent_cy.to_pt();
-                        let item = if let Some(relationship_id) = inline.chart_rel_id.as_deref() {
-                            InlineItem::Group {
-                                width,
-                                height,
-                                baseline: None,
-                                math: false,
-                                group: render_word_chart(
-                                    relationship_id,
-                                    width,
-                                    height,
-                                    input,
-                                    fm,
-                                    diagnostics,
-                                )?,
-                            }
-                        } else {
-                            media.record_picture_draw_owner(&inline.embed_id);
-                            InlineItem::Image {
-                                form_mark: current_form_mark,
-                                width,
-                                height,
-                                media_id: media.id_for_relationship_with_diagnostic(
-                                    &inline.embed_id,
-                                    diagnostics,
-                                ),
-                            }
-                        };
-                        if let Some(alternate_text) = inline
-                            .description
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|text| !text.is_empty())
-                        {
-                            inline_items.push(InlineItem::Figure {
-                                item: Box::new(item),
-                                alternate_text: alternate_text.to_owned(),
-                                structure_id: None,
-                            });
-                        } else {
-                            inline_items.push(item);
-                        }
+                        super::inline_drawings::push_inline_drawing(
+                            inline,
+                            current_form_mark,
+                            &mut inline_items,
+                            styles,
+                            input,
+                            media,
+                            fm,
+                            num_state,
+                            diagnostics,
+                        )?;
                     }
                 }
                 RunContent::Field(field) => {
@@ -2002,7 +2044,63 @@ fn layout_paragraph_with_source_and_table(
         projection_char_offset,
     )?;
     drop_trailing_display_break(&mut inline_items, &mut multilingual_styles, display_break);
+    for mark in trailing_form_anchors {
+        let (anchor, kern) = paragraph_mark_segment(
+            para_style_id,
+            styles,
+            table_run_properties,
+            direct_ppr,
+            input,
+            fm,
+            source_node,
+            automatic_color,
+            Some(mark),
+        )?;
+        let anchor = TextSegment {
+            ascent: 0.0,
+            descent: 0.0,
+            ..anchor
+        };
+        multilingual_styles.insert(
+            inline_items.len(),
+            WordMultilingualStyle {
+                kern,
+                ..Default::default()
+            },
+        );
+        inline_items.push(InlineItem::Text(anchor));
+    }
 
+    // An anchor takes no height beside other items, so the line is the one
+    // the static export draws; a paragraph of empty controls only stands,
+    // as an empty paragraph's caret does, on its mark's metrics.
+    let only_anchors = !inline_items.is_empty()
+        && inline_items.iter().all(|item| {
+            matches!(item, InlineItem::Text(segment)
+                if segment.form_mark.is_some()
+                    && segment.text.is_empty()
+                    && segment.field_kind.is_none()
+                    && segment.field_source.is_none())
+        });
+    if only_anchors {
+        let (mark, _) = paragraph_mark_segment(
+            para_style_id,
+            styles,
+            table_run_properties,
+            direct_ppr,
+            input,
+            fm,
+            source_node,
+            automatic_color,
+            None,
+        )?;
+        for item in &mut inline_items {
+            if let InlineItem::Text(segment) = item {
+                segment.ascent = mark.ascent;
+                segment.descent = mark.descent;
+            }
+        }
+    }
     let attributed_empty_paragraph = inline_items.is_empty()
         || inline_items.iter().enumerate().all(|(index, _)| {
             multilingual_styles
@@ -2011,64 +2109,37 @@ fn layout_paragraph_with_source_and_table(
                 .is_some_and(|annotation| annotation.kind == WordAnnotationRootKind::EmptySpan)
         });
     if attributed_empty_paragraph {
-        let mut caret_rpr = style_resolver::resolve_run_properties(
+        // A block form field holding only empty paragraphs has their caret
+        // to stand on.
+        let caret_mark = form_block
+            .then_some(crate::forms::BLOCK_FIELD)
+            .zip(form_paragraph)
+            .map(|(field, paragraph)| oxoffice_layout::FormMark {
+                node: paragraph.node,
+                field,
+            });
+        let (caret, kern) = paragraph_mark_segment(
             para_style_id,
-            None,
             styles,
             table_run_properties,
-        );
-        if let Some(paragraph_mark_rpr) = direct_ppr.and_then(|ppr| ppr.rpr.as_ref()) {
-            caret_rpr.merge_from(paragraph_mark_rpr);
-        }
-        let font_size = caret_rpr.sz.map(|hp| hp.to_pt()).unwrap_or(11.0);
-        let bold = caret_rpr.bold.unwrap_or(false);
-        let italic = caret_rpr.italic.unwrap_or(false);
-        // The caret of an empty paragraph draws no character, so it has no
-        // slot of its own and keeps the ASCII one it has always used.
-        let font_family =
-            resolve_font_family(&caret_rpr, input.theme.as_ref(), WordFontSlot::Ascii);
-        let font_id = fm.resolve_font_for_metrics(font_family.as_deref(), bold, italic)?;
+            direct_ppr,
+            input,
+            fm,
+            source_node,
+            automatic_color,
+            caret_mark,
+        )?;
+        let (font_id, font_size) = (caret.font_id, caret.font_size);
         let metrics = fm.metrics(font_id, font_size)?;
         if inline_items.is_empty() {
             multilingual_styles.insert(
                 inline_items.len(),
                 WordMultilingualStyle {
-                    kern: style_resolver::word_kerning_enabled(&caret_rpr),
+                    kern,
                     ..Default::default()
                 },
             );
-            inline_items.push(InlineItem::Text(TextSegment {
-                form_mark: None,
-                text: String::new(),
-                direction: TextDirection::Auto,
-                source: source_node.map(|node| SourceSpan {
-                    node,
-                    char_start: 0,
-                    char_end: 0,
-                }),
-                font_id,
-                measure_font: None,
-                font_size,
-                glyph_ids: Vec::new(),
-                advances: Vec::new(),
-                width: 0.0,
-                ascent: metrics.ascent,
-                descent: metrics.descent,
-                line_gap: 0.0,
-                color: resolve_run_color(&caret_rpr, input.theme.as_ref(), automatic_color),
-                bold,
-                italic,
-                underline: None,
-                strike: false,
-                dstrike: false,
-                highlight: None,
-                baseline_offset: 0.0,
-                hyperlink_url: None,
-                field_kind: None,
-                field_source: None,
-                note: None,
-                note_reference_source: None,
-            }));
+            inline_items.push(InlineItem::Text(caret));
         } else {
             // These atomic roots stand in for the ordinary empty caret. A
             // baseline-bearing Group retains its supplied metrics during Word
@@ -2508,6 +2579,69 @@ fn push_sequence_context_markers(
         }
         pending.extend(owner.nested_fields_in_source_order().into_iter().rev());
     }
+}
+
+/// What a paragraph mark draws: an empty segment in the mark's font, the
+/// caret of an empty paragraph and the anchor of an empty form control.
+/// The flag is whether the mark's font kerns.
+#[allow(clippy::too_many_arguments)]
+fn paragraph_mark_segment(
+    para_style_id: Option<&str>,
+    styles: &CT_Styles,
+    table_run_properties: Option<&oxoffice_docx_oxml::properties::CT_RPr>,
+    direct_ppr: Option<&oxoffice_docx_oxml::properties::CT_PPr>,
+    input: &LayoutInput,
+    fm: &mut FontManager,
+    source_node: Option<SourceNodeId>,
+    automatic_color: Color,
+    form_mark: Option<oxoffice_layout::FormMark>,
+) -> Result<(TextSegment, bool)> {
+    let mut caret_rpr =
+        style_resolver::resolve_run_properties(para_style_id, None, styles, table_run_properties);
+    if let Some(paragraph_mark_rpr) = direct_ppr.and_then(|ppr| ppr.rpr.as_ref()) {
+        caret_rpr.merge_from(paragraph_mark_rpr);
+    }
+    let font_size = caret_rpr.sz.map(|hp| hp.to_pt()).unwrap_or(11.0);
+    let bold = caret_rpr.bold.unwrap_or(false);
+    let italic = caret_rpr.italic.unwrap_or(false);
+    // The caret of an empty paragraph draws no character, so it has no
+    // slot of its own and keeps the ASCII one it has always used.
+    let font_family = resolve_font_family(&caret_rpr, input.theme.as_ref(), WordFontSlot::Ascii);
+    let font_id = fm.resolve_font_for_metrics(font_family.as_deref(), bold, italic)?;
+    let metrics = fm.metrics(font_id, font_size)?;
+    let segment = TextSegment {
+        form_mark,
+        text: String::new(),
+        direction: TextDirection::Auto,
+        source: source_node.map(|node| SourceSpan {
+            node,
+            char_start: 0,
+            char_end: 0,
+        }),
+        font_id,
+        measure_font: None,
+        font_size,
+        glyph_ids: Vec::new(),
+        advances: Vec::new(),
+        width: 0.0,
+        ascent: metrics.ascent,
+        descent: metrics.descent,
+        line_gap: 0.0,
+        color: resolve_run_color(&caret_rpr, input.theme.as_ref(), automatic_color),
+        bold,
+        italic,
+        underline: None,
+        strike: false,
+        dstrike: false,
+        highlight: None,
+        baseline_offset: 0.0,
+        hyperlink_url: None,
+        field_kind: None,
+        field_source: None,
+        note: None,
+        note_reference_source: None,
+    };
+    Ok((segment, style_resolver::word_kerning_enabled(&caret_rpr)))
 }
 
 /// Push a zero-width marker recording a structural field event at

@@ -1,0 +1,9 @@
+{
+  "id": "docx-bibliography-word-check",
+  "format": "docx",
+  "area": "fields",
+  "title": "Bibliography: only APA 6th in en-US is checked against Word, and other cases are refused",
+  "symptom": "an update rebuilds every citation and bibliography or refuses the whole document, naming the style, source and locale it cannot render; APA 6th covers the 17 source kinds, the 11 other styles a book by one author with title, year, city and publisher, and only APA 6th in en-US is compared with Word's own results (the entry order and a trailing space of patent entries still differ)",
+  "workaround": "update the fields in Word, which rebuilds citations and the bibliography in any style",
+  "issue": 468
+}

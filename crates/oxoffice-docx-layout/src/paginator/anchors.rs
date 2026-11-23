@@ -135,12 +135,18 @@ pub(super) fn anchored_elements(
         }))?;
     }
     let mut result = PaintedElements::default();
+    if anchor.form_fields {
+        result.push_non_field(crate::forms::anchored_bracket(true))?;
+    }
     while produced.len() > 0 {
         let child = produced.splice_at(&[], 0..1, &mut PaintedElements::default())?;
         result.append(&mut child.wrap(PositionedElement::MarkedContent {
             structure: anchor.structure_id,
             children: Vec::new(),
         })?)?;
+    }
+    if anchor.form_fields {
+        result.push_non_field(crate::forms::anchored_bracket(false))?;
     }
     Ok(result)
 }
@@ -305,6 +311,63 @@ fn render_shape_text(
         translate_element_shallow(element, dx, dy);
     }
     Ok(local)
+}
+
+/// The elements of a shape placed in line with text, `width` by `height`
+/// with its top left corner at the origin: its fill, and its text inside
+/// `insets` as a floating shape draws them.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn inline_shape_elements(
+    preset: ShapePreset,
+    fill: Option<Color>,
+    text: &[ParagraphBlock],
+    (width, height): (f64, f64),
+    insets: [f64; 4],
+    fixed_height: bool,
+    geometry: &PageGeometry,
+    media: &HashMap<MediaId, ImageData>,
+) -> oxoffice_layout::Result<Vec<PositionedElement>> {
+    let mut elements = Vec::new();
+    match (preset, fill) {
+        (ShapePreset::Rect, Some(color)) => elements.push(PositionedElement::FilledRect {
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
+            },
+            color,
+        }),
+        (ShapePreset::Line, Some(color)) => elements.push(PositionedElement::Line {
+            start: Point { x: 0.0, y: 0.0 },
+            end: Point {
+                x: width,
+                y: height,
+            },
+            width: 1.0,
+            color,
+            dash_pattern: None,
+        }),
+        _ => {}
+    }
+    let [left, top, right, bottom] = insets;
+    let text_rect = Rect {
+        x: left,
+        y: top,
+        width: (width - left - right).max(0.0),
+        height: (height - top - bottom).max(0.0),
+    };
+    let (mut painted, _) = render_shape_text(
+        text,
+        None,
+        geometry,
+        text_rect,
+        fixed_height.then_some(text_rect.height),
+        media,
+    )?
+    .into_parts()?;
+    elements.append(&mut painted);
+    Ok(elements)
 }
 
 fn frame_h(rel: ST_RelativeFromH, g: &PageGeometry, indent_left: f64) -> (f64, f64) {

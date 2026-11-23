@@ -1487,3 +1487,173 @@ fn a_text_box_in_a_block_control_or_with_a_description_still_gives_its_controls_
     texts.sort();
     assert_eq!(texts, ["Value", "Value"]);
 }
+
+/// A text control tagged `tag` with no run at all, as a producer writes a
+/// control emptied without placeholder text.
+fn empty_control(tag: &str) -> String {
+    format!(r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt>"#)
+}
+
+/// The diagnostics that name a field.
+fn said_about(layout: &oxoffice_layout::LayoutResult) -> Vec<&str> {
+    layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .filter(|message| message.starts_with("form "))
+        .collect()
+}
+
+#[test]
+fn empty_controls_get_a_field_where_they_stand() {
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{}</w:p><w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r>{}<w:r><w:t xml:space="preserve"> and more text after it</w:t></w:r></w:p><w:sdt><w:sdtPr><w:tag w:val="notes"/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:p/></w:sdtContent></w:sdt>"#,
+        empty_control("alone"),
+        empty_control("inline"),
+    ));
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    assert_eq!(field_names(layout), ["alone", "inline", "notes"]);
+    let rects = fragment_rects(&layout.pages);
+    assert_eq!(rects.len(), 3, "{rects:?}");
+    // Alone in its paragraph, or a block, it takes the text width; inline,
+    // 6 em of the paragraph mark's 11 pt from where it stands.
+    let text_width = rects[0].width;
+    assert!(text_width > 400.0, "{rects:?}");
+    assert!((rects[2].width - text_width).abs() < 0.01, "{rects:?}");
+    assert!((rects[1].width - 66.0).abs() < 0.01, "{rects:?}");
+    assert!(rects[1].x > rects[0].x + 10.0, "{rects:?}");
+    // Nothing was drawn for them, so the page draws what it drew before.
+    assert!(page_text(&layout.pages).contains("Name:"));
+    assert_eq!(
+        said_about(layout),
+        ["form control \"inline\": other text on its lines sits under its box"]
+    );
+    let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    assert_eq!(exported.len(), 3);
+    for field in &layout.form_fields {
+        assert!(
+            matches!(&field.kind, FormFieldKind::Text { value, .. } if value.is_empty()),
+            "{field:?}"
+        );
+        assert!((field.font_size - 11.0).abs() < 0.01, "{field:?}");
+    }
+}
+
+/// A floating text box at the start of its paragraph's column, over what the
+/// paragraph draws there, as a stamp is laid over a value.
+fn floating_stamp(id: u32, content: &str) -> String {
+    format!(
+        r#"<w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><mc:Choice Requires="wps"><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="2743200" cy="228600"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="{id}" name="Stamp {id}"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2743200" cy="228600"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FFEEAA"/></a:solidFill></wps:spPr><wps:txbx><w:txbxContent>{content}</w:txbxContent></wps:txbx><wps:bodyPr lIns="0" tIns="0" rIns="0" bIns="0"/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice></mc:AlternateContent></w:r>"#
+    )
+}
+
+#[test]
+fn a_floating_stamp_over_a_field_stays_on_the_page() {
+    let stamp = floating_stamp(
+        90,
+        r#"<w:p><w:r><w:rPr><w:caps/></w:rPr><w:t>approved</w:t></w:r></w:p>"#,
+    );
+    let doc = doc_with_body(&format!(
+        r#"<w:p>{stamp}<w:sdt><w:sdtPr><w:tag w:val="value"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Value text here and a little more</w:t></w:r></w:sdtContent></w:sdt></w:p>"#
+    ));
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    let texts: Vec<String> = fragment_texts(&layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(texts, ["Value text here and a little more"]);
+    assert!(
+        page_text(&layout.pages).contains("APPROVED"),
+        "{}",
+        page_text(&layout.pages)
+    );
+    // The stamp's fill stays on the page too: replacing the fragment by its
+    // children holds no filled rectangle.
+    fn fills(elements: &[PositionedElement]) -> usize {
+        elements
+            .iter()
+            .map(|element| match element {
+                PositionedElement::FilledRect { .. } => 1,
+                PositionedElement::FormField(fragment) => fills(&fragment.children),
+                PositionedElement::MarkedContent { children, .. } => fills(children),
+                PositionedElement::Group(group) => fills(&group.children),
+                _ => 0,
+            })
+            .sum()
+    }
+    fn fragment_fills(elements: &[PositionedElement]) -> usize {
+        elements
+            .iter()
+            .map(|element| match element {
+                PositionedElement::FormField(fragment) => fills(&fragment.children),
+                PositionedElement::MarkedContent { children, .. } => fragment_fills(children),
+                PositionedElement::Group(group) => fragment_fills(&group.children),
+                _ => 0,
+            })
+            .sum()
+    }
+    let page = &layout.pages[0].elements;
+    assert!(fills(page) >= 1);
+    assert_eq!(fragment_fills(page), 0);
+    // The drawing's brackets never reach the writer.
+    let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    assert_eq!(exported.len(), 1);
+}
+
+/// Where each text run that draws `text` starts, page by page.
+fn text_origins(
+    pages: &[std::sync::Arc<oxoffice_layout::PageFrame>],
+    text: &str,
+) -> Vec<(f64, f64)> {
+    fn visit(elements: &[PositionedElement], text: &str, out: &mut Vec<(f64, f64)>) {
+        for element in elements {
+            match element {
+                PositionedElement::Text(run) if run.text == text => {
+                    out.push((run.origin.x, run.origin.y))
+                }
+                PositionedElement::FormField(fragment) => visit(&fragment.children, text, out),
+                PositionedElement::MarkedContent { children, .. } => visit(children, text, out),
+                PositionedElement::Group(group) => visit(&group.children, text, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for page in pages {
+        visit(&page.elements, text, &mut out);
+    }
+    out
+}
+
+#[test]
+fn an_empty_control_draws_the_page_the_static_export_draws() {
+    // A large paragraph mark beside small text, a control emptied to an
+    // empty run before a date field, and one near the end of a full line.
+    let emptied = r#"<w:sdt><w:sdtPr><w:tag w:val="emptied"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t></w:t></w:r></w:sdtContent></w:sdt>"#;
+    let date = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> DATE \@ "yyyy" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2026</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:sz w:val="48"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Dated </w:t></w:r>{emptied}{}{date}</w:p><w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r>{}</w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p>"#,
+        empty_control("dated"),
+        "word ".repeat(17),
+        empty_control("late"),
+    ));
+    let fillable = doc.layout_with_options(fillable()).unwrap();
+    let plain = doc.layout_with_options(RenderOptions::default()).unwrap();
+    assert_eq!(field_names(&fillable.layout), ["emptied", "dated", "late"]);
+    assert_eq!(
+        text_origins(&fillable.layout.pages, "Next"),
+        text_origins(&plain.layout.pages, "Next")
+    );
+    let rects = fragment_rects(&fillable.layout.pages);
+    // A control with no run stands before the date the field after it draws.
+    let (year_x, _) = text_origins(&fillable.layout.pages, "2026")[0];
+    assert!(rects[1].x <= year_x + 0.01, "{rects:?} {year_x}");
+    // The late one keeps to its line's end.
+    let page_width = 612.0;
+    assert!(
+        rects[2].x + rects[2].width <= page_width - 72.0 + 0.01,
+        "{rects:?}"
+    );
+}

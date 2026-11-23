@@ -593,6 +593,8 @@ pub(super) fn apa_citation_member(
     source: &BibliographySource,
     options: &CitationSourceOptions,
     patent_punctuation: Option<(&str, &str)>,
+    // Another source has the same author: Word adds the title to tell them apart.
+    disambiguate: bool,
 ) -> String {
     use BibliographySourceKind as Kind;
     let role = citation_creator_role(source, BibliographyStyle::ApaSixthEdition);
@@ -650,9 +652,9 @@ pub(super) fn apa_citation_member(
             }
             names => result.push_str(&format!("{}, et al.", names[0])),
         }
-        if !patent_identity && !options.suppress_title && !short_title.is_empty() {
+        if disambiguate && !patent_identity && !options.suppress_title && !short_title.is_empty() {
             result.push_str(&format!(", {short_title}"));
-        } else if !options.suppress_year && year.is_empty() && !title.is_empty() {
+        } else if disambiguate && !options.suppress_year && year.is_empty() && !title.is_empty() {
             result.push_str(&format!(", {title}"));
         }
     }
@@ -672,22 +674,23 @@ pub(super) fn apa_citation_member(
         }
         result.push_str(displayed_year);
     }
-    if let Some(pages) = &options.pages
-        && !pages.is_empty()
-    {
-        result.push_str(&format!(
+    let pages = options.pages.as_deref().filter(|pages| !pages.is_empty());
+    let volume = options
+        .volume
+        .as_deref()
+        .filter(|volume| !volume.is_empty());
+    match (volume, pages) {
+        (Some(volume), Some(pages)) => result.push_str(&format!(", {volume}:{pages}")),
+        (None, Some(pages)) => result.push_str(&format!(
             ", {} {pages}",
             if pages.contains(['-', '–']) {
                 "pp."
             } else {
                 "p."
             }
-        ));
-    }
-    if let Some(volume) = &options.volume
-        && !volume.is_empty()
-    {
-        result.push_str(&format!(", vol. {volume}"));
+        )),
+        (Some(volume), None) => result.push_str(&format!(", vol. {volume}")),
+        (None, None) => {}
     }
     if let Some(suffix) = &options.suffix {
         result.push_str(suffix);

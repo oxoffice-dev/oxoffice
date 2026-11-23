@@ -409,6 +409,7 @@ pub(super) fn collect_anchored_drawings(
 
         paints.push(content_paint);
         out.push(block::AnchoredDrawing {
+            form_fields: input.form_fields,
             rotation_degrees: if shape.is_some() {
                 anchor.shape_rotation_degrees().unwrap_or(0.0)
             } else {

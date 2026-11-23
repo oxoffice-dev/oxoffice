@@ -177,41 +177,6 @@ impl BibliographyUpdateState {
             else {
                 return Ok(None);
             };
-            if style != BibliographyStyle::ApaSixthEdition {
-                let role = source
-                    .contributors
-                    .iter()
-                    .find(|contributor| contributor.role != BibliographyContributorRole::Author)
-                    .map(|contributor| contributor.role.xml_name());
-                let field = source
-                    .properties
-                    .iter()
-                    .find(|property| {
-                        !matches!(
-                            property.field,
-                            BibliographySourceField::Title
-                                | BibliographySourceField::ShortTitle
-                                | BibliographySourceField::Year
-                                | BibliographySourceField::City
-                                | BibliographySourceField::Publisher
-                                | BibliographySourceField::ReferenceOrder
-                        )
-                    })
-                    .map(|property| property.field.xml_name());
-                let part = if locale != BibliographyFormattingLocale::Numeric(1033)
-                    || source.kind != BibliographySourceKind::Book
-                {
-                    Some("bibliography entry".to_owned())
-                } else if let Some(role) = role {
-                    Some(format!("bibliography entry with the {role} role"))
-                } else {
-                    field.map(|field| format!("bibliography entry with the {field} field"))
-                };
-                if let Some(part) = part {
-                    return Err(source_not_covered(style, &part, &source, &locale));
-                }
-            }
-
             let reference = self.reference_numbers.get(&source.tag).copied();
             let numeric = matches!(
                 style,
@@ -224,6 +189,8 @@ impl BibliographyUpdateState {
             } else {
                 0
             };
+            // The entry first: an uncovered source is refused before its sort key.
+            let paragraph = self.entry_paragraph(style, &source, reference, locale.clone())?;
             let key = if !numeric && tags.is_empty() && collection.sources.len() > 1 {
                 bibliography_sort_key(&source, style, &locale)?
             } else {
@@ -291,7 +258,7 @@ impl BibliographyUpdateState {
             entries.push((
                 order,
                 key,
-                source_bibliography_paragraph(&source, style, reference, locale)?,
+                paragraph,
                 (
                     rtl_paragraph_mark,
                     complex_paragraph_mark,
@@ -374,6 +341,81 @@ impl BibliographyUpdateState {
                 )
                 .collect(),
         ))
+    }
+
+    // One source's entry, refused when the style does not render it yet.
+    fn entry_paragraph(
+        &self,
+        style: BibliographyStyle,
+        source: &BibliographySource,
+        reference: Option<u32>,
+        locale: BibliographyFormattingLocale,
+    ) -> Result<oxoffice_docx_oxml::text::CT_P> {
+        if style != BibliographyStyle::ApaSixthEdition {
+            let role = source
+                .contributors
+                .iter()
+                .find(|contributor| contributor.role != BibliographyContributorRole::Author)
+                .map(|contributor| contributor.role.xml_name());
+            let field = source
+                .properties
+                .iter()
+                .find(|property| {
+                    !matches!(
+                        property.field,
+                        BibliographySourceField::Title
+                            | BibliographySourceField::ShortTitle
+                            | BibliographySourceField::Year
+                            | BibliographySourceField::City
+                            | BibliographySourceField::Publisher
+                            | BibliographySourceField::ReferenceOrder
+                    )
+                })
+                .map(|property| property.field.xml_name());
+            let part = if locale != BibliographyFormattingLocale::Numeric(1033)
+                || source.kind != BibliographySourceKind::Book
+            {
+                Some("bibliography entry".to_owned())
+            } else if let Some(role) = role {
+                Some(format!("bibliography entry with the {role} role"))
+            } else {
+                field.map(|field| format!("bibliography entry with the {field} field"))
+            };
+            if let Some(part) = part {
+                return Err(source_not_covered(style, &part, source, &locale));
+            }
+        }
+        source_bibliography_paragraph(source, style, reference, locale)
+    }
+
+    /// The entry of the source `tag`, as a bibliography with `field_locale` writes it.
+    #[cfg(test)]
+    pub(super) fn source_entry_for_test(
+        &self,
+        tag: &str,
+        field_locale: Option<&str>,
+    ) -> Result<oxoffice_docx_oxml::text::CT_P> {
+        let collection = self.collection.as_ref().expect("source collection");
+        let style = self.style.expect("bibliography style");
+        let (index, identity) = collection
+            .sources
+            .iter()
+            .find(|(_, identity)| identity.tag == tag)
+            .expect("source tag");
+        let raw_locale = collection.parsed.optional_scalar(*index, "LCID")?;
+        let locale = formatting_locale(raw_locale.as_deref(), field_locale, self.default_locale)?;
+        let source = collection
+            .parsed
+            .supported_source(
+                *index,
+                &identity.tag,
+                identity.guid.as_deref(),
+                identity.source_type.as_deref(),
+                false,
+            )?
+            .expect("supported source");
+        let reference = self.reference_numbers.get(tag).copied();
+        self.entry_paragraph(style, &source, reference, locale)
     }
 
     pub(crate) fn citation_runs(
@@ -866,7 +908,16 @@ impl BibliographyUpdateState {
             {
                 return Err(source_not_covered(style, "citation", &source, &locale));
             }
-            fragments.push(apa_citation_member(&source, member, patent_punctuation));
+            let disambiguate = single_citation_creator(&source, style)
+                .map(|creator| has_equivalent_creator(collection, *index, creator, style))
+                .transpose()?
+                .unwrap_or(false);
+            fragments.push(apa_citation_member(
+                &source,
+                member,
+                patent_punctuation,
+                disambiguate,
+            ));
         }
         if let Some((separate, profile, square)) = numeric_profile {
             let separator = if style == BibliographyStyle::Ieee {

@@ -108,6 +108,15 @@ impl<'a> WordOwner<'a> {
             {
                 (16, 0)
             }
+            Self::Drawing(drawing)
+                if drawing
+                    .inline
+                    .as_ref()
+                    .and_then(|inline| inline.shape.as_ref())
+                    .is_some_and(|shape| shape.text_body.is_some() || !shape.text.is_empty()) =>
+            {
+                (16, 0)
+            }
             _ => (0, 0),
         }
     }
@@ -222,6 +231,16 @@ impl<'a> WordOwner<'a> {
             WordOwner::Drawing(drawing) => {
                 if let Some(anchor) = &drawing.anchor {
                     push(WordOwner::Anchor(anchor));
+                }
+                // A text box placed in line with text is a typed text box
+                // too: its weight is the drawing's own.
+                if let Some(shape) = drawing.inline.as_ref().and_then(|i| i.shape.as_ref()) {
+                    if let Some(body) = &shape.text_body {
+                        pending.push(WordOwner::Body(body));
+                    }
+                    for p in &shape.text {
+                        pending.push(WordOwner::Paragraph(p));
+                    }
                 }
             }
             WordOwner::Anchor(anchor) => {
