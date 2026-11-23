@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{Cursor, Read};
 use std::sync::OnceLock;
 
-use oxoffice_pptx::Presentation;
+use oxoffice_layout::{FontFile, FontManager, PositionedElement};
+use oxoffice_pptx::{Emu, PptxRenderOptions, Presentation};
 use oxoffice_render_test::checks::{
     Check, Finding, Rendered, Set, all_words, assert_baselines, assert_check,
     assert_every_file_has_a_baseline, check_glyphs, check_off_page, check_overlap, drawn_lines,
@@ -1300,14 +1301,20 @@ fn a_deck_names_its_text_drawn_as_boxes_once_with_the_font_file_way_out() {
             })
             .collect()
     };
-    let (_, slides) = deck.to_pdf_with_diagnostics(&[]).unwrap();
+    let bundled = PptxRenderOptions::default().with_bundled_fonts_only(true);
+    let (_, slides) = deck.to_pdf_with_diagnostics(&[], bundled).unwrap();
     // The notes pages draw each slide again in their preview: the export
     // still names the boxes once, over all its pages.
-    let (_, notes) = deck.to_notes_pdf_with_diagnostics(&[]).unwrap();
+    let (_, notes) = deck.to_notes_pdf_with_diagnostics(&[], bundled).unwrap();
     for (export, messages) in [("slides", &slides), ("notes", &notes)] {
         let found = han(messages);
         assert_eq!(found.len(), 1, "{export}: {messages:#?}");
         assert!(found[0].contains("--font-dir"), "{export}: {}", found[0]);
+        assert!(
+            found[0].contains("--bundled-fonts-only"),
+            "{export}: {}",
+            found[0]
+        );
         assert!(
             !found[0].contains("--system-fonts"),
             "{export}: {}",
@@ -1737,4 +1744,184 @@ fn a_theme_line_of_index_0_is_no_line_and_one_the_theme_cannot_resolve_drops_onl
         "{:?}",
         drawing.diagnostics
     );
+}
+
+// ---- Characters the bundled fonts lack ----
+
+/// The Han test face standing in for the host's fonts (see the fixtures'
+/// README in `oxoffice-layout`), so the fallback is tested alike everywhere.
+const FALLBACK_TEST: &[u8] =
+    include_bytes!("../../../oxoffice-layout/tests/fixtures/OxofficeFallbackTest.otf");
+
+/// A blank-slide deck whose only shape is a text box holding `text`.
+fn text_deck(text: &str) -> Presentation {
+    let mut prs = Presentation::new().expect("the default template opens");
+    let blank = (0..prs.layout_count())
+        .find(|&index| prs.layout_name(index) == Some("Blank"))
+        .expect("the default template has a Blank layout");
+    prs.add_slide(blank).expect("blank slide is added");
+    prs.slide_mut(0)
+        .unwrap()
+        .add_textbox(Emu(914_400), Emu(914_400), Emu(6 * 914_400), Emu(914_400))
+        .unwrap()
+        .set_text(text)
+        .unwrap();
+    prs
+}
+
+/// Each drawn piece of text with the family of the face that drew it.
+fn drawn_families(layout: &oxoffice_layout::LayoutResult) -> Vec<(String, String)> {
+    let families = layout
+        .fonts
+        .iter()
+        .map(|font| (font.id, font.family.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut drawn = Vec::new();
+    for page in &layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| match element {
+            PositionedElement::Text(run) => {
+                drawn.push((run.text.clone(), families[&run.font_id].clone()))
+            }
+            PositionedElement::MultilingualText(run) => {
+                drawn.push((run.logical_text.clone(), families[&run.font_id].clone()))
+            }
+            _ => {}
+        });
+    }
+    drawn
+}
+
+// A deck's text that no embedded, caller or bundled face draws takes a face
+// of the system tier, found by glyph coverage, and only that text does: the
+// Latin words and the Han the bundled subset has keep their bundled faces,
+// and a diagnostic names the face. Fixed fonts stand in for the host's.
+#[test]
+fn a_deck_draws_only_what_its_fonts_lack_with_a_system_face() {
+    let deck = text_deck("Plan 2024 \u{732b}\u{72ac} \u{4f60}\u{597d}");
+    let (input, _) = deck.render_deterministic().unwrap();
+    let fonts = FontManager::new_with_fallback_fonts(&[FontFile {
+        family: "Oxoffice Fallback Test".to_owned(),
+        data: FALLBACK_TEST.to_vec(),
+    }])
+    .unwrap();
+    let layout =
+        oxoffice_pptx_render::layout_presentation_with_font_manager(&input, fonts).unwrap();
+    let drawn = drawn_families(&layout);
+    let family_of = |text: &str| -> Vec<&str> {
+        drawn
+            .iter()
+            .filter(|(piece, _)| text.contains(piece.trim()) && !piece.trim().is_empty())
+            .map(|(_, family)| family.as_str())
+            .collect()
+    };
+    assert_eq!(
+        family_of("\u{732b}\u{72ac}"),
+        ["Oxoffice Fallback Test"; 2],
+        "{drawn:?}"
+    );
+    assert_eq!(
+        family_of("\u{4f60}\u{597d}"),
+        ["Noto Sans SC"; 2],
+        "{drawn:?}"
+    );
+    assert_eq!(family_of("Plan 2024"), ["Carlito"; 2], "{drawn:?}");
+    let messages = layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("drawn with the system font 'Oxoffice Fallback Test'")),
+        "{messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("empty boxes")),
+        "{messages:#?}"
+    );
+}
+
+// The default render reaches the host's fonts and bundled fonts only does
+// not, on any machine: by default the Han slide is drawn with a system face
+// or named as having none on this machine; with bundled fonts only it is
+// boxes that name the switch. The Latin text is drawn alike in both modes.
+#[test]
+fn a_deck_takes_a_system_face_by_default_and_never_with_bundled_fonts_only() {
+    let deck = crate::support::corpus_deck("powerpoint/multilingual.pptx");
+    let han = |options: PptxRenderOptions| -> Vec<String> {
+        let (_, mut messages) = deck.to_pdf_with_diagnostics(&[], options).unwrap();
+        // The handouts draw the slides again and say the same, once.
+        let (_, handouts) = deck
+            .to_handout_pdf_with_diagnostics(oxoffice_pptx::HandoutLayout::Six, &[], options)
+            .unwrap();
+        messages.extend(handouts);
+        messages
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .filter(|message| message.starts_with("Chinese, Japanese or Korean ideograph (Han)"))
+            .collect()
+    };
+    let default = han(PptxRenderOptions::default());
+    assert!(
+        default.iter().all(|message| {
+            message.contains("is drawn with the system font")
+                || message.contains("no system font on this machine has them")
+        }) && !default.is_empty(),
+        "{default:#?}"
+    );
+    let bundled = han(PptxRenderOptions::default().with_bundled_fonts_only(true));
+    assert!(
+        bundled.len() == 2
+            && bundled
+                .iter()
+                .all(|message| message.contains("the render uses the bundled fonts only")),
+        "{bundled:#?}"
+    );
+
+    let deck = text_deck("Revenue 2024 \u{8ba1}\u{5212}\u{4e66} \u{b9e4}\u{cd9c}");
+    let latin = |options: PptxRenderOptions| {
+        let (bytes, _) = deck.to_pdf_with_diagnostics(&[], options).unwrap();
+        let pdf = Pdf::read(&bytes);
+        pdf.drawn(0)
+            .into_iter()
+            .filter(|piece| piece.text.is_ascii() && !piece.text.trim().is_empty())
+            .map(|piece| (piece.text, piece.glyphs, piece.x, piece.end, piece.size))
+            .collect::<Vec<_>>()
+    };
+    let default = latin(PptxRenderOptions::default());
+    assert!(!default.is_empty());
+    assert_eq!(
+        default,
+        latin(PptxRenderOptions::default().with_bundled_fonts_only(true))
+    );
+}
+
+// A run keeps the face of its family for what that face draws: only the
+// characters it lacks look for a face of their own, and a face found for
+// them never takes the run's other text. The check box of "Done ☑ today" is
+// drawn by Noto Sans Symbols 2 and its words by Carlito, in both modes.
+#[test]
+fn a_run_keeps_its_family_for_the_text_it_draws_beside_a_symbol_it_lacks() {
+    let deck = text_deck("Done \u{2611} today");
+    for bundled_fonts_only in [true, false] {
+        let options = PptxRenderOptions::default().with_bundled_fonts_only(bundled_fonts_only);
+        let (_, layout) = deck.render_with_options(&[], options).unwrap();
+        let drawn = drawn_families(&layout);
+        let family_of = |text: &str| {
+            drawn
+                .iter()
+                .find(|(piece, _)| piece.trim() == text)
+                .map(|(_, family)| family.as_str())
+        };
+        assert_eq!(family_of("Done"), Some("Carlito"), "{drawn:?}");
+        assert_eq!(family_of("today"), Some("Carlito"), "{drawn:?}");
+        assert_eq!(
+            family_of("\u{2611}"),
+            Some("Noto Sans Symbols 2"),
+            "{drawn:?}"
+        );
+    }
 }

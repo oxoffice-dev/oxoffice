@@ -1265,7 +1265,12 @@ fn every_chart_kind_renders_as_a_chart_not_a_placeholder() {
         let mut prs = blank_deck(1);
         chart_on(&mut prs, 0, kind, &source);
         let (png, diagnostics) = prs
-            .render_slide_to_png_with_diagnostics(0, 48.0, &[])
+            .render_slide_to_png_with_diagnostics(
+                0,
+                48.0,
+                &[],
+                oxoffice_pptx::PptxRenderOptions::default().with_bundled_fonts_only(true),
+            )
             .unwrap();
         let png = png.expect("the slide renders");
         assert!(png.starts_with(b"\x89PNG"), "{kind:?}");

@@ -97,9 +97,15 @@ system font for all of its text when it holds such a character. `RenderOptions::
 (CLI `--bundled-fonts-only`, Python `bundled_fonts_only=True`) never takes a
 system font, and `RenderOptions::with_system_fonts` (CLI `--system-fonts`,
 Python `system_fonts=True`) resolves families in the system fonts first; the
-`*_deterministic` helpers always use the bundled fonts only. A deck uses its
-embedded, caller and bundled fonts only. Text no font in use can draw is drawn
-as empty boxes and named by a diagnostic with the way out of its family.
+`*_deterministic` helpers always use the bundled fonts only. A deck render
+(`PptxRenderOptions`, the `*_with_diagnostics` entries and
+`Presentation::render_with_options`) takes the same fallback for what its
+embedded, caller and bundled fonts lack, every East Asian run being split by
+grapheme; `PptxRenderOptions::with_bundled_fonts_only` (CLI
+`--bundled-fonts-only`, Python `bundled_fonts_only=True`) never takes one, a
+deck has no system-fonts-first mode, and its fit checks and `*_deterministic`
+helpers use the bundled fonts only. Text no font in use can draw is drawn as
+empty boxes and named by a diagnostic with the way out of its family.
 
 The Rust facades are the reference. The CLI crates and the Python crates are
 thin layers over them: a feature lands in the facade first, then reaches the
