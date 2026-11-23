@@ -70,6 +70,8 @@ One pull request, `Closes #82`, which also removes the limitation `docx-restart-
 - On a list with direct numbering over two levels, restarting the third item moves it and every later item, at
   both levels, in a table cell and in a content control too, to the new instance, each at its level; earlier
   items and another instance of the same definition keep theirs.
+- Restarting a sub-item at 5, in an instance that already restarts level 0, moves the rest of its sublist only:
+  `1. 1. 5. 6. 2. 1. 2.`.
 - The refusals (a plain paragraph, a bullet, a missing paragraph) change nothing.
 
 ## Links

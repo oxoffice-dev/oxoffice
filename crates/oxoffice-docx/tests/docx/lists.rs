@@ -279,17 +279,18 @@ fn restarting_a_sub_item_moves_only_the_rest_of_its_sublist() {
         ("one", 0),
         ("one a", 1),
         ("one b", 1),
+        ("one c", 1),
         ("two", 0),
         ("two a", 1),
         ("two b", 1),
     ] {
         doc.add_paragraph(text).numbering(id, level);
     }
-    assert_eq!(markers(&doc), ["1.", "1.", "2.", "2.", "1.", "2."]);
+    assert_eq!(markers(&doc), ["1.", "1.", "2.", "3.", "2.", "1.", "2."]);
 
     let new = doc.restart_numbering(2, 5).unwrap();
     let doc = reopen(&mut doc);
-    assert_eq!(markers(&doc), ["1.", "1.", "5.", "2.", "1.", "2."]);
+    assert_eq!(markers(&doc), ["1.", "1.", "5.", "6.", "2.", "1.", "2."]);
     let numbering: Vec<_> = (0..doc.paragraph_count())
         .map(|index| doc.paragraph(index).unwrap().numbering())
         .collect();
@@ -298,6 +299,7 @@ fn restarting_a_sub_item_moves_only_the_rest_of_its_sublist() {
         [
             Some((id, 0)),
             Some((id, 1)),
+            Some((new, 1)),
             Some((new, 1)),
             Some((id, 0)),
             Some((id, 1)),
