@@ -8,6 +8,7 @@ use std::io::{Cursor, Read};
 use lopdf::Object;
 use oxoffice_docx::paragraph::Alignment;
 use oxoffice_docx::{Document, Length, PdfConformance, PictureOptions, RenderOptions, StoryKind};
+use oxoffice_docx_oxml::table::ST_VerticalJc;
 use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf};
 
@@ -678,6 +679,38 @@ fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
 }
 
 // ---- Tables ----
+
+// A table is ink like a line: a vertically centred page whose body ends with
+// a table centres it, rather than measuring an empty page and pushing the
+// table down by half of it.
+#[test]
+fn a_vertically_centred_page_centres_a_table_that_ends_the_body() {
+    let mut doc = Document::new();
+    {
+        let mut table = doc.add_table(6, 1);
+        for row in 0..6 {
+            table
+                .cell(row, 0)
+                .unwrap()
+                .set_text(&format!("Row {}", row + 1));
+        }
+    }
+    doc.section_mut(0)
+        .unwrap()
+        .set_vertical_alignment(ST_VerticalJc::Center);
+    let pdf = pdf_of(&reopen(&mut doc));
+    let first = line_of(&pdf, 0, "Row 1");
+    let last = line_of(&pdf, 0, "Row 6");
+    // The middle of the page's text area, in PDF space.
+    let page_middle = 792.0 - 72.0 - 648.0 / 2.0;
+    let middle = (first.y + last.y) / 2.0;
+    assert!(
+        (middle - page_middle).abs() < 8.0,
+        "the rows' middle is at {middle:.1}, the page's at {page_middle} (first row {:.1}, last {:.1})",
+        first.y,
+        last.y
+    );
+}
 
 // ---- Pictures ----
 
