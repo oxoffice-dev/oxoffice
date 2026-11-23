@@ -1,6 +1,6 @@
 ---
 date: 2026-11-23
-status: accepted
+status: shipped
 scope: docx
 ---
 
@@ -109,6 +109,13 @@ content no reader understands.**
    base-less n-ary in the model, the layout, MathML and LaTeX. Closes #224: removes its last entries of
    `tests/render/known.toml`, the baselines rewritten in a commit of their own. Tests: each construct round-trips
    its XML, draws its ink where Word does, and converts to MathML and LaTeX.
+
+## Learnings
+
+- Typing new OfficeMath objects means the MathML reader must read back what the writer writes, in the same PR:
+  #557 wrote m:func, m:bar, m:borderBox, m:groupChr, m:phant and m:eqArr to MathML, and #554's ODT round trip lost
+  them until #561 taught the reader each form (an accented arrow stays an accent; an empty menclose notation is a
+  box with every side hidden; m:box has no MathML form; an unaligned m:eqArr reads as a one-column matrix).
 
 ## Links
 

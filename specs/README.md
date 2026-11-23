@@ -82,14 +82,18 @@ dependency bumps and documentation.
 | 2026-11-22 | [A line break keeps where its text restarts](2026-11-22-line-break-clear.md) | shipped |
 | 2026-11-22 | [Cut and pasted content keeps its bookmarks whole and its ids unique](2026-11-22-cut-content-keeps-its-bookmarks-and-ids.md) | accepted |
 | 2026-11-22 | [Characters XML cannot carry: refused or dropped at the setter](2026-11-22-characters-xml-cannot-carry.md) | shipped |
-| 2026-11-23 | [A deck draws the characters its fonts lack with a system font](2026-11-23-deck-system-font-fallback.md) | accepted |
-| 2026-11-23 | [Restarting a list item numbered through its style](2026-11-23-restart-a-style-numbered-list-item.md) | accepted |
-| 2026-11-23 | [Date controls with a time, and the US Gregorian calendar](2026-11-23-date-controls-with-times.md) | accepted |
-| 2026-11-23 | [One font record addressed by its index](2026-11-23-font-records-by-index.md) | accepted |
-| 2026-11-23 | [Comparison: endnotes compared like footnotes](2026-11-23-comparison-endnote-custody.md) | accepted |
-| 2026-11-23 | [A note's custom mark held by the child after its reference](2026-11-23-a-note-mark-held-by-its-child.md) | accepted |
-| 2026-11-23 | [A tagged link holds its text](2026-11-23-tagged-link-text.md) | accepted |
-| 2026-11-23 | [Comparison: a bookmark both versions hold, in a paragraph replaced whole](2026-11-23-comparison-shared-bookmarks-in-replaced-paragraphs.md) | accepted |
-| 2026-11-23 | [Chicago marks in the exports and in note policies](2026-11-23-chicago-marks.md) | accepted |
-| 2026-11-23 | [Every OfficeMath construct is drawn](2026-11-23-every-officemath-construct-drawn.md) | accepted |
-| 2026-11-23 | [Compare adds, removes and moves block content controls whole](2026-11-23-compare-block-content-controls.md) | accepted |
+| 2026-11-23 | [A deck draws the characters its fonts lack with a system font](2026-11-23-deck-system-font-fallback.md) | shipped |
+| 2026-11-23 | [Restarting a list item numbered through its style](2026-11-23-restart-a-style-numbered-list-item.md) | shipped |
+| 2026-11-23 | [Date controls with a time, and the US Gregorian calendar](2026-11-23-date-controls-with-times.md) | shipped |
+| 2026-11-23 | [One font record addressed by its index](2026-11-23-font-records-by-index.md) | shipped |
+| 2026-11-23 | [Comparison: endnotes compared like footnotes](2026-11-23-comparison-endnote-custody.md) | shipped |
+| 2026-11-23 | [A note's custom mark held by the child after its reference](2026-11-23-a-note-mark-held-by-its-child.md) | shipped |
+| 2026-11-23 | [A tagged link holds its text](2026-11-23-tagged-link-text.md) | shipped |
+| 2026-11-23 | [Comparison: a bookmark both versions hold, in a paragraph replaced whole](2026-11-23-comparison-shared-bookmarks-in-replaced-paragraphs.md) | shipped |
+| 2026-11-23 | [Chicago marks in the exports and in note policies](2026-11-23-chicago-marks.md) | shipped |
+| 2026-11-23 | [Every OfficeMath construct is drawn](2026-11-23-every-officemath-construct-drawn.md) | shipped |
+| 2026-11-23 | [Compare adds, removes and moves block content controls whole](2026-11-23-compare-block-content-controls.md) | shipped |
+| 2026-11-23 | [Equation constructs as tall as Word draws them](2026-11-23-equation-sizes-as-word.md) | shipped |
+| 2026-11-23 | [Equations in the RTF and ODT exports](2026-11-23-equations-in-rtf-and-odt.md) | shipped |
+| 2026-11-23 | [A link in a paragraph added or removed whole is tracked as a HYPERLINK field](2026-11-23-whole-paragraph-hyperlink-as-field.md) | shipped |
+| 2026-11-23 | [RTF keeps paragraph styles and section layout](2026-11-23-rtf-styles-and-sections.md) | accepted |
