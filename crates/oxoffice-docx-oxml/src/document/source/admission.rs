@@ -430,9 +430,9 @@ pub(super) fn admit_word_input_classified(
                         || (decoded_namespace_is(namespace_uri, crate::namespace::MC_NS)
                             && matches!(local.as_ref(), b"AlternateContent" | b"Choice" | b"Fallback"))
                         || (namespace_uri == b"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
-                            // Inline shape text is opaque. Only the anchor
-                            // parser constructs a recursive Word text body.
-                            && local.as_ref() == b"anchor")
+                            // The anchor and inline parsers both construct
+                            // a recursive Word text body for a shape.
+                            && matches!(local.as_ref(), b"anchor" | b"inline"))
                         || (namespace_uri == b"http://schemas.openxmlformats.org/drawingml/2006/main"
                             && matches!(local.as_ref(), b"graphic" | b"graphicData"))
                         || (namespace_uri == b"http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
@@ -557,12 +557,13 @@ pub(super) fn admit_word_input_classified(
                 // Direct CT_Drawing entries choose anchor by local name after
                 // their qualified Word drawing owner has been established.
                 // AlternateContent has its separate qualified owner admission.
-                if direct_drawing && local.as_ref() == b"anchor" {
+                if direct_drawing && matches!(local.as_ref(), b"anchor" | b"inline") {
                     admitted = stack.last().unwrap().qualified_drawing_depth.is_none_or(|depth|
                         captured_namespace_is(binding, depth, "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"));
                 }
-                let mut anchor_depth =
-                    (admitted && local.as_ref() == b"anchor").then_some(stack.len());
+                let mut anchor_depth = (admitted
+                    && matches!(local.as_ref(), b"anchor" | b"inline"))
+                .then_some(stack.len());
                 let typed_anchor_body = parent_anchor.is_some_and(|depth| {
                     local.as_ref() == b"txbxContent"
                         && (captured_namespace_is(binding, depth, W_NS) || legacy_word)
@@ -571,23 +572,29 @@ pub(super) fn admit_word_input_classified(
                     // The actual anchor reader traverses unknown wrappers and
                     // any graphicData URI. These captured branches are the
                     // exceptions it skips without constructing a Word body.
-                    admitted = !matches!(
-                        local.as_ref(),
-                        b"srcRect"
-                            | b"positionH"
-                            | b"positionV"
-                            | b"spPr"
-                            | b"blip"
-                            | b"wrapNone"
-                            | b"wrapSquare"
-                            | b"wrapTight"
-                            | b"wrapThrough"
-                            | b"wrapTopAndBottom"
-                    ) && !(captured_namespace_is(
-                        binding,
-                        parent_anchor,
-                        "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
-                    ) && local.as_ref() == b"docPr");
+                    // The inline reader walks into the position and wrap
+                    // elements only an anchor has, so it may build a body
+                    // there: only the anchor reader skips them.
+                    let anchor_owner = stack
+                        .get(parent_anchor)
+                        .is_some_and(|frame| frame.local.as_ref() == b"anchor");
+                    admitted = !matches!(local.as_ref(), b"srcRect" | b"spPr" | b"blip")
+                        && !(anchor_owner
+                            && matches!(
+                                local.as_ref(),
+                                b"positionH"
+                                    | b"positionV"
+                                    | b"wrapNone"
+                                    | b"wrapSquare"
+                                    | b"wrapTight"
+                                    | b"wrapThrough"
+                                    | b"wrapTopAndBottom"
+                            ))
+                        && !(captured_namespace_is(
+                            binding,
+                            parent_anchor,
+                            "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+                        ) && local.as_ref() == b"docPr");
                     anchor_depth = (admitted && !typed_anchor_body).then_some(parent_anchor);
                 }
                 if fact_start.checked_sub(source_start).is_some_and(|start| {

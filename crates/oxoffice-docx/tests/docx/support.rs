@@ -145,6 +145,11 @@ pub fn texts(doc: &Document) -> Vec<String> {
 /// properties: markup as Word, Google Docs or LibreOffice write it, which
 /// the facade would not write itself.
 pub fn doc_with_body(body: &str) -> Document {
+    Document::from_bytes(&docx_with_body(body)).expect("document with this body opens")
+}
+
+/// The bytes of [`doc_with_body`], for a body that may not open.
+pub fn docx_with_body(body: &str) -> Vec<u8> {
     let bytes = Document::new().to_bytes().expect("new document saves");
     let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
     let part = package.main_document_part().expect("main document part");
@@ -159,7 +164,7 @@ pub fn doc_with_body(body: &str) -> Document {
     package.set_part(&part, xml.into_bytes());
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).expect("package writes");
-    Document::from_bytes(&out.into_inner()).expect("document with this body opens")
+    out.into_inner()
 }
 
 /// A floating text box holding `content`, as Word writes it: DrawingML in

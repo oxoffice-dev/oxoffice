@@ -101,6 +101,7 @@ pub(crate) use sequence::validate_navigation_exclusions;
 mod cache_accounting;
 mod field_substitution;
 mod header_footer;
+mod inline_drawings;
 mod input_scan;
 mod note_cache;
 mod paragraph;

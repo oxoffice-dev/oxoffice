@@ -1244,6 +1244,21 @@ fn layout_paragraph_with_source_and_table(
                 }
             }
             let Some(content) = content else {
+                // A drawing Word writes in `mc:AlternateContent`, as it does
+                // every text box, is its run's only content.
+                for inline in run.alt_drawings.iter().filter_map(|d| d.inline.as_ref()) {
+                    super::inline_drawings::push_inline_drawing(
+                        inline,
+                        current_form_mark,
+                        &mut inline_items,
+                        styles,
+                        input,
+                        media,
+                        fm,
+                        num_state,
+                        diagnostics,
+                    )?;
+                }
                 break;
             };
             let content_char_start = projected_run_start + content_char_starts[content_index];
@@ -1455,49 +1470,17 @@ fn layout_paragraph_with_source_and_table(
                 },
                 RunContent::Drawing(drawing) => {
                     if let Some(ref inline) = drawing.inline {
-                        let width = inline.extent_cx.to_pt();
-                        let height = inline.extent_cy.to_pt();
-                        let item = if let Some(relationship_id) = inline.chart_rel_id.as_deref() {
-                            InlineItem::Group {
-                                width,
-                                height,
-                                baseline: None,
-                                math: false,
-                                group: render_word_chart(
-                                    relationship_id,
-                                    width,
-                                    height,
-                                    input,
-                                    fm,
-                                    diagnostics,
-                                )?,
-                            }
-                        } else {
-                            media.record_picture_draw_owner(&inline.embed_id);
-                            InlineItem::Image {
-                                form_mark: current_form_mark,
-                                width,
-                                height,
-                                media_id: media.id_for_relationship_with_diagnostic(
-                                    &inline.embed_id,
-                                    diagnostics,
-                                ),
-                            }
-                        };
-                        if let Some(alternate_text) = inline
-                            .description
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|text| !text.is_empty())
-                        {
-                            inline_items.push(InlineItem::Figure {
-                                item: Box::new(item),
-                                alternate_text: alternate_text.to_owned(),
-                                structure_id: None,
-                            });
-                        } else {
-                            inline_items.push(item);
-                        }
+                        super::inline_drawings::push_inline_drawing(
+                            inline,
+                            current_form_mark,
+                            &mut inline_items,
+                            styles,
+                            input,
+                            media,
+                            fm,
+                            num_state,
+                            diagnostics,
+                        )?;
                     }
                 }
                 RunContent::Field(field) => {
