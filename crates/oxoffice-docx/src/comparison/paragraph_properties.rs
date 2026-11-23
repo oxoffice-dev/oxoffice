@@ -579,8 +579,10 @@ pub(super) fn shared_bookmark_markers(
 /// complex field, the whole of it in an `ins` (or, `deleted`, a `del`) of its
 /// own under one new revision id: a `w:fldSimple` cannot carry a mark, and
 /// resolving the paragraph would leave its shell. That is the shape Word
-/// writes for a field deleted with its paragraph. The byte ranges of those
-/// wrappers are returned for the publisher to keep as they are.
+/// writes for a field deleted with its paragraph. Its hyperlinks are written
+/// as fields the same way (see [`whole_paragraph_hyperlinks`]). The byte
+/// ranges of those wrappers are returned for the publisher to keep as they
+/// are.
 pub(super) fn paragraph_children_xml(
     paragraph: &CT_P,
     deleted: bool,
@@ -645,6 +647,9 @@ pub(super) fn paragraph_children_xml(
     }
     for (span, replacement) in replacements.into_iter().rev() {
         xml.replace_range(span, &replacement);
+    }
+    if whole_fields {
+        whole_paragraph_hyperlinks(paragraph, &mut xml, &mut published, deleted, metadata)?;
     }
     Ok((xml, published))
 }

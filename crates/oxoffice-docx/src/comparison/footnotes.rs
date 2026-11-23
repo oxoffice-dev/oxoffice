@@ -2524,6 +2524,10 @@ pub(super) fn compare_note_parts(
         .as_ref()
         .map(|part| relationship_classes(original, &part.name).map(RelationshipClassScope::enter))
         .transpose()?;
+    metadata.whole_hyperlinks.owner = left
+        .as_ref()
+        .or(right.as_ref())
+        .map_or_else(String::new, |part| part.name.clone());
     let mut emitted = false;
     for (&id, left_owner) in &left_normal {
         if let Some(right_owner) = right_normal.get(&id) {

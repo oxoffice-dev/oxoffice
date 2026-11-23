@@ -1062,6 +1062,212 @@ pub(super) fn whole_simple_field(
     Ok(wrapper)
 }
 
+/// Each direct hyperlink of a paragraph inserted or deleted whole, written as
+/// one `HYPERLINK` complex field, the whole of it in an `ins` (or, `deleted`,
+/// a `del`) of its own under one new revision id: the hyperlink element
+/// cannot carry a mark, and Word keeps it, emptied, when it resolves the
+/// paragraph away. That is the shape Word writes itself for such a link.
+///
+/// `xml` is the paragraph's XML and `published` the wrapper spans already in
+/// it; the new wrappers join them. A link holding one of them (a simple field
+/// written whole, in a wrapper of its own) keeps its element: Word nests no
+/// revision wrapper in another. A link with an attribute no field switch
+/// carries is refused, except `w:history`, which Word drops too.
+pub(super) fn whole_paragraph_hyperlinks(
+    paragraph: &CT_P,
+    xml: &mut String,
+    published: &mut Vec<Range<usize>>,
+    deleted: bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<()> {
+    if paragraph.hyperlinks.is_empty() {
+        return Ok(());
+    }
+    let scope: NamespaceBindings = vec![
+        ("xmlns:w".into(), W_NS.into()),
+        ("xmlns:r".into(), R_NS.into()),
+    ];
+    let spans = direct_word_element_spans_in_scope(xml, "hyperlink", &scope)?;
+    if spans.len() != paragraph.hyperlinks.len() {
+        return Err(Error::Other(
+            "whole-paragraph hyperlinks differ from the paragraph's modeled links".into(),
+        ));
+    }
+    for span in spans.into_iter().rev() {
+        if published
+            .iter()
+            .any(|range| range.start < span.end && span.start < range.end)
+        {
+            continue;
+        }
+        let link = &xml[span.clone()];
+        let (opening_end, empty, _) = element_opening(link)?;
+        if empty {
+            continue;
+        }
+        let (instruction, opening) =
+            hyperlink_field_instruction(&link[..opening_end], &scope, metadata)?;
+        let inner = element_inner_range_any_prefix(link, "hyperlink")?;
+        let complex = format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve">{}</w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>{}<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+            quick_xml::escape::partial_escape(&instruction),
+            &link[inner]
+        );
+        let start = span.start + opening_end;
+        let parent = metadata
+            .ids
+            .revision_parent_scope(&ParentScopes::new(xml, vec![start]).at(start)?);
+        let payload =
+            qualified_complete_field_payload(&complex, &parent, deleted, false, true, &mut 0)?;
+        let id = metadata.ids.allocate()?;
+        let wrapper = metadata.ids.generated(IdAllocator::revision_with_id(
+            if deleted { "del" } else { "ins" },
+            metadata.author,
+            metadata.timestamp,
+            &payload,
+            id,
+        ))?;
+        let shift = wrapper.len() as isize - span.len() as isize;
+        for range in published.iter_mut() {
+            if range.start >= span.end {
+                *range = range.start.saturating_add_signed(shift)
+                    ..range.end.saturating_add_signed(shift);
+            }
+        }
+        published.push(span.start..span.start + wrapper.len());
+        xml.replace_range(span, &wrapper);
+        metadata
+            .whole_hyperlinks
+            .witnesses
+            .push(WholeHyperlinkWitness {
+                owner: metadata.whole_hyperlinks.owner.clone(),
+                input_role: usize::from(!deleted),
+                revision_id: id,
+                generated_span: payload,
+                opening,
+            });
+    }
+    published.sort_by_key(|range| range.start);
+    Ok(())
+}
+
+/// The `HYPERLINK` instruction that carries the link whose start tag is
+/// `opening`, and the qualified names of its attributes in order, with the
+/// value of those no switch carries (see `WholeHyperlinkWitness`).
+fn hyperlink_field_instruction(
+    opening: &str,
+    scope: &NamespaceBindings,
+    metadata: &Metadata<'_>,
+) -> Result<(String, HyperlinkOpening)> {
+    // The declarations the link itself writes, not those closing it adds.
+    let mut written = HashSet::new();
+    if let Event::Start(element) = Reader::from_str(opening)
+        .read_event()
+        .map_err(|error| Error::Other(error.to_string()))?
+    {
+        for attribute in element.attributes() {
+            let attribute = attribute.map_err(|error| Error::Other(error.to_string()))?;
+            written.insert(attribute.key.as_ref().to_vec());
+        }
+    }
+    let closed = actual_field_source_fragment(&format!("{opening}</w:hyperlink>"), scope)?;
+    let mut reader = NsReader::from_str(&closed);
+    let (_, event) = reader
+        .read_resolved_event()
+        .map_err(|error| Error::Other(error.to_string()))?;
+    let Event::Start(element) = event else {
+        return Err(Error::Other(
+            "whole-paragraph hyperlink has no start tag".into(),
+        ));
+    };
+    let mut names = Vec::new();
+    let mut target = None;
+    let mut switches = Vec::new();
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|error| Error::Other(error.to_string()))?;
+        if attribute.key.as_namespace_binding().is_some() {
+            if !written.contains(attribute.key.as_ref()) {
+                continue;
+            }
+            names.push((
+                String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
+                Some(
+                    attribute
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())
+                        .map_err(|error| Error::Other(error.to_string()))?
+                        .into_owned(),
+                ),
+            ));
+            continue;
+        }
+        let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())
+            .map_err(|error| Error::Other(error.to_string()))?
+            .into_owned();
+        let name = match (namespace, local.as_ref()) {
+            (ResolveResult::Bound(Namespace(uri)), b"id") if uri == R_NS.as_bytes() => {
+                let (address, external) = metadata
+                    .whole_hyperlinks
+                    .targets
+                    .get(&metadata.whole_hyperlinks.owner)
+                    .and_then(|targets| targets.get(&value))
+                    .ok_or_else(|| {
+                        Error::Other(format!(
+                            "a hyperlink of a paragraph added or removed whole names relationship {value}, which has no target"
+                        ))
+                    })?;
+                if !external {
+                    return Err(Error::Other(format!(
+                        "a hyperlink of a paragraph added or removed whole targets a part of the package ({address}), which no HYPERLINK field names"
+                    )));
+                }
+                target = Some(address.clone());
+                "r:id"
+            }
+            (ResolveResult::Bound(Namespace(uri)), local) if uri == W_NS.as_bytes() => {
+                match local {
+                    b"anchor" => switches.push(("l", value)),
+                    b"tooltip" => switches.push(("o", value)),
+                    b"tgtFrame" => switches.push(("t", value)),
+                    b"history" => {
+                        names.push(("w:history".to_owned(), Some(value)));
+                        continue;
+                    }
+                    _ => {
+                        return Err(Error::Other(format!(
+                            "a hyperlink of a paragraph added or removed whole has w:{}, which no HYPERLINK field switch carries",
+                            String::from_utf8_lossy(local)
+                        )));
+                    }
+                }
+                match local {
+                    b"anchor" => "w:anchor",
+                    b"tooltip" => "w:tooltip",
+                    _ => "w:tgtFrame",
+                }
+            }
+            _ => {
+                return Err(Error::Other(format!(
+                    "a hyperlink of a paragraph added or removed whole has {}, which no HYPERLINK field switch carries",
+                    String::from_utf8_lossy(attribute.key.as_ref())
+                )));
+            }
+        };
+        names.push((name.to_owned(), None));
+    }
+    let quoted = |value: &str| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""));
+    let mut instruction = String::from("HYPERLINK");
+    if let Some(target) = target {
+        instruction.push(' ');
+        instruction.push_str(&quoted(&target));
+    }
+    for (switch, value) in switches {
+        instruction.push_str(&format!(" \\{switch} {}", quoted(&value)));
+    }
+    Ok((instruction, names))
+}
+
 /// Qualify an ordinary whole-field run-revision payload at its actual owners.
 /// Direct runs use the existing qualified child scanner. Opaque run payloads
 /// and real nested control/wrapper custody retain their own source authority.
@@ -1531,6 +1737,7 @@ fn tracked_field_result(
         shared_bookmarks: HashSet::new(),
         point_bookmarks: HashSet::new(),
         relocated_bookmarks: HashSet::new(),
+        whole_hyperlinks: metadata.whole_hyperlinks.scope(),
     };
     let mut diagnostics = Vec::new();
     let result = compare_paragraph(
@@ -1546,6 +1753,10 @@ fn tracked_field_result(
     metadata
         .whole_field_conversions
         .extend(inner.whole_field_conversions);
+    metadata
+        .whole_hyperlinks
+        .witnesses
+        .extend(inner.whole_hyperlinks.witnesses);
     let inner_range = element_inner_range_any_prefix(&result, "p")?;
     Ok(result[inner_range].to_owned())
 }

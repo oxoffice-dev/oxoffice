@@ -165,8 +165,8 @@ impl Document {
                     .collect();
                 result.push(LinkInfo {
                     text,
-                    url: Some(field.target),
-                    anchor: None,
+                    url: field.target,
+                    anchor: field.anchor,
                     rel_id: None,
                 });
             }

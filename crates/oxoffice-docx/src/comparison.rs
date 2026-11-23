@@ -6,7 +6,7 @@ use std::ops::Range;
 use base64::Engine;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
-use oxoffice_docx_oxml::namespace::W_NS;
+use oxoffice_docx_oxml::namespace::{R_NS, W_NS};
 use oxoffice_docx_oxml::properties::CT_PPr;
 use oxoffice_docx_oxml::shared::ST_PageOrientation;
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_TblPr, CT_Tc, CellContent};
@@ -23,6 +23,12 @@ use crate::revision::{FieldEvent, paragraph_field_events, validate_revision_time
 use crate::{Document, Error, Result, StoryKind};
 
 type NamespaceBindings = Vec<(String, String)>;
+/// The target of each hyperlink relationship, by story part and id, with
+/// whether it is external.
+type HyperlinkTargets = HashMap<String, HashMap<String, (String, bool)>>;
+/// The attributes of a link's start tag, in order, with the value of those
+/// no `HYPERLINK` switch carries.
+type HyperlinkOpening = Vec<(String, Option<String>)>;
 type SourceCoordinates = (usize, Vec<(Range<usize>, Range<usize>)>);
 type RawSourceSelection = (usize, usize, usize);
 type RunSourceSelection<'a> = (&'a [RawSourceSelection], &'a [Option<TypedSourceSelection>]);
@@ -74,7 +80,7 @@ use bookmarks::{
     bookmark_coverage, holds_bookmarks_once, reconcile_body_bookmarks, rewritten_opening,
     shared_bookmark_ids, without_bookmarks, word_attributes, zero_width_bookmark_ids,
 };
-use field_conversions::validate_field_conversion_role;
+use field_conversions::{restore_whole_hyperlinks, validate_field_conversion_role};
 use guard::{
     guard_mask_coordinates, guard_source_body_at, guard_story_owners, guard_story_part,
     normalized_story_part,
@@ -90,7 +96,8 @@ use postconditions::{
     refuse_changed_existing_revisions, resolved_candidate,
 };
 use relationships::{
-    chart_relationship_signature, relationship_classes, remap_equivalent_story_relationships,
+    chart_relationship_signature, hyperlink_targets, relationship_classes,
+    remap_equivalent_story_relationships,
 };
 use source_metadata::{
     ContentMetadata, field_source_metadata, source_root_metadata,
@@ -195,7 +202,7 @@ use fields::{
     compared_run_xml, comparison_instruction_eq, containing_run, conversion_namespace_facts,
     conversion_source_inventory, field_carrier_source_budget, field_result_source_paragraph,
     field_source_sequence_budget, prepared_field_result_owner, publish_run_source, run_field,
-    run_is_field, whole_simple_field,
+    run_is_field, whole_paragraph_hyperlinks, whole_simple_field,
 };
 use granular::{
     GranularAction, align_between_shells, compare_granular_paragraph, granular_action,
@@ -305,6 +312,42 @@ struct WholeFieldWitness {
     generated_span: String,
 }
 
+/// A hyperlink written as one `HYPERLINK` complex field with the paragraph
+/// that holds it, inserted or deleted whole (see `whole_paragraph_hyperlinks`).
+/// The resolution that keeps the paragraph reads the link back from the field
+/// alone: `opening` names the attributes the input link has, in its order,
+/// with the values no field switch carries: its namespace declarations and
+/// `w:history`, which Word drops and writes back too.
+#[derive(Clone, Debug)]
+struct WholeHyperlinkWitness {
+    owner: String,
+    input_role: usize,
+    revision_id: i32,
+    generated_span: String,
+    opening: HyperlinkOpening,
+}
+
+/// What the whole-paragraph hyperlink publisher needs: the target of each
+/// hyperlink relationship by story part and id, the original story part being
+/// compared, and the witnesses it wrote.
+#[derive(Clone, Debug, Default)]
+struct WholeHyperlinks {
+    targets: std::rc::Rc<HyperlinkTargets>,
+    owner: String,
+    witnesses: Vec<WholeHyperlinkWitness>,
+}
+
+impl WholeHyperlinks {
+    /// The same targets and part, without witnesses.
+    fn scope(&self) -> Self {
+        Self {
+            targets: self.targets.clone(),
+            owner: self.owner.clone(),
+            witnesses: Vec::new(),
+        }
+    }
+}
+
 struct Metadata<'a> {
     author: &'a str,
     timestamp: &'a str,
@@ -332,6 +375,7 @@ struct Metadata<'a> {
     /// Those of them a whole paragraph wrote that way, whose start or end
     /// the acceptance or the rejection leaves at a paragraph edge.
     relocated_bookmarks: HashSet<i32>,
+    whole_hyperlinks: WholeHyperlinks,
 }
 
 #[derive(Clone)]
@@ -680,6 +724,18 @@ impl Document {
                     shared_bookmarks: HashSet::new(),
                     point_bookmarks: HashSet::new(),
                     relocated_bookmarks: HashSet::new(),
+                    // Before the relationships are remapped: the comment
+                    // story compares in place only when both inputs hold the
+                    // same comment relationships.
+                    whole_hyperlinks: WholeHyperlinks {
+                        targets: std::rc::Rc::new(hyperlink_targets(
+                            &original,
+                            [left.part_name.clone()],
+                            &[],
+                        )),
+                        owner: left.part_name.clone(),
+                        witnesses: Vec::new(),
+                    },
                 },
                 &mut Vec::new(),
             )
@@ -813,6 +869,14 @@ impl Document {
             &original.styles,
             &edited.styles,
         ));
+        let mut link_owners = vec![original.doc_part_name.clone()];
+        link_owners.extend(original_stories.iter().map(|story| story.part_name.clone()));
+        for document in [&original, &edited] {
+            for kind in NoteKind::ALL {
+                link_owners.extend(NotePart::of(document, kind)?.map(|part| part.name));
+            }
+        }
+        let link_targets = hyperlink_targets(&original, link_owners, &carried_links);
         let shared_bookmarks = shared_bookmark_ids(&original, &edited)?;
         let point_bookmarks = zero_width_bookmark_ids(&edited, &shared_bookmarks)?;
         let mut metadata = Metadata {
@@ -831,6 +895,11 @@ impl Document {
             shared_bookmarks,
             point_bookmarks,
             relocated_bookmarks: HashSet::new(),
+            whole_hyperlinks: WholeHyperlinks {
+                targets: std::rc::Rc::new(link_targets),
+                owner: original.doc_part_name.clone(),
+                witnesses: Vec::new(),
+            },
         };
         metadata.ids.local_word_binding =
             foreign_word_binding(original_xml)? || foreign_word_binding(edited_xml)?;
@@ -930,6 +999,7 @@ impl Document {
                     &original,
                     &story.part_name,
                 )?);
+                metadata.whole_hyperlinks.owner = story.part_name.clone();
                 compare_story_part(
                     story_xml(&original, story)?,
                     story_xml(&edited, story)?,
@@ -1124,9 +1194,22 @@ impl Document {
                 &new_ids,
             )?;
         }
+        // A link written as a field is read back before the resolution
+        // retires its note markers, from the bytes the field was written in.
+        let mut accepted_links = Default::default();
         let accepted = resolved_candidate(
             &candidate,
-            |document| document.accept_revision_ids(&new_ids),
+            |document| {
+                let count = document.accept_revision_ids(&new_ids)?;
+                accepted_links = restore_whole_hyperlinks(
+                    &candidate,
+                    document,
+                    &metadata.whole_hyperlinks.witnesses,
+                    1,
+                    &new_ids,
+                )?;
+                Ok(count)
+            },
             Some(&new_ids),
         )?;
         // A bookmark both inputs hold that a whole paragraph wrote once (see
@@ -1178,6 +1261,7 @@ impl Document {
             &metadata.whole_field_conversions,
             1,
             &new_ids,
+            &accepted_links,
         )?;
         for kind in NoteKind::ALL {
             verify_note_destination(&accepted, &edited, kind, true, options)?;
@@ -1199,9 +1283,22 @@ impl Document {
                 ));
             }
         }
+        // A link written as a field is read back before the resolution
+        // retires its note markers, from the bytes the field was written in.
+        let mut rejected_links = Default::default();
         let rejected = resolved_candidate(
             &candidate,
-            |document| document.reject_revision_ids(&new_ids),
+            |document| {
+                let count = document.reject_revision_ids(&new_ids)?;
+                rejected_links = restore_whole_hyperlinks(
+                    &candidate,
+                    document,
+                    &metadata.whole_hyperlinks.witnesses,
+                    0,
+                    &new_ids,
+                )?;
+                Ok(count)
+            },
             Some(&new_ids),
         )?;
         let (rejected_view, original_view) = relocated_views(&rejected, &original, "rejection")?;
@@ -1229,6 +1326,7 @@ impl Document {
             &metadata.whole_field_conversions,
             0,
             &new_ids,
+            &rejected_links,
         )?;
         for kind in NoteKind::ALL {
             verify_note_destination(&rejected, &original, kind, false, options)?;
