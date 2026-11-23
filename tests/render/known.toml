@@ -9,13 +9,6 @@
 # entry is updated or goes.
 
 [[known]]
-file = "word/long-report.docx"
-check = "text"
-pages = [0]
-finding = "1 words"
-issue = 227
-
-[[known]]
 file = "authored/thesis.docx"
 check = "overlap"
 pages = [25]

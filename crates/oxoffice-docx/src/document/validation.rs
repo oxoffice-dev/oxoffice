@@ -1148,7 +1148,7 @@ fn dangling_numbering_warnings(doc: &Document) -> Result<Vec<String>> {
         };
         for direct in xml_paragraph_numbering_properties(xml)? {
             let Some((num_id, level)) =
-                super::numbering_types::effective_numbering_reference(numbering, styles, &direct)
+                super::numbering_types::effective_numbering_reference(styles, &direct)
             else {
                 continue;
             };
