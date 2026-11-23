@@ -200,3 +200,22 @@ fn a_missing_occurrence_leaves_the_document_unchanged() {
     assert!(error.contains("must not be empty"), "{error}");
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
+
+#[test]
+fn a_replacement_names_its_source_guid_in_any_case_and_keeps_the_saved_one() {
+    let mut doc = Document::new();
+    let guid = doc
+        .add_bibliography_source(&book("Smith20", "Smith", "2020"))
+        .unwrap();
+    let mut replacement = book("Smith20", "Smith", "2021");
+    replacement.guid = guid.to_lowercase();
+    doc.replace_bibliography_source(&replacement).unwrap();
+    let source = reopen(&mut doc).bibliography_sources().unwrap().remove(0);
+    assert_eq!(source.guid, Some(guid.clone()));
+    let year = source.supported.unwrap().properties[1].value.clone();
+    assert_eq!(year, "2021");
+
+    replacement.guid = "{00000000-0000-4000-8000-000000000000}".to_owned();
+    let error = doc.replace_bibliography_source(&replacement).unwrap_err();
+    assert_eq!(error.to_string(), "bibliography: source GUID cannot change");
+}

@@ -26,8 +26,12 @@ const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Subcommand)]
 pub enum BibliographyCommand {
-    /// List the sources: tag, GUID, kind, locale, contributors, fields and
-    /// what could not be read
+    /// List the sources: tag, kind, GUID and title, and what could not be
+    /// read
+    ///
+    /// `--json` prints each source whole: locale, contributors and fields
+    /// too. The kind is the source's name (`journal_article`), or its saved
+    /// XML type in parentheses when the source cannot be edited as a whole.
     Sources {
         /// Path to the DOCX file
         file: PathBuf,
@@ -371,7 +375,7 @@ fn sources(file: &Path, json_output: bool) -> Result<()> {
     for info in &sources {
         let kind = match &info.supported {
             Some(source) => source.kind.name().to_owned(),
-            None => info.source_type.clone().unwrap_or_else(|| "?".to_owned()),
+            None => format!("({})", info.source_type.as_deref().unwrap_or("?")),
         };
         let guid = info.guid.as_deref().unwrap_or("-");
         let title = info
@@ -548,16 +552,18 @@ pub fn parse_style(value: &str) -> std::result::Result<BibliographyStyle, String
 
 /// `TAG[,pages=P][,volume=V][,prefix=F][,suffix=S][,no-author][,no-year][,no-title]`.
 pub fn parse_citation_source(spec: &str) -> std::result::Result<CitationSourceOptions, String> {
+    // Spaces around the tag and the switch names are dropped; a value is
+    // kept as written, so `prefix=see ` keeps its space.
     let mut parts = spec.split(',');
-    let tag = parts.next().unwrap_or_default();
-    if tag.trim().is_empty() {
+    let tag = parts.next().unwrap_or_default().trim();
+    if tag.is_empty() {
         return Err(format!("citation source {spec:?} has no tag"));
     }
     let mut source = citation_source(tag);
     for part in parts {
         let (name, value) = match part.split_once('=') {
-            Some((name, value)) => (name, Some(value)),
-            None => (part, None),
+            Some((name, value)) => (name.trim(), Some(value)),
+            None => (part.trim(), None),
         };
         let slot = match (name, value) {
             ("pages", Some(_)) => &mut source.pages,

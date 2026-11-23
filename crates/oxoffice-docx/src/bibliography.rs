@@ -615,9 +615,18 @@ impl Document {
             .iter()
             .find(|(_, existing)| existing.tag == source.tag)
             .ok_or_else(|| bibliography_error("source tag does not exist"))?;
-        if existing.guid.as_deref() != Some(source.guid.as_str()) {
+        // GUIDs compare as `add_bibliography_source` compares them; the saved
+        // spelling is kept.
+        let Some(guid) = existing.guid.as_ref().filter(|guid| {
+            crate::content_control::normalize_store_item_id(guid)
+                == crate::content_control::normalize_store_item_id(&source.guid)
+        }) else {
             return Err(bibliography_error("source GUID cannot change"));
-        }
+        };
+        let source = &BibliographySource {
+            guid: guid.clone(),
+            ..source.clone()
+        };
         let xml = replace_source_xml(&collection, *index, source)?;
         if xml == collection.xml {
             return Ok(());

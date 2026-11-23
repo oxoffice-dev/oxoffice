@@ -76,7 +76,9 @@ fn texts(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// The field instructions of the main document part, in order, trimmed.
+/// The field instructions of the main document part, in order, each run of
+/// spaces read as one (a patched instruction keeps the spaces of the switches
+/// it drops).
 fn instructions(path: &str) -> Vec<String> {
     let bytes = fs::read(path).unwrap();
     let package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
@@ -86,10 +88,8 @@ fn instructions(path: &str) -> Vec<String> {
         .skip(1)
         .map(|rest| {
             let text = &rest[rest.find('>').unwrap() + 1..rest.find("</w:instrText>").unwrap()];
-            text.replace("&quot;", "\"")
-                .replace("&amp;", "&")
-                .trim()
-                .to_owned()
+            let text = text.replace("&quot;", "\"").replace("&amp;", "&");
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
         })
         .collect()
 }
@@ -410,6 +410,79 @@ fn names_are_taken_in_kebab_or_snake_case_and_refused_with_the_known_ones() {
     ]);
     assert!(error.contains("either \"people\""), "{error}");
     assert!(!dir.join("4.docx").exists() && !dir.join("5.docx").exists());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn bibliography_selectors_and_spaced_citation_switches_reach_the_fields() {
+    let dir = scratch("selectors");
+    let input = document(&dir, &["First", "Second"]);
+    let input = input.to_str().unwrap();
+    let path = |name: &str| dir.join(name).to_str().unwrap().to_owned();
+    let sources = write_json(&dir, "sources.json", &json!([smith(), doe()]));
+    ok(&[
+        "add-source",
+        input,
+        "--source",
+        &sources,
+        "-o",
+        &path("1.docx"),
+    ]);
+    ok(&[
+        "insert",
+        &path("1.docx"),
+        "--index",
+        "1",
+        "--style",
+        "apa6",
+        "--locale",
+        "1033",
+        "--locale-filter",
+        "1036",
+        "--tag",
+        "Smith20",
+        "--tag",
+        "Doe19",
+        "-o",
+        &path("2.docx"),
+    ]);
+    ok(&[
+        "cite",
+        &path("2.docx"),
+        "--after",
+        "First",
+        "--source",
+        " Smith20, pages=12 , no-year",
+        "-o",
+        &path("3.docx"),
+    ]);
+    assert_eq!(
+        instructions(&path("3.docx")),
+        [
+            r#"CITATION Smith20 \p "12 " \y"#,
+            r#"BIBLIOGRAPHY \l 1033 \f 1036 \m Smith20 \m Doe19"#,
+        ]
+    );
+    let texts = texts(&path("3.docx"));
+    assert_eq!((texts[0].as_str(), texts[2].as_str()), ("First", "Second"));
+
+    // set-style rewrites the selectors of the bibliography already there.
+    ok(&[
+        "set-style",
+        &path("3.docx"),
+        "--style",
+        "chicago",
+        "--tag",
+        "Doe19",
+        "-o",
+        &path("4.docx"),
+    ]);
+    assert_eq!(instructions(&path("4.docx"))[1], r#"BIBLIOGRAPHY \m Doe19"#);
+    assert_eq!(
+        json_of(&["style", &path("4.docx"), "--json"])["style"]["name"],
+        "chicago"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
