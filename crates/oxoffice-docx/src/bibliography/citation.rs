@@ -344,6 +344,8 @@ pub(super) fn native_citation_run_properties(profile: usize) -> Result<oxoffice_
 
 pub(super) fn source_citation_runs(
     source: &BibliographySource,
+    style: BibliographyStyle,
+    locale: &BibliographyFormattingLocale,
     creator: Option<&BibliographyPerson>,
     separate_leading: bool,
     grammar: &[NativeCitationRun],
@@ -412,8 +414,11 @@ pub(super) fn source_citation_runs(
             .any(|token| matches!(token, NativeCitationRun::Year(_)))
             && !year.chars().all(|character| character.is_ascii_digit()))
     {
-        return Err(bibliography_error(
-            "catalogued source-script citation run branch is still being implemented",
+        return Err(source_not_covered(
+            style,
+            "citation whose names or year are not Latin letters and digits",
+            source,
+            locale,
         ));
     }
     let mut leading = CT_R::new(" ");
@@ -698,7 +703,9 @@ pub(super) fn bibliography_sort_key(
     locale: &BibliographyFormattingLocale,
 ) -> Result<BibliographySortKey> {
     let full_names = style == BibliographyStyle::ApaSixthEdition
-        && apa_bibliography_language(locale.clone())?.full_names;
+        && apa_bibliography_language(locale.clone())
+            .map_err(|_| source_not_covered(style, "bibliography entry", source, locale))?
+            .full_names;
     let mut people = Vec::new();
     let role = if style == BibliographyStyle::ApaSixthEdition {
         match source.kind {
@@ -758,8 +765,11 @@ pub(super) fn bibliography_sort_key(
         || !year.is_ascii()
         || !title.is_ascii()
     {
-        return Err(bibliography_error(
-            "catalogued bibliography source-key collation branch is still being implemented",
+        return Err(source_not_covered(
+            style,
+            "bibliography sort key for non-ASCII names or titles",
+            source,
+            locale,
         ));
     }
     Ok((people, year, title))
