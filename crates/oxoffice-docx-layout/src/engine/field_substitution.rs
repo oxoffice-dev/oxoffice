@@ -951,8 +951,8 @@ fn realigned_offset(changes: &[FieldWidthChange], x: f64, baseline: f64) -> Opti
 }
 
 /// Moves a rectangle over tab-aligned text with that text, and widens it by
-/// the change of the fields it covers.
-fn realign_rect(rect: &mut oxoffice_layout::Rect, changes: &[FieldWidthChange]) {
+/// the change of the fields it covers. Returns whether it moved.
+fn realign_rect(rect: &mut oxoffice_layout::Rect, changes: &[FieldWidthChange]) -> bool {
     let covers = |change: &&FieldWidthChange| {
         rect.y <= change.baseline && change.baseline <= rect.y + rect.height
     };
@@ -964,6 +964,25 @@ fn realign_rect(rect: &mut oxoffice_layout::Rect, changes: &[FieldWidthChange]) 
         let width_change = own_width_change(changes, rect.x, covers);
         rect.width += width_change;
         rect.x += offset;
+        return true;
+    }
+    false
+}
+
+/// Stretches or shrinks a fill that ends where tab-aligned text starts, a
+/// filled tab's, so it still reaches that text once its fields hold their
+/// values, as [`realign_tab_leader`] does for a leader.
+fn realign_tab_fill(rect: &mut oxoffice_layout::Rect, changes: &[FieldWidthChange]) {
+    let end = rect.x + rect.width;
+    let Some(change) = changes.iter().find(|change| {
+        rect.y <= change.baseline
+            && change.baseline <= rect.y + rect.height
+            && (end - change.aligned.start).abs() < 0.01
+    }) else {
+        return;
+    };
+    if let Some(offset) = realigned_offset(changes, change.aligned.start, change.baseline) {
+        rect.width = (rect.width + offset).max(0.0);
     }
 }
 
@@ -1001,12 +1020,18 @@ pub(super) fn realign_tab_aligned_text(
                     start.x += offset;
                 }
             }
-            PositionedElement::FilledRect { rect, .. }
-            | PositionedElement::LinkAnnotation { rect, .. } => realign_rect(rect, changes),
+            PositionedElement::FilledRect { rect, .. } => {
+                if !realign_rect(rect, changes) {
+                    realign_tab_fill(rect, changes);
+                }
+            }
+            PositionedElement::LinkAnnotation { rect, .. } => {
+                realign_rect(rect, changes);
+            }
             // A form marker moves with the text it stands over, as a link
             // rectangle does.
             PositionedElement::FormField(fragment) if fragment.mark.is_some() => {
-                realign_rect(&mut fragment.rect, changes)
+                realign_rect(&mut fragment.rect, changes);
             }
             PositionedElement::MarkedContent { children, .. } => {
                 realign_tab_aligned_text(children, changes)
