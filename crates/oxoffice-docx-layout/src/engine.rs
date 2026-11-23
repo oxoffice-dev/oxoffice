@@ -68,14 +68,16 @@ pub use field_format::{
     format_numeric_field_general, format_numeric_field_picture, format_page_field_result,
     page_reference_keeps_stored_display, section_page_number_format,
 };
-pub use fonts_annotations::{WordFontSlot, resolve_font_family};
-use fonts_annotations::{
-    WordLanguageSlot, annotation_field_owner, automatic_text_color, emphasis_mark_glyph,
-    is_east_asian, push_annotation_decorations, push_east_asian_layout_text,
-    push_emphasis_marked_text, push_empty_field_annotation, resolve_run_color, ruby_inline_item,
-    run_fill, word_font_slot_for_text, word_language_slot,
+pub(crate) use fonts_annotations::push_unique_diagnostic;
+pub use fonts_annotations::{
+    WordFontSlot, automatic_text_color, resolve_font_family, run_fill, shading_color,
 };
-pub(crate) use fonts_annotations::{push_unique_diagnostic, shading_color};
+use fonts_annotations::{
+    WordLanguageSlot, annotation_field_owner, emphasis_mark_glyph, is_east_asian,
+    push_annotation_decorations, push_east_asian_layout_text, push_emphasis_marked_text,
+    push_empty_field_annotation, resolve_run_color, ruby_inline_item, word_font_slot_for_text,
+    word_language_slot,
+};
 use multilingual::{
     highlight_to_color, inferred_word_base_direction, multilingual_candidate,
     needs_word_multilingual_layout, shape_word_multilingual_items, word_character_advance_pt,

@@ -1227,12 +1227,16 @@ pub(super) fn resolve_run_color(
 /// foreground under a solid one, the two mixed under a percentage pattern,
 /// and nothing for `nil` or an automatic fill. Under a pattern Word paints an
 /// automatic foreground black and an automatic fill white. Other patterns
-/// (stripes, crosses) are painted as their fill.
-pub(crate) fn shading_color(shading: &CT_Shd) -> Option<Color> {
+/// (stripes, crosses) are painted as their fill. A colour that is not six hex
+/// digits (after a `#` the run builders accept) is read as automatic. The
+/// HTML and EPUB exports read shading here too, so that they paint what the
+/// PDF paints.
+pub fn shading_color(shading: &CT_Shd) -> Option<Color> {
     let hex = |value: &Option<String>| {
         value
             .as_deref()
-            .filter(|value| *value != "auto")
+            .map(|value| value.strip_prefix('#').unwrap_or(value))
+            .filter(|value| value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map(Color::from_hex)
     };
     let percent = match shading.val.as_str() {
@@ -1264,7 +1268,7 @@ pub(crate) fn shading_color(shading: &CT_Shd) -> Option<Color> {
 
 /// The fill drawn behind a run's text: its highlight, which Word draws over
 /// its shading, or else its shading.
-pub(super) fn run_fill(rpr: &CT_RPr) -> Option<Color> {
+pub fn run_fill(rpr: &CT_RPr) -> Option<Color> {
     rpr.highlight
         .and_then(highlight_to_color)
         .or_else(|| rpr.shading.as_deref().and_then(shading_color))
@@ -1274,7 +1278,7 @@ pub(super) fn run_fill(rpr: &CT_RPr) -> Option<Color> {
 /// light one or on none. Word draws automatic text in whichever contrasts
 /// with the shading behind it. The coefficients and the luminance floor of
 /// 156 in 255 are the donor's chosen policy, not a pinned LibreOffice source.
-pub(super) fn automatic_text_color(fill: Option<Color>) -> Color {
+pub fn automatic_text_color(fill: Option<Color>) -> Color {
     let Some(fill) = fill else {
         return Color::BLACK;
     };
