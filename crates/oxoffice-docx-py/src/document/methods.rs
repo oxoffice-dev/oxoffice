@@ -609,6 +609,105 @@ impl PyDocument {
         PyTuple::new(py, fields)
     }
 
+    // Bibliography; the bodies are in `bibliography.rs`.
+
+    fn bibliography_sources<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        self.bibliography_sources_impl(py)
+    }
+
+    /// Add a source and return its GUID: the one it holds, or one derived
+    /// from its content when it holds none.
+    fn add_bibliography_source(
+        &mut self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+    ) -> PyResult<String> {
+        self.add_bibliography_source_impl(py, source)
+    }
+
+    /// Replace the source with the same tag, keeping its GUID: an empty
+    /// `guid` is the one the source has.
+    fn replace_bibliography_source(
+        &mut self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        self.replace_bibliography_source_impl(py, source)
+    }
+
+    fn remove_bibliography_source(&mut self, py: Python<'_>, tag: &str) -> PyResult<()> {
+        self.remove_bibliography_source_impl(py, tag)
+    }
+
+    fn bibliography_style(&self, py: Python<'_>) -> PyResult<Option<PyBibliographyStyleInfo>> {
+        self.bibliography_style_impl(py)
+    }
+
+    /// Set the style, and the selectors of every bibliography in the document.
+    #[pyo3(signature = (style, *, locale = None, locale_filter = None, tags = None))]
+    fn set_bibliography_options(
+        &mut self,
+        py: Python<'_>,
+        style: &str,
+        locale: Option<u32>,
+        locale_filter: Option<u32>,
+        tags: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        self.set_bibliography_options_impl(py, style, locale, locale_filter, tags)
+    }
+
+    #[pyo3(signature = (position, sources, *, locale = None))]
+    fn insert_citation(
+        &mut self,
+        py: Python<'_>,
+        position: &Bound<'_, PyAny>,
+        sources: &Bound<'_, PyAny>,
+        locale: Option<u32>,
+    ) -> PyResult<()> {
+        self.insert_citation_impl(py, position, sources, locale)
+    }
+
+    /// Cite right after the `occurrence`-th match of `text` in the main
+    /// story, found as `add_comment_on_text` finds its anchor.
+    #[pyo3(signature = (text, sources, *, occurrence = 0, locale = None))]
+    fn insert_citation_after_text(
+        &mut self,
+        py: Python<'_>,
+        text: &str,
+        sources: &Bound<'_, PyAny>,
+        occurrence: usize,
+        locale: Option<u32>,
+    ) -> PyResult<()> {
+        self.insert_citation_after_text_impl(py, text, sources, occurrence, locale)
+    }
+
+    /// Insert a bibliography where `insert_content` would put content, and
+    /// set the style.
+    #[pyo3(signature = (destination, style, *, locale = None, locale_filter = None, tags = None))]
+    #[allow(clippy::too_many_arguments)]
+    fn insert_bibliography(
+        &mut self,
+        py: Python<'_>,
+        destination: &Bound<'_, PyAny>,
+        style: &str,
+        locale: Option<u32>,
+        locale_filter: Option<u32>,
+        tags: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        self.insert_bibliography_impl(py, destination, style, locale, locale_filter, tags)
+    }
+
+    /// Rebuild every citation and bibliography result. A field not covered
+    /// yet fails the whole update and changes nothing.
+    #[pyo3(signature = (*, default_locale = None))]
+    fn update_bibliography(
+        &mut self,
+        py: Python<'_>,
+        default_locale: Option<u32>,
+    ) -> PyResult<PyBibliographyUpdateReport> {
+        self.update_bibliography_impl(py, default_locale)
+    }
+
     fn insert_legacy_form_field(
         &mut self,
         py: Python<'_>,

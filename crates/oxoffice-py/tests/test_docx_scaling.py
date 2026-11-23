@@ -58,6 +58,10 @@ LEGACY = oxdocx.LegacyFormFieldDefinition.text_input(value="x")
 IDS = itertools.count(1)
 
 
+def book(tag, title="A history"):
+    return oxdocx.BibliographySource(tag, "book", fields=[("title", title), ("year", "2020")])
+
+
 # ---------------------------------------------------------------- targets: each gives the k-th fresh object
 def document(doc, k):
     return doc
@@ -524,6 +528,18 @@ TIMED = {
     "Document.insert_legacy_form_field": on_made(
         lambda doc, k: oxdocx.StoryRunPosition(item=item_of(doc, para(doc, k)), run_index=1),
         lambda doc, position: doc.insert_legacy_form_field(position, LEGACY)),
+    # Bibliography (update, style and removal: WHOLE_DOCUMENT)
+    "Document.add_bibliography_source": on_made(lambda doc, k: book(f"Added{next(IDS)}"),
+                                                lambda doc, source: doc.add_bibliography_source(source)),
+    "Document.replace_bibliography_source": on_made(
+        lambda doc, k: (lambda tag: (doc.add_bibliography_source(book(tag)), book(tag, "Retitled"))[1])(
+            f"Replaced{next(IDS)}"),
+        lambda doc, source: doc.replace_bibliography_source(source)),
+    "Document.insert_citation": on_made(
+        lambda doc, k: oxdocx.StoryRunPosition(item=item_of(doc, para(doc, k)), run_index=1),
+        lambda doc, position: doc.insert_citation(position, ["Cited"], locale=1033)),
+    "Document.insert_bibliography": on_made(lambda doc, k: item_of(doc, para(doc, k)),
+                                            lambda doc, item: doc.insert_bibliography(item, "apa6", locale=1033)),
     "Document.set_mail_merge_package": on_made(lambda doc, k: merge_package(k),
                                                lambda doc, options: doc.set_mail_merge_package(options)),
     "Document.remove_mail_merge_package": on_made(lambda doc, k: doc.set_mail_merge_package(merge_package(k)),
@@ -707,6 +723,10 @@ WHOLE_DOCUMENT = {
     "Document.update_page_fields": "lays out every page",
     "Document.update_layout_backed_fields": "lays out every page",
     "Document.rebuild_toc": "lists every heading", "Document.insert_toc": "lists every heading",
+    "Document.update_bibliography": "every citation and bibliography",
+    "Document.set_bibliography_options": "every bibliography",
+    "Document.remove_bibliography_source": "searches every citation for the tag",
+    "Document.insert_citation_after_text": "searches the text",
 }
 # Names that raise an error naming the oxoffice way (python-docx names, and setters of snapshots), and public
 # methods that change nothing in the document.
@@ -723,7 +743,8 @@ READS = {"Document.verify_signatures", "Document.chart_legend", "Document.text",
          "CustomProperties.get", "FragmentConflictPolicy.with_style_reuse",
          "FragmentConflictPolicy.with_numbering_reuse", "FragmentConflictPolicy.with_related_part_reuse",
          "FragmentConflictPolicy.with_destination_formatting",
-         "Document.validate_form", "Document.mail_merge_package", "Document.prepare_mail_merge_data"}
+         "Document.validate_form", "Document.mail_merge_package", "Document.prepare_mail_merge_data",
+         "Document.bibliography_sources", "Document.bibliography_style"}
 
 
 def mutating_surface():

@@ -273,6 +273,13 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<document::PyCustomProperties>()?;
     module.add_class::<document::PyAppProperties>()?;
     module.add_class::<document::PyValidationReport>()?;
+    module.add_class::<document::PyBibliographyPerson>()?;
+    module.add_class::<document::PyBibliographyContributor>()?;
+    module.add_class::<document::PyBibliographySource>()?;
+    module.add_class::<document::PyCitationSource>()?;
+    module.add_class::<document::PyBibliographySourceInfo>()?;
+    module.add_class::<document::PyBibliographyStyleInfo>()?;
+    module.add_class::<document::PyBibliographyUpdateReport>()?;
     module.add_function(wrap_pyfunction!(document::validate_bytes, module)?)?;
     module.add_function(wrap_pyfunction!(document::validate_file, module)?)?;
 
