@@ -355,6 +355,17 @@ impl<'a> RtfWriter<'a> {
                     );
                     match content {
                         CellContent::Paragraph(paragraph) => {
+                            // Only a body paragraph ends a section.
+                            if paragraph
+                                .properties
+                                .as_ref()
+                                .is_some_and(|properties| properties.sect_pr.is_some())
+                            {
+                                self.diagnose(
+                                    &format!("{cell_location}/ppr/sectPr"),
+                                    "section properties of a table-cell paragraph were dropped during RTF export",
+                                );
+                            }
                             self.scan_paragraph(paragraph, cell_location)
                         }
                         CellContent::Table(_) => self
@@ -622,6 +633,8 @@ impl<'a> RtfWriter<'a> {
             let properties = self.run_properties(style_id.as_deref(), run.properties.as_ref());
             self.ensure_run_resources(&properties, &location);
         }
+        let mark = self.paragraph_mark_properties(paragraph);
+        self.ensure_run_resources(&mark, &location);
         if let Some((num_id, level)) = self.paragraph_numbering(paragraph) {
             if level > 8 {
                 self.diagnose(
@@ -763,15 +776,8 @@ impl<'a> RtfWriter<'a> {
                 "paragraph shading was dropped during RTF export",
             );
         }
-        if properties
-            .rpr
-            .as_ref()
-            .is_some_and(|properties| !properties.carries_nothing())
-        {
-            self.diagnose(
-                &format!("{location}/ppr/rPr"),
-                "paragraph mark run properties were dropped during RTF export",
-            );
+        if let Some(mark) = &properties.rpr {
+            self.scan_run_properties(mark, &format!("{location}/ppr"));
         }
         if properties.numbering_revision.is_some() || !properties.numbering_revision_xml.is_empty()
         {
@@ -1142,7 +1148,15 @@ impl<'a> RtfWriter<'a> {
                 "section first-page setting was dropped during RTF export",
             ),
             (
-                section.page_number.is_some(),
+                // Decimal numbering that does not restart is the default.
+                section.page_number.as_ref().is_some_and(|numbering| {
+                    numbering.start.is_some()
+                        || numbering.raw_xml.as_deref().is_some_and(|xml| {
+                            let xml = String::from_utf8_lossy(xml);
+                            (xml.contains("w:fmt=") && !xml.contains(r#"w:fmt="decimal""#))
+                                || xml.contains("w:chap")
+                        })
+                }),
                 "section page numbering was dropped during RTF export",
             ),
             (
@@ -1158,8 +1172,22 @@ impl<'a> RtfWriter<'a> {
                 "section vertical alignment was dropped during RTF export",
             ),
             (
-                section.text_direction.is_some(),
+                section
+                    .text_direction
+                    .as_deref()
+                    .is_some_and(|direction| !matches!(direction, "lrTb" | "tb")),
                 "section text direction was dropped during RTF export",
+            ),
+            (
+                section.change.is_some(),
+                "section property revision was dropped during RTF export",
+            ),
+            (
+                section
+                    .extra_xml
+                    .iter()
+                    .any(|raw| !raw_is_off_section_flag(raw)),
+                "unmodelled section XML was dropped during RTF export",
             ),
             (
                 section.footnote_pr.is_some() || section.endnote_pr.is_some(),
@@ -1213,7 +1241,24 @@ impl<'a> RtfWriter<'a> {
         if let Some(direct) = &paragraph.properties {
             properties.merge_from(direct);
         }
-        write_paragraph_properties(output, &properties)
+        write_paragraph_properties(output, &properties)?;
+        // The paragraph's character formatting, that of its mark, which
+        // Word gives `\par` and the equations, whose runs restate only the
+        // math font.
+        write!(output, "\\plain")?;
+        self.write_run_format(output, &self.paragraph_mark_properties(paragraph))
+    }
+
+    /// The formatting of a paragraph's mark: its style's, with the mark's
+    /// own over it.
+    fn paragraph_mark_properties(&self, paragraph: &CT_P) -> CT_RPr {
+        self.run_properties(
+            self.paragraph_style_id(paragraph).as_deref(),
+            paragraph
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.rpr.as_ref()),
+        )
     }
 
     /// The paragraph's style, or the default paragraph style, when the
@@ -1758,6 +1803,21 @@ fn marker_location(marker: &oxoffice_docx_oxml::text::CommentRangeMarker) -> usi
     }
 }
 
+/// Whether a section child is a flag set off (`<w:formProt w:val="false"/>`,
+/// as LibreOffice writes it), which drops nothing.
+fn raw_is_off_section_flag(raw: &[u8]) -> bool {
+    let raw = String::from_utf8_lossy(raw);
+    let raw = raw.trim();
+    ["formProt", "bidi", "rtlGutter", "noEndnote"]
+        .iter()
+        .any(|name| {
+            ["false", "0", "off"].iter().any(|value| {
+                raw == format!(r#"<w:{name} w:val="{value}"/>"#)
+                    || raw == format!(r#"<w:{name} w:val="{value}"></w:{name}>"#)
+            })
+        })
+}
+
 /// The page size, orientation and margins of a section: the document's with
 /// no suffix, a section's with `sxn` (`\pgwsxn`, `\marglsxn`...).
 fn write_page_layout(output: &mut BoundedOutput, section: &CT_SectPr, suffix: &str) -> Result<()> {
@@ -1865,9 +1925,9 @@ fn write_paragraph_properties(output: &mut BoundedOutput, properties: &CT_PPr) -
         write!(output, "\\pagebb")?;
     }
     match properties.widow_control {
-        Some(true) => write!(output, "\\widctlpar")?,
+        // Word controls widows unless told not to; RTF only with `\widctlpar`.
         Some(false) => write!(output, "\\nowidctlpar")?,
-        None => {}
+        Some(true) | None => write!(output, "\\widctlpar")?,
     }
     if let Some(level) = properties.outline_lvl.filter(|level| *level <= 8) {
         write!(output, "\\outlinelevel{level}")?;
@@ -2524,14 +2584,18 @@ impl SectionFormat {
     /// them, then the section's own.
     fn section_properties(&self, page: &SectionFormat) -> CT_SectPr {
         let mut section = CT_SectPr::default_letter();
+        // RTF has no word for portrait: a section is landscape by its own
+        // `\lndscpsxn`, or by the document's `\landscape` when it states no
+        // page size of its own.
+        let landscape = self.landscape.or_else(|| {
+            (self.width.is_none() && self.height.is_none())
+                .then_some(page.landscape)
+                .flatten()
+        });
+        if landscape == Some(true) {
+            section.orientation = Some(ST_PageOrientation::Landscape);
+        }
         for format in [page, self] {
-            if let Some(landscape) = format.landscape {
-                section.orientation = Some(if landscape {
-                    ST_PageOrientation::Landscape
-                } else {
-                    ST_PageOrientation::Portrait
-                });
-            }
             for (target, value) in [
                 (&mut section.page_width, format.width),
                 (&mut section.page_height, format.height),
@@ -4184,7 +4248,15 @@ impl Parser {
             "colno" => {
                 let number = required_nonnegative(offset, name, parameter)? as usize;
                 if number == 0 || number > 45 {
-                    return Err(rtf_error(offset, "RTF column number is out of range"));
+                    self.diagnostics.push(RtfDiagnostic {
+                        offset,
+                        destination: None,
+                        message: format!(
+                            "RTF column \\colno{number} is out of range and was dropped"
+                        ),
+                    });
+                    self.section.column = None;
+                    return Ok(());
                 }
                 let columns = &mut self.section.column_widths;
                 if columns.len() < number {

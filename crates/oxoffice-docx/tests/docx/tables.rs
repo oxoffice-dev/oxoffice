@@ -1276,14 +1276,19 @@ fn exports_report_no_formatting_for_empty_property_elements() {
         "{:?}",
         odt.diagnostics
     );
+    // RTF writes the mark's formatting as the paragraph's.
     let rtf = doc.to_rtf_bytes().unwrap();
     assert!(
-        rtf.diagnostics
-            .iter()
-            .any(|d| d.message.starts_with("paragraph mark run properties")),
+        !rtf.diagnostics.iter().any(|d| d
+            .destination
+            .as_deref()
+            .is_some_and(|path| path.contains("/ppr/rPr"))),
         "{:?}",
         rtf.diagnostics
     );
+    let text = String::from_utf8(rtf.bytes).unwrap();
+    let after = text.split(r"\pard").find(|p| p.contains("after")).unwrap();
+    assert!(after.contains(r"\b{\plain"), "{after}");
     let epub = doc.to_epub_bytes().unwrap();
     assert!(
         epub.diagnostics
@@ -1313,11 +1318,13 @@ fn exports_report_no_formatting_for_empty_property_elements() {
         "{:?}",
         odt.diagnostics
     );
+    // What RTF cannot write of the mark is reported where it is.
     let rtf = doc.to_rtf_bytes().unwrap();
     assert!(
-        rtf.diagnostics
-            .iter()
-            .any(|d| d.message.starts_with("paragraph mark run properties")),
+        rtf.diagnostics.iter().any(|d| d
+            .destination
+            .as_deref()
+            .is_some_and(|path| path.contains("/ppr/rPr"))),
         "{:?}",
         rtf.diagnostics
     );

@@ -1084,16 +1084,28 @@ fn rtf_import_reads_sections_as_word_writes_them() {
 \paperw11906\paperh16838\margl1134\margr1134\margt1134\margb1134\gutter0\ltrsect
 \widowctrl\sectd \ltrsect\linex0\endnhere\sectlinegrid360\sectdefaultcl\sftnbj
 \pard\plain title\par
-\pard\plain {\insrsid1 \sect }\sectd \ltrsect\sbknone\linex0\cols2\colsx425\endnhere\sftnbj
+\pard\plain {\insrsid1 \sect }\sectd \ltrsect\sbknone\linex0\cols2\colsx425\colno0\colw9\endnhere\sftnbj
 \pard\plain body\par}";
     let read = Document::from_rtf_bytes(rtf).unwrap();
+    // The layout words are read, a column number out of range is reported.
+    let messages: Vec<&str> = read
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    for word in [
+        "paperw", "margl", "gutter", "sectd", "sect", "sbknone", "cols", "colw",
+    ] {
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.contains(&format!("\\{word} "))),
+            "{word}: {messages:?}"
+        );
+    }
     assert!(
-        !read
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("page geometry")),
-        "{:?}",
-        read.diagnostics
+        messages.contains(&r"RTF column \colno0 is out of range and was dropped"),
+        "{messages:?}"
     );
     let doc = read.document;
     assert_eq!(texts(&doc), ["title", "", "body"]);
@@ -1115,7 +1127,76 @@ fn rtf_import_reads_sections_as_word_writes_them() {
 }
 
 #[test]
+fn rtf_round_trip_keeps_a_portrait_section_after_a_landscape_one() {
+    // RTF has no word for portrait: the document's `\landscape` must not
+    // reach a section that states its own page.
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>"#,
+        r#"<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#,
+        r#"</w:sectPr></w:pPr><w:r><w:t>wide</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>tall</w:t></w:r></w:p>"#,
+    ));
+    let rtf = doc.to_rtf_bytes().unwrap().bytes;
+    let read = Document::from_rtf_bytes(&rtf).unwrap().document;
+    assert_eq!(section_layouts(&read), section_layouts(&doc));
+    let orientations: Vec<_> = read
+        .sections()
+        .map(|section| section.orientation())
+        .collect();
+    assert_eq!(
+        orientations,
+        [
+            Some(ST_PageOrientation::Landscape),
+            Some(ST_PageOrientation::Portrait)
+        ]
+    );
+}
+
+#[test]
 fn rtf_export_reports_the_section_parts_it_drops() {
+    // A tracked section change, a child the model keeps as XML, and section
+    // properties in a table cell, which only a body paragraph can end.
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:pPr><w:sectPr><w:bidi/><w:sectPrChange w:id="1" w:author="A" w:date="2026-11-23T00:00:00Z">"#,
+        r#"<w:sectPr/></w:sectPrChange></w:sectPr></w:pPr><w:r><w:t>first</w:t></w:r></w:p>"#,
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
+        r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr>"#,
+        r#"<w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        r#"<w:p><w:r><w:t>last</w:t></w:r></w:p>"#,
+    ));
+    let messages: Vec<String> = doc
+        .to_rtf_bytes()
+        .unwrap()
+        .diagnostics
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect();
+    for expected in [
+        "section property revision was dropped during RTF export",
+        "unmodelled section XML was dropped during RTF export",
+        "section properties of a table-cell paragraph were dropped during RTF export",
+    ] {
+        assert!(
+            messages.iter().any(|message| message == expected),
+            "{expected}: {messages:?}"
+        );
+    }
+    // LibreOffice writes decimal numbering, left-to-right text and form
+    // protection off in every section: nothing is dropped.
+    let libreoffice = corpus_doc("libreoffice/paper.docx").to_rtf_bytes().unwrap();
+    assert!(
+        !libreoffice.diagnostics.iter().any(|diagnostic| {
+            diagnostic.message.contains("page numbering")
+                || diagnostic.message.contains("text direction")
+                || diagnostic.message.contains("unmodelled section")
+        }),
+        "{:?}",
+        libreoffice.diagnostics
+    );
+}
+
+#[test]
+fn rtf_export_reports_a_dropped_first_page_setting() {
     let mut doc = corpus_doc("word/paper.docx");
     doc.section_mut(0).unwrap().set_different_first_page(true);
     let written = doc.to_rtf_bytes().unwrap();
