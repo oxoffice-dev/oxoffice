@@ -575,20 +575,38 @@ fn twelve_hour(hour: u8) -> u8 {
 }
 
 /// Whether the date pattern `pattern` holds, outside quotes, one of `tokens`.
+/// A day period `AM/PM`, in any case, is one token, `'A'`: its letters are
+/// not hours or minutes.
 fn pattern_holds(pattern: &str, tokens: &[char]) -> bool {
+    let chars: Vec<char> = pattern.chars().collect();
     let mut quoted = false;
-    pattern.chars().any(|c| {
-        if c == '\'' {
+    let mut index = 0;
+    while index < chars.len() {
+        let current = chars[index];
+        if current == '\'' {
             quoted = !quoted;
+        } else if !quoted {
+            let rest: String = chars[index..chars.len().min(index + 5)].iter().collect();
+            if rest.eq_ignore_ascii_case("AM/PM") {
+                if tokens.contains(&'A') {
+                    return true;
+                }
+                index += 5;
+                continue;
+            }
+            if tokens.contains(&current) {
+                return true;
+            }
         }
-        !quoted && tokens.contains(&c)
-    })
+        index += 1;
+    }
+    false
 }
 
 /// Whether the date pattern `pattern` shows a time (an hour, minute, second
 /// or day period token outside quotes).
 pub fn word_date_format_shows_time(pattern: &str) -> bool {
-    pattern_holds(pattern, &['h', 'H', 'm', 's', 'A', 'a'])
+    pattern_holds(pattern, &['h', 'H', 'm', 's', 'A'])
 }
 
 /// Refuse a time whose hours, minutes or seconds the pattern `pattern`
@@ -783,6 +801,8 @@ mod tests {
             ("d MMMM yyyy", "2015-01-02T15:05", "shows no time"),
             ("M/d/yyyy h:mm AM/PM", "2015-01-02T15:05:09", "the seconds"),
             ("h AM/PM", "2015-01-02T15:05", "the minutes"),
+            ("h am/pm", "2015-01-02T15:05", "the minutes"),
+            ("s am/pm", "2015-01-02T15:00:09", "the hours"),
             ("mm:ss", "2015-01-02T15:05:09", "the hours"),
             ("'hh:mm' d", "2015-01-02T15:05", "shows no time"),
         ] {
@@ -825,7 +845,7 @@ mod tests {
 
     #[test]
     fn a_pattern_shows_a_time_when_it_holds_a_time_token_outside_quotes() {
-        for pattern in ["M/d/yyyy h:mm am/pm", "HH:mm", "d 's' s"] {
+        for pattern in ["M/d/yyyy h:mm am/pm", "HH:mm", "d 's' s", "am/pm"] {
             assert!(word_date_format_shows_time(pattern), "{pattern}");
         }
         for pattern in ["d MMMM yyyy", "dddd, d' de 'MMMM", "'hh:mm' d"] {
