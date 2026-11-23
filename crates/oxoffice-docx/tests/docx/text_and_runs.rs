@@ -429,6 +429,35 @@ fn a_word_split_across_runs_is_not_broken_where_its_runs_meet() {
     }
 }
 
+#[test]
+fn a_field_marker_between_two_words_leaves_the_break_between_them() {
+    // A bookmark a PAGEREF points at puts a zero-width marker where it
+    // starts. It must not join the word after it to the space before it.
+    let ends_on_first_word = (0..12).any(|width| {
+        let filler = format!("{}{}", "word ".repeat(16), "i".repeat(width));
+        let doc = doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:t xml:space="preserve">{} foo </w:t></w:r>"#,
+                r#"<w:bookmarkStart w:id="1" w:name="_Ref1"/>"#,
+                r#"<w:r><w:t xml:space="preserve">barbarbar and more words to wrap.</w:t></w:r>"#,
+                r#"<w:bookmarkEnd w:id="1"/></w:p>"#,
+                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+                r#"<w:r><w:instrText xml:space="preserve"> PAGEREF _Ref1 </w:instrText></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+            ),
+            filler
+        ));
+        first_page_lines(&doc)
+            .iter()
+            .any(|line| line.trim_end().ends_with("foo"))
+    });
+    assert!(
+        ends_on_first_word,
+        "no line breaks between foo and the marker after it"
+    );
+}
+
 // ---- Unicode ----
 
 #[test]

@@ -1709,11 +1709,14 @@ fn plain_text_breaks(items: &[InlineItem]) -> Vec<Option<PlainTextBreaks>> {
             .filter(|offset| *offset > 0 && *offset < text.len())
             .collect::<Vec<_>>();
         let opportunity = |offset: usize| opportunities.binary_search(&offset).is_ok();
+        // Each item reads its own slice of the ascending opportunities, so a
+        // stretch costs its length, not its items times its words.
         for (item, start, end) in members {
+            let first = opportunities.partition_point(|offset| *offset <= start);
+            let last = opportunities.partition_point(|offset| *offset < end);
             breaks[item] = Some(PlainTextBreaks {
-                inner: opportunities
+                inner: opportunities[first..last]
                     .iter()
-                    .filter(|offset| **offset > start && **offset < end)
                     .map(|offset| offset - start)
                     .collect(),
                 glued_before: start > 0 && !opportunity(start),
