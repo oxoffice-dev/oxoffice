@@ -430,6 +430,120 @@ fn a_word_split_across_runs_is_not_broken_where_its_runs_meet() {
 }
 
 #[test]
+fn a_word_wider_than_the_line_is_broken_where_it_overflows() {
+    // Word breaks a word with no break opportunity at the character that
+    // overflows the line, whether it is one run or split across several, and
+    // when automatic hyphenation finds no point that fits the line.
+    let word = "Pneumonoultramicroscopicsilicovolcanoconiosis".repeat(4);
+    let long = format!("{}internationalization", "q".repeat(150));
+    // A decomposed "é": its accent never starts a line.
+    let accented = "e\u{301}".repeat(120);
+    let very_long = word.repeat(12);
+    let run = |text: &str| {
+        format!(r#"<w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:t>{text}</w:t></w:r>"#)
+    };
+    for (runs, text, hyphenate) in [
+        (vec![run(&word)], &word, false),
+        (
+            vec![run(&word[..50]), run(&word[50..51]), run(&word[51..])],
+            &word,
+            false,
+        ),
+        (vec![run(&long)], &long, true),
+        (vec![run(&accented)], &accented, false),
+        // Many lines' worth: the rest is cut into line-wide pieces at once.
+        (vec![run(&very_long)], &very_long, false),
+    ] {
+        let mut doc = doc_with_body(&format!("<w:p>{}</w:p>", runs.concat()));
+        if hyphenate {
+            doc.set_auto_hyphenation(true).unwrap();
+        }
+        let result = doc.layout_deterministic().expect("the document lays out");
+        let page = &result.layout.pages[0];
+        let mut ends = Vec::new();
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                ends.push(run.origin.x + run.advances.iter().sum::<f64>());
+            }
+        });
+        // Letter paper and one-inch margins.
+        assert_eq!(page.width, 612.0);
+        assert!(ends.iter().all(|end| *end <= 540.01), "{ends:?}");
+        let lines = first_page_lines(&doc);
+        assert!(lines.len() > 1, "{lines:?}");
+        assert!(
+            lines.iter().all(|line| !line.starts_with('\u{301}')),
+            "{lines:?}"
+        );
+        // A hyphen the hyphenation adds is not part of the word.
+        assert_eq!(&lines.concat().replace('-', ""), text);
+        // Where Word breaks the full-width word (checked in Word 16).
+        if text == &word {
+            assert!(lines[0].ends_with("coniosisPneum"), "{lines:?}");
+            assert!(lines[1].starts_with("onoultramicroscopic"), "{lines:?}");
+        }
+    }
+}
+
+#[test]
+fn a_word_wider_than_its_cell_or_line_is_broken_between_graphemes() {
+    // In a one-inch cell Word breaks the word inside the cell, one run or two.
+    let cell = |content: &str| {
+        format!(
+            concat!(
+                r#"<w:tbl><w:tblPr><w:tblW w:w="1440" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>"#,
+                r#"<w:tblGrid><w:gridCol w:w="1440"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"/>"#,
+                r#"</w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl>"#
+            ),
+            content
+        )
+    };
+    let run = |text: &str| format!(r#"<w:r><w:t>{text}</w:t></w:r>"#);
+    for content in [
+        run("Pneumonoultramicroscopic"),
+        [run("Pneumonoultra"), run("microscopic")].concat(),
+    ] {
+        let doc = doc_with_body(&cell(&content));
+        assert_eq!(first_page_lines(&doc), ["Pneumonoultra", "microscopic"]);
+    }
+    // Decomposed text shapes into fewer glyphs than characters, so the cut is
+    // estimated from the mean advance: narrow letters first, wide ones after,
+    // and the line still fills to the margin.
+    let skewed = format!("e\u{301}{}{}", "i".repeat(300), "M".repeat(3000));
+    let doc = doc_with_body(&format!("<w:p>{}</w:p>", run(&skewed)));
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut first_line_end = 0.0_f64;
+    oxoffice_layout::walk(&result.layout.pages[0].elements, &mut |element, _| {
+        if let oxoffice_layout::PositionedElement::Text(run) = element
+            && run.text.starts_with('e')
+        {
+            first_line_end = run.origin.x + run.advances.iter().sum::<f64>();
+        }
+    });
+    assert!(
+        first_line_end > 520.0,
+        "the first line ends at {first_line_end}"
+    );
+    // A flag is two regional indicators: a line narrower than one flag holds
+    // a whole flag, never one indicator,
+    // whatever the width left.
+    let flags = "\u{1F1EB}\u{1F1F7}".repeat(8);
+    for right in (9100..9340).step_by(40) {
+        let doc = doc_with_body(&format!(
+            r#"<w:p><w:pPr><w:ind w:right="{right}"/></w:pPr>{}</w:p>"#,
+            run(&flags)
+        ));
+        let lines = first_page_lines(&doc);
+        assert!(lines.len() > 1, "{lines:?}");
+        assert!(
+            lines.iter().all(|line| line.chars().count() % 2 == 0),
+            "{lines:?}"
+        );
+        assert_eq!(lines.concat(), flags);
+    }
+}
+
+#[test]
 fn a_field_marker_between_two_words_leaves_the_break_between_them() {
     // A bookmark a PAGEREF points at puts a zero-width marker where it
     // starts. It must not join the word after it to the space before it.

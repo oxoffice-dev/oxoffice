@@ -2505,6 +2505,53 @@ fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_rend
     assert!(!html.contains("background-color:#A0"), "{html}");
 }
 
+#[test]
+fn a_picture_wider_than_the_line_after_a_bookmark_start_keeps_its_line() {
+    // A bookmark a PAGEREF points at puts a zero-width marker before the
+    // picture. The picture is wider than the line, but the marker alone is no
+    // cut: the picture stays on the paragraph's first line.
+    let top = |bookmarked: bool| {
+        let mut doc = Document::new();
+        doc.add_picture(
+            &png(4, 2, &[[0, 0, 255]; 8]),
+            "wide.png",
+            Length::inches(8.0),
+            Length::inches(1.0),
+        );
+        let mut package =
+            oxoffice_opc::OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+        let part = package.main_document_part().unwrap();
+        let mut xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+        if bookmarked {
+            let start = xml.find("<w:r>").unwrap();
+            xml.insert_str(start, r#"<w:bookmarkStart w:id="9" w:name="_Ref9"/>"#);
+            let end = xml.find("<w:sectPr").unwrap();
+            xml.insert_str(
+                end,
+                concat!(
+                    r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+                    r#"<w:r><w:instrText xml:space="preserve"> PAGEREF _Ref9 </w:instrText></w:r>"#,
+                    r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>"#,
+                    r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+                ),
+            );
+        }
+        package.set_part(&part, xml.into_bytes());
+        let mut out = Cursor::new(Vec::new());
+        package.write_to(&mut out).unwrap();
+        let doc = Document::from_bytes(&out.into_inner()).unwrap();
+        let layout = doc.layout_deterministic().unwrap();
+        let mut top = None;
+        oxoffice_layout::walk(&layout.layout.pages[0].elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Image { rect, .. } = element {
+                top.get_or_insert(rect.y);
+            }
+        });
+        top.expect("the picture is drawn")
+    };
+    assert_eq!(top(true), top(false));
+}
+
 // ---- Corpus ----
 
 #[test]
