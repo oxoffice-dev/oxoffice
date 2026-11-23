@@ -2258,8 +2258,9 @@ fn layout_paragraph_with_source_and_table(
         .iter()
         .filter(|bookmark| bookmark.is_start())
         .filter_map(|bookmark| bookmark.name())
-        .filter(|name| bookmark_exists(input, name))
-        .filter_map(|name| page_ref_id(input, name).map(|target| (target, name.to_owned())))
+        .filter_map(|name| page_ref_id(input, name).map(|target| (target, name)))
+        .filter(|(_, name)| bookmark_exists(input, name))
+        .map(|(target, name)| (target, name.to_owned()))
         .collect();
     result.bookmarks = para
         .bookmark_markers

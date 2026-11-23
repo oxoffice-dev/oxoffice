@@ -1,6 +1,6 @@
 //! Scans of the layout input: page references, sequence and section fields, note labels, bookmark text.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use oxoffice_docx_oxml::text::{
     bookmark_name_key, bookmarks_depending_on, field_ref_targets, same_bookmark_name,
@@ -10,18 +10,17 @@ use super::*;
 
 pub(super) fn page_ref_id(input: &LayoutInput, name: &str) -> Option<usize> {
     bookmark_names(input)
-        .page_targets
-        .iter()
-        .position(|candidate| same_bookmark_name(candidate, name))
+        .page_target_ids
+        .get(&bookmark_name_key(name))
+        .copied()
 }
 
 /// The spelling of the bookmark a name refers to, as its start writes it:
 /// Word compares bookmark names without case, links match them exactly.
 pub(super) fn bookmark_spelling(input: &LayoutInput, name: &str) -> Option<String> {
     bookmark_names(input)
-        .starts
-        .iter()
-        .find(|start| same_bookmark_name(start, name))
+        .spellings
+        .get(&bookmark_name_key(name))
         .cloned()
 }
 
@@ -32,9 +31,18 @@ fn bookmark_names(input: &LayoutInput) -> std::borrow::Cow<'_, crate::input::Boo
         input.document.body.content.as_ptr().addr(),
         input.revision_view,
     );
-    let read = || crate::input::BookmarkNames {
-        page_targets: read_page_reference_names(input),
-        starts: read_bookmark_starts(input),
+    let read = || {
+        let page_targets = read_page_reference_names(input);
+        let page_target_ids = page_targets
+            .iter()
+            .enumerate()
+            .map(|(id, name)| (bookmark_name_key(name), id))
+            .collect();
+        crate::input::BookmarkNames {
+            page_targets,
+            page_target_ids,
+            spellings: read_bookmark_spellings(input),
+        }
     };
     let (cached_owner, cached) = input.bookmark_names.0.get_or_init(|| (owner, read()));
     if *cached_owner == owner {
@@ -44,23 +52,24 @@ fn bookmark_names(input: &LayoutInput) -> std::borrow::Cow<'_, crate::input::Boo
     }
 }
 
-/// Each bookmark that starts in the stories of the input, once, in its first
-/// spelling.
-fn read_bookmark_starts(input: &LayoutInput) -> Vec<String> {
+/// The first spelling of each bookmark that starts in the stories of the
+/// input, by its folded name.
+fn read_bookmark_spellings(input: &LayoutInput) -> HashMap<String, String> {
     let block_bookmarks = input.block_bookmarks();
-    let mut starts: Vec<String> = Vec::new();
+    let mut spellings = HashMap::new();
     for paragraph in input_story_paragraphs(input).iter().flatten() {
         let (before, after) = block_bookmarks.markers(paragraph);
         for marker in paragraph.bookmark_markers.iter().chain(before).chain(after) {
             if marker.is_start()
                 && let Some(name) = marker.name()
-                && !starts.iter().any(|start| same_bookmark_name(start, name))
             {
-                starts.push(name.to_owned());
+                spellings
+                    .entry(bookmark_name_key(name))
+                    .or_insert_with(|| name.to_owned());
             }
         }
     }
-    starts
+    spellings
 }
 
 /// The bookmarks a page target marker records, by target id: those of
@@ -71,6 +80,7 @@ pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
 
 fn read_page_reference_names(input: &LayoutInput) -> Vec<String> {
     let mut names = Vec::<String>::new();
+    let mut seen = HashSet::new();
     visit_input_paragraphs(input, &mut |paragraph| {
         for projected in project_paragraph_runs(paragraph, input.revision_view) {
             for content in &projected.run.content {
@@ -82,9 +92,7 @@ fn read_page_reference_names(input: &LayoutInput) -> Vec<String> {
                     let instruction = field.effective_instruction();
                     if instruction.name == "PAGEREF"
                         && let Some(bookmark) = field_text_argument(&instruction, 0)
-                        && !names
-                            .iter()
-                            .any(|candidate| same_bookmark_name(candidate, bookmark))
+                        && seen.insert(bookmark_name_key(bookmark))
                     {
                         names.push(bookmark.to_owned());
                     }
@@ -96,11 +104,7 @@ fn read_page_reference_names(input: &LayoutInput) -> Vec<String> {
     // Then the bookmarks an internal link goes to, whose start a marker
     // records so the link lands on the line where the bookmark starts.
     let mut add = |name: &str| {
-        if !name.is_empty()
-            && !names
-                .iter()
-                .any(|candidate| same_bookmark_name(candidate, name))
-        {
+        if !name.is_empty() && seen.insert(bookmark_name_key(name)) {
             names.push(name.to_owned());
         }
     };

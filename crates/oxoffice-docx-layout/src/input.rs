@@ -335,8 +335,11 @@ pub struct BookmarkNameCache(
 pub(crate) struct BookmarkNames {
     /// The bookmarks a page target marker records, by target id.
     pub(crate) page_targets: Vec<String>,
-    /// Each bookmark that starts in the input, in its first spelling.
-    pub(crate) starts: Vec<String>,
+    /// The target id of each of them, by folded name.
+    pub(crate) page_target_ids: HashMap<String, usize>,
+    /// The first spelling of each bookmark that starts in the input, by
+    /// folded name.
+    pub(crate) spellings: HashMap<String, String>,
 }
 
 impl Clone for BookmarkNameCache {
