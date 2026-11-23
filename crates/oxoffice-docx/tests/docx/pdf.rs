@@ -872,6 +872,54 @@ fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
     }
 }
 
+// A phonetic guide as Word writes it, inside a run, draws its base text in
+// the line and its phonetic line above, as the same guide read in its
+// paragraph does.
+#[test]
+fn a_ruby_inside_a_run_draws_as_a_ruby_in_its_paragraph() {
+    let ruby = concat!(
+        r#"<w:ruby><w:rubyPr><w:hps w:val="10"/><w:hpsRaise w:val="20"/><w:hpsBaseText w:val="22"/></w:rubyPr>"#,
+        r#"<w:rt><w:r><w:rPr><w:sz w:val="10"/></w:rPr><w:t>grnd</w:t></w:r></w:rt>"#,
+        r#"<w:rubyBase><w:r><w:t>Ground</w:t></w:r></w:rubyBase></w:ruby>"#,
+    );
+    let paragraph = |guide: &str| {
+        format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{guide}<w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#
+        )
+    };
+    let in_run = pdf_of(&doc_with_body(&paragraph(&format!("<w:r>{ruby}</w:r>"))));
+    let pieces = in_run.drawn(0);
+    let base = pieces
+        .iter()
+        .find(|piece| piece.text.starts_with("Before"))
+        .expect("the line is drawn")
+        .y;
+    let on = |y: f64| {
+        pieces
+            .iter()
+            .filter(|piece| (piece.y - y).abs() < 0.5)
+            .map(|piece| piece.text.as_str())
+            .collect::<String>()
+    };
+    assert_eq!(squeeze(&on(base)), "BeforeGroundafter");
+    let phonetic = pieces
+        .iter()
+        .find(|piece| piece.text == "grnd")
+        .expect("the phonetic line is drawn");
+    assert!(
+        phonetic.y > base,
+        "the phonetic line is above its base: {pieces:?}"
+    );
+    let in_paragraph = pdf_of(&doc_with_body(&paragraph(ruby)));
+    let drawn = |pdf: &Pdf| {
+        pdf.drawn(0)
+            .iter()
+            .map(|piece| (piece.text.clone(), piece.x, piece.y))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(drawn(&in_run), drawn(&in_paragraph));
+}
+
 // ---- Headers, footers and notes ----
 
 // Fails today: endnotes are drawn over a table that ends the document, at

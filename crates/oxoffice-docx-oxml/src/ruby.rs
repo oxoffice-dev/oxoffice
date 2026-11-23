@@ -1,6 +1,9 @@
 //! Ruby phonetic guides (`w:ruby`).
 //!
-//! `w:ruby` is a sibling of `w:r` inside `w:p`, not a run child. It carries a
+//! `w:ruby` is a run child (ECMA-376 17.3.3.25), as Word writes it:
+//! `<w:r><w:ruby>…</w:ruby></w:r>`. A file may also hold it as a sibling of
+//! `w:r` inside `w:p`, outside the schema; both read the same, and each is
+//! written back in the form it was read in ([`CT_Ruby::run`]). It carries a
 //! phonetic line in `w:rt` and a base line in `w:rubyBase`, and both hold
 //! ordinary runs, so [`CT_R`] is reused rather than a second run grammar
 //! being introduced.
@@ -32,8 +35,10 @@ use quick_xml::{Reader, Writer};
 
 use crate::error::Result;
 use crate::numbering::word_prefixes_at;
+use crate::properties::CT_RPr;
 use crate::properties::{
-    get_word_val_attr, is_word_element, parse_half_point_measure, parse_word_toggle,
+    get_word_val_attr, is_word_attribute, is_word_element, parse_half_point_measure,
+    parse_word_toggle,
 };
 use crate::raw_xml::{capture_element, capture_empty_element};
 use crate::text::{CT_R, parse_run_raw};
@@ -387,6 +392,142 @@ pub struct CT_Ruby {
     /// original namespace context under canonical Word publication.
     #[doc(hidden)]
     pub raw_xml: Vec<Vec<u8>>,
+    /// The run that holds the annotation, as Word writes it (`w:r/w:ruby`),
+    /// or `None` for one read as a paragraph child, written back there.
+    pub run: Option<CT_RubyRun>,
+}
+
+/// The run around a `w:ruby`: its properties and its Word attributes.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[allow(non_camel_case_types)]
+pub struct CT_RubyRun {
+    /// The run's `w:rPr`.
+    pub properties: Option<CT_RPr>,
+    /// The run's Word attributes (`w:rsidR`, ...): local name and value.
+    pub attributes: Vec<(String, String)>,
+}
+
+impl CT_RubyRun {
+    /// Read a `w:r` that holds a phonetic guide and nothing else but its
+    /// properties: the run, and the byte range of its `w:ruby` in `raw`.
+    /// `None` when the run holds anything else, an attribute outside the Word
+    /// namespace or a namespace declaration: it is then read as a run.
+    pub(crate) fn split(
+        raw: &[u8],
+        word_prefixes: &[String],
+    ) -> Result<Option<(Self, std::ops::Range<usize>)>> {
+        // Most runs hold no guide: they are not read twice.
+        if !raw
+            .windows(5)
+            .any(|window| window == b":ruby" || window == b"<ruby")
+        {
+            return Ok(None);
+        }
+        let mut reader = Reader::from_reader(raw);
+        reader.config_mut().trim_text(false);
+        let mut run = CT_RubyRun::default();
+        let mut ruby = None;
+        let mut properties = None;
+        let mut empty_properties = false;
+        let mut buffer = Vec::new();
+        let mut prefixes = word_prefixes.to_vec();
+        let mut depth = 0usize;
+        loop {
+            let start = reader.buffer_position() as usize;
+            match reader.read_event_into(&mut buffer)? {
+                Event::Start(element) if depth == 0 => {
+                    for attribute in element.attributes() {
+                        let attribute = attribute?;
+                        let key = attribute.key.as_ref();
+                        let Some(local) = key
+                            .iter()
+                            .position(|byte| *byte == b':')
+                            .map(|at| &key[at + 1..])
+                            .filter(|local| is_word_attribute(key, local, &prefixes))
+                        else {
+                            return Ok(None);
+                        };
+                        let value =
+                            oxoffice_core::xml::attribute_text(&attribute).map_err(|error| {
+                                crate::error::OxmlError::InvalidValue(error.to_string())
+                            })?;
+                        run.attributes
+                            .push((std::str::from_utf8(local)?.to_owned(), value.into_owned()));
+                    }
+                    prefixes = word_prefixes_at(&element, &prefixes)?.into_owned();
+                    depth = 1;
+                }
+                Event::Start(element) => {
+                    let word = is_word_element(element.name().as_ref(), b"ruby", &prefixes);
+                    let is_properties = is_word_element(element.name().as_ref(), b"rPr", &prefixes);
+                    let seen_properties = properties.is_some() || empty_properties;
+                    let element = element.into_owned();
+                    capture_element(&mut reader, &element)?;
+                    let end = reader.buffer_position() as usize;
+                    if word && ruby.is_none() {
+                        ruby = Some(start..end);
+                    } else if is_properties && ruby.is_none() && !seen_properties {
+                        properties = Some(start..end);
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                Event::Empty(element) if depth == 1 => {
+                    if is_word_element(element.name().as_ref(), b"rPr", &prefixes)
+                        && ruby.is_none()
+                        && properties.is_none()
+                        && !empty_properties
+                    {
+                        empty_properties = true;
+                    } else {
+                        return Ok(None);
+                    }
+                }
+                Event::Text(text) if depth == 1 => {
+                    if !text.iter().all(u8::is_ascii_whitespace) {
+                        return Ok(None);
+                    }
+                }
+                Event::End(_) => depth = depth.saturating_sub(1),
+                Event::Eof => break,
+                Event::Decl(_) | Event::Comment(_) | Event::PI(_) if depth == 1 => {
+                    return Ok(None);
+                }
+                Event::CData(_) | Event::GeneralRef(_) | Event::DocType(_) => return Ok(None),
+                _ => {}
+            }
+            buffer.clear();
+        }
+        let Some(ruby) = ruby else {
+            return Ok(None);
+        };
+        // The properties read as a run's, through the run reader: the run
+        // without its `w:ruby`. An empty `w:rPr` reads as none, as for a run.
+        if let Some(range) = properties {
+            run.properties = Self::properties(raw, &prefixes, range)?;
+        }
+        Ok(Some((run, ruby)))
+    }
+
+    /// The `w:rPr` at `range` of the run `raw`, read by the run reader.
+    fn properties(
+        raw: &[u8],
+        prefixes: &[String],
+        range: std::ops::Range<usize>,
+    ) -> Result<Option<CT_RPr>> {
+        let open = raw
+            .iter()
+            .position(|byte| *byte == b'>')
+            .map_or(raw.len(), |at| at + 1);
+        let close = raw
+            .iter()
+            .rposition(|byte| *byte == b'<')
+            .unwrap_or(raw.len());
+        let mut run = raw[..open].to_vec();
+        run.extend_from_slice(&raw[range]);
+        run.extend_from_slice(&raw[close..]);
+        Ok(parse_run_raw(&run, prefixes, None)?.properties)
+    }
 }
 
 impl CT_Ruby {
@@ -518,6 +659,26 @@ impl CT_Ruby {
         Ok(Some((ruby, base_runs)))
     }
 
+    /// Parse a `w:r` that holds a `w:ruby` and nothing else but its
+    /// properties, as Word writes a phonetic guide: the annotation, which
+    /// remembers its run, and its base runs. `None` for any other run.
+    pub(crate) fn from_run(
+        raw: &[u8],
+        word_prefixes: &[String],
+        text_facts: Option<&mut crate::text::WordParagraphTextFacts>,
+    ) -> Result<Option<(Self, Vec<CT_R>)>> {
+        let Some((run, range)) = CT_RubyRun::split(raw, word_prefixes)? else {
+            return Ok(None);
+        };
+        let Some((mut ruby, base_runs)) =
+            Self::from_raw_with_texts(&raw[range], word_prefixes, None, text_facts)?
+        else {
+            return Ok(None);
+        };
+        ruby.run = Some(run);
+        Ok(Some((ruby, base_runs)))
+    }
+
     /// The half-open range of owning-paragraph runs this annotation covers.
     pub fn base_range(&self) -> std::ops::Range<usize> {
         self.base_start..self.base_end
@@ -528,6 +689,43 @@ impl CT_Ruby {
     /// The base runs are paragraph runs, so the owning paragraph writes them
     /// between this call and [`Self::write_end`].
     pub(crate) fn write_start<W: std::io::Write>(
+        &self,
+        writer: &mut Writer<W>,
+        role: crate::text::XmlWriteRole,
+        source_context: Option<&[(&str, &str)]>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<RubyScopes> {
+        let Some(run) = &self.run else {
+            return Ok(RubyScopes {
+                _ruby: self.write_ruby_start(writer, role, source_context, emission)?,
+                _run: None,
+            });
+        };
+        let mut start = crate::text::FieldXmlStart::new("w:r", emission)?;
+        let prefix = if role == crate::text::XmlWriteRole::Source {
+            start.qualify(&[], role, source_context)?
+        } else {
+            start.restore_word_binding()?;
+            "w".to_owned()
+        };
+        for (local, value) in &run.attributes {
+            start.push(&format!("{prefix}:{local}"), value)?;
+        }
+        let run_scope = crate::text::emitted_binding_scope(start.element(), false, false)?;
+        start.write(writer, false)?;
+        let context = word_context(source_context, &prefix);
+        let child_context =
+            (role == crate::text::XmlWriteRole::Source).then_some(context.as_slice());
+        if let Some(properties) = &run.properties {
+            properties.write_xml_role(writer, None, role, child_context, emission)?;
+        }
+        Ok(RubyScopes {
+            _ruby: self.write_ruby_start(writer, role, child_context, emission)?,
+            _run: Some(run_scope),
+        })
+    }
+
+    fn write_ruby_start<W: std::io::Write>(
         &self,
         writer: &mut Writer<W>,
         role: crate::text::XmlWriteRole,
@@ -567,6 +765,34 @@ impl CT_Ruby {
     /// Close the same actual Ruby root and locally complete only the raw-vector
     /// contract. Retained Drawing payloads keep their independent original scope.
     pub(crate) fn write_end<W: std::io::Write>(
+        &self,
+        writer: &mut Writer<W>,
+        role: crate::text::XmlWriteRole,
+        source_context: Option<&[(&str, &str)]>,
+        emission: Option<&crate::text::FieldXmlEmission>,
+    ) -> Result<()> {
+        if self.run.is_none() {
+            return self.write_ruby_end(writer, role, source_context, emission);
+        }
+        // The run's prefix, chosen from the same scope as its start.
+        let prefix = if role == crate::text::XmlWriteRole::Source {
+            crate::text::generated_word_start(BytesStart::new("w:r"), &[], role, source_context)?.1
+        } else {
+            "w".to_owned()
+        };
+        let context = word_context(source_context, &prefix);
+        let child_context =
+            (role == crate::text::XmlWriteRole::Source).then_some(context.as_slice());
+        self.write_ruby_end(writer, role, child_context, emission)?;
+        if let Some(emission) = emission {
+            emission.write_word_end(writer, &prefix, "r")?;
+        } else {
+            writer.write_event(Event::End(BytesEnd::new(format!("{prefix}:r"))))?;
+        }
+        Ok(())
+    }
+
+    fn write_ruby_end<W: std::io::Write>(
         &self,
         writer: &mut Writer<W>,
         role: crate::text::XmlWriteRole,
@@ -621,6 +847,25 @@ impl CT_Ruby {
         }
         Ok(())
     }
+}
+
+/// The binding scopes a ruby's start opens: its own, inside its run's when
+/// it has one. Fields drop in order, the inner scope first.
+pub(crate) struct RubyScopes {
+    _ruby: crate::text::RootBindingScope,
+    _run: Option<crate::text::RootBindingScope>,
+}
+
+/// `source_context` with `prefix` bound to the Word namespace: the scope
+/// inside an element written with that prefix.
+fn word_context<'a>(
+    source_context: Option<&[(&'a str, &'a str)]>,
+    prefix: &'a str,
+) -> Vec<(&'a str, &'a str)> {
+    let mut context = source_context.unwrap_or(&[]).to_vec();
+    context.retain(|(known, _)| *known != prefix);
+    context.push((prefix, crate::namespace::W_NS));
+    context
 }
 
 /// Parse the runs of a `w:rt` or `w:rubyBase`, or report that the element

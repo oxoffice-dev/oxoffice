@@ -4,7 +4,7 @@ use oxoffice_docx_oxml::borders::{CT_BorderEdge, CT_PBdr, CT_TabStop, CT_Tabs};
 use oxoffice_docx_oxml::document::CT_SectPr;
 use oxoffice_docx_oxml::math::OfficeMath;
 use oxoffice_docx_oxml::properties::{CT_FramePr, CT_PPr, CT_RPr, CT_Shd};
-use oxoffice_docx_oxml::ruby::CT_Ruby;
+use oxoffice_docx_oxml::ruby::{CT_Ruby, CT_RubyRun};
 use oxoffice_docx_oxml::shared::{
     ST_Border, ST_Jc, ST_PageOrientation, ST_SectionType, ST_TabJc, ST_TabLeader, ST_Underline,
 };
@@ -1299,6 +1299,7 @@ impl<'a> Paragraph<'a> {
     /// returns it. The phonetic text stays inside the annotation and no text
     /// extraction returns it. Use [`Self::ruby_mut`] to set the geometry in
     /// `w:rubyPr`. A character XML 1.0 cannot carry is dropped from either.
+    /// The guide is written as Word writes it, inside a run (`w:r/w:ruby`).
     pub fn add_ruby(&mut self, base: &str, phonetic: &str) -> usize {
         let base_start = self.inner.runs.len();
         self.inner
@@ -1310,6 +1311,7 @@ impl<'a> Paragraph<'a> {
             base_start,
             base_end: base_start + 1,
             raw_xml: Vec::new(),
+            run: Some(CT_RubyRun::default()),
         });
         self.inner.rubies.len() - 1
     }

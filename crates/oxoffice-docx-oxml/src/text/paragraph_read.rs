@@ -374,51 +374,82 @@ impl CT_P {
                         } else {
                             (capture_element(reader, e)?, None)
                         };
-                        let mut parsed_texts = Vec::new();
-                        let mut property_fact = None;
-                        runs.push(parse_run_raw_with_observation(
-                            &raw,
-                            &prefixes,
-                            text_facts.as_ref().map(|_| &mut parsed_texts),
-                            mapped.as_ref(),
-                            ordinary.as_ref().map(|_| &mut property_fact),
-                        )?);
-                        if let Some(maps) = &mut projection_maps {
-                            let run_map = mapped
-                                .as_ref()
-                                .map(|input| Arc::new(input.projection_parts().0.clone()));
-                            maps.runs.resize_with(runs.len() - 1, || None);
-                            maps.runs.push(run_map.clone());
-                            if maps.collect_properties {
-                                maps.ordinary_runs.resize_with(runs.len() - 1, || None);
-                                maps.ordinary_runs.push(property_fact);
+                        // A run holding a phonetic guide, as Word writes it,
+                        // reads as the guide: its base runs are the
+                        // paragraph's, as for a `w:ruby` read in `w:p`.
+                        let mut base_texts = Vec::new();
+                        let ruby = if recovered {
+                            None
+                        } else {
+                            CT_Ruby::from_run(
+                                &raw,
+                                &prefixes,
+                                text_facts.as_ref().map(|_| &mut base_texts),
+                            )?
+                        };
+                        if let Some((mut ruby, base_runs)) = ruby {
+                            if let Some(maps) = &mut projection_maps
+                                && maps.text_facts_enabled
+                            {
+                                maps.texts.extend(base_texts);
                             }
-                            if maps.text_facts_enabled {
-                                // This is the successful actual run push,
-                                // including recovered and empty Started runs.
-                                maps.texts.resize_with(runs.len() - 1, || None);
-                                maps.texts
-                                    .push(run_map.map(|source_map| ParsedWordRunTexts {
-                                        source: 0..raw.len(),
-                                        source_map: Some(source_map),
-                                        texts: parsed_texts,
-                                    }));
+                            ruby.base_start = runs.len();
+                            ruby.base_end = runs.len() + base_runs.len();
+                            projected_run_count += base_runs.len();
+                            tracked_run_count += base_runs.len();
+                            run_sources.extend(base_runs.iter().map(|_| None));
+                            runs.extend(base_runs);
+                            rubies.push(ruby);
+                        } else {
+                            let mut parsed_texts = Vec::new();
+                            let mut property_fact = None;
+                            runs.push(parse_run_raw_with_observation(
+                                &raw,
+                                &prefixes,
+                                text_facts.as_ref().map(|_| &mut parsed_texts),
+                                mapped.as_ref(),
+                                ordinary.as_ref().map(|_| &mut property_fact),
+                            )?);
+                            if let Some(maps) = &mut projection_maps {
+                                let run_map = mapped
+                                    .as_ref()
+                                    .map(|input| Arc::new(input.projection_parts().0.clone()));
+                                maps.runs.resize_with(runs.len() - 1, || None);
+                                maps.runs.push(run_map.clone());
+                                if maps.collect_properties {
+                                    maps.ordinary_runs.resize_with(runs.len() - 1, || None);
+                                    maps.ordinary_runs.push(property_fact);
+                                }
+                                if maps.text_facts_enabled {
+                                    // This is the successful actual run push,
+                                    // including recovered and empty Started runs.
+                                    maps.texts.resize_with(runs.len() - 1, || None);
+                                    maps.texts
+                                        .push(run_map.map(|source_map| ParsedWordRunTexts {
+                                            source: 0..raw.len(),
+                                            source_map: Some(source_map),
+                                            texts: parsed_texts,
+                                        }));
+                                }
                             }
-                        }
-                        if let Some(facts) = source_facts.as_deref_mut() {
-                            facts.push_run(runs.last().expect("just parsed physical run"), &raw)?;
-                        }
-                        run_sources.push(Some(raw));
-                        projected_run_count += 1;
-                        tracked_run_count += 1;
-                        // Preserve the legacy recovery branch's existing
-                        // projection-boundary policy exactly.
-                        if !recovered {
-                            run_projection_ends.push((
-                                runs.len() - 1,
-                                projected_run_count,
-                                tracked_run_count,
-                            ));
+                            if let Some(facts) = source_facts.as_deref_mut() {
+                                facts.push_run(
+                                    runs.last().expect("just parsed physical run"),
+                                    &raw,
+                                )?;
+                            }
+                            run_sources.push(Some(raw));
+                            projected_run_count += 1;
+                            tracked_run_count += 1;
+                            // Preserve the legacy recovery branch's existing
+                            // projection-boundary policy exactly.
+                            if !recovered {
+                                run_projection_ends.push((
+                                    runs.len() - 1,
+                                    projected_run_count,
+                                    tracked_run_count,
+                                ));
+                            }
                         }
                     } else if is_word_element(name.as_ref(), b"sdt", &prefixes) {
                         let (raw, captured_map) = if ordinary.is_some() {
