@@ -128,23 +128,6 @@ impl Document {
         )
     }
 
-    /// Replace literal text only in one checked related physical table cell.
-    #[doc(hidden)]
-    pub fn try_replace_text_in_story_cell(
-        &mut self,
-        story: &StoryId,
-        placeholder: &str,
-        replacement: &str,
-        expected: Option<usize>,
-    ) -> Result<std::result::Result<usize, ReplacementCountMismatch>> {
-        self.try_replace_scoped(
-            ScopedReplacementTarget::RelatedCell(story),
-            placeholder,
-            replacement,
-            expected,
-        )
-    }
-
     fn try_replace_scoped(
         &mut self,
         target: ScopedReplacementTarget<'_>,

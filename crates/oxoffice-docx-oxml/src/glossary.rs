@@ -1870,7 +1870,8 @@ fn valid_doc_part_type(value: &str) -> bool {
     )
 }
 
-fn valid_guid(value: &str) -> bool {
+/// Whether `value` is a braced upper-case GUID, `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`.
+pub fn valid_guid(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 38
         && bytes.first() == Some(&b'{')
@@ -1883,7 +1884,8 @@ fn valid_guid(value: &str) -> bool {
         })
 }
 
-fn valid_doc_part_gallery(value: &str) -> bool {
+/// Whether `value` is one of the building-block gallery values (`ST_DocPartGallery`).
+pub fn valid_doc_part_gallery(value: &str) -> bool {
     matches!(
         value,
         "placeholder"

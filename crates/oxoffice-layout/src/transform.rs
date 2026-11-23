@@ -52,6 +52,29 @@ impl Transform {
         }
     }
 
+    /// The inverse transform, or `None` when the matrix is singular or the
+    /// inverse is not finite.
+    pub fn inverse(self) -> Option<Transform> {
+        let determinant = self.a * self.d - self.b * self.c;
+        if !determinant.is_finite() || determinant == 0.0 {
+            return None;
+        }
+        let inverse = Transform {
+            a: self.d / determinant,
+            b: -self.b / determinant,
+            c: -self.c / determinant,
+            d: self.a / determinant,
+            e: (self.c * self.f - self.d * self.e) / determinant,
+            f: (self.b * self.e - self.a * self.f) / determinant,
+        };
+        [
+            inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f,
+        ]
+        .into_iter()
+        .all(f64::is_finite)
+        .then_some(inverse)
+    }
+
     /// Apply this transform to a point.
     pub fn apply(self, point: Point) -> Point {
         Point {

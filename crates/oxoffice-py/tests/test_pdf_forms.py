@@ -305,7 +305,7 @@ def verapdf_failures(path, flavour):
     run = subprocess.run(
         ["docker", "run", "--rm", "-v", f"{path.parent}:/data", VERAPDF, "--flavour", flavour, "--format", "mrr",
          f"/data/{path.name}"],
-        capture_output=True, text=True, timeout=900, check=False,
+        capture_output=True, encoding="utf-8", timeout=900, check=False,
     )
     try:
         report = ElementTree.fromstring(run.stdout).find("./jobs/job/validationReport")

@@ -268,7 +268,8 @@ impl Document {
     /// Stage a chart, its editable workbook, and the Word drawing that reaches them.
     pub(super) fn add_chart_package(
         &mut self,
-        source: ChartPackageSource<'_>,
+        kind: ChartKind,
+        data: &ChartData,
         width: Length,
         height: Length,
     ) -> Result<()> {
@@ -282,9 +283,7 @@ impl Document {
         candidate
             .identifiers
             .observe_package_graph(&candidate.package)?;
-        if matches!(&source, ChartPackageSource::Authored { .. }) {
-            candidate.ensure_authored_chart_theme()?;
-        }
+        candidate.ensure_authored_chart_theme()?;
         let chart_part = candidate
             .identifiers
             .reserve_part_name("/word/charts", "chart", "xml")?;
@@ -318,18 +317,9 @@ impl Document {
                 rel_types::PACKAGE,
                 &relative_target(&chart_part, &workbook_part),
             );
-        let (chart_xml, workbook_bytes) = match source {
-            ChartPackageSource::Typed { chart, workbook } => (
-                chart_with_workbook_relationship(chart, &workbook_relationship_id)?,
-                workbook
-                    .to_xlsx_bytes()
-                    .map_err(|error| Error::Other(format!("invalid chart workbook: {error}")))?,
-            ),
-            ChartPackageSource::Authored { kind, data } => {
-                oxoffice_chart::authored_chart_parts(kind, data, &workbook_relationship_id)
-                    .map_err(|error| Error::Other(format!("invalid chart data: {error}")))?
-            }
-        };
+        let (chart_xml, workbook_bytes) =
+            oxoffice_chart::authored_chart_parts(kind, data, &workbook_relationship_id)
+                .map_err(|error| Error::Other(format!("invalid chart data: {error}")))?;
 
         let mut inline =
             CT_Inline::new_chart(&document_relationship_id, width.to_emu(), height.to_emu());
