@@ -538,7 +538,9 @@ Rust first, then the CLI and Python. Each pull request has its own check.
      - A legacy field's runs carry a mark of their own, the field's index
        among the paragraph's fields, including the stored result runs drawn
        as ordinary runs. Fields are numbered with the content controls by
-       the first physical run each draws.
+       where each starts among the paragraph's physical runs, tracked
+       changes included: a control starts before the run at its offset, so
+       one with no run at all still keeps its own place.
      - A content control around a legacy field is a container, as it is
        around another control: the legacy field becomes the field.
      - Legacy marks name the main-story paragraph, as control marks do, and
