@@ -3,7 +3,7 @@
   "format": "docx",
   "area": "compare",
   "title": "Resolving one move alone at the end of a redline leaves an empty paragraph or fails",
-  "symptom": "after compare moved two paragraphs to the end of the body, accepting or rejecting only the last move by its id leaves an empty paragraph; with a table between the last moved paragraph and the one before it, the call fails with \"paragraph mark removal next to a table requires a paragraph with no content left\"",
+  "symptom": "after compare moved two paragraphs to the end of the body, accepting or rejecting only the last move by its id leaves an empty paragraph; with a table between the last moved paragraph and the one before it, the call fails with \"paragraph mark removal next to a table or block content control requires a paragraph with no content left\"",
   "workaround": "accept or reject every revision, or one author's, instead of a single move",
   "issue": 368
 }

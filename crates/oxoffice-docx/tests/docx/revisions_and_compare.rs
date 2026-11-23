@@ -3564,3 +3564,459 @@ fn a_last_paragraph_deleted_after_a_restyled_one_keeps_the_original_formatting_w
     assert_eq!(texts(&copy), ["Intro"]);
     assert!(!main_part_xml(&mut copy).contains("center"));
 }
+
+// ---- Block content controls ----
+
+const INTRO: &str = "<w:p><w:r><w:t>Intro</w:t></w:r></w:p>";
+const BODY: &str = "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>";
+
+/// A block content control named `alias` holding `content`.
+fn block_control(alias: &str, content: &str) -> String {
+    format!(
+        r#"<w:sdt><w:sdtPr><w:alias w:val="{alias}"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#
+    )
+}
+
+/// A one-cell table holding `content`.
+fn one_cell_table(content: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{content}</w:tc></w:tr></w:tbl>"#
+    )
+}
+
+/// The body owners of `doc` in order: a paragraph's text, a block control
+/// as `alias{text}`, a table as `[text of its first cell]`, other markup as
+/// its XML.
+fn body_owners(doc: &Document) -> Vec<String> {
+    doc.body_items()
+        .map(|item| match item {
+            BodyItemRef::Paragraph(paragraph) => paragraph.text(),
+            BodyItemRef::Table(table) => format!("[{}]", table.cell(0, 0).unwrap().text()),
+            BodyItemRef::ContentControl(control) => {
+                format!("{}{{{}}}", control.alias().unwrap_or(""), control.text())
+            }
+            BodyItemRef::UnsupportedXml(xml) => String::from_utf8_lossy(xml).into_owned(),
+        })
+        .collect()
+}
+
+/// What a resolved body must give back: its owners, the alias of every
+/// content control in document order, nested ones included, and its
+/// bookmark names.
+fn resolved_shape(doc: &mut Document) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let aliases = main_xml(doc)
+        .split(r#"<w:alias w:val=""#)
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap_or_default().to_owned())
+        .collect();
+    (body_owners(doc), aliases, bookmark_names(doc))
+}
+
+/// Compare the body `original` with the body `edited` both ways, at word
+/// and character granularity: each redline resolves to the edited body
+/// once accepted and to the original once rejected (see
+/// [`resolved_shape`]), with the revisions `check` expects.
+fn check_bodies_both_ways(original: &str, edited: &str, check: impl Fn(&mut Document, bool)) {
+    for (from, to, forward) in [(original, edited, true), (edited, original, false)] {
+        for granularity in [
+            ComparisonGranularity::Word,
+            ComparisonGranularity::Character,
+        ] {
+            let mut doc = doc_with_body(from);
+            let options = ComparisonOptions {
+                granularity,
+                ..Default::default()
+            };
+            let diagnostics = doc
+                .compare_with_options(&doc_with_body(to), AUTHOR, DATE, &options)
+                .unwrap_or_else(|error| panic!("{granularity:?} {forward}: {error}"));
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            let mut doc = reopen(&mut doc);
+            check(&mut doc, forward);
+            let context = format!("{granularity:?}, forward {forward}");
+            assert_eq!(
+                resolved_shape(&mut accepted(&mut doc)),
+                resolved_shape(&mut doc_with_body(to)),
+                "{context}"
+            );
+            assert_eq!(
+                resolved_shape(&mut rejected(&mut doc)),
+                resolved_shape(&mut doc_with_body(from)),
+                "{context}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_block_content_control_added_or_removed_whole_is_tracked_and_resolves_to_either_version() {
+    let control = block_control("Box", &plain("Inside"));
+    for (original, edited) in [
+        (format!("{INTRO}{control}{BODY}"), format!("{INTRO}{BODY}")),
+        (format!("{INTRO}{control}"), INTRO.to_owned()),
+        (control.clone(), INTRO.to_owned()),
+        (
+            format!("{INTRO}{control}{}", block_control("Two", &plain("Second"))),
+            INTRO.to_owned(),
+        ),
+    ] {
+        check_bodies_both_ways(&original, &edited, |doc, forward| {
+            let kind = if forward {
+                RevisionKind::Deletion
+            } else {
+                RevisionKind::Insertion
+            };
+            assert!(
+                revision_texts(doc, kind)
+                    .iter()
+                    .any(|text| text == "Inside"),
+                "{:?}",
+                revision_texts(doc, kind)
+            );
+            // The control and its properties stay in the redline.
+            assert!(main_xml(doc).contains(r#"<w:alias w:val="Box"/>"#));
+        });
+    }
+    // After a control both versions hold, ending the body.
+    check_bodies_both_ways(
+        &format!("{INTRO}{control}{}", block_control("Two", &plain("Second"))),
+        &format!("{INTRO}{control}"),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_block_content_control_holding_a_table_or_another_control_goes_whole() {
+    let nested = block_control(
+        "Outer",
+        &format!(
+            "{}{}",
+            one_cell_table(&plain("cell")),
+            block_control("Inner", &plain("Inside"))
+        ),
+    );
+    check_bodies_both_ways(
+        &format!("{INTRO}{nested}{BODY}"),
+        &format!("{INTRO}{BODY}"),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_paragraph_appended_after_a_final_block_content_control_is_compared() {
+    let control = block_control("Box", &plain("Inside"));
+    check_bodies_both_ways(
+        &format!("{INTRO}{control}"),
+        &format!("{INTRO}{control}{BODY}"),
+        |doc, forward| {
+            let kind = if forward {
+                RevisionKind::Insertion
+            } else {
+                RevisionKind::Deletion
+            };
+            assert_eq!(revision_texts(doc, kind), ["Body."]);
+            // As Word marks it: the change is on the mark of the control's
+            // last paragraph, and the body's final mark is untracked.
+            let xml = main_xml(doc);
+            let tag = if forward { "w:ins" } else { "w:del" };
+            let control =
+                &xml[xml.find("<w:sdtContent").unwrap()..xml.find("</w:sdtContent>").unwrap()];
+            assert!(control.contains(&format!("<w:rPr><{tag} ")), "{xml}");
+            let last = &xml[xml.rfind("<w:p>").unwrap()..];
+            assert!(!last.contains("<w:pPr>"), "{xml}");
+        },
+    );
+    // A centred paragraph appended after a control whose paragraph is not:
+    // each resolution keeps each paragraph's alignment.
+    let centred = "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>Body.</w:t></w:r></w:p>";
+    check_bodies_both_ways(
+        &format!("{INTRO}{control}"),
+        &format!("{INTRO}{control}{centred}"),
+        |doc, forward| {
+            let centred_after =
+                |doc: &mut Document| main_xml(doc).matches("w:val=\"center\"").count();
+            let (accept, reject) = if forward { (1, 0) } else { (0, 1) };
+            assert_eq!(centred_after(&mut accepted(doc)), accept);
+            assert_eq!(centred_after(&mut rejected(doc)), reject);
+        },
+    );
+    // The control's own text changes too.
+    check_bodies_both_ways(
+        &format!("{INTRO}{control}"),
+        &format!(
+            "{INTRO}{}{BODY}",
+            block_control("Box", &plain("Inside now"))
+        ),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_paragraph_removed_next_to_a_block_content_control_is_compared() {
+    let first = block_control("Box", &plain("Inside"));
+    let second = block_control("Two", &format!("{}{}", plain("Second"), plain("Third")));
+    let removed = plain("Removed");
+    for (original, edited) in [
+        // First in the body, before a control.
+        (format!("{removed}{first}{BODY}"), format!("{first}{BODY}")),
+        // Between two controls.
+        (
+            format!("{first}{removed}{second}{BODY}"),
+            format!("{first}{second}{BODY}"),
+        ),
+        // Before a control that ends the body.
+        (
+            format!("{INTRO}{removed}{first}"),
+            format!("{INTRO}{first}"),
+        ),
+        // With the control after it, ending the body.
+        (format!("{INTRO}{removed}{first}"), INTRO.to_owned()),
+        // Before a control both versions hold empty, in the middle and
+        // ending the body.
+        (
+            format!("{INTRO}{removed}{}{BODY}", block_control("Empty", "<w:p/>")),
+            format!("{INTRO}{}{BODY}", block_control("Empty", "<w:p/>")),
+        ),
+        (
+            format!("{INTRO}{removed}{}", block_control("Empty", "<w:p/>")),
+            format!("{INTRO}{}", block_control("Empty", "<w:p/>")),
+        ),
+        // In a cell, before a control.
+        (
+            one_cell_table(&format!("{removed}{first}{INTRO}")),
+            one_cell_table(&format!("{first}{INTRO}")),
+        ),
+        // Inside a control, before a nested control.
+        (
+            block_control("Outer", &format!("{removed}{first}{INTRO}")),
+            block_control("Outer", &format!("{first}{INTRO}")),
+        ),
+    ] {
+        check_bodies_both_ways(&original, &edited, |_, _| {});
+    }
+}
+
+#[test]
+fn a_moved_block_content_control_is_tracked_as_a_move() {
+    let control = block_control("Box", &plain("Inside"));
+    check_bodies_both_ways(
+        &format!("{control}{INTRO}{BODY}"),
+        &format!("{INTRO}{BODY}{control}"),
+        |doc, _| {
+            assert_eq!(revision_texts(doc, RevisionKind::MoveFrom), ["Inside"]);
+            assert_eq!(revision_texts(doc, RevisionKind::MoveTo), ["Inside"]);
+        },
+    );
+}
+
+#[test]
+fn a_block_content_control_added_in_a_cell_or_in_another_control_is_compared() {
+    let control = block_control("Box", &plain("Inside"));
+    check_bodies_both_ways(
+        &format!("{INTRO}{}{BODY}", one_cell_table(INTRO)),
+        &format!(
+            "{INTRO}{}{BODY}",
+            one_cell_table(&format!("{control}{INTRO}"))
+        ),
+        |_, _| {},
+    );
+    check_bodies_both_ways(
+        &format!("{INTRO}{}{BODY}", block_control("Outer", INTRO)),
+        &format!(
+            "{INTRO}{}{BODY}",
+            block_control("Outer", &format!("{control}{INTRO}"))
+        ),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_word_table_of_contents_removed_whole_is_compared() {
+    // Word's References > Table of Contents: a gallery control holding a
+    // heading and a TOC field across paragraphs, with hyperlinked entries.
+    let toc = concat!(
+        r#"<w:sdt><w:sdtPr><w:id w:val="-1"/><w:docPartObj><w:docPartGallery w:val="Table of Contents"/>"#,
+        r#"<w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="TOCHeading"/></w:pPr><w:r><w:t>Contents</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h \z \u </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:hyperlink w:anchor="_Toc1" w:history="1"><w:r><w:t>Intro</w:t></w:r><w:r><w:tab/></w:r>"#,
+        r#"<w:r><w:t>1</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        r#"</w:sdtContent></w:sdt>"#,
+    );
+    let heading = r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="_Toc1"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#;
+    check_bodies_both_ways(
+        &format!("{toc}{heading}{BODY}"),
+        &format!("{heading}{BODY}"),
+        |doc, forward| {
+            let kind = if forward {
+                RevisionKind::Deletion
+            } else {
+                RevisionKind::Insertion
+            };
+            assert!(revision_texts(doc, kind).contains(&"Contents".to_owned()));
+        },
+    );
+}
+
+#[test]
+fn a_block_content_control_whose_content_is_all_tracked_goes_with_that_content() {
+    // A control deleted or inserted under tracking: every run and
+    // paragraph mark inside it marked, not the control itself.
+    let marked = |kind: &str, text: &str| {
+        block_control(
+            "Box",
+            &format!(
+                r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="1" w:author="Ada" w:date="{DATE}"/></w:rPr></w:pPr><w:{kind} w:id="2" w:author="Ada" w:date="{DATE}"><w:r>{text}</w:r></w:{kind}></w:p>"#
+            ),
+        )
+    };
+    let deleted = marked("del", "<w:delText>Inside</w:delText>");
+    let inserted = marked("ins", "<w:t>Inside</w:t>");
+    for (body, goes_on_accept) in [
+        (format!("{INTRO}{deleted}{BODY}"), true),
+        (format!("{INTRO}{deleted}"), true),
+        (format!("{INTRO}{inserted}{BODY}"), false),
+        (format!("{INTRO}{inserted}"), false),
+    ] {
+        let mut doc = doc_with_body(&body);
+        let kept = body_owners(&doc_with_body(
+            &body.replace(&deleted, "").replace(&inserted, ""),
+        ));
+        let with_control = {
+            let mut owners = kept.clone();
+            owners.insert(1, "Box{Inside}".to_owned());
+            owners
+        };
+        let (on_accept, on_reject) = if goes_on_accept {
+            (kept, with_control)
+        } else {
+            (with_control, kept)
+        };
+        assert_eq!(body_owners(&accepted(&mut doc)), on_accept, "{body}");
+        assert_eq!(body_owners(&rejected(&mut doc)), on_reject, "{body}");
+    }
+}
+
+#[test]
+fn an_existing_paragraph_wrapped_in_a_block_content_control_is_compared() {
+    check_bodies_both_ways(
+        &format!("{INTRO}{BODY}"),
+        &format!("{INTRO}{}", block_control("Box", BODY)),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_block_content_control_removed_whole_takes_the_bookmarks_it_encloses() {
+    // A heading bookmark and Word's `_GoBack` inside the control, and a
+    // pretty-printed control with whitespace and a proofing mark between
+    // its paragraphs.
+    let clause = block_control(
+        "Clause",
+        &format!(
+            concat!(
+                r#"<w:p><w:bookmarkStart w:id="7" w:name="_Toc9"/><w:r><w:t>Clause</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>"#,
+                "\n  ",
+                r#"<w:proofErr w:type="spellStart"/>"#,
+                "\n  ",
+                r#"<w:p><w:bookmarkStart w:id="8" w:name="_GoBack"/><w:bookmarkEnd w:id="8"/><w:r><w:t>Text</w:t></w:r></w:p>"#,
+                "{}"
+            ),
+            "\n"
+        ),
+    );
+    check_bodies_both_ways(
+        &format!("{INTRO}{clause}{BODY}"),
+        &format!("{INTRO}{BODY}"),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_bookmark_that_only_ends_in_a_removed_control_keeps_both_ends() {
+    // A Word redline: the control deleted under tracking holds the end of a
+    // bookmark that starts before it.
+    let body = format!(
+        concat!(
+            r#"<w:p><w:bookmarkStart w:id="3" w:name="span"/><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+            r#"<w:sdt><w:sdtPr><w:alias w:val="Box"/></w:sdtPr><w:sdtContent><w:p><w:pPr><w:rPr>"#,
+            r#"<w:del w:id="1" w:author="Ada" w:date="{date}"/></w:rPr></w:pPr><w:del w:id="2" w:author="Ada" w:date="{date}">"#,
+            r#"<w:r><w:delText>Inside</w:delText></w:r></w:del><w:bookmarkEnd w:id="3"/></w:p></w:sdtContent></w:sdt>"#,
+            "{body}"
+        ),
+        date = DATE,
+        body = BODY
+    );
+    let mut doc = doc_with_body(&body);
+    let accepted = accepted(&mut doc);
+    // The end stays at block level, where the control was.
+    let owners = body_owners(&accepted);
+    assert_eq!(owners.len(), 3, "{owners:?}");
+    assert_eq!([&owners[0], &owners[2]], ["Intro", "Body."]);
+    assert!(owners[1].starts_with("<w:bookmarkEnd ") && owners[1].contains(r#"w:id="3""#));
+    assert_eq!(bookmark_names(&accepted), ["span"]);
+    assert_eq!(bookmark_names(&rejected(&mut doc)), ["span"]);
+}
+
+#[test]
+fn a_block_content_control_ending_the_body_leaves_the_final_mark_untracked() {
+    // Word cannot resolve a change on the body's last paragraph mark: the
+    // paragraph before the control carries it, as for a final paragraph.
+    let control = block_control("Box", &format!("{}{}", plain("Inside"), plain("Last")));
+    check_bodies_both_ways(&format!("{INTRO}{control}"), INTRO, |doc, forward| {
+        let xml = main_xml(doc);
+        let tag = if forward { "<w:del " } else { "<w:ins " };
+        let marks = |paragraph: &str| {
+            let properties = paragraph.split("</w:pPr>").next().unwrap_or_default();
+            paragraph.contains("</w:pPr>") && properties.contains(tag)
+        };
+        // The first paragraph is Intro's, the last the control's last.
+        let intro = &xml[..xml.find("</w:p>").unwrap()];
+        let last = &xml[xml.rfind("<w:p>").max(xml.rfind("<w:p ")).unwrap()..];
+        assert!(intro.contains("Intro") && marks(intro), "{xml}");
+        assert!(last.contains("Last<") && !marks(last), "{xml}");
+    });
+}
+
+#[test]
+fn a_range_ending_in_a_removed_final_control_still_ends_after_it_starts() {
+    // A Word-style redline of a control removed at the end of the body: the
+    // paragraph before it carries the change, and a bookmark that starts
+    // there ends in the control's first paragraph.
+    let mark = |kind: &str, id: u32| {
+        format!(
+            r#"<w:pPr><w:rPr><w:{kind} w:id="{id}" w:author="Ada" w:date="{DATE}"/></w:rPr></w:pPr>"#
+        )
+    };
+    let deleted = |id: u32, text: &str| {
+        format!(
+            r#"<w:del w:id="{id}" w:author="Ada" w:date="{DATE}"><w:r><w:delText>{text}</w:delText></w:r></w:del>"#
+        )
+    };
+    let body = format!(
+        concat!(
+            r#"<w:p>{intro_mark}<w:bookmarkStart w:id="9" w:name="span"/><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+            r#"<w:sdt><w:sdtPr><w:alias w:val="Box"/></w:sdtPr><w:sdtContent>"#,
+            r#"<w:p>{first_mark}{first}<w:bookmarkEnd w:id="9"/></w:p><w:p>{last}</w:p>"#,
+            r#"</w:sdtContent></w:sdt>"#
+        ),
+        intro_mark = mark("del", 1),
+        first_mark = mark("del", 2),
+        first = deleted(3, "Inside"),
+        last = deleted(4, "Last"),
+    );
+    let mut accepted = accepted(&mut doc_with_body(&body));
+    // The end stays at block level, after the merged paragraph.
+    let owners = body_owners(&accepted);
+    assert_eq!(owners.len(), 2, "{owners:?}");
+    assert_eq!(owners[0], "Intro");
+    assert!(owners[1].starts_with("<w:bookmarkEnd "), "{owners:?}");
+    let xml = main_xml(&mut accepted);
+    let start = xml.find("<w:bookmarkStart").expect("the bookmark starts");
+    let end = xml.find("<w:bookmarkEnd").expect("the bookmark ends");
+    assert!(start < end, "{xml}");
+    assert_eq!(bookmark_names(&accepted), ["span"]);
+}
