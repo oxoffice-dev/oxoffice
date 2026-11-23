@@ -47,7 +47,6 @@ use oxoffice_docx_oxml::web_settings::CT_WebSettings;
 use oxoffice_opc::content_types;
 use oxoffice_opc::relationship::rel_types;
 use oxoffice_opc::{OpcPackage, PackageReadLimits, SaveOptions, write_atomic_file};
-use oxoffice_sml::Workbook;
 use quick_xml::Writer;
 use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_xml_entity;
@@ -163,7 +162,6 @@ use headers_footers::{
     header_footer_story_has_expected_root, header_type_index, is_content_relationship,
     materialize_header_footer_inheritance,
 };
-use media::chart_with_workbook_relationship;
 pub use numbering::{ListItemKind, NumberingJournal};
 pub use replace::ReplacementCountMismatch;
 
@@ -1036,18 +1034,6 @@ impl Parsed {
             })
             .as_deref()
     }
-}
-
-enum ChartPackageSource<'a> {
-    #[allow(dead_code)]
-    Typed {
-        chart: &'a CT_ChartSpace,
-        workbook: &'a Workbook,
-    },
-    Authored {
-        kind: ChartKind,
-        data: &'a ChartData,
-    },
 }
 
 /// Fallback part names used when a document does not already declare one.

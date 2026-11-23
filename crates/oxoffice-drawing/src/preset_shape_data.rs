@@ -38,7 +38,6 @@
 // Inner path: OfficeOpenXML-DrawingMLGeometries.zip/presetShapeDefinitions.xml
 // Upstream: https://ecma-international.org/wp-content/uploads/ECMA-376-1_5th_edition_december_2016.zip
 
-#[allow(dead_code)]
 #[rustfmt::skip]
 pub(crate) fn preset_shape_definition(name: &str) -> Option<&'static [u8]> {
     match name {

@@ -1172,7 +1172,6 @@ dependencies = [
  "oxoffice-pdf",
  "oxoffice-pptx",
  "oxoffice-render-test",
- "oxoffice-sml",
  "pulldown-cmark",
  "quick-xml",
  "regex",

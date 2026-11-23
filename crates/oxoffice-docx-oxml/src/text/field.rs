@@ -1842,14 +1842,6 @@ impl Field {
         Ok(self.legacy_reset_default.clone())
     }
 
-    /// Change the typed current value and cache. The reset default stays put.
-    ///
-    /// Candidate bytes decide whether the edit is a no-op. Typed equality does not.
-    #[doc(hidden)]
-    pub fn set_legacy_form_value(&mut self, value: LegacyFormFieldValue) -> Result<()> {
-        self.set_legacy_form_value_with_work(value, None)
-    }
-
     fn set_legacy_form_value_with_work(
         &mut self,
         value: LegacyFormFieldValue,
