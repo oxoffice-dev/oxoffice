@@ -132,7 +132,7 @@ refused at open when one of its parts holds a control character.
 | Charts | ✅ | ⚠️ | ✅ | an existing chart's legend can change, not its data yet |
 | Hyperlinks and bookmarks | ✅ | ✅ | ✅ | |
 | Mail merge | ✅ | ✅ | ✅ | from Rust and Python |
-| Bibliography | ⚠️ | ⚠️ | ⚠️ | sources, citations and the bibliography from Rust only for now; every source kind in APA 6th, a one-author book in the 11 other styles; only APA 6th in en-US is checked against Word |
+| Bibliography | ⚠️ | ⚠️ | ⚠️ | sources, citations and the bibliography from Rust and the CLI; every source kind in APA 6th, a one-author book in the 11 other styles; only APA 6th in en-US is checked against Word |
 | Conversions | ✅ | — | ✅ | from Markdown and HTML; to PDF and PDF/A, HTML, Markdown, ODT, RTF, EPUB and page images |
 | Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
 | Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |

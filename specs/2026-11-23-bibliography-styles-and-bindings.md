@@ -233,7 +233,10 @@ steps 3 to 7 do not change, so they can run in parallel with them.
 ## Outcome
 
 Stopped after step 2 by the maintainer's decision (2026-11-23): steps 3 to
-10 are not done, and an issue will be opened if the features are needed.
+7 and 10 are not done, and an issue will be opened if the features are
+needed. The bindings session did step 8, the CLI
+([#584](https://github.com/oxoffice-dev/oxoffice/pull/584)), and step 9,
+Python ([#592](https://github.com/oxoffice-dev/oxoffice/pull/592)).
 
 - Step 1 ([#578](https://github.com/oxoffice-dev/oxoffice/pull/578)):
   behaviour tests, and every refusal names its style, source and locale.
