@@ -588,7 +588,7 @@ fn style_numbering(doc: &Document, style: &str) -> (Option<u32>, Option<u32>) {
 #[test]
 fn a_style_numbered_without_a_level_links_at_the_level_its_based_on_chain_gives() {
     // Child holds only a `w:numId`; the `w:ilvl 2` it shows comes from Deep,
-    // the style it is based on.
+    // through Mid, which holds no numbering.
     let (mut doc, id) = single_list(&[
         ListLevel::decimal().level_text("%1."),
         ListLevel::decimal().level_text("%1.%2."),
@@ -601,8 +601,10 @@ fn a_style_numbered_without_a_level_links_at_the_level_its_based_on_chain_gives(
                 concat!(
                     r#"<w:style w:type="paragraph" w:styleId="Deep"><w:name w:val="Deep"/>"#,
                     r#"<w:pPr><w:numPr><w:ilvl w:val="2"/></w:numPr></w:pPr></w:style>"#,
+                    r#"<w:style w:type="paragraph" w:styleId="Mid"><w:name w:val="Mid"/>"#,
+                    r#"<w:basedOn w:val="Deep"/></w:style>"#,
                     r#"<w:style w:type="paragraph" w:styleId="Child"><w:name w:val="Child"/>"#,
-                    r#"<w:basedOn w:val="Deep"/><w:pPr><w:numPr><w:numId w:val="{id}"/>"#,
+                    r#"<w:basedOn w:val="Mid"/><w:pPr><w:numPr><w:numId w:val="{id}"/>"#,
                     r#"</w:numPr></w:pPr></w:style></w:styles>"#
                 ),
                 id = id
@@ -643,6 +645,41 @@ fn a_style_numbered_without_a_level_links_at_the_level_its_based_on_chain_gives(
         Some("Child")
     );
     assert_eq!(markers(&doc), ["1.1.1."]);
+
+    // A new `w:basedOn` higher up the chain would move Child too.
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .set_style(StyleBuilder::paragraph("Mid", "Mid").based_on("Normal"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("style 'Child' numbering must be changed"),
+        "{error}"
+    );
+    // An instance update that would drop the level's name of Child is refused.
+    let plain = doc
+        .add_numbering_definition(&[
+            ListLevel::decimal(),
+            ListLevel::decimal(),
+            ListLevel::decimal(),
+        ])
+        .unwrap();
+    let after_definition = doc.to_bytes().unwrap();
+    let error = doc
+        .update_numbering_instance(id, plain, &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("style-link"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), after_definition);
+    assert_ne!(before, after_definition);
+
+    // Removing Child, once nothing uses it, releases the level that names it.
+    let mut unused = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
+    let item = unused.content_index_of_paragraph(0).unwrap();
+    assert!(unused.remove_content(item));
+    assert!(unused.remove_style("Child").unwrap());
+    unused.validate_numbering_graph().unwrap();
+    assert_eq!(unused.numbering_level(id, 2).unwrap().paragraph_style, None);
 
     doc.unlink_style_from_numbering("Child", id, 2).unwrap();
     let doc = reopen(&mut doc);

@@ -701,22 +701,24 @@ impl Document {
         }
         let old_link = existing.linked_style.clone();
         merge_style_update(existing, &mut authored, cleared, &removed_regions);
-        // The levels are read as layout reads them, the new style's in the
-        // table it joins: writing the level a `w:numId` without `w:ilvl`
+        // The levels are read as layout reads them, in the table before and
+        // after the change: writing the level a `w:numId` without `w:ilvl`
         // shows, or a new `w:basedOn` that gives the same level, changes no
-        // numbering.
-        let existing_numbering =
-            super::numbering::style_numbering_level(&candidate.styles, existing);
+        // numbering. A style below this one in a `w:basedOn` chain may take
+        // its level from it, so every style is compared.
+        let numbering_before = super::numbering::style_numbering_levels(&candidate.styles);
         let style_id = authored.style_id.clone();
         let new_link = authored.linked_style.clone();
         Arc::make_mut(&mut candidate.styles).styles[index] = authored;
-        let authored_numbering = super::numbering::style_numbering_level(
-            &candidate.styles,
-            &candidate.styles.styles[index],
-        );
-        if authored_numbering != existing_numbering {
+        let numbering_after = super::numbering::style_numbering_levels(&candidate.styles);
+        if let Some(changed) = numbering_after
+            .iter()
+            .zip(&numbering_before)
+            .position(|(after, before)| after != before)
+        {
             return Err(Error::Other(format!(
-                "style '{style_id}' numbering must be changed with link_style_to_numbering or unlink_style_from_numbering"
+                "style '{}' numbering must be changed with link_style_to_numbering or unlink_style_from_numbering",
+                candidate.styles.styles[changed].style_id
             )));
         }
         update_reciprocal_style_link(

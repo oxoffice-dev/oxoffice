@@ -1978,6 +1978,16 @@ fn numbering_reference_error_in(
     })
 }
 
+/// Every style's own numbering, in table order, as [`style_numbering_level`]
+/// reads it.
+pub(super) fn style_numbering_levels(styles: &CT_Styles) -> Vec<(Option<u32>, Option<u32>)> {
+    styles
+        .styles
+        .iter()
+        .map(|style| style_numbering_level(styles, style))
+        .collect()
+}
+
 /// A style's own numbering as `(numId, level)`, the level read as Word,
 /// LibreOffice and layout read it: the style's `w:ilvl`, else one its
 /// `w:basedOn` chain gives, else 0, as Word and python-docx write List
