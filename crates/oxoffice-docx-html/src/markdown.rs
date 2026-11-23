@@ -211,10 +211,16 @@ fn emit_paragraph(
     // A heading numbered through its style, as Word numbers its headings,
     // stays a heading; only its own numbering makes it a list item.
     let list_info = match counted {
-        Counted::Item(item) if detected_level.is_none() || crate::has_own_numbering(para) => {
-            Some(item)
+        Counted::Item(ref item) if detected_level.is_none() || crate::has_own_numbering(para) => {
+            Some(item.clone())
         }
         _ => None,
+    };
+    // Markdown lists have numbers and bullets only: an item whose marker
+    // they cannot write (Chicago's) is a paragraph led by that marker.
+    let (list_info, marker) = match list_info {
+        Some(item) if item.marker.is_some() => (None, item.marker),
+        list_info => (list_info, None),
     };
     // Outline level 9 (level 10 here) is body text, the level of Word's TOC
     // Heading style: written as a paragraph, which, as in HTML, takes no
@@ -224,6 +230,12 @@ fn emit_paragraph(
     // Collect inline text for the paragraph
     let mut text =
         collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries, equations);
+    if let Some(marker) = marker {
+        let mut led = String::new();
+        push_escaped_text(&mut led, &marker);
+        led.push(' ');
+        text.insert_str(0, &led);
+    }
 
     let style_id = para
         .properties

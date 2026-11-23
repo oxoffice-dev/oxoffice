@@ -1331,6 +1331,88 @@ fn epub_reports_a_table_shading_colour_it_cannot_carry() {
 }
 
 #[test]
+fn chicago_list_marks_are_written_as_the_pdf_draws_them() {
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::new(
+            oxoffice_docx::ListNumberFormat::Chicago,
+        )])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    for item in ["One", "Two", "Three", "Four", "Five"] {
+        doc.add_paragraph(item).numbering(list, 0);
+    }
+    let marks = ["*.", "\u{2020}.", "\u{2021}.", "\u{a7}.", "**."];
+
+    // HTML and EPUB: an ordered list whose items each carry their mark.
+    let html = doc.to_html_fragment();
+    assert_eq!(html_elements(&html, "ol").len(), 1, "{html}");
+    let items = html_elements(&html, "li");
+    for ((_, attributes), mark) in items.iter().zip(marks) {
+        assert_eq!(
+            attributes["style"],
+            format!("list-style-type:'{mark} '"),
+            "{html}"
+        );
+    }
+    assert_eq!(items.len(), 5, "{html}");
+    let epub = doc.to_epub_bytes().unwrap();
+    assert!(
+        !epub
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.path.ends_with("numbering/format")
+                || diagnostic.path.ends_with("numbering/marker")),
+        "{:?}",
+        epub.diagnostics
+    );
+    let chapters = epub_chapters(epub.bytes);
+    let items = html_elements(&chapters, "li[style]");
+    assert_eq!(items.len(), 5, "{chapters}");
+    for ((_, attributes), mark) in items.iter().zip(marks) {
+        assert_eq!(
+            attributes["style"],
+            format!("list-style-type:'{mark} '"),
+            "{chapters}"
+        );
+    }
+
+    // A shaded or right-to-left item keeps its shading and direction in the
+    // EPUB list, as in HTML.
+    let mut shaded = Document::new();
+    let definition = shaded
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
+        .unwrap();
+    let list = shaded.add_numbering_instance(definition, &[]).unwrap();
+    shaded
+        .add_paragraph("Shaded")
+        .numbering(list, 0)
+        .shading("C6EFCE");
+    shaded.add_paragraph("Plain").numbering(list, 0);
+    let chapters = epub_chapters(shaded.to_epub_bytes().unwrap().bytes);
+    assert!(
+        chapters.contains(r##"<li style="background-color:#C6EFCE">Shaded"##),
+        "{chapters}"
+    );
+    assert!(chapters.contains("<li>Plain"), "{chapters}");
+
+    // Markdown has no list for them: each item is a paragraph led by its
+    // mark, escaped where Markdown would read it as emphasis.
+    let markdown = doc.to_markdown();
+    assert_eq!(
+        read_markdown(&markdown),
+        [
+            Read::Paragraph("*. One".to_owned()),
+            Read::Paragraph("\u{2020}. Two".to_owned()),
+            Read::Paragraph("\u{2021}. Three".to_owned()),
+            Read::Paragraph("\u{a7}. Four".to_owned()),
+            Read::Paragraph("**. Five".to_owned()),
+        ],
+        "{markdown}"
+    );
+}
+
+#[test]
 fn internal_links_reach_their_bookmark_in_both_exports() {
     let doc = reopen(&mut doc_with_body(concat!(
         r#"<w:p><w:bookmarkStart w:id="1" w:name="goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/>"#,

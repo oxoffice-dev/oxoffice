@@ -991,10 +991,16 @@ impl<'a> EpubWriter<'a> {
                 }
                 if let Some(marker) = &level.lvl_text {
                     let standard = format!("%{}.", level.ilvl + 1);
+                    // A Chicago item writes its level text, unless it holds
+                    // another level's number.
+                    let own_marker_written = level.num_fmt == Some(ST_NumberFormat::Chicago)
+                        && (1..=9)
+                            .filter(|other| *other != level.ilvl + 1)
+                            .all(|other| !marker.contains(&format!("%{other}")));
                     if producer_defined
                         || unrendered_standard
                         || level.num_fmt == Some(ST_NumberFormat::Bullet)
-                        || marker != &standard
+                        || (marker != &standard && !own_marker_written)
                     {
                         self.diagnose(
                             format!("{path}/properties/numbering/marker"),
@@ -2405,11 +2411,11 @@ fn emit_list_level(
         let anchor = heading_anchors.get(index).map(String::as_str);
         let preserve_heading = projects_as_heading(paragraph, source_styles);
         let value = list_values.get(index).copied().unwrap_or(expected_value);
-        if list.kind == ListKind::Ordered && value != expected_value {
-            push_bounded_xhtml(output, &format!("<li value=\"{value}\">"))?;
-        } else {
-            push_bounded_xhtml(output, "<li>")?;
-        }
+        let marker = list
+            .item_markers
+            .then(|| list_definition(paragraph, input.numbering.as_ref()))
+            .flatten()
+            .map(|level| item_marker(level, value));
         // The HTML delegate reads only direct numPr. Materialize the already
         // selected source list identity on this detached paragraph projection,
         // because projected styles intentionally omit numbering inheritance.
@@ -2427,11 +2433,35 @@ fn emit_list_level(
             if preserve_heading { anchor } else { None },
             preserve_heading,
         )?;
-        if preserve_heading {
-            push_bounded_xhtml(output, &fragment)?;
+        // The item keeps the direction and the shading the HTML writer gives
+        // it, its marker and number are the EPUB list's.
+        let (attributes, inner) = if preserve_heading {
+            ("", fragment.as_str())
         } else {
-            push_bounded_xhtml(output, list_item_inner(&fragment)?)?;
+            list_item_parts(&fragment)?
+        };
+        let mut item = String::from("<li");
+        if attributes.contains(" dir=\"rtl\"") {
+            item.push_str(" dir=\"rtl\"");
         }
+        let declarations = [
+            marker.map(|marker| format!("list-style-type:{}", css_string(&format!("{marker} ")))),
+            item_background(attributes).map(|color| format!("background-color:{color}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        if list.kind == ListKind::Ordered && !list.item_markers && value != expected_value {
+            write!(item, " value=\"{value}\"")
+                .map_err(|_| epub_error("failed to format an EPUB list item"))?;
+        }
+        if !declarations.is_empty() {
+            write!(item, " style=\"{}\"", escape_xml(&declarations.join(";")))
+                .map_err(|_| epub_error("failed to format an EPUB list item"))?;
+        }
+        item.push('>');
+        push_bounded_xhtml(output, &item)?;
+        push_bounded_xhtml(output, inner)?;
         item_open = true;
         if list.kind == ListKind::Ordered {
             expected_value = value
@@ -2870,16 +2900,31 @@ fn inject_first_source_anchor(fragment: &mut String, anchor: &str) -> Result<()>
     Ok(())
 }
 
-fn list_item_inner(fragment: &str) -> Result<&str> {
-    let start = fragment
-        .find("<li>")
-        .map(|start| start + "<li>".len())
-        .ok_or_else(|| epub_error("list paragraph projection produced no list item"))?;
+/// The attributes and the content of the list item the HTML writer made of
+/// a list paragraph.
+fn list_item_parts(fragment: &str) -> Result<(&str, &str)> {
+    let no_item = || epub_error("list paragraph projection produced no list item");
+    let open = fragment
+        .match_indices("<li")
+        .map(|(at, _)| at + "<li".len())
+        .find(|at| matches!(fragment.as_bytes().get(*at), Some(b' ' | b'>')))
+        .ok_or_else(no_item)?;
+    let start = fragment[open..]
+        .find('>')
+        .map(|end| open + end)
+        .ok_or_else(no_item)?;
     let end = fragment[start..]
         .find("</li>")
         .map(|end| start + end)
         .ok_or_else(|| epub_error("list paragraph projection left its list item open"))?;
-    Ok(&fragment[start..end])
+    Ok((&fragment[open..start], &fragment[start + 1..end]))
+}
+
+/// The `background-color` a list item's HTML attributes declare.
+fn item_background(attributes: &str) -> Option<&str> {
+    let value = attributes.split("background-color:").nth(1)?;
+    let end = value.find([';', '"']).unwrap_or(value.len());
+    Some(&value[..end])
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2902,6 +2947,9 @@ struct ListInfo {
     kind: ListKind,
     start: u32,
     marker_style: Option<&'static str>,
+    /// Whether each item writes its own marker text: a format CSS does not
+    /// name (Chicago's).
+    item_markers: bool,
 }
 
 // Use the same selected native counter state once in source order, rather
@@ -3002,7 +3050,40 @@ fn detect_list(
         kind,
         start: definition.start.unwrap_or(1),
         marker_style,
+        item_markers: definition.num_fmt == Some(ST_NumberFormat::Chicago),
     })
+}
+
+/// The marker layout draws for item `value` of a level whose format CSS
+/// does not name: its level text with the level's own number in that
+/// format, and with no other level's number (a Chicago level is read
+/// alone).
+fn item_marker(level: &CT_Lvl, value: u32) -> String {
+    let own = format!("%{}", level.ilvl + 1);
+    let number = oxoffice_docx_layout::style_resolver::format_number(
+        value,
+        level.num_fmt.clone().unwrap_or(ST_NumberFormat::Decimal),
+    );
+    let text = level
+        .lvl_text
+        .as_deref()
+        .unwrap_or("%1.")
+        .replace(&own, &number);
+    (1..=9).fold(text, |text, other| text.replace(&format!("%{other}"), ""))
+}
+
+/// `text` as a CSS string: quoted, its quote and backslash escaped, a
+/// control character left out.
+fn css_string(text: &str) -> String {
+    let mut out = String::from("'");
+    for character in text.chars().filter(|character| !character.is_control()) {
+        if matches!(character, '\'' | '\\') {
+            out.push('\\');
+        }
+        out.push(character);
+    }
+    out.push('\'');
+    out
 }
 
 fn epub_list_semantics(
@@ -3018,6 +3099,8 @@ fn epub_list_semantics(
         Some(ST_NumberFormat::LowerRoman) => Some((ListKind::Ordered, Some("lower-roman"))),
         Some(ST_NumberFormat::UpperLetter) => Some((ListKind::Ordered, Some("upper-alpha"))),
         Some(ST_NumberFormat::LowerLetter) => Some((ListKind::Ordered, Some("lower-alpha"))),
+        // Each item writes its marker (`item_marker`).
+        Some(ST_NumberFormat::Chicago) => Some((ListKind::Ordered, None)),
         Some(_) => None,
     }
 }

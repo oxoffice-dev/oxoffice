@@ -45,7 +45,9 @@ pub(crate) fn emit_body(
                 // headings, stays a heading; only its own numbering makes it
                 // a list item.
                 let item = match counted {
-                    Counted::Item(item) if !heading || crate::has_own_numbering(&p) => Some(item),
+                    Counted::Item(ref item) if !heading || crate::has_own_numbering(&p) => {
+                        Some(item.clone())
+                    }
                     _ => None,
                 };
                 // A paragraph on a `none` level goes on the open item of a
@@ -91,7 +93,7 @@ pub(crate) fn emit_body(
                     out.push_str(&format!(
                         "<li{}{}>",
                         direction_attribute(&p, styles),
-                        background_attribute(&p)
+                        item_style_attribute(&p, &item)
                     ));
                     emit_paragraph_content(
                         &mut out,
@@ -178,7 +180,8 @@ fn open_item(out: &mut String, lists: &mut Vec<OpenList>, item: &ListItem) {
         ListKind::UpperLetter => " type=\"A\"",
         ListKind::LowerRoman => " type=\"i\"",
         ListKind::UpperRoman => " type=\"I\"",
-        ListKind::Bullet | ListKind::Decimal => "",
+        // Each item writes its own marker (`item_attribute`).
+        ListKind::Bullet | ListKind::Decimal | ListKind::Chicago => "",
     };
     let start = if item.kind.ordered() && item.count != 1 {
         format!(" start=\"{}\"", item.count)
@@ -293,13 +296,54 @@ fn emit_paragraph(
 /// other properties (a list item), so that its shading still shows behind
 /// the text whose automatic colour contrasts with it; empty otherwise.
 fn background_attribute(para: &CT_P) -> String {
+    style_attribute(&background_declaration(para).unwrap_or_default())
+}
+
+/// ` style="..."` for a list item: the marker text layout draws when CSS
+/// does not name the item's format, and its paragraph's shading.
+fn item_style_attribute(para: &CT_P, item: &ListItem) -> String {
+    let marker = item
+        .marker
+        .as_deref()
+        .map(|marker| format!("list-style-type:{}", css_string(&format!("{marker} "))));
+    style_attribute(
+        &[marker, background_declaration(para)]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(";"),
+    )
+}
+
+fn background_declaration(para: &CT_P) -> Option<String> {
     css::shading_background(
         para.properties
             .as_ref()
             .and_then(|properties| properties.shading.as_deref()),
     )
-    .map(|color| format!(" style=\"background-color:{color}\""))
-    .unwrap_or_default()
+    .map(|color| format!("background-color:{color}"))
+}
+
+fn style_attribute(declarations: &str) -> String {
+    if declarations.is_empty() {
+        String::new()
+    } else {
+        format!(" style=\"{}\"", escape_html_attr(declarations))
+    }
+}
+
+/// `text` as a CSS string: quoted, its quote and backslash escaped, a
+/// control character left out.
+fn css_string(text: &str) -> String {
+    let mut out = String::from("'");
+    for character in text.chars().filter(|character| !character.is_control()) {
+        if matches!(character, '\'' | '\\') {
+            out.push('\\');
+        }
+        out.push(character);
+    }
+    out.push('\'');
+    out
 }
 
 /// ` dir="rtl"` for a right-to-left paragraph, so that a browser lays it out
