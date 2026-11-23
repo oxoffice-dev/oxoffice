@@ -83,5 +83,7 @@ dependency bumps and documentation.
 | 2026-11-22 | [Cut and pasted content keeps its bookmarks whole and its ids unique](2026-11-22-cut-content-keeps-its-bookmarks-and-ids.md) | accepted |
 | 2026-11-22 | [Characters XML cannot carry: refused or dropped at the setter](2026-11-22-characters-xml-cannot-carry.md) | shipped |
 | 2026-11-23 | [A deck draws the characters its fonts lack with a system font](2026-11-23-deck-system-font-fallback.md) | accepted |
+| 2026-11-23 | [Restarting a list item numbered through its style](2026-11-23-restart-a-style-numbered-list-item.md) | accepted |
 | 2026-11-23 | [Date controls with a time, and the US Gregorian calendar](2026-11-23-date-controls-with-times.md) | accepted |
+| 2026-11-23 | [One font record addressed by its index](2026-11-23-font-records-by-index.md) | accepted |
 | 2026-11-23 | [Comparison: a bookmark both versions hold, in a paragraph replaced whole](2026-11-23-comparison-shared-bookmarks-in-replaced-paragraphs.md) | accepted |

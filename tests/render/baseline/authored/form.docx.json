@@ -1,10 +1,10 @@
 {
   "file": "authored/form.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "a face picked for its glyphs no longer measures the line",
   "resources": "1679c016b8447f85294c78aa348c0348479073a6850d3887499482af53472df2",
-  "outline_and_tags": "a076dd8390d3f1f08effa45393ba5b959c2c22aa5967a8f4bfeefc086049822a",
+  "outline_and_tags": "7af21b1c5774be05964f5a42cfc65d5416148d900dc4ffa40bd0b3998a33c4a2",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
-    {"page": 1, "pixels": "ec59618174e2cb3d2ae42dfa431b5390a1e4d34c39714a14dcf61c9db496982c", "content": "3cf5f2a5fe58104944a2b3a3780e5ea9126304b20b9ad8bbf040cb2f65b449f9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
+    {"page": 1, "pixels": "b0a98a3f49ac4d16b11705f0046055191ef600040292ed0911b1b84e773479ea", "content": "19b3283676d84d99482f89cae1465cb73e16f8ce3040879f8078a329bef8eabd", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
   ]
 }

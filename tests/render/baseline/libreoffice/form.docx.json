@@ -1,10 +1,10 @@
 {
   "file": "libreoffice/form.docx",
-  "reason": "LibreOffice legacy check boxes and drop-downs are read as fields and drawn (#139)",
+  "reason": "a face picked for its glyphs no longer measures the line",
   "resources": "0671b31985d67a2cf6ae9c0bae9ee317987d10a161521994dd12c3955da1f600",
-  "outline_and_tags": "a4655989b0f6b05b9eca644b721cf9aaa9d4ff04e746719afc071d19167a59b4",
+  "outline_and_tags": "e9220711974204190cb7cecda3a876bbb8957fe6169af4febd4e3baf2c6ca0a9",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
-    {"page": 1, "pixels": "c03f69d108f816e5e94f5bcb31ddacf28da5e1490807f90b5ff02fa6ca01a1e1", "content": "37768d76f9f1115dba58817b82e8bd1a6e7ca807ec3cdd7ba6d1ea986597358d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
+    {"page": 1, "pixels": "e6e09fb4909a19be7ecf304655e654839bd06d978291dca868a394e3371b7fae", "content": "acf27b14a102aadca7f975f0c7bf0f34beafe057ef251730ef87406cfd70fb5e", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"}
   ]
 }

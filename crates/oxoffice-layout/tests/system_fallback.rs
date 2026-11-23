@@ -237,6 +237,7 @@ fn segment(fonts: &FontManager, font_id: FontId, text: &str) -> TextSegment {
         direction: TextDirection::LeftToRight,
         source: None,
         font_id,
+        measure_font: None,
         font_size: 12.0,
         width: shaped.width,
         glyph_ids: shaped.glyph_ids,

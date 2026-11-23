@@ -332,14 +332,53 @@ impl FontTable {
         &self.fonts
     }
 
-    pub fn set_font(
+    /// The index of the one record named `name`, `None` when there is none.
+    /// Several records with that name (LibreOffice writes `Symbol` twice) are
+    /// refused: the caller addresses one by its index.
+    pub fn font_index(&self, name: &str) -> Result<Option<usize>> {
+        let mut matches = self
+            .fonts
+            .iter()
+            .enumerate()
+            .filter(|(_, font)| font.name == name)
+            .map(|(index, _)| index);
+        let first = matches.next();
+        let others = matches.count();
+        if others > 0 {
+            return Err(OxmlError::InvalidValue(format!(
+                "ambiguous font record: {} records are named {name}, address one by its index",
+                others + 1
+            )));
+        }
+        Ok(first)
+    }
+
+    /// The record at `index`, or an error naming the index.
+    pub fn font_at(&self, index: usize) -> Result<&FontRecord> {
+        self.fonts.get(index).ok_or_else(|| {
+            OxmlError::InvalidValue(format!(
+                "font record index {index} is out of range: the font table has {} records",
+                self.fonts.len()
+            ))
+        })
+    }
+
+    /// Append a record named `name` and return its index.
+    pub fn add_font(&mut self, name: String) -> usize {
+        self.fonts.push(FontRecord::new(name));
+        self.fonts.len() - 1
+    }
+
+    /// Set the descriptive fields of the record at `index` (checked).
+    pub fn set_font_fields(
         &mut self,
-        name: String,
+        index: usize,
         alternate_name: Option<String>,
         family: Option<String>,
         pitch: Option<String>,
     ) {
-        if let Some(font) = self.fonts.iter_mut().find(|font| font.name == name) {
+        {
+            let font = &mut self.fonts[index];
             if alternate_name.is_none() {
                 font.alternate_name_raw_attributes.clear();
                 font.alternate_name_raw_inner = None;
@@ -355,13 +394,7 @@ impl FontTable {
             font.alternate_name = alternate_name;
             font.family = family;
             font.pitch = pitch;
-            return;
         }
-        let mut font = FontRecord::new(name);
-        font.alternate_name = alternate_name;
-        font.family = family;
-        font.pitch = pitch;
-        self.fonts.push(font);
     }
 
     /// Check whether deleting a record leaves nothing behind it. The record
@@ -372,14 +405,8 @@ impl FontTable {
     /// Retained attributes and opaque embedded faces are still refused.
     /// `Document::remove_font` also refuses when the kept XML names, in another
     /// namespace, a relationship nothing else would use after the record.
-    pub fn can_remove_font(&self, name: &str) -> Result<bool> {
-        let mut matches = self.fonts.iter().filter(|font| font.name == name);
-        let Some(font) = matches.next() else {
-            return Ok(false);
-        };
-        if matches.next().is_some() {
-            return Err(OxmlError::InvalidValue("ambiguous font record".to_owned()));
-        }
+    pub fn can_remove_font(&self, index: usize) -> Result<()> {
+        let font = self.font_at(index)?;
         if font.raw_children_name_relationship {
             return Err(OxmlError::InvalidValue(
                 "cannot remove a font record whose retained XML names a relationship".to_owned(),
@@ -402,30 +429,25 @@ impl FontTable {
             ));
         }
         for face in &font.embedded_fonts {
-            self.can_remove_embedded_font(name, face.kind)?;
+            self.can_remove_embedded_font(index, face.kind)?;
         }
-        Ok(true)
+        Ok(())
     }
 
-    /// Check whether `set_font` can clear these fields of the record named
-    /// `name`. A cleared field takes its element's attributes and content
+    /// Check whether `set_font` can clear these fields of the record at
+    /// `index`. A cleared field takes its element's attributes and content
     /// with it, so one that carries more than namespace declarations is
     /// refused. The record's other children, the XML it keeps and its
     /// embedded faces stay, so they are not checked.
     pub fn can_clear_font_fields(
         &self,
-        name: &str,
+        index: usize,
         alternate_name: bool,
         family: bool,
         pitch: bool,
     ) -> Result<()> {
-        let mut matches = self.fonts.iter().filter(|font| font.name == name);
-        let Some(font) = matches.next() else {
-            return Ok(());
-        };
-        if matches.next().is_some() {
-            return Err(OxmlError::InvalidValue("ambiguous font record".to_owned()));
-        }
+        let font = self.font_at(index)?;
+        let name = &font.name;
         let fields = [
             (
                 alternate_name,
@@ -456,20 +478,19 @@ impl FontTable {
         Ok(())
     }
 
-    /// Check whether `set_font` can set these fields of the record named
-    /// `name`. A field whose element the record keeps verbatim reads as
+    /// Check whether `set_font` can set these fields of the record at
+    /// `index`. A field whose element the record keeps verbatim reads as
     /// unset; setting it would write a second element, which a reader then
     /// refuses as out of order, so it is refused.
     pub fn can_set_font_fields(
         &self,
-        name: &str,
+        index: usize,
         alternate_name: bool,
         family: bool,
         pitch: bool,
     ) -> Result<()> {
-        let Some(font) = self.fonts.iter().find(|font| font.name == name) else {
-            return Ok(());
-        };
+        let font = self.font_at(index)?;
+        let name = &font.name;
         for (set, slot, field) in [
             (alternate_name, 0, "alternate name"),
             (family, 3, "family"),
@@ -484,33 +505,24 @@ impl FontTable {
         Ok(())
     }
 
-    /// Check whether `embed_font` can give the record named `name` a face of
+    /// Check whether `embed_font` can give the record at `index` a face of
     /// this kind: a face element of that kind kept as written reads as no
     /// face, so a new one would be a second element, which is refused.
-    pub fn can_embed_font(&self, name: &str, kind: FontFaceKind) -> Result<()> {
-        if self
-            .fonts
-            .iter()
-            .find(|font| font.name == name)
-            .is_some_and(|font| font.kept_field_slots.contains(&kind.slot()))
-        {
+    pub fn can_embed_font(&self, index: usize, kind: FontFaceKind) -> Result<()> {
+        let font = self.font_at(index)?;
+        if font.kept_field_slots.contains(&kind.slot()) {
             return Err(OxmlError::InvalidValue(format!(
-                "cannot embed the {} face of font {name}: the file keeps that element in a form the model does not read",
-                kind.local_name()
+                "cannot embed the {} face of font {}: the file keeps that element in a form the model does not read",
+                kind.local_name(),
+                font.name
             )));
         }
         Ok(())
     }
 
     /// Check that one uniquely identified face has no unowned deletion payload.
-    pub fn can_remove_embedded_font(&self, name: &str, kind: FontFaceKind) -> Result<bool> {
-        let mut fonts = self.fonts.iter().filter(|font| font.name == name);
-        let Some(font) = fonts.next() else {
-            return Ok(false);
-        };
-        if fonts.next().is_some() {
-            return Err(OxmlError::InvalidValue("ambiguous font record".to_owned()));
-        }
+    pub fn can_remove_embedded_font(&self, index: usize, kind: FontFaceKind) -> Result<bool> {
+        let font = self.font_at(index)?;
         let mut faces = font.embedded_fonts.iter().filter(|face| face.kind == kind);
         let Some(face) = faces.next() else {
             return Ok(false);
@@ -536,21 +548,21 @@ impl FontTable {
         Ok(true)
     }
 
-    pub fn remove_font(&mut self, name: &str) -> Option<FontRecord> {
-        let index = self.fonts.iter().position(|font| font.name == name)?;
+    /// Remove the record at `index` (checked).
+    pub fn remove_font(&mut self, index: usize) -> FontRecord {
         let removed = self.fonts.remove(index);
         for (position, _) in &mut self.raw_children {
             if *position > index {
                 *position -= 1;
             }
         }
-        Some(removed)
+        removed
     }
 
-    pub fn set_embedded_font(&mut self, font_name: &str, embedded: EmbeddedFontReference) -> bool {
-        let Some(font) = self.fonts.iter_mut().find(|font| font.name == font_name) else {
-            return false;
-        };
+    /// Give the record at `index` (checked) this face, replacing one of the
+    /// same kind.
+    pub fn set_embedded_font(&mut self, index: usize, embedded: EmbeddedFontReference) {
+        let font = &mut self.fonts[index];
         if let Some(existing) = font
             .embedded_fonts
             .iter_mut()
@@ -565,15 +577,14 @@ impl FontTable {
             font.embedded_fonts.push(embedded);
             font.embedded_fonts.sort_by_key(|value| value.kind.slot());
         }
-        true
     }
 
     pub fn remove_embedded_font(
         &mut self,
-        font_name: &str,
+        index: usize,
         kind: FontFaceKind,
     ) -> Option<EmbeddedFontReference> {
-        let font = self.fonts.iter_mut().find(|font| font.name == font_name)?;
+        let font = self.fonts.get_mut(index)?;
         let index = font
             .embedded_fonts
             .iter()
@@ -589,15 +600,14 @@ impl FontTable {
             .count()
     }
 
-    /// Whether the record named `name` keeps an attribute whose value is
+    /// Whether the record at `index` keeps an attribute whose value is
     /// `value`, at any depth and in any namespace, besides its modelled faces'
     /// relationship ids: the test the cleanup after a removal applies to keep
     /// a relationship.
-    pub fn record_mentions_value(&self, name: &str, value: &str) -> bool {
+    pub fn record_mentions_value(&self, index: usize, value: &str) -> bool {
         self.fonts
-            .iter()
-            .filter(|font| font.name == name)
-            .any(|font| font.mentions_value(value))
+            .get(index)
+            .is_some_and(|font| font.mentions_value(value))
     }
 
     pub fn retained_raw_mentions_relationship(&self, relationship_id: &str) -> bool {
