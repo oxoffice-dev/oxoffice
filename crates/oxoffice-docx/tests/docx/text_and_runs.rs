@@ -430,6 +430,54 @@ fn a_word_split_across_runs_is_not_broken_where_its_runs_meet() {
 }
 
 #[test]
+fn a_word_wider_than_the_line_is_broken_where_it_overflows() {
+    // Word breaks a word with no break opportunity at the character that
+    // overflows the line, whether it is one run or split across several, and
+    // when automatic hyphenation finds no point that fits the line.
+    let word = "Pneumonoultramicroscopicsilicovolcanoconiosis".repeat(4);
+    let long = format!("{}internationalization", "q".repeat(150));
+    // A decomposed "é": its accent never starts a line.
+    let accented = "e\u{301}".repeat(120);
+    let run = |text: &str| {
+        format!(r#"<w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:t>{text}</w:t></w:r>"#)
+    };
+    for (runs, text, hyphenate) in [
+        (vec![run(&word)], &word, false),
+        (
+            vec![run(&word[..50]), run(&word[50..51]), run(&word[51..])],
+            &word,
+            false,
+        ),
+        (vec![run(&long)], &long, true),
+        (vec![run(&accented)], &accented, false),
+    ] {
+        let mut doc = doc_with_body(&format!("<w:p>{}</w:p>", runs.concat()));
+        if hyphenate {
+            doc.set_auto_hyphenation(true).unwrap();
+        }
+        let result = doc.layout_deterministic().expect("the document lays out");
+        let page = &result.layout.pages[0];
+        let mut ends = Vec::new();
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                ends.push(run.origin.x + run.advances.iter().sum::<f64>());
+            }
+        });
+        // Letter paper and one-inch margins.
+        assert_eq!(page.width, 612.0);
+        assert!(ends.iter().all(|end| *end <= 540.01), "{ends:?}");
+        let lines = first_page_lines(&doc);
+        assert!(lines.len() > 1, "{lines:?}");
+        assert!(
+            lines.iter().all(|line| !line.starts_with('\u{301}')),
+            "{lines:?}"
+        );
+        // A hyphen the hyphenation adds is not part of the word.
+        assert_eq!(&lines.concat().replace('-', ""), text);
+    }
+}
+
+#[test]
 fn a_field_marker_between_two_words_leaves_the_break_between_them() {
     // A bookmark a PAGEREF points at puts a zero-width marker where it
     // starts. It must not join the word after it to the space before it.
