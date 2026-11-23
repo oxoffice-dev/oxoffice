@@ -2976,3 +2976,61 @@ fn math_runs_are_written_in_the_math_font_and_italic_as_word_writes_them() {
     let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
     assert_eq!(equations_as_mathml(&read), equations_as_mathml(&doc));
 }
+
+/// A fraction as Word writes it: each run with its `w:rPr`, the construct
+/// with its control properties; `formatting` and `control` replace them.
+fn word_fraction(formatting: &str, coloured: &str, control: &str) -> String {
+    format!(
+        concat!(
+            r#"<m:oMath xmlns:m="{m}" xmlns:w="{w}"><m:f><m:fPr>{control}</m:fPr>"#,
+            r#"<m:num><m:r>{formatting}<m:t>x</m:t></m:r></m:num>"#,
+            r#"<m:den><m:r>{coloured}<m:t>2</m:t></m:r></m:den></m:f></m:oMath>"#
+        ),
+        m = M_NS,
+        w = W_NS,
+        formatting = formatting,
+        coloured = coloured,
+        control = control,
+    )
+}
+
+#[test]
+fn an_equation_with_the_run_formatting_word_writes_survives_rtf_and_odt_round_trips() {
+    use oxoffice_docx_oxml::math::{CT_OMath, OfficeMath};
+    let font = r#"<w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/><w:i/>"#;
+    let formatting = format!("<w:rPr>{font}</w:rPr>");
+    let coloured = format!(r#"<w:rPr>{font}<w:color w:val="C00000"/></w:rPr>"#);
+    let control = format!("<m:ctrlPr>{formatting}</m:ctrlPr>");
+    let math = word_fraction(&formatting, &coloured, &control);
+    // RTF: the OMML reads back whole but for the run formatting, which is
+    // the math font's own; only the colour is reported.
+    let (_, reported, xml) = equation_through_rtf(&math);
+    assert_eq!(
+        reported,
+        vec![
+            "equation 1 written in RTF without its character formatting of its math runs"
+                .to_owned()
+        ]
+    );
+    assert_eq!(
+        without_space_preserve(&xml),
+        omml(&word_fraction("", "", ""))
+    );
+    // ODT: the MathML reads back the same, nothing reported left out: the
+    // math font and italic are MathML's own.
+    let math = word_fraction(&formatting, &formatting, &control);
+    let mut doc = Document::new();
+    doc.add_paragraph("")
+        .add_equation(OfficeMath::Inline(
+            CT_OMath::from_xml(math.as_bytes()).unwrap(),
+        ))
+        .unwrap();
+    let written = doc.to_odt_bytes().unwrap();
+    assert!(written.diagnostics.is_empty(), "{:?}", written.diagnostics);
+    let read = Document::from_odt_bytes(&written.bytes).unwrap();
+    assert!(read.diagnostics.is_empty(), "{:?}", read.diagnostics);
+    assert_eq!(
+        equations_as_mathml(&read.document),
+        equations_as_mathml(&doc)
+    );
+}
