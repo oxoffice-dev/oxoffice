@@ -636,8 +636,8 @@ enum Source<'a> {
     Legacy,
 }
 
-/// One mapped control or legacy form field of the main body, in document
-/// order.
+/// One mapped control or legacy form field of the main body or the notes,
+/// in document order.
 struct Entry<'a> {
     source: Source<'a>,
     field: FormField,
@@ -684,8 +684,8 @@ enum Inline<'a> {
     Legacy(u32, &'a Field),
 }
 
-/// The mapped controls and legacy form fields of the main body in document
-/// order, and the (paragraph node, mark) keys that name each one.
+/// The mapped controls and legacy form fields of the main body, then of
+/// the notes, in document order, and the (paragraph node, mark) keys that name each one.
 struct Inventory<'a> {
     entries: Vec<Entry<'a>>,
     keys: HashMap<oxoffice_layout::FormMark, usize>,
@@ -694,7 +694,7 @@ struct Inventory<'a> {
     /// fields that stay static, said once each.
     faults: Vec<String>,
     faulted: std::collections::HashSet<*const CT_Sdt>,
-    /// Every main-story paragraph visited, by source node.
+    /// Every main-story and note paragraph visited, by source node.
     paragraphs: HashMap<oxoffice_layout::SourceNodeId, FormParagraph>,
     /// Controls already said to stay static for their place.
     said: std::collections::HashSet<*const CT_Sdt>,
@@ -702,6 +702,9 @@ struct Inventory<'a> {
     block_fields: HashMap<*const CT_Sdt, bool>,
     /// Controls that make no field.
     refused: std::collections::HashSet<*const CT_Sdt>,
+    /// The notes the main story references, in the order of their first
+    /// reference, while the main story is walked.
+    notes: Option<Vec<oxoffice_layout::NoteRef>>,
 }
 
 impl<'a> Inventory<'a> {
@@ -716,6 +719,7 @@ impl<'a> Inventory<'a> {
             said: std::collections::HashSet::new(),
             block_fields: HashMap::new(),
             refused: std::collections::HashSet::new(),
+            notes: Some(Vec::new()),
         };
         let body = &input.document.body;
         let items = crate::engine::body_layout_items(body);
@@ -751,17 +755,83 @@ impl<'a> Inventory<'a> {
                 }
                 crate::engine::MainStoryLayoutItem::Table(table, path) => {
                     let reason = vertical[index].then_some(VERTICAL_SECTION);
-                    inventory.table(input, sources, table, &path, reason);
+                    inventory.table(
+                        input,
+                        sources,
+                        &crate::WordStory::Document,
+                        table,
+                        &path,
+                        reason,
+                    );
                 }
             }
         }
+        // The notes come after the main story: footnotes, then endnotes,
+        // each in the order of its first reference.
+        let notes = inventory.notes.take().unwrap_or_default();
+        for stream in [
+            oxoffice_layout::NoteStream::Footnote,
+            oxoffice_layout::NoteStream::Endnote,
+        ] {
+            for note in notes.iter().filter(|note| note.stream == stream) {
+                inventory.note(input, sources, *note);
+            }
+        }
         inventory
+    }
+
+    /// A note's paragraphs and tables, as note layout walks them.
+    fn note(
+        &mut self,
+        input: &'a crate::input::LayoutInput,
+        sources: &crate::engine::SourceRegistry,
+        note: oxoffice_layout::NoteRef,
+    ) {
+        let (story, stream) = match note.stream {
+            oxoffice_layout::NoteStream::Footnote => (
+                crate::WordStory::Footnote { id: note.id },
+                input.footnotes.as_ref(),
+            ),
+            oxoffice_layout::NoteStream::Endnote => (
+                crate::WordStory::Endnote { id: note.id },
+                input.endnotes.as_ref(),
+            ),
+        };
+        if let Some(body) = input.story_bodies.get(&story) {
+            for item in crate::engine::body_layout_items(body) {
+                match item {
+                    crate::engine::MainStoryLayoutItem::Paragraph(paragraph, path) => {
+                        let node = sources.id(&story, &path);
+                        let block = enclosing_block_field(body, &path, &mut self.block_fields);
+                        self.note_block_faults(body, &path);
+                        self.paragraph(input, paragraph, node, block, None);
+                    }
+                    crate::engine::MainStoryLayoutItem::Table(table, path) => {
+                        self.table(input, sources, &story, table, &path, None);
+                    }
+                }
+            }
+            return;
+        }
+        let Some(note) = stream.and_then(|stream| {
+            stream
+                .footnotes
+                .iter()
+                .find(|candidate| candidate.id == note.id)
+        }) else {
+            return;
+        };
+        for (index, paragraph) in note.paragraphs.iter().enumerate() {
+            let node = sources.id(&story, &[index]);
+            self.paragraph(input, paragraph, node, None, None);
+        }
     }
 
     fn table(
         &mut self,
         input: &'a crate::input::LayoutInput,
         sources: &crate::engine::SourceRegistry,
+        story: &crate::WordStory,
         table: &'a CT_Tbl,
         path: &[usize],
         reason: Option<&'static str>,
@@ -782,14 +852,22 @@ impl<'a> Inventory<'a> {
                     content_path.push(index);
                     match content {
                         CellContent::Paragraph(paragraph) => {
-                            let node = sources.id(&crate::WordStory::Document, &content_path);
+                            let node = sources.id(story, &content_path);
                             self.paragraph(input, paragraph, node, None, reason);
                         }
                         CellContent::ContentControl(control) => {
-                            self.cell_control(input, sources, control, &content_path, None, reason);
+                            self.cell_control(
+                                input,
+                                sources,
+                                story,
+                                control,
+                                &content_path,
+                                None,
+                                reason,
+                            );
                         }
                         CellContent::Table(nested) => {
-                            self.table(input, sources, nested, &content_path, reason);
+                            self.table(input, sources, story, nested, &content_path, reason);
                         }
                     }
                 }
@@ -799,10 +877,12 @@ impl<'a> Inventory<'a> {
 
     /// A control at a cell's block level and what it holds, as table layout
     /// walks it: the innermost block control field encloses each paragraph.
+    #[allow(clippy::too_many_arguments)]
     fn cell_control(
         &mut self,
         input: &'a crate::input::LayoutInput,
         sources: &crate::engine::SourceRegistry,
+        story: &crate::WordStory,
         control: &'a CT_Sdt,
         path: &[usize],
         outer: Option<&'a CT_Sdt>,
@@ -819,14 +899,14 @@ impl<'a> Inventory<'a> {
             inner_path.push(inner);
             match item {
                 SdtContent::Paragraph(paragraph) => {
-                    let node = sources.id(&crate::WordStory::Document, &inner_path);
+                    let node = sources.id(story, &inner_path);
                     self.paragraph(input, paragraph, node, block, reason);
                 }
                 SdtContent::ContentControl(nested) => {
-                    self.cell_control(input, sources, nested, &inner_path, block, reason);
+                    self.cell_control(input, sources, story, nested, &inner_path, block, reason);
                 }
                 SdtContent::Table(table) => {
-                    self.table(input, sources, table, &inner_path, reason);
+                    self.table(input, sources, story, table, &inner_path, reason);
                 }
                 _ => {}
             }
@@ -851,6 +931,16 @@ impl<'a> Inventory<'a> {
         block: Option<&'a CT_Sdt>,
         reason: Option<&'static str>,
     ) {
+        if let Some(notes) = self.notes.as_mut()
+            && let Ok(references) =
+                crate::engine::paragraph_note_references(paragraph, input.revision_view)
+        {
+            for reference in references {
+                if !notes.contains(&reference) {
+                    notes.push(reference);
+                }
+            }
+        }
         let alignment = paragraph_alignment(input, paragraph);
         if let Some(node) = node {
             self.paragraphs.insert(
@@ -1071,7 +1161,7 @@ fn legacy_name(field: &Field) -> String {
         .unwrap_or_else(|| "untitled".to_owned())
 }
 
-/// A main-story paragraph as the form marks see it: the source node marks
+/// A main-story or note paragraph as the form marks see it: the source node marks
 /// name, and whether a block control field encloses it.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1080,7 +1170,7 @@ pub struct FormParagraph {
     pub block: bool,
 }
 
-/// The main-story paragraphs of one layout, by source node in the registry
+/// The main-story and note paragraphs of one layout, by source node in the registry
 /// the inventory used.
 #[doc(hidden)]
 #[derive(Clone, Debug, Default)]
@@ -1091,7 +1181,7 @@ pub struct FormParagraphs {
     nodes: HashMap<oxoffice_layout::SourceNodeId, FormParagraph>,
 }
 
-/// The main-story paragraphs of an input, by source node.
+/// The main-story and note paragraphs of an input, by source node.
 pub(crate) fn form_paragraphs(
     input: &crate::input::LayoutInput,
     sources: &crate::engine::SourceRegistry,
@@ -1113,10 +1203,10 @@ pub(crate) fn body_form_paragraph(
     input.form_paragraphs.as_ref()?.nodes.get(&node?).copied()
 }
 
-/// The form identity of a table cell paragraph: only for the main story
-/// and the registry the inventory used, since table layout serves headers,
-/// notes and text boxes too.
-pub(crate) fn cell_form_paragraph(
+/// The form identity of a note or table cell paragraph: only for the
+/// stories the inventory walks (the main story and the notes) and the
+/// registry it used, since table layout serves headers and text boxes too.
+pub(crate) fn story_form_paragraph(
     input: &crate::input::LayoutInput,
     sources: Option<&crate::engine::SourceRegistry>,
     story: &crate::WordStory,
@@ -1124,7 +1214,12 @@ pub(crate) fn cell_form_paragraph(
 ) -> Option<FormParagraph> {
     let paragraphs = input.form_paragraphs.as_ref()?;
     if !input.form_fields
-        || *story != crate::WordStory::Document
+        || !matches!(
+            story,
+            crate::WordStory::Document
+                | crate::WordStory::Footnote { .. }
+                | crate::WordStory::Endnote { .. }
+        )
         || sources.map(|sources| std::ptr::from_ref(sources).addr()) != Some(paragraphs.registry)
     {
         return None;
@@ -1267,7 +1362,10 @@ fn union_rect(boxes: &[oxoffice_layout::Rect]) -> oxoffice_layout::Rect {
 /// Whether a box starts strictly inside another.
 fn starts_inside(rect: oxoffice_layout::Rect, extent: oxoffice_layout::Rect) -> bool {
     const EPSILON: f64 = 0.01;
-    extent.x > rect.x + EPSILON
+    // Text that starts on the box's left edge is under it too: a list or
+    // note number on the first line of a block field that wraps, whose
+    // later lines start at the margin.
+    extent.x > rect.x - EPSILON
         && extent.x < rect.x + rect.width - EPSILON
         && extent.y > rect.y + EPSILON
         && extent.y < rect.y + rect.height - EPSILON

@@ -152,6 +152,53 @@ styles are the snake-case names, typed as `Literal` in `_native.pyi`. The
 info and report classes are frozen and compare by value, like the other
 snapshot classes. Errors are the facade's, raised as `ValueError`.
 
+### Amendment: the bindings as built (2026-11-23, step 8)
+
+Agreed with the formatter's author before step 8. Where the sections above
+differ, this one holds.
+
+- **Rust layout.** The names live in `bibliography/names.rs`, the derived
+  GUID in `bibliography/identity.rs` (version-4 shape, upper case in braces,
+  as Word writes it) and `insert_citation_after_text` in
+  `bibliography/citation_anchor.rs`. `insert_citation` and
+  `insert_citation_after_text` share one `citation_instruction`.
+- **JSON shape.** `sources --json` prints `{"sources": [{"tag", "guid",
+  "source_type", "source", "diagnostics"}]}`: `source_type` is the raw
+  `b:SourceType`, `source` the editable source or null when it has no
+  unambiguous projection. `add-source` and `replace-source` take that
+  `source` object, or an array of them, so a listed source round-trips.
+  Output prints a person's `last`, `first` and `middle` as arrays (the Rust
+  model holds a list for each); input takes a string or an array for each.
+  An unknown key is refused. `replace-source` fills a missing or empty `guid`
+  from the source with that tag.
+- **Names.** JSON, in and out, uses the snake-case names. Flags take snake
+  or kebab case (`--style harvard-anglia` or `harvard_anglia`).
+- **Citation sources.** A comma inside an inline `--source` value is refused
+  with a hint to use `--sources CITE.json`: an array of `{"tag", "pages",
+  "volume", "prefix", "suffix", "suppress_author", "suppress_year",
+  "suppress_title"}`, which conflicts with `--source`.
+- **Positions.** `cite --paragraph N --run R` is a body item index and a run
+  boundary counted as `text --json` counts them, as `comment add
+  --start-paragraph --start-run` are.
+- **Flag spelling.** `set-style` and `insert` spell the locale filter
+  `--locale-filter`, as Python's `locale_filter` and the Rust field do.
+  `style --json` prints `{"style": {"name", "style_key", "style_path",
+  "locale"} | null}`, `name` null for a style outside the 12.
+- **Refusal messages** name a style by Word's display name ("Chicago",
+  "APA") and a kind by its XML name ("JournalArticle"), as Word's dialogs and
+  the saved XML do; the snake-case names are for input and JSON only.
+- **Python errors.** Facade errors are raised as `DocxError`, as for every
+  other method. A `ValueError` is raised for the binding's own argument
+  checks: an unknown style, kind, role or field name, a contributor with both
+  or neither of `people` and `corporate`, a malformed field pair.
+- **Python info classes** keep the Rust field names:
+  `BibliographySourceInfo(tag, guid, source_type, supported, diagnostics)`
+  with `supported: BibliographySource | None`,
+  `BibliographyStyleInfo(style_key, style_path, locale, supported_style)` with
+  `supported_style: str | None`, and
+  `BibliographyUpdateReport(updated_citations, rebuilt_bibliographies,
+  diagnostics)`. Sequences read back as tuples.
+
 ## Plan
 
 Each step is one pull request. Each is checked by behaviour tests named after

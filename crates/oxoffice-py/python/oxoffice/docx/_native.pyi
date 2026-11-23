@@ -1216,7 +1216,7 @@ class Document:
         Unknown values or legal styling with accepted view raise ValueError.
 
         fillable_forms=True exports the content controls and legacy form
-        fields of the body as fillable PDF form fields: text, check boxes,
+        fields of the body and the notes as fillable PDF form fields: text, check boxes,
         lists and dates with their values. A control tagged "signature" or
         "signature:<name>" becomes an empty signature field. It needs the accepted view, and
         raises ValueError with revision_view="tracked".

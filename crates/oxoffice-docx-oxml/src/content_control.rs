@@ -1542,32 +1542,12 @@ pub(crate) struct InlineFieldProjection {
 }
 
 impl CT_Sdt {
-    /// Borrow a stored capture by its absolute content index. The writer still
-    /// decides whether this capture is eligible for current publication.
-    #[doc(hidden)]
-    pub fn retained_run_xml(&self, content_index: usize) -> Option<&[u8]> {
-        self.inline_run_sources
-            .iter()
-            .find(|source| source.content_index == content_index)
-            .map(|source| source.raw_xml.as_slice())
-    }
-
     /// Borrow every actual stored run capture once, retaining absolute indices.
     #[doc(hidden)]
     pub fn retained_resource_run_xml(&self) -> impl Iterator<Item = (usize, &[u8])> {
         self.inline_run_sources
             .iter()
             .map(|source| (source.content_index, source.raw_xml.as_slice()))
-    }
-
-    /// Project complex legacy fields owned by direct inline runs.
-    #[doc(hidden)]
-    pub fn inline_legacy_form_fields(&self) -> Result<Vec<Field>> {
-        Ok(self
-            .inline_legacy_form_fields_with_content_indices()?
-            .into_iter()
-            .map(|(_, field)| field)
-            .collect())
     }
 
     /// Project direct-run legacy fields with their starting content boundary.

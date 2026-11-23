@@ -883,7 +883,7 @@ impl Document {
         if updates
             .iter()
             .flatten()
-            .any(|update| !update.cached_result.chars().all(valid_xml_character))
+            .any(|update| !update.cached_result.chars().all(is_xml_1_0_character))
         {
             return Err(Error::Other(
                 "field result contains a character forbidden by XML 1.0".to_owned(),

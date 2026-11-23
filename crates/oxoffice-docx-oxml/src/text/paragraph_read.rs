@@ -682,52 +682,39 @@ impl CT_P {
                             extra_xml.push((runs.len(), raw));
                         }
                     } else if is_word_element(name.as_ref(), b"fldSimple", &prefixes) {
-                        let prepared_header = if source_facts.is_none() {
-                            control_facts.as_deref().and_then(|facts| {
-                                facts.simple_header(
-                                    reader,
-                                    event_start..reader.buffer_position(),
-                                    e,
-                                    &prefixes,
-                                )
-                            })
-                        } else {
-                            None
-                        };
-                        let raw = capture_element(reader, e)?;
-                        if let Some(facts) = source_facts.as_deref_mut() {
-                            facts.simple_fields_deferred = true;
-                            extra_xml.push((runs.len(), raw));
-                        } else {
-                            let mapped = control_facts.as_deref().and_then(|facts| {
-                                facts.field_input(
-                                    reader,
-                                    event_start..reader.buffer_position(),
-                                    &raw,
-                                )
-                            });
-                            let prepared_selector = control_facts.as_deref().and_then(|facts| {
-                                facts.simple_selector(
-                                    reader,
-                                    event_start..reader.buffer_position(),
-                                    &raw,
-                                )
-                            });
-                            if let Some((field, summary)) = parse_simple_field_with_summary(
-                                &raw,
+                        let prepared_header = control_facts.as_deref().and_then(|facts| {
+                            facts.simple_header(
+                                reader,
+                                event_start..reader.buffer_position(),
+                                e,
                                 &prefixes,
-                                prepared_header,
-                                prepared_selector,
-                                mapped.as_ref(),
-                            )? {
-                                simple_field_summaries.push((runs.len(), summary));
-                                runs.push(field_run(field, None));
-                                run_sources.push(Some(raw));
-                                projected_run_count += 1;
-                                tracked_run_count += 1;
-                            } else {
-                                extra_xml.push((runs.len(), raw));
-                            }
+                            )
+                        });
+                        let raw = capture_element(reader, e)?;
+                        let mapped = control_facts.as_deref().and_then(|facts| {
+                            facts.field_input(reader, event_start..reader.buffer_position(), &raw)
+                        });
+                        let prepared_selector = control_facts.as_deref().and_then(|facts| {
+                            facts.simple_selector(
+                                reader,
+                                event_start..reader.buffer_position(),
+                                &raw,
+                            )
+                        });
+                        if let Some((field, summary)) = parse_simple_field_with_summary(
+                            &raw,
+                            &prefixes,
+                            prepared_header,
+                            prepared_selector,
+                            mapped.as_ref(),
+                        )? {
+                            simple_field_summaries.push((runs.len(), summary));
+                            runs.push(field_run(field, None));
+                            run_sources.push(Some(raw));
+                            projected_run_count += 1;
+                            tracked_run_count += 1;
+                        } else {
+                            extra_xml.push((runs.len(), raw));
                         }
                     } else if is_word_element(name.as_ref(), b"commentRangeStart", &prefixes)
                         || is_word_element(name.as_ref(), b"commentRangeEnd", &prefixes)
@@ -875,21 +862,13 @@ impl CT_P {
                         let mapped = control_facts.as_deref().and_then(|facts| {
                             facts.field_input(reader, event_start..reader.buffer_position(), &raw)
                         });
-                        let field = if source_facts.is_none() {
-                            parse_empty_simple_field(
-                                e,
-                                &raw,
-                                prefixes.into_owned(),
-                                mapped.as_ref(),
-                            )?
-                            .map(|(field, _)| field)
-                        } else {
-                            source_facts
-                                .as_deref_mut()
-                                .expect("physical revision facts")
-                                .simple_fields_deferred = true;
-                            None
-                        };
+                        let field = parse_empty_simple_field(
+                            e,
+                            &raw,
+                            prefixes.into_owned(),
+                            mapped.as_ref(),
+                        )?
+                        .map(|(field, _)| field);
                         if let Some(field) = field {
                             if let Some(mapped) = mapped {
                                 mapped.register(&field)?;

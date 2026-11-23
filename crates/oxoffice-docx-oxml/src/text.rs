@@ -158,10 +158,10 @@ mod paragraph_write;
 
 use paragraph_projection::{
     accepted_control_bookmark_projection, accepted_revision_bookmark_projection,
-    append_nested_bookmark_projection, current_control_bookmark_projection,
-    current_paragraph_bookmark_projection, element_prefix_has_binding, is_content_revision_element,
-    is_element_in_namespace, parse_hyperlink_attributes, parse_hyperlink_children,
-    prefixes_with_assumed_word_owner,
+    append_nested_bookmark_projection, current_paragraph_bookmark_projection,
+    element_prefix_has_binding, is_content_revision_element, is_element_in_namespace,
+    parse_hyperlink_attributes, parse_hyperlink_children, prefixes_with_assumed_word_owner,
+    sdt_content_bookmark_starts,
 };
 use paragraph_write::{safe_hyperlink_name, write_hyperlink_record};
 
@@ -1619,7 +1619,7 @@ fn append_accepted_text_keeping(
                     // other wrappers included.
                     if let Some(content) = accepted_revision_content(&paragraph.revisions[index].2)
                     {
-                        append_accepted_text_keeping(&content, output, keep);
+                        append_accepted_text_keeping(content, output, keep);
                     }
                 }
                 BoundaryOwner::Wrapper(index) => {
@@ -2167,39 +2167,45 @@ fn append_accepted_inline_paragraph(
     equations
 }
 
-fn append_accepted_inline_revision(
-    revision: &CT_Revision,
-    runs: &mut Vec<CT_R>,
-    boundaries: &mut Vec<usize>,
-) {
-    if let Some(paragraph) = accepted_revision_content(revision) {
-        // The bookmarks of a control's content are read from the control.
-        append_accepted_inline_paragraph(&paragraph, runs, boundaries, &mut Vec::new());
-    }
-}
-
+/// Append the accepted view of an inline content control: its runs, with
+/// their simple-field and wrapper boundaries, and the equations and bookmarks
+/// that start in it, all counted on the runs appended, so that an export
+/// writes each at its place among them.
 fn append_accepted_inline_control(
     control: &CT_Sdt,
     runs: &mut Vec<CT_R>,
     boundaries: &mut Vec<usize>,
+    equations: &mut Vec<(usize, usize, OfficeMath)>,
+    bookmarks: &mut Vec<(usize, String)>,
 ) {
     let start = runs.len();
     let boundary_start = boundaries.len();
     boundaries.push(start);
+    let mut bindings = None;
     for boundary in 0..=control.content.len() {
         for (_, revision) in control.revisions().iter().filter(|(at, _)| *at == boundary) {
-            append_accepted_inline_revision(revision, runs, boundaries);
+            if let Some(paragraph) = accepted_revision_content(revision) {
+                equations.extend(append_accepted_inline_paragraph(
+                    paragraph, runs, boundaries, bookmarks,
+                ));
+            }
         }
         let Some(content) = control.content.get(boundary) else {
             continue;
         };
+        bookmarks.extend(shifted_bookmarks(
+            sdt_content_bookmark_starts(content, control.word_prefixes()),
+            runs.len(),
+        ));
         match content {
             SdtContent::Run(run) => runs.push(run.clone()),
             SdtContent::ContentControl(nested) => {
-                append_accepted_inline_control(nested, runs, boundaries)
+                append_accepted_inline_control(nested, runs, boundaries, equations, bookmarks)
             }
             SdtContent::Paragraph(paragraph) => {
-                append_accepted_inline_paragraph(paragraph, runs, boundaries, &mut Vec::new());
+                equations.extend(append_accepted_inline_paragraph(
+                    paragraph, runs, boundaries, bookmarks,
+                ));
             }
             // Block carriers are emitted separately by Markdown. Retain the
             // accepted typed projection if encountered in a synthetic inline model.
@@ -2224,7 +2230,15 @@ fn append_accepted_inline_control(
                 runs.extend(owned.into_iter().cloned());
                 boundaries.push(runs.len());
             }
-            SdtContent::RawXml(_) => {}
+            // An equation in an inline control is read as a paragraph's.
+            SdtContent::RawXml(raw) => {
+                let bindings = bindings.get_or_insert_with(|| {
+                    crate::numbering::namespace_bindings(control.word_prefixes())
+                });
+                if let Ok(Some(equation)) = OfficeMath::from_raw(raw, bindings) {
+                    equations.push((runs.len(), 0, equation));
+                }
+            }
         }
     }
     if runs.len() == start {
@@ -2236,18 +2250,12 @@ fn append_accepted_inline_control(
 
 /// The content of an insertion or a move destination, which the accepted
 /// view keeps, simple fields included; a deletion or a move source has none.
-fn accepted_revision_content(revision: &CT_Revision) -> Option<Cow<'_, CT_P>> {
+fn accepted_revision_content(revision: &CT_Revision) -> Option<&CT_P> {
     revision.accepted_content()
 }
 
 fn append_accepted_revision_runs<'a>(revision: &'a CT_Revision, output: &mut Vec<&'a CT_R>) {
-    if !matches!(
-        revision.kind(),
-        RevisionKind::Insertion | RevisionKind::MoveTo
-    ) {
-        return;
-    }
-    if let Some(paragraph) = revision.content_paragraph() {
+    if let Some(paragraph) = accepted_revision_content(revision) {
         output.extend(accepted_paragraph_runs(paragraph));
     }
 }
@@ -2260,22 +2268,6 @@ fn shifted_bookmarks(
     bookmarks
         .into_iter()
         .map(move |(at, name)| (offset + at, name))
-}
-
-/// The bookmarks that start in an inline content control, each at its run
-/// boundary in the control's runs shifted by `offset`.
-fn control_bookmark_starts(control: &CT_Sdt, offset: usize) -> Vec<(usize, String)> {
-    current_control_bookmark_projection(control)
-        .markers
-        .into_iter()
-        .filter(|marker| marker.is_start())
-        .filter_map(|marker| {
-            Some((
-                offset + marker.projected_run_index(),
-                marker.name()?.to_owned(),
-            ))
-        })
-        .collect()
 }
 
 /// The first start of each bookmark name. The paragraph's markers also list
@@ -2469,7 +2461,7 @@ impl CT_P {
         for boundary in start..=end {
             for (_, _, revision) in revisions.iter().filter(|(at, _, _)| *at == boundary) {
                 if let Some(content) = accepted_revision_content(revision) {
-                    append_accepted_text(&content, &mut text);
+                    append_accepted_text(content, &mut text);
                 }
             }
             if boundary < end {
@@ -2618,7 +2610,8 @@ impl CT_P {
     /// moves in, smart tags, inline custom XML elements and simple fields
     /// are included, deleted and moved-away runs are left out, and the
     /// hyperlink spans cover the same runs as in the source, and the
-    /// paragraph's own equations stay at their run boundary. Content
+    /// equations of the paragraph, of its insertions and of its inline
+    /// controls stay at their run boundary. Content
     /// controls, revisions, wrappers and markers are not kept. Borrowed when
     /// the paragraph holds none of them, since its runs are then the view.
     #[doc(hidden)]
@@ -2719,61 +2712,49 @@ impl CT_P {
                     }
                     ViewStep::Owner(owner) => owner,
                 };
-                let mut owned = Vec::new();
-                let link = match owner {
+                match owner {
                     BoundaryOwner::ContentControl(index) => {
-                        let control = &self.content_controls[index].3;
-                        // The control's runs are the same in its bookmark
-                        // projection and in the view.
                         let offset = runs.len();
-                        bookmark_starts.extend(control_bookmark_starts(control, offset));
-                        if preserve_field_owners {
-                            append_accepted_inline_control(
-                                control,
-                                &mut runs,
-                                &mut inline_boundaries,
-                            );
-                            links.extend(std::iter::repeat_n(None, runs.len() - offset));
-                            continue;
-                        }
-                        append_accepted_control_runs(control, &mut owned);
-                        None
+                        let mut boundaries = Vec::new();
+                        append_accepted_inline_control(
+                            &self.content_controls[index].3,
+                            &mut runs,
+                            if preserve_field_owners {
+                                &mut inline_boundaries
+                            } else {
+                                &mut boundaries
+                            },
+                            &mut equations,
+                            &mut bookmark_starts,
+                        );
+                        links.extend(std::iter::repeat_n(None, runs.len() - offset));
                     }
                     BoundaryOwner::Revision(index) => {
                         let (_, slot, revision) = &self.revisions[index];
                         let offset = runs.len();
-                        if preserve_field_owners {
-                            // Its equations sit on the runs of the same view.
-                            if let Some(content) = accepted_revision_content(revision) {
+                        // The runs and equations of an insertion's own accepted
+                        // view, wrappers and simple fields read as everywhere.
+                        if let Some(content) = accepted_revision_content(revision) {
+                            if preserve_field_owners {
                                 equations.extend(append_accepted_inline_paragraph(
-                                    &content,
+                                    content,
                                     &mut runs,
                                     &mut inline_boundaries,
                                     &mut bookmark_starts,
                                 ));
+                            } else {
+                                let projection = content.accepted_view_projection(false);
+                                bookmark_starts
+                                    .extend(shifted_bookmarks(projection.bookmark_starts, offset));
+                                let view = projection.paragraph.into_owned();
+                                equations.extend(shifted_equations(&view, offset));
+                                runs.extend(view.runs);
                             }
-                            links.extend(std::iter::repeat_n(
-                                hyperlink_revision_index(*slot),
-                                runs.len() - offset,
-                            ));
-                            continue;
                         }
-                        // The runs and equations of an insertion's own accepted
-                        // view, wrappers and simple fields read as everywhere,
-                        // simple fields included while their parse is deferred.
-                        if let Some(content) = accepted_revision_content(revision) {
-                            let projection = content.accepted_view_projection(false);
-                            bookmark_starts
-                                .extend(shifted_bookmarks(projection.bookmark_starts, offset));
-                            let view = projection.paragraph.into_owned();
-                            links.extend(std::iter::repeat_n(
-                                hyperlink_revision_index(*slot),
-                                view.runs.len(),
-                            ));
-                            equations.extend(shifted_equations(&view, offset));
-                            runs.extend(view.runs);
-                        }
-                        continue;
+                        links.extend(std::iter::repeat_n(
+                            hyperlink_revision_index(*slot),
+                            runs.len() - offset,
+                        ));
                     }
                     BoundaryOwner::Wrapper(index) => {
                         if let Some(content) =
@@ -2796,15 +2777,8 @@ impl CT_P {
                             equations.extend(shifted_equations(&view, offset));
                             runs.extend(view.runs);
                         }
-                        continue;
                     }
-                };
-                if preserve_field_owners && !owned.is_empty() {
-                    inline_boundaries.push(runs.len());
-                    inline_boundaries.push(runs.len() + owned.len());
                 }
-                links.extend(std::iter::repeat_n(link, owned.len()));
-                runs.extend(owned.into_iter().cloned());
             }
             if let Some(run) = self.runs.get(boundary) {
                 let link = self.hyperlinks.iter().position(|hyperlink| {

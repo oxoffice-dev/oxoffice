@@ -1087,22 +1087,24 @@ fn text_controls(values: &[&str]) -> Document {
 
 #[test]
 fn a_field_holding_text_the_typing_font_cannot_encode_names_its_scripts() {
-    let doc = text_controls(&["Москва", "Łódź 東京", "Crème brûlée, 5 € – œuvre"]);
+    let doc = text_controls(&[
+        "東京",
+        "Łódź Москва Ωμέγα שלום",
+        "Crème brûlée, 5 € – œuvre",
+        "Łódź مرحبا 東京",
+    ]);
     let layout = doc.layout_with_options(fillable()).unwrap();
     let said = typing_diagnostics(&layout.layout);
     assert_eq!(said.len(), 2, "{said:?}");
+    assert!(said[0].contains("\"field0\" holds Han text"), "{said:?}");
+    assert!(said[0].contains("2 distinct characters"), "{said:?}");
+    // Latin, Cyrillic, Greek and Hebrew letters are in Liberation Sans.
     assert!(
-        said[0].contains("\"field0\" holds Cyrillic text"),
-        "{said:?}"
-    );
-    assert!(said[0].contains("6 distinct characters"), "{said:?}");
-    // Ł and ź are Latin letters WinAnsi lacks; ó is in WinAnsi.
-    assert!(
-        said[1].contains("\"field1\" holds Han, Latin text"),
+        said[1].contains("\"field3\" holds Arabic, Han text"),
         "{said:?}"
     );
     // The sample is in code point order, like the glyph coverage ones.
-    assert!(said[1].contains("such as \"Łź京東\""), "{said:?}");
+    assert!(said[1].contains("such as \"ابحرم京東\""), "{said:?}");
 
     let (_, diagnostics) = doc.to_pdf_with_diagnostics(&[], fillable()).unwrap();
     let from_pdf: Vec<_> = diagnostics
@@ -1118,29 +1120,32 @@ fn a_field_holding_text_the_typing_font_cannot_encode_names_its_scripts() {
 #[test]
 fn a_field_names_the_typing_font_gap_under_its_pdf_name() {
     let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="a.b"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Ωμέγα</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="a.b"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>नमस्ते</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
     let layout = doc.layout_with_options(fillable()).unwrap();
     let said = typing_diagnostics(&layout.layout);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("\"a_b\" holds Greek text"), "{said:?}");
+    assert!(
+        said[0].contains("\"a_b\" holds Devanagari text"),
+        "{said:?}"
+    );
 }
 
 #[test]
 fn list_options_the_typing_font_cannot_encode_are_named_even_when_not_chosen() {
     let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="country"/><w:dropDownList><w:listItem w:displayText="France" w:value="fr"/><w:listItem w:displayText="Ελλάδα" w:value="gr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>France</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="country"/><w:dropDownList><w:listItem w:displayText="France" w:value="fr"/><w:listItem w:displayText="日本" w:value="jp"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>France</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
     let layout = doc.layout_with_options(fillable()).unwrap();
     let said = typing_diagnostics(&layout.layout);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("\"country\" holds Greek text"), "{said:?}");
+    assert!(said[0].contains("\"country\" holds Han text"), "{said:?}");
 }
 
 #[test]
 fn locked_fields_and_placeholders_say_nothing_about_the_typing_font() {
     let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="locked"/><w:lock w:val="sdtContentLocked"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Москва</w:t></w:r></w:sdtContent></w:sdt></w:p>
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="locked"/><w:lock w:val="sdtContentLocked"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>東京</w:t></w:r></w:sdtContent></w:sdt></w:p>
 <w:p><w:sdt><w:sdtPr><w:tag w:val="prompt"/><w:showingPlcHdr/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>点击这里</w:t></w:r></w:sdtContent></w:sdt></w:p>
 <w:p><w:sdt><w:sdtPr><w:tag w:val="notes"/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:t>one</w:t><w:br/><w:t>two</w:t><w:tab/><w:t>three</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
@@ -1156,11 +1161,220 @@ fn locked_fields_and_placeholders_say_nothing_about_the_typing_font() {
 #[test]
 fn a_list_value_counts_only_when_typed_not_when_it_is_an_option_export_value() {
     let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="exported"/><w:dropDownList><w:listItem w:displayText="Greece" w:value="Ελλάδα"/><w:listItem w:displayText="France" w:value="fr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Greece</w:t></w:r></w:sdtContent></w:sdt></w:p>
-<w:p><w:sdt><w:sdtPr><w:tag w:val="typed"/><w:comboBox><w:listItem w:displayText="Paris" w:value="paris"/></w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>Αθήνα</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="exported"/><w:dropDownList><w:listItem w:displayText="Greece" w:value="希腊"/><w:listItem w:displayText="France" w:value="fr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Greece</w:t></w:r></w:sdtContent></w:sdt></w:p>
+<w:p><w:sdt><w:sdtPr><w:tag w:val="typed"/><w:comboBox><w:listItem w:displayText="Paris" w:value="paris"/></w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>雅典</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
     let layout = doc.layout_with_options(fillable()).unwrap();
     let said = typing_diagnostics(&layout.layout);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("\"typed\" holds Greek text"), "{said:?}");
+    assert!(said[0].contains("\"typed\" holds Han text"), "{said:?}");
+}
+
+/// A text control tagged `tag` showing `value`.
+fn text_control(tag: &str, value: &str) -> String {
+    format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{value}</w:t></w:r></w:sdtContent></w:sdt>"#
+    )
+}
+
+/// A document whose first paragraph references an endnote, then a footnote,
+/// each holding a text control after its own text, and whose second
+/// paragraph holds a control of the body. All three are tagged `name`.
+fn doc_with_note_controls() -> Document {
+    doc_with_notes(|xml, marker, value| {
+        xml.replace(
+            &format!("{marker}</w:t></w:r>"),
+            &format!("{marker} </w:t></w:r>{}", text_control("name", value)),
+        )
+    })
+}
+
+/// A document whose first paragraph references an endnote, then a footnote,
+/// and whose second paragraph holds a control of the body tagged `name`.
+/// `note` rewrites each notes part, given the part, the text of its note
+/// and the value a control there shows.
+fn doc_with_notes(note: impl Fn(&str, &str, &str) -> String) -> Document {
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:p>{}</w:p>"#,
+        text_control("name", "Body value")
+    ));
+    let body = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_endnote(&body, "ENDNOTE").unwrap();
+    let body = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_footnote(&body, "FOOTNOTE").unwrap();
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    for (part, marker, value) in [
+        ("/word/footnotes.xml", "FOOTNOTE", "Foot value"),
+        ("/word/endnotes.xml", "ENDNOTE", "End value"),
+    ] {
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        assert!(xml.contains(&format!("{marker}</w:t></w:r>")), "{xml}");
+        let xml = note(&xml, marker, value);
+        package.set_part(part, xml.into_bytes());
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn controls_in_notes_become_fields_after_the_body_footnotes_first() {
+    let doc = doc_with_note_controls();
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Body value".to_owned()),
+            ("name_2".to_owned(), "Foot value".to_owned()),
+            ("name_3".to_owned(), "End value".to_owned()),
+        ]
+    );
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    let mut texts: Vec<String> = fragment_texts(&layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    texts.sort();
+    assert_eq!(texts, ["Body value", "End value", "Foot value"]);
+    // The notes' own text and marks stay on the page.
+    let page = page_text(&layout.pages);
+    assert!(
+        page.contains("FOOTNOTE") && page.contains("ENDNOTE"),
+        "{page}"
+    );
+    assert!(
+        layout
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("stays static")),
+        "{:?}",
+        layout.diagnostics
+    );
+    let (_, fields) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    assert_eq!(fields.len(), 3);
+}
+
+#[test]
+fn a_control_in_a_table_of_a_note_becomes_a_field() {
+    // The table follows the note's paragraph, inside the note.
+    let doc = doc_with_notes(|xml, marker, value| {
+        let table = format!(
+            r#"{marker}</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t></w:t></w:r>"#,
+            text_control("name", value)
+        );
+        xml.replace(&format!("{marker}</w:t></w:r>"), &table)
+    });
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Body value".to_owned()),
+            ("name_2".to_owned(), "Foot value".to_owned()),
+            ("name_3".to_owned(), "End value".to_owned()),
+        ]
+    );
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let mut texts: Vec<String> = fragment_texts(&result.layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    texts.sort();
+    assert_eq!(texts, ["Body value", "End value", "Foot value"]);
+}
+
+#[test]
+fn a_block_control_around_a_note_leaves_the_note_number_on_the_page() {
+    // Word wraps the whole note text, its number included, when the whole
+    // note is selected. The endnote holds a legacy text field instead.
+    let doc = doc_with_notes(|xml, marker, value| {
+        if marker == "ENDNOTE" {
+            let field = legacy(
+                9,
+                "Legacy",
+                r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
+                "FORMTEXT",
+                Some(value),
+            );
+            return xml.replace(
+                &format!("{marker}</w:t></w:r>"),
+                &format!("{marker} </w:t></w:r>{field}"),
+            );
+        }
+        let end = xml.find(&format!("{marker}</w:t></w:r>")).unwrap();
+        let start = xml[..end]
+            .rfind("<w:p>")
+            .or_else(|| xml[..end].rfind("<w:p "))
+            .unwrap();
+        let close = end + xml[end..].find("</w:p>").unwrap() + "</w:p>".len();
+        let paragraph = xml[start..close].replace(marker, value);
+        format!(
+            r#"{}<w:sdt><w:sdtPr><w:tag w:val="name"/><w:richText/></w:sdtPr><w:sdtContent>{paragraph}</w:sdtContent></w:sdt>{}"#,
+            &xml[..start],
+            &xml[close..]
+        )
+    });
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    let mut texts: Vec<String> = fragment_texts(&layout.pages)
+        .into_iter()
+        .map(|(_, text)| text.trim().to_owned())
+        .collect();
+    texts.sort();
+    // The space after the number is the note's text, inside the control.
+    assert_eq!(texts, ["Body value", "End value", "Foot value"]);
+    let named: Vec<(String, String)> = names_and_values(&doc)
+        .into_iter()
+        .map(|(name, value)| (name, value.trim().to_owned()))
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("name".to_owned(), "Body value".to_owned()),
+            ("name_2".to_owned(), "Foot value".to_owned()),
+            ("Legacy".to_owned(), "End value".to_owned()),
+        ]
+    );
+    // The note's number, beside the body's reference to it.
+    assert_eq!(page_text(&layout.pages).matches('1').count(), 2);
+    assert!(
+        layout
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("stays static")),
+        "{:?}",
+        layout.diagnostics
+    );
+}
+
+#[test]
+fn a_wrapped_block_control_around_a_note_says_its_number_sits_under_its_box() {
+    // The later lines start at the margin, so the widget reaches back over
+    // the number on the first line.
+    let long = "Foot value that runs on long enough to wrap onto a second line of the note area, and then on again for good measure, well past the right margin of the page";
+    let doc = doc_with_notes(|xml, marker, _| {
+        let end = xml.find(&format!("{marker}</w:t></w:r>")).unwrap();
+        let start = xml[..end]
+            .rfind("<w:p>")
+            .or_else(|| xml[..end].rfind("<w:p "))
+            .unwrap();
+        let close = end + xml[end..].find("</w:p>").unwrap() + "</w:p>".len();
+        let paragraph = xml[start..close].replace(marker, long);
+        format!(
+            r#"{}<w:sdt><w:sdtPr><w:tag w:val="note"/><w:richText/></w:sdtPr><w:sdtContent>{paragraph}</w:sdtContent></w:sdt>{}"#,
+            &xml[..start],
+            &xml[close..]
+        )
+    });
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(
+        layout
+            .layout
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message
+                == "form control \"note\": other text on its lines sits under its box"),
+        "{:?}",
+        layout.layout.diagnostics
+    );
 }

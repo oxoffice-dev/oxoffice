@@ -243,48 +243,6 @@ impl Document {
         Ok(location)
     }
 
-    /// Consume a private candidate using the same checked picture transaction.
-    #[doc(hidden)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn insert_picture_to_story_with_options_owned(
-        mut self,
-        story: &StoryId,
-        after: Option<&ContentLocation>,
-        image_data: &[u8],
-        image_filename: &str,
-        width: Option<Length>,
-        height: Option<Length>,
-        options: Option<PictureOptions>,
-    ) -> Result<(Self, ContentLocation)> {
-        let options = Self::checked_insertion_picture_options(
-            image_data,
-            image_filename,
-            width,
-            height,
-            options,
-        )?;
-        let mut origin = self.take_staged_commit_origin();
-        let (updated, location) = Self::insert_picture_candidate(
-            self,
-            story,
-            after,
-            image_data,
-            image_filename,
-            options,
-            None,
-        )?;
-        Ok((
-            Self::finish_staged_candidate(
-                &origin.package,
-                origin.signature_invalidated,
-                &mut origin.normal_engine,
-                &mut origin.bundled_engine,
-                updated,
-            ),
-            location,
-        ))
-    }
-
     /// Consume a private candidate and return the complete checked picture inventory.
     /// Existing insertion-only methods do not perform this inventory.
     #[doc(hidden)]

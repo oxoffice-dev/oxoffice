@@ -132,10 +132,8 @@ use input_scan::{
     field_has_switch, field_link, field_text_argument, input_uses_page_note_restart, note_labels,
     note_reference_pages, numbered_ref_text, page_ref_id, visit_input_paragraphs,
 };
-use note_cache::{
-    body_note_references, content_note_references, paragraph_note_references,
-    stored_note_cache_runs,
-};
+pub(crate) use note_cache::paragraph_note_references;
+use note_cache::{body_note_references, content_note_references, stored_note_cache_runs};
 pub(crate) use paragraph::{
     layout_paragraph_with_grid, layout_paragraph_with_source_and_direction,
     layout_paragraph_with_source_in_table, source_fields,

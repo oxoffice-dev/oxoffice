@@ -842,8 +842,8 @@ fn layout_paragraph_with_source_and_table(
             expanded.push((index, projected, start, false, true, None, None, None));
         }
     }
-    // Only a main-story paragraph draws form marks, named after its own
-    // source node: a cached, header, note or text-box layout passes none.
+    // Only a main-story or note paragraph draws form marks, named after its
+    // own source node: a cached, header or text-box layout passes none.
     let form_paragraph = form.filter(|_| input.form_fields);
     let inline_controls = form_paragraph
         .filter(|_| !para.content_controls.is_empty() || !para.revisions.is_empty())
@@ -1152,8 +1152,10 @@ fn layout_paragraph_with_source_and_table(
                         style_resolver::word_kerning_enabled(&effective_rpr),
                     )?;
                     let marker_metrics = fm.metrics(measure_font, size)?;
+                    // The note's own number stays on the page, as a list
+                    // number does: a field's value never holds it.
                     inline_items.push(InlineItem::Text(TextSegment {
-                        form_mark: current_form_mark,
+                        form_mark: None,
                         text,
                         direction: TextDirection::Auto,
                         source: None,

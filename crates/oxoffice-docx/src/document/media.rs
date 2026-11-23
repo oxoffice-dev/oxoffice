@@ -296,7 +296,7 @@ impl Document {
         height: Length,
         data: &ChartData,
     ) -> Result<Paragraph<'_>> {
-        self.add_chart_package(ChartPackageSource::Authored { kind, data }, width, height)?;
+        self.add_chart_package(kind, data, width, height)?;
         let Some(BodyContent::Paragraph(paragraph)) = self.document.body.content.last_mut() else {
             unreachable!("chart package assembly appends one paragraph");
         };
@@ -784,86 +784,5 @@ fn word_chart_references(xml: &[u8]) -> Result<Vec<WordChartReference>> {
             Event::Eof => return Ok(references),
             _ => {}
         }
-    }
-}
-
-pub(super) fn chart_with_workbook_relationship(
-    chart: &CT_ChartSpace,
-    relationship_id: &str,
-) -> Result<Vec<u8>> {
-    const END: &[u8] = b"</c:chartSpace>";
-    let mut xml = chart
-        .to_xml()
-        .map_err(|error| Error::Other(format!("invalid chart part: {error}")))?;
-    if chart_has_external_data(&xml)? {
-        return Err(Error::Other(
-            "chart already contains an external workbook relationship".to_owned(),
-        ));
-    }
-    if !xml.ends_with(END) {
-        return Err(Error::Other(
-            "serialized chart lacks the chartSpace closing element".to_owned(),
-        ));
-    }
-
-    xml.truncate(xml.len() - END.len());
-    xml.extend_from_slice(
-        format!(
-            r#"<c:externalData r:id="{relationship_id}"><c:autoUpdate val="0"/></c:externalData>"#
-        )
-        .as_bytes(),
-    );
-    xml.extend_from_slice(END);
-    CT_ChartSpace::from_xml(&xml)
-        .and_then(|validated| validated.to_xml())
-        .map_err(|error| Error::Other(format!("invalid chart part: {error}")))
-}
-
-fn chart_has_external_data(xml: &[u8]) -> Result<bool> {
-    let mut reader = NsReader::from_reader(xml);
-    let mut buffer = Vec::new();
-    let mut depth = 0usize;
-    let mut chart_space_depth = None;
-    loop {
-        let (namespace, event) = reader
-            .read_resolved_event_into(&mut buffer)
-            .map_err(|error| Error::Other(format!("invalid chart part XML: {error}")))?;
-        match event {
-            Event::Start(ref element) => {
-                if chart_space_depth.is_none()
-                    && chart_namespace_matches(&namespace)
-                    && matches_local_name(element.name().as_ref(), b"chartSpace")
-                {
-                    chart_space_depth = Some(depth);
-                } else if chart_space_depth.is_some_and(|root| depth == root + 1)
-                    && chart_namespace_matches(&namespace)
-                    && matches_local_name(element.name().as_ref(), b"externalData")
-                {
-                    return Ok(true);
-                }
-                depth = depth
-                    .checked_add(1)
-                    .ok_or_else(|| Error::Other("chart part XML depth overflow".to_owned()))?;
-            }
-            Event::Empty(ref element)
-                if chart_space_depth.is_some_and(|root| depth == root + 1)
-                    && chart_namespace_matches(&namespace)
-                    && matches_local_name(element.name().as_ref(), b"externalData") =>
-            {
-                return Ok(true);
-            }
-            Event::End(_) => depth = depth.saturating_sub(1),
-            Event::Eof => return Ok(false),
-            _ => {}
-        }
-        buffer.clear();
-    }
-}
-
-fn chart_namespace_matches(namespace: &ResolveResult<'_>) -> bool {
-    match namespace {
-        ResolveResult::Bound(Namespace(uri)) => *uri == oxoffice_chart::C_NS.as_bytes(),
-        ResolveResult::Unknown(prefix) => *prefix == b"c",
-        ResolveResult::Unbound => false,
     }
 }

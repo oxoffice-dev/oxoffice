@@ -22,7 +22,6 @@ const MAX_REVISION_NESTING_DEPTH: usize = 32;
 pub(crate) struct RevisionSourceFacts {
     pub(crate) runs: Vec<CT_R>,
     pub(crate) revisions: Vec<(usize, CT_Revision)>,
-    pub(crate) simple_fields_deferred: bool,
     copy_nodes_bound: usize,
     copy_bytes_bound: usize,
     copy_nodes: usize,
@@ -325,7 +324,6 @@ pub struct CT_Revision {
     require_author: bool,
     accepted_fields_pending: bool,
     accepted_payload_pending: bool,
-    semantic_fields_pending: bool,
     read_context: Option<Arc<RevisionReadContext>>,
 }
 
@@ -437,7 +435,6 @@ impl std::fmt::Debug for CT_Revision {
             .field("require_author", &self.require_author)
             .field("accepted_fields_pending", &self.accepted_fields_pending)
             .field("accepted_payload_pending", &self.accepted_payload_pending)
-            .field("semantic_fields_pending", &self.semantic_fields_pending)
             .field("read_context", &self.read_context)
             .finish()
     }
@@ -622,7 +619,6 @@ impl CT_Revision {
                         require_author,
                         accepted_fields_pending: false,
                         accepted_payload_pending: false,
-                        semantic_fields_pending: false,
                         read_context: None,
                     });
                 }
@@ -636,7 +632,7 @@ impl CT_Revision {
             buffer.clear();
         };
         let (kind, id, author, timestamp) = kind;
-        let (content, content_paragraph, nested_revisions, semantic_fields_pending) = if matches!(
+        let (content, content_paragraph, nested_revisions) = if matches!(
             RevisionBodyMode::selected(
                 kind,
                 RevisionBodyMode::without_source_probe(kind).is_none()
@@ -652,23 +648,17 @@ impl CT_Revision {
             )?;
             let (paragraph, facts) =
                 parse_revision_content_with_facts(&raw_xml, &prefixes, copy_bound, input, output)?;
-            let semantic_fields_pending = facts.simple_fields_deferred;
             let content = if facts.runs.is_empty() {
                 RevisionContent::Marker
             } else {
                 RevisionContent::Runs(facts.runs)
             };
-            (
-                content,
-                Some(Arc::new(paragraph)),
-                facts.revisions,
-                semantic_fields_pending,
-            )
+            (content, Some(Arc::new(paragraph)), facts.revisions)
         } else {
             let cursor = input.map(|input| input.cursor(&raw_xml)).transpose()?;
             let (content, nested_revisions) =
                 parse_content(&mut reader, kind, &prefixes, cursor.as_ref())?;
-            (content, None, nested_revisions, false)
+            (content, None, nested_revisions)
         };
         Ok(Self {
             kind,
@@ -683,7 +673,6 @@ impl CT_Revision {
             require_author,
             accepted_fields_pending: false,
             accepted_payload_pending: false,
-            semantic_fields_pending,
             read_context: None,
         })
     }
@@ -751,27 +740,14 @@ impl CT_Revision {
     }
 
     /// The content an insertion or a move destination adds to the accepted
-    /// view, its simple fields read even while their parse is deferred, as a
-    /// reader sees it. A deletion, a move source or a marker adds none.
+    /// view, its simple fields included, as a reader sees it: the stored
+    /// paragraph. A deletion, a move source or a marker adds none.
     #[doc(hidden)]
-    pub fn accepted_content(&self) -> Option<std::borrow::Cow<'_, CT_P>> {
+    pub fn accepted_content(&self) -> Option<&CT_P> {
         if !matches!(self.kind, RevisionKind::Insertion | RevisionKind::MoveTo) {
             return None;
         }
-        // An in-place edit of the stored paragraph makes it the authority;
-        // the raw XML is read only while it is still what was opened.
-        let edited = self.accepted_fields_pending || self.accepted_payload_pending;
-        match self.content_paragraph.as_deref() {
-            Some(paragraph) if !self.semantic_fields_pending || edited => {
-                Some(std::borrow::Cow::Borrowed(paragraph))
-            }
-            stored => {
-                parse_accepted_revision_content(&self.raw_xml, &self.parse_word_prefixes, None)
-                    .ok()
-                    .map(std::borrow::Cow::Owned)
-                    .or_else(|| stored.map(std::borrow::Cow::Borrowed))
-            }
-        }
+        self.content_paragraph.as_deref()
     }
 
     /// Mutate physical read-projection metadata without rewriting revision XML.
@@ -788,7 +764,7 @@ impl CT_Revision {
         ) {
             return Ok(None);
         }
-        if self.content_paragraph.is_none() || self.semantic_fields_pending {
+        if self.content_paragraph.is_none() {
             // This is the same successful revision reader's actual produced map.
             // Forward its live registry, never register the view as new ingress.
             let input = self.read_context.as_ref().and_then(|context| {
@@ -801,7 +777,6 @@ impl CT_Revision {
                 &self.parse_word_prefixes,
                 input.as_ref(),
             )?));
-            self.semantic_fields_pending = false;
         }
         self.read_context = None;
         Ok(self.content_paragraph.as_mut().map(Arc::make_mut))
@@ -1302,18 +1277,6 @@ impl CT_Revision {
         )?;
         if let Some(mapped) = &mapped {
             normalized.attach_read_context(mapped, read_maps);
-        }
-        if !self.semantic_fields_pending && normalized.semantic_fields_pending {
-            // The prior edited owner already has typed simple fields. The
-            // physical refresh reader deliberately defers those fields, so
-            // prepare this same revision's checked view before identity proof.
-            // Keep its actual produced read context for the scoped publisher.
-            normalized.content_paragraph = Some(Arc::new(parse_accepted_revision_content(
-                &normalized.raw_xml,
-                &normalized.parse_word_prefixes,
-                mapped.as_ref(),
-            )?));
-            normalized.semantic_fields_pending = false;
         }
         let parsed_source = normalized.content_paragraph.clone();
         if let Some(current) = normalized.content_paragraph.as_mut() {

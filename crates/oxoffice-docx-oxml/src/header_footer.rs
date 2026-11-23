@@ -42,12 +42,6 @@ pub enum VmlWatermark {
 }
 
 impl VmlWatermark {
-    /// Project a supported `w:pict` subtree without taking ownership of its XML.
-    #[doc(hidden)]
-    pub fn from_pict_xml(xml: &[u8]) -> Option<Self> {
-        parse_vml_watermark(xml)
-    }
-
     /// Write the canonical VML subtree used by the native authoring facade.
     #[doc(hidden)]
     pub fn to_pict_xml(&self) -> Vec<u8> {
@@ -994,10 +988,6 @@ impl Default for CT_HdrFtr {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn parse_vml_watermark(xml: &[u8]) -> Option<VmlWatermark> {
-    parse_vml_watermarks(xml).into_iter().next()
 }
 
 #[derive(Default)]

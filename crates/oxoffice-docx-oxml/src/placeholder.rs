@@ -2635,40 +2635,6 @@ fn edit_text_box_block(
     Ok((count, map))
 }
 
-/// Run the literal matcher on one namespace-closed paragraph, table, control or cell.
-/// Unlike the legacy raw walker, parsing and namespace refusal are errors.
-#[doc(hidden)]
-pub fn try_replace_in_block(
-    raw: &mut Vec<u8>,
-    paragraph: Option<usize>,
-    placeholder: &str,
-    replacement: &str,
-) -> crate::Result<usize> {
-    try_replace_in_block_with_constructors(raw, paragraph, placeholder, replacement, None)
-}
-
-// Standalone callers admit their own source. Scoped operations supply outcomes
-// from the same original source without granting a new expanded-byte allowance.
-pub(crate) fn try_replace_in_block_with_constructors(
-    raw: &mut Vec<u8>,
-    paragraph: Option<usize>,
-    placeholder: &str,
-    replacement: &str,
-    constructors: Option<(
-        crate::document::ConstructorFailures,
-        crate::document::WordSourceMap,
-    )>,
-) -> crate::Result<usize> {
-    try_replace_in_block_with_constructors_in(
-        raw,
-        paragraph,
-        placeholder,
-        replacement,
-        constructors,
-        None,
-    )
-}
-
 pub(crate) struct ScopedLiteralContext<'a> {
     pub(crate) work: &'a mut WordOperationWork,
     pub(crate) delivered: &'a std::cell::Cell<bool>,
@@ -3267,17 +3233,6 @@ pub fn try_replace_in_header_footer(
     Ok(count)
 }
 
-/// The texts of `hf` that template tags are found in, see [`replaceable_texts`].
-#[doc(hidden)]
-pub fn header_footer_replaceable_texts(hf: &CT_HdrFtr) -> Vec<String> {
-    let mut texts = Vec::new();
-    edit_header_footer(&mut hf.clone(), &mut |paragraph| {
-        texts.extend(replaceable_texts(paragraph));
-        0
-    });
-    texts
-}
-
 fn edit_header_footer(hf: &mut CT_HdrFtr, edit: &mut dyn FnMut(&mut CT_P) -> usize) -> usize {
     let mut count = 0;
     for paragraph in &mut hf.paragraphs {
@@ -3354,19 +3309,6 @@ pub fn replace_regex_in_xml_part(
     rewrite_text_boxes(xml, true, &mut |paragraph| {
         try_replace_regex_in_paragraph(paragraph, re, replacement)
     })
-}
-
-/// The texts of the text boxes of a raw XML part that template tags are
-/// found in, see [`replaceable_texts`]. The copies of a text box
-/// that Word writes twice, see [`replace_in_xml_part`], are left out.
-#[doc(hidden)]
-pub fn xml_part_replaceable_texts(xml: &[u8]) -> crate::error::Result<Vec<String>> {
-    let mut texts = Vec::new();
-    rewrite_text_boxes(xml, false, &mut |paragraph| {
-        texts.extend(replaceable_texts(paragraph));
-        Ok(0)
-    })?;
-    Ok(texts)
 }
 
 struct TextBoxOutput {
@@ -3592,94 +3534,6 @@ pub(crate) fn replace_original_template_literals_in<'e, 'v>(
             output.map.expect("mapped textbox walk"),
         ))
     }
-}
-
-/// Stage original literal matches in the established raw textbox boundary.
-/// Physical exclusions identify separately checked textbox owners in this input.
-/// Empty operands discover original logical source texts without editing.
-#[doc(hidden)]
-pub fn replace_original_literals_in_xml_part(
-    xml: &[u8],
-    excluded: &[std::ops::Range<usize>],
-    replacements: &[(&str, &str)],
-) -> crate::Result<(Vec<u8>, usize, Vec<String>)> {
-    use crate::OxmlError;
-    validate_original_textbox_exclusions(xml, excluded)?;
-    let prefixes = [
-        "w".to_owned(),
-        format!("\0r\0{}", crate::namespace::R_NS),
-        format!("\0mc\0{}", crate::namespace::MC_NS),
-    ];
-    let mut texts = Vec::new();
-    rewrite_text_boxes_within(
-        xml,
-        &prefixes,
-        false,
-        &mut TextBoxEditor::Ordinary(&mut |paragraph| {
-            texts.extend(replaceable_texts(paragraph));
-            Ok(0)
-        }),
-        excluded,
-        0,
-        &mut false,
-        None,
-    )?;
-    if replacements.is_empty() {
-        return Ok((xml.to_vec(), 0, texts));
-    }
-    let mut operands = std::collections::BTreeMap::new();
-    for &(literal, value) in replacements {
-        if literal.is_empty()
-            || operands
-                .insert(literal, value)
-                .is_some_and(|old| old != value)
-        {
-            return Err(OxmlError::InvalidValue(
-                "ambiguous original textbox literal operands".into(),
-            ));
-        }
-    }
-    let mut alternatives = operands.keys().copied().collect::<Vec<_>>();
-    alternatives.sort_by_key(|literal| std::cmp::Reverse(literal.len()));
-    let matcher = regex::Regex::new(
-        &alternatives
-            .into_iter()
-            .map(regex::escape)
-            .collect::<Vec<_>>()
-            .join("|"),
-    )
-    .map_err(|error| OxmlError::InvalidValue(error.to_string()))?;
-    let rewritten = rewrite_text_boxes_within(
-        xml,
-        &prefixes,
-        true,
-        &mut TextBoxEditor::Ordinary(&mut |paragraph| {
-            let occurrences = replaceable_texts(paragraph)
-                .iter()
-                .enumerate()
-                .flat_map(|(stretch, text)| {
-                    matcher
-                        .find_iter(text)
-                        .map(|matched| {
-                            (
-                                stretch,
-                                matched.range(),
-                                operands[matched.as_str()].to_owned(),
-                                None,
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            replace_prepared_occurrences(paragraph, &occurrences)?;
-            Ok(occurrences.len())
-        }),
-        excluded,
-        0,
-        &mut false,
-        None,
-    )?;
-    Ok((rewritten.bytes, rewritten.count, texts))
 }
 
 /// Walk `xml`, handing each paragraph of a `w:txbxContent` element to `edit`,
@@ -4061,18 +3915,6 @@ pub fn replace_regex_in_notes_part(
     rewrite_notes(xml, &mut |paragraph| {
         try_replace_regex_in_paragraph(paragraph, re, replacement)
     })
-}
-
-/// The texts of the notes of a footnotes or endnotes part that template tags
-/// are found in, see [`replaceable_texts`].
-#[doc(hidden)]
-pub fn notes_part_replaceable_texts(xml: &[u8]) -> crate::error::Result<Vec<String>> {
-    let mut texts = Vec::new();
-    rewrite_notes(xml, &mut |paragraph| {
-        texts.extend(replaceable_texts(paragraph));
-        Ok(0)
-    })?;
-    Ok(texts)
 }
 
 /// Walk a footnotes or endnotes part, handing each paragraph of a note to
