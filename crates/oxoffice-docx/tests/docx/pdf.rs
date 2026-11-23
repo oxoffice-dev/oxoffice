@@ -650,6 +650,99 @@ fn text_around_a_display_equation_in_its_paragraph_takes_lines_of_its_own() {
     }
 }
 
+/// Every glyph run the document draws, as (text, size, colour), and the
+/// diagnostics of its layout.
+fn laid_out_runs(doc: &Document) -> (Vec<(String, f64, oxoffice_layout::Color)>, Vec<String>) {
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut runs = Vec::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                runs.push((run.text.clone(), run.font_size, run.color));
+            }
+        });
+    }
+    let diagnostics = result
+        .layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect();
+    (runs, diagnostics)
+}
+
+const MATH: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+
+// Word writes a w:rPr in every math run and an m:ctrlPr in every
+// construct's properties: the equation is drawn whole, with no diagnostic,
+// and a `∼` has a glyph with the bundled fonts.
+#[test]
+fn an_equation_with_the_run_formatting_word_writes_is_drawn_whole() {
+    let cambria = r#"<w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><m:oMathPara xmlns:m="{MATH}"><m:oMath><m:sSub><m:sSubPr><m:ctrlPr>{cambria}</m:ctrlPr></m:sSubPr><m:e><m:r>{cambria}<m:t>y</m:t></m:r></m:e><m:sub><m:r>{cambria}<m:t>i</m:t></m:r></m:sub></m:sSub><m:r>{cambria}<m:t>∼⊤</m:t></m:r></m:oMath></m:oMathPara></w:p>"#
+    );
+    let doc = doc_with_body(&body);
+    let (_, diagnostics) = laid_out_runs(&doc);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|message| !message.contains("OfficeMath")),
+        "{diagnostics:?}"
+    );
+    let pdf = pdf_of(&doc);
+    let drawn = pdf.drawn(0);
+    assert!(
+        drawn.iter().any(|piece| piece.text.contains('∼')),
+        "{drawn:#?}"
+    );
+    assert!(drawn.iter().all(|piece| piece.notdef == 0), "{drawn:#?}");
+}
+
+// A w:rPr that tracks an insertion is not formatting the layout draws: the
+// equation still says it left something out.
+#[test]
+fn a_math_run_whose_properties_track_a_change_is_reported() {
+    let body = format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:r><w:rPr><w:ins w:id="1" w:author="A" w:date="2026-11-23T00:00:00Z"/></w:rPr><m:t>x</m:t></m:r></m:oMath></w:p>"#
+    );
+    let (_, diagnostics) = laid_out_runs(&doc_with_body(&body));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|message| message.contains("could not be rendered")),
+        "{diagnostics:?}"
+    );
+}
+
+// Word draws a math run in the colour and size of its own w:rPr, and a
+// script of that run smaller in proportion.
+#[test]
+fn a_math_run_draws_in_the_colour_and_size_of_its_run_properties() {
+    let red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:r>{red}<m:t>a</m:t></m:r><m:r><m:t>b</m:t></m:r><m:sSup><m:e><m:r><m:t>c</m:t></m:r></m:e><m:sup><m:r>{red}<m:t>d</m:t></m:r></m:sup></m:sSup><m:sSup><m:e><m:r><m:t>f</m:t></m:r></m:e><m:sup><m:r><m:t>g</m:t></m:r></m:sup></m:sSup></m:oMath></w:p>"#
+    );
+    let (runs, _) = laid_out_runs(&doc_with_body(&body));
+    let run = |text: &str| {
+        runs.iter()
+            .find(|run| run.0.contains(text))
+            .unwrap_or_else(|| panic!("{text} drawn: {runs:?}"))
+            .clone()
+    };
+    let (a, b, c, d, g) = (run("a"), run("b"), run("c"), run("d"), run("g"));
+    let red = |color: oxoffice_layout::Color| color.r > 0.99 && color.g < 0.01 && color.b < 0.01;
+    assert!(red(a.2) && !red(b.2) && !red(c.2) && red(d.2), "{runs:?}");
+    assert!((a.1 - 16.0).abs() < 0.01, "{runs:?}");
+    assert!(
+        (b.1 - 11.0).abs() < 0.01 && (c.1 - 11.0).abs() < 0.01,
+        "{runs:?}"
+    );
+    // A 16 pt superscript is to a plain one what 16 pt is to 11.
+    assert!(g.1 < c.1, "{runs:?}");
+    assert!((d.1 - g.1 * 16.0 / 11.0).abs() < 0.01, "{runs:?}");
+}
+
 // ---- Headers, footers and notes ----
 
 // Fails today: endnotes are drawn over a table that ends the document, at
