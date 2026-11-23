@@ -10,10 +10,7 @@ impl Document {
 
     /// Return checked font snapshots after bounding every projected byte copy.
     pub fn try_fonts(&self) -> Result<Vec<FontDefinition>> {
-        let Some(table) = &self.font_table else {
-            if self.font_table_part_name.is_some() {
-                return Err(Error::Other("font table is unmodeled".to_owned()));
-            }
+        let Some(table) = self.modeled_font_table()? else {
             return Ok(Vec::new());
         };
         if table.fonts().len() > 4096 {
@@ -22,6 +19,16 @@ impl Document {
             ));
         }
         self.project_font_records(&table.fonts().iter().collect::<Vec<_>>())
+    }
+
+    /// The font table, `None` when the document has none. A font-table part
+    /// the model cannot read is an error: every font call refuses it, rather
+    /// than reading it as an empty table.
+    fn modeled_font_table(&self) -> Result<Option<&FontTable>> {
+        match (&self.font_table, &self.font_table_part_name) {
+            (None, Some(_)) => Err(Error::Other("font table is unmodeled".to_owned())),
+            (table, _) => Ok(table.as_ref()),
+        }
     }
 
     fn project_font_records(&self, records: &[&FontRecord]) -> Result<Vec<FontDefinition>> {
@@ -123,8 +130,7 @@ impl Document {
         face_index: usize,
     ) -> Result<(String, usize)> {
         let reference = self
-            .font_table
-            .as_ref()
+            .modeled_font_table()?
             .and_then(|table| table.fonts().get(record_index))
             .and_then(|record| record.embedded_fonts.get(face_index))
             .ok_or_else(|| Error::Other("font record or face index is out of range".to_owned()))?;
@@ -409,13 +415,12 @@ impl Document {
 
     /// Remove one font-table record and every embedded face it owns.
     pub fn remove_font(&mut self, name: &str) -> Result<Option<FontDefinition>> {
-        if let Some(table) = &self.font_table {
+        let table = self.modeled_font_table()?;
+        if let Some(table) = table {
             table.can_remove_font(name)?;
         }
-        let Some(record) = self
-            .font_table
-            .as_ref()
-            .and_then(|table| table.fonts().iter().find(|font| font.name == name))
+        let Some(record) =
+            table.and_then(|table| table.fonts().iter().find(|font| font.name == name))
         else {
             return Ok(None);
         };
@@ -700,12 +705,11 @@ impl Document {
         font_name: &str,
         kind: EmbeddedFontKind,
     ) -> Result<Option<EmbeddedFont>> {
-        if let Some(table) = &self.font_table {
+        let table = self.modeled_font_table()?;
+        if let Some(table) = table {
             table.can_remove_embedded_font(font_name, kind.into())?;
         }
-        let Some(reference) = self
-            .font_table
-            .as_ref()
+        let Some(reference) = table
             .and_then(|table| table.fonts().iter().find(|font| font.name == font_name))
             .and_then(|font| {
                 font.embedded_fonts
