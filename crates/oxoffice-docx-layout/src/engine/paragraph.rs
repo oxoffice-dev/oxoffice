@@ -803,6 +803,13 @@ fn layout_paragraph_with_source_and_table(
         };
         stored_caches.push(cache);
     }
+    // The fields of the paragraph by source index, which a stored run names
+    // as the field that displays it.
+    let paragraph_fields = if source_node.is_some() {
+        source_fields(para)
+    } else {
+        Vec::new()
+    };
     let mut expanded = Vec::new();
     for (index, (projected, cache)) in projected_runs.into_iter().zip(&stored_caches).enumerate() {
         let start = projection_char_offset;
@@ -887,17 +894,24 @@ fn layout_paragraph_with_source_and_table(
             })
             .or_else(|| {
                 // The stored result of a cross-reference or a hyperlink
-                // field, drawn as the runs it caches, links as the field.
+                // field, drawn as the runs it caches, links as the field
+                // that displays the run (a page reference nested in a table
+                // of contents), else as the field the run belongs to.
                 if !stored_cache {
                     return None;
                 }
+                let nested = stored_source
+                    .and_then(|source| paragraph_fields.get(source.index as usize))
+                    .and_then(|field| field_link(&field.effective_instruction()));
                 let owner = prepared_runs[projected_index]
                     .as_ref()
                     .unwrap_or(original_runs[projected_index].run);
-                let [RunContent::Field(field)] = owner.content.as_slice() else {
-                    return None;
+                let outer = || match owner.content.as_slice() {
+                    [RunContent::Field(field)] => field_link(&field.effective_instruction()),
+                    _ => None,
                 };
-                field_link(&field.effective_instruction())
+                nested
+                    .or_else(outer)
                     .and_then(|link| hyperlink_url_of_field(&link, input))
             });
 
@@ -2341,11 +2355,15 @@ fn hyperlink_target(
 ) -> Option<String> {
     match hyperlink.rel_id.as_deref() {
         Some(rel_id) => input.hyperlink_urls.get(rel_id).cloned(),
+        // The link names its bookmark as the bookmark's start does.
         None => hyperlink
             .anchor
             .as_deref()
             .filter(|anchor| !anchor.is_empty())
-            .map(|anchor| format!("#{anchor}")),
+            .map(|anchor| {
+                let name = bookmark_spelling(input, anchor);
+                format!("#{}", name.as_deref().unwrap_or(anchor))
+            }),
     }
 }
 
@@ -2354,7 +2372,10 @@ fn hyperlink_target(
 /// bookmark makes none.
 fn hyperlink_url_of_field(link: &str, input: &LayoutInput) -> Option<String> {
     match link.strip_prefix('#') {
-        Some(name) => bookmark_exists(input, name).then(|| link.to_owned()),
+        Some(name) => bookmark_exists(input, name)
+            .then(|| bookmark_spelling(input, name))
+            .flatten()
+            .map(|name| format!("#{name}")),
         None => Some(link.to_owned()),
     }
 }

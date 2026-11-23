@@ -9,14 +9,67 @@ use oxoffice_docx_oxml::text::{
 use super::*;
 
 pub(super) fn page_ref_id(input: &LayoutInput, name: &str) -> Option<usize> {
-    page_reference_names(input)
+    bookmark_names(input)
+        .page_targets
         .iter()
         .position(|candidate| same_bookmark_name(candidate, name))
+}
+
+/// The spelling of the bookmark a name refers to, as its start writes it:
+/// Word compares bookmark names without case, links match them exactly.
+pub(super) fn bookmark_spelling(input: &LayoutInput, name: &str) -> Option<String> {
+    bookmark_names(input)
+        .starts
+        .iter()
+        .find(|start| same_bookmark_name(start, name))
+        .cloned()
+}
+
+/// The bookmark names of the input, read once while its body and revision
+/// view stay the same.
+fn bookmark_names(input: &LayoutInput) -> std::borrow::Cow<'_, crate::input::BookmarkNames> {
+    let owner = (
+        input.document.body.content.as_ptr().addr(),
+        input.revision_view,
+    );
+    let read = || crate::input::BookmarkNames {
+        page_targets: read_page_reference_names(input),
+        starts: read_bookmark_starts(input),
+    };
+    let (cached_owner, cached) = input.bookmark_names.0.get_or_init(|| (owner, read()));
+    if *cached_owner == owner {
+        std::borrow::Cow::Borrowed(cached)
+    } else {
+        std::borrow::Cow::Owned(read())
+    }
+}
+
+/// Each bookmark that starts in the stories of the input, once, in its first
+/// spelling.
+fn read_bookmark_starts(input: &LayoutInput) -> Vec<String> {
+    let block_bookmarks = input.block_bookmarks();
+    let mut starts: Vec<String> = Vec::new();
+    for paragraph in input_story_paragraphs(input).iter().flatten() {
+        let (before, after) = block_bookmarks.markers(paragraph);
+        for marker in paragraph.bookmark_markers.iter().chain(before).chain(after) {
+            if marker.is_start()
+                && let Some(name) = marker.name()
+                && !starts.iter().any(|start| same_bookmark_name(start, name))
+            {
+                starts.push(name.to_owned());
+            }
+        }
+    }
+    starts
 }
 
 /// The bookmarks a page target marker records, by target id: those of
 /// `PAGEREF` fields first, then those an internal link goes to.
 pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
+    bookmark_names(input).page_targets.clone()
+}
+
+fn read_page_reference_names(input: &LayoutInput) -> Vec<String> {
     let mut names = Vec::<String>::new();
     visit_input_paragraphs(input, &mut |paragraph| {
         for projected in project_paragraph_runs(paragraph, input.revision_view) {

@@ -5835,9 +5835,10 @@ fn render_para_split(
             widow_control: para.widow_control,
             heading_level: None,
             heading_text: None,
-            // The bookmarks land on the first fragment.
+            // The bookmarks land on the first fragment; one with a marker
+            // lands where its marker is drawn, maybe in this one.
             bookmarks: Vec::new(),
-            bookmark_targets: Vec::new(),
+            bookmark_targets: para.bookmark_targets.clone(),
             list: para.list,
             structure_id: para.structure_id(),
             // The continuation keeps the logical input sequence for text
