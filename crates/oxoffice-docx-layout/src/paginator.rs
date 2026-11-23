@@ -5853,8 +5853,10 @@ fn render_para_split(
             widow_control: para.widow_control,
             heading_level: None,
             heading_text: None,
-            // The bookmarks land on the first fragment.
+            // The bookmarks land on the first fragment; one with a marker
+            // lands where its marker is drawn, maybe in this one.
             bookmarks: Vec::new(),
+            bookmark_targets: para.bookmark_targets.clone(),
             list: para.list,
             structure_id: para.structure_id(),
             // The continuation keeps the logical input sequence for text
@@ -6380,6 +6382,16 @@ fn render_paragraph_lines(
         };
 
         for (visual_item, item) in line.items.iter().enumerate() {
+            // A bookmark that starts here lands here, on this line.
+            if let Some(name) = bookmark_target_name(item, &para.bookmark_targets) {
+                elements.push(PositionedElement::Destination {
+                    name: name.to_owned(),
+                    point: Point {
+                        x,
+                        y: geometry.margin_top + y,
+                    },
+                });
+            }
             match item {
                 LineItem::MultilingualText(segment) if !segment.uses_legacy_shaping() => {
                     let first = elements.len();
@@ -6641,7 +6653,25 @@ fn render_paragraph_lines(
                     _accumulated_extra += segment_extra;
                     x += effective_width;
                 }
-                LineItem::Tab { width, leader, .. } => {
+                LineItem::Tab {
+                    width,
+                    leader,
+                    fill,
+                    ..
+                } => {
+                    // A tab in a filled run is filled across its width,
+                    // like the run's text.
+                    if let Some(color) = fill {
+                        elements.push(PositionedElement::FilledRect {
+                            rect: Rect {
+                                x,
+                                y: geometry.margin_top + y,
+                                width: *width,
+                                height: line.height,
+                            },
+                            color: *color,
+                        });
+                    }
                     mark_item(
                         &mut elements,
                         enclosed_tab_mark(&line.items, visual_item),
@@ -7000,6 +7030,22 @@ fn render_paragraph_lines(
     Ok(layers)
 }
 
+/// The bookmark a page target marker records, among a paragraph's.
+fn bookmark_target_name<'a>(item: &LineItem, targets: &'a [(usize, String)]) -> Option<&'a str> {
+    let field_kind = match item {
+        LineItem::Text(segment) | LineItem::Marker(segment) => segment.field_kind,
+        LineItem::MultilingualText(segment) => segment.base().field_kind,
+        _ => None,
+    };
+    let Some(oxoffice_layout::FieldKind::Target(target)) = field_kind else {
+        return None;
+    };
+    targets
+        .iter()
+        .find(|(id, _)| *id == target)
+        .map(|(_, name)| name.as_str())
+}
+
 fn word_field_owner(
     paint: Option<&WordParagraphPaint>,
     segment: Option<&oxoffice_layout::MultilingualTextSegment>,
@@ -7343,7 +7389,7 @@ fn logical_tab_ranks(
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
-            matches!(item, oxoffice_layout::InlineItem::Tab).then_some(index)
+            matches!(item, oxoffice_layout::InlineItem::Tab { .. }).then_some(index)
         })
         .collect::<Vec<_>>();
     if logical_tabs.len() < tabs.len() {

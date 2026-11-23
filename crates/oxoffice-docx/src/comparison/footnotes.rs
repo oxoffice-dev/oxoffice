@@ -130,7 +130,7 @@ impl NotePart {
 
     /// The notes part name, from the one internal relationship and its
     /// content type, without reading the part.
-    fn name_of(document: &Document, kind: NoteKind) -> Result<Option<String>> {
+    pub(super) fn name_of(document: &Document, kind: NoteKind) -> Result<Option<String>> {
         let relationships = document.package.get_part_rels(&document.doc_part_name);
         let links = relationships
             .into_iter()

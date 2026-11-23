@@ -1083,6 +1083,147 @@ fn doc_linking_to(target: &str) -> Document {
 }
 
 #[test]
+fn cross_references_with_h_and_hyperlink_fields_with_l_are_links_to_their_bookmark() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" REF results \h "><w:r><w:t>Results</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:t xml:space="preserve"> on page </w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGEREF results \h </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve"> and in </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" HYPERLINK \l &quot;results&quot; "><w:r><w:t>the summary</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:t xml:space="preserve">, but not </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" REF results "><w:r><w:t>Results</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:t xml:space="preserve"> nor </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" REF nowhere \h "><w:r><w:t>Gone</w:t></w:r></w:fldSimple></w:p>"#,
+        r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#,
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Results</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let results = pdf.page_count() - 1;
+    assert_eq!(results, 1);
+    let links = pdf.internal_links(0);
+    assert!(links.iter().all(|(page, ..)| *page == results), "{links:?}");
+    let linked: Vec<String> = links
+        .iter()
+        .map(|(_, _, [left, bottom, right, top])| {
+            pdf.drawn(0)
+                .into_iter()
+                .filter(|piece| {
+                    piece.x >= left - 0.01
+                        && piece.end <= right + 0.01
+                        && piece.y > *bottom
+                        && piece.y < *top
+                })
+                .map(|piece| piece.text)
+                .collect()
+        })
+        .collect();
+    // The two cross-references with `\h` and the hyperlink field, one piece
+    // a word; neither the plain cross-reference nor the one to no bookmark.
+    assert_eq!(linked.concat(), "Results2the summary", "{linked:?}");
+}
+
+#[test]
+fn a_link_lands_on_the_page_where_its_bookmark_starts_inside_a_paragraph() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:hyperlink w:anchor="results"><w:r><w:t>Go to the results</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:r><w:t>The method comes first.</w:t></w:r><w:r><w:br w:type="page"/></w:r>"#,
+        r#"<w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Results come next.</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let results = page_with(&pdf, "Results come next.");
+    assert_eq!(results, 1);
+    let links = pdf.internal_links(0);
+    assert!(!links.is_empty());
+    let line = line_of(&pdf, results, "Results come next.");
+    for (page, top, _) in &links {
+        assert_eq!(*page, results, "not the page where the paragraph starts");
+        assert!(
+            *top > line.y && *top < line.y + 30.0,
+            "the destination {top} is the top of the bookmark's line at {}",
+            line.y
+        );
+    }
+}
+
+#[test]
+fn a_link_lands_after_the_second_page_break_of_a_paragraph() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:hyperlink w:anchor="annex"><w:r><w:t>Go to the annex</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:r><w:t>First part.</w:t></w:r><w:r><w:br w:type="page"/></w:r>"#,
+        r#"<w:r><w:t>Second part.</w:t></w:r><w:r><w:br w:type="page"/></w:r>"#,
+        r#"<w:bookmarkStart w:id="0" w:name="annex"/><w:r><w:t>Annex text.</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let annex = page_with(&pdf, "Annex text.");
+    assert_eq!(annex, 2);
+    let links = pdf.internal_links(0);
+    assert!(!links.is_empty(), "the link keeps its destination");
+    assert!(links.iter().all(|(page, ..)| *page == annex), "{links:?}");
+}
+
+#[test]
+fn a_cross_reference_finds_its_bookmark_whatever_the_case() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:fldSimple w:instr=" REF RESULTS \h "><w:r><w:t>Results</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:t xml:space="preserve"> and </w:t></w:r>"#,
+        r#"<w:hyperlink w:anchor="Results"><w:r><w:t>again</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#,
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Findings</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let links = pdf.internal_links(0);
+    assert_eq!(links.len(), 2, "{links:?}");
+    assert!(links.iter().all(|(page, ..)| *page == 1), "{links:?}");
+}
+
+#[test]
+fn a_page_reference_nested_in_a_table_of_contents_links_its_page_number() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> TOC \o "1-3" </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve">Results </w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGEREF results \h </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#,
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Results</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let links = pdf.internal_links(0);
+    assert!(!links.is_empty(), "the page number links to its bookmark");
+    assert!(links.iter().all(|(page, ..)| *page == 1), "{links:?}");
+}
+
+#[test]
+fn an_empty_paragraph_holding_a_linked_bookmark_keeps_its_height() {
+    let below = |bookmark: &str| {
+        let doc = doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:hyperlink w:anchor="spot"><w:r><w:t>Link</w:t></w:r></w:hyperlink></w:p>"#,
+                r#"<w:p>{}</w:p><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
+            ),
+            bookmark
+        ));
+        line_of(&pdf_of(&doc), 0, "After").y
+    };
+    let plain = below("");
+    let marked = below(r#"<w:bookmarkStart w:id="0" w:name="spot"/><w:bookmarkEnd w:id="0"/>"#);
+    assert!((plain - marked).abs() < 0.01, "{plain} vs {marked}");
+}
+
+#[test]
 fn an_internal_hyperlink_goes_to_the_top_of_its_bookmark() {
     let doc = reopen(&mut doc_linking_to("results"));
     // One page's SVG has nowhere to land, so it draws no dead anchor.
@@ -1386,6 +1527,48 @@ fn ordinary_output_is_tagged_with_headings_paragraphs_tables_lists_and_figures()
 }
 
 #[test]
+fn a_hyperlink_wrapped_over_two_lines_is_one_tagged_link_holding_its_text() {
+    let text = "the quarterly budget review with every regional figure, the forecast \
+                for next year and the notes of the finance committee";
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship("https://example.com/budget");
+    let mut paragraph = doc.add_paragraph("Read ");
+    paragraph.add_hyperlink(text, &relationship);
+    paragraph.add_run(" before the meeting.");
+    let pdf = pdf_of(&reopen(&mut doc));
+    let links: Vec<Element> = pdf
+        .structure()
+        .into_iter()
+        .filter(|(role, ..)| role == "Link")
+        .collect();
+    assert_eq!(links.len(), 1, "one link element for the whole hyperlink");
+    let annotations: Vec<String> = pdf
+        .page_ids()
+        .into_iter()
+        .take(1)
+        .flat_map(|page| {
+            let page = pdf.doc.get_dictionary(page).expect("page");
+            let annots = pdf.resolve(page.get(b"Annots").expect("annotations"));
+            annots.as_array().expect("an array").clone()
+        })
+        .map(|annotation| {
+            let annotation = pdf.resolve(&annotation).as_dict().expect("annotation");
+            let contents = annotation.get(b"Contents").expect("contents");
+            lopdf::decode_text_string(contents).expect("text")
+        })
+        .collect();
+    assert!(annotations.len() >= 2, "{annotations:?}");
+    assert!(
+        links[0].3.len() >= 2,
+        "the text of both lines is in the link"
+    );
+    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for contents in annotations {
+        assert_eq!(words(&contents), words(text));
+    }
+}
+
+#[test]
 fn pdfa_output_refuses_a_link_it_cannot_archive() {
     let target = "file:///srv/share/budget.xlsx";
     let mut doc = Document::new();
@@ -1539,6 +1722,102 @@ fn a_run_shading_is_drawn_behind_its_text() {
     // Automatic text turns white on a dark fill, as on a dark paragraph.
     assert!(pixels_in_text_box(&doc, "Dark", [0xFF, 0xFF, 0xFF]) > 0);
     assert_eq!(pixels_in_text_box(&doc, "Dark", [0, 0, 0]), 0);
+}
+
+/// Pixels of `rgb` on page 0 between the end of the drawn piece holding
+/// `before` and the start of the one holding `after`, on their text band.
+fn pixels_between(doc: &Document, before: &str, after: &str, rgb: [u8; 3]) -> usize {
+    let drawn = pdf_of(doc).drawn(0);
+    let find = |text: &str| {
+        drawn
+            .iter()
+            .find(|piece| piece.text.contains(text))
+            .unwrap_or_else(|| panic!("{text} is drawn"))
+            .clone()
+    };
+    let (before, after) = (find(before), find(after));
+    let image = Pixels::decode(&doc.render_page_to_png(0, 72.0).unwrap().expect("page 0"));
+    let height = f64::from(image.height);
+    let mut count = 0;
+    for y in (height - before.y - before.size * 0.7) as u32..(height - before.y) as u32 {
+        for x in before.end.ceil() as u32..after.x.floor() as u32 {
+            let at = ((y * image.width + x) * 4) as usize;
+            if image.rgba[at..at + 3] == rgb {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn a_tab_in_a_filled_run_is_filled_across_its_width() {
+    // A shaded run, a highlighted one and a positional tab: Word fills the
+    // gap a tab leaves with the run's fill, so the band runs unbroken.
+    // A stop two inches in leaves a gap of over an inch after each label.
+    let stop = r#"<w:pPr><w:tabs><w:tab w:val="left" w:pos="2880"/></w:tabs></w:pPr>"#;
+    let doc = doc_with_body(&[
+        r#"<w:p>STOP<w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="C6EFCE"/></w:rPr>"#,
+        r#"<w:t>Shaded</w:t><w:tab/><w:t>Next</w:t></w:r></w:p>"#,
+        r#"<w:p>STOP<w:r><w:rPr><w:highlight w:val="yellow"/></w:rPr>"#,
+        r#"<w:t>Marked</w:t><w:tab/><w:t>Then</w:t></w:r></w:p>"#,
+        r#"<w:p>STOP<w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="FFC7CE"/></w:rPr>"#,
+        r#"<w:t>Placed</w:t><w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/>"#,
+        r#"<w:t>Right</w:t></w:r></w:p>"#,
+        // A tab in a field result takes the result's fill.
+        r#"<w:p>STOP<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> REF source </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="E7E6E6"/></w:rPr><w:t>old</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="source"/><w:r><w:t>Alpha</w:t><w:tab/>"#,
+        r#"<w:t>Omega</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+    ]
+    .concat()
+    .replace("STOP", stop));
+    assert!(pixels_between(&doc, "Shaded", "Next", [0xC6, 0xEF, 0xCE]) > 100);
+    assert!(pixels_between(&doc, "Marked", "Then", [0xFF, 0xFF, 0x00]) > 100);
+    assert!(pixels_between(&doc, "Placed", "Right", [0xFF, 0xC7, 0xCE]) > 100);
+    assert!(pixels_between(&doc, "Alpha", "Omega", [0xE7, 0xE6, 0xE6]) > 100);
+}
+
+#[test]
+fn a_filled_tab_still_reaches_a_page_number_aligned_after_it() {
+    // The number on a right stop takes its value after the line is laid out,
+    // narrower than its stored "10": the tab's fill follows it, with no
+    // white gap between the two.
+    let fill = r#"<w:rPr><w:shd w:val="clear" w:color="auto" w:fill="C6EFCE"/></w:rPr>"#;
+    let doc = doc_with_body(
+        &[
+            r#"<w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="5760"/></w:tabs></w:pPr>"#,
+            r#"<w:r>FILL<w:t>Folio</w:t><w:tab/></w:r>"#,
+            r#"<w:r>FILL<w:fldChar w:fldCharType="begin"/></w:r>"#,
+            r#"<w:r>FILL<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>"#,
+            r#"<w:r>FILL<w:fldChar w:fldCharType="separate"/></w:r><w:r>FILL<w:t>10</w:t></w:r>"#,
+            r#"<w:r>FILL<w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        ]
+        .concat()
+        .replace("FILL", fill),
+    );
+    assert!(pixels_between(&doc, "Folio", "1", [0xC6, 0xEF, 0xCE]) > 100);
+    assert_eq!(pixels_between(&doc, "Folio", "1", [0xFF, 0xFF, 0xFF]), 0);
+}
+
+#[test]
+fn a_ruby_base_and_its_annotation_paint_their_run_fills() {
+    // Each run paints its own fill, and automatic text on a dark fill turns
+    // white to stay readable. The model reads a ruby as a paragraph child.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:ruby><w:rubyPr><w:rubyAlign w:val="center"/><w:hps w:val="12"/>"#,
+        r#"<w:hpsRaise w:val="22"/><w:hpsBaseText w:val="24"/><w:lid w:val="ja-JP"/></w:rubyPr>"#,
+        r#"<w:rt><w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="FFC7CE"/><w:sz w:val="12"/></w:rPr>"#,
+        r#"<w:t>Above</w:t></w:r></w:rt>"#,
+        r#"<w:rubyBase><w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="1F3864"/><w:sz w:val="24"/></w:rPr>"#,
+        r#"<w:t>Ground</w:t></w:r></w:rubyBase></w:ruby></w:p>"#,
+    ));
+    assert!(pixels_in_text_box(&doc, "Ground", [0x1F, 0x38, 0x64]) > 20);
+    assert_eq!(pixels_in_text_box(&doc, "Ground", [0, 0, 0]), 0);
+    assert!(pixels_in_text_box(&doc, "Above", [0xFF, 0xC7, 0xCE]) > 5);
 }
 
 #[test]
