@@ -1386,6 +1386,48 @@ fn ordinary_output_is_tagged_with_headings_paragraphs_tables_lists_and_figures()
 }
 
 #[test]
+fn a_hyperlink_wrapped_over_two_lines_is_one_tagged_link_holding_its_text() {
+    let text = "the quarterly budget review with every regional figure, the forecast \
+                for next year and the notes of the finance committee";
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship("https://example.com/budget");
+    let mut paragraph = doc.add_paragraph("Read ");
+    paragraph.add_hyperlink(text, &relationship);
+    paragraph.add_run(" before the meeting.");
+    let pdf = pdf_of(&reopen(&mut doc));
+    let links: Vec<Element> = pdf
+        .structure()
+        .into_iter()
+        .filter(|(role, ..)| role == "Link")
+        .collect();
+    assert_eq!(links.len(), 1, "one link element for the whole hyperlink");
+    let annotations: Vec<String> = pdf
+        .page_ids()
+        .into_iter()
+        .take(1)
+        .flat_map(|page| {
+            let page = pdf.doc.get_dictionary(page).expect("page");
+            let annots = pdf.resolve(page.get(b"Annots").expect("annotations"));
+            annots.as_array().expect("an array").clone()
+        })
+        .map(|annotation| {
+            let annotation = pdf.resolve(&annotation).as_dict().expect("annotation");
+            let contents = annotation.get(b"Contents").expect("contents");
+            lopdf::decode_text_string(contents).expect("text")
+        })
+        .collect();
+    assert!(annotations.len() >= 2, "{annotations:?}");
+    assert!(
+        links[0].3.len() >= 2,
+        "the text of both lines is in the link"
+    );
+    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for contents in annotations {
+        assert_eq!(words(&contents), words(text));
+    }
+}
+
+#[test]
 fn pdfa_output_refuses_a_link_it_cannot_archive() {
     let target = "file:///srv/share/budget.xlsx";
     let mut doc = Document::new();
