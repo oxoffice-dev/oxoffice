@@ -265,6 +265,8 @@ enum InlinePiece {
     Text(String, Box<ComputedStyle>, bool),
     Break,
     Image(EmbeddedHtmlImage),
+    /// The target of a `#name` link of the document: a bookmark.
+    Anchor(String),
 }
 
 #[derive(Debug)]
@@ -352,8 +354,11 @@ fn from_html_in_document(
         cells: 0,
         projection,
         embedded_images: HashMap::new(),
+        link_targets: dom_link_targets(&dom),
+        bookmark_names: HashSet::new(),
     };
     let mut importer = importer;
+    importer.bookmark_names = importer.existing_bookmark_names();
     importer.record_parser_repairs()?;
     importer.record_head_resources()?;
     importer.collect_styles()?;
@@ -403,7 +408,10 @@ pub(crate) fn project_html_fragment(
         cells: 0,
         projection: Some(&projection),
         embedded_images: HashMap::new(),
+        link_targets: dom_link_targets(&dom),
+        bookmark_names: HashSet::new(),
     };
+    importer.bookmark_names = importer.existing_bookmark_names();
     importer.record_parser_repairs()?;
     importer.record_head_resources()?;
     importer.collect_styles()?;
@@ -585,6 +593,8 @@ fn project_markdown(markdown: &str, limits: Limits) -> Result<MarkdownHtmlProjec
     let mut event_count = 0_usize;
     let mut image_depth = 0_usize;
     let mut source_elements = Vec::new();
+    // Whether the last raw HTML kept opened an anchor its `</a>` closes.
+    let mut raw_anchor_open = false;
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
     for (event, range) in Parser::new_ext(markdown, options).into_offset_iter() {
         event_count = event_count
@@ -633,6 +643,22 @@ fn project_markdown(markdown: &str, limits: Limits) -> Result<MarkdownHtmlProjec
             }
             _ => {}
         }
+        // The anchor the Markdown export writes at a linked bookmark,
+        // `<a id="name"></a>`, is the one raw HTML read: as a bookmark.
+        if let Event::InlineHtml(html) = &event {
+            let html = html.trim();
+            if markdown_anchor_open(html).is_some() {
+                source_elements.push(("a", range.clone()));
+                raw_anchor_open = !html.ends_with("</a>");
+                events.push(event);
+                continue;
+            }
+            if raw_anchor_open && html == "</a>" {
+                raw_anchor_open = false;
+                events.push(event);
+                continue;
+            }
+        }
         if matches!(event, Event::Html(_) | Event::InlineHtml(_)) {
             if diagnostics.len() >= limits.diagnostics {
                 return Err(html_error("input", "Markdown exceeds its diagnostic limit"));
@@ -662,6 +688,16 @@ fn project_markdown(markdown: &str, limits: Limits) -> Result<MarkdownHtmlProjec
         diagnostics,
         source_elements,
     })
+}
+
+/// The name of a raw `<a id="name">` (or `<a id="name"></a>`) as the
+/// Markdown export writes it, the name one Word accepts for a bookmark.
+fn markdown_anchor_open(html: &str) -> Option<&str> {
+    let rest = html.strip_prefix("<a id=\"")?;
+    let (name, rest) = rest.split_once('"')?;
+    matches!(rest, ">" | "></a>")
+        .then_some(name)
+        .filter(|name| internal_link_target(&format!("#{name}")).is_some())
 }
 
 fn html_style_id(document: &Document, id: &str) -> String {
@@ -2478,6 +2514,23 @@ fn css_resource_references(css: &str) -> Result<Vec<String>> {
     Ok(references)
 }
 
+/// Add a run of `text` formatted by `style`: in a link to a bookmark of the
+/// document, in a link through its relationship, or plain.
+fn add_text_run<'p>(
+    paragraph: &'p mut Paragraph<'_>,
+    text: &str,
+    style: &ComputedStyle,
+    relationships: &HashMap<String, String>,
+) -> Run<'p> {
+    match style.hyperlink.as_deref() {
+        Some(url) => match internal_link_target(url) {
+            Some(name) => paragraph.add_internal_hyperlink(text, name, None),
+            None => paragraph.add_hyperlink(text, &relationships[url]),
+        },
+        None => paragraph.add_run(text),
+    }
+}
+
 fn safe_hyperlink(value: &str, base: Option<&str>) -> Option<String> {
     let value = value.trim();
     if value.is_empty()
@@ -2883,9 +2936,64 @@ struct Importer<'a> {
     cells: usize,
     projection: Option<&'a HtmlProjection>,
     embedded_images: HashMap<String, String>,
+    /// The names `#name` links of the input target, by `bookmark_name_key`:
+    /// an element with one of them as its id becomes a bookmark.
+    link_targets: HashSet<String>,
+    /// The bookmark names the document holds or the import wrote, by
+    /// `bookmark_name_key`.
+    bookmark_names: HashSet<String>,
+}
+
+/// The bookmark a `#name` link targets: a name Word accepts for a bookmark
+/// (40 ASCII letters, digits or underscores, not starting with a digit),
+/// the hidden `_Toc` and `_Ref` names included.
+fn internal_link_target(href: &str) -> Option<&str> {
+    let name = href.strip_prefix('#')?;
+    (!name.is_empty()
+        && name.len() <= 40
+        && !name.starts_with(|character: char| character.is_ascii_digit())
+        && name
+            .chars()
+            .all(|character| character == '_' || character.is_ascii_alphanumeric()))
+    .then_some(name)
+}
+
+/// The names the `#name` links of `dom` target, by `bookmark_name_key`.
+fn dom_link_targets(dom: &Html) -> HashSet<String> {
+    let selector = Selector::parse("a[href]").expect("static selector");
+    dom.select(&selector)
+        .filter_map(|anchor| internal_link_target(anchor.attr("href")?.trim()))
+        .map(oxoffice_docx_oxml::text::bookmark_name_key)
+        .collect()
 }
 
 impl Importer<'_> {
+    fn existing_bookmark_names(&self) -> HashSet<String> {
+        self.document
+            .bookmarks()
+            .iter()
+            .filter_map(|bookmark| bookmark.name())
+            .map(oxoffice_docx_oxml::text::bookmark_name_key)
+            .collect()
+    }
+
+    /// Push the bookmark `element` stands for, when a `#name` link of the
+    /// input targets its id (or, on `a`, its legacy `name`).
+    fn push_anchor(&self, element: ElementRef<'_>, pieces: &mut Vec<InlinePiece>) {
+        let id = element.attr("id").or_else(|| {
+            (element.value().name() == "a")
+                .then(|| element.attr("name"))
+                .flatten()
+        });
+        if let Some(id) = id.map(str::trim)
+            && self
+                .link_targets
+                .contains(&oxoffice_docx_oxml::text::bookmark_name_key(id))
+        {
+            pieces.push(InlinePiece::Anchor(id.to_owned()));
+        }
+    }
+
     fn record_parser_repairs(&mut self) -> Result<()> {
         for error in &self.dom.errors {
             self.diagnostic("html", None, format!("HTML parser repair: {error}"))?;
@@ -3172,6 +3280,7 @@ impl Importer<'_> {
                 let style = self.computed_style(element, inherited)?;
                 let mut pieces = Vec::new();
                 let pre = name == "pre";
+                self.push_anchor(element, &mut pieces);
                 self.collect_inline_children(element, &style, pre, &mut pieces)?;
                 let paragraph_style = match name {
                     "h1" => Some("Heading1".to_string()),
@@ -3896,6 +4005,7 @@ impl Importer<'_> {
     ) -> Result<()> {
         let name = element.value().name();
         let location = element_path(element);
+        self.push_anchor(element, pieces);
         match name {
             "br" => {
                 pieces.push(InlinePiece::Break);
@@ -4056,7 +4166,10 @@ impl Importer<'_> {
                 }
                 return Ok(());
             }
-            "a" if element.attr("href").is_some() => {
+            "a" if element
+                .attr("href")
+                .is_some_and(|href| internal_link_target(href.trim()).is_none()) =>
+            {
                 let href = element.attr("href").expect("anchor href checked");
                 if self.projection.is_none()
                     || self.projection.is_some_and(|projection| {
@@ -4089,6 +4202,13 @@ impl Importer<'_> {
 
         let mut style = self.computed_style(element, inherited)?;
         if name == "a"
+            && let Some(name) = element
+                .attr("href")
+                .and_then(|href| internal_link_target(href.trim()))
+        {
+            // A link to a bookmark of the same document.
+            style.hyperlink = Some(format!("#{name}"));
+        } else if name == "a"
             && let Some(href) = element.attr("href")
             && let Some(projection) = self.projection
         {
@@ -4166,6 +4286,7 @@ impl Importer<'_> {
         for piece in &model.pieces {
             if let InlinePiece::Text(_, style, _) = piece
                 && let Some(url) = &style.hyperlink
+                && internal_link_target(url).is_none()
                 && !hyperlink_ids.contains_key(url)
             {
                 let relationship_id = if let Some(story) = self.story {
@@ -4206,6 +4327,41 @@ impl Importer<'_> {
             let mut space_ends_last_run = false;
             for piece in model.pieces {
                 match piece {
+                    InlinePiece::Anchor(name) => {
+                        // A space pending before the anchor is written
+                        // before it, where the text puts it.
+                        if pending_space
+                            && emitted
+                            && let Some(space) = space_style.take()
+                        {
+                            if space_ends_last_run
+                                && let Some(last) = paragraph.inner.runs.last_mut()
+                            {
+                                let mut run = Run { inner: last };
+                                run.set_text(&format!("{} ", run.text()));
+                            } else {
+                                self.bump_runs()?;
+                                let mut run =
+                                    add_text_run(&mut paragraph, " ", &space, &hyperlink_ids);
+                                apply_run_style(&mut run, &space);
+                            }
+                            pending_space = false;
+                        }
+                        // One bookmark per name: Word compares names
+                        // without regard to case.
+                        if self
+                            .bookmark_names
+                            .insert(oxoffice_docx_oxml::text::bookmark_name_key(&name))
+                        {
+                            let id = self.document.identifiers.reserve_bookmark_id()?;
+                            let at = paragraph.inner.runs.len();
+                            if !(paragraph.inner.insert_bookmark_start(at, id, &name)
+                                && paragraph.inner.insert_bookmark_end(at, id))
+                            {
+                                return Err(html_error("html", "could not write an HTML anchor"));
+                            }
+                        }
+                    }
                     InlinePiece::Break => {
                         self.bump_runs()?;
                         paragraph.add_line_break();
@@ -4243,11 +4399,8 @@ impl Importer<'_> {
                                 run.set_text(&format!("{} ", run.text()));
                             } else {
                                 self.bump_runs()?;
-                                let mut run = if let Some(url) = &space.hyperlink {
-                                    paragraph.add_hyperlink(" ", &hyperlink_ids[url])
-                                } else {
-                                    paragraph.add_run(" ")
-                                };
+                                let mut run =
+                                    add_text_run(&mut paragraph, " ", &space, &hyperlink_ids);
                                 apply_run_style(&mut run, &space);
                             }
                         }
@@ -4255,11 +4408,8 @@ impl Importer<'_> {
                         while let Some(line) = lines.next() {
                             if !line.is_empty() {
                                 self.bump_runs()?;
-                                let mut run = if let Some(url) = &style.hyperlink {
-                                    paragraph.add_hyperlink(line, &hyperlink_ids[url])
-                                } else {
-                                    paragraph.add_run(line)
-                                };
+                                let mut run =
+                                    add_text_run(&mut paragraph, line, &style, &hyperlink_ids);
                                 apply_run_style(&mut run, &style);
                                 emitted = true;
                             }
@@ -4289,11 +4439,8 @@ impl Importer<'_> {
                                 run.set_text(&format!("{} ", run.text()));
                             } else {
                                 self.bump_runs()?;
-                                let mut run = if let Some(url) = &space.hyperlink {
-                                    paragraph.add_hyperlink(" ", &hyperlink_ids[url])
-                                } else {
-                                    paragraph.add_run(" ")
-                                };
+                                let mut run =
+                                    add_text_run(&mut paragraph, " ", &space, &hyperlink_ids);
                                 apply_run_style(&mut run, &space);
                             }
                             pending_space = false;
@@ -4305,11 +4452,8 @@ impl Importer<'_> {
                         let normalized = collapse_text(text, &mut pending_space, emitted);
                         if !normalized.is_empty() {
                             self.bump_runs()?;
-                            let mut run = if let Some(url) = &style.hyperlink {
-                                paragraph.add_hyperlink(&normalized, &hyperlink_ids[url])
-                            } else {
-                                paragraph.add_run(&normalized)
-                            };
+                            let mut run =
+                                add_text_run(&mut paragraph, &normalized, &style, &hyperlink_ids);
                             apply_run_style(&mut run, &style);
                             emitted = true;
                         }
@@ -4492,6 +4636,8 @@ fn inline_piece_is_visible(piece: &InlinePiece) -> bool {
         }
         InlinePiece::Break => true,
         InlinePiece::Image(_) => true,
+        // A bookmark alone does not make a paragraph.
+        InlinePiece::Anchor(_) => false,
     }
 }
 

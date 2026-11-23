@@ -1152,6 +1152,101 @@ fn an_odt_list_runs_on_through_a_bookmark_between_its_items() {
 }
 
 #[test]
+fn internal_links_and_their_bookmarks_survive_a_round_trip_through_html_markdown_and_mhtml() {
+    let doc = reopen(&mut doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">Intro </w:t></w:r><w:bookmarkStart w:id="2" w:name="_Toc12"/><w:r><w:t>Heading</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:hyperlink w:anchor="goal"><w:r><w:t>the goal</w:t></w:r></w:hyperlink>"#,
+        r#"<w:r><w:t xml:space="preserve"> and </w:t></w:r><w:hyperlink w:anchor="_Toc12"><w:r><w:t>the heading</w:t></w:r></w:hyperlink></w:p>"#,
+    )));
+    let check = |read: &Document, format: &str| {
+        let mut links = read
+            .links()
+            .into_iter()
+            .map(|link| (link.text, link.anchor, link.rel_id))
+            .collect::<Vec<_>>();
+        links.sort();
+        assert_eq!(
+            links,
+            [
+                ("the goal".to_owned(), Some("goal".to_owned()), None),
+                ("the heading".to_owned(), Some("_Toc12".to_owned()), None),
+            ],
+            "{format}"
+        );
+        let mut names = read
+            .bookmarks()
+            .iter()
+            .filter_map(|bookmark| bookmark.name().map(str::to_owned))
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["_Toc12", "goal"], "{format}");
+        // Exported again, each anchor is back at its place (the read runs
+        // carry the template's font, written as spans).
+        let mut html = read
+            .to_html_fragment()
+            .replace("</span>", "")
+            .replace("<u>", "")
+            .replace("</u>", "");
+        while let Some(start) = html.find("<span") {
+            let end = start + html[start..].find('>').unwrap();
+            html.replace_range(start..=end, "");
+        }
+        for expected in [
+            r#"<a id="goal"></a>Goal"#,
+            r#"Intro <a id="_Toc12"></a>Heading"#,
+            r##"<a href="#goal">the goal</a>"##,
+        ] {
+            assert!(html.contains(expected), "{format}: {expected} in {html}");
+        }
+    };
+    let html = Document::from_html(&doc.to_html()).unwrap();
+    assert!(
+        !html
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("link")),
+        "{:?}",
+        html.diagnostics
+    );
+    check(&html.document, "HTML");
+    let markdown = Document::from_markdown(&doc.to_markdown()).unwrap();
+    assert!(
+        !markdown
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("raw Markdown HTML")),
+        "{:?}",
+        markdown.diagnostics
+    );
+    check(&markdown.document, "Markdown");
+    let mhtml = Document::from_mhtml_bytes(&doc.to_mhtml_bytes().unwrap().bytes).unwrap();
+    check(&mhtml.document, "MHTML");
+
+    // A heading or a legacy named anchor that a link targets is a bookmark
+    // too; an id no link targets is not, and a name Word refuses stays text.
+    let read = Document::from_html(concat!(
+        r#"<h2 id="results">Results</h2><p><a name="old"></a>Old</p><p id="unlinked">Plain</p>"#,
+        r##"<p><a href="#results">up</a> <a href="#old">old</a> <a href="#a b">bad</a></p>"##,
+    ))
+    .unwrap()
+    .document;
+    let mut names = read
+        .bookmarks()
+        .iter()
+        .filter_map(|bookmark| bookmark.name().map(str::to_owned))
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["old", "results"]);
+    let anchors = read
+        .links()
+        .into_iter()
+        .filter_map(|link| link.anchor)
+        .collect::<Vec<_>>();
+    assert_eq!(anchors, ["results", "old"]);
+}
+
+#[test]
 fn internal_links_reach_their_bookmark_in_both_exports() {
     let doc = reopen(&mut doc_with_body(concat!(
         r#"<w:p><w:bookmarkStart w:id="1" w:name="goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/>"#,
