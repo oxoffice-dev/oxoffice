@@ -548,7 +548,8 @@ fn a_right_to_left_paragraph_reads_left_and_right_as_start_and_end() {
 // right margin with a start indent, an end indent, both, or a hanging indent
 // (its second stop too), the default stops are counted from there, a line
 // after the first of a hanging indent does not stop at the hanging stop, and
-// a decimal stop puts the number's decimal point on the stop.
+// a decimal stop puts the number's decimal point on the stop (an integer's
+// end, a point in a run of its own, as in a left-to-right paragraph).
 #[test]
 fn tab_stops_in_a_right_to_left_paragraph_are_measured_from_the_right_margin() {
     let rtl = |ppr: &str, runs: &str| {
@@ -609,7 +610,7 @@ fn tab_stops_in_a_right_to_left_paragraph_are_measured_from_the_right_margin() {
         .concat(),
     ));
     body.push_str(&rtl(
-        r#"<w:ind w:left="1440" w:hanging="720"/>"#,
+        r#"<w:ind w:left="1440" w:hanging="1080"/>"#,
         &[
             text("WrapA"),
             r#"<w:r><w:br/></w:r>"#.to_owned(),
@@ -623,6 +624,16 @@ fn tab_stops_in_a_right_to_left_paragraph_are_measured_from_the_right_margin() {
     body.push_str(&rtl(
         &decimal,
         &[text("NumA"), tab.to_owned(), text("12.50")].concat(),
+    ));
+    // An integer ends on the stop, and a number split across runs aligns as
+    // one run does.
+    body.push_str(&rtl(
+        &decimal,
+        &[text("IntA"), tab.to_owned(), text("7")].concat(),
+    ));
+    body.push_str(&rtl(
+        &decimal,
+        &[text("SplitA"), tab.to_owned(), text("34"), text(".75")].concat(),
     ));
     body.push_str(&format!(
         r#"<w:p><w:pPr>{decimal}</w:pPr>{}{tab}{}</w:p>"#,
@@ -665,6 +676,16 @@ fn tab_stops_in_a_right_to_left_paragraph_are_measured_from_the_right_margin() {
             .unwrap()
             .x;
     assert!((shift - 36.0).abs() < 0.5, "the number moves {shift:.1}");
+    let integer = piece("7").end;
+    assert!(
+        (integer - 324.0).abs() < 0.5,
+        "the integer ends at {integer:.1}"
+    );
+    let point = piece(".75").x;
+    assert!(
+        (point - 324.0).abs() < 0.5,
+        "the split number's point is at {point:.1}"
+    );
 }
 
 // Word and LibreOffice align a right-to-left paragraph on the right margin,

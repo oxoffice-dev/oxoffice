@@ -454,7 +454,8 @@ impl Default for LineBreakParams {
 
 /// Break inline items into lines using a greedy algorithm.
 ///
-/// Tab stops are measured from the zero indent, the margin in Word, so a tab
+/// Tab stops are measured from the margin the paragraph starts at, as Word
+/// measures them (the right one when `first_line_at_right`), so a tab
 /// resolves against where its line starts rather than against the line's own
 /// origin. A right, centre or decimal tab takes its width from the text after
 /// it, up to the next tab or the end of the line.
@@ -1134,7 +1135,8 @@ impl LineState {
     }
 }
 
-/// The stop a tab goes to, measured from the zero indent.
+/// The stop a tab goes to, in the line's coordinates (see
+/// [`LineState::next_tab`]).
 struct ResolvedTab {
     stop: f64,
     align: TabAlign,
@@ -1205,15 +1207,18 @@ impl PendingTab {
             _ => 0.0,
         };
         if self.align == TabAlign::Decimal && !self.aligned_found {
+            // A mirrored line draws text that reads against it, a number or
+            // Latin words, the other way round: of such text, what lies
+            // before the stop is what follows its alignment point, and none
+            // of a part of it that holds no point (an integer, the digits
+            // of a number split across runs).
+            let against = self.mirrored && !reads_right_to_left(item);
             match decimal_alignment_offset(item, &mut self.in_number, fm)? {
-                Some((offset, in_number)) => {
-                    self.aligned += if self.mirrored && in_number {
-                        width - offset
-                    } else {
-                        offset
-                    };
+                Some(offset) => {
+                    self.aligned += if against { width - offset } else { offset };
                     self.aligned_found = true;
                 }
+                None if against => {}
                 None => self.aligned += width,
             }
         }
@@ -1249,8 +1254,7 @@ impl PendingTab {
     }
 }
 
-/// Where a decimal tab aligns within one item, as a width from its start,
-/// and whether that point is in a number.
+/// Where a decimal tab aligns within one item, as a width from its start.
 ///
 /// Word aligns the first full stop, or else the end of the first number, a
 /// comma inside a number belonging to it whatever the document's decimal
@@ -1259,23 +1263,40 @@ fn decimal_alignment_offset(
     item: &InlineItem,
     in_number: &mut bool,
     fm: &FontManager,
-) -> Result<Option<(f64, bool)>> {
+) -> Result<Option<f64>> {
     let segment = match item {
         InlineItem::Text(segment) | InlineItem::HyphenatedText { segment, .. } => segment,
         InlineItem::MultilingualText(segment) => segment.base(),
-        _ => return Ok(in_number.then_some((0.0, true))),
+        _ => return Ok(in_number.then_some(0.0)),
     };
     for (index, ch) in segment.text.char_indices() {
         if ch == '.' || (*in_number && !ch.is_ascii_digit() && ch != ',') {
-            let offset = match item {
+            return Ok(Some(match item {
                 InlineItem::MultilingualText(span) => fm.context_prefix_width(span, index)?,
                 _ => text_prefix_width(segment, index, fm),
-            };
-            return Ok(Some((offset, *in_number)));
+            }));
         }
         *in_number |= ch.is_ascii_digit();
     }
     Ok(None)
+}
+
+/// Whether an item's text reads right to left: its first strong character
+/// is Hebrew or Arabic. Digits and other weak characters read left to right.
+fn reads_right_to_left(item: &InlineItem) -> bool {
+    let text = match item {
+        InlineItem::Text(segment) | InlineItem::HyphenatedText { segment, .. } => &segment.text,
+        InlineItem::MultilingualText(segment) => segment.text(),
+        _ => return false,
+    };
+    text.chars()
+        .find(|character| character.is_alphabetic())
+        .is_some_and(|character| {
+            matches!(
+                character as u32,
+                0x0590..=0x08ff | 0xfb1d..=0xfdff | 0xfe70..=0xfeff
+            )
+        })
 }
 
 /// Width of the spaces that end a segment's text.
