@@ -4,6 +4,7 @@ use oxoffice_docx_oxml::math::{
     MathProperties, MathRadical, MathRun, MathScript, MathStyle, MathSubSuperscript,
     MatrixBaseJustification, OfficeMath,
 };
+use oxoffice_docx_oxml::properties::CT_RPr;
 use oxoffice_docx_oxml::theme::Theme;
 use oxoffice_layout::{
     Color, Diagnostic, FontManager, GlyphRun, GroupElement, Point, PositionedElement, Rect, Result,
@@ -132,7 +133,14 @@ pub(crate) fn layout_officemath(
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<(MeasuredMath, bool)> {
-    let size = finite_positive(font_size).unwrap_or(DEFAULT_MATH_SIZE);
+    // An equation whose runs all carry one size or colour, as Word writes a
+    // whole equation set to 16 pt or red, takes it for its rules, signs and
+    // delimiters too.
+    let (uniform_size, uniform_color) = uniform_run_formatting(equation, runs);
+    let color = uniform_color.unwrap_or(color);
+    let size = uniform_size
+        .or(finite_positive(font_size))
+        .unwrap_or(DEFAULT_MATH_SIZE);
     let font_family = math_properties
         .and_then(|properties| properties.math_font.as_deref())
         .filter(|family| !family.is_empty())
@@ -245,6 +253,50 @@ pub(crate) fn layout_officemath(
             ))
         }
     }
+}
+
+/// The size and colour every run of `equation` sets in its own `w:rPr`,
+/// each when all runs set the same.
+fn uniform_run_formatting(
+    equation: &OfficeMath,
+    runs: RunFormatting<'_>,
+) -> (Option<f64>, Option<Color>) {
+    let mut pending: Vec<&MathExpression> = match equation {
+        OfficeMath::Inline(value) => value.expressions.iter().collect(),
+        OfficeMath::Display(value) => value
+            .equations
+            .iter()
+            .flat_map(|equation| &equation.expressions)
+            .collect(),
+    };
+    let mut sizes = Vec::new();
+    let mut colors = Vec::new();
+    while let Some(expression) = pending.pop() {
+        if let MathExpression::Run(run) = expression {
+            let properties = run.word_properties().unwrap_or_default();
+            sizes.push(properties.sz.and_then(|size| finite_positive(size.to_pt())));
+            colors.push(run_color(&properties, runs));
+        }
+        for argument in expression.arguments() {
+            pending.extend(&argument.expressions);
+        }
+    }
+    fn uniform<T: Copy + PartialEq>(values: &[Option<T>]) -> Option<T> {
+        let first = (*values.first()?)?;
+        values
+            .iter()
+            .all(|value| *value == Some(first))
+            .then_some(first)
+    }
+    (uniform(&sizes), uniform(&colors))
+}
+
+/// The colour a math run's `w:rPr` sets, if it sets one.
+fn run_color(properties: &CT_RPr, runs: RunFormatting<'_>) -> Option<Color> {
+    (properties.color.is_some()
+        || properties.color_theme.is_some()
+        || properties.solid_text_fill().is_some())
+    .then(|| crate::engine::resolve_run_color(properties, runs.theme, runs.automatic))
 }
 
 fn ink_bounds(value: &MeasuredMath, fm: &FontManager) -> Rect {
@@ -930,15 +982,8 @@ fn layout_run(
     let mut context = context;
     let mut color = color;
     if let Some(properties) = run.word_properties() {
-        if properties.color.is_some()
-            || properties.color_theme.is_some()
-            || properties.solid_text_fill().is_some()
-        {
-            color = crate::engine::resolve_run_color(
-                &properties,
-                context.runs.theme,
-                context.runs.automatic,
-            );
+        if let Some(run_color) = run_color(&properties, context.runs) {
+            color = run_color;
         }
         if let Some(size) = properties.sz.and_then(|size| finite_positive(size.to_pt())) {
             context.font_size *= size / context.root_size;

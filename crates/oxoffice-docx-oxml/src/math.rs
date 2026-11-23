@@ -311,6 +311,28 @@ pub enum MathExpression {
 }
 
 impl MathExpression {
+    /// The arguments of this expression, in document order: a matrix's
+    /// cells row by row.
+    pub fn arguments(&self) -> Vec<&MathArgument> {
+        match self {
+            Self::Run(_) => Vec::new(),
+            Self::Fraction(value) => vec![&value.numerator, &value.denominator],
+            Self::Subscript(value) | Self::Superscript(value) => vec![&value.base, &value.script],
+            Self::SubSuperscript(value) => {
+                vec![&value.base, &value.subscript, &value.superscript]
+            }
+            Self::PreSubSuperscript(value) => {
+                vec![&value.subscript, &value.superscript, &value.base]
+            }
+            Self::Radical(value) => vec![&value.degree, &value.base],
+            Self::Matrix(value) => value.rows.iter().flat_map(|row| &row.cells).collect(),
+            Self::LowerLimit(value) | Self::UpperLimit(value) => vec![&value.base, &value.limit],
+            Self::Nary(value) => vec![&value.subscript, &value.superscript, &value.base],
+            Self::Delimiter(value) => value.arguments.iter().collect(),
+            Self::Accent(value) => vec![&value.base],
+        }
+    }
+
     /// Whether this expression or one of its arguments retains unsupported content.
     pub fn has_unsupported_content(&self) -> bool {
         match self {
@@ -459,7 +481,13 @@ impl MathArgument {
 
     /// Whether this argument retains content outside the typed OfficeMath subset.
     pub fn has_unsupported_content(&self) -> bool {
-        preservation_has_unsupported_content(&self.preservation)
+        // An argument may end with the control properties of its construct.
+        let bindings = element_bindings(&self.preservation);
+        let mut preservation = self.preservation.clone();
+        preservation
+            .raw_children
+            .retain(|(_, raw)| !is_control_properties(raw, &bindings));
+        preservation_has_unsupported_content(&preservation)
             || self
                 .expressions
                 .iter()
@@ -2462,7 +2490,12 @@ fn word_run_properties(raw: &[u8], inherited: &[(String, String)]) -> Option<CT_
             .filter(|(_, namespace)| namespace == W_NS)
             .map(|(prefix, _)| prefix.clone())
             .collect();
-        return CT_RPr::from_xml_with_prefixes(&mut reader, &prefixes).ok();
+        return CT_RPr::from_xml_with_prefixes_and_owner_bindings(
+            &mut reader,
+            &prefixes,
+            &bindings,
+        )
+        .ok();
     }
 }
 

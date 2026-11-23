@@ -1,6 +1,6 @@
 {
   "file": "google/minutes.docx",
-  "reason": "equations draw their run formatting and a math fallback face",
+  "reason": "a math fallback face renumbers the PDF font resources",
   "resources": "ec5da75808b430ef06b72d812c8b3f4bdc0bb72781da371a723e7ef4cfbcbf41",
   "outline_and_tags": "1156cad6adc00fee6cc96c5b7a07fe43de3ac8e874e1fb5163f628d72405f77b",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",

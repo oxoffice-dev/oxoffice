@@ -44,6 +44,8 @@ content no reader understands.**
   `m:ctrlPr` holding only such a `w:rPr` are no longer unsupported content; `MathRun::word_properties` reads the
   first. The layout draws a math run in its colour (`w:color`, a theme colour, a text fill) and its size (`w:sz`,
   scaled by the run's script level: a 16 pt superscript is to a plain one what 16 pt is to the equation's size).
+  When every run of an equation sets one size or one colour, as Word writes a whole equation set to 16 pt or red,
+  the equation takes it: its rules, signs and delimiters too.
   Bold and italic stay `m:sty`'s, the font stays the math font. `m:ctrlPr` styles the construct's own characters (a
   delimiter, a bar, a fraction rule): the layout draws them with the equation's formatting, as before. A `w:rPr`
   or `m:ctrlPr` holding anything else (a tracked change, an attribute) is still reported.
@@ -73,7 +75,8 @@ content no reader understands.**
 **What we do not do**:
 
 - No line breaking inside an equation: `m:box`'s `noBreak` and the `m:brk` of a run change nothing drawn today.
-- `m:ctrlPr` formatting that differs from the equation's (a red delimiter) is kept and written back, not drawn.
+- `m:ctrlPr` formatting that differs from the equation's (a red delimiter in a black equation) is kept and
+  written back, not drawn; an `m:ctrlPr` is understood in a construct's properties and at the end of an argument.
 - The other properties of a math run's `w:rPr` (underline, highlight, `w:b`, `w:rFonts`) are kept and written
   back, not drawn.
 - Word's sizes of each construct are issue #405, a separate pull request on the same files.

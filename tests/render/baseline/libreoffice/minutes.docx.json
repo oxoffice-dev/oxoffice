@@ -1,6 +1,6 @@
 {
   "file": "libreoffice/minutes.docx",
-  "reason": "equations draw their run formatting and a math fallback face",
+  "reason": "a math fallback face renumbers the PDF font resources",
   "resources": "e524e092cf516bd5b400c96dc34bdaf7f6d3dc7062c0416721bd2c7a8b366013",
   "outline_and_tags": "ee8ba2e0e1b2900839341a4febbcb4b34d68cd01c4db8561c7440995ec36d398",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
