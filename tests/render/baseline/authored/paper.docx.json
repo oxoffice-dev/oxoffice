@@ -1,13 +1,13 @@
 {
   "file": "authored/paper.docx",
-  "reason": "every OfficeMath construct is drawn",
-  "resources": "27bbf37b585e568968e0f93af0e515eab8d1be67229fc18d17d185c162f3b15b",
-  "outline_and_tags": "f7123e132fe201d01523597a225d8287868fbbc66a3eee9f60a1b5ba55e71990",
+  "reason": "equation constructs take word's sizes, after #557",
+  "resources": "ece8d4e9c56a73b35f83804899dc382a767e2cbd95fb24f5ab4d13c7d8fddc49",
+  "outline_and_tags": "a08a3a748f905447193aaf5dcf358bb0bf718b0a299fb91fd0cd485af6787c19",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "6c26a1a41e8f800d122fd505f5ccc0e40ffad09002e8978a1346135d244ca7a5", "content": "d1a8539f97062a55b8076a02358c939829816cdd3a08b90ff5d71fd4fdd9accb", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "a4d3dda1a6d735a937c2971fe860e858328a82f58ac50b4377f4b2fa00e577b7", "content": "374e775374c60a10e6cd02fc13572a53a2bfb12fe43485e6270a7025c356b050", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "b5efef8cdb72c3756cc272c5f8e522b3ab6d57681d2fdfbee2ab43690bac686d", "content": "7c6564aeec2f1675828226192da6a87ee4b73a516149a1d408b56ecd551f5480", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
+    {"page": 2, "pixels": "ee8873c69d1895688e3f148d2947d742e003b2d8a1c34a38659ba205fc9a8e1f", "content": "62b4681bf5ad6805f67afcf045b9655cb1e36ed168d77525b009b74054cbeb41", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "2949af9abe2068506796ddb9b920bcf67b949bcd5faa299369a72cf965388ff5", "content": "8e8aa63b1ee0bfdde1faed2a5a2c4fa9c16d703dc5f532a99b3a02d4f4a6ddeb", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
     {"page": 4, "pixels": "76e1b3fd8c2b323985402fed303cedc866216b5239eb20378f124b718ca689d4", "content": "a73ff154d6a79048f7de42bb2dd80330a5ad7996231ba3742278e219892de738", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "b2f0f1e0a4487da9bb8eb2b61f9ec7110a58558f2d8a73d3ba0ec5857b32e036"}
   ]
 }

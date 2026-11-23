@@ -957,6 +957,367 @@ fn text_around_a_display_equation_in_its_paragraph_takes_lines_of_its_own() {
     }
 }
 
+/// One OfficeMath construct in Word's probes for equation sizes: a display
+/// equation between "before" and "after" lines, then the same equation in a
+/// line of text between "above" and "below" lines, all Cambria 11 on single
+/// lines with no space between paragraphs.
+struct MathProbe {
+    /// Word 16.115's baseline steps: before to the equation, the equation to
+    /// after, above to the inline line, the inline line to below.
+    word: [f64; 4],
+    /// Text drawn on the display equation's baseline.
+    anchor: &'static str,
+    omml: String,
+}
+
+impl MathProbe {
+    /// oxoffice's four steps for this construct.
+    fn steps(&self) -> [f64; 4] {
+        let cambria = r#"<w:rPr><w:rFonts w:ascii="Cambria" w:hAnsi="Cambria"/></w:rPr>"#;
+        let ppr = format!(
+            r#"<w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/>{cambria}</w:pPr>"#
+        );
+        let text =
+            |text: &str| format!(r#"<w:r>{cambria}<w:t xml:space="preserve">{text}</w:t></w:r>"#);
+        let line = |content: String| format!("<w:p>{ppr}{content}</w:p>");
+        let body = [
+            line(text("Before")),
+            line(format!(
+                r#"<m:oMathPara xmlns:m="{MATH_NS}"><m:oMath>{}</m:oMath></m:oMathPara>"#,
+                self.omml
+            )),
+            line(text("After")),
+            line(text("Above")),
+            line(format!(
+                r#"{}<m:oMath xmlns:m="{MATH_NS}">{}</m:oMath>{}"#,
+                text("Inline "),
+                self.omml,
+                text(" end of line.")
+            )),
+            line(text("Below")),
+        ]
+        .concat();
+        let pdf = pdf_of(&doc_with_body(&body));
+        let (top, bottom) = (line_of(&pdf, 0, "Before").y, line_of(&pdf, 0, "After").y);
+        let display = lines(&pdf.drawn(0))
+            .into_iter()
+            .find(|line| line.y < top && line.y > bottom && line.text.contains(self.anchor))
+            .unwrap_or_else(|| panic!("no display line draws {:?}", self.anchor))
+            .y;
+        let (before, after) = steps_around_y(&pdf, "Before", display, "After");
+        let (above, below) = steps_around(&pdf, "Above", "Inline", "Below");
+        [before, after, above, below]
+    }
+
+    fn assert_within_a_point_of_word(&self) {
+        let steps = self.steps();
+        let labels = ["before", "after", "above", "below"];
+        for ((label, ours), word) in labels.iter().zip(steps).zip(self.word) {
+            assert!(
+                (ours - word).abs() < 1.0,
+                "{label}: {ours:.2} pt, Word {word:.2} (steps {steps:.2?}, Word {:.2?})",
+                self.word
+            );
+        }
+    }
+}
+
+const MATH_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+
+fn math_run(text: &str) -> String {
+    format!("<m:r><m:t>{text}</m:t></m:r>")
+}
+
+fn math_fraction(numerator: &str, denominator: &str) -> String {
+    format!("<m:f><m:num>{numerator}</m:num><m:den>{denominator}</m:den></m:f>")
+}
+
+fn math_script(kind: &str, base: &str, script: &str) -> String {
+    let tag = if kind == "sSup" { "sup" } else { "sub" };
+    format!("<m:{kind}><m:e>{base}</m:e><m:{tag}>{script}</m:{tag}></m:{kind}>")
+}
+
+fn math_nary(character: &str, location: &str, lower: &str, upper: &str, base: &str) -> String {
+    format!(
+        r#"<m:nary><m:naryPr><m:chr m:val="{character}"/><m:limLoc m:val="{location}"/></m:naryPr><m:sub>{lower}</m:sub><m:sup>{upper}</m:sup><m:e>{base}</m:e></m:nary>"#
+    )
+}
+
+/// The steps into and out of the line whose baseline is at `y`.
+fn steps_around_y(pdf: &Pdf, before: &str, y: f64, after: &str) -> (f64, f64) {
+    (line_of(pdf, 0, before).y - y, y - line_of(pdf, 0, after).y)
+}
+
+// Word sets a fraction in a line of text in the smaller text style: its parts
+// at script size, closer to the rule. A display fraction keeps its size.
+#[test]
+fn a_fraction_in_a_line_of_text_is_set_in_the_smaller_text_style() {
+    MathProbe {
+        word: [17.52, 18.00, 14.51, 16.02],
+        anchor: "y=",
+        omml: format!(
+            "{}{}",
+            math_run("y="),
+            math_fraction(&math_run("a"), &math_run("b"))
+        ),
+    }
+    .assert_within_a_point_of_word();
+}
+
+// A sum with limits under and over: a display equation draws a large sign
+// with its limits stacked; a line of text keeps the text-size sign and sets
+// the limits beside it, so the line grows by about a point.
+#[test]
+fn a_sum_in_a_line_of_text_sets_its_limits_beside_a_text_size_sign() {
+    let indexed = |base: &str| math_script("sSub", &math_run(base), &math_run("i"));
+    for (word, base) in [
+        ([25.50, 24.53, 13.50, 13.25], indexed("x")),
+        (
+            [25.50, 24.50, 13.75, 13.00],
+            format!(
+                r#"<m:d><m:dPr></m:dPr><m:e>{}{}{}{}{}</m:e></m:d>"#,
+                indexed("h"),
+                indexed("I"),
+                math_run("+"),
+                indexed("b"),
+                indexed("B")
+            ),
+        ),
+    ] {
+        MathProbe {
+            word,
+            anchor: "S=",
+            omml: format!(
+                "{}{}",
+                math_run("S="),
+                math_nary(
+                    "\u{2211}",
+                    "undOvr",
+                    &math_run("i=1"),
+                    &math_run("N"),
+                    &base
+                )
+            ),
+        }
+        .assert_within_a_point_of_word();
+    }
+}
+
+// Word draws a display integral with a large sign, its limits beside it by
+// the sign's ink.
+#[test]
+fn a_display_integral_draws_a_large_sign() {
+    MathProbe {
+        word: [21.78, 21.00, 15.75, 15.00],
+        anchor: "F=",
+        omml: format!(
+            "{}{}",
+            math_run("F="),
+            math_nary(
+                "\u{222b}",
+                "subSup",
+                &math_run("0"),
+                &math_run("1"),
+                &format!(
+                    r#"{}<m:d><m:dPr></m:dPr><m:e>{}</m:e></m:d>{}"#,
+                    math_run("f"),
+                    math_run("t"),
+                    math_run("dt")
+                )
+            )
+        ),
+    }
+    .assert_within_a_point_of_word();
+}
+
+// A matrix is centred on the math axis, its brackets grown to cover it, in a
+// display equation and in a line of text alike.
+#[test]
+fn a_matrix_is_centred_on_the_math_axis() {
+    let rows = [["a", "b", "c"], ["d", "e", "f"], ["g", "h", "k"]]
+        .iter()
+        .map(|row| {
+            format!(
+                "<m:mr>{}</m:mr>",
+                row.iter()
+                    .map(|cell| format!("<m:e>{}</m:e>", math_run(cell)))
+                    .collect::<String>()
+            )
+        })
+        .collect::<String>();
+    MathProbe {
+        word: [25.50, 25.52, 25.50, 25.52],
+        anchor: "A=",
+        omml: format!(
+            r#"{}<m:d><m:dPr><m:begChr m:val="["/><m:endChr m:val="]"/></m:dPr><m:e><m:m><m:mPr><m:mcs><m:mc><m:mcPr><m:count m:val="3"/><m:mcJc m:val="center"/></m:mcPr></m:mc></m:mcs></m:mPr>{rows}</m:m></m:e></m:d>"#,
+            math_run("A=")
+        ),
+    }
+    .assert_within_a_point_of_word();
+}
+
+// Fractions nested in a display equation keep their size; in a line of text
+// each level goes one script size down.
+#[test]
+fn nested_fractions_keep_their_size_in_display_and_shrink_in_a_line_of_text() {
+    MathProbe {
+        word: [26.25, 26.50, 20.50, 20.25],
+        anchor: "z=",
+        omml: format!(
+            "{}{}",
+            math_run("z="),
+            math_fraction(
+                &math_fraction(&math_run("a"), &math_run("b")),
+                &math_fraction(&math_run("c"), &math_run("d"))
+            )
+        ),
+    }
+    .assert_within_a_point_of_word();
+}
+
+// Scripts and a radical place their parts by the math constants, so that a
+// line holding them is as tall as Word's.
+#[test]
+fn scripts_and_radicals_are_as_tall_as_in_word() {
+    let squared = |base: &str| math_script("sSup", &math_run(base), &math_run("2"));
+    for probe in [
+        MathProbe {
+            word: [13.00, 12.75, 13.00, 12.76],
+            anchor: "C=x",
+            omml: math_run("C=x"),
+        },
+        MathProbe {
+            word: [15.75, 13.00, 15.53, 13.50],
+            anchor: "r=",
+            omml: format!(
+                r#"{}<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e>{}{}{}</m:e></m:rad>"#,
+                math_run("r="),
+                squared("x"),
+                math_run("+"),
+                squared("y")
+            ),
+        },
+        MathProbe {
+            word: [12.75, 13.00, 13.00, 12.74],
+            anchor: "e",
+            omml: math_script("sSup", &math_run("e"), &math_run("x")),
+        },
+    ] {
+        probe.assert_within_a_point_of_word();
+    }
+}
+
+// A radical's sign grows to cover a tall radicand, its top joining the rule
+// over it, and its degree is set small, before the radicand and above the
+// baseline.
+#[test]
+fn a_radical_sign_covers_a_tall_radicand_and_sets_its_degree_small() {
+    let radical = |degree: &str, numerator: &str, denominator: &str| {
+        let degree = if degree.is_empty() {
+            r#"<m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/>"#.to_owned()
+        } else {
+            format!("<m:deg>{}</m:deg>", math_run(degree))
+        };
+        format!(
+            "<m:rad>{degree}<m:e>{}</m:e></m:rad>",
+            math_fraction(&math_run(numerator), &math_run(denominator))
+        )
+    };
+    let body = [
+        tight("Before"),
+        display_equation(
+            TIGHT,
+            &format!("{}{}", math_run("r="), radical("", "a", "b")),
+        ),
+        tight("Between"),
+        display_equation(
+            TIGHT,
+            &format!("{}{}", math_run("s="), radical("3", "c", "d")),
+        ),
+        tight("After"),
+    ]
+    .concat();
+    let doc = doc_with_body(&body);
+    let drawn = pdf_of(&doc).drawn(0);
+    let piece = |text: &str| {
+        drawn
+            .iter()
+            .find(|piece| piece.text == text)
+            .unwrap_or_else(|| panic!("{text} is drawn"))
+            .clone()
+    };
+    let (equals, degree, radicand) = (piece("s="), piece("3"), piece("c"));
+    assert!(
+        degree.size < 0.7 * equals.size && degree.end <= radicand.x && degree.y > equals.y + 3.0,
+        "degree {degree:?}, equation {equals:?}, radicand {radicand:?}"
+    );
+    let (sign, numerator, denominator) = (piece("\u{221a}"), piece("a"), piece("b"));
+    // The top and bottom dark rows of the page image (four pixels a point),
+    // in PDF points, over a band of columns, between the lines around the
+    // first equation.
+    let (above, below) = (piece("Before").y, piece("Between").y);
+    let image = Pixels::decode(&doc.render_page_to_png(0, 288.0).unwrap().expect("page 0"));
+    let height = f64::from(image.height) / 4.0;
+    let ink_rows = |from: f64, to: f64| {
+        let rows = (0..image.height)
+            .filter(|y| {
+                ((from * 4.0).ceil() as u32..(to * 4.0).floor() as u32).any(|x| {
+                    let at = ((y * image.width + x) * 4) as usize;
+                    image.rgba[at..at + 3].iter().all(|channel| *channel < 128)
+                })
+            })
+            .map(|y| height - f64::from(y) / 4.0)
+            .filter(|y| *y < above && *y > below + 1.0)
+            .collect::<Vec<_>>();
+        (rows[0], rows[rows.len() - 1])
+    };
+    let (sign_top, sign_bottom) = ink_rows(sign.x, sign.end);
+    let (rule, radicand_bottom) = ink_rows(numerator.x, numerator.end.min(denominator.end));
+    assert!(
+        (sign_top - rule).abs() <= 1.5 && sign_bottom <= radicand_bottom + 1.0,
+        "sign ink {sign_top:.1}..{sign_bottom:.1}, radicand {rule:.1}..{radicand_bottom:.1}"
+    );
+}
+
+// A linear fraction in a line of text keeps its parts at the size of its
+// slash; a stacked one sets them a script size down.
+#[test]
+fn a_linear_fraction_in_a_line_of_text_keeps_its_parts_at_the_slash_size() {
+    let linear = r#"<m:f><m:fPr><m:type m:val="lin"/></m:fPr><m:num><m:r><m:t>p</m:t></m:r></m:num><m:den><m:r><m:t>q</m:t></m:r></m:den></m:f>"#;
+    let body = tight_runs(&[
+        r#"<w:r><w:t xml:space="preserve">Linear </w:t></w:r>"#.to_owned(),
+        format!(r#"<m:oMath xmlns:m="{MATH_NS}">{linear}</m:oMath>"#),
+        r#"<w:r><w:t xml:space="preserve"> stacked </w:t></w:r>"#.to_owned(),
+        format!(
+            r#"<m:oMath xmlns:m="{MATH_NS}">{}</m:oMath>"#,
+            math_fraction(&math_run("m"), &math_run("n"))
+        ),
+    ]);
+    let drawn = pdf_of(&doc_with_body(&body)).drawn(0);
+    let size = |text: &str| {
+        drawn
+            .iter()
+            .find(|piece| piece.text == text)
+            .unwrap_or_else(|| panic!("{text} is drawn"))
+            .size
+    };
+    let slash = size("/");
+    for part in ["p", "q"] {
+        assert!(
+            (size(part) - slash).abs() < 0.01,
+            "{part} at {:.2} pt, the slash at {slash:.2}",
+            size(part)
+        );
+    }
+    for part in ["m", "n"] {
+        assert!(
+            size(part) < 0.8 * slash,
+            "{part} at {:.2} pt, the slash at {slash:.2}",
+            size(part)
+        );
+    }
+}
+
 /// A paragraph of single lines holding these runs.
 fn tight_runs(runs: &[String]) -> String {
     format!(r#"<w:p>{TIGHT}{}</w:p>"#, runs.concat())
