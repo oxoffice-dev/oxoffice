@@ -887,18 +887,24 @@ impl<'a> Inventory<'a> {
                 self.note_static(control, "a tracked change deletes it");
             }
         }
-        // Document order: by the first physical run each field draws.
+        // Document order: by where each field starts among the physical
+        // runs, its tracked changes included. A control starts before the
+        // run at its offset, so it sorts ahead of a legacy field in that run,
+        // and one with no run at all still has its own place.
         let runs = paragraph.source_runs();
-        let position: HashMap<*const CT_R, usize> = runs
-            .iter()
-            .enumerate()
-            .map(|(position, run)| (std::ptr::from_ref(*run), position))
+        let starts: HashMap<*const CT_Sdt, usize> = paragraph
+            .source_control_starts()
+            .into_iter()
+            .map(|(control, at)| (std::ptr::from_ref(control), at))
             .collect();
         let mut inline = Vec::new();
         let mut last = 0;
         for (ordinal, control) in controls.order.iter().enumerate() {
             let ordinal = u32::try_from(ordinal).unwrap_or(u32::MAX - 1);
-            last = first_run(control, &position).unwrap_or(last);
+            last = starts
+                .get(&std::ptr::from_ref(*control))
+                .copied()
+                .unwrap_or(last);
             if controls.mark_of(control) == Some(ordinal) {
                 inline.push((last, Inline::Control(ordinal, control)));
             }
@@ -941,16 +947,8 @@ impl<'a> Inventory<'a> {
                     ));
                     continue;
                 }
-                match field.legacy_form_value() {
-                    Ok(_) => {
-                        if let Some(index) = field_index.get(&std::ptr::from_ref(field)) {
-                            inline.push((at, Inline::Legacy(*index, field)));
-                        }
-                    }
-                    Err(error) => self.faults.push(format!(
-                        "form field {:?} stays static: its form data does not read ({error})",
-                        legacy_name(field)
-                    )),
+                if let Some(index) = field_index.get(&std::ptr::from_ref(field)) {
+                    inline.push((at, Inline::Legacy(*index, field)));
                 }
             }
         }
@@ -1066,34 +1064,10 @@ impl<'a> Inventory<'a> {
     }
 }
 
-/// Where a control's first physical run sits among the paragraph's runs,
-/// the runs of its tracked changes included: a control whose own text sits
-/// only in a tracked insertion still orders by that text.
-fn first_run(control: &CT_Sdt, position: &HashMap<*const CT_R, usize>) -> Option<usize> {
-    let at = |run: &CT_R| position.get(&std::ptr::from_ref(run)).copied();
-    let content = control.content.iter().filter_map(|content| match content {
-        SdtContent::Run(run) => at(run),
-        SdtContent::ContentControl(nested) => first_run(nested, position),
-        SdtContent::Paragraph(paragraph) => {
-            paragraph.source_runs().into_iter().filter_map(at).min()
-        }
-        _ => None,
-    });
-    let revisions = control
-        .revisions()
-        .iter()
-        .filter_map(|(_, revision)| revision.content_paragraph())
-        .filter_map(|paragraph| paragraph.source_runs().into_iter().filter_map(at).min());
-    content.chain(revisions).min()
-}
-
 /// A legacy form field's name for a diagnostic.
 fn legacy_name(field: &Field) -> String {
     field
-        .legacy_form
-        .as_ref()
-        .and_then(|data| data.name.clone())
-        .filter(|name| !name.is_empty())
+        .legacy_form_name()
         .unwrap_or_else(|| "untitled".to_owned())
 }
 

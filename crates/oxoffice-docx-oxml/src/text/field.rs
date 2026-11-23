@@ -1796,6 +1796,31 @@ impl Field {
         }
     }
 
+    /// The legacy form's `w:name` for a diagnostic: read leniently when its
+    /// form data does not read as a whole, so such a field still names
+    /// itself. `None` for a field that is no legacy form or has no name.
+    #[doc(hidden)]
+    pub fn legacy_form_name(&self) -> Option<String> {
+        if let Some(form) = &self.legacy_form {
+            return form.name.clone().filter(|name| !name.is_empty());
+        }
+        if !self.legacy_form_parse_error {
+            return None;
+        }
+        let FieldSource::Parsed {
+            raw_xml,
+            word_prefixes,
+            ..
+        } = self.source.as_ref()
+        else {
+            return None;
+        };
+        lenient_legacy_form_name(
+            crate::document::WordXmlInput::Contiguous(raw_xml),
+            word_prefixes,
+        )
+    }
+
     /// Read the authoritative current value. `Ok(None)` is a non-legacy field.
     #[doc(hidden)]
     pub fn legacy_form_value(&self) -> Result<Option<LegacyFormFieldValue>> {

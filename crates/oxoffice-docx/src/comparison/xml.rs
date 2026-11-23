@@ -36,6 +36,60 @@ pub(super) fn direct_element_spans(xml: &str) -> Result<Vec<Range<usize>>> {
     Ok(spans)
 }
 
+pub(super) fn element_opening(xml: &str) -> Result<(usize, bool, String)> {
+    let mut reader = Reader::from_str(xml);
+    let event = reader
+        .read_event()
+        .map_err(|error| Error::Other(format!("comparison owner start failed: {error}")))?;
+    let (element, empty) = match event {
+        Event::Start(element) => (element, false),
+        Event::Empty(element) => (element, true),
+        _ => return Err(Error::Other("comparison owner has no start element".into())),
+    };
+    let name = std::str::from_utf8(element.name().as_ref())
+        .map_err(utf8_error)?
+        .to_owned();
+    Ok((reader.buffer_position() as usize, empty, name))
+}
+
+pub(super) fn insert_first_child(xml: &str, child: &str) -> Result<String> {
+    let (end, empty, name) = element_opening(xml)?;
+    if empty {
+        return Ok(format!(
+            "{}>{child}</{name}>{}",
+            &xml[..end - 2],
+            &xml[end..]
+        ));
+    }
+    Ok(format!("{}{child}{}", &xml[..end], &xml[end..]))
+}
+
+/// Expanded Word names in a serialized owner. The writer supplies canonical
+/// `w` names, while preserved children can shadow that binding or use aliases.
+pub(super) fn word_element_starts(xml: &str) -> Result<HashSet<usize>> {
+    let opening = format!(r#"<scope xmlns:w="{W_NS}">"#);
+    let scoped = format!("{opening}{xml}</scope>");
+    let mut reader = NsReader::from_reader(scoped.as_bytes());
+    let mut starts = HashSet::new();
+    let mut buffer = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("comparison XML scan failed: {error}")))?;
+        if matches!(event, Event::Start(_) | Event::Empty(_))
+            && matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
+            && let Some(start) = before.checked_sub(opening.len())
+        {
+            starts.insert(start);
+        }
+        if matches!(event, Event::Eof) {
+            return Ok(starts);
+        }
+        buffer.clear();
+    }
+}
+
 pub(super) fn body_content_xml(content: &BodyContent) -> Result<String> {
     match content {
         BodyContent::Paragraph(paragraph) => paragraph_xml(paragraph),
