@@ -339,3 +339,25 @@ def test_grid_widths_on_cells_holding_a_hyperlink_or_a_table_keep_the_handles_ta
     saved = oxdocx.Document.from_bytes(doc.to_bytes()).tables[0]
     assert saved.cell(0, 0).width == Pt(100)
     assert saved.cell(0, 0).paragraphs[0].runs[0].bold is True
+
+
+def test_a_first_property_of_a_cell_holding_two_tables_keeps_each_table_handle_on_its_own_table():
+    """Owners in a cell story are matched by depth, then in document order: each handle keeps its own table."""
+    inner = ('<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>{}</w:t>'
+             "</w:r></w:p></w:tc></w:tr></w:tbl>")
+    doc = document_with_body(bare_cells("<w:p/>" + inner.format("first") + "<w:p/>" + inner.format("second")
+                                        + "<w:p/>"))
+    cell = doc.tables[0].cell(0, 0)
+    first, second = cell.tables
+    assert (first.cell(0, 0).text, second.cell(0, 0).text) == ("first", "second")
+
+    cell.shading = "FFFF00"
+
+    assert (first.cell(0, 0).text, second.cell(0, 0).text) == ("first", "second")
+    first.cell(0, 0).paragraphs[0].runs[0].bold = True
+    second.cell(0, 0).text = "changed"
+    saved = oxdocx.Document.from_bytes(doc.to_bytes()).tables[0].cell(0, 0)
+    assert saved.shading == RGBColor(0xFF, 0xFF, 0x00)
+    assert [table.cell(0, 0).text for table in saved.tables] == ["first", "changed"]
+    assert saved.tables[0].cell(0, 0).paragraphs[0].runs[0].bold is True
+
