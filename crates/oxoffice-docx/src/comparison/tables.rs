@@ -856,12 +856,19 @@ fn compare_aligned_cell_children(
                 .or_else(|| left.and_then(|index| original.content.get(index)))
         };
         let next_takes_mark = next_kept_owner(&aligned, position, |pair| {
-            matches!(item(pair), Some(CellContent::Table(_)))
+            matches!(
+                item(pair),
+                Some(CellContent::Table(_) | CellContent::ContentControl(_))
+            )
         })
         .is_some_and(|pair| {
             matches!(
                 item(pair),
-                Some(CellContent::Paragraph(_) | CellContent::Table(_))
+                Some(
+                    CellContent::Paragraph(_)
+                        | CellContent::Table(_)
+                        | CellContent::ContentControl(_)
+                )
             )
         });
         let child_mark = metadata.leaf_publications.len();

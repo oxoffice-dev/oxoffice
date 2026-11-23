@@ -1133,6 +1133,9 @@ pub(super) fn marked_control(
             (SdtContent::ContentControl(nested), _) => {
                 marked_control(nested, kind, move_id, carried, metadata)?
             }
+            (SdtContent::RawXml(raw), _) if block_markup_between_owners(raw) => {
+                String::from_utf8(raw.clone()).map_err(utf8_error)?
+            }
             _ => {
                 return Err(Error::Other(
                     "comparison can add or remove whole only a content control that holds paragraphs, tables or content controls"
@@ -1141,7 +1144,12 @@ pub(super) fn marked_control(
             }
         });
     }
-    if content.is_empty() {
+    if !control.content.iter().any(|child| {
+        matches!(
+            child,
+            SdtContent::Paragraph(_) | SdtContent::Table(_) | SdtContent::ContentControl(_)
+        )
+    }) {
         return Err(Error::Other(
             "comparison cannot add or remove an empty content control".to_owned(),
         ));
@@ -1149,4 +1157,34 @@ pub(super) fn marked_control(
     metadata
         .ids
         .generated(replace_element_inner(&source, "w:sdtContent", &content)?)
+}
+
+/// Whether unmodelled XML between the owners of a block content control is
+/// whitespace, a proofing mark or a bookmark, comment or permission range
+/// marker: markup that resolving the control's content keeps or drops as
+/// it stands, and that a control added or removed whole carries verbatim.
+fn block_markup_between_owners(raw: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(raw);
+    let text = text.trim();
+    if text.is_empty() {
+        return true;
+    }
+    let Some(tag) = text.strip_prefix('<') else {
+        return false;
+    };
+    let name = tag
+        .split(|character: char| character.is_whitespace() || matches!(character, '/' | '>'))
+        .next()
+        .unwrap_or_default();
+    matches!(
+        name.rsplit(':').next().unwrap_or_default(),
+        "proofErr"
+            | "bookmarkStart"
+            | "bookmarkEnd"
+            | "commentRangeStart"
+            | "commentRangeEnd"
+            | "permStart"
+            | "permEnd"
+    ) && text.ends_with("/>")
+        && text.matches('<').count() == 1
 }

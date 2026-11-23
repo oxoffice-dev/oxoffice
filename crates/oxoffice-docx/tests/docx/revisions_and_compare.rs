@@ -2000,7 +2000,8 @@ fn one_cell_table(content: &str) -> String {
 }
 
 /// The body owners of `doc` in order: a paragraph's text, a block control
-/// as `alias{text}`, a table as `[text of its first cell]`.
+/// as `alias{text}`, a table as `[text of its first cell]`, other markup as
+/// its XML.
 fn body_owners(doc: &Document) -> Vec<String> {
     doc.body_items()
         .map(|item| match item {
@@ -2009,15 +2010,27 @@ fn body_owners(doc: &Document) -> Vec<String> {
             BodyItemRef::ContentControl(control) => {
                 format!("{}{{{}}}", control.alias().unwrap_or(""), control.text())
             }
-            BodyItemRef::UnsupportedXml(_) => panic!("no opaque body node here"),
+            BodyItemRef::UnsupportedXml(xml) => String::from_utf8_lossy(xml).into_owned(),
         })
         .collect()
 }
 
+/// What a resolved body must give back: its owners, the alias of every
+/// content control in document order, nested ones included, and its
+/// bookmark names.
+fn resolved_shape(doc: &mut Document) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let aliases = main_xml(doc)
+        .split(r#"<w:alias w:val=""#)
+        .skip(1)
+        .map(|rest| rest.split('"').next().unwrap_or_default().to_owned())
+        .collect();
+    (body_owners(doc), aliases, bookmark_names(doc))
+}
+
 /// Compare the body `original` with the body `edited` both ways, at word
 /// and character granularity: each redline resolves to the edited body
-/// once accepted and to the original once rejected, with the revisions
-/// `check` expects.
+/// once accepted and to the original once rejected (see
+/// [`resolved_shape`]), with the revisions `check` expects.
 fn check_bodies_both_ways(original: &str, edited: &str, check: impl Fn(&mut Document, bool)) {
     for (from, to, forward) in [(original, edited, true), (edited, original, false)] {
         for granularity in [
@@ -2037,13 +2050,13 @@ fn check_bodies_both_ways(original: &str, edited: &str, check: impl Fn(&mut Docu
             check(&mut doc, forward);
             let context = format!("{granularity:?}, forward {forward}");
             assert_eq!(
-                body_owners(&accepted(&mut doc)),
-                body_owners(&doc_with_body(to)),
+                resolved_shape(&mut accepted(&mut doc)),
+                resolved_shape(&mut doc_with_body(to)),
                 "{context}"
             );
             assert_eq!(
-                body_owners(&rejected(&mut doc)),
-                body_owners(&doc_with_body(from)),
+                resolved_shape(&mut rejected(&mut doc)),
+                resolved_shape(&mut doc_with_body(from)),
                 "{context}"
             );
         }
@@ -2144,6 +2157,16 @@ fn a_paragraph_removed_next_to_a_block_content_control_is_compared() {
         ),
         // With the control after it, ending the body.
         (format!("{INTRO}{removed}{first}"), INTRO.to_owned()),
+        // In a cell, before a control.
+        (
+            one_cell_table(&format!("{removed}{first}{INTRO}")),
+            one_cell_table(&format!("{first}{INTRO}")),
+        ),
+        // Inside a control, before a nested control.
+        (
+            block_control("Outer", &format!("{removed}{first}{INTRO}")),
+            block_control("Outer", &format!("{first}{INTRO}")),
+        ),
     ] {
         check_bodies_both_ways(&original, &edited, |_, _| {});
     }
@@ -2251,4 +2274,65 @@ fn a_block_content_control_whose_content_is_all_tracked_goes_with_that_content()
         assert_eq!(body_owners(&accepted(&mut doc)), on_accept, "{body}");
         assert_eq!(body_owners(&rejected(&mut doc)), on_reject, "{body}");
     }
+}
+
+#[test]
+fn an_existing_paragraph_wrapped_in_a_block_content_control_is_compared() {
+    check_bodies_both_ways(
+        &format!("{INTRO}{BODY}"),
+        &format!("{INTRO}{}", block_control("Box", BODY)),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_block_content_control_removed_whole_takes_the_bookmarks_it_encloses() {
+    // A heading bookmark and Word's `_GoBack` inside the control, and a
+    // pretty-printed control with whitespace and a proofing mark between
+    // its paragraphs.
+    let clause = block_control(
+        "Clause",
+        &format!(
+            concat!(
+                r#"<w:p><w:bookmarkStart w:id="7" w:name="_Toc9"/><w:r><w:t>Clause</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>"#,
+                "\n  ",
+                r#"<w:proofErr w:type="spellStart"/>"#,
+                "\n  ",
+                r#"<w:p><w:bookmarkStart w:id="8" w:name="_GoBack"/><w:bookmarkEnd w:id="8"/><w:r><w:t>Text</w:t></w:r></w:p>"#,
+                "{}"
+            ),
+            "\n"
+        ),
+    );
+    check_bodies_both_ways(
+        &format!("{INTRO}{clause}{BODY}"),
+        &format!("{INTRO}{BODY}"),
+        |_, _| {},
+    );
+}
+
+#[test]
+fn a_bookmark_that_only_ends_in_a_removed_control_keeps_both_ends() {
+    // A Word redline: the control deleted under tracking holds the end of a
+    // bookmark that starts before it.
+    let body = format!(
+        concat!(
+            r#"<w:p><w:bookmarkStart w:id="3" w:name="span"/><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+            r#"<w:sdt><w:sdtPr><w:alias w:val="Box"/></w:sdtPr><w:sdtContent><w:p><w:pPr><w:rPr>"#,
+            r#"<w:del w:id="1" w:author="Ada" w:date="{date}"/></w:rPr></w:pPr><w:del w:id="2" w:author="Ada" w:date="{date}">"#,
+            r#"<w:r><w:delText>Inside</w:delText></w:r></w:del><w:bookmarkEnd w:id="3"/></w:p></w:sdtContent></w:sdt>"#,
+            "{body}"
+        ),
+        date = DATE,
+        body = BODY
+    );
+    let mut doc = doc_with_body(&body);
+    let accepted = accepted(&mut doc);
+    // The end stays at block level, where the control was.
+    let owners = body_owners(&accepted);
+    assert_eq!(owners.len(), 3, "{owners:?}");
+    assert_eq!([&owners[0], &owners[2]], ["Intro", "Body."]);
+    assert!(owners[1].starts_with("<w:bookmarkEnd ") && owners[1].contains(r#"w:id="3""#));
+    assert_eq!(bookmark_names(&accepted), ["span"]);
+    assert_eq!(bookmark_names(&rejected(&mut doc)), ["span"]);
 }

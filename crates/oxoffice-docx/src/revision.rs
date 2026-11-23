@@ -2537,8 +2537,7 @@ impl<'a> XmlTree<'a> {
         // goes whole, as a table whose every row it removes does: a control
         // added or removed whole holds only marked paragraphs and tables.
         if semantic && self.control_owners_all_remove(index, state) {
-            self.validate_removed_control(index, state)?;
-            return Ok(Vec::new());
+            return self.render_removed_control(index, state);
         }
         if let Some(metadata) = &element.revision
             && semantic
@@ -2903,8 +2902,11 @@ impl<'a> XmlTree<'a> {
                     output.extend_from_slice(
                         &self.source[self.elements[pair[0]].end..self.elements[pair[1]].start],
                     );
+                    // A crossed table yields no bytes, a crossed control only
+                    // the range markers it leaves (see `render_removed_control`).
                     if matches!(self.elements[pair[1]].local.as_str(), "tbl" | "sdt") {
-                        self.render(pair[1], state, false)?;
+                        let crossed = self.render(pair[1], state, false)?;
+                        output.extend_from_slice(&crossed);
                     }
                 }
                 if before_table {
@@ -3235,7 +3237,8 @@ impl<'a> XmlTree<'a> {
 
     /// The paragraphs, tables and block controls a block content control
     /// holds, in order. `None` for any other element, and for a control
-    /// that holds runs, rows, cells or other markup between its owners.
+    /// that holds runs, rows, cells or markup between its owners other than
+    /// proofing marks and range markers.
     fn block_control_owners(&self, index: usize) -> Option<Vec<usize>> {
         let element = &self.elements[index];
         if !(element.word && element.local == "sdt") {
@@ -3249,7 +3252,9 @@ impl<'a> XmlTree<'a> {
             let child_element = &self.elements[child];
             if self.story_owner(child) {
                 owners.push(child);
-            } else if !(child_element.word && child_element.local == "proofErr") {
+            } else if !(child_element.word
+                && (child_element.local == "proofErr" || range_marker(&child_element.local)))
+            {
                 return None;
             }
         }
@@ -3272,16 +3277,100 @@ impl<'a> XmlTree<'a> {
         })
     }
 
-    /// Resolve a block content control that goes whole: nothing of its
-    /// paragraphs but proofing marks may remain.
-    fn validate_removed_control(&self, index: usize, state: &mut RenderState<'_>) -> Result<()> {
-        for owner in self.block_control_owners(index).unwrap_or_default() {
-            match self.elements[owner].local.as_str() {
-                "p" => self.validate_removed_paragraphs(&[owner], state)?,
-                "tbl" => {
-                    self.render(owner, state, false)?;
+    /// Resolve a block content control that goes whole, into the range
+    /// markers it leaves at block level where it was. Nothing of its
+    /// paragraphs but proofing marks and range markers may remain. A
+    /// bookmark whose both ends it holds goes with it, as Word drops a
+    /// bookmark whose whole range is deleted; every other marker stays, so
+    /// that a bookmark, comment or permission range that only starts or ends
+    /// in it keeps both ends.
+    fn render_removed_control(&self, index: usize, state: &mut RenderState<'_>) -> Result<Vec<u8>> {
+        let mut markers = Vec::new();
+        self.collect_removed_control_markers(index, state, &mut markers)?;
+        let bookmark_ids = |local: &str| -> HashSet<String> {
+            markers
+                .iter()
+                .filter(|marker| self.elements[**marker].local == local)
+                .filter_map(|marker| self.element_id(*marker))
+                .collect()
+        };
+        let enclosed = bookmark_ids("bookmarkStart")
+            .intersection(&bookmark_ids("bookmarkEnd"))
+            .cloned()
+            .collect::<HashSet<_>>();
+        let mut output = Vec::new();
+        for marker in markers {
+            let element = &self.elements[marker];
+            if matches!(element.local.as_str(), "bookmarkStart" | "bookmarkEnd")
+                && self
+                    .element_id(marker)
+                    .is_some_and(|id| enclosed.contains(&id))
+            {
+                continue;
+            }
+            output.extend_from_slice(&self.render(marker, state, false)?);
+        }
+        Ok(output)
+    }
+
+    /// The range markers of a block content control that goes whole, in
+    /// order, after checking that nothing else of its paragraphs but proofing
+    /// marks remains.
+    fn collect_removed_control_markers(
+        &self,
+        index: usize,
+        state: &mut RenderState<'_>,
+        markers: &mut Vec<usize>,
+    ) -> Result<()> {
+        let refusal = || {
+            Error::Other(
+                "a content control removed whole requires its paragraphs to keep no content"
+                    .to_owned(),
+            )
+        };
+        let content = self.elements[index].children.iter().copied().find(|child| {
+            self.elements[*child].word && self.elements[*child].local == "sdtContent"
+        });
+        for &child in content.map_or(&[][..], |content| &self.elements[content].children[..]) {
+            let element = &self.elements[child];
+            match element.local.as_str() {
+                "p" if element.word => {
+                    let mut cursor = element.open_end;
+                    for &grandchild in &element.children {
+                        let inner = &self.elements[grandchild];
+                        if !self.source[cursor..inner.start]
+                            .iter()
+                            .all(u8::is_ascii_whitespace)
+                        {
+                            return Err(refusal());
+                        }
+                        cursor = inner.end;
+                        if inner.word && inner.local == "pPr" {
+                            self.validate_selected_descendants(grandchild, state)?;
+                        } else if inner.word && range_marker(&inner.local) {
+                            markers.push(grandchild);
+                        } else if !self.render(grandchild, state, false)?.is_empty()
+                            && !(inner.word && inner.local == "proofErr")
+                        {
+                            return Err(refusal());
+                        }
+                    }
+                    if !element.empty
+                        && !self.source[cursor..element.close_start]
+                            .iter()
+                            .all(u8::is_ascii_whitespace)
+                    {
+                        return Err(refusal());
+                    }
                 }
-                _ => self.validate_removed_control(owner, state)?,
+                "tbl" if element.word => {
+                    self.render(child, state, false)?;
+                }
+                "sdt" if element.word => {
+                    self.collect_removed_control_markers(child, state, markers)?
+                }
+                local if element.word && range_marker(local) => markers.push(child),
+                _ => {}
             }
         }
         Ok(())
@@ -4044,6 +4133,20 @@ fn is_property_change(kind: RevisionKind) -> bool {
 
 fn keeps_content(resolution: Resolution, kind: RevisionKind) -> bool {
     !removes_content(resolution, kind)
+}
+
+/// A bookmark, comment or permission range marker, which may stand at block
+/// level as well as in a paragraph.
+fn range_marker(local: &str) -> bool {
+    matches!(
+        local,
+        "bookmarkStart"
+            | "bookmarkEnd"
+            | "commentRangeStart"
+            | "commentRangeEnd"
+            | "permStart"
+            | "permEnd"
+    )
 }
 
 fn removes_content(resolution: Resolution, kind: RevisionKind) -> bool {

@@ -32,6 +32,10 @@ body. A block content control (`w:sdt` holding paragraphs and tables) has no suc
   else, as a table whose every row it removes does. In a chain of removed paragraph marks, such a control is
   crossed; a control that stays stops the chain as a table that stays does (the paragraphs before it go), and the
   body may end with it.
+- **Range markers** of a control that goes: a bookmark whose both ends it holds goes with it, as Word drops a
+  bookmark whose whole range is deleted (a heading's `_Toc` bookmark, `_GoBack`). Every other bookmark, comment or
+  permission marker stays where the control was, at block level, so that a range that only starts or ends in it
+  keeps both ends.
 - **Comparison**: a control added, removed or moved whole keeps its properties and has each paragraph and table
   inside marked as added, removed or moved whole, nested controls alike: the OOXML has no mark for the control
   itself, so the marks go on what it holds. Whether Word's own Compare writes the same shape is the Word check of
@@ -43,7 +47,10 @@ We deliberately do not:
 
 - Track an unmodelled body node (`RawXml`): its XML cannot carry a mark. It stays refused, with its own message.
 - Track a control holding runs, rows or cells, or one with nothing inside, added or removed whole: they are not
-  block controls, or there is nothing to mark. Refused with a message that says so.
+  block controls, or there is nothing to mark. Refused with a message that says so. Whitespace, proofing marks
+  and range markers between its paragraphs are carried as they are.
+- Give the copy of a moved control new properties: until the move is resolved, the redline holds both copies with
+  the same `w:id`, tag and gallery (Word check, step 3).
 - Change how a control both versions hold is compared inside.
 
 ## Plan
