@@ -192,7 +192,6 @@ impl GradientRegistry {
         };
 
         for (page_idx, page) in pages.iter().enumerate() {
-            let mut leaf_idx = 0;
             let page_flip = Transform {
                 a: 1.0,
                 b: 0.0,
@@ -211,9 +210,7 @@ impl GradientRegistry {
                     alloc,
                 );
             }
-            walk(&page.elements, &mut |element, transform| {
-                let current_idx = leaf_idx;
-                leaf_idx += 1;
+            walk_leaves(&page.elements, &mut |current_idx, element, transform| {
                 let PositionedElement::Path(path) = element else {
                     return;
                 };
@@ -523,14 +520,7 @@ pub(crate) fn write_pdf_impl(
     let mut image_map: HashMap<(usize, usize), usize> = HashMap::new();
 
     for (page_idx, page) in layout.pages.iter().enumerate() {
-        let mut elem_idx = 0;
-        walk(&page.elements, &mut |element, _| {
-            if matches!(element, PositionedElement::Text(run) if run.text.is_empty() && run.glyph_ids.is_empty())
-            {
-                return;
-            }
-            let current_idx = elem_idx;
-            elem_idx += 1;
+        walk_leaves(&page.elements, &mut |current_idx, element, _| {
             if let PositionedElement::Image {
                 data, content_type, ..
             } = element
@@ -562,10 +552,7 @@ pub(crate) fn write_pdf_impl(
     let destinations = link_destinations(layout);
     let mut annotation_refs: HashMap<(usize, usize), Ref> = HashMap::new();
     for (page_idx, page) in layout.pages.iter().enumerate() {
-        let mut elem_idx = 0;
-        walk(&page.elements, &mut |element, _| {
-            let current_idx = elem_idx;
-            elem_idx += 1;
+        walk_leaves(&page.elements, &mut |current_idx, element, _| {
             if let PositionedElement::LinkAnnotation { url, .. } = element
                 && url
                     .strip_prefix('#')
@@ -603,10 +590,8 @@ pub(crate) fn write_pdf_impl(
             .map_or(0, |forms| forms.tagged_widgets().len());
         let mut next_key = (layout.pages.len() + widget_count) as i32;
         for (page_idx, page) in layout.pages.iter().enumerate() {
-            let (mut elem_idx, mut ordinal) = (0, 0);
-            walk(&page.elements, &mut |element, _| {
-                let current_idx = elem_idx;
-                elem_idx += 1;
+            let mut ordinal = 0;
+            walk_leaves(&page.elements, &mut |current_idx, element, _| {
                 if let PositionedElement::LinkAnnotation { .. } = element {
                     if let Some(&annotation) = annotation_refs.get(&(page_idx, current_idx)) {
                         tagged_links.push(TaggedLink {
@@ -943,10 +928,7 @@ pub(crate) fn write_pdf_impl(
 
         // Annotations (hyperlinks)
         let mut page_annotations = Vec::new();
-        let mut elem_idx = 0;
-        walk(&page.elements, &mut |element, _| {
-            let current_idx = elem_idx;
-            elem_idx += 1;
+        walk_leaves(&page.elements, &mut |current_idx, element, _| {
             if matches!(element, PositionedElement::LinkAnnotation { .. })
                 && let Some(reference) = annotation_refs.get(&(page_idx, current_idx))
             {
@@ -970,10 +952,7 @@ pub(crate) fn write_pdf_impl(
 
     // ── Write link annotations ───────────────────────────────────────
     for (page_idx, page) in layout.pages.iter().enumerate() {
-        let mut elem_idx = 0;
-        walk(&page.elements, &mut |element, transform| {
-            let current_idx = elem_idx;
-            elem_idx += 1;
+        walk_leaves(&page.elements, &mut |current_idx, element, transform| {
             if let PositionedElement::LinkAnnotation { rect, url } = element
                 && let Some(&annot_ref) = annotation_refs.get(&(page_idx, current_idx))
             {
@@ -1074,6 +1053,39 @@ pub(crate) fn write_pdf_impl(
     }
     pdf.set_file_id((file_id.to_vec(), file_id.to_vec()));
     pdf.finish()
+}
+
+/// Whether an element takes a number among its page's leaves. The number
+/// names the page's images and gradients and keys its link annotations, so
+/// every pass that numbers leaves asks here: [`walk_leaves`] for the passes
+/// before the content stream, `emit_elements` for the stream itself. An empty
+/// run draws nothing and takes no number.
+fn counts_as_leaf(element: &PositionedElement) -> bool {
+    match element {
+        PositionedElement::Group(_)
+        | PositionedElement::MarkedContent { .. }
+        | PositionedElement::FormField(_) => false,
+        PositionedElement::Text(run) => !(run.text.is_empty() && run.glyph_ids.is_empty()),
+        PositionedElement::MultilingualText(run) => {
+            !(run.logical_text.is_empty() && run.glyph_ids.is_empty())
+        }
+        _ => true,
+    }
+}
+
+/// Visit the numbered leaves of a page in [`walk`] order, each with its
+/// number and its transform to the page.
+fn walk_leaves(
+    elements: &[PositionedElement],
+    f: &mut impl FnMut(usize, &PositionedElement, &Transform),
+) {
+    let mut index = 0;
+    walk(elements, &mut |element, transform| {
+        if counts_as_leaf(element) {
+            f(index, element, transform);
+            index += 1;
+        }
+    });
 }
 
 /// Where each named destination lands: the first page that draws it, and
@@ -1379,6 +1391,15 @@ fn build_page_content<'a>(
         Transform::IDENTITY,
         None,
     );
+    debug_assert_eq!(
+        state.leaf_index,
+        {
+            let mut count = 0;
+            walk_leaves(&page.elements, &mut |_, _, _| count += 1);
+            count
+        },
+        "the content stream numbered page {page_idx}'s leaves unlike the passes before it"
+    );
 
     content.restore_state();
     content.finish().to_vec()
@@ -1499,10 +1520,7 @@ fn emit_elements<'a>(
             continue;
         }
         let elem_idx = state.leaf_index;
-        if !matches!(element, PositionedElement::Group(_))
-            && !matches!(element, PositionedElement::Text(run) if run.text.is_empty() && run.glyph_ids.is_empty())
-            && !matches!(element, PositionedElement::MultilingualText(run) if run.logical_text.is_empty() && run.glyph_ids.is_empty())
-        {
+        if counts_as_leaf(element) {
             state.leaf_index += 1;
         }
         match element {
