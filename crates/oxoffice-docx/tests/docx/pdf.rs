@@ -7,7 +7,9 @@ use std::io::{Cursor, Read};
 
 use lopdf::Object;
 use oxoffice_docx::paragraph::Alignment;
-use oxoffice_docx::{Document, Length, PdfConformance, PictureOptions, RenderOptions, StoryKind};
+use oxoffice_docx::{
+    CT_RPr, Document, Length, ListLevel, PdfConformance, PictureOptions, RenderOptions, StoryKind,
+};
 use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf};
 
@@ -650,6 +652,226 @@ fn text_around_a_display_equation_in_its_paragraph_takes_lines_of_its_own() {
     }
 }
 
+/// A paragraph of single lines holding these runs.
+fn tight_runs(runs: &[String]) -> String {
+    format!(r#"<w:p>{TIGHT}{}</w:p>"#, runs.concat())
+}
+
+/// A paragraph of exact 14 pt lines holding these runs.
+fn exact(runs: &[String]) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="280" w:lineRule="exact"/></w:pPr>{}</w:p>"#,
+        runs.concat()
+    )
+}
+
+fn run_in(fonts: &str, text: &str) -> String {
+    format!(
+        r#"<w:r><w:rPr><w:rFonts {fonts}/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#
+    )
+}
+
+// A glyph the requested family's face lacks is drawn by a face that has it,
+// and its line stays as tall as a line of the requested family: Word
+// measures a line on the run's font, not on the font that rescued a glyph.
+// MS Gothic and SimSun stand in as Carlito here; Noto Sans Symbols 2 and
+// Noto Sans SC, which draw the box, the symbol and the Han character, are
+// taller.
+#[test]
+fn a_glyph_drawn_by_a_fallback_face_leaves_its_line_as_tall_as_the_requested_font() {
+    let gothic = r#"w:ascii="MS Gothic" w:hAnsi="MS Gothic" w:eastAsia="MS Gothic""#;
+    let simsun = r#"w:ascii="SimSun" w:hAnsi="SimSun" w:eastAsia="SimSun""#;
+    let body = [
+        tight_runs(&[run_in(gothic, "Plain one")]),
+        tight_runs(&[run_in(gothic, "Plain two")]),
+        tight_runs(&[run_in(gothic, "\u{2612}"), run_in(gothic, " Boxed")]),
+        tight_runs(&[run_in(gothic, "Below box")]),
+        tight_runs(&[
+            r#"<w:r><w:sym w:font="Wingdings 2" w:char="F054"/></w:r>"#.to_owned(),
+            run_in(gothic, " Symbol"),
+        ]),
+        tight_runs(&[run_in(gothic, "Below symbol")]),
+        tight_runs(&[run_in(simsun, "\u{4e2d}"), run_in(simsun, " Hanzi")]),
+        tight_runs(&[run_in(gothic, "Below hanzi")]),
+        tight_runs(&[
+            format!(
+                r#"<w:r><w:rPr><w:rFonts {gothic}/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:checkBox><w:sizeAuto/><w:default w:val="1"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:rPr><w:rFonts {gothic}/></w:rPr><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:rPr><w:rFonts {gothic}/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>"#
+            ),
+            run_in(gothic, " Checked"),
+        ]),
+        tight_runs(&[run_in(gothic, "Below check")]),
+        exact(&[run_in(gothic, "Exact plain")]),
+        exact(&[run_in(gothic, "\u{2612}"), run_in(gothic, " Exact boxed")]),
+        exact(&[run_in(gothic, "Exact below")]),
+    ]
+    .concat();
+    let mut doc = doc_with_body(&body);
+    let marker = CT_RPr {
+        font_ascii: Some("MS Gothic".to_owned()),
+        font_hansi: Some("MS Gothic".to_owned()),
+        ..Default::default()
+    };
+    let list = doc.add_list_definition(&[ListLevel::bullet()
+        .level_text("\u{2612}")
+        .marker_properties(marker)]);
+    for text in ["Listed one", "Listed two"] {
+        doc.add_paragraph(text).set_numbering(list, 0);
+    }
+    for text in ["Unlisted one", "Unlisted two"] {
+        doc.add_paragraph(text);
+    }
+    let pdf = pdf_of(&doc);
+    let line = baseline_step(&pdf, "Plain one", "Plain two");
+    for (from, to) in [
+        ("Plain two", "Boxed"),
+        ("Boxed", "Below box"),
+        ("Below box", "Symbol"),
+        ("Symbol", "Below symbol"),
+        ("Below symbol", "Hanzi"),
+        ("Hanzi", "Below hanzi"),
+        ("Below hanzi", "Checked"),
+        ("Checked", "Below check"),
+    ] {
+        let step = baseline_step(&pdf, from, to);
+        assert!(
+            (step - line).abs() < 0.01,
+            "{from} to {to}: {step:.2} pt, a line of the requested font {line:.2}"
+        );
+    }
+    // An exact line keeps its baseline where a line of the requested font has it.
+    for (from, to) in [
+        ("Exact plain", "Exact boxed"),
+        ("Exact boxed", "Exact below"),
+    ] {
+        let step = baseline_step(&pdf, from, to);
+        assert!(
+            (step - 14.0).abs() < 0.01,
+            "{from} to {to}: {step:.2} pt on exact 14 pt lines"
+        );
+    }
+    let listed = baseline_step(&pdf, "Listed one", "Listed two");
+    let unlisted = baseline_step(&pdf, "Unlisted one", "Unlisted two");
+    assert!(
+        (listed - unlisted).abs() < 0.01,
+        "list items with a box marker step {listed:.2} pt, plain paragraphs {unlisted:.2}"
+    );
+    for drawn in ["\u{2612}", "\u{4e2d}"] {
+        assert!(pdf.page_text(0).contains(drawn), "{drawn} is not drawn");
+    }
+}
+
+/// The baseline steps into and out of the line holding `middle`, between the
+/// lines holding `before` and `after`.
+fn steps_around(pdf: &Pdf, before: &str, middle: &str, after: &str) -> (f64, f64) {
+    (
+        baseline_step(pdf, before, middle),
+        baseline_step(pdf, middle, after),
+    )
+}
+
+// Word draws a run's Han characters from its `w:eastAsia` family even when
+// its Latin text gives the run the ASCII slot, so a mixed run measures its
+// Han on SimSun's stand-in (Carlito), as a run of Han alone does, and not on
+// the Latin family (Times New Roman, standing in as Liberation Serif).
+#[test]
+fn han_in_a_mixed_run_measures_on_the_runs_east_asian_family() {
+    let mixed = r#"w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="SimSun""#;
+    let times = r#"w:ascii="Times New Roman" w:hAnsi="Times New Roman""#;
+    let body = [
+        tight_runs(&[run_in(times, "Lead one")]),
+        tight_runs(&[run_in(mixed, "Q3 \u{4e2d} Mixed")]),
+        tight_runs(&[run_in(times, "Middle")]),
+        tight_runs(&[
+            run_in(times, "Q3 "),
+            run_in(mixed, "\u{4e2d}"),
+            run_in(times, " Split"),
+        ]),
+        tight_runs(&[run_in(times, "Tail")]),
+    ]
+    .concat();
+    let pdf = pdf_of(&doc_with_body(&body));
+    let mixed_steps = steps_around(&pdf, "Lead one", "Mixed", "Middle");
+    let split_steps = steps_around(&pdf, "Middle", "Split", "Tail");
+    assert!(
+        (mixed_steps.0 - split_steps.0).abs() < 0.01
+            && (mixed_steps.1 - split_steps.1).abs() < 0.01,
+        "a mixed run steps {mixed_steps:.2?}, its Han in a run of its own {split_steps:.2?}"
+    );
+}
+
+// An emphasis mark, a ruby or a combined layout over Han drawn by a fallback face stands on a
+// line measured on the run's requested family, as the same annotation over
+// Latin text of that family's stand-in does.
+#[test]
+fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
+    let simsun = r#"w:ascii="SimSun" w:hAnsi="SimSun" w:eastAsia="SimSun""#;
+    let calibri = r#"w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri""#;
+    let emphasis = |fonts: &str, text: &str, label: &str| {
+        tight_runs(&[
+            format!(
+                r#"<w:r><w:rPr><w:rFonts {fonts}/><w:em w:val="dot"/></w:rPr><w:t>{text}</w:t></w:r>"#
+            ),
+            run_in(fonts, label),
+        ])
+    };
+    let ruby = |fonts: &str, text: &str, label: &str| {
+        tight_runs(&[
+            format!(
+                r#"<w:ruby><w:rubyPr><w:rubyAlign w:val="center"/><w:hps w:val="10"/><w:hpsRaise w:val="20"/><w:hpsBaseText w:val="22"/><w:lid w:val="zh-CN"/></w:rubyPr><w:rt><w:r><w:rPr><w:sz w:val="10"/></w:rPr><w:t>ab</w:t></w:r></w:rt><w:rubyBase><w:r><w:rPr><w:rFonts {fonts}/></w:rPr><w:t>{text}</w:t></w:r></w:rubyBase></w:ruby>"#
+            ),
+            run_in(fonts, label),
+        ])
+    };
+    let combined = |fonts: &str, text: &str, label: &str| {
+        tight_runs(&[
+            format!(
+                r#"<w:r><w:rPr><w:rFonts {fonts}/><w:eastAsianLayout w:id="1" w:combine="1"/></w:rPr><w:t>{text}</w:t></w:r>"#
+            ),
+            run_in(fonts, label),
+        ])
+    };
+    let body = [
+        tight_runs(&[run_in(calibri, "First")]),
+        emphasis(simsun, "\u{4e2d}", " Dotted han"),
+        tight_runs(&[run_in(calibri, "Second")]),
+        emphasis(calibri, "Q", " Dotted latin"),
+        tight_runs(&[run_in(calibri, "Third")]),
+        ruby(simsun, "\u{4e2d}", " Ruby han"),
+        tight_runs(&[run_in(calibri, "Fourth")]),
+        ruby(calibri, "Q", " Ruby latin"),
+        tight_runs(&[run_in(calibri, "Fifth")]),
+        combined(simsun, "\u{4e2d}\u{4e2d}", " Combined han"),
+        tight_runs(&[run_in(calibri, "Sixth")]),
+        combined(calibri, "QQ", " Combined latin"),
+        tight_runs(&[run_in(calibri, "Seventh")]),
+    ]
+    .concat();
+    let pdf = pdf_of(&doc_with_body(&body));
+    for (han, latin) in [
+        (
+            ("First", "Dotted han", "Second"),
+            ("Second", "Dotted latin", "Third"),
+        ),
+        (
+            ("Third", "Ruby han", "Fourth"),
+            ("Fourth", "Ruby latin", "Fifth"),
+        ),
+        (
+            ("Fifth", "Combined han", "Sixth"),
+            ("Sixth", "Combined latin", "Seventh"),
+        ),
+    ] {
+        let han_steps = steps_around(&pdf, han.0, han.1, han.2);
+        let latin_steps = steps_around(&pdf, latin.0, latin.1, latin.2);
+        assert!(
+            (han_steps.0 - latin_steps.0).abs() < 0.01
+                && (han_steps.1 - latin_steps.1).abs() < 0.01,
+            "{}: {han_steps:.2?}, over Latin {latin_steps:.2?}",
+            han.1
+        );
+    }
+}
+
 // ---- Headers, footers and notes ----
 
 // Fails today: endnotes are drawn over a table that ends the document, at
@@ -683,6 +905,66 @@ fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
 // ---- Tables ----
 
 // ---- Pictures ----
+
+/// A paragraph that starts with a text box it must clear, Word's "top and
+/// bottom" wrapping, anchored at the paragraph's top.
+fn paragraph_below_its_text_box(text: &str) -> String {
+    format!(
+        concat!(
+            r#"<w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" "#,
+            r#"relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">"#,
+            r#"<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+            r#"<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>"#,
+            r#"<wp:extent cx="1828800" cy="1371600"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/>"#,
+            r#"<wp:docPr id="7" name="Text Box"/><wp:cNvGraphicFramePr/>"#,
+            r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+            r#"<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="1371600"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>"#,
+            r#"<w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>"#,
+            r#"</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>{}</w:t></w:r></w:p>"#,
+        ),
+        text
+    )
+}
+
+// The text box stays with the first part of a paragraph split across pages;
+// the rest starts at the top of the next page, where the cursor is, so the
+// paragraph after it is drawn below it, not over it. The newsletter's
+// three-column pages showed it.
+#[test]
+fn the_rest_of_a_paragraph_below_a_text_box_starts_the_next_page() {
+    let fillers = (1..=20)
+        .map(|number| format!("<w:p><w:r><w:t>Filler {number}</w:t></w:r></w:p>"))
+        .collect::<String>();
+    let words = (1..=160)
+        .map(|number| format!("word{number}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let body = format!(
+        "{fillers}{}<w:p><w:r><w:t>After</w:t></w:r></w:p>",
+        paragraph_below_its_text_box(&words)
+    );
+    let pdf = pdf_of(&doc_with_body(&body));
+    assert_eq!(
+        page_with(&pdf, "word1 "),
+        0,
+        "the paragraph starts on page 1"
+    );
+    assert_eq!(page_with(&pdf, "word160"), 1, "and ends on page 2");
+    let rest = lines(&pdf.drawn(1));
+    let after = line_of(&pdf, 1, "After");
+    for line in rest.iter().filter(|line| line.text.contains("word")) {
+        assert!(
+            line.y > after.y + 1.0,
+            "{:?} at {:.1} is not above the next paragraph at {:.1}",
+            line.text,
+            line.y,
+            after.y
+        );
+    }
+}
 
 #[test]
 fn pictures_are_drawn_once_at_their_size_with_their_pixels() {
@@ -1257,6 +1539,42 @@ fn a_solid_or_percentage_shading_paints_its_pattern_colour() {
     assert!(pixels_in_text_box(&doc, "Table", [0xFF, 0x00, 0xFF]) > 20);
     // So does it under a table style, over the style's own.
     assert!(pixels_in_text_box(&doc, "Styled", [0x00, 0xFF, 0xFF]) > 20);
+}
+
+#[test]
+fn a_dark_highlight_paints_words_palette() {
+    // Word's dark highlights are half intensity, not the CSS colours of the
+    // same names (dark blue is 000080, not 00008B), and its greys are
+    // 808080 and C0C0C0.
+    let run = |value: &str| {
+        format!(
+            r#"<w:p><w:r><w:rPr><w:highlight w:val="{value}"/></w:rPr><w:t>{value}</w:t></w:r></w:p>"#
+        )
+    };
+    let doc = doc_with_body(&[run("darkBlue"), run("darkGray"), run("lightGray")].concat());
+    assert!(pixels_in_text_box(&doc, "darkBlue", [0x00, 0x00, 0x80]) > 20);
+    assert!(pixels_in_text_box(&doc, "darkGray", [0x80, 0x80, 0x80]) > 20);
+    assert!(pixels_in_text_box(&doc, "lightGray", [0xC0, 0xC0, 0xC0]) > 20);
+}
+
+#[test]
+fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_render() {
+    // A shading or a text colour read from the file unchecked, with a
+    // character of more than one byte where a digit belongs.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:rPr><w:shd w:val="clear" w:fill="Aé0000"/></w:rPr><w:t>Fill</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:color w:val="Aé0000"/></w:rPr><w:t>Colour</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="00FF00;x" w:fill="FF0000"/></w:rPr><w:t>Pattern</w:t></w:r></w:p>"#,
+    ));
+    // The page stays white behind the fill that is not a colour.
+    assert_eq!(pixels_in_text_box(&doc, "Fill", [0xA0, 0x00, 0x00]), 0);
+    assert!(pixels_in_text_box(&doc, "Fill", [0xFF, 0xFF, 0xFF]) > 20);
+    // A foreground that is not a colour is automatic: black under a
+    // pattern, so 25 % of it over red is BF0000 (not BF4000, a quarter of
+    // the green the value starts with).
+    assert!(pixels_in_text_box(&doc, "Pattern", [0xBF, 0x00, 0x00]) > 20);
+    let html = doc.to_html_fragment();
+    assert!(!html.contains("background-color:#A0"), "{html}");
 }
 
 // ---- Corpus ----

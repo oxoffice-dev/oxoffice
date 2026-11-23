@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use oxoffice_docx_oxml::CT_RPr;
 use oxoffice_docx_oxml::content_control::{CT_DataBinding, CT_Sdt, SdtContent, SdtType};
-use oxoffice_docx_oxml::date_format::{check_word_date_format, word_date_format_shows_time};
+use oxoffice_docx_oxml::date_format::{WordDateTime, check_word_date_format};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::namespace::{W_NS, matches_local_name};
 use oxoffice_docx_oxml::styles::{CT_Styles, StyleType};
@@ -3796,7 +3796,7 @@ fn word_paragraph_in_span(xml: &[u8], span: Range<usize>) -> Result<bool> {
 fn validate_type_payload(payload: &ContentControlTypePayload) -> Result<()> {
     match payload {
         // The control is written without a language (`w:lid`): English names.
-        ContentControlTypePayload::Date { format } => check_word_date_format(format, None)?,
+        ContentControlTypePayload::Date { format } => check_word_date_format(format, None, None)?,
         ContentControlTypePayload::ComboBox { items }
         | ContentControlTypePayload::DropDownList { items } => validate_list_items(items)?,
         ContentControlTypePayload::Picture { relationship_id } => {
@@ -5755,25 +5755,16 @@ fn date_issue(control: &PhysicalControl) -> Option<&'static str> {
         return None;
     }
     let facts = control.date.as_ref()?;
-    let Some(full_date) = facts.full_date.as_deref() else {
+    // A time typed in Word into a control whose format shows one is checked
+    // as a date is; a time under a format that shows none is a wrong value.
+    let Some((full_date, at)) = facts
+        .full_date
+        .as_deref()
+        .and_then(|full_date| Some((full_date, WordDateTime::parse_full_date(full_date)?)))
+    else {
         return Some("current form value is invalid");
     };
-    if !canonical_full_date(full_date) {
-        // A time typed in Word into a control whose format shows one: the
-        // value is not wrong, oxoffice only writes dates.
-        let timed = full_date.as_bytes().get(10) == Some(&b'T')
-            && civil_date_text(&full_date[..10])
-            && facts
-                .format
-                .as_deref()
-                .is_some_and(word_date_format_shows_time);
-        return Some(if timed {
-            "unsupported date metadata"
-        } else {
-            "current form value is invalid"
-        });
-    }
-    let Ok((display, bound, prepared)) = prepare_control_text(control, &full_date[..10]) else {
+    let Ok((display, bound, prepared)) = prepare_control_text(control, &at.value()) else {
         return Some("current form value is invalid");
     };
     if control.display != display || prepared.as_deref() != Some(full_date) {
@@ -5790,7 +5781,10 @@ fn date_metadata_unsupported(control: &PhysicalControl) -> bool {
         return true;
     };
     facts.duplicate
-        || !matches!(facts.calendar.as_deref(), None | Some("gregorian"))
+        || !matches!(
+            facts.calendar.as_deref(),
+            None | Some("gregorian" | "gregorianUs")
+        )
         || date_format_issue(facts).is_some()
         || !matches!(
             facts.store.as_deref(),
@@ -5803,22 +5797,9 @@ fn date_format_issue(facts: &DateFacts) -> Option<String> {
     let Some(format) = facts.format.as_deref() else {
         return Some("missing date format".to_owned());
     };
-    check_word_date_format(format, facts.language.as_deref())
+    check_word_date_format(format, facts.language.as_deref(), facts.calendar.as_deref())
         .err()
         .map(|error| error.to_string())
-}
-
-fn canonical_full_date(value: &str) -> bool {
-    value.len() == 20 && value.ends_with("T00:00:00Z") && civil_date_text(&value[..10])
-}
-
-fn civil_date_text(value: &str) -> bool {
-    let mut parts = value.split('-');
-    let year = parts.next().and_then(|part| part.parse::<i32>().ok());
-    let month = parts.next().and_then(|part| part.parse::<u32>().ok());
-    let day = parts.next().and_then(|part| part.parse::<u32>().ok());
-    matches!((year, month, day, parts.next()), (Some(year), Some(month), Some(day), None)
-        if (1..=9999).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day))
 }
 
 fn checkbox_disagrees(control: &PhysicalControl) -> bool {
