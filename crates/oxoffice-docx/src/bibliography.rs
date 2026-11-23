@@ -515,6 +515,34 @@ fn bibliography_error(message: impl Into<String>) -> Error {
     Error::Other(format!("bibliography: {}", message.into()))
 }
 
+// A case the formatter does not render yet; the whole update is refused.
+fn not_covered(case: impl std::fmt::Display) -> Error {
+    bibliography_error(format!("{case} is not covered yet"))
+}
+
+// The formatter has no entry or citation for this source in this style and locale.
+fn source_not_covered(
+    style: BibliographyStyle,
+    part: &str,
+    source: &BibliographySource,
+    locale: &BibliographyFormattingLocale,
+) -> Error {
+    bibliography_error(format!(
+        "{} has no {part} yet for the {} source \"{}\" in locale {}",
+        style.metadata().1,
+        source.kind.xml_name(),
+        source.tag,
+        locale_label(locale)
+    ))
+}
+
+fn locale_label(locale: &BibliographyFormattingLocale) -> String {
+    match locale {
+        BibliographyFormattingLocale::Numeric(number) => number.to_string(),
+        BibliographyFormattingLocale::Lexical(value) => value.clone(),
+    }
+}
+
 fn namespace_value(value: ResolveResult<'_>) -> Result<String> {
     match value {
         ResolveResult::Bound(value) => String::from_utf8(value.as_ref().to_vec())

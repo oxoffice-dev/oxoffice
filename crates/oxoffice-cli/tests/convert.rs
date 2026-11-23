@@ -257,3 +257,30 @@ fn system_fonts_and_bundled_fonts_only_are_refused_together() {
         stderr(&output)
     );
 }
+
+#[test]
+fn a_field_holding_text_the_typing_font_lacks_is_named_on_stderr() {
+    let filled = scratch("han-form.docx");
+    let fill = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+        .args(["docx", "fill"])
+        .arg(corpus("word/form.docx"))
+        .args(["--tag", "company_name=東京 Ltd", "-o"])
+        .arg(&filled)
+        .output()
+        .expect("oxoffice runs");
+    assert!(fill.status.success(), "{}", stderr(&fill));
+
+    let path = scratch("han-form.pdf");
+    let output = convert_input(&filled, "pdf", &path, &[]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let warnings: Vec<String> = stderr(&output)
+        .lines()
+        .filter(|line| line.contains("typing font"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].contains("\"company_name\" holds Han text"),
+        "{warnings:?}"
+    );
+}

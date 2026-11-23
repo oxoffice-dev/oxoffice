@@ -13,6 +13,7 @@ mod writer;
 
 use oxoffice_layout::LayoutResult;
 
+pub use forms::untypable_form_text;
 pub use image::{ImageDrawClass, classify_image_draw};
 
 pub use conformance::{PdfConformance, PdfError, PdfOptions};

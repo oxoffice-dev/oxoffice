@@ -859,12 +859,7 @@ pub(super) fn validate_format_code(format_code: &str) -> Result<()> {
 }
 
 pub(super) fn validate_xml_text(value: &str, element: &str) -> Result<()> {
-    if value.chars().all(|character| {
-        matches!(
-            character,
-            '\u{9}' | '\u{A}' | '\u{D}' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}'
-        )
-    }) {
+    if value.chars().all(oxoffice_core::xml::is_xml_1_0_character) {
         return Ok(());
     }
     Err(ChartError::InvalidValue {

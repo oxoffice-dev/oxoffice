@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
+use oxoffice_core::xml::is_xml_1_0_character;
 use oxoffice_docx_oxml::document::BodyContent;
 use oxoffice_docx_oxml::numbering::{CT_Lvl, ST_NumberFormat};
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
@@ -912,7 +913,7 @@ impl<'a> OdtWriter<'a> {
             let content_path = format!("{path}/content[{index}]");
             match content {
                 RunContent::Text(text) | RunContent::DeletedText(text) => {
-                    if !text.text.chars().all(valid_xml_character) {
+                    if !text.text.chars().all(is_xml_1_0_character) {
                         return Err(odt_error(
                             Some("content.xml"),
                             0,
@@ -1985,15 +1986,8 @@ impl<'a> OdtWriter<'a> {
     }
 }
 
-fn valid_xml_character(value: char) -> bool {
-    matches!(value, '\u{9}' | '\u{A}' | '\u{D}')
-        || ('\u{20}'..='\u{D7FF}').contains(&value)
-        || ('\u{E000}'..='\u{FFFD}').contains(&value)
-        || ('\u{10000}'..='\u{10FFFF}').contains(&value)
-}
-
 fn validate_xml_value(value: &str, path: &str) -> Result<()> {
-    if value.chars().all(valid_xml_character) {
+    if value.chars().all(is_xml_1_0_character) {
         Ok(())
     } else {
         Err(odt_error(
