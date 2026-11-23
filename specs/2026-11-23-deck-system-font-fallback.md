@@ -1,6 +1,6 @@
 ---
 date: 2026-11-23
-status: accepted
+status: shipped
 scope: pptx
 ---
 

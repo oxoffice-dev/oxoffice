@@ -1,6 +1,6 @@
 ---
 date: 2026-11-23
-status: accepted
+status: shipped
 scope: docx
 ---
 
@@ -62,6 +62,19 @@ One pull request, closes #405. Checked by one test per construct in `crates/oxof
 (`MathProbe`: Word's probe built the same way, its four baseline steps within a point of Word's), each failing on
 main with the numbers of the table above; the render baselines of the corpus files with equations rewritten in a
 commit of their own, and their page counts checked against Word's.
+
+## Learnings
+
+- Word lays equations out with the OpenType MATH rules and Cambria Math's constants; with Caladea (no MATH table)
+  using Cambria Math's numbers brings every probe within 0.65 pt of Word.
+- An equation's line box is its ink plus MathLeading above, never smaller than a line of the math font: true for
+  display and inline equations alike.
+- A display equation keeps nested fractions at full size (text-style shifts); a line of text sets fraction parts
+  one script level down at each depth. Linear and skewed fractions keep their size.
+- Word draws the display sum with the first variant at least DisplayOperatorMinHeight tall, the display integral
+  with the next variant; operators, matrices and delimiters are centred on the math axis.
+- Word rounds baselines to the quarter point: tests compare within a point.
+- A pixel check of a stretched sign needs 288 dpi; at 72 dpi rounding moves its edges by 2 pt.
 
 ## Links
 
