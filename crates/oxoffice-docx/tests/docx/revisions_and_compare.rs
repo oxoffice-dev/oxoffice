@@ -407,6 +407,66 @@ fn rtl_and_cjk_text_compare_by_character() {
     assert_eq!(texts(&rejected(&mut doc)), original);
 }
 
+/// A document with one paragraph per id of `links`, each a hyperlink through
+/// that relationship id, and one relationship to `address` per distinct id.
+fn doc_with_links(links: &[&str], address: &str) -> Document {
+    let body = links
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            format!(
+                r#"<w:p><w:hyperlink xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{id}"><w:r><w:t>site {index}</w:t></w:r></w:hyperlink></w:p>"#
+            )
+        })
+        .collect::<String>();
+    let mut doc = doc_with_body(&body);
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let relationships = package.get_or_create_part_rels("/word/document.xml");
+    let mut ids = links.to_vec();
+    ids.dedup();
+    for id in ids {
+        relationships.items.push(oxoffice_opc::Relationship {
+            id: id.to_owned(),
+            rel_type:
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+                    .to_owned(),
+            target: address.to_owned(),
+            target_mode: Some("External".to_owned()),
+        });
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn links_reaching_one_address_through_other_relationships_are_no_change() {
+    const SITE: &str = "https://example.com/";
+    for (original, edited) in [
+        (
+            &["rIdShared", "rIdShared"][..],
+            &["rIdShared", "rIdOther"][..],
+        ),
+        (&["rIdA", "rIdB"][..], &["rIdC", "rIdC"][..]),
+    ] {
+        let mut doc = redline(
+            doc_with_links(original, SITE),
+            &doc_with_links(edited, SITE),
+        );
+        assert_eq!(kinds(&doc), [], "{original:?} against {edited:?}");
+        let urls = |doc: &Document| {
+            doc.links()
+                .into_iter()
+                .map(|link| link.url)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(urls(&doc), [Some(SITE.to_owned()), Some(SITE.to_owned())]);
+        assert_eq!(urls(&accepted(&mut doc)), urls(&rejected(&mut doc)));
+    }
+}
+
 // ---- Comparing editors' files ----
 // A comparison of the corpus report costs seconds in a debug build, so these
 // tests compare once and read the redline back through its resolved copy.

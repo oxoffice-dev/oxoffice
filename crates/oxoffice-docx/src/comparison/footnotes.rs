@@ -2294,6 +2294,7 @@ pub(super) fn compare_footnote_parts(
         if let Some(right_owner) = right_normal.get(&id) {
             let l = left.as_ref().expect("left owner");
             let r = right.as_ref().expect("right owner");
+            let _classes = RelationshipClassScope::enter(relationship_classes(original, &l.name)?);
             let inner = compare_story_inner(
                 &l.xml[left_owner.inner.clone()],
                 &r.xml[right_owner.inner.clone()],

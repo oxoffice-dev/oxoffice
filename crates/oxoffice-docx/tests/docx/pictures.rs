@@ -13,8 +13,8 @@ use oxoffice_docx::{
     DrawingHorizontalRelativeFrom, DrawingVerticalAlignment, DrawingVerticalRelativeFrom,
     DrawingWrap, Error, HdrFtrType, HeaderFooterKind, ImageWatermarkOptions, LegendPosition,
     LegendSettings, Length, PictureAnchor, PictureCrop, PictureOccurrence, PictureOptions,
-    RunItemRef, StoryId, StoryItemKind, StoryKind, StoryRunPosition, TextBoxDirection,
-    TextBoxOptions, TextWatermarkOptions,
+    RevisionKind, RunItemRef, StoryId, StoryItemKind, StoryKind, StoryRunPosition,
+    TextBoxDirection, TextBoxOptions, TextWatermarkOptions,
 };
 use oxoffice_opc::{OpcPackage, Relationship};
 
@@ -1902,6 +1902,307 @@ fn a_linked_picture_added_in_a_comparison_keeps_its_address() {
         [Some(LINKED_IMAGE.to_owned())]
     );
     assert_eq!(resolved_picture_addresses(&mut doc, false), []);
+}
+
+/// Where a relationship of [`pictures_document`] points.
+#[derive(Clone, Copy)]
+enum PictureTarget {
+    /// A media part of this name holding a PNG of this grey.
+    Media(&'static str, u8),
+    /// An External address.
+    Address(&'static str),
+}
+
+/// Where [`pictures_document`] puts its pictures.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Placement {
+    Body,
+    /// The default header.
+    Header,
+}
+
+/// A document holding one picture paragraph per `(attribute, relationship
+/// id)` of `pictures` (`r:embed` or `r:link`) where `placement` says, then
+/// a text paragraph, with the image relationships of `relationships`.
+fn pictures_document(
+    placement: Placement,
+    pictures: &[(&str, &str)],
+    relationships: &[(&str, PictureTarget)],
+) -> Document {
+    let in_header = placement == Placement::Header;
+    let body = pictures
+        .iter()
+        .enumerate()
+        .map(|(index, (attribute, id))| {
+            format!(
+                concat!(
+                    r#"<w:p><w:r><w:drawing>"#,
+                    r#"<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">"#,
+                    r#"<wp:extent cx="91440" cy="91440"/><wp:docPr id="{n}" name="Picture {n}"/>"#,
+                    r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+                    r#"<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+                    r#"<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+                    r#"<pic:nvPicPr><pic:cNvPr id="{n}" name="Picture {n}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
+                    r#"<pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" {attribute}="{id}"/></pic:blipFill><pic:spPr/></pic:pic>"#,
+                    r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+                ),
+                n = index + 1,
+                attribute = attribute,
+                id = id
+            )
+        })
+        .collect::<String>()
+        + "<w:p><w:r><w:t>end</w:t></w:r></w:p>";
+    let mut doc = if in_header {
+        let mut doc = doc_with(&["body"]);
+        doc.set_header("header");
+        doc
+    } else {
+        doc_with_body(&body)
+    };
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let owner = if in_header {
+        let owner = package
+            .parts
+            .keys()
+            .find(|name| name.starts_with("/word/header"))
+            .cloned()
+            .expect("a header part");
+        let xml = String::from_utf8(package.get_part(&owner).unwrap().to_vec()).unwrap();
+        let start = xml.find("<w:p>").or_else(|| xml.find("<w:p ")).unwrap();
+        let end = xml.rfind("</w:hdr>").unwrap();
+        package.set_part(
+            &owner,
+            format!("{}{body}{}", &xml[..start], &xml[end..]).into_bytes(),
+        );
+        owner
+    } else {
+        "/word/document.xml".to_owned()
+    };
+    package.content_types.add_default("png", "image/png");
+    for (id, target) in relationships {
+        let relationships = package.get_or_create_part_rels(&owner);
+        match target {
+            PictureTarget::Media(name, grey) => {
+                relationships.add_with_id(id, IMAGE, &format!("media/{name}"));
+                package.set_part(&format!("/word/media/{name}"), png(2, 2, *grey));
+            }
+            PictureTarget::Address(address) => relationships.items.push(Relationship {
+                id: (*id).to_owned(),
+                rel_type: IMAGE.to_owned(),
+                target: (*address).to_owned(),
+                target_mode: Some("External".to_owned()),
+            }),
+        }
+    }
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// The story and kind of each revision of `doc`, every story included.
+fn story_revision_kinds(doc: &Document) -> Vec<(StoryKind, RevisionKind)> {
+    doc.story_revisions()
+        .unwrap()
+        .into_iter()
+        .map(|revision| (revision.story().kind(), revision.kind()))
+        .collect()
+}
+
+/// The bytes or address each picture of the saved `doc` shows, in order,
+/// with every revision accepted or rejected.
+fn resolved_pictures(doc: &mut Document, accept: bool) -> Vec<String> {
+    let mut copy = reopen(doc);
+    if accept {
+        copy.accept_all().unwrap();
+    } else {
+        copy.reject_all().unwrap();
+    }
+    picture_payloads(&mut reopen(&mut copy))
+}
+
+/// The bytes (as their length and sum) or address each picture of `doc` shows.
+fn picture_payloads(doc: &mut Document) -> Vec<String> {
+    let package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let mut owners = package
+        .parts
+        .keys()
+        .filter(|name| name == &"/word/document.xml" || name.starts_with("/word/header"))
+        .cloned()
+        .collect::<Vec<_>>();
+    owners.sort();
+    let mut payloads = Vec::new();
+    for owner in owners {
+        let xml = String::from_utf8(package.get_part(&owner).unwrap().to_vec()).unwrap();
+        for piece in xml.split("<a:blip ").skip(1) {
+            let at = piece
+                .find("r:embed=\"")
+                .or_else(|| piece.find("r:link=\""))
+                .unwrap();
+            let rest = &piece[at..];
+            let rest = &rest[rest.find('"').unwrap() + 1..];
+            let id = &rest[..rest.find('"').unwrap()];
+            let relationship = package
+                .get_part_rels(&owner)
+                .and_then(|relationships| relationships.get_by_id(id))
+                .unwrap_or_else(|| panic!("{owner}: {id} names no relationship"));
+            payloads.push(if relationship.target_mode.as_deref() == Some("External") {
+                relationship.target.clone()
+            } else {
+                let bytes = package
+                    .get_part(&OpcPackage::resolve_rel_target(
+                        &owner,
+                        &relationship.target,
+                    ))
+                    .unwrap();
+                format!(
+                    "{} bytes, sum {}",
+                    bytes.len(),
+                    bytes.iter().map(|&byte| u64::from(byte)).sum::<u64>()
+                )
+            });
+        }
+    }
+    payloads
+}
+
+/// The pictures and relationships of one version for [`pictures_document`].
+type Version<'a> = (&'a [(&'a str, &'a str)], &'a [(&'a str, PictureTarget)]);
+
+#[test]
+fn pictures_reaching_the_same_image_through_other_relationships_are_no_change() {
+    use PictureTarget::{Address, Media};
+    const SITE: &str = "https://images.example/logo.png";
+    for placement in [Placement::Body, Placement::Header] {
+        let cases: [[Version; 2]; 4] = [
+            // One shared embedded image against one relationship each, to
+            // one media part and to two equal ones.
+            [
+                (
+                    &[("r:embed", "rIdShared"), ("r:embed", "rIdShared")],
+                    &[("rIdShared", Media("one.png", 40))],
+                ),
+                (
+                    &[("r:embed", "rIdShared"), ("r:embed", "rIdOther")],
+                    &[
+                        ("rIdShared", Media("one.png", 40)),
+                        ("rIdOther", Media("two.png", 40)),
+                    ],
+                ),
+            ],
+            // The other way round.
+            [
+                (
+                    &[("r:embed", "rIdA"), ("r:embed", "rIdB")],
+                    &[
+                        ("rIdA", Media("one.png", 40)),
+                        ("rIdB", Media("one.png", 40)),
+                    ],
+                ),
+                (
+                    &[("r:embed", "rIdC"), ("r:embed", "rIdC")],
+                    &[("rIdC", Media("one.png", 40))],
+                ),
+            ],
+            // One shared linked address against one relationship each, and
+            // the other way round.
+            [
+                (
+                    &[("r:link", "rIdShared"), ("r:link", "rIdShared")],
+                    &[("rIdShared", Address(SITE))],
+                ),
+                (
+                    &[("r:link", "rIdShared"), ("r:link", "rIdOther")],
+                    &[("rIdShared", Address(SITE)), ("rIdOther", Address(SITE))],
+                ),
+            ],
+            [
+                (
+                    &[("r:link", "rIdA"), ("r:link", "rIdB")],
+                    &[("rIdA", Address(SITE)), ("rIdB", Address(SITE))],
+                ),
+                (
+                    &[("r:link", "rIdC"), ("r:link", "rIdC")],
+                    &[("rIdC", Address(SITE))],
+                ),
+            ],
+        ];
+        for (
+            index,
+            [
+                (pictures, relationships),
+                (edited_pictures, edited_relationships),
+            ],
+        ) in cases.into_iter().enumerate()
+        {
+            let original = pictures_document(placement, pictures, relationships);
+            let edited = pictures_document(placement, edited_pictures, edited_relationships);
+            let mut doc = compared(original, &edited);
+            assert_eq!(
+                story_revision_kinds(&doc),
+                [],
+                "case {index}, {placement:?}"
+            );
+            let shown = picture_payloads(&mut doc);
+            assert_eq!(shown.len(), 2);
+            assert_eq!(shown[0], shown[1], "case {index}, {placement:?}");
+        }
+    }
+}
+
+#[test]
+fn only_the_relinked_one_of_two_pictures_sharing_an_image_is_changed() {
+    use PictureTarget::{Address, Media};
+    for placement in [Placement::Body, Placement::Header] {
+        for (first, second, relinked) in [
+            (Media("a.png", 40), Media("a2.png", 40), Media("b.png", 90)),
+            (
+                Address("https://images.example/a.png"),
+                Address("https://images.example/a.png"),
+                Address("https://images.example/b.png"),
+            ),
+        ] {
+            let attribute = if matches!(first, Address(_)) {
+                "r:link"
+            } else {
+                "r:embed"
+            };
+            let mut original = pictures_document(
+                placement,
+                &[(attribute, "rId5"), (attribute, "rId6")],
+                &[("rId5", first), ("rId6", second)],
+            );
+            let mut edited = pictures_document(
+                placement,
+                &[(attribute, "rId5"), (attribute, "rId6")],
+                &[("rId5", relinked), ("rId6", second)],
+            );
+            let mut wanted_original = reopen(&mut original);
+            let mut wanted_edited = reopen(&mut edited);
+            let mut doc = compared(original, &edited);
+            let story = if placement == Placement::Header {
+                StoryKind::Header
+            } else {
+                StoryKind::Body
+            };
+            assert_eq!(
+                story_revision_kinds(&doc),
+                [
+                    (story, RevisionKind::Deletion),
+                    (story, RevisionKind::Insertion)
+                ],
+                "{attribute}, {placement:?}: the first picture deleted and inserted"
+            );
+            assert_eq!(
+                resolved_pictures(&mut doc, true),
+                picture_payloads(&mut wanted_edited)
+            );
+            assert_eq!(
+                resolved_pictures(&mut doc, false),
+                picture_payloads(&mut wanted_original)
+            );
+        }
+    }
 }
 
 /// The parts and relationship targets of the saved `doc`, by ZIP entry name.
