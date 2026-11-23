@@ -51,25 +51,25 @@ by_design = "the \"Dates for your diary\" text box keeps its size and its last l
 [[known]]
 file = "authored/minutes.docx"
 check = "missing-glyph"
-pages = [1, 2, 3]
+pages = [1, 2]
 by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "google/minutes.docx"
 check = "missing-glyph"
-pages = [1, 2, 3]
+pages = [1, 2]
 by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "libreoffice/minutes.docx"
 check = "missing-glyph"
-pages = [1, 2, 3]
+pages = [1, 2]
 by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "word/minutes.docx"
 check = "missing-glyph"
-pages = [1, 2, 3]
+pages = [1, 2]
 by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
