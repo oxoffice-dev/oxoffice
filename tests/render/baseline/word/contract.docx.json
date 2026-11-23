@@ -1,8 +1,8 @@
 {
   "file": "word/contract.docx",
-  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "5df350dfec6800a5307b66e8bfec186219dc827678038d5c1028325ad5134cd8",
-  "outline_and_tags": "3fd8b7a92c8aeaa4a7d80d78f082e04c2efd60a3c234a740595288a3334662f6",
+  "outline_and_tags": "ddd8aec25bbb8dfd2a522158c41ecfeac65772383ede16f2fbde959c5d5158c7",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "3a04f27f9b660ad72a4b5af42b6fb8c00d5d14e74b4334d132b6fc802122ecdd", "content": "a26d9b9241b2323a5d218502de45848eec04e8e444075ff9695ab5a86018e730", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},

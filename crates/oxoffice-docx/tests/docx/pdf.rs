@@ -10,6 +10,7 @@ use oxoffice_docx::paragraph::Alignment;
 use oxoffice_docx::{
     CT_RPr, Document, Length, ListLevel, PdfConformance, PictureOptions, RenderOptions, StoryKind,
 };
+use oxoffice_docx_oxml::table::ST_VerticalJc;
 use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf};
 
@@ -922,10 +923,7 @@ fn a_ruby_inside_a_run_draws_as_a_ruby_in_its_paragraph() {
 
 // ---- Headers, footers and notes ----
 
-// Fails today: endnotes are drawn over a table that ends the document, at
-// the height of its rows. Issue: #156
 #[test]
-#[should_panic(expected = "endnote drawn over the table")]
 fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
     let mut doc = doc_with(&["Has a note"]);
     let cited = doc.paragraph_story_location(0).unwrap().unwrap();
@@ -951,6 +949,38 @@ fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
 }
 
 // ---- Tables ----
+
+// A table is ink like a line: a vertically centred page whose body ends with
+// a table centres it, rather than measuring an empty page and pushing the
+// table down by half of it.
+#[test]
+fn a_vertically_centred_page_centres_a_table_that_ends_the_body() {
+    let mut doc = Document::new();
+    {
+        let mut table = doc.add_table(6, 1);
+        for row in 0..6 {
+            table
+                .cell(row, 0)
+                .unwrap()
+                .set_text(&format!("Row {}", row + 1));
+        }
+    }
+    doc.section_mut(0)
+        .unwrap()
+        .set_vertical_alignment(ST_VerticalJc::Center);
+    let pdf = pdf_of(&reopen(&mut doc));
+    let first = line_of(&pdf, 0, "Row 1");
+    let last = line_of(&pdf, 0, "Row 6");
+    // The middle of the page's text area, in PDF space.
+    let page_middle = 792.0 - 72.0 - 648.0 / 2.0;
+    let middle = (first.y + last.y) / 2.0;
+    assert!(
+        (middle - page_middle).abs() < 8.0,
+        "the rows' middle is at {middle:.1}, the page's at {page_middle} (first row {:.1}, last {:.1})",
+        first.y,
+        last.y
+    );
+}
 
 // ---- Pictures ----
 
@@ -1180,12 +1210,7 @@ fn headings_become_the_outline_with_their_levels_and_pages() {
     assert!(pdf.catalog().get(b"Outlines").is_err());
 }
 
-// Fails today: the outline keeps the place a heading had before keep with
-// next moved it to the next page, so the bookmark opens the page before; the
-// four corpus reports show it on "3. Operations", the thesis on "1.2 Research
-// questions". Issue: #156
 #[test]
-#[should_panic(expected = "but the heading is drawn on page")]
 fn an_outline_entry_opens_the_page_its_heading_moved_to() {
     let mut doc = Document::new();
     for number in 1..=27 {

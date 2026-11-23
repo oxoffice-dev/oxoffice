@@ -38,7 +38,7 @@ pub(crate) fn emit_body(
 
     for block in body_blocks(body, false) {
         match block {
-            Block::Paragraph(p, _) => {
+            Block::Paragraph(p, _, carried) => {
                 let heading = detect_heading_level(p.properties.as_ref(), styles).is_some();
                 let counted = counter.paragraph(&p);
                 // A heading numbered through its style, as Word numbers its
@@ -79,6 +79,7 @@ pub(crate) fn emit_body(
                     emit_paragraph_content(
                         &mut out,
                         &p,
+                        &carried,
                         images,
                         hyperlink_urls,
                         options,
@@ -96,6 +97,7 @@ pub(crate) fn emit_body(
                     emit_paragraph_content(
                         &mut out,
                         &p,
+                        &carried,
                         images,
                         hyperlink_urls,
                         options,
@@ -107,6 +109,7 @@ pub(crate) fn emit_body(
                     emit_paragraph(
                         &mut out,
                         &p,
+                        &carried,
                         styles,
                         images,
                         hyperlink_urls,
@@ -246,6 +249,7 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
 fn emit_paragraph(
     out: &mut String,
     para: &CT_P,
+    carried: &[(usize, String)],
     styles: &CT_Styles,
     images: &HashMap<String, ImageData>,
     hyperlink_urls: &crate::Links<'_>,
@@ -279,6 +283,7 @@ fn emit_paragraph(
     emit_paragraph_content(
         out,
         para,
+        carried,
         images,
         hyperlink_urls,
         options,
@@ -340,10 +345,13 @@ fn direction_attribute(para: &CT_P, styles: &CT_Styles) -> &'static str {
 }
 
 /// Emit the inner content of a paragraph (the runs of its accepted view and
-/// hyperlinks).
+/// hyperlinks). `carried` are the bookmarks that the paragraphs joined to it
+/// start (see `Block::Paragraph`).
+#[allow(clippy::too_many_arguments)]
 fn emit_paragraph_content(
     out: &mut String,
     para: &CT_P,
+    carried: &[(usize, String)],
     images: &HashMap<String, ImageData>,
     hyperlink_urls: &crate::Links<'_>,
     options: &HtmlOptions,
@@ -352,12 +360,14 @@ fn emit_paragraph_content(
 ) {
     // The fill behind the runs: the paragraph's shading, or the cell's.
     let behind = css::paragraph_fill(para.properties.as_ref(), behind);
-    // The bookmarks a link targets, read before the accepted view drops
-    // the markers.
-    let anchors = crate::bookmark_anchors(para, &hyperlink_urls.bookmarks);
     // The runs the text readers read, those of content controls, tracked
-    // insertions, smart tags and custom XML included, deleted ones left out.
-    let para = &para.accepted_view();
+    // insertions, smart tags and custom XML included, deleted ones left out,
+    // with the bookmarks they start: a link's target gets an anchor.
+    let view = para.accepted_view_with_bookmarks(false);
+    let mut starts = carried.to_vec();
+    starts.extend(view.bookmark_starts);
+    let anchors = crate::bookmark_anchors(starts, &hyperlink_urls.bookmarks);
+    let para = &view.paragraph;
     let hyperlink_map = crate::hyperlink_targets(para, hyperlink_urls);
     let emit_anchors = |out: &mut String, boundary: usize| {
         for (_, name) in anchors.iter().filter(|(at, _)| *at == boundary) {
@@ -789,10 +799,11 @@ fn emit_table(
             };
             for block in cell_blocks(cell) {
                 match block {
-                    Block::Paragraph(p, _) => {
+                    Block::Paragraph(p, _, carried) => {
                         emit_paragraph(
                             out,
                             &p,
+                            &carried,
                             styles,
                             images,
                             hyperlink_urls,
