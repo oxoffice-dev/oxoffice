@@ -1,10 +1,10 @@
 {
   "file": "google/cv.docx",
-  "reason": "tagged links hold their text: the structure tree and the links' /Contents change",
+  "reason": "a face picked for its glyphs no longer measures the line",
   "resources": "9933a9467a963870e579a2b47979c87971c3dc04a4d72d6eb53e107ca28ee055",
-  "outline_and_tags": "9b5ed9395e1b3632fd45ac2350cc880bf678eb3d1448c35ffe0deaf37b71db5c",
+  "outline_and_tags": "870aeb216c46bcb45526de1c5493540365f97e674b97b88e2677dbfc5c3cab2d",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
-    {"page": 1, "pixels": "3924d38fdd9f8fd0e950a904a8f0f509afd10a1d91bf184a16f7a0cf699d8068", "content": "6b7caa032377f268616cee2e1dc455f5a33d495c52aa1270152beb7eff8466bd", "annotations": "533dc43cb34a63580a086e74f4e48bddf600f57689986bd5f0bf6248fc8b470f", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"}
+    {"page": 1, "pixels": "50abece3ddd62b7b360e2ac0cdfc4cd53c416d430349ff6d430859b63d6cae55", "content": "7e9c1012a5ef1368f9c57aaf8e5524431d970179b1ca342bdfa9d7660d3c8539", "annotations": "4c5875c62f53a7ddafdac271a99c0959e54b1db8dcae551fd22d2730846df1ce", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"}
   ]
 }

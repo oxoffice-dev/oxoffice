@@ -1,11 +1,11 @@
 {
   "file": "word-google/record.docx",
-  "reason": "tagged links hold their text: the structure tree and the links' /Contents change",
+  "reason": "a face picked for its glyphs no longer measures the line",
   "resources": "3198ec19b693a1e68900094bb2509582df7c0913e84d8047857f34e5c7bcdd32",
-  "outline_and_tags": "078a7e15cc51e2e0fe95ce3810c78efc6b0b79c693fd3aa6c94d72629105f3ea",
+  "outline_and_tags": "6def688f1daccf9a17e5ea96f5974d9f308739b6c8c6564e6ee7d98a188b7a5f",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
-    {"page": 1, "pixels": "694a2de6f856818a9e2d931044218ad4dab4fbd27344ccf8e9fd061c470f6d12", "content": "e6dd78694450c420d6414fd6ceeb799661b90bca66176f5c0477f43dca37bf2d", "annotations": "21b3d70593ab78d7fb841ec19f4fae2905864f41f73451ba0f9b1a1534315fe0", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
+    {"page": 1, "pixels": "fba44c9e2bfc78b07d0585259575a58fbe329a341e1f256cd56d8791af093c62", "content": "2aa27520fa328118eba63fab832b02106ea70cb3231f31ab1c410f594a935eba", "annotations": "06659071576fcd13563a8dbade11d7d44796def305f95e5c52c1feb22c96a4b9", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},
     {"page": 2, "pixels": "5177d7b93a7a9a7f303db21c9de4821c1a3f083d58fab726a8d68351676b6b41", "content": "8a42e86b629ef0cbc6ca6da90cf1fbc802b215efef332fe08a24eb9994ed8aff", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
     {"page": 3, "pixels": "ed4099488d90c44dbd49475e88ac53ddb776b91c90689cac487f8cb01c0f1815", "content": "60a12f93b3f95cc3b1cc0d701aff2ac20fc32c1e06842a2f939f5c01f76d437f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]

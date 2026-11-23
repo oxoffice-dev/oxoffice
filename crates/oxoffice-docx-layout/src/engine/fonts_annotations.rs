@@ -528,7 +528,7 @@ pub(super) fn push_east_asian_layout_text(
     if !combine && !vert {
         return Ok(false);
     }
-    let metrics = fm.metrics(base.font_id, base.font_size)?;
+    let metrics = requested_metrics(fm, base)?;
     let ascent = metrics.ascent.max(0.0);
     let descent = metrics.descent.max(0.0);
     let mut shaped = fm.shape_text_with_kerning(base.font_id, text, base.font_size, base.kern)?;
@@ -820,7 +820,7 @@ pub(super) fn push_emphasis_marked_text(
         return Ok(false);
     }
     let mark_metrics = fm.metrics(mark_font, mark_size)?;
-    let metrics = fm.metrics(base.font_id, base.font_size)?;
+    let metrics = requested_metrics(fm, base)?;
     let ascent = metrics.ascent.max(0.0);
     let descent = metrics.descent.max(0.0);
     let mark_ascent = mark_metrics.ascent.max(0.0);
@@ -959,6 +959,17 @@ pub(super) fn push_emphasis_marked_text(
     Ok(true)
 }
 
+/// The metrics a base run's annotation group measures on: the face of its
+/// requested family, not a face picked for glyphs that family lacks, as body
+/// text measures.
+fn requested_metrics(
+    fm: &mut FontManager,
+    base: &AnnotationBase<'_>,
+) -> Result<oxoffice_layout::FontMetrics> {
+    let face = fm.resolve_font_for_metrics(base.font_family, base.bold, base.italic)?;
+    fm.metrics(face, base.font_size)
+}
+
 /// Shape a sequence of runs onto one baseline.
 ///
 /// `size_override` is the size `w:hps` and `w:hpsBaseText` fix for the whole
@@ -1010,7 +1021,9 @@ fn measure_annotation_line(
             font_size,
             style_resolver::word_kerning_enabled(&effective_rpr),
         )?;
-        let metrics = fm.metrics(font_id, font_size)?;
+        // The face of the requested family measures the line, as in body text.
+        let measure_font = fm.resolve_font_for_metrics(family.as_deref(), bold, italic)?;
+        let metrics = fm.metrics(measure_font, font_size)?;
         fm.record_font_contribution(font_id, family.as_deref(), &text)?;
         if line.runs.is_empty() {
             line.primary_font_size = font_size;
