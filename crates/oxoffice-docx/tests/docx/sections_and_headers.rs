@@ -1150,6 +1150,14 @@ fn rtf_round_trip_keeps_a_portrait_section_after_a_landscape_one() {
             Some(ST_PageOrientation::Portrait)
         ]
     );
+    // A section that states a wider than tall page without `\lndscpsxn`.
+    let rtf =
+        br"{\rtf1\ansi\landscape\paperw15840\paperh12240\sectd\pgwsxn15840\pghsxn12240 wide\par}";
+    let read = Document::from_rtf_bytes(rtf).unwrap().document;
+    assert_eq!(
+        read.section(0).unwrap().orientation(),
+        Some(ST_PageOrientation::Landscape)
+    );
 }
 
 #[test]
@@ -1157,7 +1165,8 @@ fn rtf_export_reports_the_section_parts_it_drops() {
     // A tracked section change, a child the model keeps as XML, and section
     // properties in a table cell, which only a body paragraph can end.
     let doc = crate::support::doc_with_body(concat!(
-        r#"<w:p><w:pPr><w:sectPr><w:bidi/><w:sectPrChange w:id="1" w:author="A" w:date="2026-11-23T00:00:00Z">"#,
+        r#"<w:p><w:pPr><w:sectPr><w:pgNumType xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main" x:fmt="lowerRoman"/>"#,
+        r#"<w:bidi/><w:sectPrChange w:id="1" w:author="A" w:date="2026-11-23T00:00:00Z">"#,
         r#"<w:sectPr/></w:sectPrChange></w:sectPr></w:pPr><w:r><w:t>first</w:t></w:r></w:p>"#,
         r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
         r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr>"#,
@@ -1172,6 +1181,7 @@ fn rtf_export_reports_the_section_parts_it_drops() {
         .map(|diagnostic| diagnostic.message)
         .collect();
     for expected in [
+        "section page numbering was dropped during RTF export",
         "section property revision was dropped during RTF export",
         "unmodelled section XML was dropped during RTF export",
         "section properties of a table-cell paragraph were dropped during RTF export",

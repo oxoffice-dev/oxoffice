@@ -1151,11 +1151,10 @@ impl<'a> RtfWriter<'a> {
                 // Decimal numbering that does not restart is the default.
                 section.page_number.as_ref().is_some_and(|numbering| {
                     numbering.start.is_some()
-                        || numbering.raw_xml.as_deref().is_some_and(|xml| {
-                            let xml = String::from_utf8_lossy(xml);
-                            (xml.contains("w:fmt=") && !xml.contains(r#"w:fmt="decimal""#))
-                                || xml.contains("w:chap")
-                        })
+                        || numbering
+                            .raw_xml
+                            .as_deref()
+                            .is_some_and(page_numbering_is_not_decimal)
                 }),
                 "section page numbering was dropped during RTF export",
             ),
@@ -1800,6 +1799,29 @@ fn marker_location(marker: &oxoffice_docx_oxml::text::CommentRangeMarker) -> usi
     match marker {
         oxoffice_docx_oxml::text::CommentRangeMarker::Start { run_index, .. }
         | oxoffice_docx_oxml::text::CommentRangeMarker::End { run_index, .. } => *run_index,
+    }
+}
+
+/// Whether a `w:pgNumType` names a format other than decimal or chapter
+/// numbering, whatever prefix its attributes take.
+fn page_numbering_is_not_decimal(xml: &[u8]) -> bool {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    loop {
+        match reader.read_event() {
+            Ok(
+                quick_xml::events::Event::Start(element) | quick_xml::events::Event::Empty(element),
+            ) => {
+                return element.attributes().flatten().any(|attribute| {
+                    match attribute.key.local_name().as_ref() {
+                        b"fmt" => attribute.value.as_ref() != b"decimal",
+                        b"chapStyle" | b"chapSep" => true,
+                        _ => false,
+                    }
+                });
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => return false,
+            Ok(_) => {}
+        }
     }
 }
 
@@ -2587,10 +2609,13 @@ impl SectionFormat {
         // RTF has no word for portrait: a section is landscape by its own
         // `\lndscpsxn`, or by the document's `\landscape` when it states no
         // page size of its own.
-        let landscape = self.landscape.or_else(|| {
-            (self.width.is_none() && self.height.is_none())
-                .then_some(page.landscape)
-                .flatten()
+        let landscape = self.landscape.or_else(|| match (self.width, self.height) {
+            (None, None) => page.landscape,
+            // A section that states a wider than tall page without
+            // `\lndscpsxn` is landscape too.
+            (width, height) => Some(
+                width.or(page.width).unwrap_or(12240) > height.or(page.height).unwrap_or(15840),
+            ),
         });
         if landscape == Some(true) {
             section.orientation = Some(ST_PageOrientation::Landscape);

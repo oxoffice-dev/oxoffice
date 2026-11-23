@@ -61,8 +61,9 @@ Write and read RTF the way Word does.
   orientation, margins, columns (`\cols`, `\colsx`) and break kind after
   `\sectd`, and `\sect` at each section's end; the reader reads them back,
   document-level `\paperw`... included. RTF has no word for portrait: a
-  section is landscape by its own `\lndscpsxn`, or by the document's
-  `\landscape` only when it states no page size of its own. Export reports
+  section is landscape by its own `\lndscpsxn`, by a page it states wider
+  than tall, or by the document's `\landscape` when it states no page size
+  of its own. Export reports
   what it drops of a section (headers and footers, first page, numbering
   other than decimal, borders, line numbers, revisions...).
 
