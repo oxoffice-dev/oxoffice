@@ -32,7 +32,7 @@ from Rust, the command line or Python.**
 - 🔍 **Real review tools**: list, accept and reject tracked changes, compare two versions into a redline,
   work with comments.
 - 🖨️ **Rendering without an office suite**: PDF, PNG, HTML and Markdown, with bundled fonts so the output is
-  the same on every machine; a Word render takes a system font only for characters they lack, such as most
+  the same on every machine; a render takes a system font only for characters they lack, such as most
   Chinese, Japanese and Korean text (`--bundled-fonts-only` never does).
 - 🚫 **Nothing to install around it**: no Office, no LibreOffice, no conversion service, no network.
 

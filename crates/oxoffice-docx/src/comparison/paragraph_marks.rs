@@ -98,6 +98,13 @@ impl<'a> EmittedOwner<'a> {
         metadata: &Metadata<'_>,
     ) -> Result<Self> {
         let (accepted, rejected) = PropertySide::matched(original, edited, metadata)?;
+        // With formatting ignored, the paragraph keeps the original's
+        // properties on both sides, as it is written.
+        let accepted = if metadata.options.ignore_formatting {
+            rejected.clone()
+        } else {
+            accepted
+        };
         Ok(Self::Paragraph { accepted, rejected })
     }
 

@@ -175,7 +175,7 @@ mod render;
 pub use render::{
     AutofitRefreshResult, AutofitUpdate, DeterministicMediaTimelineFrame,
     DeterministicTimelineFrame, FitFrameReport, FitReport, HandoutLayout, MediaFallbackPolicy,
-    TextFrameLayout, TextFrameLocation,
+    PptxRenderOptions, TextFrameLayout, TextFrameLocation,
 };
 #[cfg(feature = "render")]
 use render::{
