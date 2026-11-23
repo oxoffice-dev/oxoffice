@@ -636,6 +636,43 @@ fn break_into_lines_recorded(
                 {
                     push_layout_line(&mut lines, &mut origins, &mut line, params, fm, false, None)?;
                 }
+                // A group wider than a whole line has no break opportunity
+                // left: Word breaks it at the character that overflows.
+                let (seg_items, seg_origins) = if params.wrap
+                    && line.items.is_empty()
+                    && line.beside_no_float(params)
+                    && line.width_with(&seg_items, fm)? - hanging_space_width(&seg_items, fm)?
+                        > line.limit + 0.01
+                {
+                    match cut_overflowing_group(seg_items, seg_origins, line.limit, true, fm)? {
+                        Ok(cut) => {
+                            for (item_index, item) in cut.head.iter().enumerate() {
+                                line.push(
+                                    item,
+                                    fm,
+                                    cut.head_origins.iter().find_map(|(index, origin)| {
+                                        (*index == item_index).then_some(*origin)
+                                    }),
+                                )?;
+                            }
+                            push_layout_line(
+                                &mut lines,
+                                &mut origins,
+                                &mut line,
+                                params,
+                                fm,
+                                false,
+                                None,
+                            )?;
+                            segments
+                                .push_front(BreakableSegment::Items(cut.tail, cut.tail_origins));
+                            continue;
+                        }
+                        Err(whole) => whole,
+                    }
+                } else {
+                    (seg_items, seg_origins)
+                };
 
                 // Add segment items to current line
                 for (item_index, item) in seg_items.iter().enumerate() {
@@ -700,9 +737,57 @@ fn break_into_lines_recorded(
                         },
                     )));
                 } else {
-                    let item = segment;
-                    font_ctx = Some((segment_font_id(&item), segment_font_size(&item)));
-                    line.push(&item, fm, None)?;
+                    // No hyphenation point fits an empty line: the word is
+                    // broken at the character that overflows, as above.
+                    let cut = if line.beside_no_float(params) {
+                        cut_overflowing_group(vec![segment], Vec::new(), line.limit, false, fm)?
+                    } else {
+                        Err((vec![segment], Vec::new()))
+                    };
+                    match cut {
+                        Ok(cut) => {
+                            let cut_at = cut
+                                .head
+                                .iter()
+                                .map(|item| hyphenation_base(item).map(|base| base.text.len()))
+                                .sum::<Result<usize>>()?;
+                            for item in &cut.head {
+                                font_ctx = Some((segment_font_id(item), segment_font_size(item)));
+                                line.push(item, fm, None)?;
+                            }
+                            push_layout_line(
+                                &mut lines,
+                                &mut origins,
+                                &mut line,
+                                params,
+                                fm,
+                                false,
+                                None,
+                            )?;
+                            let mut tail = cut.tail.into_iter();
+                            let (Some(remainder), None) = (tail.next(), tail.next()) else {
+                                return Err(LayoutError::Layout(
+                                    "a cut word lost its remainder".into(),
+                                ));
+                            };
+                            segments.push_front(BreakableSegment::Hyphenated(Box::new(
+                                HyphenatedSegment {
+                                    segment: remainder,
+                                    break_points: break_points
+                                        .iter()
+                                        .filter(|point| **point > cut_at)
+                                        .map(|point| point - cut_at)
+                                        .collect(),
+                                },
+                            )));
+                        }
+                        Err((whole, _)) => {
+                            for item in &whole {
+                                font_ctx = Some((segment_font_id(item), segment_font_size(item)));
+                                line.push(item, fm, None)?;
+                            }
+                        }
+                    }
                 }
             }
             BreakableSegment::ForcedBreak(break_kind) => {
@@ -929,6 +1014,12 @@ impl LineState {
             }
             None => self.width + items.iter().map(inline_item_width).sum::<f64>(),
         })
+    }
+
+    /// Whether no floating object narrows this line. A word too wide for a
+    /// narrowed line is not cut: the text goes on past the object.
+    fn beside_no_float(&self, params: &LineBreakParams) -> bool {
+        line_prefix_width(params, self.index) == 0.0 && line_suffix_width(params, self.index) == 0.0
     }
 
     /// The width appended text starts from, once a waiting tab has given up
@@ -2123,6 +2214,214 @@ fn fitting_hyphenation(
         }));
     }
     Ok(None)
+}
+
+/// A group cut where it overflows a line: what fits, and the rest.
+struct OverflowCut {
+    head: Vec<InlineItem>,
+    head_origins: Vec<(usize, usize)>,
+    tail: Vec<InlineItem>,
+    tail_origins: Vec<(usize, usize)>,
+}
+
+/// Cut a group that has no break opportunity at the character that
+/// overflows `available`, keeping at least one character on the line so a
+/// line always advances. The cut falls between two items when the item that
+/// overflows is not text, or when none of its characters fits after the
+/// items before it. The group comes back whole when it cannot be cut: it
+/// starts with a picture or drawing wider than the line, holds one
+/// character, or would leave nothing visible on the line.
+///
+/// With `split_rest`, a rest much wider than the line is cut into pieces of
+/// about one line in the same pass, so a long string is shaped a bounded
+/// number of times per character, not once per line.
+#[allow(clippy::type_complexity)]
+fn cut_overflowing_group(
+    mut items: Vec<InlineItem>,
+    origins: Vec<(usize, usize)>,
+    available: f64,
+    split_rest: bool,
+    fm: &FontManager,
+) -> Result<std::result::Result<OverflowCut, (Vec<InlineItem>, Vec<(usize, usize)>)>> {
+    let mut used = 0.0;
+    let Some(index) = items.iter().position(|item| {
+        let width = inline_item_width(item);
+        let overflows = used + width > available + 0.01;
+        used += width;
+        overflows
+    }) else {
+        return Ok(Err((items, origins)));
+    };
+    let used = items[..index].iter().map(inline_item_width).sum::<f64>();
+    let rest = items.split_off(index + 1);
+    let Some(item) = items.pop() else {
+        return Err(LayoutError::Layout("a cut lost its item".into()));
+    };
+    let mut head = items;
+    let cut = cut_text_item(
+        &item,
+        available - used,
+        head.is_empty(),
+        split_rest.then_some(available),
+        fm,
+    )?;
+    let mut tail = Vec::new();
+    match cut {
+        Some((prefix, pieces)) => {
+            head.push(prefix);
+            tail.extend(pieces);
+        }
+        None => tail.push(item),
+    }
+    let pieces = tail.len();
+    if head.iter().map(inline_item_width).sum::<f64>() <= 0.0 {
+        head.extend(tail);
+        head.extend(rest);
+        return Ok(Err((head, origins)));
+    }
+    tail.extend(rest);
+    let (head_origins, tail_origins): (Vec<_>, Vec<_>) =
+        origins.into_iter().partition(|(at, _)| *at < index);
+    let tail_origins = tail_origins
+        .into_iter()
+        .map(|(at, origin): (usize, usize)| {
+            // An uncut item keeps its place at the front of the rest.
+            (
+                if at == index {
+                    0
+                } else {
+                    at - index - 1 + pieces
+                },
+                origin,
+            )
+        })
+        .collect();
+    Ok(Ok(OverflowCut {
+        head,
+        head_origins,
+        tail,
+        tail_origins,
+    }))
+}
+
+/// Cut a text item after the longest prefix that fits `room`, at a grapheme
+/// boundary; on an empty line at least one grapheme goes. The rest comes back
+/// as one piece, or as pieces about `piece_width` wide when it is more than
+/// twice that. `None` for an item that is not text or has no prefix to give.
+fn cut_text_item(
+    item: &InlineItem,
+    room: f64,
+    line_empty: bool,
+    piece_width: Option<f64>,
+    fm: &FontManager,
+) -> Result<Option<(InlineItem, Vec<InlineItem>)>> {
+    let segment = match item {
+        InlineItem::Text(segment) => segment,
+        InlineItem::MultilingualText(span) => span.base(),
+        _ => return Ok(None),
+    };
+    let split = |start: usize, end: usize, spacing: f64| match item {
+        InlineItem::Text(segment) => split_text_subsegment(segment, start, end, spacing, fm),
+        _ => split_hyphenation_item(item, start, end, spacing, fm),
+    };
+    let bounds = icu_segmenter::GraphemeClusterSegmenter::new()
+        .segment_str(&segment.text)
+        .filter(|at| *at > 0 && *at < segment.text.len())
+        .collect::<Vec<_>>();
+    // Each grapheme's width is read from the shaped advances when they map one
+    // to one onto the characters, else estimated from the mean advance.
+    let chars = segment.text.chars().count().max(1);
+    let one_to_one = segment.advances.len() == chars;
+    let mean = segment.width / chars as f64;
+    let mut estimated = Vec::with_capacity(bounds.len() + 1);
+    let (mut previous, mut char_index, mut total) = (0, 0, 0.0);
+    for end in bounds
+        .iter()
+        .copied()
+        .chain(std::iter::once(segment.text.len()))
+    {
+        let count = segment.text[previous..end].chars().count();
+        total += if one_to_one {
+            segment.advances[char_index..char_index + count]
+                .iter()
+                .sum::<f64>()
+        } else {
+            mean * count as f64
+        };
+        estimated.push(total);
+        char_index += count;
+        previous = end;
+    }
+    // The character spacing the item's advances carry. Shaping a long run
+    // whole costs more than the cut it serves, so a long one is read from its
+    // first characters, shaped without spacing.
+    const WINDOW: usize = 256;
+    let spacing = if one_to_one && chars > 2 * WINDOW {
+        let end = segment
+            .text
+            .char_indices()
+            .nth(WINDOW)
+            .map_or(segment.text.len(), |(at, _)| at);
+        let natural = inline_item_width(&split(0, end, 0.0)?);
+        (segment.advances[..WINDOW].iter().sum::<f64>() - natural) / WINDOW as f64
+    } else {
+        match item {
+            InlineItem::MultilingualText(span) => fm.context_character_spacing(span)?,
+            _ => text_segment_spacing(segment, fm)?,
+        }
+    };
+    let piece = |start: usize, end: usize| split(start, end, spacing);
+    // The longest prefix that fits, found by halving: a prefix only grows as
+    // graphemes are added. The estimate bounds the search, so only prefixes of
+    // about a line are shaped.
+    let estimate = estimated.partition_point(|width| *width <= room + 0.01);
+    let cap = bounds.len().min(2 * estimate + 8);
+    let mut low = 0;
+    // Past the bound, when even it fits: an estimate from the mean advance can
+    // be far off (narrow characters first, wide ones after).
+    for high in [cap, bounds.len()] {
+        let mut high = high;
+        while low < high {
+            let middle = (low + high).div_ceil(2);
+            if inline_item_width(&piece(0, bounds[middle - 1])?) <= room + 0.01 {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        if low < cap {
+            break;
+        }
+    }
+    let cut = match (low, line_empty) {
+        (0, true) => match bounds.first() {
+            Some(first) => *first,
+            None => return Ok(None),
+        },
+        (0, false) => return Ok(None),
+        (fitting, _) => bounds[fitting - 1],
+    };
+    let prefix = piece(0, cut)?;
+    let rest_width = segment.width - inline_item_width(&prefix);
+    let Some(width) = piece_width.filter(|width| *width > 0.0 && rest_width > 2.0 * width) else {
+        return Ok(Some((prefix, vec![piece(cut, segment.text.len())?])));
+    };
+    // Pieces about one line wide, from the estimated widths, shaped once each.
+    let first = bounds.partition_point(|at| *at <= cut);
+    let (mut start, mut line_start) = (cut, estimated[first.saturating_sub(1)]);
+    if first == 0 {
+        line_start = 0.0;
+    }
+    let mut pieces = Vec::new();
+    for (index, end) in bounds.iter().copied().enumerate().skip(first) {
+        if estimated[index + 1] - line_start > width && end > start {
+            pieces.push(piece(start, end)?);
+            start = end;
+            line_start = estimated[index];
+        }
+    }
+    pieces.push(piece(start, segment.text.len())?);
+    Ok(Some((prefix, pieces)))
 }
 
 fn text_segment_spacing(segment: &TextSegment, fm: &FontManager) -> Result<f64> {

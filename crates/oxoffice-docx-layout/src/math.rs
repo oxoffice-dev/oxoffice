@@ -1,8 +1,9 @@
 use oxoffice_docx_oxml::math::{
-    FractionType, LimitLocation, MathAccent, MathArgument, MathDelimiter, MathExpression,
-    MathFraction, MathJustification, MathLimit, MathMatrix, MathNary, MathPreSubSuperscript,
+    FractionType, LimitLocation, MathAccent, MathArgument, MathBorderBox, MathDelimiter,
+    MathEquationArray, MathExpression, MathFraction, MathFunction, MathGroupCharacter,
+    MathJustification, MathLimit, MathMatrix, MathNary, MathPhantom, MathPreSubSuperscript,
     MathProperties, MathRadical, MathRun, MathScript, MathStyle, MathSubSuperscript,
-    MatrixBaseJustification, OfficeMath,
+    MathVerticalPosition, MatrixBaseJustification, MatrixColumnJustification, OfficeMath,
 };
 use oxoffice_docx_oxml::properties::CT_RPr;
 use oxoffice_docx_oxml::theme::Theme;
@@ -893,7 +894,11 @@ fn apply_expression_limit_defaults(
                     argument(argument_value, properties);
                 }
             }
-            MathExpression::Accent(value) => argument(&mut value.base, properties),
+            other => {
+                for value in other.arguments_mut() {
+                    argument(value, properties);
+                }
+            }
         }
     }
 }
@@ -1100,6 +1105,77 @@ fn layout_expression(
             source_path,
             diagnostics,
         ),
+        MathExpression::Function(value) => layout_function(
+            value,
+            fm,
+            font_family,
+            context,
+            color,
+            source_path,
+            diagnostics,
+        ),
+        MathExpression::Bar(value) => Ok(ruled(
+            layout_argument(
+                &value.base,
+                fm,
+                font_family,
+                context,
+                color,
+                &format!("{source_path}/base"),
+                diagnostics,
+            )?,
+            value.position == Some(MathVerticalPosition::Top),
+            context.font_size,
+            color,
+        )),
+        MathExpression::Box(value) => layout_argument(
+            &value.base,
+            fm,
+            font_family,
+            context,
+            color,
+            &format!("{source_path}/base"),
+            diagnostics,
+        ),
+        MathExpression::BorderBox(value) => layout_border_box(
+            value,
+            fm,
+            font_family,
+            context,
+            color,
+            source_path,
+            diagnostics,
+        ),
+        MathExpression::GroupCharacter(value) => layout_group_character(
+            value,
+            fm,
+            font_family,
+            context,
+            color,
+            source_path,
+            diagnostics,
+        ),
+        MathExpression::Phantom(value) => layout_phantom(
+            value,
+            fm,
+            font_family,
+            context,
+            color,
+            source_path,
+            diagnostics,
+        ),
+        MathExpression::EquationArray(value) => layout_equation_array(
+            value,
+            fm,
+            font_family,
+            context,
+            color,
+            source_path,
+            diagnostics,
+        ),
+        // A construct this layout does not know yet is reported by the
+        // equation's unsupported content and takes no room.
+        _ => Ok(MeasuredMath::empty()),
     }
 }
 
@@ -1966,12 +2042,20 @@ fn layout_matrix(
         + row_gap * rows.len().saturating_sub(1) as f64;
     let top_row_ascent = row_metrics[0].0;
     let bottom_row_descent = row_metrics.last().map_or(0.0, |(_, descent)| *descent);
+    let justifications = (0..column_count)
+        .map(|column| value.column_justification(column))
+        .collect::<Vec<_>>();
     let mut children = Vec::new();
     let mut y = 0.0;
     for (row, (row_ascent, row_descent)) in rows.into_iter().zip(row_metrics) {
         let mut x = 0.0;
         for (column_index, cell) in row.into_iter().enumerate() {
-            let cell_x = x + (column_widths[column_index] - cell.width) / 2.0;
+            let room = column_widths[column_index] - cell.width;
+            let cell_x = x + match justifications[column_index] {
+                MatrixColumnJustification::Left => 0.0,
+                MatrixColumnJustification::Center => room / 2.0,
+                MatrixColumnJustification::Right => room,
+            };
             children.push(translated(cell.group, cell_x, y + row_ascent - cell.ascent));
             x += column_widths[column_index] + column_gap;
         }
@@ -2479,6 +2563,363 @@ fn layout_accent(
             translated(accent.group, (width - accent.width) / 2.0, 0.0),
             translated(base.group, (width - base.width) / 2.0, accent_raise),
         ]),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_function(
+    value: &MathFunction,
+    fm: &mut FontManager,
+    font_family: Option<&str>,
+    context: MathLayoutStyle<'_>,
+    color: Color,
+    source_path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<MeasuredMath> {
+    let name = layout_argument(
+        &value.name,
+        fm,
+        font_family,
+        context,
+        color,
+        &format!("{source_path}/name"),
+        diagnostics,
+    )?;
+    let argument = layout_argument(
+        &value.argument,
+        fm,
+        font_family,
+        context,
+        color,
+        &format!("{source_path}/argument"),
+        diagnostics,
+    )?;
+    if value.argument.expressions.is_empty() {
+        return Ok(name);
+    }
+    // A thin space, a sixth of an em, between the name and its argument.
+    let space = MeasuredMath {
+        width: context.font_size / 6.0,
+        ..MeasuredMath::empty()
+    };
+    Ok(layout_sequence(vec![name, space, argument]))
+}
+
+/// A rule of the fraction rule's thickness over or under `base`, a gap away.
+fn ruled(base: MeasuredMath, over: bool, font_size: f64, color: Color) -> MeasuredMath {
+    let rule = font_size * RULE_EM;
+    let gap = font_size * GAP_EM / 2.0;
+    let (base_y, rule_y) = if over {
+        (gap + rule, rule / 2.0)
+    } else {
+        (0.0, base.height() + gap + rule / 2.0)
+    };
+    MeasuredMath {
+        terminal_italic_advance: 0.0,
+        top_padding: 0.0,
+        width: base.width,
+        ascent: base.ascent + if over { gap + rule } else { 0.0 },
+        descent: base.descent + if over { 0.0 } else { gap + rule },
+        group: group(vec![
+            translated(base.group, 0.0, base_y),
+            PositionedElement::Line {
+                start: Point { x: 0.0, y: rule_y },
+                end: Point {
+                    x: base.width,
+                    y: rule_y,
+                },
+                width: rule,
+                color,
+                dash_pattern: None,
+            },
+        ]),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_border_box(
+    value: &MathBorderBox,
+    fm: &mut FontManager,
+    font_family: Option<&str>,
+    context: MathLayoutStyle<'_>,
+    color: Color,
+    source_path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<MeasuredMath> {
+    let font_size = context.font_size;
+    let base = layout_argument(
+        &value.base,
+        fm,
+        font_family,
+        context,
+        color,
+        &format!("{source_path}/base"),
+        diagnostics,
+    )?;
+    let rule = font_size * RULE_EM;
+    let padding = font_size * GAP_EM + rule;
+    let width = base.width + 2.0 * padding;
+    let height = base.height() + 2.0 * padding;
+    let line = |start: (f64, f64), end: (f64, f64)| PositionedElement::Line {
+        start: Point {
+            x: start.0,
+            y: start.1,
+        },
+        end: Point { x: end.0, y: end.1 },
+        width: rule,
+        color,
+        dash_pattern: None,
+    };
+    let (left, right, top, bottom) = (
+        rule / 2.0,
+        width - rule / 2.0,
+        rule / 2.0,
+        height - rule / 2.0,
+    );
+    let on = |flag: Option<bool>| flag == Some(true);
+    let mut children = vec![translated(base.group, padding, padding)];
+    for (drawn, start, end) in [
+        (!on(value.hide_top), (0.0, top), (width, top)),
+        (!on(value.hide_bottom), (0.0, bottom), (width, bottom)),
+        (!on(value.hide_left), (left, 0.0), (left, height)),
+        (!on(value.hide_right), (right, 0.0), (right, height)),
+        (
+            on(value.strike_horizontal),
+            (0.0, height / 2.0),
+            (width, height / 2.0),
+        ),
+        (
+            on(value.strike_vertical),
+            (width / 2.0, 0.0),
+            (width / 2.0, height),
+        ),
+        (
+            on(value.strike_bottom_left_to_top_right),
+            (0.0, height),
+            (width, 0.0),
+        ),
+        (
+            on(value.strike_top_left_to_bottom_right),
+            (0.0, 0.0),
+            (width, height),
+        ),
+    ] {
+        if drawn {
+            children.push(line(start, end));
+        }
+    }
+    Ok(MeasuredMath {
+        terminal_italic_advance: 0.0,
+        top_padding: 0.0,
+        width,
+        ascent: base.ascent + padding,
+        descent: base.descent + padding,
+        group: group(children),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_group_character(
+    value: &MathGroupCharacter,
+    fm: &mut FontManager,
+    font_family: Option<&str>,
+    context: MathLayoutStyle<'_>,
+    color: Color,
+    source_path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<MeasuredMath> {
+    let font_size = context.font_size;
+    let base = layout_argument(
+        &value.base,
+        fm,
+        font_family,
+        context,
+        color,
+        &format!("{source_path}/base"),
+        diagnostics,
+    )?;
+    let character = value.character.as_deref().unwrap_or("\u{23df}");
+    if character.is_empty() {
+        return Ok(base);
+    }
+    let mut mark = layout_text(
+        character,
+        fm,
+        font_family,
+        context,
+        color,
+        false,
+        false,
+        source_path,
+        diagnostics,
+    )?;
+    // The character stretches to the width of its base. Its own group keeps
+    // the text's horizontal scale: the stretch wraps it.
+    if mark.width > 0.0 && base.width > mark.width {
+        let scale = base.width / mark.width;
+        mark.group = group(vec![PositionedElement::Group(mark.group)]);
+        mark = horizontally_scaled(mark, scale);
+    }
+    let over = value.position == Some(MathVerticalPosition::Top);
+    let gap = font_size * GAP_EM;
+    let width = base.width.max(mark.width);
+    let (base_x, mark_x) = ((width - base.width) / 2.0, (width - mark.width) / 2.0);
+    let (first, second) = if over { (&mark, &base) } else { (&base, &mark) };
+    let second_y = first.height() + gap;
+    // The base keeps the baseline unless the vertical justification names
+    // the character's side.
+    let on_character = value.vertical_justification
+        == value.position.or(Some(MathVerticalPosition::Bottom))
+        && value.vertical_justification.is_some();
+    let ascent = match (over, on_character) {
+        (true, false) | (false, true) => second_y + second.ascent,
+        (false, false) | (true, true) => first.ascent,
+    };
+    let height = second_y + second.height();
+    let (base_y, mark_y) = if over {
+        (second_y, 0.0)
+    } else {
+        (0.0, second_y)
+    };
+    Ok(MeasuredMath {
+        terminal_italic_advance: 0.0,
+        top_padding: 0.0,
+        width,
+        ascent,
+        descent: height - ascent,
+        group: group(vec![
+            translated(base.group, base_x, base_y),
+            translated(mark.group, mark_x, mark_y),
+        ]),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_phantom(
+    value: &MathPhantom,
+    fm: &mut FontManager,
+    font_family: Option<&str>,
+    context: MathLayoutStyle<'_>,
+    color: Color,
+    source_path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<MeasuredMath> {
+    let mut base = layout_argument(
+        &value.base,
+        fm,
+        font_family,
+        context,
+        color,
+        &format!("{source_path}/base"),
+        diagnostics,
+    )?;
+    if value.show == Some(false) {
+        base.group = group(Vec::new());
+    }
+    if value.zero_width == Some(true) {
+        base.width = 0.0;
+    }
+    if value.zero_ascent == Some(true) {
+        // The ink keeps its baseline: the box's top moves down to it.
+        base.group = group(vec![translated(base.group, 0.0, -base.ascent)]);
+        base.ascent = 0.0;
+    }
+    if value.zero_descent == Some(true) {
+        base.descent = 0.0;
+    }
+    Ok(base)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_equation_array(
+    value: &MathEquationArray,
+    fm: &mut FontManager,
+    font_family: Option<&str>,
+    context: MathLayoutStyle<'_>,
+    color: Color,
+    source_path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<MeasuredMath> {
+    let font_size = context.font_size;
+    // Each row aligns on its first `&`, which is not drawn: the part before
+    // it ends at one column, the part after it starts there; a row with no
+    // mark starts at the column. With no mark in any row, Word centres them.
+    let aligned = value
+        .rows
+        .iter()
+        .any(|row| row.split_at_alignment().is_some());
+    let mut rows = Vec::with_capacity(value.rows.len());
+    for (index, row) in value.rows.iter().enumerate() {
+        let (before, after) = row
+            .split_at_alignment()
+            .unwrap_or_else(|| (MathArgument::default(), row.clone()));
+        let path = format!("{source_path}/row/{index}");
+        let before = layout_argument(&before, fm, font_family, context, color, &path, diagnostics)?;
+        let after = layout_argument(&after, fm, font_family, context, color, &path, diagnostics)?;
+        rows.push((before, after));
+    }
+    let column = rows
+        .iter()
+        .map(|(before, _)| before.width)
+        .fold(0.0, f64::max);
+    let width = rows
+        .iter()
+        .map(|(_, after)| column + after.width)
+        .fold(0.0, f64::max);
+    // Single spacing by default; the rules of 1.5, double, exactly and
+    // multiple lines as Word reads them for a matrix.
+    let line = font_size * 1.2;
+    let step = |ascent_descent: f64| match (value.row_spacing_rule, value.row_spacing) {
+        (Some(1), _) => ascent_descent.max(line * 1.5),
+        (Some(2), _) => ascent_descent.max(line * 2.0),
+        (Some(3), Some(points)) => f64::from(points) / 20.0,
+        (Some(4), Some(lines)) => ascent_descent.max(line * f64::from(lines) / 2.0),
+        _ => ascent_descent + font_size * GAP_EM,
+    };
+    let mut children = Vec::new();
+    let mut baseline = 0.0;
+    let mut previous_descent = None;
+    let mut first_ascent = 0.0;
+    for (before, after) in rows {
+        let ascent = before.ascent.max(after.ascent);
+        let descent = before.descent.max(after.descent);
+        baseline = match previous_descent {
+            None => {
+                first_ascent = ascent;
+                ascent
+            }
+            Some(previous) => baseline + step(previous + ascent),
+        };
+        children.push(translated(
+            before.group,
+            column - before.width,
+            baseline - before.ascent,
+        ));
+        let after_x = if aligned {
+            column
+        } else {
+            (width - after.width) / 2.0
+        };
+        children.push(translated(after.group, after_x, baseline - after.ascent));
+        previous_descent = Some(descent);
+    }
+    let height = baseline + previous_descent.unwrap_or(0.0);
+    let ascent = match value.base_justification {
+        Some(MatrixBaseJustification::Top) => first_ascent,
+        Some(MatrixBaseJustification::Bottom) => baseline,
+        Some(MatrixBaseJustification::Center) | None => {
+            // Centred on the math axis, a quarter of the font size above the
+            // baseline.
+            height / 2.0 + font_size * 0.25
+        }
+    };
+    Ok(MeasuredMath {
+        terminal_italic_advance: 0.0,
+        top_padding: 0.0,
+        width,
+        ascent,
+        descent: height - ascent,
+        group: group(children),
     })
 }
 

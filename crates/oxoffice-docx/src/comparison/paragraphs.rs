@@ -49,8 +49,11 @@ pub(super) fn deleted_body_content(
     match content {
         BodyContent::Paragraph(paragraph) => deleted_paragraph(paragraph, carried, metadata),
         BodyContent::Table(table) => marked_table(table, "del", metadata),
-        BodyContent::ContentControl(_) | BodyContent::RawXml(_) => Err(Error::Other(
-            "comparison cannot delete an unmatched content-control or opaque body node".to_owned(),
+        BodyContent::ContentControl(control) => {
+            marked_control(control, "del", None, carried, None, metadata)
+        }
+        BodyContent::RawXml(_) => Err(Error::Other(
+            "comparison cannot delete an unmatched opaque body node".to_owned(),
         )),
     }
 }
@@ -63,8 +66,11 @@ pub(super) fn inserted_body_content(
     match content {
         BodyContent::Paragraph(paragraph) => inserted_paragraph(paragraph, carried, metadata),
         BodyContent::Table(table) => marked_table(table, "ins", metadata),
-        BodyContent::ContentControl(_) | BodyContent::RawXml(_) => Err(Error::Other(
-            "comparison cannot insert an unmatched content-control or opaque body node".to_owned(),
+        BodyContent::ContentControl(control) => {
+            marked_control(control, "ins", None, carried, None, metadata)
+        }
+        BodyContent::RawXml(_) => Err(Error::Other(
+            "comparison cannot insert an unmatched opaque body node".to_owned(),
         )),
     }
 }

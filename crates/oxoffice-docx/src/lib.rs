@@ -123,11 +123,13 @@ pub use oxoffice_docx_layout::{RevisionStyle, RevisionView, WordLayoutResult};
 pub use oxoffice_docx_oxml::document::{CT_DocGrid, ST_DocGrid};
 pub use oxoffice_docx_oxml::header_footer::HdrFtrType;
 pub use oxoffice_docx_oxml::math::{
-    CT_OMath, CT_OMathPara, FractionType, LimitLocation, MathAccent, MathArgument, MathDelimiter,
-    MathExpression, MathFraction, MathJustification, MathLimit, MathMatrix, MathMatrixProperties,
-    MathMatrixRow, MathNary, MathParagraphProperties, MathPreSubSuperscript, MathProperties,
-    MathRadical, MathRun, MathRunProperties, MathScript, MathScriptStyle, MathStyle,
-    MathSubSuperscript, MatrixBaseJustification, OfficeMath,
+    CT_OMath, CT_OMathPara, FractionType, LimitLocation, MathAccent, MathArgument, MathBar,
+    MathBorderBox, MathBox, MathDelimiter, MathEquationArray, MathExpression, MathFraction,
+    MathFunction, MathGroupCharacter, MathJustification, MathLimit, MathMatrix,
+    MathMatrixProperties, MathMatrixRow, MathNary, MathParagraphProperties, MathPhantom,
+    MathPreSubSuperscript, MathProperties, MathRadical, MathRun, MathRunProperties, MathScript,
+    MathScriptStyle, MathStyle, MathSubSuperscript, MathVerticalPosition, MatrixBaseJustification,
+    MatrixColumnJustification, OfficeMath,
 };
 pub use oxoffice_docx_oxml::properties::{
     CT_EastAsianLayout, CT_FitText, CT_PPr, CT_RPr, ST_Em, ST_TextEffect,
