@@ -48,6 +48,7 @@ const TABLE_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const DRAW_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 const SVG_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
+const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
 const MANIFEST_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 const ODT_MIMETYPE: &[u8] = b"application/vnd.oasis.opendocument.text";
 
@@ -3962,10 +3963,17 @@ impl<'a> Importer<'a> {
                     let index = element_positions.entry(key).or_default();
                     *index += 1;
                     let child_path = format!("{path}/draw:frame[{}]", *index);
-                    let piece = if element.elements().any(|node| node.is(DRAW_NS, "object")) {
+                    // A formula object reads as an equation; any other
+                    // object (a chart, an OLE object) as its replacement
+                    // image, as before formulas were read.
+                    let formula = if element.elements().any(|node| node.is(DRAW_NS, "object")) {
                         self.project_formula(element, &child_path)?
                     } else {
-                        self.project_image(element, &child_path)?
+                        None
+                    };
+                    let piece = match formula {
+                        Some(formula) => Some(formula),
+                        None => self.project_image(element, &child_path)?,
                     };
                     if let Some(image) = piece {
                         output.push(image);
@@ -3990,40 +3998,41 @@ impl<'a> Importer<'a> {
     }
 
     /// Read a formula object (`draw:object` whose sub-document is MathML)
-    /// back as an equation. One it cannot read is reported and left out.
+    /// back as an equation; a formula it cannot read is reported and left
+    /// out. `None`, and no report, for any other object: the caller reads
+    /// its replacement image.
     fn project_formula(&mut self, frame: &XmlNode, path: &str) -> Result<Option<InlinePiece>> {
-        let object = frame
+        let Some(href) = frame
             .elements()
             .find(|node| node.is(DRAW_NS, "object"))
-            .expect("the caller found the object");
-        let Some(href) = object.attr(Some(XLINK_NS), "href") else {
-            self.diagnostic(path, "ODT object has no package target")?;
+            .and_then(|object| object.attr(Some(XLINK_NS), "href"))
+        else {
             return Ok(None);
         };
-        let target = href
-            .strip_prefix("./")
-            .unwrap_or(href)
-            .trim_end_matches('/')
-            .to_owned()
-            + "/content.xml";
-        let target = safe_image_target(&target).ok_or_else(|| {
-            odt_error(
-                Some("content.xml"),
-                0,
-                format!("unsafe ODT object target {href}"),
-            )
-        })?;
+        // An object outside the package, or one whose content is encrypted
+        // or missing, is not a formula this reader can read.
+        let Some(target) = safe_image_target(
+            &(href
+                .strip_prefix("./")
+                .unwrap_or(href)
+                .trim_end_matches('/')
+                .to_owned()
+                + "/content.xml"),
+        ) else {
+            return Ok(None);
+        };
         if self.encrypted.contains(&target) {
-            return Err(odt_error(
-                Some(&target),
-                0,
-                "referenced ODT object is encrypted",
-            ));
+            return Ok(None);
         }
         let Some(bytes) = self.archive.read_optional(&target)? else {
-            self.diagnostic(path, format!("missing ODT object content {target}"))?;
             return Ok(None);
         };
+        if !bytes
+            .windows(MATHML_NS.len())
+            .any(|window| window == MATHML_NS.as_bytes())
+        {
+            return Ok(None);
+        }
         let read = std::str::from_utf8(&bytes)
             .map_err(|_| crate::math::math_error("formula object is not UTF-8"))
             .and_then(crate::math::equation_from_formula_object);

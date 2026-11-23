@@ -48,7 +48,7 @@ const ON_OFF: &[&str] = &[
 /// is a container (`{\mf ...}`), its children inside.
 const VALUED: &[&str] = &[
     "argSz", "baseJc", "begChr", "cGp", "cGpRule", "chr", "count", "cSp", "endChr", "limLoc",
-    "mcJc", "pos", "rSp", "rSpRule", "sepChr", "type", "vertJc",
+    "mcJc", "pos", "rSp", "rSpRule", "sepChr", "shp", "type", "vertJc",
 ];
 
 /// An equation as OMML-in-RTF, and what the RTF cannot carry of it.
@@ -234,10 +234,16 @@ impl Writer {
                     .push_str(&format!("{{\\m{local} {}", if on { "on" } else { "off" }));
                 Open::Group
             }
-            local if VALUED.contains(&local) || value.is_some() => {
+            local if VALUED.contains(&local) => {
                 self.out.push_str(&format!("{{\\m{local} "));
                 push_rtf_text(&mut self.out, value.as_deref().unwrap_or_default());
                 Open::Group
+            }
+            // A value the reader would not read back as one: reported, so
+            // that writer and reader always agree on what is a value.
+            local if value.is_some() => {
+                self.lost.push(format!("m:{local}"));
+                Open::Nothing
             }
             local => {
                 self.out.push_str(&format!("{{\\m{local}"));

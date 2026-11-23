@@ -2240,6 +2240,105 @@ fn a_formula_libreoffice_writes_reads_as_an_equation() {
     );
 }
 
+/// `odt` with each entry passed through `edit` (name, bytes), and the
+/// entries of `extra` added.
+fn odt_edited(
+    odt: &[u8],
+    edit: impl Fn(&str, Vec<u8>) -> Vec<u8>,
+    extra: &[(&str, &[u8])],
+) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(odt)).unwrap();
+    let mut output = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+        output
+            .start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut output, &edit(&name, bytes)).unwrap();
+    }
+    for (name, bytes) in extra {
+        output
+            .start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut output, bytes).unwrap();
+    }
+    output.finish().unwrap().into_inner()
+}
+
+#[test]
+fn an_object_that_is_not_a_formula_reads_as_its_replacement_image() {
+    let odt = corpus_doc("word/paper.docx").to_odt_bytes().unwrap().bytes;
+    let pictures = |odt: &[u8]| {
+        Document::from_odt_bytes(odt)
+            .unwrap()
+            .document
+            .pictures()
+            .unwrap()
+            .len()
+    };
+    let expected = pictures(&odt);
+    assert!(expected > 0);
+    // A chart in the package, then an object linked outside it, beside the
+    // image that replaces it.
+    for target in ["./Object 99", "../outside.ods"] {
+        let edited = odt_edited(
+            &odt,
+            |name, bytes| {
+                if name != "content.xml" {
+                    return bytes;
+                }
+                let xml = String::from_utf8(bytes).unwrap();
+                assert!(xml.contains("<draw:image "), "{xml}");
+                xml.replacen(
+                    "<draw:image ",
+                    &format!(r#"<draw:object xlink:href="{target}"/><draw:image "#),
+                    1,
+                )
+                .into_bytes()
+            },
+            &[(
+                "Object 99/content.xml",
+                br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>"#,
+            )],
+        );
+        assert_eq!(pictures(&edited), expected, "{target}");
+    }
+}
+
+#[test]
+fn a_delimiter_shape_survives_an_rtf_round_trip() {
+    let math = format!(
+        concat!(
+            r#"<m:oMath xmlns:m="{m}"><m:d><m:dPr><m:begChr m:val="["/><m:shp m:val="match"/></m:dPr>"#,
+            r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath>"#
+        ),
+        m = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+    );
+    let mut doc = Document::new();
+    doc.add_paragraph("Let ")
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::Inline(
+            oxoffice_docx_oxml::math::CT_OMath::from_xml(math.as_bytes()).unwrap(),
+        ))
+        .unwrap();
+    let written = doc.to_rtf_bytes().unwrap();
+    let rtf = String::from_utf8(written.bytes).unwrap();
+    assert!(rtf.contains(r"{\mshp match}"), "{rtf}");
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
+    let equation = read
+        .paragraph(0)
+        .unwrap()
+        .equations()
+        .next()
+        .cloned()
+        .unwrap();
+    let xml = String::from_utf8(equation.to_xml().unwrap()).unwrap();
+    assert!(xml.contains(r#"<m:shp m:val="match"/>"#), "{xml}");
+    assert!(!xml.contains("<m:shp><m:r>"), "{xml}");
+}
+
 #[test]
 fn equation_content_outside_the_supported_subset_is_reported() {
     // m:func (sin x) is kept as preserved XML, not as a typed expression.
