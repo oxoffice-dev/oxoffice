@@ -127,6 +127,26 @@ pub(crate) fn note_part_name(document: &Document, kind: NoteKind) -> Result<Opti
     NotePart::name_of(document, kind)
 }
 
+/// The note kinds whose custody accepting or rejecting settles: footnotes
+/// always, endnotes only when the main part has an endnotes relationship.
+/// Without an endnotes part there is no endnote to settle, and a stray
+/// endnote reference resolves as any other run. One relationship lookup, no
+/// part is read.
+pub(crate) fn resolved_note_kinds(document: &Document) -> Vec<NoteKind> {
+    let relationships = document.package.get_part_rels(&document.doc_part_name);
+    NoteKind::ALL
+        .into_iter()
+        .filter(|&kind| {
+            kind == NoteKind::Footnote
+                || relationships.is_some_and(|rels| {
+                    rels.items
+                        .iter()
+                        .any(|rel| rel.rel_type == kind.relationship_type())
+                })
+        })
+        .collect()
+}
+
 #[derive(PartialEq, Eq)]
 enum NoteRootAnchor {
     Normal(i32),

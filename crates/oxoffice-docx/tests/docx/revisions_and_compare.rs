@@ -1661,6 +1661,290 @@ fn an_endnote_the_original_lacks_is_refused_while_endnotes_are_ignored() {
     assert!(doc.revisions().is_empty());
 }
 
+#[test]
+fn a_moved_endnote_reference_with_endnotes_ignored_is_refused() {
+    // Ignored endnotes keep the original's, so the moved reference cannot
+    // get its own endnote: the redline would name one endnote from both
+    // places.
+    let mut doc = doc_with_endnote_texts(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
+    let edited = doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", Some("Source"))]);
+    let options = ComparisonOptions {
+        ignored_stories: vec![ComparisonStoryKind::Endnote],
+        ..Default::default()
+    };
+    let error = doc
+        .compare_with_options(&edited, AUTHOR, DATE, &options)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("endnote") && error.to_string().contains("moved"),
+        "{error}"
+    );
+    assert!(doc.revisions().is_empty());
+}
+
+/// `doc` saved with `edit` applied to the XML of `part`, a package path
+/// such as `word/endnotes.xml`, then reopened: markup Word writes that the
+/// facade would not.
+fn with_part_edited(doc: &mut Document, part: &str, edit: impl FnOnce(&str) -> String) -> Document {
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
+    let name = format!("/{part}");
+    let xml = std::str::from_utf8(package.get_part(&name).expect("part exists"))
+        .expect("part is UTF-8")
+        .to_owned();
+    package.set_part(&name, edit(&xml).into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    Document::from_bytes(&out.into_inner()).expect("edited document opens")
+}
+
+/// `xml` with `edit` applied to the content of its note `<w:{owner} w:id="{id}">`.
+fn with_note_edited(xml: &str, owner: &str, id: i32, edit: impl FnOnce(&str) -> String) -> String {
+    let start = xml
+        .find(&format!(r#"<w:{owner} w:id="{id}""#))
+        .expect("note owner");
+    let open = start + xml[start..].find('>').expect("owner start tag") + 1;
+    let close = open
+        + xml[open..]
+            .find(&format!("</w:{owner}>"))
+            .expect("owner end tag");
+    format!(
+        "{}{}{}",
+        &xml[..open],
+        edit(&xml[open..close]),
+        &xml[close..]
+    )
+}
+
+/// `xml` with every run wrapped in its own tracked insertion, ids from `id`.
+fn runs_inserted(xml: &str, id: &mut i32) -> String {
+    let mut out = String::new();
+    let mut rest = xml;
+    while let Some(start) = ["<w:r>", "<w:r "]
+        .iter()
+        .filter_map(|tag| rest.find(tag))
+        .min()
+    {
+        let end = start + rest[start..].find("</w:r>").expect("run end") + "</w:r>".len();
+        out.push_str(&rest[..start]);
+        out.push_str(&format!(
+            r#"<w:ins w:id="{id}" w:author="{AUTHOR}" w:date="{DATE}">{}</w:ins>"#,
+            &rest[start..end]
+        ));
+        *id += 1;
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `doc` with note `id` of this kind (`footnote` or `endnote`) inserted as
+/// Word tracks a note typed with track changes on: its reference run and
+/// every run of the note in a tracked insertion, the note's paragraph mark
+/// inserted.
+fn with_tracked_note_insertion(doc: &mut Document, owner: &str, id: i32) -> Document {
+    let mut revision = 900;
+    let reference = format!(r#"<w:{owner}Reference w:id="{id}"/></w:r>"#);
+    let mut doc = with_part_edited(doc, "word/document.xml", |xml| {
+        let end = xml.find(&reference).expect("note reference") + reference.len();
+        let start = xml[..end].rfind("<w:r>").expect("reference run");
+        format!(
+            "{}{}{}",
+            &xml[..start],
+            runs_inserted(&xml[start..end], &mut revision),
+            &xml[end..]
+        )
+    });
+    with_part_edited(&mut doc, &format!("word/{owner}s.xml"), |xml| {
+        with_note_edited(xml, owner, id, |content| {
+            let content = runs_inserted(content, &mut revision);
+            content.replacen(
+                "<w:p>",
+                &format!(
+                    r#"<w:p><w:pPr><w:rPr><w:ins w:id="{revision}" w:author="{AUTHOR}" w:date="{DATE}"/></w:rPr></w:pPr>"#
+                ),
+                1,
+            )
+        })
+    })
+}
+
+#[test]
+fn rejecting_a_tracked_endnote_insertion_removes_the_endnote_whole() {
+    // Not a comparison: Word tracked the endnote typed at the end of the
+    // second claim. Rejecting removes its definition with its reference.
+    let mut doc = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
+    let (_, id) = endnote_references(&doc)[1];
+    let mut doc = with_tracked_note_insertion(&mut doc, "endnote", id);
+    let wanted = |doc: &Document| (note_marked_texts(doc), held_note_texts(doc));
+    assert_eq!(
+        wanted(&accepted(&mut doc)),
+        (
+            vec!["Claim one.{A}".to_owned(), "Claim two.{B}".to_owned()],
+            (vec![], vec!["A".to_owned(), "B".to_owned()])
+        )
+    );
+    assert_eq!(
+        wanted(&rejected(&mut doc)),
+        (
+            vec!["Claim one.{A}".to_owned(), "Claim two.".to_owned()],
+            (vec![], vec!["A".to_owned()])
+        )
+    );
+}
+
+#[test]
+fn rejecting_a_tracked_footnote_insertion_removes_the_footnote_whole() {
+    // The footnote twin of the endnote case above.
+    let mut doc = doc_with_notes_in_order(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
+    let id = doc.footnotes().last().expect("second footnote").0;
+    let mut doc = with_tracked_note_insertion(&mut doc, "footnote", id);
+    let wanted = |doc: &Document| (note_marked_texts(doc), held_note_texts(doc));
+    assert_eq!(
+        wanted(&accepted(&mut doc)),
+        (
+            vec!["Claim one.[A]".to_owned(), "Claim two.[B]".to_owned()],
+            (vec!["A".to_owned(), "B".to_owned()], vec![])
+        )
+    );
+    assert_eq!(
+        wanted(&rejected(&mut doc)),
+        (
+            vec!["Claim one.[A]".to_owned(), "Claim two.".to_owned()],
+            (vec!["A".to_owned()], vec![])
+        )
+    );
+}
+
+#[test]
+fn a_tracked_change_beside_an_endnote_reference_without_endnotes_resolves() {
+    // No endnotes part, so no endnote to settle: the stray reference stays
+    // and the insertion beside it resolves as in any paragraph.
+    let body = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Claim </w:t></w:r><w:ins w:id="1" w:author="{AUTHOR}" w:date="{DATE}"><w:r><w:t>added</w:t></w:r></w:ins><w:r><w:endnoteReference w:id="2"/></w:r></w:p>"#
+    );
+    let mut doc = doc_with_body(&body);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), ["Claim added"]);
+    assert_eq!(endnote_references(&copy), [(0, 2)]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["Claim "]);
+    assert_eq!(endnote_references(&copy), [(0, 2)]);
+}
+
+#[test]
+fn a_tracked_change_in_a_text_box_of_an_added_note_resolves_with_the_note() {
+    // The added note holds a text box, and the text box a tracked insertion
+    // of its own, in both the DrawingML and the VML copy. Accepting keeps
+    // the note, rejecting removes it whole, and one revision alone is a
+    // partial selection of the note, for either kind.
+    for owner in ["footnote", "endnote"] {
+        let (original, mut edited) = if owner == "footnote" {
+            (
+                doc_with_notes_in_order(&[("Claim one.", Some("A")), ("Claim two.", None)]),
+                doc_with_notes_in_order(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]),
+            )
+        } else {
+            (
+                doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", None)]),
+                doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]),
+            )
+        };
+        let part = format!("word/{owner}s.xml");
+        let inside = "<w:r><w:t>Inside</w:t></w:r>";
+        let edited = with_part_edited(&mut edited, &part, |xml| {
+            with_note_edited(xml, owner, 3, |content| {
+                let text_box = crate::support::text_box_run(7, &format!("<w:p>{inside}</w:p>"));
+                content.replacen("</w:p>", &format!("{text_box}</w:p>"), 1)
+            })
+        });
+        let mut doc = redline(original, &edited);
+        let mut doc = with_part_edited(&mut doc, &part, |xml| {
+            xml.replace(
+                inside,
+                &format!(
+                    r#"<w:ins w:id="901" w:author="{AUTHOR}" w:date="{DATE}">{inside}</w:ins>"#
+                ),
+            )
+        });
+        let mark = |text: &str| {
+            if owner == "footnote" {
+                format!("[{text}]")
+            } else {
+                format!("{{{text}}}")
+            }
+        };
+        let notes = |texts: &[&str]| {
+            let texts = texts.iter().map(|text| (*text).to_owned()).collect();
+            if owner == "footnote" {
+                (texts, vec![])
+            } else {
+                (vec![], texts)
+            }
+        };
+        let wanted = |doc: &Document| (note_marked_texts(doc), held_note_texts(doc));
+        let note_part = |doc: &Document| doc.part_xml(&part).expect("note part reads");
+        let copy = accepted(&mut doc);
+        assert_eq!(
+            wanted(&copy),
+            (
+                vec![
+                    format!("Claim one.{}", mark("A")),
+                    format!("Claim two.{}", mark("B"))
+                ],
+                notes(&["A", "B"])
+            ),
+            "{owner}"
+        );
+        assert!(
+            copy.story_revisions().expect("revisions").is_empty(),
+            "{owner}"
+        );
+        let xml = note_part(&copy);
+        assert_eq!(xml.matches(">Inside<").count(), 2, "{owner}: {xml}");
+        // Footnotes leave the VML copy's insertion in the part, outside
+        // the revisions they list; endnotes resolve every copy, as the body.
+        if owner == "endnote" {
+            assert!(!xml.contains("<w:ins "), "{xml}");
+        }
+        let copy = rejected(&mut doc);
+        assert_eq!(
+            wanted(&copy),
+            (
+                vec![format!("Claim one.{}", mark("A")), "Claim two.".to_owned()],
+                notes(&["A"])
+            ),
+            "{owner}"
+        );
+        assert!(!note_part(&copy).contains("Inside"), "{owner}");
+        let ids = doc
+            .story_revisions()
+            .expect("revisions")
+            .iter()
+            .map(|revision| revision.id())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(ids.contains(&901), "{owner}: {ids:?}");
+        for id in ids {
+            for accept in [true, false] {
+                let mut copy = reopen(&mut doc);
+                let error = if accept {
+                    copy.accept_revision_id(id)
+                } else {
+                    copy.reject_revision_id(id)
+                }
+                .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("partial {owner} custody selection")),
+                    "{owner} {id}: {error}"
+                );
+            }
+        }
+    }
+}
+
 /// `body` with every revision accepted, and the main part the resolution
 /// wrote.
 fn accepted_main_part(body: &str) -> String {

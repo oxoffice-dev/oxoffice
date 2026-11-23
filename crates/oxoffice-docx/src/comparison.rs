@@ -48,7 +48,8 @@ use comments::{
 };
 pub(crate) use footnotes::{
     NoteKind, RawNoteType, note_part_name, raw_note_attribute_in_scope, raw_note_type_in_scope,
-    remove_selected_note_definitions, settle_note_custody, validate_note_custody,
+    remove_selected_note_definitions, resolved_note_kinds, settle_note_custody,
+    validate_note_custody,
 };
 use footnotes::{
     RenumberedNotes, compare_note_parts, normal_note_owner, note_custody_reserved_ids,

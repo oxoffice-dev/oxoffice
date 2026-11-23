@@ -483,9 +483,10 @@ impl Document {
     ) -> Result<usize> {
         let mut candidate = self.clone_for_staging();
         candidate.prepare_staged_package()?;
-        // Custody resolves per note kind: footnotes, then endnotes.
+        // Custody resolves per note kind: footnotes, then endnotes when the
+        // document has an endnotes part.
         let mut custody = Vec::new();
-        for kind in crate::comparison::NoteKind::ALL {
+        for kind in crate::comparison::resolved_note_kinds(&candidate) {
             custody.push((
                 kind,
                 crate::comparison::validate_note_custody(&candidate, kind, &scope)?,

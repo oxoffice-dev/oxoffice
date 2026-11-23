@@ -115,7 +115,8 @@ pub(super) fn resolved_candidate(
     let mut resolved = candidate.clone_for_staging();
     let mut units = Vec::new();
     if let Some(ids) = custody_ids {
-        for kind in NoteKind::ALL {
+        // The kinds the resolution itself settles.
+        for kind in resolved_note_kinds(candidate) {
             let scope = crate::revision::RevisionScope::Ids(ids);
             units.push((kind, validate_note_custody(candidate, kind, &scope)?));
         }
