@@ -2828,6 +2828,9 @@ impl<'a> XmlTree<'a> {
                 // A table that stays leaves the paragraphs nothing to merge
                 // into, so they go, which needs them to keep no content.
                 let mut before_table = false;
+                // A control that goes but for its last paragraph, which ends
+                // the chain (see `control_last_paragraph_takes_merge`).
+                let mut merged_control = None;
                 loop {
                     // The end of the body after a table that stays: as before
                     // a table, the paragraphs go, and the body ends with that
@@ -2882,13 +2885,23 @@ impl<'a> XmlTree<'a> {
                     // A block content control is crossed or stays as a table
                     // is: whole.
                     if self.story_owner(next) && next_element.local == "sdt" {
-                        if !self.control_owners_all_remove(next, state) {
-                            before_table = true;
+                        if self.control_owners_all_remove(next, state) {
+                            siblings.push(next);
+                            next_index += 1;
+                            continue;
+                        }
+                        // A control whose content all goes but its last mark,
+                        // the one that ended its story: that last paragraph
+                        // takes the merge, and the control goes.
+                        if let Some(last) = self.control_last_paragraph_takes_merge(next, state) {
+                            siblings.push(next);
+                            next_index += 1;
+                            paragraphs.push(last);
+                            merged_control = Some((next, last));
                             break;
                         }
-                        siblings.push(next);
-                        next_index += 1;
-                        continue;
+                        before_table = true;
+                        break;
                     }
                     if !self.semantic_element(next)
                         || !next_element.word
@@ -2925,7 +2938,12 @@ impl<'a> XmlTree<'a> {
                     );
                     // A crossed table yields no bytes, a crossed control only
                     // the range markers it leaves (see `render_removed_control`).
-                    if matches!(self.elements[pair[1]].local.as_str(), "tbl" | "sdt") {
+                    if let Some((control, last)) = merged_control
+                        && pair[1] == control
+                    {
+                        let markers = self.render_control_markers(control, Some(last), state)?;
+                        output.extend_from_slice(&markers);
+                    } else if matches!(self.elements[pair[1]].local.as_str(), "tbl" | "sdt") {
                         let crossed = self.render(pair[1], state, false)?;
                         output.extend_from_slice(&crossed);
                     }
@@ -3325,6 +3343,34 @@ impl<'a> XmlTree<'a> {
         })
     }
 
+    /// The last paragraph of a block content control whose every other owner
+    /// the resolution removes whole, and whose own content, but not its mark,
+    /// goes: a control that ended the story, whose change the paragraph
+    /// before it carries. That paragraph's merge takes the last paragraph,
+    /// and the control goes.
+    fn control_last_paragraph_takes_merge(
+        &self,
+        index: usize,
+        state: &RenderState<'_>,
+    ) -> Option<usize> {
+        let owners = self.block_control_owners(index)?;
+        let (&last, others) = owners.split_last()?;
+        (self.elements[last].local == "p"
+            && !self.paragraph_mark_removes(last, state)
+            && self.paragraph_content_all_removes(last, state)
+            && others
+                .iter()
+                .all(|&owner| match self.elements[owner].local.as_str() {
+                    "p" => {
+                        self.paragraph_mark_removes(owner, state)
+                            && self.paragraph_content_all_removes(owner, state)
+                    }
+                    "tbl" => self.owned_rows_all_remove(owner, state),
+                    _ => self.control_owners_all_remove(owner, state),
+                }))
+        .then_some(last)
+    }
+
     /// Whether the resolution removes every child of a paragraph but its
     /// properties, proofing marks and range markers: each a revision wrapper
     /// it removes, a simple field it retires, or a hyperlink, field, inline
@@ -3372,8 +3418,19 @@ impl<'a> XmlTree<'a> {
     /// that a bookmark, comment or permission range that only starts or ends
     /// in it keeps both ends.
     fn render_removed_control(&self, index: usize, state: &mut RenderState<'_>) -> Result<Vec<u8>> {
+        self.render_control_markers(index, None, state)
+    }
+
+    /// [`Self::render_removed_control`] for a control whose paragraph
+    /// `merged`, if any, a merge takes elsewhere.
+    fn render_control_markers(
+        &self,
+        index: usize,
+        merged: Option<usize>,
+        state: &mut RenderState<'_>,
+    ) -> Result<Vec<u8>> {
         let mut markers = Vec::new();
-        self.collect_removed_control_markers(index, state, &mut markers)?;
+        self.collect_removed_control_markers(index, merged, state, &mut markers)?;
         let bookmark_ids = |local: &str| -> HashSet<String> {
             markers
                 .iter()
@@ -3406,6 +3463,7 @@ impl<'a> XmlTree<'a> {
     fn collect_removed_control_markers(
         &self,
         index: usize,
+        merged: Option<usize>,
         state: &mut RenderState<'_>,
         markers: &mut Vec<usize>,
     ) -> Result<()> {
@@ -3420,6 +3478,9 @@ impl<'a> XmlTree<'a> {
         });
         for &child in content.map_or(&[][..], |content| &self.elements[content].children[..]) {
             let element = &self.elements[child];
+            if Some(child) == merged {
+                continue;
+            }
             match element.local.as_str() {
                 "p" if element.word => {
                     let mut cursor = element.open_end;
@@ -3454,7 +3515,7 @@ impl<'a> XmlTree<'a> {
                     self.render(child, state, false)?;
                 }
                 "sdt" if element.word => {
-                    self.collect_removed_control_markers(child, state, markers)?
+                    self.collect_removed_control_markers(child, None, state, markers)?
                 }
                 local if element.word && range_marker(local) => markers.push(child),
                 _ => {}

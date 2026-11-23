@@ -2469,3 +2469,23 @@ fn a_bookmark_that_only_ends_in_a_removed_control_keeps_both_ends() {
     assert_eq!(bookmark_names(&accepted), ["span"]);
     assert_eq!(bookmark_names(&rejected(&mut doc)), ["span"]);
 }
+
+#[test]
+fn a_block_content_control_ending_the_body_leaves_the_final_mark_untracked() {
+    // Word cannot resolve a change on the body's last paragraph mark: the
+    // paragraph before the control carries it, as for a final paragraph.
+    let control = block_control("Box", &format!("{}{}", plain("Inside"), plain("Last")));
+    check_bodies_both_ways(&format!("{INTRO}{control}"), INTRO, |doc, forward| {
+        let xml = main_xml(doc);
+        let tag = if forward { "<w:del " } else { "<w:ins " };
+        let marks = |paragraph: &str| {
+            let properties = paragraph.split("</w:pPr>").next().unwrap_or_default();
+            paragraph.contains("</w:pPr>") && properties.contains(tag)
+        };
+        // The first paragraph is Intro's, the last the control's last.
+        let intro = &xml[..xml.find("</w:p>").unwrap()];
+        let last = &xml[xml.rfind("<w:p>").max(xml.rfind("<w:p ")).unwrap()..];
+        assert!(intro.contains("Intro") && marks(intro), "{xml}");
+        assert!(last.contains("Last<") && !marks(last), "{xml}");
+    });
+}

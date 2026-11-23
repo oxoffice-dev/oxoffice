@@ -1092,7 +1092,9 @@ fn marked_control_content(
                 .revision(kind, metadata.author, metadata.timestamp, &payload)
         }
         SdtContent::RawXml(raw) => String::from_utf8(raw.clone()).map_err(utf8_error),
-        SdtContent::ContentControl(nested) => marked_control(nested, kind, None, carried, metadata),
+        SdtContent::ContentControl(nested) => {
+            marked_control(nested, kind, None, carried, None, metadata)
+        }
         SdtContent::Cell(_) => Err(Error::Other(
             "comparison cannot add or remove an unmatched cell in a content control".to_owned(),
         )),
@@ -1105,11 +1107,17 @@ fn marked_control_content(
 /// its properties kept. The resolution that removes that content removes
 /// the control with it. `carried` is passed to its paragraphs (see
 /// [`deleted_paragraph`]).
-pub(super) fn marked_control(
-    control: &CT_Sdt,
+///
+/// With `last_merged`, the control ends the body and its last paragraph is
+/// written as a [`final_paragraph`] that merges those properties: its mark,
+/// the body's last, stays untracked, which Word needs to resolve it, and the
+/// mark of the paragraph before the control carries the change.
+pub(super) fn marked_control<'a>(
+    control: &'a CT_Sdt,
     kind: &str,
     move_id: Option<i32>,
     carried: bool,
+    last_merged: Option<PropertySide<'a>>,
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     let source = metadata
@@ -1117,7 +1125,16 @@ pub(super) fn marked_control(
         .map(str::to_owned)
         .map_or_else(|| control_xml(control), Ok)?;
     let mut content = String::new();
-    for child in &control.content {
+    let mut last_merged = last_merged;
+    for (index, child) in control.content.iter().enumerate() {
+        if index + 1 == control.content.len()
+            && let SdtContent::Paragraph(paragraph) = child
+            && let Some(merged) = last_merged.take()
+        {
+            content
+                .push_str(&final_paragraph(paragraph, kind, move_id, carried, merged, metadata)?.1);
+            continue;
+        }
         content.push_str(&match (child, move_id) {
             (SdtContent::Paragraph(paragraph), Some(id)) => {
                 moved_paragraph(paragraph, kind, id, metadata)?
@@ -1131,7 +1148,7 @@ pub(super) fn marked_control(
             (SdtContent::Table(table), Some(id)) => moved_table(table, kind, id, metadata)?,
             (SdtContent::Table(table), None) => marked_table(table, kind, metadata)?,
             (SdtContent::ContentControl(nested), _) => {
-                marked_control(nested, kind, move_id, carried, metadata)?
+                marked_control(nested, kind, move_id, carried, None, metadata)?
             }
             (SdtContent::RawXml(raw), _) if block_markup_between_owners(raw) => {
                 String::from_utf8(raw.clone()).map_err(utf8_error)?

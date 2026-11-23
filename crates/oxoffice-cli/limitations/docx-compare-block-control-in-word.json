@@ -3,7 +3,7 @@
   "format": "docx",
   "area": "compare",
   "title": "In Word, resolving a block content control compare added or removed whole leaves an empty control",
-  "symptom": "a redline of a block content control (other than a table of contents) added or removed whole resolves to either version in oxoffice, but in Word, Accept All of the removal or Reject All of the addition leaves an empty control at the start of the next paragraph: WordprocessingML has no mark for the control itself, and Word's own Compare leaves an empty control too",
+  "symptom": "a redline of a block content control (other than a table of contents) added or removed whole resolves to either version in oxoffice, but in Word, Accept All of the removal or Reject All of the addition leaves an empty control, at the start of the next paragraph, or at the end of the previous one when the control ended the body: WordprocessingML has no mark for the control itself, and Word's own Compare leaves an empty control too",
   "workaround": "resolve the redline with oxoffice (Python accept_all / reject_all, CLI docx revision accept / reject), or delete the empty control in Word afterwards",
   "issue": 460
 }

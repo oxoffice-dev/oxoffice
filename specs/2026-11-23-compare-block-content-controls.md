@@ -43,6 +43,9 @@ body. A block content control (`w:sdt` holding paragraphs and tables) has no suc
   itself, so the marks go on what it holds. In the body, in a cell and inside another control. It is an owner a
   change of the same resolution crosses, and a control both versions hold is kept like a table: a paragraph
   before it carries its own change.
+- **A control added or removed whole that ends the body** keeps its last paragraph's mark, the body's last,
+  untracked, and the mark of the paragraph before it carries the change, as for a final paragraph; resolving it
+  merges that paragraph with the control's last one, and the control goes (Word check round 3: no revision left).
 - **A final paragraph added or removed after a control both versions hold** puts its change on the mark of the
   control's last paragraph, and the body's final mark stays untracked: Word's own shape. Word cannot resolve a
   change on the body's final mark (first Word check: one revision left after Accept All, an empty tracked paragraph
@@ -51,7 +54,7 @@ body. A block content control (`w:sdt` holding paragraphs and tables) has no suc
 **Word and a plain control added or removed whole** (decision of 2026-11-23, option A of the Word check): Word cannot
 remove a block control by Accept All or Reject All, whatever the marks. Accepting the removal (or rejecting the
 addition) of a control other than a table of contents leaves an empty inline control at the start of the next
-paragraph in Word. Word's own Compare does no better: it leaves an empty block control after accepting a removal,
+paragraph in Word, or at the end of the previous one when the control ended the body. Word's own Compare does no better: it leaves an empty block control after accepting a removal,
 and drops the control from an addition. We keep the shape that oxoffice resolves to either version exactly, and
 name the Word behaviour in the limitation `docx-compare-block-control-in-word`. A table of contents control
 (gallery `Table of Contents`) resolves cleanly in Word.
@@ -79,8 +82,10 @@ One pull request, closing #460 and #433:
    control in a cell and in another control; a Word TOC gallery control with its field and hyperlinked entries.
 3. Word check (Mac session), round 1 (2026-11-23): every redline opens without repair; the TOC case resolves both
    ways; cases with a plain control fail as described above; a final paragraph after a control needs Word's shape.
-   Round 2: the final-paragraph shape, the plain cases reconfirmed, a control of several paragraphs and one ending
-   the body.
+   Round 2: the final-paragraph shape passes both ways; the plain cases and a control of several paragraphs leave
+   the known empty control; a control ending the body left a revision on the body's last mark. Round 3 (hand-made
+   redlines): with that change on the mark of the paragraph before, no revision is left, the text never moves into
+   the control, and only the known empty control remains.
 
 ## Links
 
