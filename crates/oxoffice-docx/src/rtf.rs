@@ -9,6 +9,7 @@ use encoding_rs::Encoding;
 use oxoffice_docx_oxml::numbering::ST_NumberFormat;
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::ST_Jc;
+use oxoffice_docx_oxml::styles::StyleType;
 use oxoffice_docx_oxml::table::{
     CT_Row, CT_Tbl, CT_TblPr, CT_TblWidth, CT_TcPr, CT_TrPr, CellContent,
 };
@@ -18,7 +19,9 @@ use crate::document::{ExportItem, body_export_items};
 
 mod math;
 use crate::revision::{raw_is_typed_revision, revision_removes_text};
-use crate::{Alignment, Document, Error, Length, ListLevel, ListNumberFormat, Result};
+use crate::{
+    Alignment, Document, Error, Length, ListLevel, ListNumberFormat, Result, StyleBuilder,
+};
 
 const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_GROUP_DEPTH: usize = 256;
@@ -179,10 +182,14 @@ struct RtfWriter<'a> {
     colors: BTreeMap<String, usize>,
     lists: Vec<WriterList>,
     list_indexes: BTreeMap<u32, usize>,
+    /// The paragraph styles the stylesheet lists, in `\sN` order.
+    paragraph_styles: Vec<String>,
     diagnostics: Vec<RtfDiagnostic>,
     output_limit: usize,
     /// The equations written so far, which number them in the messages.
     equations: usize,
+    /// The theme's fonts, which name a run's theme font.
+    theme: Option<oxoffice_docx_oxml::theme::Theme>,
 }
 
 impl<'a> RtfWriter<'a> {
@@ -199,9 +206,11 @@ impl<'a> RtfWriter<'a> {
             colors: BTreeMap::new(),
             lists: Vec::new(),
             list_indexes: BTreeMap::new(),
+            paragraph_styles: Vec::new(),
             diagnostics: Vec::new(),
             output_limit,
             equations: 0,
+            theme: document.theme().map(oxoffice_docx_oxml::theme::Theme::from),
         }
     }
 
@@ -216,6 +225,7 @@ impl<'a> RtfWriter<'a> {
         write!(output, "{{\\rtf1\\ansi\\deff0")?;
         self.write_font_table(&mut output)?;
         self.write_color_table(&mut output)?;
+        self.write_stylesheet(&mut output)?;
         self.write_list_tables(&mut output)?;
 
         for (item, location) in &items {
@@ -575,6 +585,14 @@ impl<'a> RtfWriter<'a> {
     }
 
     fn scan_paragraph(&mut self, paragraph: &CT_P, location: String) {
+        let style_id = self.paragraph_style_id(paragraph);
+        if let Some(style_id) = &style_id {
+            self.ensure_paragraph_style(style_id, &location);
+        }
+        for run in &paragraph.accepted_view().runs {
+            let properties = self.run_properties(style_id.as_deref(), run.properties.as_ref());
+            self.ensure_run_resources(&properties, &location);
+        }
         if let Some((num_id, level)) = self.paragraph_numbering(paragraph) {
             if level > 8 {
                 self.diagnose(
@@ -668,12 +686,6 @@ impl<'a> RtfWriter<'a> {
     }
 
     fn scan_paragraph_properties(&mut self, properties: &CT_PPr, location: &str) {
-        if properties.style_id.is_some() {
-            self.diagnose(
-                &format!("{location}/ppr/pStyle"),
-                "paragraph style was dropped during RTF export",
-            );
-        }
         if properties.line_rule.is_some() && properties.line_spacing.is_none() {
             self.diagnose(
                 &format!("{location}/ppr/lineRule"),
@@ -690,30 +702,6 @@ impl<'a> RtfWriter<'a> {
             self.diagnose(
                 &format!("{location}/ppr/afterAutospacing"),
                 "paragraph after auto-spacing was dropped during RTF export",
-            );
-        }
-        if properties.keep_next.is_some() {
-            self.diagnose(
-                &format!("{location}/ppr/keepNext"),
-                "keep-with-next paragraph property was dropped during RTF export",
-            );
-        }
-        if properties.keep_lines.is_some() {
-            self.diagnose(
-                &format!("{location}/ppr/keepLines"),
-                "keep-lines paragraph property was dropped during RTF export",
-            );
-        }
-        if properties.page_break_before.is_some() {
-            self.diagnose(
-                &format!("{location}/ppr/pageBreakBefore"),
-                "page-break-before paragraph property was dropped during RTF export",
-            );
-        }
-        if properties.widow_control.is_some() {
-            self.diagnose(
-                &format!("{location}/ppr/widowControl"),
-                "widow-control paragraph property was dropped during RTF export",
             );
         }
         if properties.suppress_auto_hyphens.is_some() {
@@ -779,8 +767,8 @@ impl<'a> RtfWriter<'a> {
 
     fn scan_run(&mut self, run: &CT_R, location: String) {
         if let Some(properties) = &run.properties {
-            if let Some(font) = run_font(properties) {
-                self.ensure_font(font);
+            if let Some(font) = self.run_font(properties) {
+                self.ensure_font(&font);
             }
             if let Some(color) = properties.color.as_deref() {
                 self.ensure_hex_color(color, &format!("{location}/color"));
@@ -843,17 +831,17 @@ impl<'a> RtfWriter<'a> {
         if properties.style_id.is_some() {
             self.diagnose(
                 &format!("{location}/rPr/rStyle"),
-                "run style was dropped during RTF export",
+                "run style was written as direct formatting during RTF export",
             );
         }
-        let selected_font = run_font(properties);
+        let selected_font = self.run_font(properties);
         for (field, font) in [
             ("hAnsi", properties.font_hansi.as_deref()),
             ("eastAsia", properties.font_east_asia.as_deref()),
             ("cs", properties.font_cs.as_deref()),
         ] {
             if let Some(font) = font
-                && Some(font) != selected_font
+                && Some(font) != selected_font.as_deref()
             {
                 self.diagnose(
                     &format!("{location}/rPr/{field}"),
@@ -861,11 +849,15 @@ impl<'a> RtfWriter<'a> {
                 );
             }
         }
-        for (field, font) in [
+        // A theme font is written as the font the theme names.
+        for (field, reference) in [
             ("asciiTheme", properties.font_ascii_theme.as_deref()),
             ("hAnsiTheme", properties.font_hansi_theme.as_deref()),
         ] {
-            if font.is_some() {
+            if let Some(reference) = reference
+                && (self.theme_font(reference).is_none()
+                    || self.theme_font(reference) != selected_font)
+            {
                 self.diagnose(
                     &format!("{location}/rPr/{field}"),
                     "theme run font was dropped during RTF export",
@@ -1069,8 +1061,8 @@ impl<'a> RtfWriter<'a> {
         location: &str,
     ) -> Result<()> {
         write!(output, "\\pard")?;
-        self.write_paragraph_format(output, paragraph.properties.as_ref(), paragraph)?;
-        self.write_view(output, &paragraph.accepted_view(), location)?;
+        self.write_paragraph_format(output, paragraph)?;
+        self.write_view(output, paragraph, location)?;
         writeln!(output, "\\par")?;
         Ok(())
     }
@@ -1082,16 +1074,20 @@ impl<'a> RtfWriter<'a> {
         location: &str,
     ) -> Result<()> {
         write!(output, "\\pard\\intbl")?;
-        self.write_paragraph_format(output, paragraph.properties.as_ref(), paragraph)?;
-        self.write_view(output, &paragraph.accepted_view(), location)
+        self.write_paragraph_format(output, paragraph)?;
+        self.write_view(output, paragraph, location)
     }
 
-    fn write_paragraph_format(
-        &self,
-        output: &mut BoundedOutput,
-        properties: Option<&CT_PPr>,
-        paragraph: &CT_P,
-    ) -> Result<()> {
+    /// A paragraph's style, its number, then its formatting: the style's,
+    /// with the paragraph's own over it, as Word writes a styled paragraph.
+    fn write_paragraph_format(&self, output: &mut BoundedOutput, paragraph: &CT_P) -> Result<()> {
+        let style_id = self.paragraph_style_id(paragraph);
+        if let Some(number) = style_id
+            .as_deref()
+            .and_then(|style_id| self.paragraph_style_number(style_id))
+        {
+            write!(output, "\\s{number}")?;
+        }
         // A paragraph numbered through its style may carry no pPr at all.
         if let Some((num_id, level)) = self.paragraph_numbering(paragraph)
             && level <= 8
@@ -1102,40 +1098,185 @@ impl<'a> RtfWriter<'a> {
             let list = &self.lists[*list_index];
             write!(output, "\\ls{}\\ilvl{}", list.override_id, level)?;
         }
-        let Some(properties) = properties else {
-            return Ok(());
-        };
-        match properties.jc {
-            Some(ST_Jc::Center) => write!(output, "\\qc")?,
-            Some(ST_Jc::Right | ST_Jc::End) => write!(output, "\\qr")?,
-            Some(ST_Jc::Both | ST_Jc::Distribute) => write!(output, "\\qj")?,
-            Some(_) | None => {}
+        let mut properties =
+            crate::style::resolve_paragraph_properties(style_id.as_deref(), &self.document.styles);
+        if let Some(direct) = &paragraph.properties {
+            properties.merge_from(direct);
         }
-        if let Some(value) = properties.ind_left {
-            write!(output, "\\li{}", value.0)?;
-        }
-        if let Some(value) = properties.ind_right {
-            write!(output, "\\ri{}", value.0)?;
-        }
-        // Word ignores `w:firstLine` when `w:hanging` is there.
-        if let Some(value) = properties.ind_hanging {
-            write!(output, "\\fi{}", value.0.saturating_neg())?;
-        } else if let Some(value) = properties.ind_first_line {
-            write!(output, "\\fi{}", value.0)?;
-        }
-        if let Some(value) = properties.space_before {
-            write!(output, "\\sb{}", value.0)?;
-        }
-        if let Some(value) = properties.space_after {
-            write!(output, "\\sa{}", value.0)?;
-        }
-        if let Some(value) = properties.line_spacing {
-            match properties.line_rule.as_deref() {
-                Some("exact") => write!(output, "\\sl{}\\slmult0", value.0.saturating_neg())?,
-                Some("atLeast") => write!(output, "\\sl{}\\slmult0", value.0)?,
-                _ => write!(output, "\\sl{}\\slmult1", value.0)?,
+        write_paragraph_properties(output, &properties)
+    }
+
+    /// The paragraph's style, or the default paragraph style, when the
+    /// document defines it.
+    fn paragraph_style_id(&self, paragraph: &CT_P) -> Option<String> {
+        let styles = &self.document.styles;
+        paragraph
+            .properties
+            .as_ref()
+            .and_then(|properties| properties.style_id.as_deref())
+            .filter(|style_id| {
+                styles
+                    .get_by_id(style_id)
+                    .is_some_and(|style| style.style_type == StyleType::Paragraph)
+            })
+            .or_else(|| {
+                styles
+                    .get_default(StyleType::Paragraph)
+                    .map(|style| style.style_id.as_str())
+            })
+            .map(str::to_owned)
+    }
+
+    fn paragraph_style_number(&self, style_id: &str) -> Option<usize> {
+        self.paragraph_styles
+            .iter()
+            .position(|listed| listed == style_id)
+    }
+
+    /// Lists a paragraph style in the stylesheet after the styles it is based
+    /// on, the default paragraph style first, as `\s0`.
+    fn ensure_paragraph_style(&mut self, style_id: &str, location: &str) {
+        if self.paragraph_styles.is_empty() {
+            match self
+                .document
+                .styles
+                .get_default(StyleType::Paragraph)
+                .map(|style| style.style_id.clone())
+            {
+                Some(default) if default != style_id => {
+                    self.ensure_paragraph_style(&default, location)
+                }
+                Some(_) => {}
+                // `\s0` is the default style: without one, it is left out.
+                None => self.paragraph_styles.push(String::new()),
             }
         }
+        // Walk the based-on chain up to a listed style (or a cycle), then
+        // list it from its base down.
+        let mut chain = Vec::new();
+        let mut current = Some(style_id.to_owned());
+        while let Some(id) = current {
+            if self.paragraph_style_number(&id).is_some() || chain.contains(&id) {
+                break;
+            }
+            let Some(style) = self
+                .document
+                .styles
+                .get_by_id(&id)
+                .filter(|style| style.style_type == StyleType::Paragraph)
+            else {
+                break;
+            };
+            current = style.based_on.clone();
+            chain.push(id);
+        }
+        for id in chain.into_iter().rev() {
+            let properties = self.run_properties(Some(&id), None);
+            self.ensure_run_resources(&properties, location);
+            self.paragraph_styles.push(id);
+        }
+    }
+
+    /// A run's formatting: its paragraph style's and its own style's, with
+    /// its own over them. RTF's `\plain` resets a run to no formatting.
+    fn run_properties(&self, paragraph_style: Option<&str>, direct: Option<&CT_RPr>) -> CT_RPr {
+        let mut properties = crate::style::resolve_run_properties(
+            paragraph_style,
+            direct.and_then(|properties| properties.style_id.as_deref()),
+            &self.document.styles,
+        );
+        if let Some(direct) = direct {
+            properties.merge_from(direct);
+        }
+        // The font is the one the most specific level names, its theme font
+        // first: merging attribute by attribute would let the defaults'
+        // theme font win over a style's or a run's named font.
+        let styles = &self.document.styles;
+        let chain = |style_id: Option<&str>| {
+            style_id
+                .map(|style_id| crate::style::collect_style_chain(style_id, styles))
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+                .filter_map(|style| style.rpr.as_ref())
+        };
+        let character_style = direct
+            .and_then(|properties| properties.style_id.as_deref())
+            .and_then(|style_id| crate::style::character_style_id(style_id, styles));
+        let font = styles
+            .doc_defaults
+            .as_ref()
+            .and_then(|defaults| defaults.rpr.as_ref())
+            .into_iter()
+            .chain(chain(paragraph_style))
+            .chain(chain(character_style))
+            .chain(direct)
+            .rev()
+            .find_map(|level| {
+                level
+                    .font_ascii_theme
+                    .as_deref()
+                    .and_then(|reference| self.theme_font(reference))
+                    .or_else(|| level.font_ascii.clone())
+            });
+        if let Some(font) = font {
+            properties.font_ascii = Some(font);
+            properties.font_ascii_theme = None;
+        }
+        properties
+    }
+
+    fn ensure_run_resources(&mut self, properties: &CT_RPr, location: &str) {
+        if let Some(font) = self.run_font(properties) {
+            self.ensure_font(&font);
+        }
+        if let Some(color) = properties.color.as_deref()
+            && color != "auto"
+        {
+            self.ensure_hex_color(color, &format!("{location}/color"));
+        }
+        if let Some(fill) = oxoffice_docx_layout::engine::run_fill(properties) {
+            self.ensure_hex_color(&fill.to_hex(), &format!("{location}/highlight"));
+        }
+    }
+
+    /// `{\stylesheet}`: each listed paragraph style with its formatting
+    /// resolved through its based-on chain, its based-on and next styles, and
+    /// its name.
+    fn write_stylesheet(&self, output: &mut BoundedOutput) -> Result<()> {
+        if self.paragraph_styles.is_empty() {
+            return Ok(());
+        }
+        write!(output, "{{\\stylesheet")?;
+        for (number, style_id) in self.paragraph_styles.iter().enumerate() {
+            let Some(style) = self.document.styles.get_by_id(style_id) else {
+                continue;
+            };
+            write!(output, "{{\\s{number}")?;
+            write_paragraph_properties(
+                output,
+                &crate::style::resolve_paragraph_properties(Some(style_id), &self.document.styles),
+            )?;
+            self.write_run_format(output, &self.run_properties(Some(style_id), None))?;
+            if let Some(based_on) = style
+                .based_on
+                .as_deref()
+                .and_then(|based_on| self.paragraph_style_number(based_on))
+            {
+                write!(output, "\\sbasedon{based_on}")?;
+            }
+            if let Some(next) = style
+                .next_style
+                .as_deref()
+                .and_then(|next| self.paragraph_style_number(next))
+            {
+                write!(output, "\\snext{next}")?;
+            }
+            output.push(b' ')?;
+            write_rtf_text(output, style.name.as_deref().unwrap_or(style_id))?;
+            write!(output, ";}}")?;
+        }
+        write!(output, "}}")?;
         Ok(())
     }
 
@@ -1144,15 +1285,17 @@ impl<'a> RtfWriter<'a> {
     fn write_view(
         &mut self,
         output: &mut BoundedOutput,
-        view: &CT_P,
+        paragraph: &CT_P,
         location: &str,
     ) -> Result<()> {
+        let style_id = self.paragraph_style_id(paragraph);
+        let view = paragraph.accepted_view();
         for boundary in 0..=view.runs.len() {
             for (_, _, equation) in view.equations.iter().filter(|(at, _, _)| *at == boundary) {
                 self.write_equation(output, equation, location)?;
             }
             if let Some(run) = view.runs.get(boundary) {
-                self.write_run(output, run, boundary, location)?;
+                self.write_run(output, run, style_id.as_deref(), boundary, location)?;
             }
         }
         Ok(())
@@ -1189,11 +1332,13 @@ impl<'a> RtfWriter<'a> {
         &mut self,
         output: &mut BoundedOutput,
         run: &CT_R,
+        paragraph_style: Option<&str>,
         run_index: usize,
         location: &str,
     ) -> Result<()> {
         write!(output, "{{\\plain")?;
-        self.write_run_format(output, run.properties.as_ref())?;
+        let properties = self.run_properties(paragraph_style, run.properties.as_ref());
+        self.write_run_format(output, &properties)?;
         output.push(b' ')?;
         for (content_index, content) in run.content.iter().enumerate() {
             self.write_run_content(
@@ -1206,17 +1351,10 @@ impl<'a> RtfWriter<'a> {
         Ok(())
     }
 
-    fn write_run_format(
-        &self,
-        output: &mut BoundedOutput,
-        properties: Option<&CT_RPr>,
-    ) -> Result<()> {
-        let Some(properties) = properties else {
-            write!(output, "\\f0")?;
-            return Ok(());
-        };
-        let font_id = run_font(properties)
-            .and_then(|font| self.fonts.get(font).copied())
+    fn write_run_format(&self, output: &mut BoundedOutput, properties: &CT_RPr) -> Result<()> {
+        let font_id = self
+            .run_font(properties)
+            .and_then(|font| self.fonts.get(&font).copied())
             .unwrap_or(0);
         write!(output, "\\f{font_id}")?;
         if let Some(size) = properties.sz {
@@ -1346,6 +1484,27 @@ impl<'a> RtfWriter<'a> {
                 self.diagnose(location, "comment reference was dropped during RTF export");
                 Ok(())
             }
+        }
+    }
+
+    /// The font RTF writes for a run: its own, or the one its theme font
+    /// names.
+    fn run_font(&self, properties: &CT_RPr) -> Option<String> {
+        // Word takes the theme font over the named one.
+        properties
+            .font_ascii_theme
+            .as_deref()
+            .and_then(|reference| self.theme_font(reference))
+            .or_else(|| run_font(properties).map(str::to_owned))
+    }
+
+    /// The Latin font a theme font reference names in the document's theme.
+    fn theme_font(&self, reference: &str) -> Option<String> {
+        let theme = self.theme.as_ref()?;
+        match reference {
+            "majorAscii" | "majorHAnsi" => theme.major_font.clone(),
+            "minorAscii" | "minorHAnsi" => theme.minor_font.clone(),
+            _ => None,
         }
     }
 
@@ -1487,6 +1646,60 @@ fn marker_location(marker: &oxoffice_docx_oxml::text::CommentRangeMarker) -> usi
         oxoffice_docx_oxml::text::CommentRangeMarker::Start { run_index, .. }
         | oxoffice_docx_oxml::text::CommentRangeMarker::End { run_index, .. } => *run_index,
     }
+}
+
+/// A paragraph's formatting controls: alignment, indents, spacing and
+/// outline level.
+fn write_paragraph_properties(output: &mut BoundedOutput, properties: &CT_PPr) -> Result<()> {
+    match properties.jc {
+        Some(ST_Jc::Center) => write!(output, "\\qc")?,
+        Some(ST_Jc::Right | ST_Jc::End) => write!(output, "\\qr")?,
+        Some(ST_Jc::Both | ST_Jc::Distribute) => write!(output, "\\qj")?,
+        Some(_) | None => {}
+    }
+    if let Some(value) = properties.ind_left {
+        write!(output, "\\li{}", value.0)?;
+    }
+    if let Some(value) = properties.ind_right {
+        write!(output, "\\ri{}", value.0)?;
+    }
+    // Word ignores `w:firstLine` when `w:hanging` is there.
+    if let Some(value) = properties.ind_hanging {
+        write!(output, "\\fi{}", value.0.saturating_neg())?;
+    } else if let Some(value) = properties.ind_first_line {
+        write!(output, "\\fi{}", value.0)?;
+    }
+    if let Some(value) = properties.space_before {
+        write!(output, "\\sb{}", value.0)?;
+    }
+    if let Some(value) = properties.space_after {
+        write!(output, "\\sa{}", value.0)?;
+    }
+    if let Some(value) = properties.line_spacing {
+        match properties.line_rule.as_deref() {
+            Some("exact") => write!(output, "\\sl{}\\slmult0", value.0.saturating_neg())?,
+            Some("atLeast") => write!(output, "\\sl{}\\slmult0", value.0)?,
+            _ => write!(output, "\\sl{}\\slmult1", value.0)?,
+        }
+    }
+    if properties.keep_next == Some(true) {
+        write!(output, "\\keepn")?;
+    }
+    if properties.keep_lines == Some(true) {
+        write!(output, "\\keep")?;
+    }
+    if properties.page_break_before == Some(true) {
+        write!(output, "\\pagebb")?;
+    }
+    match properties.widow_control {
+        Some(true) => write!(output, "\\widctlpar")?,
+        Some(false) => write!(output, "\\nowidctlpar")?,
+        None => {}
+    }
+    if let Some(level) = properties.outline_lvl.filter(|level| *level <= 8) {
+        write!(output, "\\outlinelevel{level}")?;
+    }
+    Ok(())
 }
 
 fn run_font(properties: &CT_RPr) -> Option<&str> {
@@ -1927,6 +2140,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 enum Destination {
     Body,
     FontTable,
+    StyleSheet,
     ColorTable,
     ListTable,
     ListOverrideTable,
@@ -1973,6 +2187,23 @@ struct ParagraphFormat {
     space_after: Option<i32>,
     line_spacing: Option<i32>,
     line_spacing_multiple: bool,
+    /// `\sN`: the stylesheet entry the paragraph takes.
+    style: Option<i32>,
+    outline_level: Option<u32>,
+    keep_next: Option<bool>,
+    keep_lines: Option<bool>,
+    page_break_before: Option<bool>,
+    widow_control: Option<bool>,
+}
+
+/// A paragraph style of the `{\stylesheet}`.
+#[derive(Clone, Debug)]
+struct StyleEntry {
+    name: String,
+    paragraph: ParagraphFormat,
+    format: RunFormat,
+    based_on: Option<i32>,
+    next: Option<i32>,
 }
 
 #[derive(Clone, Debug)]
@@ -2005,6 +2236,14 @@ struct State {
     color_blue: Option<u8>,
     unicode_alternative_children: usize,
     list_override_entry: bool,
+    /// The stylesheet entry being read: its `\sN` (none for a character,
+    /// section or table style), based-on and next styles, and name.
+    style_number: Option<i32>,
+    style_based_on: Option<i32>,
+    style_next: Option<i32>,
+    style_name: Vec<u8>,
+    /// The name read so far when `\u` characters interrupt its bytes.
+    style_name_text: String,
 }
 
 impl Default for State {
@@ -2031,6 +2270,11 @@ impl Default for State {
             color_blue: None,
             unicode_alternative_children: 0,
             list_override_entry: false,
+            style_number: None,
+            style_based_on: None,
+            style_next: None,
+            style_name: Vec::new(),
+            style_name_text: String::new(),
         }
     }
 }
@@ -2060,6 +2304,11 @@ impl State {
             color_blue: self.color_blue,
             unicode_alternative_children: self.unicode_alternative_children,
             list_override_entry: false,
+            style_number: None,
+            style_based_on: None,
+            style_next: None,
+            style_name: Vec::new(),
+            style_name_text: String::new(),
         }
     }
 }
@@ -2175,6 +2424,9 @@ impl Default for ListLevelData {
 
 struct ParsedRtf {
     blocks: Vec<Block>,
+    /// `\deffN`, the font of what names none.
+    default_font: Option<i32>,
+    styles: BTreeMap<i32, StyleEntry>,
     diagnostics: Vec<RtfDiagnostic>,
     fonts: HashMap<i32, FontEntry>,
     colors: Vec<Option<String>>,
@@ -2186,19 +2438,22 @@ impl ParsedRtf {
     fn project(self) -> Result<RtfReadResult> {
         let ParsedRtf {
             blocks,
-            diagnostics,
+            default_font,
+            styles,
+            mut diagnostics,
             fonts,
             colors,
             lists,
             overrides,
         } = self;
         let mut document = Document::new();
+        let style_ids = project_styles(&mut document, &styles, &fonts, &colors, &mut diagnostics)?;
         let mut projected_lists = HashMap::new();
         for block in blocks {
             match block {
                 Block::Paragraph(paragraph) => project_paragraph(
                     &mut document,
-                    paragraph,
+                    styled(paragraph, &styles, &style_ids, default_font),
                     &fonts,
                     &colors,
                     &lists,
@@ -2252,7 +2507,14 @@ impl ParsedRtf {
                             for (paragraph, (list_id, pictures)) in
                                 paragraphs.into_iter().zip(prepared_cell)
                             {
+                                let StyledParagraph {
+                                    paragraph,
+                                    style_id,
+                                } = styled(paragraph, &styles, &style_ids, default_font);
                                 let mut target = cell.add_paragraph("");
+                                if let Some(style_id) = &style_id {
+                                    target.set_style(style_id);
+                                }
                                 apply_paragraph_format(&mut target, &paragraph.format, list_id);
                                 project_items(
                                     &mut target,
@@ -2277,7 +2539,10 @@ impl ParsedRtf {
 
 fn project_paragraph(
     document: &mut Document,
-    paragraph: ParagraphData,
+    StyledParagraph {
+        paragraph,
+        style_id,
+    }: StyledParagraph,
     fonts: &HashMap<i32, FontEntry>,
     colors: &[Option<String>],
     lists: &HashMap<i32, Vec<ListLevelData>>,
@@ -2287,9 +2552,259 @@ fn project_paragraph(
     let list_id = ensure_list(document, &paragraph, lists, overrides, projected_lists)?;
     let pictures = prepare_pictures(document, &paragraph)?;
     let mut target = document.add_paragraph("");
+    if let Some(style_id) = &style_id {
+        target.set_style(style_id);
+    }
     apply_paragraph_format(&mut target, &paragraph.format, list_id);
     project_items(&mut target, paragraph.items, pictures, fonts, colors)?;
     Ok(())
+}
+
+/// The paragraph with its style's id in place of its `\sN`, and the
+/// formatting it restates from that style left to the style: Word repeats a
+/// style's formatting on every paragraph and run that takes it.
+fn styled(
+    mut paragraph: ParagraphData,
+    styles: &BTreeMap<i32, StyleEntry>,
+    style_ids: &BTreeMap<i32, String>,
+    default_font: Option<i32>,
+) -> StyledParagraph {
+    // A paragraph without `\sN` takes `\s0`.
+    let number = paragraph.format.style.take().unwrap_or(0);
+    let (Some(entry), Some(style_id)) = (styles.get(&number), style_ids.get(&number)) else {
+        return StyledParagraph {
+            paragraph,
+            style_id: None,
+        };
+    };
+    // As in Word, a value the paragraph or run does not state is RTF's
+    // default, not its style's: what equals the style's value is left to
+    // the style, what differs is kept, the default included.
+    fn settle<T: PartialEq + Clone>(value: &mut Option<T>, style: &Option<T>, default: T) {
+        let own = value.clone().unwrap_or_else(|| default.clone());
+        let styled = style.clone().unwrap_or(default);
+        *value = (own != styled).then_some(own);
+    }
+    let format = &mut paragraph.format;
+    let defined = &entry.paragraph;
+    settle(&mut format.alignment, &defined.alignment, Alignment::Left);
+    settle(&mut format.indent_left, &defined.indent_left, 0);
+    settle(&mut format.indent_right, &defined.indent_right, 0);
+    settle(&mut format.first_line_indent, &defined.first_line_indent, 0);
+    settle(&mut format.space_before, &defined.space_before, 0);
+    settle(&mut format.space_after, &defined.space_after, 0);
+    // Outline level 9 is body text.
+    settle(&mut format.outline_level, &defined.outline_level, 9);
+    settle(&mut format.keep_next, &defined.keep_next, false);
+    settle(&mut format.keep_lines, &defined.keep_lines, false);
+    settle(
+        &mut format.page_break_before,
+        &defined.page_break_before,
+        false,
+    );
+    settle(&mut format.widow_control, &defined.widow_control, false);
+    // `\sl0` and no `\sl` are single spacing, written back as 240 lines.
+    let spacing = |value: Option<i32>, multiple: bool| {
+        value
+            .filter(|value| *value != 0)
+            .map_or((240, true), |value| (value, multiple))
+    };
+    let own = spacing(format.line_spacing, format.line_spacing_multiple);
+    if own == spacing(defined.line_spacing, defined.line_spacing_multiple) {
+        format.line_spacing = None;
+    } else {
+        (format.line_spacing, format.line_spacing_multiple) = (Some(own.0), own.1);
+    }
+    for item in &mut paragraph.items {
+        if let ParagraphItem::Text(run) = item {
+            let format = &mut run.format;
+            let defined = &entry.format;
+            settle(&mut format.bold, &defined.bold, false);
+            settle(&mut format.italic, &defined.italic, false);
+            settle(&mut format.underline, &defined.underline, false);
+            settle(&mut format.strike, &defined.strike, false);
+            settle(&mut format.caps, &defined.caps, false);
+            settle(&mut format.small_caps, &defined.small_caps, false);
+            settle(&mut format.hidden, &defined.hidden, false);
+            // RTF's default size is 12 points, its default colour auto.
+            settle(&mut format.size_points, &defined.size_points, 12.0);
+            settle(&mut format.color, &defined.color, 0);
+            if let Some(default_font) = default_font {
+                settle(&mut format.font, &defined.font, default_font);
+            } else if format.font == defined.font {
+                format.font = None;
+            }
+            if format.highlight == defined.highlight {
+                format.highlight = None;
+            }
+            if format.vertical == defined.vertical {
+                format.vertical = None;
+            }
+        }
+    }
+    StyledParagraph {
+        paragraph,
+        // `\s0` is the default paragraph style, which needs no `w:pStyle`.
+        style_id: (number != 0).then(|| style_id.clone()),
+    }
+}
+
+struct StyledParagraph {
+    paragraph: ParagraphData,
+    style_id: Option<String>,
+}
+
+/// Each paragraph style of the stylesheet as a document style: a built-in
+/// style of the same name takes the stylesheet's formatting, another one is
+/// added. Returns the style id of each `\sN`.
+fn project_styles(
+    document: &mut Document,
+    styles: &BTreeMap<i32, StyleEntry>,
+    fonts: &HashMap<i32, FontEntry>,
+    colors: &[Option<String>],
+    diagnostics: &mut Vec<RtfDiagnostic>,
+) -> Result<BTreeMap<i32, String>> {
+    let mut ids = BTreeMap::new();
+    let default_style = document
+        .styles
+        .get_default(StyleType::Paragraph)
+        .map(|style| style.style_id.clone());
+    for (number, entry) in styles {
+        // `\s0` is the default paragraph style, whatever its name.
+        let existing = if *number == 0 {
+            default_style.clone()
+        } else {
+            None
+        }
+        .or_else(|| {
+            document
+                .styles
+                .styles
+                .iter()
+                .find(|style| {
+                    style.style_type == StyleType::Paragraph
+                        && style
+                            .name
+                            .as_deref()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(&entry.name))
+                })
+                .map(|style| style.style_id.clone())
+        });
+        let id = existing.unwrap_or_else(|| {
+            let base = entry
+                .name
+                .split_whitespace()
+                .map(|word| {
+                    let mut characters =
+                        word.chars().filter(|character| character.is_alphanumeric());
+                    characters
+                        .next()
+                        .map(|first| first.to_uppercase().chain(characters).collect::<String>())
+                        .unwrap_or_default()
+                })
+                .collect::<String>();
+            let base = if base.is_empty() {
+                format!("Style{number}")
+            } else {
+                base
+            };
+            let mut id = base.clone();
+            let mut suffix = 1;
+            while document.styles.get_by_id(&id).is_some() || ids.values().any(|used| *used == id) {
+                suffix += 1;
+                id = format!("{base}{suffix}");
+            }
+            id
+        });
+        ids.insert(*number, id);
+    }
+    // Every style exists before any is based on or followed by another,
+    // which may come later in the stylesheet.
+    for (number, entry) in styles {
+        let id = &ids[number];
+        if document.styles.get_by_id(id).is_none()
+            && let Err(error) = document.add_style(StyleBuilder::paragraph(id, &entry.name))
+        {
+            diagnostics.push(RtfDiagnostic {
+                offset: 0,
+                destination: Some("stylesheet".to_owned()),
+                message: format!("RTF style {:?} was dropped: {error}", entry.name),
+            });
+        }
+    }
+    ids.retain(|_, id| document.styles.get_by_id(id).is_some());
+    let mut refused = Vec::new();
+    for (number, entry) in styles {
+        let Some(id) = ids.get(number) else {
+            continue;
+        };
+        // The default style keeps its name.
+        let name = document
+            .styles
+            .get_by_id(id)
+            .and_then(|style| style.name.clone())
+            .filter(|_| *number == 0)
+            .unwrap_or_else(|| entry.name.clone());
+        // The entry's formatting, as a paragraph and a run would take it.
+        let mut scratch = CT_P::default();
+        let mut paragraph = crate::Paragraph {
+            inner: &mut scratch,
+        };
+        apply_paragraph_format(&mut paragraph, &entry.paragraph, None);
+        let run_properties = {
+            let mut run = paragraph.add_run("");
+            apply_run_format(&mut run, &entry.format, fonts, colors)?;
+            run.inner.properties.clone()
+        };
+        let paragraph_properties = scratch.properties.take();
+        let builder = |linked: bool| {
+            let mut builder = StyleBuilder::paragraph(id, &name);
+            if let Some(properties) = paragraph_properties.clone() {
+                builder = builder.paragraph_properties(properties);
+            }
+            if let Some(properties) = run_properties.clone() {
+                builder = builder.run_properties(properties);
+            }
+            if !linked {
+                return builder;
+            }
+            if let Some(based_on) = entry
+                .based_on
+                .filter(|based_on| based_on != number)
+                .and_then(|based_on| ids.get(&based_on))
+            {
+                builder = builder.based_on(based_on);
+            }
+            if let Some(next) = entry.next.and_then(|next| ids.get(&next)) {
+                builder = builder.next_style(next);
+            }
+            builder
+        };
+        // A style refused with its links (a based-on cycle) is kept without
+        // them; one refused even then gives up its paragraphs' formatting.
+        let Err(error) = document.set_style(builder(true)) else {
+            continue;
+        };
+        let message = match document.set_style(builder(false)) {
+            Ok(()) => format!(
+                "RTF style {:?} lost its based-on and next styles: {error}",
+                entry.name
+            ),
+            Err(error) => {
+                refused.push(*number);
+                format!("RTF style {:?} was dropped: {error}", entry.name)
+            }
+        };
+        diagnostics.push(RtfDiagnostic {
+            offset: 0,
+            destination: Some("stylesheet".to_owned()),
+            message,
+        });
+    }
+    for number in refused {
+        ids.remove(&number);
+    }
+    Ok(ids)
 }
 
 fn ensure_list(
@@ -2462,6 +2977,13 @@ fn apply_paragraph_format(
             paragraph.set_line_spacing(line_spacing.saturating_abs() as f64 / 20.0);
         }
     }
+    if let Some(level) = format.outline_level {
+        paragraph.set_outline_level(level);
+    }
+    paragraph.set_keep_with_next_value(format.keep_next);
+    paragraph.set_keep_together_value(format.keep_lines);
+    paragraph.set_page_break_before_value(format.page_break_before);
+    paragraph.set_widow_control_value(format.widow_control);
     if let Some(list_id) = list_id {
         let _ = paragraph.set_numbering(list_id, format.list_level.min(8));
     }
@@ -2489,11 +3011,13 @@ fn apply_run_format(
         run.set_size(size);
     }
     if let Some(index) = format.color {
-        let color = colors
-            .get(index)
-            .ok_or_else(|| rtf_error(0, format!("RTF colour {index} is undefined")))?;
-        if let Some(color) = color {
-            run.set_color(color);
+        let color = colors.get(index);
+        match color {
+            Some(Some(color)) => run.set_color(color),
+            // `\cf0`, auto, against a style's colour.
+            Some(None) | None if index == 0 => run.set_color("auto"),
+            Some(None) => {}
+            None => return Err(rtf_error(0, format!("RTF colour {index} is undefined"))),
         }
     }
     if let Some(index) = format.highlight {
@@ -2538,6 +3062,7 @@ struct Parser {
     colors: Vec<Option<String>>,
     lists: HashMap<i32, Vec<ListLevelData>>,
     overrides: HashMap<i32, ListOverrideData>,
+    styles: BTreeMap<i32, StyleEntry>,
     active_list_levels: Vec<ListLevelData>,
     active_override_list: Option<i32>,
     active_override_id: Option<i32>,
@@ -2578,6 +3103,7 @@ impl Parser {
             colors: Vec::new(),
             lists: HashMap::new(),
             overrides: HashMap::new(),
+            styles: BTreeMap::new(),
             active_list_levels: Vec::new(),
             active_override_list: None,
             active_override_id: None,
@@ -2613,6 +3139,8 @@ impl Parser {
         parser.finish_document()?;
         Ok(ParsedRtf {
             blocks: parser.blocks,
+            styles: parser.styles,
+            default_font: parser.default_font,
             diagnostics: parser.diagnostics,
             fonts: parser.fonts,
             colors: parser.colors,
@@ -2958,6 +3486,59 @@ impl Parser {
                 self.header_table_started = true;
                 self.states.last_mut().unwrap().destination = Destination::ColorTable;
             }
+            "stylesheet" => {
+                self.header_table_started = true;
+                self.states.last_mut().unwrap().destination = Destination::StyleSheet;
+            }
+            "s" => {
+                let number = required_nonnegative(offset, name, parameter)? as i32;
+                let state = self.states.last_mut().unwrap();
+                if state.destination == Destination::StyleSheet {
+                    state.style_number = Some(number);
+                } else {
+                    state.paragraph.style = Some(number);
+                }
+            }
+            name @ ("sbasedon" | "snext") => {
+                let number = required_nonnegative(offset, name, parameter)? as i32;
+                let state = self.states.last_mut().unwrap();
+                if name == "sbasedon" {
+                    state.style_based_on = Some(number);
+                } else {
+                    state.style_next = Some(number);
+                }
+            }
+            name @ ("keepn" | "keep" | "pagebb" | "widctlpar" | "nowidctlpar") => {
+                let on = parameter != Some(0);
+                let paragraph = &mut self.states.last_mut().unwrap().paragraph;
+                match name {
+                    "keepn" => paragraph.keep_next = Some(on),
+                    "keep" => paragraph.keep_lines = Some(on),
+                    "pagebb" => paragraph.page_break_before = Some(on),
+                    "widctlpar" => paragraph.widow_control = Some(true),
+                    _ => paragraph.widow_control = Some(false),
+                }
+            }
+            "outlinelevel" => {
+                let level = required_nonnegative(offset, name, parameter)?;
+                self.states.last_mut().unwrap().paragraph.outline_level =
+                    (level <= 8).then_some(level as u32);
+            }
+            // Character, section and table styles: their entries are skipped.
+            "cs" | "ds" | "ts"
+                if self.states.last().unwrap().destination == Destination::StyleSheet =>
+            {
+                self.states.last_mut().unwrap().destination = Destination::Skip(name.to_owned());
+                self.diagnostics.push(RtfDiagnostic {
+                    offset,
+                    destination: Some("stylesheet".to_owned()),
+                    message: format!("RTF style entry \\{name} was dropped"),
+                });
+            }
+            "additive" | "sautoupd" | "shidden" | "sqformat" | "spriority" | "slink"
+            | "ssemihidden" | "sunhideused" | "slocked" | "spersonal" | "scompose" | "sreply"
+            | "styrsid" | "ssparent" | "sbkall" | "sbknone"
+                if self.states.last().unwrap().destination == Destination::StyleSheet => {}
             "listtable" => {
                 self.header_table_started = true;
                 self.states.last_mut().unwrap().destination = Destination::ListTable;
@@ -3287,8 +3868,8 @@ impl Parser {
                 });
             }
             name @ ("deflang" | "deflangfe" | "sectd" | "lang" | "langfe" | "loch" | "hich"
-            | "dbch" | "af" | "rtlch" | "ltrch" | "widowctrl" | "nowidctlpar"
-            | "hyphauto" | "formshade" | "headery" | "footery" | "endnhere") => {
+            | "dbch" | "af" | "rtlch" | "ltrch" | "widowctrl" | "hyphauto"
+            | "formshade" | "headery" | "footery" | "endnhere") => {
                 self.diagnostics.push(RtfDiagnostic {
                     offset,
                     destination: None,
@@ -3398,6 +3979,11 @@ impl Parser {
                 self.active_list_marker.push(byte);
                 Ok(())
             }
+            Destination::StyleSheet => {
+                self.retain_output(offset, 3)?;
+                self.states.last_mut().unwrap().style_name.push(byte);
+                Ok(())
+            }
             Destination::Body | Destination::Math => {
                 self.retain_output(offset, 3)?;
                 let state = self.states.last_mut().unwrap();
@@ -3435,6 +4021,10 @@ impl Parser {
                 self.font_table_text(offset, bytes)?;
             }
             Destination::ColorTable => self.color_table_text(offset, bytes)?,
+            Destination::StyleSheet => {
+                self.retain_output(offset, bytes.len().saturating_mul(3))?;
+                self.style_sheet_text(offset, bytes)?;
+            }
             Destination::ListText => {
                 self.retain_output(offset, bytes.len().saturating_mul(3))?;
                 self.active_list_marker.extend_from_slice(bytes);
@@ -3567,6 +4157,15 @@ impl Parser {
                 }
                 state.font_name_text.push(character);
             }
+            Destination::StyleSheet => {
+                self.retain_output(offset, character.len_utf8())?;
+                let state = self.states.last_mut().unwrap();
+                let bytes = std::mem::take(&mut state.style_name);
+                if let Some((text, _)) = decode(state.code_page, &bytes) {
+                    state.style_name_text.push_str(&text);
+                }
+                state.style_name_text.push(character);
+            }
             _ => {
                 self.diagnostics.push(RtfDiagnostic {
                     offset,
@@ -3695,6 +4294,17 @@ impl Parser {
     }
 
     fn start_row(&mut self, offset: usize) -> Result<()> {
+        // Word restates the row definition after the row's last cell, just
+        // before `\row`: its `\cellx` replace the ones read at the start.
+        if self.in_table
+            && !self.current_row.is_empty()
+            && self.current_cell.is_empty()
+            && !self.current_paragraph.has_content()
+        {
+            self.current_cell_boundaries.clear();
+            self.expected_cells = 0;
+            return Ok(());
+        }
         if self.in_table {
             return Err(rtf_error(offset, "nested or unfinished RTF table row"));
         }
@@ -3826,6 +4436,52 @@ impl Parser {
             } else {
                 self.states.last_mut().unwrap().font_name.push(byte);
             }
+        }
+        Ok(())
+    }
+
+    /// A stylesheet entry's name runs to its `;`, which closes the entry.
+    fn style_sheet_text(&mut self, offset: usize, bytes: &[u8]) -> Result<()> {
+        let default_font = self.default_font;
+        for &byte in bytes {
+            let state = self.states.last_mut().unwrap();
+            if byte != b';' {
+                state.style_name.push(byte);
+                continue;
+            }
+            let name_bytes = std::mem::take(&mut state.style_name);
+            let name_text = std::mem::take(&mut state.style_name_text);
+            // An entry without `\sN` is `\s0`, as Word writes Normal.
+            let number = state.style_number.take().unwrap_or(0);
+            let Some(name) = decode(state.code_page, &name_bytes)
+                .map(|value| format!("{name_text}{}", value.0).trim().to_owned())
+                .filter(|name| !name.is_empty())
+            else {
+                self.diagnostics.push(RtfDiagnostic {
+                    offset,
+                    destination: Some("stylesheet".to_owned()),
+                    message: format!("RTF style \\s{number} has no name and was dropped"),
+                });
+                continue;
+            };
+            let entry = StyleEntry {
+                name,
+                paragraph: ParagraphFormat {
+                    style: None,
+                    ..state.paragraph.clone()
+                },
+                // An entry without `\fN` is in the default font.
+                format: RunFormat {
+                    font: state.format.font.or(default_font),
+                    ..state.format.clone()
+                },
+                based_on: state.style_based_on.take(),
+                next: state.style_next.take(),
+            };
+            if self.styles.len() >= MAX_LOOKUP_ENTRIES && !self.styles.contains_key(&number) {
+                return Err(rtf_error(offset, "RTF stylesheet exceeds the entry limit"));
+            }
+            self.styles.insert(number, entry);
         }
         Ok(())
     }
@@ -4349,6 +5005,7 @@ fn is_supported_destination(name: &str) -> bool {
     matches!(
         name,
         "fonttbl"
+            | "stylesheet"
             | "colortbl"
             | "listtable"
             | "listoverridetable"
@@ -4365,8 +5022,7 @@ fn is_supported_destination(name: &str) -> bool {
 fn is_unsupported_destination(name: &str) -> bool {
     matches!(
         name,
-        "stylesheet"
-            | "info"
+        "info"
             | "generator"
             | "filetbl"
             | "revtbl"
@@ -4395,6 +5051,7 @@ fn destination_name(destination: &Destination) -> String {
         Destination::Body => "body".to_owned(),
         Destination::FontTable => "fonttbl".to_owned(),
         Destination::ColorTable => "colortbl".to_owned(),
+        Destination::StyleSheet => "stylesheet".to_owned(),
         Destination::ListTable => "listtable".to_owned(),
         Destination::ListOverrideTable => "listoverridetable".to_owned(),
         Destination::ListText => "listtext".to_owned(),

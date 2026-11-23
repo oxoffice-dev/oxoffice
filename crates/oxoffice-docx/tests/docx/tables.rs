@@ -1192,6 +1192,29 @@ fn table_and_cell_edges_set_to_nil_or_none_draw_no_border() {
 }
 
 #[test]
+fn rtf_import_reads_a_table_as_word_writes_its_rows() {
+    // Word restates each row's definition after its last cell, just before
+    // `\row`; the second `\trowd` belongs to the same row.
+    let rtf = br"{\rtf1\ansi\deff0{\fonttbl{\f0 Calibri;}}
+\trowd \irow0\trgaph108\cellx2000\cellx4000\pard\plain \intbl a\cell \pard\plain \intbl b\cell
+\pard\plain \intbl {\trowd \irow0\trgaph108\cellx2000\cellx4000\row }
+\trowd \irow1\lastrow \trgaph108\cellx2000\cellx4000\pard\plain \intbl c\cell \pard\plain \intbl d\cell
+\pard\plain \intbl {\trowd \irow1\lastrow \trgaph108\cellx2000\cellx4000\row }
+\pard\plain after\par}";
+    let doc = Document::from_rtf_bytes(rtf).unwrap().document;
+    let table = doc.table(0).unwrap();
+    let cells: Vec<Vec<String>> = (0..2)
+        .map(|row| {
+            (0..2)
+                .map(|column| table.cell(row, column).unwrap().text())
+                .collect()
+        })
+        .collect();
+    assert_eq!(cells, [["a", "b"], ["c", "d"]]);
+    assert_eq!(texts(&doc).last().map(String::as_str), Some("after"));
+}
+
+#[test]
 fn exports_report_no_formatting_for_empty_property_elements() {
     // LibreOffice writes an empty `w:trPr` in every row, and empty `w:pPr`,
     // `w:rPr` and `w:tcPr` elements: they carry no formatting to drop.
