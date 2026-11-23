@@ -184,15 +184,17 @@ impl<'a> PreparedStructure<'a> {
         }
         let link_groups = group_links(&links, &texts, annotated);
         let mut link_group_of = HashMap::new();
+        let mut moved = HashSet::new();
         for (index, group) in link_groups.iter().enumerate() {
             for link in &group.links {
                 link_group_of.insert(*link, index);
             }
-            // The text of a link leaves its paragraph for its link element.
-            for mark in &group.marks {
-                for marks in occurrences.values_mut() {
-                    marks.retain(|own| (own.page_index, own.mcid) != (mark.page_index, mark.mcid));
-                }
+            moved.extend(group.marks.iter().map(|mark| (mark.page_index, mark.mcid)));
+        }
+        // The text of a link leaves its paragraph for its link element.
+        if !moved.is_empty() {
+            for marks in occurrences.values_mut() {
+                marks.retain(|own| !moved.contains(&(own.page_index, own.mcid)));
             }
         }
         Some(Self {
