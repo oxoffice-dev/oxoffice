@@ -636,6 +636,30 @@ fn tab_stops_in_a_right_to_left_paragraph_are_measured_from_the_right_margin() {
         &decimal,
         &[text("SplitA"), tab.to_owned(), text("34"), text(".75")].concat(),
     ));
+    // Split after the point, and an Arabic word with a space of its own.
+    body.push_str(&rtl(
+        &decimal,
+        &[text("TailA"), tab.to_owned(), text("12.5"), text("0")].concat(),
+    ));
+    body.push_str(&rtl(
+        &decimal,
+        &[
+            text("WordA"),
+            tab.to_owned(),
+            text("\u{0631}\u{064a}\u{0627}\u{0644}"),
+            text(" "),
+        ]
+        .concat(),
+    ));
+    body.push_str(&rtl(
+        &decimal,
+        &[
+            text("BareA"),
+            tab.to_owned(),
+            text("\u{0631}\u{064a}\u{0627}\u{0644}"),
+        ]
+        .concat(),
+    ));
     body.push_str(&format!(
         r#"<w:p><w:pPr>{decimal}</w:pPr>{}{tab}{}</w:p>"#,
         text("LtrA"),
@@ -686,6 +710,21 @@ fn tab_stops_in_a_right_to_left_paragraph_are_measured_from_the_right_margin() {
     assert!(
         (point - 324.0).abs() < 0.5,
         "the split number's point is at {point:.1}"
+    );
+    let (split, whole) = (piece("12.5").x, piece("12.50").x);
+    assert!(
+        (split - whole).abs() < 0.5,
+        "split after its point the number starts at {split:.1}, whole at {whole:.1}"
+    );
+    // A word with a space after it ends where it ends alone.
+    let words = drawn
+        .iter()
+        .filter(|piece| piece.text.trim() == "\u{0631}\u{064a}\u{0627}\u{0644}")
+        .map(|piece| piece.x)
+        .collect::<Vec<_>>();
+    assert!(
+        words.len() == 2 && (words[0] - words[1]).abs() < 0.5,
+        "the word starts at {words:.1?}"
     );
 }
 

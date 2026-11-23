@@ -1071,6 +1071,8 @@ impl LineState {
                 trailing: 0.0,
                 aligned: 0.0,
                 aligned_found: false,
+                after_point: false,
+                spaces_after_point: 0.0,
                 in_number: false,
                 shift_limit: tab.shift_limit.map(|limit| limit - self.start),
                 font_ctx,
@@ -1189,6 +1191,12 @@ struct PendingTab {
     /// For a decimal tab, the width of the text before its alignment point.
     aligned: f64,
     aligned_found: bool,
+    /// Whether the text after a decimal point found on a mirrored line still
+    /// goes on, reading against the line, and lies before the stop.
+    after_point: bool,
+    /// Width of the items without text of their own since that text last
+    /// went on: they count once it goes on again.
+    spaces_after_point: f64,
     /// Whether the text scanned so far ends inside a number.
     in_number: bool,
     shift_limit: Option<f64>,
@@ -1214,12 +1222,11 @@ impl PendingTab {
                 trailing_space_width(segment, fm)
             }
             InlineItem::MultilingualText(segment)
-                if segment.uses_legacy_shaping()
-                    && segment.text().chars().all(char::is_whitespace) =>
+                if segment.text().chars().all(char::is_whitespace) =>
             {
                 self.trailing + width
             }
-            InlineItem::MultilingualText(segment) if segment.uses_legacy_shaping() => {
+            InlineItem::MultilingualText(segment) => {
                 let trimmed = segment.text().trim_end_matches(char::is_whitespace);
                 segment.width() - fm.context_prefix_width(segment, trimmed.len())?
             }
@@ -1228,17 +1235,29 @@ impl PendingTab {
         if self.align == TabAlign::Decimal && !self.aligned_found {
             // A mirrored line draws text that reads against it, a number or
             // Latin words, the other way round: of such text, what lies
-            // before the stop is what follows its alignment point, and none
-            // of a part of it that holds no point (an integer, the digits
-            // of a number split across runs).
-            let against = self.mirrored && !reads_right_to_left(item);
+            // before the stop is what follows its alignment point, the rest
+            // of that text in later items included, and none of a part of it
+            // that holds no point (an integer, the digits of a number split
+            // across runs).
+            let against = self.mirrored && reads_against_a_mirrored_line(item);
             match decimal_alignment_offset(item, &mut self.in_number, fm)? {
                 Some(offset) => {
                     self.aligned += if against { width - offset } else { offset };
                     self.aligned_found = true;
+                    self.after_point = against;
                 }
                 None if against => {}
                 None => self.aligned += width,
+            }
+        } else if self.after_point {
+            // Spaces count once the text they separate goes on.
+            if reads_right_to_left(item) {
+                self.after_point = false;
+            } else if reads_against_a_mirrored_line(item) {
+                self.aligned += self.spaces_after_point + width;
+                self.spaces_after_point = 0.0;
+            } else {
+                self.spaces_after_point += width;
             }
         }
         Ok(())
@@ -1316,6 +1335,21 @@ fn reads_right_to_left(item: &InlineItem) -> bool {
                 0x0590..=0x08ff | 0xfb1d..=0xfdff | 0xfe70..=0xfeff
             )
         })
+}
+
+/// Whether an item reads against a mirrored line: text whose first strong
+/// character is not Hebrew or Arabic and that holds a letter, a digit or a
+/// full stop. White space, punctuation alone and objects read with the line.
+fn reads_against_a_mirrored_line(item: &InlineItem) -> bool {
+    let text = match item {
+        InlineItem::Text(segment) | InlineItem::HyphenatedText { segment, .. } => &segment.text,
+        InlineItem::MultilingualText(segment) => segment.text(),
+        _ => return false,
+    };
+    !reads_right_to_left(item)
+        && text
+            .chars()
+            .any(|character| character.is_alphanumeric() || character == '.')
 }
 
 /// Width of the spaces that end a segment's text.
