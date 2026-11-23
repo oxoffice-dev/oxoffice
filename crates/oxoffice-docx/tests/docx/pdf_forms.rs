@@ -1087,7 +1087,7 @@ fn a_field_holding_text_the_typing_font_cannot_encode_names_its_scripts() {
         "{said:?}"
     );
     // The sample is in code point order, like the glyph coverage ones.
-    assert!(said[1].contains("\"Łź京東\""), "{said:?}");
+    assert!(said[1].contains("such as \"Łź京東\""), "{said:?}");
 
     let (_, diagnostics) = doc.to_pdf_with_diagnostics(&[], fillable()).unwrap();
     let from_pdf: Vec<_> = diagnostics
@@ -1136,4 +1136,16 @@ fn locked_fields_and_placeholders_say_nothing_about_the_typing_font() {
         "{:?}",
         typing_diagnostics(&layout.layout)
     );
+}
+
+#[test]
+fn a_list_value_counts_only_when_typed_not_when_it_is_an_option_export_value() {
+    let doc = doc_with_body(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="exported"/><w:dropDownList><w:listItem w:displayText="Greece" w:value="Ελλάδα"/><w:listItem w:displayText="France" w:value="fr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Greece</w:t></w:r></w:sdtContent></w:sdt></w:p>
+<w:p><w:sdt><w:sdtPr><w:tag w:val="typed"/><w:comboBox><w:listItem w:displayText="Paris" w:value="paris"/></w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>Αθήνα</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    let said = typing_diagnostics(&layout.layout);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("\"typed\" holds Greek text"), "{said:?}");
 }
