@@ -2345,7 +2345,8 @@ impl CT_P {
         self.runs().iter().map(|run| run.text()).collect()
     }
 
-    /// Return valid complex `HYPERLINK` fields projected into synthetic runs.
+    /// Return valid complex `HYPERLINK` fields projected into synthetic runs:
+    /// those with an address, a bookmark (`\l`), or both.
     pub fn complex_field_hyperlinks(&self) -> Vec<ComplexFieldHyperlink> {
         self.runs
             .iter()
@@ -2366,11 +2367,18 @@ impl CT_P {
                         return None;
                     };
                     (!target.is_empty()).then(|| target.clone())
-                })?;
-                Some(ComplexFieldHyperlink {
+                });
+                let anchor = field.instruction.switches.iter().find_map(|switch| {
+                    let Some(FieldArgument::Text(anchor)) = &switch.argument else {
+                        return None;
+                    };
+                    (switch.name == "l" && !anchor.is_empty()).then(|| anchor.clone())
+                });
+                (target.is_some() || anchor.is_some()).then_some(ComplexFieldHyperlink {
                     run_start: run_index,
                     run_end: run_index + 1,
                     target,
+                    anchor,
                 })
             })
             .collect()

@@ -4020,3 +4020,316 @@ fn a_range_ending_in_a_removed_final_control_still_ends_after_it_starts() {
     assert!(start < end, "{xml}");
     assert_eq!(bookmark_names(&accepted), ["span"]);
 }
+
+// ---- Hyperlinks of whole paragraphs ----
+//
+// A hyperlink of a paragraph inserted or deleted whole is written as one
+// HYPERLINK complex field in a wrapper of its own, as Word writes it: Word
+// keeps an emptied w:hyperlink element when it resolves the paragraph away.
+
+/// A paragraph linking `text` to the bookmark `Target`.
+fn linked_line(text: &str) -> String {
+    format!(
+        r#"<w:p><w:hyperlink w:anchor="Target" w:history="1"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>{text}</w:t></w:r></w:hyperlink></w:p>"#
+    )
+}
+
+/// The XML of the one `w:ins` or `w:del` holding the field whose instruction
+/// starts with `HYPERLINK`, in `xml`.
+fn hyperlink_field_wrapper<'a>(xml: &'a str, kind: &str) -> &'a str {
+    let instruction = xml.find(">HYPERLINK").expect("a HYPERLINK field");
+    let start = xml[..instruction].rfind(&format!("<w:{kind} ")).unwrap();
+    let end = xml[instruction..].find(&format!("</w:{kind}>")).unwrap() + instruction;
+    &xml[start..end]
+}
+
+#[test]
+fn a_linked_paragraph_added_or_removed_whole_is_tracked_as_a_hyperlink_field() {
+    let target = r#"<w:p><w:bookmarkStart w:id="0" w:name="Target"/><w:r><w:t>Target section.</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#;
+    let without = format!("{}{target}{}", plain("Before."), plain("After."));
+    let with = format!(
+        "{}{}{target}{}",
+        plain("Before."),
+        linked_line("See the target."),
+        plain("After.")
+    );
+    for (from, to, kind) in [(&without, &with, "ins"), (&with, &without, "del")] {
+        let mut doc = redline(doc_with_body(from), &doc_with_body(to));
+        let xml = main_part_xml(&mut doc);
+        assert!(!xml.contains("<w:hyperlink"), "{xml}");
+        let field = hyperlink_field_wrapper(&xml, kind);
+        assert!(field.contains(r#"HYPERLINK \l "Target""#), "{xml}");
+        for marker in ["begin", "separate", "end"] {
+            assert_eq!(
+                field.matches(&format!(r#"fldCharType="{marker}""#)).count(),
+                1,
+                "{xml}"
+            );
+        }
+        let inner = &field[field.find('>').unwrap()..];
+        assert!(
+            !inner.contains("<w:ins ") && !inner.contains("<w:del "),
+            "{xml}"
+        );
+        assert_eq!(
+            field.contains("<w:delText>See the target.</w:delText>"),
+            kind == "del",
+            "{xml}"
+        );
+        assert_eq!(
+            field.contains("<w:t>See the target.</w:t>"),
+            kind == "ins",
+            "{xml}"
+        );
+    }
+    check_both_ways(
+        || doc_with_body(&without),
+        || doc_with_body(&with),
+        "document.xml",
+        [false, true],
+    );
+}
+
+/// `doc` saved with an external hyperlink relationship `id` to `address`
+/// added to its main part.
+fn with_link_relationship(doc: &mut Document, id: &str, address: &str) -> Document {
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    package
+        .get_or_create_part_rels("/word/document.xml")
+        .items
+        .push(oxoffice_opc::Relationship {
+            id: id.to_owned(),
+            rel_type:
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+                    .to_owned(),
+            target: address.to_owned(),
+            target_mode: Some("External".to_owned()),
+        });
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn an_address_link_of_a_whole_paragraph_keeps_its_address_tooltip_and_frame() {
+    const SITE: &str = "https://example.com/a?b=1&c=2";
+    let link = |id: &str, text: &str| {
+        format!(
+            r#"<w:p><w:hyperlink xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="{id}" w:tooltip="Say &quot;hi&quot; \ bye" w:tgtFrame="_blank" w:history="1"><w:r><w:t>{text}</w:t></w:r></w:hyperlink></w:p>"#
+        )
+    };
+    // The kept link reaches the address through rIdKept in both versions;
+    // the other link reaches it through its own relationship (rIdNew), or
+    // a new address (rIdElse), both only in the version holding it.
+    let kept = link("rIdKept", "Kept link.");
+    let build = |body: &str| {
+        let mut doc = doc_with_body(body);
+        let mut doc = with_link_relationship(&mut doc, "rIdKept", SITE);
+        let mut doc = with_link_relationship(&mut doc, "rIdNew", SITE);
+        with_link_relationship(&mut doc, "rIdElse", "https://example.org/")
+    };
+    for (id, address) in [("rIdNew", SITE), ("rIdElse", "https://example.org/")] {
+        let added = link(id, "Added link.");
+        // Before a paragraph, and as the last one.
+        for (without, with) in [
+            (
+                format!("{kept}{}", plain("After.")),
+                format!("{kept}{added}{}", plain("After.")),
+            ),
+            (kept.clone(), format!("{kept}{added}")),
+        ] {
+            for (from, to, kind) in [(&without, &with, "ins"), (&with, &without, "del")] {
+                let mut doc = redline(build(from), &build(to));
+                let xml = main_part_xml(&mut doc);
+                assert_eq!(xml.matches("<w:hyperlink").count(), 1, "{xml}");
+                let field = hyperlink_field_wrapper(&xml, kind);
+                let instruction = format!(
+                    r#"HYPERLINK "{}" \o "Say \"hi\" \\ bye" \t "_blank""#,
+                    address.replace('&', "&amp;")
+                );
+                assert!(field.contains(&instruction), "{instruction} in {xml}");
+                let links = |doc: &mut Document| {
+                    let mut links = doc
+                        .links()
+                        .into_iter()
+                        .map(|link| link.url)
+                        .collect::<Vec<_>>();
+                    links.sort();
+                    links
+                };
+                assert_eq!(
+                    texts(&accepted(&mut doc)),
+                    texts(&build(to)),
+                    "{from} -> {to}"
+                );
+                assert_eq!(texts(&rejected(&mut doc)), texts(&build(from)));
+                assert_eq!(
+                    links(&mut accepted(&mut doc)).len(),
+                    links(&mut build(to)).len()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_contents_entry_added_or_removed_whole_keeps_its_page_field_in_the_link_field() {
+    // A contents entry links its heading and shows its page through a
+    // PAGEREF field inside the link: both fields go in one wrapper, nested.
+    let entry = concat!(
+        r#"<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:hyperlink w:anchor="_Toc1" w:history="1">"#,
+        r#"<w:r><w:t>Method</w:t></w:r><w:r><w:tab/></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGEREF _Toc1 \h </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:hyperlink></w:p>"#
+    );
+    let heading = r#"<w:p><w:bookmarkStart w:id="0" w:name="_Toc1"/><w:r><w:t>Method</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#;
+    let without = format!("{}{heading}", plain("Contents"));
+    let with = format!("{}{entry}{heading}", plain("Contents"));
+    for (from, to, kind) in [(&without, &with, "ins"), (&with, &without, "del")] {
+        let mut doc = redline(doc_with_body(from), &doc_with_body(to));
+        let xml = main_part_xml(&mut doc);
+        assert!(!xml.contains("<w:hyperlink"), "{xml}");
+        let field = hyperlink_field_wrapper(&xml, kind);
+        assert!(field.contains(r#"HYPERLINK \l "_Toc1""#), "{xml}");
+        assert!(field.contains("PAGEREF _Toc1"), "{xml}");
+        assert_eq!(field.matches(r#"fldCharType="begin""#).count(), 2, "{xml}");
+        assert_eq!(field.matches(r#"fldCharType="end""#).count(), 2, "{xml}");
+        assert!(!field.contains("<w:t>") || kind == "ins", "{xml}");
+    }
+    check_both_ways(
+        || doc_with_body(&without),
+        || doc_with_body(&with),
+        "document.xml",
+        [false, true],
+    );
+}
+
+#[test]
+fn a_linked_paragraph_in_a_note_a_comment_a_header_a_cell_or_a_control_is_tracked_as_a_field() {
+    let line = linked_line("See the target.");
+    let target = r#"<w:p><w:bookmarkStart w:id="0" w:name="Target"/><w:r><w:t>Target.</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#;
+    let held = |xml: &str| xml.contains("HYPERLINK");
+    let note = |linked: bool| {
+        let mut doc = doc_with_notes(&[("Claim.", Some("Source.")), ("After.", None)]);
+        if linked {
+            with_part(&mut doc, "footnotes.xml", |xml| {
+                let at = xml.find("Source.").unwrap();
+                let end = at + xml[at..].find("</w:footnote>").unwrap();
+                format!("{}{line}{}", &xml[..end], &xml[end..])
+            })
+        } else {
+            reopen(&mut doc)
+        }
+    };
+    let comment = |linked: bool| {
+        let mut doc = doc_with(&["Claim.", "After."]);
+        let range = oxoffice_docx::RunRange {
+            start: oxoffice_docx::RunPosition {
+                body_index: 0,
+                run_index: 0,
+            },
+            end: oxoffice_docx::RunPosition {
+                body_index: 0,
+                run_index: 1,
+            },
+        };
+        doc.add_comment_with_date(
+            range,
+            "Ada",
+            None,
+            "Note.",
+            oxoffice_docx::CommentDate::Undated,
+        )
+        .unwrap();
+        if linked {
+            with_part(&mut doc, "comments.xml", |xml| {
+                xml.replacen("</w:comment>", &format!("{line}</w:comment>"), 1)
+            })
+        } else {
+            reopen(&mut doc)
+        }
+    };
+    let header = |linked: bool| {
+        let mut doc = doc_with(&["Body."]);
+        doc.set_header("Running title");
+        if linked {
+            with_part(&mut doc, "header1.xml", |xml| {
+                xml.replacen("</w:hdr>", &format!("{line}</w:hdr>"), 1)
+            })
+        } else {
+            reopen(&mut doc)
+        }
+    };
+    for (owner, suffix) in [
+        (&note as &dyn Fn(bool) -> Document, "footnotes.xml"),
+        (&comment, "comments.xml"),
+        (&header, "header1.xml"),
+    ] {
+        for (from, to) in [(false, true), (true, false)] {
+            let mut doc = redline(owner(from), &owner(to));
+            let xml = part_xml(&mut doc, suffix);
+            assert!(held(&xml) && !xml.contains("<w:hyperlink"), "{xml}");
+            assert!(!part_xml(&mut accepted(&mut doc), suffix).contains("<w:hyperlink"));
+            assert_eq!(
+                part_texts(&mut accepted(&mut doc), suffix),
+                part_texts(&mut owner(to), suffix)
+            );
+            assert_eq!(
+                part_texts(&mut rejected(&mut doc), suffix),
+                part_texts(&mut owner(from), suffix)
+            );
+        }
+    }
+
+    let cell = |content: &str| {
+        doc_with_body(&format!(
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>{content}</w:tc></w:tr></w:tbl>{target}"#
+        ))
+    };
+    let control = |content: &str| {
+        doc_with_body(&format!(
+            r#"<w:sdt><w:sdtPr><w:alias w:val="Box"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>{target}"#
+        ))
+    };
+    for owner in [&cell as &dyn Fn(&str) -> Document, &control] {
+        // First and last paragraph of a kept cell or control.
+        for with in [
+            format!("{line}{}", plain("Inside.")),
+            format!("{}{line}", plain("Inside.")),
+        ] {
+            let mut doc = redline(owner(&plain("Inside.")), &owner(&with));
+            let xml = main_part_xml(&mut doc);
+            assert!(held(&xml) && !xml.contains("<w:hyperlink"), "{xml}");
+            check_both_ways(
+                || owner(&plain("Inside.")),
+                || owner(&with),
+                "document.xml",
+                [false, true],
+            );
+        }
+    }
+}
+
+#[test]
+fn a_whole_paragraph_link_no_field_can_carry_is_refused() {
+    // w:docLocation has no HYPERLINK switch: the comparison refuses rather
+    // than drop it, and writes nothing.
+    let located = r#"<w:p><w:hyperlink w:anchor="Target" w:docLocation="table"><w:r><w:t>See.</w:t></w:r></w:hyperlink></w:p>"#;
+    let after = plain("After.");
+    for (original, edited) in [
+        (after.clone(), format!("{located}{after}")),
+        (format!("{located}{after}"), after.clone()),
+    ] {
+        let mut doc = doc_with_body(&original);
+        let error = doc
+            .compare(&doc_with_body(&edited), AUTHOR, DATE)
+            .expect_err("refused");
+        assert!(error.to_string().contains("w:docLocation"), "{error}");
+        assert!(doc.revisions().is_empty());
+        assert_eq!(texts(&reopen(&mut doc)), texts(&doc_with_body(&original)));
+    }
+}

@@ -2669,7 +2669,10 @@ const HYPERLINK_REVISION_FLAG: usize = 1usize << (usize::BITS - 1);
 pub struct ComplexFieldHyperlink {
     pub run_start: usize,
     pub run_end: usize,
-    pub target: String,
+    /// The address, the field's first argument.
+    pub target: Option<String>,
+    /// The bookmark, the field's `\l` switch.
+    pub anchor: Option<String>,
 }
 
 pub(super) type ParsedHyperlinkAttributes = (

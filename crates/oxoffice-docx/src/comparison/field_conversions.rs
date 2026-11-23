@@ -15,6 +15,7 @@ pub(super) fn validate_field_conversion_role(
     whole: &[WholeFieldWitness],
     role: usize,
     new_ids: &HashSet<i32>,
+    restorations: &HyperlinkRestorations,
 ) -> Result<()> {
     /// One input's side of a conversion: the field's occurrence there, and
     /// the id and payload of the one wrapper that publishes it.
@@ -167,94 +168,15 @@ pub(super) fn validate_field_conversion_role(
                     Error::Other("field conversion has no proven physical story part".into())
                 })?
         };
-        let bytes = candidate
-            .package
-            .get_part(part)
-            .ok_or_else(|| Error::Other("field conversion part is missing".into()))?;
-        let spans = crate::revision::modeled_revision_spans(bytes)?
-            .into_iter()
-            .filter(|(_, id)| *id == side.revision_id)
-            .collect::<Vec<_>>();
-        if spans.len() != 1 {
-            return Err(Error::Other(
-                "field conversion publication id has no unique physical span".into(),
-            ));
-        }
-        let raw = std::str::from_utf8(&bytes[spans[0].0.clone()]).map_err(utf8_error)?;
-        let kind = if role == 0 { "del" } else { "ins" };
-        let inner = element_inner_range_any_prefix(raw, kind)?;
-        if raw[inner] != *side.generated_span {
-            return Err(Error::Other(
-                "field conversion publication payload differs from its checked local span".into(),
-            ));
-        }
-        let roots = direct_element_spans(raw)?
-            .into_iter()
-            .map(|range| {
-                range
-                    .start
-                    .checked_add(spans[0].0.start)
-                    .zip(range.end.checked_add(spans[0].0.start))
-                    .map(|(start, end)| start..end)
-                    .ok_or_else(|| Error::Other("publication root part offset overflow".into()))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let resolution = if role == 0 {
-            crate::revision::Resolution::Reject
-        } else {
-            crate::revision::Resolution::Accept
-        };
-        let mut note_part = false;
-        for kind in NoteKind::ALL {
-            note_part |= NotePart::name_of(candidate, kind)?.is_some_and(|name| name == part);
-        }
-        let (transported, mapped) = if note_part {
-            let mut trace = crate::revision::NotePublication::new(part, side.revision_id, &roots);
-            let mut carrier = candidate.clone_for_staging();
-            carrier.resolve_revisions_with_note_publication(
-                resolution,
-                crate::revision::RevisionScope::Ids(new_ids),
-                Some(&mut trace),
-            )?;
-            (
-                trace.output.ok_or_else(|| {
-                    Error::Other("selected publication note part was removed".into())
-                })?,
-                trace.roots,
-            )
-        } else {
-            let (transported, _, mapped) =
-                crate::revision::resolve_story_xml_with_publication_roots(
-                    bytes,
-                    resolution,
-                    crate::revision::RevisionScope::Ids(new_ids),
-                    side.revision_id,
-                    &roots,
-                )?;
-            (transported, mapped)
-        };
-        let mut ranges = Vec::with_capacity(mapped.len());
-        let mut previous = None;
-        for range in mapped {
-            let range = range.ok_or_else(|| {
-                Error::Other("a selected publication root was discarded or unproved".into())
-            })?;
-            if range.start >= range.end
-                || range.end > transported.len()
-                || previous.is_some_and(|end| {
-                    end > range.start
-                        || !transported[end..range.start]
-                            .iter()
-                            .all(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
-                })
-            {
-                return Err(Error::Other(
-                    "resolved publication root order or intervening source coverage changed".into(),
-                ));
-            }
-            previous = Some(range.end);
-            ranges.push(range);
-        }
+        let (transported, ranges) = transported_publication(
+            candidate,
+            part,
+            side.revision_id,
+            side.generated_span,
+            role,
+            new_ids,
+            restorations,
+        )?;
         let extent = ranges
             .first()
             .zip(ranges.last())
@@ -658,4 +580,453 @@ fn map_nested_conversion_metadata(
         }
     }
     Ok(())
+}
+
+/// The part `part` of `candidate` once `role`'s resolution of `new_ids` is
+/// applied, and the range there of each direct child of the one wrapper
+/// `revision_id` that publishes `generated_span`, in order and with nothing but
+/// white space between them. `restorations` are the edits made since in the
+/// resolved part (see [`restore_whole_hyperlinks`]): they apply to the part
+/// and move the ranges, which none of them may cross.
+#[allow(clippy::too_many_arguments)]
+fn transported_publication(
+    candidate: &Document,
+    part: &str,
+    revision_id: i32,
+    generated_span: &str,
+    role: usize,
+    new_ids: &HashSet<i32>,
+    restorations: &HyperlinkRestorations,
+) -> Result<(Vec<u8>, Vec<Range<usize>>)> {
+    let bytes = candidate
+        .package
+        .get_part(part)
+        .ok_or_else(|| Error::Other("field conversion part is missing".into()))?;
+    let spans = crate::revision::modeled_revision_spans(bytes)?
+        .into_iter()
+        .filter(|(_, id)| *id == revision_id)
+        .collect::<Vec<_>>();
+    if spans.len() != 1 {
+        return Err(Error::Other(
+            "field conversion publication id has no unique physical span".into(),
+        ));
+    }
+    let raw = std::str::from_utf8(&bytes[spans[0].0.clone()]).map_err(utf8_error)?;
+    let kind = if role == 0 { "del" } else { "ins" };
+    let inner = element_inner_range_any_prefix(raw, kind)?;
+    if raw[inner] != *generated_span {
+        return Err(Error::Other(
+            "field conversion publication payload differs from its checked local span".into(),
+        ));
+    }
+    let roots = direct_element_spans(raw)?
+        .into_iter()
+        .map(|range| {
+            range
+                .start
+                .checked_add(spans[0].0.start)
+                .zip(range.end.checked_add(spans[0].0.start))
+                .map(|(start, end)| start..end)
+                .ok_or_else(|| Error::Other("publication root part offset overflow".into()))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let resolution = if role == 0 {
+        crate::revision::Resolution::Reject
+    } else {
+        crate::revision::Resolution::Accept
+    };
+    let mut note_part = false;
+    for kind in NoteKind::ALL {
+        note_part |= NotePart::name_of(candidate, kind)?.is_some_and(|name| name == part);
+    }
+    let (transported, mapped) = if note_part {
+        let mut trace = crate::revision::NotePublication::new(part, revision_id, &roots);
+        let mut carrier = candidate.clone_for_staging();
+        carrier.resolve_revisions_with_note_publication(
+            resolution,
+            crate::revision::RevisionScope::Ids(new_ids),
+            Some(&mut trace),
+        )?;
+        (
+            trace
+                .output
+                .ok_or_else(|| Error::Other("selected publication note part was removed".into()))?,
+            trace.roots,
+        )
+    } else {
+        let (transported, _, mapped) = crate::revision::resolve_story_xml_with_publication_roots(
+            bytes,
+            resolution,
+            crate::revision::RevisionScope::Ids(new_ids),
+            revision_id,
+            &roots,
+        )?;
+        (transported, mapped)
+    };
+    let mut ranges = Vec::with_capacity(mapped.len());
+    let mut previous = None;
+    for range in mapped {
+        let range = range.ok_or_else(|| {
+            Error::Other("a selected publication root was discarded or unproved".into())
+        })?;
+        if range.start >= range.end
+            || range.end > transported.len()
+            || previous.is_some_and(|end| {
+                end > range.start
+                    || !transported[end..range.start]
+                        .iter()
+                        .all(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+            })
+        {
+            return Err(Error::Other(
+                "resolved publication root order or intervening source coverage changed".into(),
+            ));
+        }
+        previous = Some(range.end);
+        ranges.push(range);
+    }
+    let Some(edits) = restorations.get(part) else {
+        return Ok((transported, ranges));
+    };
+    let ranges = ranges
+        .into_iter()
+        .map(|range| restored_range(edits, range))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((restored_part(&transported, edits), ranges))
+}
+
+/// The edits, by part and in order, that [`restore_whole_hyperlinks`] made in
+/// a resolved document.
+pub(super) type HyperlinkRestorations = HashMap<String, Vec<(Range<usize>, String)>>;
+
+/// Write back as a `w:hyperlink` each hyperlink field that `role`'s resolution
+/// keeps of a paragraph inserted or deleted whole (see
+/// `whole_paragraph_hyperlinks`), as Word does when it saves the resolved
+/// document, so the guard compares the link with the input's.
+///
+/// The link is read from the resolved field alone: its address, anchor,
+/// tooltip and target frame from the instruction, its content from the
+/// result, which stays in place. Only the order of the input's attributes
+/// and its `w:history` value, which no switch carries, come from the witness.
+/// An address gets a new relationship in the resolved document, which the
+/// guard reads by its target.
+pub(super) fn restore_whole_hyperlinks(
+    candidate: &Document,
+    resolved: &mut Document,
+    witnesses: &[WholeHyperlinkWitness],
+    role: usize,
+    new_ids: &HashSet<i32>,
+) -> Result<HyperlinkRestorations> {
+    let mut restorations = HyperlinkRestorations::new();
+    let mut resolved_edits = HyperlinkRestorations::new();
+    let mut relationships = 0usize;
+    for witness in witnesses
+        .iter()
+        .filter(|witness| witness.input_role == role)
+    {
+        if !new_ids.contains(&witness.revision_id) {
+            return Err(Error::Other(
+                "invalid whole-paragraph hyperlink witness".into(),
+            ));
+        }
+        let (transported, roots) = transported_publication(
+            candidate,
+            &witness.owner,
+            witness.revision_id,
+            &witness.generated_span,
+            role,
+            new_ids,
+            &HyperlinkRestorations::new(),
+        )?;
+        let [begin, instruction, separate, .., end] = roots.as_slice() else {
+            return Err(Error::Other(
+                "a whole-paragraph hyperlink publication is not one field".into(),
+            ));
+        };
+        // The resolved document also retires the comparison's note markers,
+        // which the resolution of this part alone keeps: the field is the
+        // same occurrence of its bytes in both.
+        let extent = &transported[begin.start..end.end];
+        let resolved_part = resolved
+            .package
+            .get_part(&witness.owner)
+            .ok_or_else(|| Error::Other("whole-paragraph hyperlink part is missing".into()))?;
+        let before = occurrences(&transported, extent);
+        let after = occurrences(resolved_part, extent);
+        let rank = before.iter().position(|start| *start == begin.start);
+        let Some(start) = rank
+            .filter(|_| before.len() == after.len())
+            .map(|rank| after[rank])
+        else {
+            return Err(Error::Other(
+                "a whole-paragraph hyperlink publication does not reach the resolved part".into(),
+            ));
+        };
+        let text = |range: &Range<usize>| {
+            std::str::from_utf8(&transported[range.clone()]).map_err(utf8_error)
+        };
+        for (range, kind) in [(begin, "begin"), (separate, "separate"), (end, "end")] {
+            if field_char_run(text(range)?)? != Some(kind.to_owned()) {
+                return Err(Error::Other(format!(
+                    "a whole-paragraph hyperlink publication has no field {kind} run where one field needs it"
+                )));
+            }
+        }
+        let field =
+            oxoffice_docx_oxml::text::Field::new(&instruction_run_text(text(instruction)?)?, "");
+        let instruction = &field.instruction;
+        let mut values = HashMap::new();
+        for switch in &instruction.switches {
+            let Some(oxoffice_docx_oxml::text::FieldArgument::Text(value)) = &switch.argument
+            else {
+                return Err(Error::Other(
+                    "a whole-paragraph hyperlink switch has no value".into(),
+                ));
+            };
+            let name = match switch.name.as_str() {
+                "l" => "w:anchor",
+                "o" => "w:tooltip",
+                "t" => "w:tgtFrame",
+                _ => {
+                    return Err(Error::Other(format!(
+                        "a whole-paragraph hyperlink field has switch \\{}, which no link attribute carries",
+                        switch.name
+                    )));
+                }
+            };
+            if values.insert(name, value.clone()).is_some() {
+                return Err(Error::Other(
+                    "a whole-paragraph hyperlink switch is repeated".into(),
+                ));
+            }
+        }
+        match instruction.arguments.as_slice() {
+            [] => {}
+            [oxoffice_docx_oxml::text::FieldArgument::Text(address)] => {
+                let rels = resolved.package.get_or_create_part_rels(&witness.owner);
+                let id = loop {
+                    relationships += 1;
+                    let id = format!("rIdOxofficeGuardLink{relationships}");
+                    if rels.get_by_id(&id).is_none() {
+                        break id;
+                    }
+                };
+                rels.items.push(Relationship {
+                    id: id.clone(),
+                    rel_type: rel_types::HYPERLINK.to_owned(),
+                    target: address.clone(),
+                    target_mode: Some("External".to_owned()),
+                });
+                values.insert("r:id", id);
+            }
+            _ => {
+                return Err(Error::Other(
+                    "a whole-paragraph hyperlink field has more than one address".into(),
+                ));
+            }
+        }
+        if instruction.name != "HYPERLINK" {
+            return Err(Error::Other(
+                "a whole-paragraph hyperlink publication is not a HYPERLINK field".into(),
+            ));
+        }
+        let mut opening = String::from("<w:hyperlink");
+        for (name, carried) in &witness.opening {
+            let value = carried
+                .clone()
+                .or_else(|| values.remove(name.as_str()))
+                .ok_or_else(|| {
+                    Error::Other(format!(
+                        "a whole-paragraph hyperlink field does not carry the link's {name}"
+                    ))
+                })?;
+            opening.push_str(&format!(
+                r#" {name}="{}""#,
+                oxoffice_core::xml::escape_attribute_value(&value)
+            ));
+        }
+        if !values.is_empty() {
+            return Err(Error::Other(
+                "a whole-paragraph hyperlink field carries what the link did not".into(),
+            ));
+        }
+        opening.push('>');
+        let moved = |range: &Range<usize>| {
+            range.start - begin.start + start..range.end - begin.start + start
+        };
+        let edits = restorations.entry(witness.owner.clone()).or_default();
+        edits.push((begin.start..separate.end, opening.clone()));
+        edits.push((end.clone(), "</w:hyperlink>".to_owned()));
+        let edits = resolved_edits.entry(witness.owner.clone()).or_default();
+        edits.push((moved(&(begin.start..separate.end)), opening));
+        edits.push((moved(end), "</w:hyperlink>".to_owned()));
+    }
+    for edits in restorations.values_mut() {
+        edits.sort_by_key(|(range, _)| range.start);
+    }
+    for (part, edits) in &mut resolved_edits {
+        edits.sort_by_key(|(range, _)| range.start);
+        if edits.windows(2).any(|pair| pair[0].0.end > pair[1].0.start) {
+            return Err(Error::Other(
+                "whole-paragraph hyperlink fields overlap".into(),
+            ));
+        }
+        let bytes = resolved
+            .package
+            .get_part(part)
+            .ok_or_else(|| Error::Other("whole-paragraph hyperlink part is missing".into()))?;
+        let restored = restored_part(bytes, edits);
+        crate::document::set_story_source_xml(resolved, part, restored)?;
+    }
+    Ok(restorations)
+}
+
+/// The only child of the run `xml`, as its Word local name, its
+/// `w:fldCharType` value and its text; `None` when `xml` is not a Word run
+/// with one child.
+fn single_run_child(xml: &str) -> Result<Option<(String, Option<String>, String)>> {
+    let mut reader = NsReader::from_str(xml);
+    let mut depth = 0usize;
+    let mut child = None;
+    let mut children = 0usize;
+    loop {
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map_err(|error| Error::Other(error.to_string()))?;
+        let word =
+            matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes());
+        let (element, empty) = match event {
+            Event::Start(element) => (element, false),
+            Event::Empty(element) => (element, true),
+            Event::Text(text) if depth == 2 => {
+                if let Some((_, _, value)) = &mut child {
+                    let text = text
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .map_err(|error| Error::Other(error.to_string()))?;
+                    String::push_str(value, &text);
+                }
+                continue;
+            }
+            Event::GeneralRef(reference) if depth == 2 => {
+                if let Some((_, _, value)) = &mut child {
+                    if let Some(character) = reference
+                        .resolve_char_ref()
+                        .map_err(|error| Error::Other(error.to_string()))?
+                    {
+                        value.push(character);
+                    } else {
+                        let name = reference
+                            .decode()
+                            .map_err(|error| Error::Other(error.to_string()))?;
+                        value.push_str(
+                            quick_xml::escape::resolve_predefined_entity(&name)
+                                .ok_or_else(|| Error::Other(format!("unknown entity &{name};")))?,
+                        );
+                    }
+                }
+                continue;
+            }
+            Event::End(_) => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            Event::Eof => break,
+            _ => continue,
+        };
+        match depth {
+            0 if !(word && element.local_name().as_ref() == b"r") || empty => return Ok(None),
+            1 => {
+                children += 1;
+                let mut kind = None;
+                for attribute in element.attributes() {
+                    let attribute = attribute.map_err(|error| Error::Other(error.to_string()))?;
+                    let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+                    if matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
+                        && local.as_ref() == b"fldCharType"
+                    {
+                        kind = Some(
+                            attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    element.decoder(),
+                                )
+                                .map_err(|error| Error::Other(error.to_string()))?
+                                .into_owned(),
+                        );
+                    }
+                }
+                child = word.then(|| {
+                    (
+                        String::from_utf8_lossy(element.local_name().as_ref()).into_owned(),
+                        kind,
+                        String::new(),
+                    )
+                });
+            }
+            _ => {}
+        }
+        if !empty {
+            depth += 1;
+        }
+    }
+    Ok(child.filter(|_| children == 1))
+}
+
+/// The `w:fldCharType` of the run `xml` when its only child is a `w:fldChar`.
+fn field_char_run(xml: &str) -> Result<Option<String>> {
+    Ok(single_run_child(xml)?
+        .filter(|(local, _, _)| local == "fldChar")
+        .and_then(|(_, kind, _)| kind))
+}
+
+/// The instruction of the run `xml` when its only child is a `w:instrText`.
+fn instruction_run_text(xml: &str) -> Result<String> {
+    single_run_child(xml)?
+        .filter(|(local, _, _)| local == "instrText")
+        .map(|(_, _, text)| text)
+        .ok_or_else(|| {
+            Error::Other("a whole-paragraph hyperlink field has no instruction run".into())
+        })
+}
+
+/// The start of each occurrence of `needle` in `haystack`, none overlapping.
+fn occurrences(haystack: &[u8], needle: &[u8]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut at = 0;
+    while let Some(found) = haystack.get(at..).and_then(|rest| {
+        rest.windows(needle.len())
+            .position(|window| window == needle)
+    }) {
+        starts.push(at + found);
+        at += found + needle.len().max(1);
+    }
+    starts
+}
+
+/// `part` with `edits`, in order and apart, applied.
+fn restored_part(part: &[u8], edits: &[(Range<usize>, String)]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(part.len());
+    let mut cursor = 0;
+    for (range, replacement) in edits {
+        output.extend_from_slice(&part[cursor..range.start]);
+        output.extend_from_slice(replacement.as_bytes());
+        cursor = range.end;
+    }
+    output.extend_from_slice(&part[cursor..]);
+    output
+}
+
+/// Where `range` of a part sits once `edits` are applied; no edit may cross it.
+fn restored_range(edits: &[(Range<usize>, String)], range: Range<usize>) -> Result<Range<usize>> {
+    let mut shift = 0isize;
+    for (edit, replacement) in edits {
+        if edit.end <= range.start {
+            shift += replacement.len() as isize - edit.len() as isize;
+        } else if edit.start < range.end {
+            return Err(Error::Other(
+                "a field publication crosses a restored whole-paragraph hyperlink".into(),
+            ));
+        }
+    }
+    Ok(range.start.saturating_add_signed(shift)..range.end.saturating_add_signed(shift))
 }

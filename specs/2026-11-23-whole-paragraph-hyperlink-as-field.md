@@ -28,26 +28,37 @@ reason: a `w:fldSimple` cannot carry a mark.
 **A `w:hyperlink` of a paragraph inserted or deleted whole is written as one `HYPERLINK` complex field, the whole of
 it in an `ins` (or `del`) of its own under one new revision id, as Word writes it.**
 
-- **Instruction**: `HYPERLINK "<target>"` for a link with a relationship (its target, from the part's
-  relationships), `HYPERLINK \l "<anchor>"` for a link to a bookmark, both for a link with both; `\o "<tooltip>"` and
-  `\t "<target frame>"` when the link has them. Quotes and backslashes in a value are escaped as field arguments.
-- **Result**: the link's runs, deleted or inserted as the paragraph's other runs; a simple field inside the link is
-  the nested complex field #437 writes.
-- **Refused**, not dropped: a link with what no switch carries (`w:docLocation`, an unmodelled attribute or child),
-  with a message naming it.
+- **Instruction**: `HYPERLINK "<address>"` for a link through an external relationship (its target, from the
+  story part's relationships, the original's or those carried from the edited package), `\l "<anchor>"` for a link
+  to a bookmark, `\o "<tooltip>"` and `\t "<target frame>"` when the link has them, in the order of its attributes.
+  Quotes and backslashes in a value are escaped as field arguments. `w:history` has no switch: Word drops it from
+  the field and writes it back when it saves the link, and so does the guard.
+- **Result**: the link's content, deleted or inserted as the paragraph's other runs; a complex field inside it (the
+  PAGEREF of a contents entry) nests in the link's field, in the same wrapper.
+- **Refused**, not dropped: a link with what no switch carries (`w:docLocation`, an unmodelled attribute), or whose
+  relationship targets a part of the package, with a message naming it.
+- **Kept as today**: a link holding a simple field written whole (#437): that field has a wrapper of its own, and
+  Word nests no wrapper in another. Word writes no simple field; the combination comes from other producers only.
 - **Where**: only for a paragraph inserted or deleted whole that is neither moved nor carried inside a complex field
-  replaced whole; a link in a paragraph that both versions hold, or that moves, keeps its `w:hyperlink`.
-- **Guard**: the comparison checks that the resolution keeping the paragraph reads back the link it came from
-  (target, anchor, tooltip, result), as it checks a whole-paragraph simple field.
+  replaced whole; a link in a paragraph that both versions hold, or that moves, keeps its `w:hyperlink`. That covers
+  the body, cells, block content controls, notes, comments, headers and footers.
+- **Guard**: the resolution that keeps the paragraph is read back as Word saves it: each such field becomes a
+  `w:hyperlink` again, its address (through a new relationship), anchor, tooltip and frame read from the field's
+  instruction alone, its content the field's result left in place; only the attribute order, the namespace
+  declarations and `w:history` come from the comparison. The ordinary postcondition then compares it with the input,
+  so a field that misstates the link fails the comparison.
+- **Links of the resolved document**: oxoffice keeps the field after resolution, and `links()` reports a `HYPERLINK`
+  field to a bookmark with its anchor, as it already reported one to an address; before, it left it out.
 
 We deliberately do not change links elsewhere, nor how the resolution writes a surviving field (oxoffice keeps the
 field form after resolution, as for #437's fields; Word writes the link back as `w:hyperlink`).
 
 ## Plan
 
-One pull request, closing #541: the emitter next to `whole_simple_field`, the guard witness, tests (internal and
-external links, inserted and deleted, the final paragraph, a link holding a simple field, a table of contents entry
-paragraph), then a Word check (both directions, internal and external) before merge.
+One pull request, closing #541: the emitter next to `whole_simple_field`, the guard restoration, `links()` for a
+field to a bookmark, tests (internal and external links, inserted and deleted, the final paragraph, a table of
+contents entry, notes, comments, cells and controls, the refusal), then a Word check (both directions, internal and
+external) before merge.
 
 ## Links
 

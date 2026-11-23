@@ -296,7 +296,7 @@ fn an_internal_link_names_its_bookmark_and_no_url() {
 }
 
 #[test]
-fn a_link_written_as_a_hyperlink_field_reads_its_url() {
+fn a_link_written_as_a_hyperlink_field_reads_its_url_or_its_anchor() {
     // Word may write a link as a HYPERLINK field instead of w:hyperlink.
     let mut doc = doc_with_body(concat!(
         r#"<w:p><w:r><w:t xml:space="preserve">Visit </w:t></w:r>"#,
@@ -304,7 +304,7 @@ fn a_link_written_as_a_hyperlink_field_reads_its_url() {
         r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK "https://example.com/a?b=1&amp;c=2" </w:instrText></w:r>"#,
         r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>our site</w:t></w:r>"#,
         r#"<w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t>.</w:t></w:r></w:p>"#,
-        // A place in this document, its name unquoted: not a URL.
+        // A place in this document, its name unquoted: an anchor, not a URL.
         r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
         r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK \l Results </w:instrText></w:r>"#,
         r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Results</w:t></w:r>"#,
@@ -313,12 +313,20 @@ fn a_link_written_as_a_hyperlink_field_reads_its_url() {
     let doc = reopen(&mut doc);
     assert_eq!(
         doc.links(),
-        [LinkInfo {
-            text: "our site".to_owned(),
-            url: Some("https://example.com/a?b=1&c=2".to_owned()),
-            anchor: None,
-            rel_id: None,
-        }]
+        [
+            LinkInfo {
+                text: "our site".to_owned(),
+                url: Some("https://example.com/a?b=1&c=2".to_owned()),
+                anchor: None,
+                rel_id: None,
+            },
+            LinkInfo {
+                text: "Results".to_owned(),
+                url: None,
+                anchor: Some("Results".to_owned()),
+                rel_id: None,
+            }
+        ]
     );
     assert_eq!(doc.text(), "Visit our site.\nResults\n");
 }

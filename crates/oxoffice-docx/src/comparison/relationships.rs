@@ -614,3 +614,40 @@ fn relationship_payload(
     let target = OpcPackage::resolve_rel_target(owner, &relationship.target);
     document.package.get_part(&target).map(<[u8]>::to_vec)
 }
+
+/// The target of each hyperlink relationship of the story parts `owners`, by
+/// part and id, with whether it is external: the original's relationships and
+/// the hyperlinks carried from the edited package, which the ids of the
+/// edited content name once remapped (see `whole_paragraph_hyperlinks`).
+pub(super) fn hyperlink_targets(
+    original: &Document,
+    owners: impl IntoIterator<Item = String>,
+    carried: &[CarriedRelationship],
+) -> HyperlinkTargets {
+    let mut targets = HyperlinkTargets::new();
+    let mut add = |owner: &str, relationship: &Relationship| {
+        if relationship.rel_type == rel_types::HYPERLINK {
+            targets.entry(owner.to_owned()).or_default().insert(
+                relationship.id.clone(),
+                (
+                    relationship.target.clone(),
+                    !crate::document::relationship_is_internal(relationship),
+                ),
+            );
+        }
+    };
+    for owner in owners {
+        for relationship in original
+            .package
+            .get_part_rels(&owner)
+            .into_iter()
+            .flat_map(|relationships| &relationships.items)
+        {
+            add(&owner, relationship);
+        }
+    }
+    for link in carried {
+        add(&link.owner, &link.relationship);
+    }
+    targets
+}
