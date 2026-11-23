@@ -82,6 +82,16 @@ pub(super) fn source_root_metadata(
 
 /// Paragraph and control fields share one source-qualified residual policy.
 pub(super) fn field_source_metadata(view: &str, complex: bool) -> Result<Vec<String>> {
+    // A drawing's id is an identity a comparison renumbers, not content, as
+    // outside fields (`normalize_drawing_identity`).
+    let mut view = view.to_owned();
+    for (start, end, _) in crate::document::drawing_id_spans(view.as_bytes())?
+        .into_iter()
+        .rev()
+    {
+        view.replace_range(start..end, "0");
+    }
+    let view = view.as_str();
     Ok(if !complex {
         let mut remainder = view.to_owned();
         let simple = direct_word_element_spans(view, "fldSimple")?;

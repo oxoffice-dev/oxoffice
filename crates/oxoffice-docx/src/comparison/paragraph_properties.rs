@@ -469,12 +469,6 @@ pub(super) fn paragraph_children_xml(
     whole_fields: bool,
     metadata: &mut Metadata<'_>,
 ) -> Result<(String, Vec<Range<usize>>)> {
-    if whole_fields && simple_field_paths(paragraph)?.linked {
-        return Err(Error::Other(
-            "comparison cannot track a whole paragraph's simple field outside a field it replaces: it is inside a hyperlink"
-                .into(),
-        ));
-    }
     let mut children = paragraph.clone();
     children.properties = None;
     if deleted {

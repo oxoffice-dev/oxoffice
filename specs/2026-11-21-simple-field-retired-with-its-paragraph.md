@@ -70,7 +70,12 @@ Then the rewriting in `comparison.rs`, the one-sided witness in its checks, the 
 - **`xml:space` on a field instruction.** The guard's protected residual modelled `xml:space` on `w:t` and `w:delText` only. The complex field writes `xml:space="preserve"` on its instruction, and under `ignore_fields` no witness maps the field's facts, so the residual models it on `w:instrText` and `w:delInstrText` too.
 - **The last paragraph of a story.** A paired paragraph whose boundaries differ and which ends its story was kept paired when it held a simple field, and its inserted mark could not be rejected. It is now written as a deleted and an inserted paragraph like any other.
 - **Table of contents entries.** An entry that `rebuild_toc` writes lies inside the table's field, begun in an earlier paragraph. Its `PAGEREF` field converts like any other and is proved as a field nested in that result.
-- **Still refused**: a simple field inside a hyperlink (the #66 message) or inside another simple field (the conversion's message), kept as the narrowed limitation `docx-compare-simple-field-paragraph` on #66; a simple field the reader keeps as raw XML (an empty instruction) fails earlier, when the comparison correlates the paragraph's runs.
+- **Still refused** at first: a simple field inside a hyperlink (the #66 message) or inside another simple field (the conversion's message), kept as the narrowed limitation `docx-compare-simple-field-paragraph` on #66; a simple field the reader keeps as raw XML (an empty instruction) fails earlier, when the comparison correlates the paragraph's runs (still so).
+- **Closed on 2026-11-23** (#66; the Word check of these shapes is on the pull request):
+  - *Inside a hyperlink*: the field is written the same way, its one wrapper inside the `w:hyperlink` (a hyperlink may hold revision wrappers); the publisher keeps a published field that is a child of a hyperlink of the paragraph.
+  - *Nested in another simple field*: each simple field of the result is written complex too, inside the outer one's result, all in the one wrapper (Word nests complex fields only). The guard reads a nested field in either form as its own facts, and gives every nested field the form of the input.
+  - *Found on the way*: a complex field whose instruction or result holds another field had its result cut at the nested field's `separate` or `end`; it is found by depth now. A picture in a field result was compared with its drawing id, which the comparison renumbers; the field's residual sets it aside, as the guard does outside fields.
+  - The limitation is removed.
 
 ## Links
 

@@ -370,25 +370,9 @@ pub(super) fn uncarried_field_owners(
     Ok(owners)
 }
 
-/// Whether this paragraph has a simple-field owner on the existing direct or
-/// hyperlink path that requires complete carriage for whole-paragraph changes.
+/// Whether this paragraph holds a simple field a whole-paragraph change must
+/// track: as its own child, or inside a hyperlink.
 fn paragraph_wraps_simple_field(paragraph: &CT_P) -> Result<bool> {
-    let paths = simple_field_paths(paragraph)?;
-    Ok(paths.direct || paths.linked)
-}
-
-/// Where a paragraph holds the simple fields a whole-paragraph change must
-/// track: as its own children, or inside a hyperlink.
-pub(super) struct SimpleFieldPaths {
-    direct: bool,
-    pub(super) linked: bool,
-}
-
-pub(super) fn simple_field_paths(paragraph: &CT_P) -> Result<SimpleFieldPaths> {
-    let mut paths = SimpleFieldPaths {
-        direct: false,
-        linked: false,
-    };
     let xml = paragraph_xml(paragraph)?;
     let word_starts = word_element_starts(&xml)?;
     let mut reader = Reader::from_reader(xml.as_bytes());
@@ -408,7 +392,7 @@ pub(super) fn simple_field_paths(paragraph: &CT_P) -> Result<SimpleFieldPaths> {
                 buffer.clear();
                 continue;
             }
-            Event::Eof => return Ok(paths),
+            Event::Eof => return Ok(false),
             _ => {
                 buffer.clear();
                 continue;
@@ -417,11 +401,7 @@ pub(super) fn simple_field_paths(paragraph: &CT_P) -> Result<SimpleFieldPaths> {
         let local = element.local_name();
         let parent_wrapped = open.last().copied();
         if word && parent_wrapped == Some(true) && local.as_ref() == b"fldSimple" {
-            if open.len() == 1 {
-                paths.direct = true;
-            } else {
-                paths.linked = true;
-            }
+            return Ok(true);
         }
         if !empty {
             open.push(

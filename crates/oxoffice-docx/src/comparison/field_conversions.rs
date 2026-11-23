@@ -365,7 +365,7 @@ fn map_field_conversion_role(
                 ));
             }
             let mut semantic = field.clone();
-            semantic.complex = false;
+            encoded_as(&mut semantic, expected);
             if semantic != *expected
                 || conversion_source_inventory(&input.source, &input.scope)?
                     != conversion_source_inventory(&current.source, &current.scope)?
@@ -374,7 +374,7 @@ fn map_field_conversion_role(
                     "resolved field conversion changed independent semantic or source facts".into(),
                 ));
             }
-            field.complex = false;
+            encoded_as(field, expected);
             map_field_metadata_record(item, &observation, expected_record)?;
             count += 1;
         }
@@ -385,6 +385,15 @@ fn map_field_conversion_role(
         }
     }
     Ok(count)
+}
+
+/// The converter writes a simple field and every simple field nested in its
+/// result as complex fields: give each the form the input field has.
+fn encoded_as(actual: &mut GuardField, expected: &GuardField) {
+    actual.complex &= expected.complex;
+    for (actual, expected) in actual.result_fields.iter_mut().zip(&expected.result_fields) {
+        encoded_as(actual, expected);
+    }
 }
 
 fn map_field_metadata_record(

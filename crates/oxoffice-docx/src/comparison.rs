@@ -128,8 +128,8 @@ use run_source::{
 };
 
 use alignment::{
-    Alignment, align, pair_gaps_by_kind, replace_changed_paragraph_runs, simple_field_paths,
-    uncarried_field_owners, validate_field_alignment,
+    Alignment, align, pair_gaps_by_kind, replace_changed_paragraph_runs, uncarried_field_owners,
+    validate_field_alignment,
 };
 use leaf_publications::{
     complete_run_selection, emitted_fragment_leaves, preserve_run_source,
