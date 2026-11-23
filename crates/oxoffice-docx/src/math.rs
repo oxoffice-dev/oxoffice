@@ -4,9 +4,10 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use oxoffice_docx_oxml::math::{
-    FractionType, MathAccent, MathArgument, MathDelimiter, MathExpression, MathFraction, MathLimit,
-    MathMatrix, MathMatrixRow, MathNary, MathPreSubSuperscript, MathRadical, MathRun, MathScript,
-    MathStyle, MathSubSuperscript, MathVerticalPosition,
+    FractionType, MathAccent, MathArgument, MathBar, MathBorderBox, MathDelimiter,
+    MathEquationArray, MathExpression, MathFraction, MathFunction, MathGroupCharacter, MathLimit,
+    MathMatrix, MathMatrixRow, MathNary, MathPhantom, MathPreSubSuperscript, MathRadical, MathRun,
+    MathScript, MathStyle, MathSubSuperscript, MathVerticalPosition,
 };
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
@@ -679,6 +680,8 @@ fn mathml_element_to_expressions(
         "munderover" => &["accent", "accentunder"][..],
         "mfenced" => &["open", "close", "separators"][..],
         "mi" | "mn" | "mo" | "mtext" => &["mathvariant"][..],
+        "menclose" => &["notation"][..],
+        "mtable" => &["columnalign"][..],
         "mspace" => &["width"][..],
         "mfrac" => &["linethickness"][..],
         "mstyle" => &["displaystyle"][..],
@@ -715,6 +718,11 @@ fn mathml_element_to_expressions(
                 && let Some(nary) = parse_explicit_nary_row(node, path, diagnostics, nodes)?
             {
                 return Ok(vec![MathExpression::Nary(nary)]);
+            }
+            if node.local == "mrow"
+                && let Some(function) = parse_function_row(node, path, diagnostics, nodes)?
+            {
+                return Ok(vec![MathExpression::Function(function)]);
             }
             Ok(mathml_children_to_argument(node, path, diagnostics, nodes)?.expressions)
         }
@@ -881,6 +889,63 @@ fn mathml_element_to_expressions(
             ))])
         }
         "mtable" => parse_mathml_matrix(node, path, diagnostics, nodes),
+        "menclose" => {
+            let mut border =
+                MathBorderBox::new(mathml_children_to_argument(node, path, diagnostics, nodes)?);
+            // A box, a rounded box or a circle draws all four sides; sides or
+            // strikes named without one draw only what they name, and an empty
+            // notation (the form of a box with every side hidden) draws
+            // nothing; a missing one or longdiv reads as a box.
+            let notations = node
+                .attribute("notation")
+                .unwrap_or("box")
+                .split_whitespace()
+                .collect::<Vec<_>>();
+            let empty = notations.is_empty();
+            let framed = notations
+                .iter()
+                .any(|name| matches!(*name, "box" | "roundedbox" | "circle"));
+            let drawn = notations.iter().any(|name| {
+                matches!(
+                    *name,
+                    "top"
+                        | "bottom"
+                        | "left"
+                        | "right"
+                        | "horizontalstrike"
+                        | "verticalstrike"
+                        | "updiagonalstrike"
+                        | "downdiagonalstrike"
+                )
+            });
+            if !framed && (drawn || empty) {
+                let hidden = |side: &str| (!notations.contains(&side)).then_some(true);
+                border.hide_top = hidden("top");
+                border.hide_bottom = hidden("bottom");
+                border.hide_left = hidden("left");
+                border.hide_right = hidden("right");
+            }
+            for name in &notations {
+                match *name {
+                    "box" | "roundedbox" | "circle" | "top" | "bottom" | "left" | "right" => {}
+                    "horizontalstrike" => border.strike_horizontal = Some(true),
+                    "verticalstrike" => border.strike_vertical = Some(true),
+                    "updiagonalstrike" => border.strike_bottom_left_to_top_right = Some(true),
+                    "downdiagonalstrike" => border.strike_top_left_to_bottom_right = Some(true),
+                    _ => diagnostics.push(
+                        format!("{path}/@notation"),
+                        format!("unsupported MathML enclosure {name} was discarded"),
+                    )?,
+                }
+            }
+            Ok(vec![MathExpression::BorderBox(border)])
+        }
+        "mphantom" => {
+            let mut phantom =
+                MathPhantom::new(mathml_children_to_argument(node, path, diagnostics, nodes)?);
+            phantom.show = Some(false);
+            Ok(vec![MathExpression::Phantom(phantom)])
+        }
         "munder" | "mover" | "munderover" => {
             parse_mathml_limits_or_accent(node, path, diagnostics, nodes)
         }
@@ -1089,6 +1154,8 @@ fn is_supported_mathml_element(node: &XmlNode) -> bool {
                 | "mover"
                 | "munderover"
                 | "mfenced"
+                | "menclose"
+                | "mphantom"
                 | "semantics"
         )
 }
@@ -1188,6 +1255,19 @@ fn parse_mathml_matrix(
     if row_nodes.is_empty() || row_nodes.len() > MAX_ROWS {
         return Err(math_error(format!("{path} exceeds the matrix row limit")));
     }
+    // Rows of two columns, the first right-aligned and the second left-aligned,
+    // are equations aligned on a mark, as an equation array writes them.
+    let aligned = match node.attribute("columnalign") {
+        None => false,
+        Some("right left") => true,
+        Some(_) => {
+            diagnostics.push(
+                format!("{path}/@columnalign"),
+                "unsupported MathML column alignment was discarded",
+            )?;
+            false
+        }
+    };
     let mut rows = Vec::new();
     let mut width = None;
     for (row_index, row) in row_nodes.iter().enumerate() {
@@ -1225,7 +1305,73 @@ fn parse_mathml_matrix(
         }
         rows.push(MathMatrixRow::new(converted));
     }
+    if aligned && width == Some(2) {
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                let mut cells = row.cells.into_iter();
+                let mut expressions = cells.next().unwrap_or_default().expressions;
+                expressions.push(MathRun::new("&").into());
+                expressions.extend(cells.next().unwrap_or_default().expressions);
+                let mut row = MathArgument::new(expressions);
+                normalize_argument(&mut row);
+                row
+            })
+            .collect();
+        return Ok(vec![MathExpression::EquationArray(MathEquationArray::new(
+            rows,
+        ))]);
+    }
     Ok(vec![MathExpression::Matrix(MathMatrix::new(rows))])
+}
+
+/// The horizontal braces and brackets a group character stretches.
+fn is_group_bracket(text: &str) -> bool {
+    matches!(
+        text,
+        "\u{23de}"
+            | "\u{23df}"
+            | "\u{23dc}"
+            | "\u{23dd}"
+            | "\u{23b4}"
+            | "\u{23b5}"
+            | "\u{23e0}"
+            | "\u{23e1}"
+    )
+}
+
+/// The arrows a group character stretches over or under its base.
+fn is_group_arrow(text: &str) -> bool {
+    matches!(
+        text,
+        "\u{2190}" | "\u{2192}" | "\u{2194}" | "\u{21d0}" | "\u{21d2}" | "\u{21d4}"
+    )
+}
+
+/// `<mrow>name<mo>&#x2061;</mo>argument</mrow>`, as Word and oxoffice write
+/// a function apply: a name, the function marker and one argument.
+fn parse_function_row(
+    node: &XmlNode,
+    path: &str,
+    diagnostics: &mut Diagnostics,
+    nodes: &mut usize,
+) -> Result<Option<MathFunction>> {
+    let children = mathml_element_children(node);
+    let [name, marker, argument] = children.as_slice() else {
+        return Ok(None);
+    };
+    if marker.namespace.as_deref() != Some(MATHML_NS)
+        || marker.local != "mo"
+        || !marker.attributes.is_empty()
+        || marker.elements().next().is_some()
+        || marker.text() != "\u{2061}"
+    {
+        return Ok(None);
+    }
+    Ok(Some(MathFunction::new(
+        mathml_node_to_argument(name, &format!("{path}/*[1]"), diagnostics, nodes)?,
+        mathml_node_to_argument(argument, &format!("{path}/*[3]"), diagnostics, nodes)?,
+    )))
 }
 
 fn parse_mathml_limits_or_accent(
@@ -1239,6 +1385,59 @@ fn parse_mathml_limits_or_accent(
     let children = mathml_element_children(node);
     let expected = if node.local == "munderover" { 3 } else { 2 };
     require_child_count(path, &children, expected)?;
+    // A line over or under its base is a bar; a stretched brace, bracket or
+    // arrow is a group character.
+    let mark = (node.local != "munderover")
+        .then(|| children[1])
+        .filter(|child| {
+            child.namespace.as_deref() == Some(MATHML_NS)
+                && child.local == "mo"
+                && child.elements().next().is_none()
+        })
+        .map(|child| (child.text(), child.attribute("stretchy") == Some("true")));
+    // An accent (on the node or its mark) stays an accent, unless its mark is a
+    // brace or bracket, which only a group character draws.
+    let marked_accent = node.local == "mover"
+        && (node.attribute("accent") == Some("true")
+            || children[1].attribute("accent") == Some("true"));
+    if let Some((text, stretchy)) = &mark {
+        let over = node.local == "mover";
+        if (over && text == "\u{203e}") || (!over && matches!(text.as_str(), "_" | "\u{332}")) {
+            let position = if over {
+                MathVerticalPosition::Top
+            } else {
+                MathVerticalPosition::Bottom
+            };
+            let base =
+                mathml_node_to_argument(children[0], &format!("{path}/*[1]"), diagnostics, nodes)?;
+            return Ok(vec![MathExpression::Bar(MathBar::new(
+                Some(position),
+                base,
+            ))]);
+        }
+        if text.chars().count() == 1
+            && (if marked_accent {
+                is_group_bracket(text)
+            } else {
+                *stretchy || is_group_bracket(text) || is_group_arrow(text)
+            })
+            && mathml_nary_operator(children[0], &format!("{path}/*[1]"), diagnostics)?.is_none()
+        {
+            let mut group = MathGroupCharacter::new(mathml_node_to_argument(
+                children[0],
+                &format!("{path}/*[1]"),
+                diagnostics,
+                nodes,
+            )?);
+            group.character = Some(text.clone());
+            group.position = Some(if over {
+                MathVerticalPosition::Top
+            } else {
+                MathVerticalPosition::Bottom
+            });
+            return Ok(vec![MathExpression::GroupCharacter(group)]);
+        }
+    }
     let token_accent = children.get(1).is_some_and(|child| {
         child.namespace.as_deref() == Some(MATHML_NS)
             && child.local == "mo"
@@ -1271,7 +1470,7 @@ fn parse_mathml_limits_or_accent(
         diagnose_boolean_attribute(children[1], &format!("{path}/*[2]"), "accent", diagnostics)?;
         diagnose_token_children(children[1], &format!("{path}/*[2]"), diagnostics)?;
         let character = match children[1].text().as_str() {
-            "‾" | "¯" => "̄".to_owned(),
+            "¯" => "̄".to_owned(),
             "→" => "⃗".to_owned(),
             value => value.to_owned(),
         };
