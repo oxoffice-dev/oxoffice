@@ -21,6 +21,8 @@ and produces fixed or flow output without an Office host.
 - Tracked revision inspection, filtered resolution, table-of-contents rebuilds,
   and document comparison at run, word, or character granularity with ignore
   options.
+- Bibliography sources in and out as JSON, the style, citations after a piece
+  of text or at a run boundary, bibliographies, and the update of their results.
 - Atomic form filling accepts repeatable `--tag` assignments or strict flat
   `--values` JSON over unique SDT tags/aliases and legacy names.
 - Package-preserving edits cover the final S74 paragraph, run, typography,
@@ -244,11 +246,11 @@ Unknown view names are usage errors. HTML and Markdown conversion refuse
 the tracked view before creating output.
 
 `convert --to pdf --fillable-forms` exports the content controls and legacy
-form fields of the body and the notes as fillable PDF form fields: text, check boxes, lists and dates, with their
+form fields of the body, its text boxes and the notes as fillable PDF form fields: text, check boxes, lists and dates, with their
 current values. A control tagged `signature` or `signature:<name>` becomes an
 empty signature field. The flag needs `--to pdf` and the accepted view.
 `oxoffice limitations` lists the kinds of controls it leaves static, and a
-control of the body or the notes that would be a field but is left static says why on
+control of the body, a text box or a note that would be a field but is left static says why on
 standard error; a picture control without a signature tag or a group control
 is no field, and stays static without a message.
 
@@ -468,6 +470,38 @@ creates no directory. JSON is printed only after publication.
 Every mutation requires an output and refuses existing outputs, input identity,
 symlink aliases and hard links. Native package-class, VBA and signature checks
 remain authoritative. No success report precedes publication.
+
+## Bibliography
+
+```bash
+oxoffice docx bibliography add-source input.docx --source sources.json -o 1.docx
+oxoffice docx bibliography set-style 1.docx --style apa6 -o 2.docx
+oxoffice docx bibliography cite 2.docx --after "as shown" --source "Smith20,pages=12-14" -o 3.docx
+oxoffice docx bibliography insert 3.docx --index 9 --style apa6 -o 4.docx
+oxoffice docx bibliography update 4.docx --default-locale 1033 -o 5.docx --json
+oxoffice docx bibliography sources 5.docx --json
+```
+
+`sources --json` lists each source as `{tag, guid, source_type, source,
+diagnostics}`; `source` is null when the source cannot be edited as a whole.
+`add-source` and `replace-source` take that `source` object, or an array of
+them: `{"tag", "kind", "guid", "locale", "contributors": [{"role", "people":
+[{"last", "first", "middle"}]} | {"role", "corporate"}], "fields": [[field,
+value], ...]}`. A name part is a string or an array of strings; `fields` keeps
+its order and may repeat a field. A source with no `guid` gets one derived from
+its content; `replace-source` keeps the GUID of the source with that tag.
+
+Styles, kinds, roles and fields are snake-case names (`apa6`,
+`harvard_anglia`, `journal_article`, `book_author`, `reference_order`). Flags
+also take them in kebab case. A `cite --source` value is a tag followed by
+switches after commas: `pages=`, `volume=`, `prefix=`, `suffix=`, `no-author`,
+`no-year`, `no-title`. A tag or a value holding a comma goes in `--sources
+CITE.json`, an array of `{"tag", "pages", "volume", "prefix", "suffix",
+"suppress_author", "suppress_year", "suppress_title"}`. `cite --after TEXT`
+finds the text as `comment add --anchor` does; `--paragraph N --run R` counts
+as `text --json` does. `update` fails as a whole, writing nothing, when a field
+is not covered yet, and needs `--default-locale` when a field and its sources
+name no locale.
 
 ## Licensed font embedding
 

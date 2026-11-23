@@ -42,6 +42,106 @@ _BorderStyle = _Literal[
     "none", "single", "thick", "double", "dotted", "dashed", "dotDash", "wave"
 ]
 _BorderEdge = _Literal["top", "bottom", "left", "right", "insideH", "insideV"]
+_BibliographyStyleName = _Literal[
+    "apa6",
+    "chicago",
+    "gb7714",
+    "gost_name",
+    "gost_title",
+    "harvard_anglia",
+    "ieee",
+    "iso690_author_date",
+    "iso690_numeric",
+    "mla7",
+    "sist02",
+    "turabian",
+]
+_BibliographySourceKind = _Literal[
+    "article_in_a_periodical",
+    "book",
+    "book_section",
+    "journal_article",
+    "conference_proceedings",
+    "report",
+    "sound_recording",
+    "performance",
+    "art",
+    "document_from_internet_site",
+    "internet_site",
+    "film",
+    "interview",
+    "patent",
+    "electronic_source",
+    "case",
+    "misc",
+]
+_BibliographyContributorRole = _Literal[
+    "artist",
+    "author",
+    "book_author",
+    "compiler",
+    "composer",
+    "conductor",
+    "counsel",
+    "director",
+    "editor",
+    "interviewee",
+    "interviewer",
+    "inventor",
+    "performer",
+    "producer_name",
+    "translator",
+    "writer",
+]
+_BibliographySourceField = _Literal[
+    "abbreviated_case_number",
+    "album_title",
+    "book_title",
+    "broadcaster",
+    "broadcast_title",
+    "case_number",
+    "chapter_number",
+    "city",
+    "comments",
+    "conference_name",
+    "country_region",
+    "court",
+    "day",
+    "day_accessed",
+    "department",
+    "distributor",
+    "edition",
+    "institution",
+    "internet_site_title",
+    "issue",
+    "journal_name",
+    "medium",
+    "month",
+    "month_accessed",
+    "number_volumes",
+    "pages",
+    "patent_number",
+    "periodical_title",
+    "production_company",
+    "publication_title",
+    "publisher",
+    "recording_number",
+    "reference_order",
+    "reporter",
+    "short_title",
+    "standard_number",
+    "state_province",
+    "station",
+    "theater",
+    "thesis_type",
+    "title",
+    "patent_type",
+    "url",
+    "version",
+    "volume",
+    "year",
+    "year_accessed",
+]
 _Margins = tuple[
     _shared.Length | None, _shared.Length | None, _shared.Length | None, _shared.Length | None
 ]
@@ -91,6 +191,13 @@ __all__ = [
     "FormValidationIssue",
     "DocumentProtection",
     "ValidationReport",
+    "BibliographyPerson",
+    "BibliographyContributor",
+    "BibliographySource",
+    "CitationSource",
+    "BibliographySourceInfo",
+    "BibliographyStyleInfo",
+    "BibliographyUpdateReport",
     "validate_bytes",
     "validate_file",
     "Bookmark", "BoundingBox", "Cell", "CellCollection", "CellParagraphCollection",
@@ -379,6 +486,131 @@ class LayoutBackedFieldUpdateReport:
     def diagnostics(self) -> tuple[str, ...]: ...
     @property
     def diagnostic_count(self) -> int: ...
+
+
+@_final
+class BibliographyPerson:
+    def __new__(
+        cls, last: str | _Sequence[str], first: str | _Sequence[str] = ..., middle: str | _Sequence[str] = ...
+    ) -> BibliographyPerson: ...
+    @property
+    def last(self) -> tuple[str, ...]: ...
+    @property
+    def first(self) -> tuple[str, ...]: ...
+    @property
+    def middle(self) -> tuple[str, ...]: ...
+
+
+@_final
+class BibliographyContributor:
+    @_overload
+    def __new__(
+        cls, role: _BibliographyContributorRole, *, people: _Sequence[BibliographyPerson], corporate: None = None
+    ) -> BibliographyContributor: ...
+    @_overload
+    def __new__(
+        cls, role: _BibliographyContributorRole, *, people: None = None, corporate: str
+    ) -> BibliographyContributor: ...
+    @property
+    def role(self) -> _BibliographyContributorRole: ...
+    @property
+    def people(self) -> tuple[BibliographyPerson, ...] | None: ...
+    @property
+    def corporate(self) -> str | None: ...
+
+
+@_final
+class BibliographySource:
+    def __new__(
+        cls,
+        tag: str,
+        kind: _BibliographySourceKind,
+        *,
+        guid: str = "",
+        locale: int | None = None,
+        contributors: _Sequence[BibliographyContributor] = (),
+        fields: _Sequence[tuple[_BibliographySourceField, str]] = (),
+    ) -> BibliographySource: ...
+    @property
+    def tag(self) -> str: ...
+    @property
+    def kind(self) -> _BibliographySourceKind: ...
+    @property
+    def guid(self) -> str: ...
+    @property
+    def locale(self) -> int | None: ...
+    @property
+    def contributors(self) -> tuple[BibliographyContributor, ...]: ...
+    @property
+    def fields(self) -> tuple[tuple[_BibliographySourceField, str], ...]: ...
+
+
+@_final
+class CitationSource:
+    def __new__(
+        cls,
+        tag: str,
+        *,
+        pages: str | None = None,
+        volume: str | None = None,
+        prefix: str | None = None,
+        suffix: str | None = None,
+        suppress_author: bool = False,
+        suppress_year: bool = False,
+        suppress_title: bool = False,
+    ) -> CitationSource: ...
+    @property
+    def tag(self) -> str: ...
+    @property
+    def pages(self) -> str | None: ...
+    @property
+    def volume(self) -> str | None: ...
+    @property
+    def prefix(self) -> str | None: ...
+    @property
+    def suffix(self) -> str | None: ...
+    @property
+    def suppress_author(self) -> bool: ...
+    @property
+    def suppress_year(self) -> bool: ...
+    @property
+    def suppress_title(self) -> bool: ...
+
+
+@_final
+class BibliographySourceInfo:
+    @property
+    def tag(self) -> str: ...
+    @property
+    def guid(self) -> str | None: ...
+    @property
+    def source_type(self) -> str | None: ...
+    @property
+    def supported(self) -> BibliographySource | None: ...
+    @property
+    def diagnostics(self) -> tuple[str, ...]: ...
+
+
+@_final
+class BibliographyStyleInfo:
+    @property
+    def style_key(self) -> str | None: ...
+    @property
+    def style_path(self) -> str | None: ...
+    @property
+    def locale(self) -> int | None: ...
+    @property
+    def supported_style(self) -> _BibliographyStyleName | None: ...
+
+
+@_final
+class BibliographyUpdateReport:
+    @property
+    def updated_citations(self) -> int: ...
+    @property
+    def rebuilt_bibliographies(self) -> int: ...
+    @property
+    def diagnostics(self) -> tuple[str, ...]: ...
 
 
 @_final
@@ -1216,7 +1448,7 @@ class Document:
         Unknown values or legal styling with accepted view raise ValueError.
 
         fillable_forms=True exports the content controls and legacy form
-        fields of the body and the notes as fillable PDF form fields: text, check boxes,
+        fields of the body, its text boxes and the notes as fillable PDF form fields: text, check boxes,
         lists and dates with their values. A control tagged "signature" or
         "signature:<name>" becomes an empty signature field. It needs the accepted view, and
         raises ValueError with revision_view="tracked".
@@ -1505,6 +1737,48 @@ class Document:
     def bind_content_controls(self, values: dict[str, str]) -> int: ...
     def legacy_form_fields(self) -> tuple[LegacyFormField, ...]: ...
     def insert_legacy_form_field(self, position: StoryRunPosition, definition: LegacyFormFieldDefinition) -> None: ...
+    def bibliography_sources(self) -> tuple[BibliographySourceInfo, ...]: ...
+    def add_bibliography_source(self, source: BibliographySource) -> str:
+        """Add a source and return its GUID: the one it holds, or one derived from its content when it holds none."""
+    def replace_bibliography_source(self, source: BibliographySource) -> None:
+        """Replace the source with the same tag, keeping its GUID: an empty ``guid`` is the one the source has."""
+    def remove_bibliography_source(self, tag: str) -> None: ...
+    def bibliography_style(self) -> BibliographyStyleInfo | None: ...
+    def set_bibliography_options(
+        self,
+        style: _BibliographyStyleName,
+        *,
+        locale: int | None = None,
+        locale_filter: int | None = None,
+        tags: _Sequence[str] = (),
+    ) -> None:
+        """Set the style, and the selectors of every bibliography in the document."""
+    def insert_citation(
+        self, position: StoryRunPosition, sources: _Sequence[str | CitationSource], *, locale: int | None = None
+    ) -> None: ...
+    def insert_citation_after_text(
+        self,
+        text: str,
+        sources: _Sequence[str | CitationSource],
+        *,
+        occurrence: int = 0,
+        locale: int | None = None,
+    ) -> None:
+        """Cite right after the ``occurrence``-th match of ``text`` in the main story, found as
+        ``add_comment_on_text`` finds its anchor."""
+    def insert_bibliography(
+        self,
+        destination: int | StoryItem | Story,
+        style: _BibliographyStyleName,
+        *,
+        locale: int | None = None,
+        locale_filter: int | None = None,
+        tags: _Sequence[str] = (),
+    ) -> None:
+        """Insert a bibliography where ``insert_content`` would put content, and set the style."""
+    def update_bibliography(self, *, default_locale: int | None = None) -> BibliographyUpdateReport:
+        """Rebuild every citation and bibliography result. A field not covered yet fails the whole update and
+        changes nothing."""
     def set_legacy_form_field_value(self, name: str | None, value: str | bool | int, *, source_part: str | None = None, ordinal: int | None = None) -> LegacyFormField: ...
     def content_controls(self) -> tuple[ContentControl, ...]: ...
     def set_content_control_value_by_tag(self, tag: str, value: str) -> int: ...

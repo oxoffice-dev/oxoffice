@@ -7,6 +7,7 @@ use std::process;
 
 use clap::{Args, Parser, Subcommand};
 
+mod bibliography;
 mod commands;
 
 #[derive(Parser)]
@@ -213,8 +214,8 @@ enum Command {
         /// Preserve unpainted PNG pixels as transparent
         #[arg(long)]
         transparent: bool,
-        /// Export the content controls and legacy form fields of the body and
-        /// the notes as fillable PDF form fields (PDF only, accepted view). A control tagged `signature` or
+        /// Export the content controls and legacy form fields of the body, its
+        /// text boxes and the notes as fillable PDF form fields (PDF only, accepted view). A control tagged `signature` or
         /// `signature:<name>` becomes an empty signature field.
         #[arg(long)]
         fillable_forms: bool,
@@ -443,6 +444,11 @@ enum Command {
     Toc {
         #[command(subcommand)]
         command: TocCommand,
+    },
+    /// Bibliography sources, style, citations and bibliographies
+    Bibliography {
+        #[command(subcommand)]
+        command: bibliography::BibliographyCommand,
     },
     /// Update field results
     Fields {
@@ -1200,6 +1206,7 @@ pub fn run(cli: Cli) {
             &output,
             json,
         ),
+        Command::Bibliography { command } => bibliography::run(command),
         Command::Fields { command } => match command {
             FieldsCommand::Update {
                 file,

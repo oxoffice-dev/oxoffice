@@ -26,7 +26,7 @@ pub struct RenderOptions {
     /// always render so. Exclusive with `use_system_fonts`.
     pub bundled_fonts_only: bool,
     /// Export the content controls and legacy form fields of the main body
-    /// and the notes as fillable PDF form fields. A control tagged `signature` or `signature:<name>` becomes an
+    /// with its text boxes, and the notes as fillable PDF form fields. A control tagged `signature` or `signature:<name>` becomes an
     /// empty signature field. Image rendering draws the controls as usual,
     /// and the tracked view refuses this option.
     pub fillable_forms: bool,

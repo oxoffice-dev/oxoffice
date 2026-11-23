@@ -669,6 +669,48 @@ orchestration of run FBCF decided, per place, what becomes a field:
   sections (the writer learns `/MK /R`). Each removes its places from the
   limitation of #131, which closes with the last.
 
+## Amendment 2026-11-23: where a field goes
+
+#131: a control outside the main body, or in rotated text, stays static. The
+orchestration of run FBCF decided, per place, what becomes a field:
+
+| Place | Field | Numbered |
+| --- | --- | --- |
+| footnotes, endnotes | as in the body; a note split across pages stays static, as a body field does | after the body and the headers and footers: footnotes, then endnotes, each in the order of its first reference in the main story |
+| text boxes | when the box is upright or turned by a multiple of 90 degrees (widget `/MK /R`); any other angle stays static, with a diagnostic | at the anchor: the box's controls sit in its anchoring run |
+| headers, footers | one field per control, with one widget on each page that draws it (a field with `/Kids` widgets: one value, typed once, shown on every page); a part several sections share is one field | after the body: section by section, header before footer, default, first page, even page |
+| rotated cells (`tbRl`, `btLr`), vertical sections | widget `/MK /R` 90 or 270, the appearance drawn in the turned box | in place, as today |
+| upright stacked text (`tbRlV`, `tbLrV`, East Asian vertical) | stays static, with a diagnostic: a widget cannot stack its glyphs | |
+| comments | none: the PDF draws no comments, so there is nothing to map and nothing to say | |
+
+- **Names stay a function of the document.** The new stories join the
+  numbering pass in the order above, so names and `_2` suffixes still never
+  depend on fonts or pagination.
+- **Who marks.** A note paragraph is marked as a body paragraph is, under the
+  registry the inventory used and named by its own source node; text boxes,
+  headers and footers follow in their own pull requests, each named the same
+  way. A paragraph laid out from a cache or a sentinel node still draws no
+  mark.
+- **Nothing lost silently** holds as before: a mapped control of a drawn
+  story that ends without a field says why.
+- **Text boxes, as built.** A floating text box's paragraphs are laid out
+  under its own local sources; when the owning paragraph is one the
+  inventory walks, they draw marks named by those local nodes, and the
+  marks move with the text to the registry's nodes when the box binds its
+  sources. The registry keeps each anchored drawing's story, and the
+  inventory and layout list a paragraph's anchors with one walk
+  (`paragraph_anchors`). An anchored drawing wraps each element it paints in
+  marked content of its own, so gathering lifts a marker out of such a
+  wrapper to meet its neighbours. A box turned by any angle, with vertical
+  text, inside another box, or a table inside a box, stays static with a
+  diagnostic (turns by a multiple of 90 degrees join with the `/MK /R` pull
+  request). An inline text box draws no text today (#585), so it has nothing to
+  map.
+- **Pull requests.** Notes, then text boxes, then headers and footers (the
+  writer learns several widgets per field), then rotated cells and vertical
+  sections (the writer learns `/MK /R`). Each removes its places from the
+  limitation of #131, which closes with the last.
+
 ## Links
 
 - [ROADMAP.md](../ROADMAP.md), item 4.
