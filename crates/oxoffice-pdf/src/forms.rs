@@ -401,6 +401,77 @@ impl<'a> FormPlan<'a> {
     }
 }
 
+/// One message per field a user can type into whose text the typing font
+/// cannot encode, naming the field as the PDF does and the text's scripts.
+///
+/// Viewers rebuild a field's appearance with the typing font once it is
+/// edited: text in those scripts may then show nothing, or be saved without
+/// an appearance that other viewers draw.
+pub fn untypable_form_text(layout: &oxoffice_layout::LayoutResult) -> Vec<String> {
+    let mut next = 0;
+    let Some(plan) = FormPlan::new(&layout.pages, &layout.form_fields, false, &mut || {
+        next += 1;
+        Ref::new(next)
+    }) else {
+        return Vec::new();
+    };
+    let mut messages: Vec<String> = Vec::new();
+    for placed in &plan.fields {
+        if placed.field.read_only {
+            continue;
+        }
+        let texts: Vec<&str> = match &placed.field.kind {
+            FormFieldKind::Text { value, .. } if !placed.field.placeholder => vec![value],
+            FormFieldKind::Choice { options, value, .. } => options
+                .iter()
+                .map(|option| option.display.as_str())
+                .chain(value.as_deref().filter(|_| !placed.field.placeholder))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let characters: BTreeSet<char> = texts
+            .iter()
+            .flat_map(|text| text.chars())
+            .filter(|ch| !typing_font_encodes(*ch))
+            .collect();
+        if characters.is_empty() {
+            continue;
+        }
+        let scripts: BTreeSet<&str> = characters.iter().map(|ch| script_name(*ch)).collect();
+        let sample: String = characters.iter().take(8).collect();
+        let count = match characters.len() {
+            1 => "1 character".to_owned(),
+            count => format!("{count} distinct characters"),
+        };
+        let message = format!(
+            "form field \"{}\" holds {} text its typing font (Liberation Sans, WinAnsi) cannot \
+             encode ({count}, such as \"{sample}\"): once the field is edited, a PDF viewer may \
+             show nothing or save it without an appearance",
+            placed.name,
+            scripts.into_iter().collect::<Vec<_>>().join(", "),
+        );
+        if !messages.contains(&message) {
+            messages.push(message);
+        }
+    }
+    messages
+}
+
+/// Whether the typing font encodes `ch`: a WinAnsi character, or a line
+/// break or tab a multiline field holds.
+fn typing_font_encodes(ch: char) -> bool {
+    matches!(ch, '\n' | '\r' | '\t') || (32u8..=255).any(|code| win_ansi_char(code) == Some(ch))
+}
+
+/// A character's Unicode script name, "symbol" for the common ones.
+fn script_name(ch: char) -> &'static str {
+    use unicode_script::{Script, UnicodeScript};
+    match ch.script() {
+        Script::Common | Script::Inherited | Script::Unknown => "symbol",
+        script => script.full_name(),
+    }
+}
+
 fn write_appearance(
     pdf: &mut Pdf,
     id: Ref,
@@ -563,5 +634,17 @@ mod tests {
         assert_eq!(win_ansi_char(0x81), None);
         assert_eq!(win_ansi_char(0x41), Some('A'));
         assert_eq!(win_ansi_char(0xE9), Some('é'));
+    }
+
+    #[test]
+    fn the_typing_font_encodes_win_ansi_and_line_breaks_only() {
+        for ch in ['A', 'é', '€', 'œ', '\u{2013}', '\n', '\t'] {
+            assert!(typing_font_encodes(ch), "{ch:?}");
+        }
+        for ch in ['Ł', 'č', 'Ж', 'Ω', 'ש', '中', '\u{81}', '\u{7}'] {
+            assert!(!typing_font_encodes(ch), "{ch:?}");
+        }
+        assert_eq!(script_name('Ж'), "Cyrillic");
+        assert_eq!(script_name('→'), "symbol");
     }
 }
