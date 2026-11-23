@@ -975,6 +975,7 @@ fn measure_annotation_line(
         descent: 0.0,
         primary_font_size: size_override.unwrap_or(0.0),
         runs: Vec::new(),
+        fills: Vec::new(),
     };
     for run in runs {
         let run_style_id = run.properties.as_ref().and_then(|p| p.style_id.as_deref());
@@ -1017,6 +1018,8 @@ fn measure_annotation_line(
         }
         line.ascent = line.ascent.max(metrics.ascent.max(0.0));
         line.descent = line.descent.max(metrics.descent.max(0.0));
+        let fill = run_fill(&effective_rpr);
+        line.fills.push(fill);
         line.runs.push(GlyphRun {
             origin: Point {
                 x: line.width,
@@ -1031,7 +1034,9 @@ fn measure_annotation_line(
             color: resolve_run_color(
                 &effective_rpr,
                 context.input.theme.as_ref(),
-                context.automatic_color,
+                fill.map_or(context.automatic_color, |fill| {
+                    automatic_text_color(Some(fill))
+                }),
             ),
             bold,
             italic,
@@ -1129,7 +1134,27 @@ pub(super) fn ruby_inline_item(
         width,
     );
 
+    // A run's fill covers its glyphs across its own line's height, the base
+    // line or the phonetic line above it.
     let mut children = Vec::new();
+    for (line, top) in [
+        (&base, group_ascent - base.ascent),
+        (&phonetic, group_ascent - raise - phonetic.ascent),
+    ] {
+        for (run, fill) in line.runs.iter().zip(&line.fills) {
+            if let Some(color) = *fill {
+                children.push(PositionedElement::FilledRect {
+                    rect: Rect {
+                        x: run.origin.x,
+                        y: top,
+                        width: run.advances.iter().sum(),
+                        height: line.ascent + line.descent,
+                    },
+                    color,
+                });
+            }
+        }
+    }
     for mut run in base.runs {
         run.origin.y = group_ascent;
         children.push(PositionedElement::Text(run));

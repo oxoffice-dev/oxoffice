@@ -85,8 +85,9 @@ pub enum InlineItem {
         segment: TextSegment,
         language: String,
     },
-    /// A tab character.
-    Tab,
+    /// A tab character, and the fill its run draws behind it (a highlight
+    /// or shading) across the tab's width.
+    Tab { fill: Option<Color> },
     /// A forced line break, and where the text after it restarts beside
     /// floating objects.
     LineBreak(LineClear),
@@ -218,6 +219,8 @@ pub enum LineItem {
         /// before it. It is below `width` only when that text is too wide to
         /// align on its stop.
         gap: f64,
+        /// The fill drawn behind the tab's width, from its run.
+        fill: Option<Color>,
     },
     Image {
         width: f64,
@@ -602,7 +605,12 @@ fn break_into_lines_recorded(
 
     while let Some(seg) = segments.pop_front() {
         match seg {
-            BreakableSegment::Items(seg_items, _) if matches!(seg_items[..], [InlineItem::Tab]) => {
+            BreakableSegment::Items(seg_items, _)
+                if matches!(seg_items[..], [InlineItem::Tab { .. }]) =>
+            {
+                let [InlineItem::Tab { fill }] = seg_items[..] else {
+                    unreachable!("matched a lone tab");
+                };
                 line.settle_tab(fm);
                 let mut tab = line.next_tab(params);
                 if params.wrap && tab.wraps && !line.items.is_empty() {
@@ -610,7 +618,7 @@ fn break_into_lines_recorded(
                     push_layout_line(&mut lines, &mut origins, &mut line, params, fm, false, None)?;
                     tab = line.next_tab(params);
                 }
-                line.push_tab(tab, fm, font_ctx);
+                line.push_tab(tab, fm, font_ctx, fill);
             }
             BreakableSegment::Items(seg_items, seg_origins) => {
                 if params.wrap
@@ -1014,7 +1022,13 @@ impl LineState {
         }
     }
 
-    fn push_tab(&mut self, tab: ResolvedTab, fm: &FontManager, font_ctx: Option<(FontId, f64)>) {
+    fn push_tab(
+        &mut self,
+        tab: ResolvedTab,
+        fm: &FontManager,
+        font_ctx: Option<(FontId, f64)>,
+        fill: Option<Color>,
+    ) {
         self.limit = self.limit.max(tab.reach - self.start);
         let start = self.width;
         let stop = tab.stop - self.start;
@@ -1035,6 +1049,7 @@ impl LineState {
                 in_number: false,
                 shift_limit: tab.shift_limit.map(|limit| limit - self.start),
                 font_ctx,
+                fill,
             };
             self.width = start + pending.width();
             self.pending = Some(pending);
@@ -1044,6 +1059,7 @@ impl LineState {
                 leader: None,
                 align: tab.align,
                 gap: 0.0,
+                fill,
             });
         } else {
             let width = (stop - start).max(0.0);
@@ -1055,6 +1071,7 @@ impl LineState {
                 leader,
                 align: TabAlign::Left,
                 gap: width,
+                fill,
             });
             self.width += width;
         }
@@ -1072,6 +1089,7 @@ impl LineState {
                 leader,
                 align: tab.align,
                 gap: tab.gap(),
+                fill: tab.fill,
             };
         }
     }
@@ -1145,6 +1163,7 @@ struct PendingTab {
     in_number: bool,
     shift_limit: Option<f64>,
     font_ctx: Option<(FontId, f64)>,
+    fill: Option<Color>,
 }
 
 impl PendingTab {
@@ -1557,7 +1576,7 @@ fn build_breakable_segments(
                 }
                 segments.push(BreakableSegment::ForcedBreak(ForcedBreakKind::Column));
             }
-            InlineItem::Tab => {
+            InlineItem::Tab { .. } => {
                 // Tab is a break opportunity
                 if !current_group.is_empty() {
                     segments.push(BreakableSegment::Items(
@@ -2115,7 +2134,7 @@ fn inline_item_width(item: &InlineItem) -> f64 {
     match item {
         InlineItem::Text(seg) | InlineItem::HyphenatedText { segment: seg, .. } => seg.width,
         InlineItem::MultilingualText(seg) => seg.width(),
-        InlineItem::Tab => 36.0, // Default tab width, will be resolved
+        InlineItem::Tab { .. } => 36.0, // Default tab width, will be resolved
         InlineItem::Image { width, .. } => *width,
         InlineItem::Group { width, .. } => *width,
         InlineItem::Figure { item, .. } => inline_item_width(item),
@@ -2148,7 +2167,7 @@ fn item_metrics(item: &InlineItem) -> (f64, f64, f64, f64, f64) {
             seg.ascent + seg.descent + seg.line_gap,
             0.0,
         ),
-        InlineItem::Tab => (36.0, 0.0, 0.0, 0.0, 0.0),
+        InlineItem::Tab { .. } => (36.0, 0.0, 0.0, 0.0, 0.0),
         InlineItem::Image { width, height, .. } => (*width, *height, 0.0, *height, 0.0),
         InlineItem::Group {
             width,
@@ -2184,11 +2203,12 @@ fn inline_to_line_item(item: &InlineItem) -> LineItem {
         InlineItem::MultilingualText(seg) => LineItem::MultilingualText(seg.clone()),
         InlineItem::Marker(seg) => LineItem::Marker(seg.clone()),
         // `LineState::push_tab` places tabs, so this is only a placeholder.
-        InlineItem::Tab => LineItem::Tab {
+        InlineItem::Tab { fill } => LineItem::Tab {
             width: 0.0,
             leader: None,
             align: TabAlign::Left,
             gap: 0.0,
+            fill: *fill,
         },
         InlineItem::Image {
             width,
@@ -2229,6 +2249,7 @@ fn inline_to_line_item(item: &InlineItem) -> LineItem {
                 leader: None,
                 align: TabAlign::Left,
                 gap: 0.0,
+                fill: None,
             }
         }
     }

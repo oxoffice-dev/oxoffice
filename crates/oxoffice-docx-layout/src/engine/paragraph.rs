@@ -585,7 +585,7 @@ fn layout_paragraph_with_source_and_table(
                 }
 
                 match marker.suffix {
-                    ST_LvlSuffix::Tab => inline_items.push(InlineItem::Tab),
+                    ST_LvlSuffix::Tab => inline_items.push(InlineItem::Tab { fill: None }),
                     ST_LvlSuffix::Space => {
                         multilingual_styles.insert(
                             inline_items.len(),
@@ -1321,8 +1321,9 @@ fn layout_paragraph_with_source_and_table(
                         inline_items.push(InlineItem::Text(segment));
                     }
                 }
+                // A tab in a filled run is filled across its width.
                 RunContent::Tab => {
-                    inline_items.push(InlineItem::Tab);
+                    inline_items.push(InlineItem::Tab { fill: highlight });
                 }
                 // Word drops a page or column break inside a table cell, so
                 // the text on either side of it joins on one line.
@@ -1554,7 +1555,9 @@ fn layout_paragraph_with_source_and_table(
                             .chain(std::iter::once((value.len(), '\0')))
                         {
                             let control = match character {
-                                '\t' => Some(InlineItem::Tab),
+                                '\t' => Some(InlineItem::Tab {
+                                    fill: segment_highlight,
+                                }),
                                 '\n' => Some(InlineItem::LineBreak(LineClear::None)),
                                 '\u{000c}' => Some(InlineItem::PageBreak),
                                 '\u{000b}' => Some(InlineItem::ColumnBreak),
@@ -1850,7 +1853,7 @@ fn layout_paragraph_with_source_and_table(
                     // The absolute position is a paragraph-relative tab stop
                     // the tab resolver already places.
                     SpecialCharacter::PositionalTab { .. } => {
-                        inline_items.push(InlineItem::Tab);
+                        inline_items.push(InlineItem::Tab { fill: highlight });
                     }
                 },
                 RunContent::CommentReference { .. } => {}
