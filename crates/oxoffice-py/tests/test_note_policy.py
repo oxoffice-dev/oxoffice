@@ -31,3 +31,10 @@ def test_a_note_policy_without_a_format_numbers_as_word_does():
     assert note_formats(section)[b"endnote"] == [b"lowerRoman"]
     doc.set_note_policy("endnote", format="decimal")
     assert note_formats(doc)[b"endnote"] == [b"decimal"]
+
+
+def test_a_note_policy_takes_words_chicago_marks():
+    doc = oxdocx.Document()
+    doc.add_paragraph("Body")
+    doc.set_note_policy("footnote", format="chicago")
+    assert note_formats(doc)[b"footnote"] == [b"chicago"]
