@@ -778,12 +778,18 @@ impl<'a> RtfWriter<'a> {
             if let Some(color) = properties.color.as_deref() {
                 self.ensure_hex_color(color, &format!("{location}/color"));
             }
-            if let Some(fill) = properties
+            if let Some(fill) = oxoffice_docx_layout::engine::run_fill(properties) {
+                self.ensure_hex_color(&fill.to_hex(), &format!("{location}/highlight"));
+            } else if properties
                 .shading
                 .as_ref()
                 .and_then(|shading| shading.fill.as_deref())
+                .is_some_and(|fill| fill != "auto" && parse_hex_color(fill).is_none())
             {
-                self.ensure_hex_color(fill, &format!("{location}/highlight"));
+                self.diagnose(
+                    &format!("{location}/highlight"),
+                    "unsupported colour value was dropped during RTF export",
+                );
             }
             self.scan_run_properties(properties, &location);
         }
@@ -899,12 +905,6 @@ impl<'a> RtfWriter<'a> {
             self.diagnose(
                 &format!("{location}/rPr/themeColor"),
                 "theme run colour was dropped during RTF export",
-            );
-        }
-        if properties.highlight.is_some() {
-            self.diagnose(
-                &format!("{location}/rPr/highlight"),
-                "keyword highlight colour was dropped during RTF export",
             );
         }
         if properties.spacing.is_some() {
@@ -1191,11 +1191,10 @@ impl<'a> RtfWriter<'a> {
         {
             write!(output, "\\cf{index}")?;
         }
-        if let Some(fill) = properties
-            .shading
-            .as_ref()
-            .and_then(|shading| shading.fill.as_deref())
-            && let Some(index) = self.colors.get(&normalize_hex_color(fill))
+        // The fill layout paints behind the text: the highlight over the
+        // shading, a pattern as its mixed colour.
+        if let Some(fill) = oxoffice_docx_layout::engine::run_fill(properties)
+            && let Some(index) = self.colors.get(&fill.to_hex())
         {
             write!(output, "\\highlight{index}")?;
         }
