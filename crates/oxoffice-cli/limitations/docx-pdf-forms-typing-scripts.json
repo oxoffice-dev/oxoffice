@@ -2,8 +2,8 @@
   "id": "docx-pdf-forms-typing-scripts",
   "format": "docx",
   "area": "pdf forms",
-  "title": "Typed text in scripts the form font lacks depends on the PDF viewer",
-  "symptom": "in a fillable PDF, text typed in Chinese, Japanese, Korean, Arabic, Hebrew, Devanagari or Thai may not display",
+  "title": "Typed text in characters the form font cannot encode depends on the PDF viewer",
+  "symptom": "in a fillable PDF, text typed in Chinese, Japanese, Korean, Arabic, Hebrew, Devanagari, Thai, Cyrillic, Greek or Latin letters such as Ł or č may not display, or be saved without an appearance; the export names each field already holding such text",
   "workaround": "fill those values in the Word document before exporting, or use a viewer that substitutes fonts",
   "issue": 132
 }

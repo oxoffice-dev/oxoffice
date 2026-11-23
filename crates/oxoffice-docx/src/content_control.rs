@@ -551,23 +551,36 @@ fn collect_sdt_text(sdt: &CT_Sdt, output: &mut String) {
 }
 
 /// The text of a control as lines: one per paragraph of the control and of
-/// its nested controls, an inline control's runs on the current line. Table
-/// content reads as one line of its cells' text, each cell's paragraphs on
-/// lines of their own, as a cell's text reads.
+/// its nested controls, an inline control's runs and tracked insertions on
+/// the current line. Table content reads as one line of its cells' text,
+/// each cell's paragraphs on lines of their own, as a cell's text reads.
 fn collect_sdt_lines(sdt: &CT_Sdt, lines: &mut Vec<String>) {
-    for content in &sdt.content {
+    for boundary in 0..=sdt.content.len() {
+        for (_, revision) in sdt.revisions().iter().filter(|(at, _)| *at == boundary) {
+            if let Some(content) = revision.accepted_content() {
+                push_inline_text(lines, content.accepted_text());
+            }
+        }
+        let Some(content) = sdt.content.get(boundary) else {
+            continue;
+        };
         match content {
             SdtContent::Paragraph(paragraph) => lines.push(paragraph_text(paragraph)),
             SdtContent::Table(table) => lines.push(table_text(table)),
             SdtContent::Row(row) => lines.push(row_text(row)),
             SdtContent::Cell(cell) => lines.push(cell_text(cell)),
-            SdtContent::Run(run) => match lines.last_mut() {
-                Some(line) => line.push_str(&run.accepted_text()),
-                None => lines.push(run.accepted_text()),
-            },
+            SdtContent::Run(run) => push_inline_text(lines, run.accepted_text()),
             SdtContent::ContentControl(nested) => collect_sdt_lines(nested, lines),
             SdtContent::RawXml(_) => {}
         }
+    }
+}
+
+/// Add inline text to the current line, or start the first one.
+fn push_inline_text(lines: &mut Vec<String>, text: String) {
+    match lines.last_mut() {
+        Some(line) => line.push_str(&text),
+        None => lines.push(text),
     }
 }
 

@@ -12,7 +12,8 @@ def cli_limitations(*args):
         [sys.executable, "-m", "oxoffice", "limitations", *args, "--json"],
         check=True,
         capture_output=True,
-        text=True,
+        # The command line writes UTF-8, whatever the platform's locale.
+        encoding="utf-8",
     ).stdout
     return json.loads(out)
 
