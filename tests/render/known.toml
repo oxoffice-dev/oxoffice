@@ -9,18 +9,6 @@
 # entry is updated or goes.
 
 [[known]]
-file = "authored/thesis.docx"
-check = "overlap"
-pages = [25]
-issue = 156
-
-[[known]]
-file = "libreoffice/thesis.docx"
-check = "overlap"
-pages = [25]
-issue = 156
-
-[[known]]
 file = "authored/newsletter.docx"
 check = "overlap"
 pages = [3]
