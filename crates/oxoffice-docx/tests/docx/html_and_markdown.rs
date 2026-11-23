@@ -2743,3 +2743,203 @@ fn markdown_import_reads_commonmark_and_locates_what_it_drops_in_the_source() {
     assert_eq!(table.cell(0, 1).unwrap().text(), "B");
     assert_eq!(table.cell(1, 1).unwrap().text(), "x|y");
 }
+
+const M_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+/// `math` (OMML whose root declares `m` and `w`) as the only equation of a
+/// paragraph, written to RTF and read back: the RTF, what writing it
+/// reported, and the OMML read back.
+fn equation_through_rtf(math: &str) -> (String, Vec<String>, String) {
+    use oxoffice_docx_oxml::math::{CT_OMath, CT_OMathPara, OfficeMath};
+    let equation = if math.starts_with("<m:oMathPara") {
+        OfficeMath::Display(CT_OMathPara::from_xml(math.as_bytes()).unwrap())
+    } else {
+        OfficeMath::Inline(CT_OMath::from_xml(math.as_bytes()).unwrap())
+    };
+    let mut doc = Document::new();
+    doc.add_paragraph("").add_equation(equation).unwrap();
+    let written = doc.to_rtf_bytes().unwrap();
+    let rtf = String::from_utf8(written.bytes).unwrap();
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
+    assert!(read.diagnostics.is_empty(), "{:?}", read.diagnostics);
+    let equation = read
+        .document
+        .paragraph(0)
+        .unwrap()
+        .equations()
+        .next()
+        .cloned()
+        .unwrap();
+    let xml = String::from_utf8(equation.to_xml().unwrap()).unwrap();
+    let reported = written
+        .diagnostics
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect();
+    (rtf, reported, xml)
+}
+
+/// The OMML `math` as the typed model writes it back, without the
+/// `xml:space` the RTF reader puts on every math text.
+fn omml(math: &str) -> String {
+    use oxoffice_docx_oxml::math::{CT_OMath, CT_OMathPara, OfficeMath};
+    let equation = if math.starts_with("<m:oMathPara") {
+        OfficeMath::Display(CT_OMathPara::from_xml(math.as_bytes()).unwrap())
+    } else {
+        OfficeMath::Inline(CT_OMath::from_xml(math.as_bytes()).unwrap())
+    };
+    without_space_preserve(&String::from_utf8(equation.to_xml().unwrap()).unwrap())
+}
+
+fn without_space_preserve(xml: &str) -> String {
+    xml.replace(r#" xml:space="preserve""#, "")
+}
+
+#[test]
+fn an_alignment_point_or_break_of_a_math_run_is_reported_not_misplaced_in_rtf() {
+    // A display group aligned on `=`, its second line broken before `+`
+    // and aligned at the first alignment point.
+    let lines = |equals: &str, plus: &str| {
+        format!(
+            concat!(
+                r#"<m:oMathPara xmlns:m="{m}" xmlns:w="{w}"><m:oMath><m:r><m:t>x</m:t></m:r>"#,
+                r#"<m:r>{equals}<m:t>=</m:t></m:r><m:r><m:t>1</m:t></m:r></m:oMath><m:oMath>"#,
+                r#"<m:r>{plus}<m:t>+</m:t></m:r><m:r><m:t>y</m:t></m:r></m:oMath></m:oMathPara>"#
+            ),
+            m = M_NS,
+            w = W_NS,
+            equals = equals,
+            plus = plus,
+        )
+    };
+    let aligned = lines(
+        "<m:rPr><m:aln/></m:rPr>",
+        r#"<m:rPr><m:brk m:alnAt="1"/></m:rPr>"#,
+    );
+    let (rtf, reported, xml) = equation_through_rtf(&aligned);
+    // No Word file shows how Word spells them inside a run: reported,
+    // not written as groups of their own.
+    assert!(!rtf.contains(r"\maln") && !rtf.contains(r"\mbrk"), "{rtf}");
+    for property in ["m:aln of a math run", "m:brk of a math run"] {
+        assert!(
+            reported.iter().any(|message| message.contains(property)),
+            "{property}: {reported:?}"
+        );
+    }
+    // The rest reads back whole, as valid OMML.
+    assert_eq!(without_space_preserve(&xml), omml(&lines("", "")));
+    // Written as a group of its own before the run, they are reported and
+    // left out by the reader, not read as an element of the equation.
+    let rtf = r"{\rtf1\ansi {\mmath{\*\moMath {\mr\mscr0\msty2 x}{\maln on}{\mr\mscr0\msty2 =}{\mbrk}{\mr\mscr0\msty2 1}}}\par}";
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
+    let equation = read
+        .document
+        .paragraph(0)
+        .unwrap()
+        .equations()
+        .next()
+        .cloned()
+        .unwrap();
+    let xml = String::from_utf8(equation.to_xml().unwrap()).unwrap();
+    assert!(!xml.contains("m:aln") && !xml.contains("m:brk"), "{xml}");
+    for word in [r"\maln", r"\mbrk"] {
+        assert!(
+            read.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains(word)),
+            "{word}: {:?}",
+            read.diagnostics
+        );
+    }
+}
+
+#[test]
+fn bold_of_a_math_run_is_reported_in_rtf() {
+    let math = format!(
+        concat!(
+            r#"<m:oMath xmlns:m="{m}" xmlns:w="{w}"><m:r><w:rPr><w:rFonts w:ascii="Cambria Math"/>"#,
+            r#"<w:b/></w:rPr><m:t>x</m:t></m:r></m:oMath>"#
+        ),
+        m = M_NS,
+        w = W_NS,
+    );
+    let (_, reported, _) = equation_through_rtf(&math);
+    assert!(
+        reported
+            .iter()
+            .any(|message| message.contains("character formatting of its math runs")),
+        "{reported:?}"
+    );
+}
+
+#[test]
+fn an_equation_the_rtf_reader_cannot_rebuild_keeps_its_text() {
+    // A run with no equation around it, and a run straight in a display
+    // group: neither is OMML.
+    for equation in [r"{\mmath {\mr x}}", r"{\mmath{\*\moMathPara {\mr x}}}"] {
+        let rtf = format!(r"{{\rtf1\ansi Let {equation} hold.\par}}");
+        let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
+        let paragraph = read.document.paragraph(0).unwrap();
+        assert_eq!(paragraph.text(), "Let x hold.", "{equation}");
+        assert_eq!(paragraph.equations().count(), 0);
+        assert!(
+            read.diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("could not be read")),
+            "{:?}",
+            read.diagnostics
+        );
+    }
+}
+
+#[test]
+fn spaces_at_the_edges_of_a_math_run_survive_an_rtf_round_trip() {
+    let math = format!(
+        concat!(
+            r#"<m:oMath xmlns:m="{m}" xmlns:w="{w}"><m:r><m:t>x</m:t></m:r>"#,
+            r#"<m:r><m:rPr><m:nor/></m:rPr><m:t xml:space="preserve"> if </m:t></m:r>"#,
+            r#"<m:r><m:t>y</m:t></m:r><m:r><m:rPr><m:nor/></m:rPr><m:t xml:space="preserve"> </m:t></m:r>"#,
+            r#"<m:r><m:t>z</m:t></m:r></m:oMath>"#
+        ),
+        m = M_NS,
+        w = W_NS,
+    );
+    let (_, _, xml) = equation_through_rtf(&math);
+    assert!(
+        xml.contains(r#"<m:t xml:space="preserve"> if </m:t>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<m:t xml:space="preserve"> </m:t>"#),
+        "{xml}"
+    );
+}
+
+#[test]
+fn built_equations_keep_their_omml_through_rtf() {
+    let equations = [
+        // A delimiter that matches its content's height.
+        r#"<m:d><m:dPr><m:begChr m:val="["/><m:shp m:val="match"/></m:dPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:d>"#,
+        // A function, its name upright.
+        concat!(
+            r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>sin</m:t></m:r></m:fName>"#,
+            r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:func>"#
+        ),
+        // A fraction, an n-ary sum with its limits, a radical with its
+        // degree hidden.
+        concat!(
+            r#"<m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f>"#,
+            r#"<m:nary><m:naryPr><m:chr m:val="&#8721;"/><m:limLoc m:val="undOvr"/></m:naryPr>"#,
+            r#"<m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>n</m:t></m:r></m:sup>"#,
+            r#"<m:e><m:r><m:t>i</m:t></m:r></m:e></m:nary>"#,
+            r#"<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:r><m:t>y</m:t></m:r></m:e></m:rad>"#
+        ),
+    ];
+    for body in equations {
+        let math = format!(r#"<m:oMath xmlns:m="{M_NS}" xmlns:w="{W_NS}">{body}</m:oMath>"#);
+        let (_, reported, xml) = equation_through_rtf(&math);
+        assert!(reported.is_empty(), "{reported:?}");
+        assert_eq!(without_space_preserve(&xml), omml(&math), "{body}");
+    }
+}

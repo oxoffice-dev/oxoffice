@@ -32,18 +32,22 @@ Both formats have a native carrier:
 - **RTF writer**: an equation is written from its OMML (`OfficeMath::to_xml`, so the content outside the typed
   subset is kept too) by one generic walk: an element `m:X` with children is `{\mX children}`; an element whose only
   content is `m:val` is `{\mX value}`; a math run `m:r` is `{\mr flags text}`, its `m:rPr` written as the run's
-  flags; its `w:rPr` (font, bold, italic, colour) as the character formatting RTF already writes for a run. The
+  flags. A run's alignment point and break (`m:aln`, `m:brk`) have no Word file showing their spelling inside a
+  run: they are reported, not written. Its `w:rPr` is not carried: the math font and italic are the reader's own,
+  other formatting (bold, colour) is reported. The
   first element is starred (`{\mmath{\*\moMath ...}}`, `{\mmath{\*\moMathPara ...}}` for a display group), as Word
   and LibreOffice write it. The spelling of what the generic rule does not cover (`m:sty`, `m:scr` and the other
   run flags, the `\mmathPr` header) is taken from an RTF that Word saves (Word 16.115 on the Mac,
   `word-paper.rtf`): values are group text with the OMML string (`{\mpos top}`, `{\mdegHide on}`), numbers only
   for `\mjc` (center 2, centerGroup 1) and the run flags `\mscr0` (roman), `\msty0` (p), `\msty2` (i). The other
-  `sty`, `scr` and `jc` values have no Word file showing their numbers: they are left out and reported.
+  `sty`, `scr` and `jc` values have no Word file showing their numbers: they are left out and reported. The reader
+  reads `\mscr0` and `\msty2`, which Word writes on every run, as OMML's defaults (no `m:scr`, no `m:sty`), so a
+  built equation reads back as the same OMML.
 - **No picture fallback**: Word adds `{\mmathPict ...}`, a picture of the equation, for readers that do not know
   math. We do not draw one: the RTF writer does not render.
 - **RTF reader**: `\mmath` is read back into the paragraph's equation at its place, by the inverse walk; a group it
-  cannot map is reported and its text kept as the equation's text, as a reader without math would show it. Today
-  the reader keeps the letters as body text.
+  cannot map is reported and left out; an equation it cannot rebuild as OMML is reported and its text kept as body
+  text, as a reader without math would show it (before this change the reader kept every equation's letters so).
 - **ODT writer**: an equation is a `draw:frame` anchored `as-char` holding a `draw:object` that points at its own
   sub-document `Object N/content.xml`, the MathML that `equation_to_mathml` writes for the HTML export, with the same
   diagnostics (`ExportEquations`), each reported at its equation. The equations of a display group are frames

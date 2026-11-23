@@ -148,10 +148,10 @@ impl Writer {
     fn start(&mut self, namespace: &[u8], local: &str, value: Option<String>, empty: bool) {
         if self.skipping.is_some() {
             // The math font and the italic Word gives every math run are the
-            // reader's own; other formatting is not carried.
+            // reader's own; other formatting (bold too) is not carried.
             if self.skipping_formatting
                 && namespace == W_NS.as_bytes()
-                && !matches!(local, "rFonts" | "i" | "iCs" | "b" | "bCs" | "lang")
+                && !matches!(local, "rFonts" | "i" | "iCs" | "lang")
             {
                 self.lost
                     .push("character formatting of its math runs".to_owned());
@@ -214,6 +214,14 @@ impl Writer {
             "t" if self.run.is_some() => Open::Transparent,
             "sty" | "scr" | "nor" | "lit" if self.run.is_some() => {
                 self.run_flag(local, value.as_deref());
+                Open::Nothing
+            }
+            // The other run properties (`m:aln`, `m:brk` and its `m:alnAt`):
+            // no Word file at hand shows how Word spells them inside a run,
+            // so they are reported rather than written where no reader
+            // looks for them.
+            local if self.run.is_some() => {
+                self.lost.push(format!("m:{local} of a math run"));
                 Open::Nothing
             }
             "jc" => {
@@ -359,6 +367,9 @@ pub(super) struct MathBuilder {
     frames: Vec<Frame>,
     /// Whether the outermost element was a display group.
     display: bool,
+    /// The text of its runs, in order: what a reader without math shows,
+    /// kept when the equation cannot be rebuilt.
+    pub(super) text: String,
     pub(super) lost: Vec<String>,
 }
 
@@ -402,6 +413,13 @@ impl MathBuilder {
         if at_start && matches!(frame, Frame::Plain(text) if text.is_empty()) {
             *frame = match local {
                 "mathPict" | "ctrlPr" | "mathPr" => Frame::Skipped,
+                // A math run's alignment point and break: their spelling in
+                // Word's RTF is not known here, and as an element of their
+                // own they would make the OMML invalid.
+                "aln" | "brk" => {
+                    self.lost.push(format!("\\m{local}"));
+                    Frame::Skipped
+                }
                 "r" => Frame::Run(String::new(), String::new()),
                 local if ON_OFF.contains(&local) || VALUED.contains(&local) => {
                     Frame::Valued(local.to_owned(), String::new())
@@ -421,7 +439,9 @@ impl MathBuilder {
             // Word writes its default style, italic letters and upright
             // digits and operators, as `\msty2` on every such run.
             (Frame::Run(flags, _), "sty", Some(2)) => flags.push_str(DEFAULT_STYLE),
-            (Frame::Run(flags, _), "scr", Some(0)) => flags.push_str(r#"<m:scr m:val="roman"/>"#),
+            // The roman script is OMML's default, which Word writes on every
+            // run as `\mscr0`: no `m:scr`.
+            (Frame::Run(..), "scr", Some(0)) => {}
             (Frame::Run(flags, _), "nor", _) => flags.push_str("<m:nor/>"),
             (Frame::Run(flags, _), "lit", _) => flags.push_str("<m:lit/>"),
             (_, "jc", Some(1)) => self.xml.push_str(r#"<m:jc m:val="centerGroup"/>"#),
@@ -444,6 +464,7 @@ impl MathBuilder {
                 // Text straight in an element is a run of its own, as Word
                 // writes a comma between two runs.
                 write_run(&mut self.xml, "", text);
+                self.text.push_str(text);
             }
             _ => {}
         }
@@ -469,9 +490,13 @@ impl MathBuilder {
                 } else {
                     format!(r#"{flags}<m:sty m:val="p"/>"#)
                 };
-                write_run(&mut self.xml, &flags, &text)
+                write_run(&mut self.xml, &flags, &text);
+                self.text.push_str(&text);
             }
-            Some(Frame::Plain(text)) if !text.is_empty() => write_run(&mut self.xml, "", &text),
+            Some(Frame::Plain(text)) if !text.is_empty() => {
+                write_run(&mut self.xml, "", &text);
+                self.text.push_str(&text);
+            }
             _ => {}
         }
     }
@@ -511,7 +536,6 @@ const STYLE_LEFT_OUT: &str = "\u{1}";
 const DEFAULT_STYLE: &str = "<m:sty/>";
 
 fn write_run(xml: &mut String, flags: &str, text: &str) {
-    let text = text.trim_start_matches(' ');
     if text.is_empty() {
         return;
     }

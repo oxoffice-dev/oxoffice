@@ -3605,11 +3605,13 @@ impl Parser {
     }
 
     /// The `\mmath` group closed: its equation goes in the paragraph, or,
-    /// when it cannot be read, is reported and left out.
+    /// when it cannot be read, is reported and its text kept, as a reader
+    /// without math shows it.
     fn finish_math(&mut self, offset: usize) -> Result<()> {
-        let Some(math) = self.active_math.take() else {
+        let Some(mut math) = self.active_math.take() else {
             return Ok(());
         };
+        let text = std::mem::take(&mut math.text);
         match math.finish() {
             Ok((equation, lost)) => {
                 for lost in lost {
@@ -3625,9 +3627,13 @@ impl Parser {
                 self.diagnostics.push(RtfDiagnostic {
                     offset,
                     destination: Some("mmath".to_owned()),
-                    message: format!("equation could not be read and was left out: {error}"),
+                    message: format!("equation could not be read, its text was kept: {error}"),
                 });
-                Ok(())
+                let Some(state) = self.states.last() else {
+                    return Ok(());
+                };
+                let (format, paragraph) = (state.format.clone(), state.paragraph.clone());
+                self.append_text(offset, &text, &format, &paragraph)
             }
         }
     }
