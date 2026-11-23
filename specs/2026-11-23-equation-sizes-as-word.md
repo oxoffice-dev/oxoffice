@@ -49,9 +49,12 @@ and the construct rules above apply to every face.
 - For the display sum and integral without MATH variants, the sign's glyph is stretched to the ink of Cambria Math's
   display sign (sum -1370..2540, integral -1623..2782 in its 2048 units).
 - The radical without variants stretches its own glyph the same way, with the MATH constants for gap and rule.
-- Not done: horizontal metrics (widths, gaps between atoms) are not measured against Word; they move only where a
-  MATH constant sets them (`SpaceAfterScript`) or a sign changes size. A face with a MATH table keeps choosing its
-  display sign as the first variant at least `DisplayOperatorMinHeight` tall.
+- Not done: horizontal metrics (widths, gaps between atoms) are not measured against Word. They move where the MATH
+  rules set them: `SpaceAfterScript` after scripts, a bar fraction without the 0.06 em side padding (its rule flush
+  with its parts), a radical without its 0.9 horizontal squeeze and with its degree placed by
+  `RadicalKernBeforeDegree` and `RadicalKernAfterDegree`, and signs that change size. A face with a MATH table keeps
+  choosing its display sign as the first variant at least `DisplayOperatorMinHeight` tall.
+- A linear or skewed fraction keeps its parts at its slash's size in a line of text too.
 
 ## Plan
 

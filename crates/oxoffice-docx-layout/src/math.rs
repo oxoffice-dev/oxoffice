@@ -1390,8 +1390,14 @@ fn layout_fraction(
     let c = MathConstants::of(fm, font_family)?;
     let em = |value: f64| c.at(value, font_size);
     // Word keeps a display equation's fractions at full size however deep
-    // they nest; in a line of text their parts go one script level down.
-    let parts = if context.inline {
+    // they nest; in a line of text a stacked fraction's parts go one script
+    // level down. A linear or skewed fraction keeps its parts at the size of
+    // its slash.
+    let stacked = !matches!(
+        value.fraction_type,
+        FractionType::Linear | FractionType::Skewed
+    );
+    let parts = if context.inline && stacked {
         math_script_context(fm, font_family, context, 1)?
     } else {
         context.with_size(font_size)
@@ -1414,10 +1420,7 @@ fn layout_fraction(
         &format!("{source_path}/denominator"),
         diagnostics,
     )?;
-    if matches!(
-        value.fraction_type,
-        FractionType::Linear | FractionType::Skewed
-    ) {
+    if !stacked {
         let slash = layout_text(
             "/",
             fm,
