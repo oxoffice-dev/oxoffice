@@ -232,14 +232,30 @@ def test_a_control_left_static_says_so(tmp_path):
     word = PythonDocxDocument()
     body = word.element.body
     body.insert(len(body) - 1, parse_xml(
+        f'<w:tbl {W}><w:tblPr><w:tblW w:w="3000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/>'
+        '</w:tblGrid><w:tr><w:trPr><w:trHeight w:val="1500"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/>'
+        '<w:textDirection w:val="btLr"/></w:tcPr><w:p><w:sdt><w:sdtPr><w:tag w:val="notes"/><w:text/></w:sdtPr>'
+        '<w:sdtContent><w:r><w:t>Up</w:t></w:r></w:sdtContent></w:sdt></w:p></w:tc></w:tr></w:tbl>'
+    ))
+    path = tmp_path / "rotated.docx"
+    word.save(path)
+    pdf, messages = oxdocx.Document(path).to_pdf_with_diagnostics(fillable_forms=True)
+    assert not fields(pdf)
+    assert any('"notes" stays static' in message for message in messages), messages
+
+
+def test_an_empty_control_becomes_an_empty_field(tmp_path):
+    word = PythonDocxDocument()
+    body = word.element.body
+    body.insert(len(body) - 1, parse_xml(
         f'<w:p {W}><w:r><w:t xml:space="preserve">Notes: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="notes"/><w:text/>'
         '</w:sdtPr><w:sdtContent/></w:sdt></w:p>'
     ))
     path = tmp_path / "empty.docx"
     word.save(path)
     pdf, messages = oxdocx.Document(path).to_pdf_with_diagnostics(fillable_forms=True)
-    assert not fields(pdf)
-    assert any('"notes" stays static' in message for message in messages), messages
+    assert list(fields(pdf)) == ["notes"]
+    assert not any("stays static" in message for message in messages), messages
 
 
 def test_a_legacy_form_field_becomes_a_field(tmp_path):
