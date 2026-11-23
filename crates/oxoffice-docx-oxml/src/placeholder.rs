@@ -2635,8 +2635,6 @@ fn edit_text_box_block(
     Ok((count, map))
 }
 
-// Standalone callers admit their own source. Scoped operations supply outcomes
-// from the same original source without granting a new expanded-byte allowance.
 pub(crate) struct ScopedLiteralContext<'a> {
     pub(crate) work: &'a mut WordOperationWork,
     pub(crate) delivered: &'a std::cell::Cell<bool>,

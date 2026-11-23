@@ -786,4 +786,3 @@ fn word_chart_references(xml: &[u8]) -> Result<Vec<WordChartReference>> {
         }
     }
 }
-
