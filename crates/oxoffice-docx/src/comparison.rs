@@ -717,7 +717,18 @@ impl Document {
                     shared_bookmarks: HashSet::new(),
                     point_bookmarks: HashSet::new(),
                     relocated_bookmarks: HashSet::new(),
-                    whole_hyperlinks: WholeHyperlinks::default(),
+                    // Before the relationships are remapped: the comment
+                    // story compares in place only when both inputs hold the
+                    // same comment relationships.
+                    whole_hyperlinks: WholeHyperlinks {
+                        targets: std::rc::Rc::new(hyperlink_targets(
+                            &original,
+                            [left.part_name.clone()],
+                            &[],
+                        )),
+                        owner: left.part_name.clone(),
+                        witnesses: Vec::new(),
+                    },
                 },
                 &mut Vec::new(),
             )

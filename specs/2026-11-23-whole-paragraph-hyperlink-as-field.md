@@ -37,8 +37,10 @@ it in an `ins` (or `del`) of its own under one new revision id, as Word writes i
   PAGEREF of a contents entry) nests in the link's field, in the same wrapper.
 - **Refused**, not dropped: a link with what no switch carries (`w:docLocation`, an unmodelled attribute), or whose
   relationship targets a part of the package, with a message naming it.
-- **Kept as today**: a link holding a simple field written whole (#437): that field has a wrapper of its own, and
-  Word nests no wrapper in another. Word writes no simple field; the combination comes from other producers only.
+- **Kept as today**, edge cases no Word file holds: a link holding a simple field written whole (#437), since that
+  field has a wrapper of its own and Word nests no wrapper in another (Word writes no simple field); and a link
+  inside an inline content control, a smart tag or an inline custom XML element, since only the paragraph's direct
+  links are written as fields. Word may still keep such a link's emptied element.
 - **Where**: only for a paragraph inserted or deleted whole that is neither moved nor carried inside a complex field
   replaced whole; a link in a paragraph that both versions hold, or that moves, keeps its `w:hyperlink`. That covers
   the body, cells, block content controls, notes, comments, headers and footers.
@@ -46,7 +48,8 @@ it in an `ins` (or `del`) of its own under one new revision id, as Word writes i
   `w:hyperlink` again, its address (through a new relationship), anchor, tooltip and frame read from the field's
   instruction alone, its content the field's result left in place; only the attribute order, the namespace
   declarations and `w:history` come from the comparison. The ordinary postcondition then compares it with the input,
-  so a field that misstates the link fails the comparison.
+  so a field that misstates the link fails the comparison. A story part is resolved once for all of its links (a
+  contents rebuilt whole holds one per entry); a note part, which only the whole document resolves, once per link.
 - **Links of the resolved document**: oxoffice keeps the field after resolution, and `links()` reports a `HYPERLINK`
   field to a bookmark with its anchor, as it already reported one to an address; before, it left it out.
 

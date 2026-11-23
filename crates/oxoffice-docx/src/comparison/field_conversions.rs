@@ -598,10 +598,75 @@ fn transported_publication(
     new_ids: &HashSet<i32>,
     restorations: &HyperlinkRestorations,
 ) -> Result<(Vec<u8>, Vec<Range<usize>>)> {
-    let bytes = candidate
+    let roots = publication_roots(candidate, part, revision_id, generated_span, role)?;
+    let resolution = if role == 0 {
+        crate::revision::Resolution::Reject
+    } else {
+        crate::revision::Resolution::Accept
+    };
+    let (transported, mapped) = if is_note_part(candidate, part)? {
+        let mut trace = crate::revision::NotePublication::new(part, revision_id, &roots);
+        let mut carrier = candidate.clone_for_staging();
+        carrier.resolve_revisions_with_note_publication(
+            resolution,
+            crate::revision::RevisionScope::Ids(new_ids),
+            Some(&mut trace),
+        )?;
+        (
+            trace
+                .output
+                .ok_or_else(|| Error::Other("selected publication note part was removed".into()))?,
+            trace.roots,
+        )
+    } else {
+        let (transported, _, mapped) = crate::revision::resolve_story_xml_with_publication_roots(
+            publication_part(candidate, part)?,
+            resolution,
+            crate::revision::RevisionScope::Ids(new_ids),
+            revision_id,
+            &roots,
+        )?;
+        (transported, mapped)
+    };
+    let ranges = resolved_publication_roots(mapped, &transported)?;
+    let Some(edits) = restorations.get(part) else {
+        return Ok((transported, ranges));
+    };
+    let ranges = ranges
+        .into_iter()
+        .map(|range| restored_range(edits, range))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((restored_part(&transported, edits), ranges))
+}
+
+/// Whether `part` is a footnote or endnote part of `candidate`, which only
+/// the resolution of the whole document resolves.
+fn is_note_part(candidate: &Document, part: &str) -> Result<bool> {
+    let mut note_part = false;
+    for kind in NoteKind::ALL {
+        note_part |= NotePart::name_of(candidate, kind)?.is_some_and(|name| name == part);
+    }
+    Ok(note_part)
+}
+
+/// The part `part` of `candidate`.
+fn publication_part<'d>(candidate: &'d Document, part: &str) -> Result<&'d [u8]> {
+    candidate
         .package
         .get_part(part)
-        .ok_or_else(|| Error::Other("field conversion part is missing".into()))?;
+        .ok_or_else(|| Error::Other("field conversion part is missing".into()))
+}
+
+/// The ranges in `part` of the direct children of the one wrapper
+/// `revision_id` that publishes `generated_span` for `role`.
+fn publication_roots(
+    candidate: &Document,
+    part: &str,
+    revision_id: i32,
+    generated_span: &str,
+    role: usize,
+) -> Result<Vec<Range<usize>>> {
+    let bytes = publication_part(candidate, part)?;
     let spans = crate::revision::modeled_revision_spans(bytes)?
         .into_iter()
         .filter(|(_, id)| *id == revision_id)
@@ -619,7 +684,7 @@ fn transported_publication(
             "field conversion publication payload differs from its checked local span".into(),
         ));
     }
-    let roots = direct_element_spans(raw)?
+    direct_element_spans(raw)?
         .into_iter()
         .map(|range| {
             range
@@ -629,40 +694,15 @@ fn transported_publication(
                 .map(|(start, end)| start..end)
                 .ok_or_else(|| Error::Other("publication root part offset overflow".into()))
         })
-        .collect::<Result<Vec<_>>>()?;
-    let resolution = if role == 0 {
-        crate::revision::Resolution::Reject
-    } else {
-        crate::revision::Resolution::Accept
-    };
-    let mut note_part = false;
-    for kind in NoteKind::ALL {
-        note_part |= NotePart::name_of(candidate, kind)?.is_some_and(|name| name == part);
-    }
-    let (transported, mapped) = if note_part {
-        let mut trace = crate::revision::NotePublication::new(part, revision_id, &roots);
-        let mut carrier = candidate.clone_for_staging();
-        carrier.resolve_revisions_with_note_publication(
-            resolution,
-            crate::revision::RevisionScope::Ids(new_ids),
-            Some(&mut trace),
-        )?;
-        (
-            trace
-                .output
-                .ok_or_else(|| Error::Other("selected publication note part was removed".into()))?,
-            trace.roots,
-        )
-    } else {
-        let (transported, _, mapped) = crate::revision::resolve_story_xml_with_publication_roots(
-            bytes,
-            resolution,
-            crate::revision::RevisionScope::Ids(new_ids),
-            revision_id,
-            &roots,
-        )?;
-        (transported, mapped)
-    };
+        .collect()
+}
+
+/// The resolved ranges of a publication's roots, each kept, in order and with
+/// nothing but white space between them.
+fn resolved_publication_roots(
+    mapped: Vec<Option<Range<usize>>>,
+    transported: &[u8],
+) -> Result<Vec<Range<usize>>> {
     let mut ranges = Vec::with_capacity(mapped.len());
     let mut previous = None;
     for range in mapped {
@@ -685,14 +725,7 @@ fn transported_publication(
         previous = Some(range.end);
         ranges.push(range);
     }
-    let Some(edits) = restorations.get(part) else {
-        return Ok((transported, ranges));
-    };
-    let ranges = ranges
-        .into_iter()
-        .map(|range| restored_range(edits, range))
-        .collect::<Result<Vec<_>>>()?;
-    Ok((restored_part(&transported, edits), ranges))
+    Ok(ranges)
 }
 
 /// The edits, by part and in order, that [`restore_whole_hyperlinks`] made in
@@ -717,27 +750,84 @@ pub(super) fn restore_whole_hyperlinks(
     role: usize,
     new_ids: &HashSet<i32>,
 ) -> Result<HyperlinkRestorations> {
+    let witnesses = witnesses
+        .iter()
+        .filter(|witness| witness.input_role == role)
+        .collect::<Vec<_>>();
+    if witnesses
+        .iter()
+        .any(|witness| !new_ids.contains(&witness.revision_id))
+    {
+        return Err(Error::Other(
+            "invalid whole-paragraph hyperlink witness".into(),
+        ));
+    }
+    // A contents rebuilt whole holds a link per entry: each story part is
+    // resolved once for all of its links. Only the resolution of the whole
+    // document resolves a note part, once per link.
+    let mut transports = HashMap::new();
+    let mut by_part = BTreeMap::<&str, Vec<&WholeHyperlinkWitness>>::new();
+    for witness in &witnesses {
+        by_part.entry(&witness.owner).or_default().push(witness);
+    }
+    for (part, witnesses) in by_part {
+        if is_note_part(candidate, part)? {
+            for witness in witnesses {
+                let (transported, roots) = transported_publication(
+                    candidate,
+                    part,
+                    witness.revision_id,
+                    &witness.generated_span,
+                    role,
+                    new_ids,
+                    &HyperlinkRestorations::new(),
+                )?;
+                transports.insert(witness.revision_id, (std::rc::Rc::new(transported), roots));
+            }
+            continue;
+        }
+        let publications = witnesses
+            .iter()
+            .map(|witness| {
+                Ok((
+                    witness.revision_id,
+                    publication_roots(
+                        candidate,
+                        part,
+                        witness.revision_id,
+                        &witness.generated_span,
+                        role,
+                    )?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let (transported, mapped) = crate::revision::resolve_story_xml_with_publications(
+            publication_part(candidate, part)?,
+            if role == 0 {
+                crate::revision::Resolution::Reject
+            } else {
+                crate::revision::Resolution::Accept
+            },
+            crate::revision::RevisionScope::Ids(new_ids),
+            &publications,
+        )?;
+        let transported = std::rc::Rc::new(transported);
+        for ((revision_id, _), mapped) in publications.into_iter().zip(mapped) {
+            let roots = resolved_publication_roots(mapped, &transported)?;
+            transports.insert(revision_id, (transported.clone(), roots));
+        }
+    }
     let mut restorations = HyperlinkRestorations::new();
     let mut resolved_edits = HyperlinkRestorations::new();
     let mut relationships = 0usize;
-    for witness in witnesses
-        .iter()
-        .filter(|witness| witness.input_role == role)
-    {
-        if !new_ids.contains(&witness.revision_id) {
-            return Err(Error::Other(
-                "invalid whole-paragraph hyperlink witness".into(),
-            ));
-        }
-        let (transported, roots) = transported_publication(
-            candidate,
-            &witness.owner,
-            witness.revision_id,
-            &witness.generated_span,
-            role,
-            new_ids,
-            &HyperlinkRestorations::new(),
-        )?;
+    let mut begins = HashMap::new();
+    for witness in witnesses {
+        let (transported, roots) = &transports[&witness.revision_id];
+        let transported = transported.as_slice();
+        let resolved_part = resolved
+            .package
+            .get_part(&witness.owner)
+            .ok_or_else(|| Error::Other("whole-paragraph hyperlink part is missing".into()))?;
         let [begin, instruction, separate, .., end] = roots.as_slice() else {
             return Err(Error::Other(
                 "a whole-paragraph hyperlink publication is not one field".into(),
@@ -746,13 +836,27 @@ pub(super) fn restore_whole_hyperlinks(
         // The resolved document also retires the comparison's note markers,
         // which the resolution of this part alone keeps: the field is the
         // same occurrence of its bytes in both.
+        // Every link field begins with the same generated run: its places
+        // are found once per part.
         let extent = &transported[begin.start..end.end];
-        let resolved_part = resolved
-            .package
-            .get_part(&witness.owner)
-            .ok_or_else(|| Error::Other("whole-paragraph hyperlink part is missing".into()))?;
-        let before = occurrences(&transported, extent);
-        let after = occurrences(resolved_part, extent);
+        let opening_run = &transported[begin.clone()];
+        let places = begins
+            .entry((witness.owner.as_str(), opening_run.to_vec()))
+            .or_insert_with(|| {
+                (
+                    occurrences(transported, opening_run),
+                    occurrences(resolved_part, opening_run),
+                )
+            });
+        let matching = |part: &[u8], starts: &[usize]| {
+            starts
+                .iter()
+                .copied()
+                .filter(|start| part[*start..].starts_with(extent))
+                .collect::<Vec<_>>()
+        };
+        let before = matching(transported, &places.0);
+        let after = matching(resolved_part, &places.1);
         let rank = before.iter().position(|start| *start == begin.start);
         let Some(start) = rank
             .filter(|_| before.len() == after.len())

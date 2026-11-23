@@ -810,6 +810,35 @@ pub(crate) fn resolve_story_xml_with_publication_roots(
     render_with_source_ranges(&tree, resolution, scope, selected)
 }
 
+/// [`resolve_story_xml_with_publication_roots`] for several publications of
+/// one part in one resolution: the ranges of each one's roots, in order.
+pub(crate) fn resolve_story_xml_with_publications(
+    source: &[u8],
+    resolution: Resolution,
+    scope: RevisionScope<'_>,
+    publications: &[(i32, Vec<Range<usize>>)],
+) -> Result<(Vec<u8>, Vec<Vec<Option<Range<usize>>>>)> {
+    let mut tree = XmlTree::parse(source)?;
+    tree.qualify_note_revisions()?;
+    let mut selected = Vec::new();
+    for (publication, roots) in publications {
+        selected.extend(publication_root_indices(
+            &tree,
+            resolution,
+            &scope,
+            *publication,
+            roots,
+        )?);
+    }
+    let (output, _, mut ranges) = render_with_source_ranges(&tree, resolution, scope, selected)?;
+    let mut split = Vec::with_capacity(publications.len());
+    for (_, roots) in publications.iter().rev() {
+        split.push(ranges.split_off(ranges.len() - roots.len()));
+    }
+    split.reverse();
+    Ok((output, split))
+}
+
 fn publication_root_indices(
     tree: &XmlTree<'_>,
     resolution: Resolution,

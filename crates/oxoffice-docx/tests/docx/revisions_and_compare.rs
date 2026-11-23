@@ -4093,11 +4093,22 @@ fn a_linked_paragraph_added_or_removed_whole_is_tracked_as_a_hyperlink_field() {
 /// `doc` saved with an external hyperlink relationship `id` to `address`
 /// added to its main part.
 fn with_link_relationship(doc: &mut Document, id: &str, address: &str) -> Document {
+    with_part_link_relationship(doc, "/word/document.xml", id, address)
+}
+
+/// `doc` saved with an external hyperlink relationship `id` to `address`
+/// added to its part `part`.
+fn with_part_link_relationship(
+    doc: &mut Document,
+    part: &str,
+    id: &str,
+    address: &str,
+) -> Document {
     let mut package =
         oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
             .unwrap();
     package
-        .get_or_create_part_rels("/word/document.xml")
+        .get_or_create_part_rels(part)
         .items
         .push(oxoffice_opc::Relationship {
             id: id.to_owned(),
@@ -4253,6 +4264,28 @@ fn a_linked_paragraph_in_a_note_a_comment_a_header_a_cell_or_a_control_is_tracke
             reopen(&mut doc)
         }
     };
+    // A link to an address, through the comment part's own relationship,
+    // which both versions hold.
+    let addressed = |linked: bool| {
+        let mut doc = comment(false);
+        let mut doc = with_part_link_relationship(
+            &mut doc,
+            "/word/comments.xml",
+            "rIdSite",
+            "https://example.com/",
+        );
+        if linked {
+            with_part(&mut doc, "comments.xml", |xml| {
+                xml.replacen(
+                    "</w:comment>",
+                    r#"<w:p><w:hyperlink xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdSite"><w:r><w:t>Site.</w:t></w:r></w:hyperlink></w:p></w:comment>"#,
+                    1,
+                )
+            })
+        } else {
+            doc
+        }
+    };
     let header = |linked: bool| {
         let mut doc = doc_with(&["Body."]);
         doc.set_header("Running title");
@@ -4267,6 +4300,7 @@ fn a_linked_paragraph_in_a_note_a_comment_a_header_a_cell_or_a_control_is_tracke
     for (owner, suffix) in [
         (&note as &dyn Fn(bool) -> Document, "footnotes.xml"),
         (&comment, "comments.xml"),
+        (&addressed, "comments.xml"),
         (&header, "header1.xml"),
     ] {
         for (from, to) in [(false, true), (true, false)] {
