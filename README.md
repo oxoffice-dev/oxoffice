@@ -24,7 +24,7 @@ from Rust, the command line or Python.**
 ## ✨ Why oxoffice
 
 - 🦀 **One engine, three doors**: a Rust API, an `oxoffice` command for everything that makes sense in a
-  shell, and an `oxoffice` Python package that covers nearly all of it (a few calls, such as bibliographies and
+  shell, and an `oxoffice` Python package that covers nearly all of it (a few calls, such as
   encryption, are Rust only for now) for when the shell is not enough.
 - 📄 **Word and PowerPoint as equals**, with spreadsheets on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap).
 - ✍️ **Edits that keep the file intact**: unmodelled XML is carried over verbatim, child order follows the
@@ -132,7 +132,7 @@ refused at open when one of its parts holds a control character.
 | Charts | ✅ | ⚠️ | ✅ | an existing chart's legend can change, not its data yet |
 | Hyperlinks and bookmarks | ✅ | ✅ | ✅ | |
 | Mail merge | ✅ | ✅ | ✅ | from Rust and Python |
-| Bibliography | ⚠️ | ⚠️ | ⚠️ | sources, citations and the bibliography from Rust only for now; more on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap) |
+| Bibliography | ⚠️ | ⚠️ | ⚠️ | sources, citations and the bibliography from Rust, the CLI and Python; every source kind in APA 6th, a one-author book in the 11 other styles; only APA 6th in en-US is checked against Word |
 | Conversions | ✅ | — | ✅ | from Markdown and HTML; to PDF and PDF/A, HTML, Markdown, ODT, RTF, EPUB and page images |
 | Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
 | Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |

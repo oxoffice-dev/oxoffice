@@ -18,6 +18,8 @@ mod citation_grammar;
 mod identity;
 mod locale;
 mod names;
+#[cfg(test)]
+mod oracle_tests;
 mod paragraph_properties;
 mod render;
 mod render_rtl;

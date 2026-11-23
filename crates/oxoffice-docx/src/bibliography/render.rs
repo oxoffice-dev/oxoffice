@@ -1575,12 +1575,18 @@ fn apa_sound_bibliography_paragraph(
     .filter(|value| !value.is_empty())
     .collect::<Vec<_>>()
     .join(", ");
-    let producer = apa_bibliography_names(
-        source,
-        BibliographyContributorRole::ProducerName,
-        false,
-        grammar,
-    );
+    // Word names the production company as the publisher, before any producer.
+    let company = first_source_property(source, BibliographySourceField::ProductionCompany);
+    let producer = if company.is_empty() {
+        apa_bibliography_names(
+            source,
+            BibliographyContributorRole::ProducerName,
+            false,
+            grammar,
+        )
+    } else {
+        company.to_owned()
+    };
     let mut suffix = if medium.is_empty() {
         if album.is_empty() {
             String::new()
