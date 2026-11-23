@@ -1,12 +1,12 @@
 {
   "file": "libreoffice/minutes.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
-  "resources": "4479de7d28c4393f7ac84f41a12c43bc205030c2c78e8fe4543a4d6f20a49d61",
+  "reason": "equations draw their run formatting and a math fallback face",
+  "resources": "e524e092cf516bd5b400c96dc34bdaf7f6d3dc7062c0416721bd2c7a8b366013",
   "outline_and_tags": "ee8ba2e0e1b2900839341a4febbcb4b34d68cd01c4db8561c7440995ec36d398",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
-    {"page": 1, "pixels": "e7066bd3d69a5fcf69f5778e15de06065ac43b6c6008d896101abeb8cdd0ba50", "content": "ddac3ad2cca92c984a6b7b5c4436b540013272bfe5329b5a73b59838d5aa6d29", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "c771682a73af208f7f2ece7aa9532aff366cb26627cf7980909fd81aef193b38", "content": "5d0ff920d83ee687a15b01499ef97d36922db074fb6514f11233e36b8d398dae", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "e03e2474abbba2e4887670a4f143c0c3b298a78b1fb3d6fd5da67d5a4bd41e8f", "content": "782a6fa07999182d57bbf68f31351d78794926902717b199e84559b8f227ddd6", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+    {"page": 1, "pixels": "e7066bd3d69a5fcf69f5778e15de06065ac43b6c6008d896101abeb8cdd0ba50", "content": "ae1e0c5e03e37a29baa8380d590c424bb7fd5a911417f9867f1d3fdb52769c0d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "c771682a73af208f7f2ece7aa9532aff366cb26627cf7980909fd81aef193b38", "content": "fac26e4ce59d17ae9608c30e249e0aaf5a9ce8ec1f74d0af70825d6276e91a7d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "e03e2474abbba2e4887670a4f143c0c3b298a78b1fb3d6fd5da67d5a4bd41e8f", "content": "fdbf222c5e49bcac6d5770eb393b27492409c8e1b775e89602ff2c239a99be45", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }
