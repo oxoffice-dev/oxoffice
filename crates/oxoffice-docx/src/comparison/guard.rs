@@ -598,7 +598,9 @@ pub(super) fn guard_story_owners(
     let mut output = Vec::new();
     if let Some(local) = kind.owner_local() {
         let spans = if note_id_locations {
-            NotePart::parse(owner.to_owned(), source.to_owned(), NoteKind::Footnote)?
+            let note = NoteKind::of_story(kind)
+                .ok_or_else(|| Error::Other("note guard needs a notes story".into()))?;
+            NotePart::parse(owner.to_owned(), source.to_owned(), note)?
                 .owners
                 .into_iter()
                 .filter(|record| {

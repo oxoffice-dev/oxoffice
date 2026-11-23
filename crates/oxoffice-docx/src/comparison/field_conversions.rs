@@ -204,9 +204,11 @@ pub(super) fn validate_field_conversion_role(
         } else {
             crate::revision::Resolution::Accept
         };
-        let (transported, mapped) = if NotePart::of(candidate, NoteKind::Footnote)?
-            .is_some_and(|notes| notes.name == part)
-        {
+        let mut note_part = false;
+        for kind in NoteKind::ALL {
+            note_part |= NotePart::name_of(candidate, kind)?.is_some_and(|name| name == part);
+        }
+        let (transported, mapped) = if note_part {
             let mut trace = crate::revision::NotePublication::new(part, side.revision_id, &roots);
             let mut carrier = candidate.clone_for_staging();
             carrier.resolve_revisions_with_note_publication(
