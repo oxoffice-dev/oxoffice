@@ -1,9 +1,10 @@
 //! Deterministic allocation and serialization of tagged PDF structure.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use oxoffice_layout::{
-    DocumentStructure, FormFieldId, PageFrame, PositionedElement, StructureId, StructureRole, walk,
+    DocumentStructure, FormFieldId, PageFrame, Point, PositionedElement, Rect, StructureId,
+    StructureRole, Transform, walk,
 };
 use pdf_writer::types::{StructRole, TableHeaderScope};
 use pdf_writer::{Finish, Name, Pdf, Ref, TextStr};
@@ -35,7 +36,7 @@ struct FragmentMark {
 }
 
 /// Where a link annotation sits among a page's marked content.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct LinkMark {
     /// Marked content sequences the page opens before the link.
     mcid_before: i32,
@@ -43,7 +44,32 @@ struct LinkMark {
     sequence: u32,
     /// The structure element of the marked content around the link.
     parent: Option<StructureId>,
+    /// Its rectangle in page coordinates.
+    rect: Rect,
+    url: String,
 }
+
+/// A marked content sequence that draws text: its structure element, where
+/// each of its runs starts in page coordinates, and the text it draws.
+#[derive(Debug, Clone)]
+struct TextMark {
+    occurrence: MarkOccurrence,
+    parent: StructureId,
+    origins: Vec<Point>,
+    text: String,
+}
+
+/// The pieces of one link: its annotations, by page and rank on the page,
+/// and the marked content of its text, both in reading order.
+#[derive(Debug, Default)]
+struct LinkGroup {
+    links: Vec<(usize, usize)>,
+    marks: Vec<MarkOccurrence>,
+    text: String,
+}
+
+/// Half a point: how far outside its link's rectangle a run may start.
+const LINK_SLACK: f64 = 0.5;
 
 /// A form field widget to tag: its `/Form` element and its parent tree key.
 #[derive(Debug, Clone, Copy)]
@@ -87,6 +113,14 @@ struct AnnotationKid {
     element: Ref,
 }
 
+/// A kid of a link element: the marked content of its text, or one of its
+/// annotations with its page.
+#[derive(Debug, Clone, Copy)]
+enum LinkKid {
+    Text(MarkOccurrence),
+    Annotation(Ref, usize),
+}
+
 pub(crate) struct PreparedStructure<'a> {
     structure: &'a DocumentStructure,
     pub(crate) root_ref: Ref,
@@ -97,12 +131,19 @@ pub(crate) struct PreparedStructure<'a> {
     fragments: Vec<FragmentMark>,
     /// Each link annotation by its page and its rank on the page.
     links: HashMap<(usize, usize), LinkMark>,
+    /// Each tagged link, its pieces and its text.
+    link_groups: Vec<LinkGroup>,
+    /// The group of each link annotation in a group.
+    link_group_of: HashMap<(usize, usize), usize>,
 }
 
 impl<'a> PreparedStructure<'a> {
+    /// The structure of `pages`, `annotated` holding the links that get an
+    /// annotation, by page and rank on the page.
     pub(crate) fn new(
         structure: &'a DocumentStructure,
         pages: &[std::sync::Arc<PageFrame>],
+        annotated: &HashSet<(usize, usize)>,
         alloc: &mut impl FnMut() -> Ref,
     ) -> Option<Self> {
         if !valid_structure(structure, pages) {
@@ -124,6 +165,7 @@ impl<'a> PreparedStructure<'a> {
         let mut occurrences = BTreeMap::new();
         let mut fragments = Vec::new();
         let mut links = HashMap::new();
+        let mut texts = Vec::new();
         for (page_index, page) in pages.iter().enumerate() {
             let mut marks = Marks {
                 page_index,
@@ -133,8 +175,22 @@ impl<'a> PreparedStructure<'a> {
                 occurrences: &mut occurrences,
                 fragments: &mut fragments,
                 links: &mut links,
+                texts: &mut texts,
             };
-            marks.collect(&page.elements, None);
+            marks.collect(&page.elements, None, Transform::IDENTITY);
+        }
+        let link_groups = group_links(&links, &texts, annotated);
+        let mut link_group_of = HashMap::new();
+        for (index, group) in link_groups.iter().enumerate() {
+            for link in &group.links {
+                link_group_of.insert(*link, index);
+            }
+            // The text of a link leaves its paragraph for its link element.
+            for mark in &group.marks {
+                for marks in occurrences.values_mut() {
+                    marks.retain(|own| (own.page_index, own.mcid) != (mark.page_index, mark.mcid));
+                }
+            }
         }
         Some(Self {
             structure,
@@ -145,7 +201,22 @@ impl<'a> PreparedStructure<'a> {
             occurrences,
             fragments,
             links,
+            link_groups,
+            link_group_of,
         })
+    }
+
+    /// The group of a tagged link annotation, by its page and its rank among
+    /// the page's link annotations: links of one group share an element.
+    pub(crate) fn link_group(&self, page_index: usize, ordinal: usize) -> Option<usize> {
+        self.link_group_of.get(&(page_index, ordinal)).copied()
+    }
+
+    /// The text a tagged link shows, if it shows any.
+    pub(crate) fn link_text(&self, page_index: usize, ordinal: usize) -> Option<&str> {
+        self.link_group(page_index, ordinal)
+            .map(|group| self.link_groups[group].text.as_str())
+            .filter(|text| !text.trim().is_empty())
     }
 
     pub(crate) fn node_ref(&self, id: StructureId) -> Option<Ref> {
@@ -190,23 +261,34 @@ impl<'a> PreparedStructure<'a> {
                 });
             placement.parent.insert(widget.key, parent);
         }
+        let mut placed = HashSet::new();
         for link in links {
             let mark = self.links.get(&(link.page_index, link.ordinal));
             let parent = mark
                 .and_then(|mark| mark.parent)
                 .filter(|parent| self.node_refs.contains_key(parent))
                 .unwrap_or(self.structure.root);
-            let order = mark.map_or((link.page_index, i32::MAX, u32::MAX), |mark| {
-                (link.page_index, mark.mcid_before, mark.sequence)
+            // The pieces of one link sit where its first piece does, at its
+            // text or else at its annotation.
+            let group = self.link_group(link.page_index, link.ordinal);
+            let first_text = group
+                .and_then(|group| self.link_groups[group].marks.first())
+                .map(|mark| (mark.page_index, mark.mcid, 0));
+            let order = first_text.unwrap_or_else(|| {
+                mark.map_or((link.page_index, i32::MAX, u32::MAX), |mark| {
+                    (link.page_index, mark.mcid_before, mark.sequence)
+                })
             });
-            placement
-                .kids
-                .entry(parent)
-                .or_default()
-                .push(AnnotationKid {
-                    order,
-                    element: link.element,
-                });
+            if placed.insert(link.element) {
+                placement
+                    .kids
+                    .entry(parent)
+                    .or_default()
+                    .push(AnnotationKid {
+                        order,
+                        element: link.element,
+                    });
+            }
             placement.parent.insert(link.key, parent);
         }
         placement
@@ -339,26 +421,80 @@ impl<'a> PreparedStructure<'a> {
             }
         }
 
-        let annotations = widgets
-            .iter()
-            .map(|widget| {
-                (
-                    StructRole::Form,
-                    widget.key,
-                    widget.element,
-                    widget.widget,
-                    widget.page_index,
-                )
-            })
-            .chain(links.iter().map(|link| {
-                (
-                    StructRole::Link,
-                    link.key,
-                    link.element,
-                    link.annotation,
-                    link.page_index,
-                )
-            }));
+        // A link element holds the text of its link and the annotation of
+        // each of its pieces, in reading order.
+        let mut link_elements: BTreeMap<Ref, Vec<(ReadingOrder, LinkKid)>> = BTreeMap::new();
+        let mut link_keys: BTreeMap<Ref, i32> = BTreeMap::new();
+        for link in links {
+            let kids = link_elements.entry(link.element).or_default();
+            link_keys.entry(link.element).or_insert(link.key);
+            let order = self
+                .links
+                .get(&(link.page_index, link.ordinal))
+                .map_or((link.page_index, i32::MAX, u32::MAX), |mark| {
+                    (link.page_index, mark.mcid_before, mark.sequence)
+                });
+            kids.push((order, LinkKid::Annotation(link.annotation, link.page_index)));
+            let group = self.link_group(link.page_index, link.ordinal);
+            if kids.len() == 1
+                && let Some(group) = group
+            {
+                for mark in &self.link_groups[group].marks {
+                    kids.push(((mark.page_index, mark.mcid, u32::MAX), LinkKid::Text(*mark)));
+                }
+            }
+        }
+        let mut link_mcids: Vec<(MarkOccurrence, Ref)> = Vec::new();
+        for (element_ref, kids) in &mut link_elements {
+            kids.sort_by_key(|(order, _)| *order);
+            let key = link_keys[element_ref];
+            let parent = placement
+                .parent
+                .get(&key)
+                .copied()
+                .unwrap_or(self.structure.root);
+            let parent_ref = self
+                .list_body_refs
+                .get(&parent)
+                .copied()
+                .or_else(|| self.node_ref(parent))
+                .unwrap_or(document_ref);
+            let mut element = pdf.struct_element(*element_ref);
+            element.kind(StructRole::Link);
+            element.parent(parent_ref);
+            let mut children = element.children();
+            for (_, kid) in kids.iter() {
+                match *kid {
+                    LinkKid::Text(mark) => {
+                        let Some(page_ref) = page_ids.get(mark.page_index).copied() else {
+                            continue;
+                        };
+                        children
+                            .marked_content_ref()
+                            .page(page_ref)
+                            .marked_content_id(mark.mcid);
+                        link_mcids.push((mark, *element_ref));
+                    }
+                    LinkKid::Annotation(annotation, page_index) => {
+                        if let Some(page_ref) = page_ids.get(page_index).copied() {
+                            children.object_ref().object(annotation).page(page_ref);
+                        }
+                    }
+                }
+            }
+            children.finish();
+            element.finish();
+        }
+
+        let annotations = widgets.iter().map(|widget| {
+            (
+                StructRole::Form,
+                widget.key,
+                widget.element,
+                widget.widget,
+                widget.page_index,
+            )
+        });
         for (role, key, element_ref, annotation, page_index) in annotations {
             let parent = placement
                 .parent
@@ -391,6 +527,11 @@ impl<'a> PreparedStructure<'a> {
                     if let Some(reference) = self.node_ref(*id) {
                         by_mcid.push((mark.mcid, reference));
                     }
+                }
+            }
+            for (mark, reference) in &link_mcids {
+                if mark.page_index == page_index {
+                    by_mcid.push((mark.mcid, *reference));
                 }
             }
             by_mcid.sort_unstable_by_key(|(mcid, _)| *mcid);
@@ -565,32 +706,58 @@ struct Marks<'m> {
     occurrences: &'m mut BTreeMap<StructureId, Vec<MarkOccurrence>>,
     fragments: &'m mut Vec<FragmentMark>,
     links: &'m mut HashMap<(usize, usize), LinkMark>,
+    texts: &'m mut Vec<TextMark>,
 }
 
 impl Marks<'_> {
-    fn collect(&mut self, elements: &[PositionedElement], parent: Option<StructureId>) {
+    fn collect(
+        &mut self,
+        elements: &[PositionedElement],
+        parent: Option<StructureId>,
+        transform: Transform,
+    ) {
         for element in elements {
             match element {
                 PositionedElement::MarkedContent {
                     structure: Some(id),
                     children,
                 } if has_content_stream_output(children) => {
-                    self.occurrences
-                        .entry(*id)
-                        .or_default()
-                        .push(MarkOccurrence {
-                            page_index: self.page_index,
-                            mcid: self.next_mcid,
-                        });
+                    let occurrence = MarkOccurrence {
+                        page_index: self.page_index,
+                        mcid: self.next_mcid,
+                    };
+                    self.occurrences.entry(*id).or_default().push(occurrence);
                     self.next_mcid += 1;
-                    self.collect(children, Some(*id));
+                    let mut text = TextMark {
+                        occurrence,
+                        parent: *id,
+                        origins: Vec::new(),
+                        text: String::new(),
+                    };
+                    walk(children, &mut |element, inner| {
+                        let (origin, run) = match element {
+                            PositionedElement::Text(run) => (run.origin, run.text.as_str()),
+                            PositionedElement::MultilingualText(run) => {
+                                (run.origin, run.logical_text.as_str())
+                            }
+                            _ => return,
+                        };
+                        if !run.is_empty() {
+                            text.origins.push(inner.then(transform).apply(origin));
+                            text.text.push_str(run);
+                        }
+                    });
+                    if !text.origins.is_empty() {
+                        self.texts.push(text);
+                    }
+                    self.collect(children, Some(*id), transform);
                 }
                 PositionedElement::MarkedContent {
                     structure,
                     children,
-                } => self.collect(children, structure.or(parent)),
-                PositionedElement::Group(oxoffice_layout::GroupElement { children, .. }) => {
-                    self.collect(children, parent);
+                } => self.collect(children, structure.or(parent), transform),
+                PositionedElement::Group(group) => {
+                    self.collect(&group.children, parent, group.transform.then(transform));
                 }
                 // Its children are drawn without marks, so they number nothing
                 // but the links among them.
@@ -603,31 +770,141 @@ impl Marks<'_> {
                         parent,
                     });
                     self.next_fragment += 1;
-                    walk(&fragment.children, &mut |element, _| {
-                        if matches!(element, PositionedElement::LinkAnnotation { .. }) {
-                            self.link(parent);
+                    walk(&fragment.children, &mut |element, inner| {
+                        if let PositionedElement::LinkAnnotation { rect, url } = element {
+                            self.link(
+                                parent,
+                                inner.then(transform).transform_rect_bbox(*rect),
+                                url,
+                            );
                         }
                     });
                 }
-                PositionedElement::LinkAnnotation { .. } => self.link(parent),
+                PositionedElement::LinkAnnotation { rect, url } => {
+                    self.link(parent, transform.transform_rect_bbox(*rect), url);
+                }
                 _ => {}
             }
         }
     }
 
     /// The next link annotation of the page, in the order `walk` meets it.
-    fn link(&mut self, parent: Option<StructureId>) {
+    fn link(&mut self, parent: Option<StructureId>, rect: Rect, url: &str) {
         self.links.insert(
             (self.page_index, self.next_link),
             LinkMark {
                 mcid_before: self.next_mcid,
                 sequence: self.next_fragment,
                 parent,
+                rect,
+                url: url.to_owned(),
             },
         );
         self.next_link += 1;
         self.next_fragment += 1;
     }
+}
+
+/// The tagged links, each with its pieces and its text. A link's text is
+/// each marked content sequence of the link's parent, on its page, whose runs
+/// all start inside its rectangle. Consecutive annotations with one parent and
+/// one target, with no other text of that parent between their texts, are
+/// one link. Only links that get an annotation are grouped.
+fn group_links(
+    links: &HashMap<(usize, usize), LinkMark>,
+    texts: &[TextMark],
+    annotated: &HashSet<(usize, usize)>,
+) -> Vec<LinkGroup> {
+    let mut order: Vec<&(usize, usize)> =
+        links.keys().filter(|key| annotated.contains(key)).collect();
+    order.sort_unstable();
+    let inside = |rect: &Rect, point: &Point| {
+        point.x >= rect.x - LINK_SLACK
+            && point.x <= rect.x + rect.width + LINK_SLACK
+            && point.y >= rect.y - LINK_SLACK
+            && point.y <= rect.y + rect.height + LINK_SLACK
+    };
+    // Each text sequence goes to the first link it lies in.
+    let mut owner: HashMap<usize, (usize, usize)> = HashMap::new();
+    for key in &order {
+        let link = &links[key];
+        for (index, text) in texts.iter().enumerate() {
+            if text.occurrence.page_index == key.0
+                && Some(text.parent) == link.parent
+                && !owner.contains_key(&index)
+                && text.origins.iter().all(|origin| inside(&link.rect, origin))
+            {
+                owner.insert(index, **key);
+            }
+        }
+    }
+    let position = |mark: &MarkOccurrence| (mark.page_index, mark.mcid);
+    let own_texts = |key: &(usize, usize)| -> Vec<usize> {
+        let mut own: Vec<usize> = owner
+            .iter()
+            .filter(|(_, link)| *link == key)
+            .map(|(index, _)| *index)
+            .collect();
+        own.sort_unstable_by_key(|index| position(&texts[*index].occurrence));
+        own
+    };
+    // Where a link starts and ends among the page's marked content: its
+    // text, or else the place of its annotation.
+    let span = |key: &(usize, usize), own: &[usize]| {
+        let link = &links[key];
+        match (own.first(), own.last()) {
+            (Some(first), Some(last)) => (
+                position(&texts[*first].occurrence),
+                position(&texts[*last].occurrence),
+            ),
+            _ => ((key.0, link.mcid_before), (key.0, link.mcid_before - 1)),
+        }
+    };
+    let mut groups: Vec<LinkGroup> = Vec::new();
+    let mut texts_of: Vec<Vec<usize>> = Vec::new();
+    let mut last: Option<((usize, usize), (usize, i32))> = None;
+    for key in order {
+        let link = &links[key];
+        let own = own_texts(key);
+        let (start, end) = span(key, &own);
+        let joins = last.is_some_and(|(previous, previous_end)| {
+            let before = &links[&previous];
+            before.parent == link.parent
+                && before.url == link.url
+                && !texts.iter().enumerate().any(|(index, text)| {
+                    Some(text.parent) == link.parent
+                        && !owner.contains_key(&index)
+                        && previous_end < position(&text.occurrence)
+                        && position(&text.occurrence) < start
+                })
+        });
+        if !joins {
+            groups.push(LinkGroup::default());
+            texts_of.push(Vec::new());
+        }
+        let group = groups.last_mut().expect("a group");
+        group.links.push(*key);
+        texts_of.last_mut().expect("a group").extend(own);
+        last = Some((*key, end));
+    }
+    for (group, own) in groups.iter_mut().zip(texts_of) {
+        let mut previous: Option<&TextMark> = None;
+        for index in own {
+            let text = &texts[index];
+            group.marks.push(text.occurrence);
+            // Two lines of one link read with a space between them.
+            if let Some(previous) = previous
+                && (previous.origins[0].y - text.origins[0].y).abs() > LINK_SLACK
+                && !previous.text.ends_with(char::is_whitespace)
+                && !text.text.starts_with(char::is_whitespace)
+            {
+                group.text.push(' ');
+            }
+            group.text.push_str(&text.text);
+            previous = Some(text);
+        }
+    }
+    groups
 }
 
 pub(crate) fn has_content_stream_output(elements: &[PositionedElement]) -> bool {
