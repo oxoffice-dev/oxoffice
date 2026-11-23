@@ -1425,7 +1425,13 @@ impl CT_R {
                     let action = plan.action;
                     // A child kept raw leaves the empty mark pending: only the
                     // next modelled child says whether it holds the mark.
-                    if !action.retains_raw(false)
+                    let modelled = !action.retains_raw(false)
+                        && action != RunChildAction::Properties
+                        && !(matches!(
+                            action,
+                            RunChildAction::FootnoteReference | RunChildAction::EndnoteReference
+                        ) && started_reference_has_payload(*reader.get_ref())?);
+                    if modelled
                         && let Some((preserve, encoded)) = empty_mark.take()
                         && action == RunChildAction::DeletedText
                     {
@@ -2877,6 +2883,7 @@ mod custom_mark_tests {
             "<w:lastRenderedPageBreak/>",
             "<w:lastRenderedPageBreak></w:lastRenderedPageBreak>",
             r#"<w:fldChar w:fldCharType="begin"/>"#,
+            r#"<w:footnoteReference w:id="3"><!-- c --></w:footnoteReference>"#,
         ] {
             let source = format!("{reference}<w:t></w:t>{between}{symbol}");
             let run = read(&source);

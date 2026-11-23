@@ -43,6 +43,12 @@ said which item held the mark:
   holds anything stays verbatim, in the run reader and the source capture
   alike.
 
+Known and left: the run reader counts a dropped empty `w:t` mark as a child
+of its own, which the model cannot tell from a reference with no `w:t`, so a
+raw child after a later reference of the same run may be placed one slot off
+(the writer already shifts raws after a text mark). It takes two marked
+references in one run with raw children between.
+
 Not done: a hidden raw copy of the mark child (the option recorded on #164):
 it would take the symbol out of the typed content that layout draws and that
 labels the note.
