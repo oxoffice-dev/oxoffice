@@ -408,12 +408,15 @@ pub(super) fn final_paragraph<'a>(
     output.push_str(&final_paragraph_properties_xml(
         &own, &accepted, &rejected, metadata,
     )?);
-    let (children, published) = paragraph_children_xml(
+    let (mut children, mut published) = paragraph_children_xml(
         paragraph,
         kind == "del",
         move_id.is_none() && !carried,
         metadata,
     )?;
+    if move_id.is_none() {
+        place_shared_bookmarks(&mut children, &mut published, kind == "del", metadata)?;
+    }
     output.push_str(&crate::revision::tracked_paragraph_children(
         &children,
         kind == "del",

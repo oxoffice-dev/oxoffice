@@ -1,6 +1,6 @@
 //! Scans of the layout input: page references, sequence and section fields, note labels, bookmark text.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use oxoffice_docx_oxml::text::{
     bookmark_name_key, bookmarks_depending_on, field_ref_targets, same_bookmark_name,
@@ -9,13 +9,78 @@ use oxoffice_docx_oxml::text::{
 use super::*;
 
 pub(super) fn page_ref_id(input: &LayoutInput, name: &str) -> Option<usize> {
-    page_reference_names(input)
-        .iter()
-        .position(|candidate| same_bookmark_name(candidate, name))
+    bookmark_names(input)
+        .page_target_ids
+        .get(&bookmark_name_key(name))
+        .copied()
 }
 
+/// The spelling of the bookmark a name refers to, as its start writes it:
+/// Word compares bookmark names without case, links match them exactly.
+pub(super) fn bookmark_spelling(input: &LayoutInput, name: &str) -> Option<String> {
+    bookmark_names(input)
+        .spellings
+        .get(&bookmark_name_key(name))
+        .cloned()
+}
+
+/// The bookmark names of the input, read once while its body and revision
+/// view stay the same.
+fn bookmark_names(input: &LayoutInput) -> std::borrow::Cow<'_, crate::input::BookmarkNames> {
+    let owner = (
+        input.document.body.content.as_ptr().addr(),
+        input.revision_view,
+    );
+    let read = || {
+        let page_targets = read_page_reference_names(input);
+        let page_target_ids = page_targets
+            .iter()
+            .enumerate()
+            .map(|(id, name)| (bookmark_name_key(name), id))
+            .collect();
+        crate::input::BookmarkNames {
+            page_targets,
+            page_target_ids,
+            spellings: read_bookmark_spellings(input),
+        }
+    };
+    let (cached_owner, cached) = input.bookmark_names.0.get_or_init(|| (owner, read()));
+    if *cached_owner == owner {
+        std::borrow::Cow::Borrowed(cached)
+    } else {
+        std::borrow::Cow::Owned(read())
+    }
+}
+
+/// The first spelling of each bookmark that starts in the stories of the
+/// input, by its folded name.
+fn read_bookmark_spellings(input: &LayoutInput) -> HashMap<String, String> {
+    let block_bookmarks = input.block_bookmarks();
+    let mut spellings = HashMap::new();
+    for paragraph in input_story_paragraphs(input).iter().flatten() {
+        let (before, after) = block_bookmarks.markers(paragraph);
+        for marker in paragraph.bookmark_markers.iter().chain(before).chain(after) {
+            if marker.is_start()
+                && let Some(name) = marker.name()
+            {
+                spellings
+                    .entry(bookmark_name_key(name))
+                    .or_insert_with(|| name.to_owned());
+            }
+        }
+    }
+    spellings
+}
+
+/// The bookmarks a page target marker records, by target id: those of
+/// `PAGEREF` fields first, then those an internal link goes to.
 pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
+    bookmark_names(input).page_targets.clone()
+}
+
+fn read_page_reference_names(input: &LayoutInput) -> Vec<String> {
     let mut names = Vec::<String>::new();
+    let mut seen = HashSet::new();
     visit_input_paragraphs(input, &mut |paragraph| {
         for projected in project_paragraph_runs(paragraph, input.revision_view) {
             for content in &projected.run.content {
@@ -27,9 +92,7 @@ pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
                     let instruction = field.effective_instruction();
                     if instruction.name == "PAGEREF"
                         && let Some(bookmark) = field_text_argument(&instruction, 0)
-                        && !names
-                            .iter()
-                            .any(|candidate| same_bookmark_name(candidate, bookmark))
+                        && seen.insert(bookmark_name_key(bookmark))
                     {
                         names.push(bookmark.to_owned());
                     }
@@ -38,7 +101,72 @@ pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
             }
         }
     });
+    // Then the bookmarks an internal link goes to, whose start a marker
+    // records so the link lands on the line where the bookmark starts.
+    let mut add = |name: &str| {
+        if !name.is_empty() && seen.insert(bookmark_name_key(name)) {
+            names.push(name.to_owned());
+        }
+    };
+    visit_input_paragraphs(input, &mut |paragraph| {
+        for hyperlink in &paragraph.hyperlinks {
+            if hyperlink.rel_id.is_none()
+                && let Some(anchor) = hyperlink.anchor.as_deref()
+            {
+                add(anchor);
+            }
+        }
+        for projected in project_paragraph_runs(paragraph, input.revision_view) {
+            for content in &projected.run.content {
+                let RunContent::Field(field) = content else {
+                    continue;
+                };
+                let mut fields = vec![field];
+                while let Some(field) = fields.pop() {
+                    if let Some(name) = field_link(&field.effective_instruction())
+                        .as_deref()
+                        .and_then(|link| link.strip_prefix('#'))
+                    {
+                        add(name);
+                    }
+                    fields.extend(field.all_nested_fields_in_source_order().into_iter().rev());
+                }
+            }
+        }
+    });
     names
+}
+
+/// Where a field links to: `HYPERLINK` to its target, its `\l` anchor
+/// appended (`#anchor` alone for an anchor only), and `REF`, `PAGEREF` or
+/// `NOTEREF` with `\h` to `#` and their bookmark.
+pub(crate) fn field_link(instruction: &FieldInstruction) -> Option<String> {
+    match instruction.name.as_str() {
+        "HYPERLINK" => {
+            let anchor = instruction
+                .switches
+                .iter()
+                .find(|field_switch| field_switch.name == "l")
+                .and_then(|field_switch| match &field_switch.argument {
+                    Some(FieldArgument::Text(anchor)) => Some(anchor.as_str()),
+                    _ => None,
+                })
+                .filter(|anchor| !anchor.is_empty());
+            let target = field_text_argument(instruction, 0).filter(|target| !target.is_empty());
+            match (target, anchor) {
+                (Some(target), Some(anchor)) => Some(format!("{target}#{anchor}")),
+                (Some(target), None) => Some(target.to_owned()),
+                (None, Some(anchor)) => Some(format!("#{anchor}")),
+                (None, None) => None,
+            }
+        }
+        "REF" | "PAGEREF" | "NOTEREF" if field_has_switch(instruction, "h") => {
+            field_text_argument(instruction, 0)
+                .filter(|bookmark| !bookmark.is_empty())
+                .map(|bookmark| format!("#{bookmark}"))
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn document_has_sequence_fields(input: &LayoutInput) -> bool {
