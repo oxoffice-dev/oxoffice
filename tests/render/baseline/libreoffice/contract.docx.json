@@ -1,8 +1,8 @@
 {
   "file": "libreoffice/contract.docx",
-  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "53f6f9736438fa17c482a33244072b4defdda0613b9b9ca4143fbfca3dac9ff5",
-  "outline_and_tags": "c9c433183c945c72439fcb2dd782e026db47b5b8f720e74fdca782d979df0e86",
+  "outline_and_tags": "8b372c9f2ae8648e1a81d67b876a85b88aeb5797c30e875f03587f1b4e0dcddc",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "43f017633c504a3db90e7509a7d043708b0ed3b09b8318285c656f7a3a0f9bbb", "content": "f02f488ac1590cd3ae15a23427e2ad4304bd969bd1b2ad65dd239a4543478e5d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},

@@ -1,8 +1,8 @@
 {
   "file": "authored/thesis.docx",
-  "reason": "merge of main: caption numbers drawn after their labels (#158) over the run-boundary line breaks (#522)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "0d76bf8f2eba7d6d48453b8d2158e88004d76bbbaba37a2b6a3e69641ad84197",
-  "outline_and_tags": "799f9bdde7f86af18af67d1c08cc8b34dbbfed138f696291bd95956772816abe",
+  "outline_and_tags": "9acda4fc8fb64c26b4ec5ca0a62a4acae9551fa0dc555076f4583eaec4c33319",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "43b8c3dd24641ca5145bf9c5a9efea09d36bfa5e08a4905d8ab8743149359028", "content": "1b46657a2183eb3ae749a2919f61493a2528e54011486fdf352e05ab91455d02", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
@@ -29,6 +29,6 @@
     {"page": 22, "pixels": "45aeb0736cd18b84113fb14e3492e539546613cb8eca68122dd209564f9d0c7b", "content": "6be3704e91b506dd10cc76a96e917768167abf78fafe3bd3f44af1d8ded72a02", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "40380d40fd4ae3d45b0a0312e85ad5dc4d179f2b3f5cc978f5b68429316913bb"},
     {"page": 23, "pixels": "a876e97fc3688a154bc68bcb44c5174ade75fda9e4260f52116a4bee98996df2", "content": "8a07e7a142d9de6685d65ac3188a48afa68345f81eba037e99ea5cff144e0312", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8bf50cd4345201d3616074616a8010245391701f83ddc9f580fb9b0d192ea0a0"},
     {"page": 24, "pixels": "dc0da321395100ff484ed5eda1d153f6a1480ea11803df1605545bd8d6493202", "content": "d647eebc5353a1bafff207f60a93d2d11ecb4ebc657ef91296422faef1e04072", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "4aaf1717e459ebc7a815dbceb3a493f69e341faa96274032e508f38d41b7fc70"},
-    {"page": 25, "pixels": "37895ebe439e8ca3b2168d63ded86fbf77e7fee178a43c13a0f3bed0c2f17c62", "content": "855ff6078b7de95c9291c0846acba34b722f0edb38d56e0022e514e532555a1a", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "499ebf632503a4d71d023de7550d556a9b2a962e98618b88a9205fd52830fdaa"}
+    {"page": 25, "pixels": "f659c98597f6d39999b3544698e9e20d9304a6c8cca1db62783d1ab8f48d76af", "content": "e966ce6e8cdb420b11e475a9bb777edcaffa9b6c2a2fde1d0c229641e6c949c2", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "499ebf632503a4d71d023de7550d556a9b2a962e98618b88a9205fd52830fdaa"}
   ]
 }

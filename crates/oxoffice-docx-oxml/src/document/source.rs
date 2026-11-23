@@ -3880,7 +3880,15 @@ fn qualify_constructor_failures(
                                 && (crate::text::comment_reference_has_payload_attributes(
                                     start, &aliases,
                                 ) || !empty);
-                            parent.known &= simple && !comment_raw;
+                            // A started note reference reads as the empty one
+                            // only once its content is known to be empty.
+                            let started_note = !empty
+                                && matches!(
+                                    action,
+                                    crate::text::RunChildAction::FootnoteReference
+                                        | crate::text::RunChildAction::EndnoteReference
+                                );
+                            parent.known &= simple && !comment_raw && !started_note;
                         }
                     }
                 }
@@ -7923,8 +7931,20 @@ fn plan_capture_with_context(
                 } else {
                     false
                 };
-                let modeled =
-                    direct_run_child && !action.retains_raw(special_typed) && !comment_raw;
+                // A started note reference that holds anything stays raw, as
+                // the run reader keeps it.
+                let note_raw = direct_run_child
+                    && !empty
+                    && matches!(
+                        action,
+                        crate::text::RunChildAction::FootnoteReference
+                            | crate::text::RunChildAction::EndnoteReference
+                    )
+                    && crate::text::started_reference_has_payload(*reader.get_ref())?;
+                let modeled = direct_run_child
+                    && !action.retains_raw(special_typed)
+                    && !comment_raw
+                    && !note_raw;
                 let mut class = classify_original_capture(
                     empty,
                     word,
