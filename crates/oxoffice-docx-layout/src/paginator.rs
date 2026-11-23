@@ -6206,8 +6206,15 @@ fn render_paragraph_lines(
     }
     let mut structural_count = 0usize;
     // A drawing this paragraph must clear rather than flow beside pushes its
-    // first line down. `content_height` already counts the same offset.
-    let mut y = start_y + para.content_offset_top;
+    // first line down. `content_height` already counts the same offset. A
+    // continuation starts at the top of its page or column: the drawing
+    // stayed with the first fragment.
+    let mut y = start_y
+        + if fragment.0 {
+            para.content_offset_top
+        } else {
+            0.0
+        };
     let (top_padding, bottom_padding) = para.borders.as_ref().map_or((0.0, 0.0), |borders| {
         (
             if fragment.0 {

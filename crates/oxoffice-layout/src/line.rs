@@ -1546,6 +1546,7 @@ fn build_breakable_segments(
     let mut segments = Vec::new();
     let mut current_group: Vec<InlineItem> = Vec::new();
     let mut current_origins = Vec::new();
+    let text_breaks = plain_text_breaks(items);
 
     for (input_slot, item) in items.iter().enumerate() {
         match item {
@@ -1587,8 +1588,9 @@ fn build_breakable_segments(
                 segments.push(BreakableSegment::Items(vec![item.clone()], Vec::new()));
             }
             InlineItem::Text(_) | InlineItem::HyphenatedText { .. } => {
-                append_legacy_breakable_item(
+                append_plain_text_item(
                     item,
+                    text_breaks[input_slot].as_ref(),
                     fm,
                     &mut segments,
                     &mut current_group,
@@ -1597,8 +1599,9 @@ fn build_breakable_segments(
             }
             InlineItem::MultilingualText(segment) => {
                 if segment.uses_legacy_shaping() {
-                    append_legacy_breakable_item(
+                    append_plain_text_item(
                         item,
+                        text_breaks[input_slot].as_ref(),
                         fm,
                         &mut segments,
                         &mut current_group,
@@ -1656,36 +1659,111 @@ fn build_breakable_segments(
     Ok(segments)
 }
 
-/// Preserve the former plain tokenization while a legacy carrier retains
-/// its explicit shaping and hyphenation context.
-fn append_legacy_breakable_item(
+/// Where a plain text item may break, read from the text of the stretch of
+/// plain text items it belongs to.
+///
+/// A stretch runs up to the next tab, forced break, picture or rich span. A
+/// producer splits its text into items wherever the formatting changes, and
+/// Word splits a word's runs at each editing session, so the end of an item
+/// is a break only when the text on both sides allows one.
+struct PlainTextBreaks {
+    /// Byte offsets inside the item after which a line may break, ascending.
+    inner: Vec<usize>,
+    /// The item starts inside a word begun by the item before it.
+    glued_before: bool,
+    /// A line may break after the item.
+    break_after: bool,
+}
+
+fn plain_text(item: &InlineItem) -> Option<&TextSegment> {
+    match item {
+        InlineItem::Text(base) | InlineItem::HyphenatedText { segment: base, .. } => Some(base),
+        InlineItem::MultilingualText(span) if span.uses_legacy_shaping() => Some(span.base()),
+        _ => None,
+    }
+}
+
+/// An item that adds no text a break is decided on: a numbering marker, an
+/// empty text, or the zero-width word joiner a producer places to record a
+/// field. It joins the group around it.
+fn transparent_to_breaks(item: &InlineItem) -> bool {
+    matches!(item, InlineItem::Marker(_))
+        || plain_text(item).is_some_and(|segment| {
+            segment.text.is_empty()
+                || (segment.width == 0.0
+                    && segment.field_kind.is_some()
+                    && segment.text.chars().all(|c| c == '\u{2060}'))
+        })
+}
+
+/// The breaks of every plain text item, `None` for the others and for the
+/// items transparent to breaks.
+fn plain_text_breaks(items: &[InlineItem]) -> Vec<Option<PlainTextBreaks>> {
+    use unicode_linebreak::linebreaks;
+
+    let mut breaks: Vec<Option<PlainTextBreaks>> = items.iter().map(|_| None).collect();
+    let mut index = 0;
+    while index < items.len() {
+        let mut text = String::new();
+        let mut members = Vec::new();
+        while let Some(item) = items.get(index) {
+            if transparent_to_breaks(item) {
+                index += 1;
+                continue;
+            }
+            let Some(segment) = plain_text(item) else {
+                break;
+            };
+            let start = text.len();
+            text.push_str(&segment.text);
+            members.push((index, start, text.len()));
+            index += 1;
+        }
+        if members.is_empty() {
+            index += 1;
+            continue;
+        }
+        let opportunities = linebreaks(&text)
+            .map(|(offset, _)| offset)
+            .filter(|offset| *offset > 0 && *offset < text.len())
+            .collect::<Vec<_>>();
+        let opportunity = |offset: usize| opportunities.binary_search(&offset).is_ok();
+        // Each item reads its own slice of the ascending opportunities, so a
+        // stretch costs its length, not its items times its words.
+        for (item, start, end) in members {
+            let first = opportunities.partition_point(|offset| *offset <= start);
+            let last = opportunities.partition_point(|offset| *offset < end);
+            breaks[item] = Some(PlainTextBreaks {
+                inner: opportunities[first..last]
+                    .iter()
+                    .map(|offset| offset - start)
+                    .collect(),
+                glued_before: start > 0 && !opportunity(start),
+                break_after: end == text.len() || opportunity(end),
+            });
+        }
+    }
+    breaks
+}
+
+/// Split one plain text item at its break opportunities, keeping its
+/// explicit shaping and hyphenation context. An item without breaks (one
+/// transparent to them) joins the current group whole.
+fn append_plain_text_item(
     item: &InlineItem,
+    breaks: Option<&PlainTextBreaks>,
     fm: &FontManager,
     segments: &mut Vec<BreakableSegment>,
     current_group: &mut Vec<InlineItem>,
     current_origins: &mut Vec<(usize, usize)>,
 ) -> Result<()> {
-    let seg = match item {
-        InlineItem::Text(base) | InlineItem::HyphenatedText { segment: base, .. } => base,
-        InlineItem::MultilingualText(span) if span.uses_legacy_shaping() => span.base(),
-        _ => {
-            return Err(LayoutError::Layout(
-                "plain tokenization lacks a legacy producer".into(),
-            ));
-        }
-    };
-    if seg.text.is_empty() {
-        if !current_group.is_empty() {
-            segments.push(BreakableSegment::Items(
-                std::mem::take(current_group),
-                std::mem::take(current_origins),
-            ));
-        }
-        segments.push(BreakableSegment::Items(vec![item.clone()], Vec::new()));
+    let seg = plain_text(item)
+        .ok_or_else(|| LayoutError::Layout("plain tokenization lacks a legacy producer".into()))?;
+    let Some(text_breaks) = breaks else {
+        current_group.push(item.clone());
         return Ok(());
-    }
-    // Use unicode-linebreak to find break opportunities within text
-    let breaks = split_text_at_break_opportunities(seg);
+    };
+    let breaks = text_break_chunks(seg.text.len(), text_breaks);
     let spacing = if breaks.len() == 1 && breaks[0].start == 0 && breaks[0].end == seg.text.len() {
         0.0
     } else if let InlineItem::MultilingualText(span) = item {
@@ -1705,8 +1783,13 @@ fn append_legacy_breakable_item(
             continue;
         }
 
+        // Text glued to the item before it continues that item's word.
+        let glued_before = tb.start == 0 && text_breaks.glued_before;
         // If this chunk starts with whitespace, treat as a break opportunity
-        if !current_group.is_empty() && chunk.starts_with(|c: char| c.is_whitespace()) {
+        if !glued_before
+            && !current_group.is_empty()
+            && chunk.starts_with(|c: char| c.is_whitespace())
+        {
             segments.push(BreakableSegment::Items(
                 std::mem::take(current_group),
                 std::mem::take(current_origins),
@@ -1724,9 +1807,15 @@ fn append_legacy_breakable_item(
             InlineItem::MultilingualText(span) => span.hyphenation_language(),
             _ => None,
         };
-        let break_points = language.map_or_else(Vec::new, |language| {
-            hyphenation_opportunities(language, chunk)
-        });
+        // A chunk that is only part of a word is not hyphenated on its own: a
+        // hyphenated segment stands alone, which would open a break where
+        // the word's items meet.
+        let break_points = match language {
+            Some(language) if !glued_before && tb.is_break => {
+                hyphenation_opportunities(language, chunk)
+            }
+            _ => Vec::new(),
+        };
         if break_points.is_empty() {
             current_group.push(sub_item);
         } else {
@@ -1749,14 +1838,7 @@ fn append_legacy_breakable_item(
             ));
         }
     }
-
-    // Flush any remaining
-    if !current_group.is_empty() {
-        segments.push(BreakableSegment::Items(
-            std::mem::take(current_group),
-            std::mem::take(current_origins),
-        ));
-    }
+    // Without a break after it, the group stays open for the next item.
     Ok(())
 }
 
@@ -2018,45 +2100,20 @@ struct TextBreakInfo {
     is_break: bool,
 }
 
-fn split_text_at_break_opportunities(seg: &TextSegment) -> Vec<TextBreakInfo> {
-    use unicode_linebreak::{BreakOpportunity, linebreaks};
-
-    let text = &seg.text;
-    if text.is_empty() {
-        return vec![];
-    }
-
-    let mut breaks = Vec::new();
-    let mut last_start = 0;
-
-    for (byte_pos, opportunity) in linebreaks(text) {
-        if byte_pos == 0 {
-            continue;
-        }
-
-        let is_break = matches!(
-            opportunity,
-            BreakOpportunity::Allowed | BreakOpportunity::Mandatory
-        );
-
-        breaks.push(TextBreakInfo {
-            start: last_start,
-            end: byte_pos,
-            is_break,
+/// The chunks of a text of `len` bytes, cut at its inner breaks; the last
+/// one breaks only when the text after the item allows it.
+fn text_break_chunks(len: usize, breaks: &PlainTextBreaks) -> Vec<TextBreakInfo> {
+    let mut chunks = Vec::with_capacity(breaks.inner.len() + 1);
+    let mut start = 0;
+    for end in breaks.inner.iter().copied().chain(std::iter::once(len)) {
+        chunks.push(TextBreakInfo {
+            start,
+            end,
+            is_break: end < len || breaks.break_after,
         });
-        last_start = byte_pos;
+        start = end;
     }
-
-    // If unicode-linebreak didn't produce any breaks, treat as one chunk
-    if breaks.is_empty() {
-        breaks.push(TextBreakInfo {
-            start: 0,
-            end: text.len(),
-            is_break: true,
-        });
-    }
-
-    breaks
+    chunks
 }
 
 /// Width of the spaces that end a group of text items.
