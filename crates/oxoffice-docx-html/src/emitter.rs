@@ -321,9 +321,8 @@ fn direction_attribute(para: &CT_P, styles: &CT_Styles) -> &'static str {
 }
 
 /// Emit the inner content of a paragraph (the runs of its accepted view and
-/// hyperlinks).
-/// Write a paragraph's runs. `carried` are the bookmarks that the
-/// paragraphs joined to it start (see `Block::Paragraph`).
+/// hyperlinks). `carried` are the bookmarks that the paragraphs joined to it
+/// start (see `Block::Paragraph`).
 fn emit_paragraph_content(
     out: &mut String,
     para: &CT_P,

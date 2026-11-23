@@ -2119,12 +2119,10 @@ fn append_tracked_cell_runs<'a>(cell: &'a CT_Tc, output: &mut Vec<&'a CT_R>) {
     }
 }
 
-// Markdown's accepted projection carries physical scope boundaries separately
-// from the typed runs. Default accepted-view readers keep their existing walk.
-// Returns the view's equations, placed on the same runs.
-/// Append the accepted view of `paragraph`, return its equations and push
-/// the bookmarks that start in it on `bookmarks`, shifted to their place in
-/// `runs`.
+/// Append the accepted view of `paragraph` with its simple-field and
+/// wrapper boundaries (Markdown keeps them apart from the typed runs),
+/// return its equations and push the bookmarks that start in it on
+/// `bookmarks`, all shifted to their place in `runs`.
 fn append_accepted_inline_paragraph(
     paragraph: &CT_P,
     runs: &mut Vec<CT_R>,
@@ -2231,7 +2229,7 @@ fn append_accepted_revision_runs<'a>(revision: &'a CT_Revision, output: &mut Vec
     }
 }
 
-/// The equations of a nested accepted view, at `offset` in the outer one.
+/// The bookmarks of a nested accepted view, at `offset` in the outer one.
 fn shifted_bookmarks(
     bookmarks: Vec<(usize, String)>,
     offset: usize,
@@ -2257,6 +2255,17 @@ fn control_bookmark_starts(control: &CT_Sdt, offset: usize) -> Vec<(usize, Strin
         .collect()
 }
 
+/// The first start of each bookmark name. The paragraph's markers also list
+/// those of its content controls and tracked insertions, at the owner's
+/// place: the owner, read before them, gives the start its exact place.
+fn first_of_each_name(starts: Vec<(usize, String)>) -> Vec<(usize, String)> {
+    let mut seen = HashSet::new();
+    starts
+        .into_iter()
+        .filter(|(_, name)| seen.insert(name.clone()))
+        .collect()
+}
+
 /// A paragraph's accepted view, as [`CT_P::accepted_view_with_bookmarks`]
 /// gives it.
 #[doc(hidden)]
@@ -2276,6 +2285,7 @@ enum ViewStep<'a> {
     BookmarkStart(&'a str),
 }
 
+/// The equations of a nested accepted view, at `offset` in the outer one.
 fn shifted_equations(
     view: &CT_P,
     offset: usize,
@@ -2808,7 +2818,7 @@ impl CT_P {
                 ..CT_P::new()
             }),
             field_boundaries: inline_boundaries,
-            bookmark_starts,
+            bookmark_starts: first_of_each_name(bookmark_starts),
         }
     }
 

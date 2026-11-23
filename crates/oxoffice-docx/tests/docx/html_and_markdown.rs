@@ -1170,25 +1170,43 @@ fn a_link_anchor_lands_at_its_bookmark_after_wrappers_and_across_a_deleted_mark(
         r#"<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Ada" w:date="2020-01-01T00:00:00Z"/></w:rPr></w:pPr>"#,
         r#"<w:bookmarkStart w:id="2" w:name="first"/><w:r><w:t xml:space="preserve">FIRST </w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
         r#"<w:p><w:r><w:t xml:space="preserve">Then </w:t></w:r><w:bookmarkStart w:id="3" w:name="second"/><w:r><w:t>SECOND</w:t></w:r><w:bookmarkEnd w:id="3"/></w:p>"#,
+        // A bookmark inside an inline content control and inside a tracked
+        // insertion.
+        r#"<w:p><w:hyperlink w:anchor="control"><w:r><w:t>control</w:t></w:r></w:hyperlink>"#,
+        r#"<w:hyperlink w:anchor="inserted"><w:r><w:t>inserted</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="t"/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">G </w:t></w:r>"#,
+        r#"<w:bookmarkStart w:id="5" w:name="control"/><w:r><w:t>CONTROL</w:t></w:r><w:bookmarkEnd w:id="5"/></w:sdtContent></w:sdt>"#,
+        r#"<w:r><w:t xml:space="preserve"> H </w:t></w:r>"#,
+        r#"<w:ins w:id="6" w:author="Ada" w:date="2020-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">I </w:t></w:r>"#,
+        r#"<w:bookmarkStart w:id="7" w:name="inserted"/><w:r><w:t>INSERTED</w:t></w:r><w:bookmarkEnd w:id="7"/></w:ins>"#,
+        r#"<w:r><w:t xml:space="preserve"> J</w:t></w:r></w:p>"#,
     )));
+    let anchored = [
+        r#"A B C D E <a id="here"></a>HERE"#,
+        r#" F<a id="inside"></a>INSIDE"#,
+        r#"<a id="first"></a>FIRST Then <a id="second"></a>SECOND"#,
+        r#"G <a id="control"></a>CONTROL H I <a id="inserted"></a>INSERTED J"#,
+    ];
     let html = doc.to_html_fragment();
-    for expected in [
-        r#"A B C D E <a id="here"></a>HERE"#,
-        r#" F<a id="inside"></a>INSIDE"#,
-        r#"<a id="first"></a>FIRST Then <a id="second"></a>SECOND"#,
-        r##"<a href="#first">first</a>"##,
-    ] {
-        assert!(html.contains(expected), "{expected} in {html}");
-    }
     let markdown = doc.to_markdown();
-    for expected in [
-        r#"A B C D E <a id="here"></a>HERE"#,
-        r#" F<a id="inside"></a>INSIDE"#,
-        r#"<a id="first"></a>FIRST Then <a id="second"></a>SECOND"#,
-        "[first](#first)",
-    ] {
-        assert!(markdown.contains(expected), "{expected} in {markdown}");
+    for (format, output) in [("HTML", &html), ("Markdown", &markdown)] {
+        for expected in anchored {
+            assert!(
+                output.contains(expected),
+                "{format}: {expected} in {output}"
+            );
+        }
+        // Each anchor once: an HTML id is unique.
+        for name in ["here", "inside", "first", "second", "control", "inserted"] {
+            assert_eq!(
+                output.matches(&format!(r#"<a id="{name}">"#)).count(),
+                1,
+                "{format}: {name} in {output}"
+            );
+        }
     }
+    assert!(html.contains(r##"<a href="#first">first</a>"##), "{html}");
+    assert!(markdown.contains("[first](#first)"), "{markdown}");
 }
 
 #[test]
