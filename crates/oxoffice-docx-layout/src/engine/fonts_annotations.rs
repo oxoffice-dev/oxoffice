@@ -959,10 +959,6 @@ pub(super) fn push_emphasis_marked_text(
     Ok(true)
 }
 
-/// Shape a sequence of runs onto one baseline.
-///
-/// `size_override` is the size `w:hps` and `w:hpsBaseText` fix for the whole
-/// line, which is why it wins over the run's own `w:sz`.
 /// The metrics a base run's annotation group measures on: the face of its
 /// requested family, not a face picked for glyphs that family lacks, as body
 /// text measures.
@@ -974,6 +970,10 @@ fn requested_metrics(
     fm.metrics(face, base.font_size)
 }
 
+/// Shape a sequence of runs onto one baseline.
+///
+/// `size_override` is the size `w:hps` and `w:hpsBaseText` fix for the whole
+/// line, which is why it wins over the run's own `w:sz`.
 fn measure_annotation_line(
     runs: &[CT_R],
     context: &AnnotationContext<'_>,

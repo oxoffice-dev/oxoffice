@@ -799,7 +799,7 @@ fn han_in_a_mixed_run_measures_on_the_runs_east_asian_family() {
     );
 }
 
-// An emphasis mark or a ruby over Han drawn by a fallback face stands on a
+// An emphasis mark, a ruby or a combined layout over Han drawn by a fallback face stands on a
 // line measured on the run's requested family, as the same annotation over
 // Latin text of that family's stand-in does.
 #[test]
@@ -822,6 +822,14 @@ fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
             run_in(fonts, label),
         ])
     };
+    let combined = |fonts: &str, text: &str, label: &str| {
+        tight_runs(&[
+            format!(
+                r#"<w:r><w:rPr><w:rFonts {fonts}/><w:eastAsianLayout w:id="1" w:combine="1"/></w:rPr><w:t>{text}</w:t></w:r>"#
+            ),
+            run_in(fonts, label),
+        ])
+    };
     let body = [
         tight_runs(&[run_in(calibri, "First")]),
         emphasis(simsun, "\u{4e2d}", " Dotted han"),
@@ -832,6 +840,10 @@ fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
         tight_runs(&[run_in(calibri, "Fourth")]),
         ruby(calibri, "Q", " Ruby latin"),
         tight_runs(&[run_in(calibri, "Fifth")]),
+        combined(simsun, "\u{4e2d}\u{4e2d}", " Combined han"),
+        tight_runs(&[run_in(calibri, "Sixth")]),
+        combined(calibri, "QQ", " Combined latin"),
+        tight_runs(&[run_in(calibri, "Seventh")]),
     ]
     .concat();
     let pdf = pdf_of(&doc_with_body(&body));
@@ -843,6 +855,10 @@ fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
         (
             ("Third", "Ruby han", "Fourth"),
             ("Fourth", "Ruby latin", "Fifth"),
+        ),
+        (
+            ("Fifth", "Combined han", "Sixth"),
+            ("Sixth", "Combined latin", "Seventh"),
         ),
     ] {
         let han_steps = steps_around(&pdf, han.0, han.1, han.2);
