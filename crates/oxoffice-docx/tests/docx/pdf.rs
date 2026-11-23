@@ -10,6 +10,7 @@ use oxoffice_docx::paragraph::Alignment;
 use oxoffice_docx::{
     CT_RPr, Document, Length, ListLevel, PdfConformance, PictureOptions, RenderOptions, StoryKind,
 };
+use oxoffice_docx_oxml::table::ST_VerticalJc;
 use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf};
 
@@ -874,10 +875,7 @@ fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
 
 // ---- Headers, footers and notes ----
 
-// Fails today: endnotes are drawn over a table that ends the document, at
-// the height of its rows. Issue: #156
 #[test]
-#[should_panic(expected = "endnote drawn over the table")]
 fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
     let mut doc = doc_with(&["Has a note"]);
     let cited = doc.paragraph_story_location(0).unwrap().unwrap();
@@ -903,6 +901,38 @@ fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
 }
 
 // ---- Tables ----
+
+// A table is ink like a line: a vertically centred page whose body ends with
+// a table centres it, rather than measuring an empty page and pushing the
+// table down by half of it.
+#[test]
+fn a_vertically_centred_page_centres_a_table_that_ends_the_body() {
+    let mut doc = Document::new();
+    {
+        let mut table = doc.add_table(6, 1);
+        for row in 0..6 {
+            table
+                .cell(row, 0)
+                .unwrap()
+                .set_text(&format!("Row {}", row + 1));
+        }
+    }
+    doc.section_mut(0)
+        .unwrap()
+        .set_vertical_alignment(ST_VerticalJc::Center);
+    let pdf = pdf_of(&reopen(&mut doc));
+    let first = line_of(&pdf, 0, "Row 1");
+    let last = line_of(&pdf, 0, "Row 6");
+    // The middle of the page's text area, in PDF space.
+    let page_middle = 792.0 - 72.0 - 648.0 / 2.0;
+    let middle = (first.y + last.y) / 2.0;
+    assert!(
+        (middle - page_middle).abs() < 8.0,
+        "the rows' middle is at {middle:.1}, the page's at {page_middle} (first row {:.1}, last {:.1})",
+        first.y,
+        last.y
+    );
+}
 
 // ---- Pictures ----
 
@@ -1132,12 +1162,7 @@ fn headings_become_the_outline_with_their_levels_and_pages() {
     assert!(pdf.catalog().get(b"Outlines").is_err());
 }
 
-// Fails today: the outline keeps the place a heading had before keep with
-// next moved it to the next page, so the bookmark opens the page before; the
-// four corpus reports show it on "3. Operations", the thesis on "1.2 Research
-// questions". Issue: #156
 #[test]
-#[should_panic(expected = "but the heading is drawn on page")]
 fn an_outline_entry_opens_the_page_its_heading_moved_to() {
     let mut doc = Document::new();
     for number in 1..=27 {
@@ -1361,6 +1386,48 @@ fn ordinary_output_is_tagged_with_headings_paragraphs_tables_lists_and_figures()
 }
 
 #[test]
+fn a_hyperlink_wrapped_over_two_lines_is_one_tagged_link_holding_its_text() {
+    let text = "the quarterly budget review with every regional figure, the forecast \
+                for next year and the notes of the finance committee";
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship("https://example.com/budget");
+    let mut paragraph = doc.add_paragraph("Read ");
+    paragraph.add_hyperlink(text, &relationship);
+    paragraph.add_run(" before the meeting.");
+    let pdf = pdf_of(&reopen(&mut doc));
+    let links: Vec<Element> = pdf
+        .structure()
+        .into_iter()
+        .filter(|(role, ..)| role == "Link")
+        .collect();
+    assert_eq!(links.len(), 1, "one link element for the whole hyperlink");
+    let annotations: Vec<String> = pdf
+        .page_ids()
+        .into_iter()
+        .take(1)
+        .flat_map(|page| {
+            let page = pdf.doc.get_dictionary(page).expect("page");
+            let annots = pdf.resolve(page.get(b"Annots").expect("annotations"));
+            annots.as_array().expect("an array").clone()
+        })
+        .map(|annotation| {
+            let annotation = pdf.resolve(&annotation).as_dict().expect("annotation");
+            let contents = annotation.get(b"Contents").expect("contents");
+            lopdf::decode_text_string(contents).expect("text")
+        })
+        .collect();
+    assert!(annotations.len() >= 2, "{annotations:?}");
+    assert!(
+        links[0].3.len() >= 2,
+        "the text of both lines is in the link"
+    );
+    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for contents in annotations {
+        assert_eq!(words(&contents), words(text));
+    }
+}
+
+#[test]
 fn pdfa_output_refuses_a_link_it_cannot_archive() {
     let target = "file:///srv/share/budget.xlsx";
     let mut doc = Document::new();
@@ -1579,11 +1646,7 @@ fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_rend
 
 // ---- Corpus ----
 
-// Fails today: the number of a caption made with a SEQ field is drawn, and
-// tagged, before its label, so text extraction and screen readers read
-// "1Table : Notation". Issue: #158
 #[test]
-#[should_panic(expected = "in the tagged order")]
 fn a_caption_number_is_read_after_its_label() {
     let doc = doc_with_body(concat!(
         r#"<w:p><w:r><w:t xml:space="preserve">Table </w:t></w:r>"#,
@@ -1609,4 +1672,58 @@ fn a_caption_number_is_read_after_its_label() {
         read, "Table 1: Notation",
         "the caption reads {read:?} in the tagged order"
     );
+}
+
+#[test]
+fn a_caption_number_drawn_from_its_stored_result_is_read_after_its_label() {
+    // A SEQ whose format the layout cannot apply keeps its stored result,
+    // drawn from the field's own runs.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Table </w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> SEQ Table \* Bogus </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>7</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve">: Notation</w:t></w:r></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let elements = pdf.structure();
+    let paragraph = elements
+        .iter()
+        .position(|element| element.0 == "P")
+        .unwrap();
+    let read = tagged_text(&pdf, &elements, paragraph);
+    assert_eq!(read, "Table 7: Notation", "the caption reads {read:?}");
+}
+
+#[test]
+fn a_field_result_after_a_page_referenced_bookmark_is_read_in_place() {
+    // A bookmark a PAGEREF points at records where it starts; the field
+    // result right after that start is read after the text before it.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="source"/><w:r><w:t>Alpha</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r>"#,
+        r#"<w:bookmarkStart w:id="2" w:name="_Ref2"/>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> REF source </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r><w:bookmarkEnd w:id="2"/>"#,
+        r#"<w:r><w:t xml:space="preserve"> here</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGEREF _Ref2 </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let elements = pdf.structure();
+    let paragraph = elements
+        .iter()
+        .enumerate()
+        .filter(|(_, element)| element.0 == "P")
+        .nth(1)
+        .unwrap()
+        .0;
+    let read = tagged_text(&pdf, &elements, paragraph);
+    assert_eq!(read, "See Alpha here", "the paragraph reads {read:?}");
 }

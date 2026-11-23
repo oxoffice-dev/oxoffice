@@ -67,6 +67,10 @@ fn complex_field_events(
     let mut boundaries = vec![0usize];
     let mut typed = 0usize;
     let mut note_mark_empty = false;
+    // The boundary slot of an empty `w:t` mark, which the run reader makes
+    // an empty text item when the next modelled child is a symbol or
+    // deleted text.
+    let mut empty_mark: Option<usize> = None;
     loop {
         let before = reader.buffer_position() as usize;
         let ordinal = boundaries.len() - 1;
@@ -102,7 +106,13 @@ fn complex_field_events(
             continue;
         }
         let text = !empty && is_word_element(name.as_ref(), b"t", &prefixes);
+        // A started note reference with nothing inside reads as the empty one.
+        let started_reference = !empty
+            && (is_word_element(name.as_ref(), b"footnoteReference", &prefixes)
+                || is_word_element(name.as_ref(), b"endnoteReference", &prefixes))
+            && !super::started_reference_has_payload(*reader.get_ref())?;
         let modeled = properties
+            || started_reference
             || text
             || (!empty
                 && [b"delText".as_slice(), b"drawing", b"commentReference"]
@@ -119,14 +129,32 @@ fn complex_field_events(
                 .iter()
                 .any(|local| is_word_element(name.as_ref(), local, &prefixes))
                     || parse_typed_special_run_child(&root, &prefixes)?.is_some()));
+        if modeled
+            && !properties
+            && let Some(slot) = empty_mark.take()
+            && ((!empty && is_word_element(name.as_ref(), b"delText", &prefixes))
+                || (empty
+                    && matches!(
+                        parse_typed_special_run_child(&root, &prefixes)?,
+                        Some(super::SpecialRunValue::Symbol { .. })
+                    )))
+        {
+            typed += 1;
+            for boundary in &mut boundaries[slot..] {
+                *boundary += 1;
+            }
+        }
         if text && note_mark_empty {
             // The first `w:t` is the mark, even an empty one.
-            crate::xml_text::read_element_text(&mut reader, root.name());
+            let mark = crate::xml_text::read_element_text(&mut reader, root.name());
+            if mark.is_empty() {
+                empty_mark = Some(boundaries.len());
+            }
             note_mark_empty = false;
         } else {
             if modeled && !properties {
                 typed += 1;
-                note_mark_empty = empty
+                note_mark_empty = (empty || started_reference)
                     && (is_word_element(name.as_ref(), b"footnoteReference", &prefixes)
                         || is_word_element(name.as_ref(), b"endnoteReference", &prefixes))
                     && optional_word_attribute(&root, b"customMarkFollows", &prefixes)

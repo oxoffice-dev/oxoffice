@@ -648,7 +648,7 @@ fn current_revision_bookmark_projection(revision: &CT_Revision) -> AcceptedBookm
     }
 }
 
-fn current_control_bookmark_projection(control: &CT_Sdt) -> AcceptedBookmarkProjection {
+pub(super) fn current_control_bookmark_projection(control: &CT_Sdt) -> AcceptedBookmarkProjection {
     let mut output = AcceptedBookmarkProjection::default();
     for boundary in 0..=control.content.len() {
         for (_, revision) in control.revisions().iter().filter(|(at, _)| *at == boundary) {
