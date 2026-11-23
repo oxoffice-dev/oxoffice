@@ -30,7 +30,7 @@ pub(crate) fn emit_markdown(
     let mut previous_quote_owner = None;
     for block in body_blocks(&input.document.body, true) {
         let style_id = match &block {
-            Block::Paragraph(p, _) => p.properties.as_ref().and_then(|p| p.style_id.as_deref()),
+            Block::Paragraph(p, _, _) => p.properties.as_ref().and_then(|p| p.style_id.as_deref()),
             Block::Table(t) => t.properties.as_ref().and_then(|p| p.style_id.as_deref()),
         };
         let owner = quote_owner(style_id, styles);
@@ -63,12 +63,12 @@ pub(crate) fn emit_markdown(
         }
         previous_quote_owner = owner;
         match block {
-            Block::Paragraph(p, boundaries) => {
+            Block::Paragraph(p, boundaries, carried) => {
                 let counted = counter.paragraph(&p);
                 emit_paragraph(
                     &mut out,
                     &p,
-                    &boundaries,
+                    (&boundaries, &carried),
                     input,
                     (equations, hyperlink_urls),
                     counted,
@@ -198,7 +198,8 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
 fn emit_paragraph(
     out: &mut String,
     para: &CT_P,
-    boundaries: &[usize],
+    // What the paragraphs joined to it carry (see `Block::Paragraph`).
+    joined: (&[usize], &[(usize, String)]),
     input: &HtmlInput,
     // The equation writer and the link targets.
     (equations, hyperlink_urls): (&dyn EquationWriter, &crate::Links<'_>),
@@ -228,8 +229,7 @@ fn emit_paragraph(
     let mut heading_level = detected_level.filter(|&level| level < 10);
 
     // Collect inline text for the paragraph
-    let mut text =
-        collect_paragraph_text(para, styles, hyperlink_urls, images, boundaries, equations);
+    let mut text = collect_paragraph_text(para, styles, hyperlink_urls, images, joined, equations);
     if let Some(marker) = marker {
         let mut led = String::new();
         push_escaped_text(&mut led, &marker);
@@ -657,14 +657,21 @@ fn collect_paragraph_text(
     styles: &CT_Styles,
     hyperlink_urls: &crate::Links<'_>,
     images: &HashMap<String, ImageData>,
-    boundaries: &[usize],
+    // The simple-field boundaries and the bookmarks of the paragraphs
+    // joined to it (see `Block::Paragraph`).
+    (boundaries, carried): (&[usize], &[(usize, String)]),
     equations: &dyn EquationWriter,
 ) -> String {
     let mut out = String::new();
 
-    // The bookmarks a link targets, read before the accepted view drops
-    // the markers, written as inline HTML anchors.
-    let anchors = crate::bookmark_anchors(para, &hyperlink_urls.bookmarks);
+    // The runs the text readers read, those of content controls, tracked
+    // insertions, smart tags and custom XML included, deleted ones left out,
+    // with the bookmarks they start; those a link targets are written as
+    // inline HTML anchors.
+    let view = para.accepted_view_with_bookmarks(true);
+    let mut starts = carried.to_vec();
+    starts.extend(view.bookmark_starts);
+    let anchors = crate::bookmark_anchors(starts, &hyperlink_urls.bookmarks);
     let anchor_html = |boundary: usize| {
         anchors
             .iter()
@@ -673,10 +680,8 @@ fn collect_paragraph_text(
             .collect::<String>()
     };
 
-    // The runs the text readers read, those of content controls, tracked
-    // insertions, smart tags and custom XML included, deleted ones left out.
-    let (view, projected_boundaries) = para.accepted_view_with_field_owners();
-    let para = &view;
+    let projected_boundaries = view.field_boundaries;
+    let para = &view.paragraph;
 
     // Markdown renderers turn `[text](javascript:...)` into a live link too,
     // so the same scheme allowlist applies here.
@@ -1420,7 +1425,7 @@ fn collect_cell_text(
 
     for block in cell_blocks(cell) {
         match block {
-            Block::Paragraph(p, boundaries) => {
+            Block::Paragraph(p, boundaries, carried) => {
                 // A pipe table row is one line, so breaks inside a cell are
                 // written as HTML line breaks. A pipe would end the cell, in
                 // a link destination too, so every pipe is escaped, and GFM
@@ -1430,7 +1435,7 @@ fn collect_cell_text(
                     styles,
                     hyperlink_urls,
                     images,
-                    &boundaries,
+                    (&boundaries, &carried),
                     equations,
                 )
                 .replace(PAGE_BREAK, " ");

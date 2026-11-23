@@ -3629,9 +3629,44 @@ pub fn images_extract(file: &Path, dir: &Path, json_output: bool) -> Result<()> 
     }
 }
 
+/// A font record named by the caller: its name, or its index in `font list`
+/// when several records share a name.
+#[derive(Clone, Copy)]
+pub enum FontRecordRef<'a> {
+    Name(&'a str),
+    Index(usize),
+}
+
+/// The record `--name` or `--index` names (clap requires exactly one).
+pub fn font_record(name: Option<&str>, index: Option<usize>) -> FontRecordRef<'_> {
+    match (name, index) {
+        (_, Some(index)) => FontRecordRef::Index(index),
+        (name, None) => FontRecordRef::Name(name.unwrap_or_default()),
+    }
+}
+
+impl FontRecordRef<'_> {
+    /// The record as JSON: its name or its index.
+    fn json(self) -> (serde_json::Value, serde_json::Value) {
+        match self {
+            Self::Name(name) => (json!(name), serde_json::Value::Null),
+            Self::Index(index) => (serde_json::Value::Null, json!(index)),
+        }
+    }
+}
+
+impl std::fmt::Display for FontRecordRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Name(name) => f.write_str(name),
+            Self::Index(index) => write!(f, "record {index}"),
+        }
+    }
+}
+
 /// Inputs for one explicitly licensed embedded font face.
 pub struct FontEmbedOptions<'a> {
-    pub name: &'a str,
+    pub record: FontRecordRef<'a>,
     pub font: &'a Path,
     pub kind: &'a str,
     pub license_authorized: bool,
@@ -3710,26 +3745,27 @@ pub fn font_embed(file: &Path, options: &FontEmbedOptions<'_>) -> Result<()> {
         Some(key) => key.to_owned(),
         None => oxoffice_docx::derive_font_key(&data)?,
     };
-    document.embed_font(
-        options.name,
-        oxoffice_docx::EmbeddedFont {
-            kind,
-            data,
-            font_key: key,
-            subsetted: options.subsetted,
-            license: oxoffice_docx::FontEmbeddingLicense::new(
-                options.license_authorized,
-                options.license_identity,
-            ),
-        },
-    )?;
+    let face = oxoffice_docx::EmbeddedFont {
+        kind,
+        data,
+        font_key: key,
+        subsetted: options.subsetted,
+        license: oxoffice_docx::FontEmbeddingLicense::new(
+            options.license_authorized,
+            options.license_identity,
+        ),
+    };
+    match options.record {
+        FontRecordRef::Name(name) => document.embed_font(name, face)?,
+        FontRecordRef::Index(index) => document.embed_font_at(index, face)?,
+    }
     let bytes = document.to_bytes_for_path(options.output)?;
     stage_and_publish(&[(options.output.to_path_buf(), bytes)], false)?;
-    font_mutation_record("embed", options.name, options.output, options.json)
+    font_mutation_record("embed", options.record, options.output, options.json)
 }
 pub fn font_remove(
     file: &Path,
-    name: &str,
+    record: FontRecordRef<'_>,
     kind: Option<&str>,
     output: &Path,
     as_json: bool,
@@ -3737,31 +3773,48 @@ pub fn font_remove(
     ensure_output_paths_allowed(&[output.to_path_buf()], file, true)?;
     ensure_output_paths_available(&[output.to_path_buf()])?;
     let mut document = Document::open(file)?;
-    let removed = if let Some(kind) = kind {
-        document
+    let removed = match (record, kind) {
+        (FontRecordRef::Name(name), Some(kind)) => document
             .remove_embedded_font(name, font_kind(kind)?)?
-            .is_some()
-    } else {
-        document.remove_font(name)?.is_some()
+            .is_some(),
+        (FontRecordRef::Index(index), Some(kind)) => document
+            .remove_embedded_font_at(index, font_kind(kind)?)?
+            .is_some(),
+        (FontRecordRef::Name(name), None) => document.remove_font(name)?.is_some(),
+        (FontRecordRef::Index(index), None) => {
+            document.remove_font_at(index)?;
+            true
+        }
     };
     let bytes = document.to_bytes_for_path(output)?;
     stage_and_publish(&[(output.to_path_buf(), bytes)], false)?;
     if as_json {
-        print_json(json!({"scope": "font", "action": "remove", "name": name,
-        "kind": kind, "removed": removed, "output": output.display().to_string()}))
+        let (name, index) = record.json();
+        print_json(
+            json!({"scope": "font", "action": "remove", "name": name, "index": index,
+        "kind": kind, "removed": removed, "output": output.display().to_string()}),
+        )
     } else {
         writeln!(io::stdout(), "Removed: {removed}")?;
         Ok(())
     }
 }
-fn font_mutation_record(action: &str, name: &str, output: &Path, as_json: bool) -> Result<()> {
+fn font_mutation_record(
+    action: &str,
+    record: FontRecordRef<'_>,
+    output: &Path,
+    as_json: bool,
+) -> Result<()> {
     if as_json {
-        print_json(json!({"scope": "font", "action": action, "name": name,
-        "output": output.display().to_string()}))
+        let (name, index) = record.json();
+        print_json(
+            json!({"scope": "font", "action": action, "name": name, "index": index,
+        "output": output.display().to_string()}),
+        )
     } else {
         writeln!(
             io::stdout(),
-            "{action}: {name}\nWritten to {}",
+            "{action}: {record}\nWritten to {}",
             output.display()
         )?;
         Ok(())
@@ -3828,7 +3881,7 @@ pub fn font_list(file: &Path, as_json: bool) -> Result<()> {
                 "subsetted": face.subsetted}))
         }).collect::<Result<Vec<_>>>()?;
             Ok(
-                json!({"name": font.name, "alternate_name": font.alternate_name,
+                json!({"index": record_index, "name": font.name, "alternate_name": font.alternate_name,
             "family": font.family, "pitch": font.pitch, "faces": faces}),
             )
         })
@@ -3839,7 +3892,8 @@ pub fn font_list(file: &Path, as_json: bool) -> Result<()> {
         for font in fonts {
             writeln!(
                 io::stdout(),
-                "{}: {} face(s)",
+                "{}. {}: {} face(s)",
+                font["index"],
                 font["name"].as_str().unwrap_or(""),
                 font["faces"].as_array().map_or(0, Vec::len)
             )?;
