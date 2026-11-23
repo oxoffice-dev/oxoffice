@@ -5,7 +5,8 @@ built by the `oxoffice-cli` crate.
 
 `oxoffice-pptx-cli` makes complete PPTX workflows available to shell scripts. It
 inspects and extracts deck content, validates package invariants, compares or
-replaces text, and produces deterministic fixed output.
+replaces text, and renders to PDF and images, the same on every machine with
+`--bundled-fonts-only`.
 
 ## Capabilities
 
@@ -18,7 +19,7 @@ replaces text, and produces deterministic fixed output.
 - Selected-slide rendering, thumbnails, text diff, replacement, and validation.
 - Modern comment thread listing, addition, replies, resolution, and removal.
 - Scriptable output covers slide order, notes, comments, recursive group
-  content, relationship-backed media, and deterministic rendering diagnostics.
+  content, relationship-backed media, and rendering diagnostics.
 
 `oxoffice pptx validate FILE` validates the stored package through its original XML
 bytes: XML 1.0 lexical and character faults, one complete root per XML part

@@ -403,10 +403,27 @@ fn shape_run(
     };
     let font_size = style.font_size.unwrap_or(DEFAULT_FONT_SIZE);
     let typeface = typeface_for_text(style, &rendered_text);
-    let font_id =
-        font_manager.resolve_font_for_text(typeface, style.bold, style.italic, &rendered_text)?;
+    // A run keeps the face of its family when that face draws part of it:
+    // the glyphs it lacks are left as .notdef, which sends the paragraph to
+    // the grapheme split, where only those graphemes look for a face, a
+    // system one included. A face picked for the whole run would take the
+    // text the family draws too, and draw it as boxes when it has no Latin.
+    // A run the family draws none of takes a face that covers it.
+    let primary = font_manager.resolve_font(typeface, style.bold, style.italic)?;
+    let mut font_id = primary;
+    let mut shaped = font_manager.shape_text(primary, &rendered_text, font_size)?;
+    if !shaped.glyph_ids.is_empty() && shaped.glyph_ids.iter().all(|glyph| *glyph == 0) {
+        font_id = font_manager.resolve_font_for_text(
+            typeface,
+            style.bold,
+            style.italic,
+            &rendered_text,
+        )?;
+        if font_id != primary {
+            shaped = font_manager.shape_text(font_id, &rendered_text, font_size)?;
+        }
+    }
     let metrics = font_manager.metrics(font_id, font_size)?;
-    let mut shaped = font_manager.shape_text(font_id, &rendered_text, font_size)?;
     if let Some(spacing) = style.spacing {
         for advance in &mut shaped.advances {
             *advance += spacing;
@@ -783,7 +800,11 @@ fn shape_paragraphs(
             let legacy_items = inline_items_with_caps(font_manager, &mut shaping_cache, paragraph, page_number, &mut requests, &mut contexts)?;
             let uses_rich_text = requests.iter().any(|(small, all, _, _)| *small || *all) || base_direction != oxoffice_layout::TextDirection::Auto
                 || legacy_items.iter().any(|item| {
-                    matches!(item, InlineItem::Text(segment) if needs_multilingual_layout(&segment.text))
+                    // A run its face cannot wholly draw is split too, so each
+                    // grapheme it lacks finds a face of its own and the rest
+                    // keeps the run's face.
+                    matches!(item, InlineItem::Text(segment)
+                        if needs_multilingual_layout(&segment.text) || segment.glyph_ids.contains(&0))
                 });
             let mut items = if uses_rich_text {
                 shape_multilingual_items_preserving_controls(

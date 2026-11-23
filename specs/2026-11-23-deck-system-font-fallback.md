@@ -83,10 +83,13 @@ argument land together.
   `Presentation::render_with_options` for the layout itself;
   `configured_font_manager` takes the tier; `needs_multilingual_layout` covers
   every East Asian character; the deck layout and its notes and handout
-  exports name the system font through `glyph_coverage_diagnostics`. The run
-  shaper keeps `resolve_font_for_text`: the grapheme split already gives each
-  missing grapheme its own face, and the split variant changed nothing a test
-  could see. Tests: with a fixed fallback font, a deck draws only what its
+  exports name the system font through `glyph_coverage_diagnostics`. A run
+  keeps the face of its family when that face draws part of it, and a run
+  with glyphs that face lacks takes the grapheme split too, so only those
+  graphemes look for a face (a system one included) and the family keeps the
+  rest: a face picked for a whole run used to take its Latin text as well,
+  and draw it as boxes when it had none (an emoji face, Noto Sans Symbols 2
+  for a check box beside words). Tests: with a fixed fallback font, a deck draws only what its
   fonts lack with it and names it; on any machine, the default render takes a
   system face or says none was found, bundled fonts only names the switch,
   and Latin text is drawn alike in both modes; Korean, fullwidth and

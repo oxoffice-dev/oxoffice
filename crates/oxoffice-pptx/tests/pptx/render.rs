@@ -1852,7 +1852,12 @@ fn a_deck_draws_only_what_its_fonts_lack_with_a_system_face() {
 fn a_deck_takes_a_system_face_by_default_and_never_with_bundled_fonts_only() {
     let deck = crate::support::corpus_deck("powerpoint/multilingual.pptx");
     let han = |options: PptxRenderOptions| -> Vec<String> {
-        let (_, messages) = deck.to_pdf_with_diagnostics(&[], options).unwrap();
+        let (_, mut messages) = deck.to_pdf_with_diagnostics(&[], options).unwrap();
+        // The handouts draw the slides again and say the same, once.
+        let (_, handouts) = deck
+            .to_handout_pdf_with_diagnostics(oxoffice_pptx::HandoutLayout::Six, &[], options)
+            .unwrap();
+        messages.extend(handouts);
         messages
             .into_iter()
             .map(|diagnostic| diagnostic.message)
@@ -1869,7 +1874,10 @@ fn a_deck_takes_a_system_face_by_default_and_never_with_bundled_fonts_only() {
     );
     let bundled = han(PptxRenderOptions::default().with_bundled_fonts_only(true));
     assert!(
-        bundled.len() == 1 && bundled[0].contains("the render uses the bundled fonts only"),
+        bundled.len() == 2
+            && bundled
+                .iter()
+                .all(|message| message.contains("the render uses the bundled fonts only")),
         "{bundled:#?}"
     );
 
@@ -1889,4 +1897,31 @@ fn a_deck_takes_a_system_face_by_default_and_never_with_bundled_fonts_only() {
         default,
         latin(PptxRenderOptions::default().with_bundled_fonts_only(true))
     );
+}
+
+// A run keeps the face of its family for what that face draws: only the
+// characters it lacks look for a face of their own, and a face found for
+// them never takes the run's other text. The check box of "Done ☑ today" is
+// drawn by Noto Sans Symbols 2 and its words by Carlito, in both modes.
+#[test]
+fn a_run_keeps_its_family_for_the_text_it_draws_beside_a_symbol_it_lacks() {
+    let deck = text_deck("Done \u{2611} today");
+    for bundled_fonts_only in [true, false] {
+        let options = PptxRenderOptions::default().with_bundled_fonts_only(bundled_fonts_only);
+        let (_, layout) = deck.render_with_options(&[], options).unwrap();
+        let drawn = drawn_families(&layout);
+        let family_of = |text: &str| {
+            drawn
+                .iter()
+                .find(|(piece, _)| piece.trim() == text)
+                .map(|(_, family)| family.as_str())
+        };
+        assert_eq!(family_of("Done"), Some("Carlito"), "{drawn:?}");
+        assert_eq!(family_of("today"), Some("Carlito"), "{drawn:?}");
+        assert_eq!(
+            family_of("\u{2611}"),
+            Some("Noto Sans Symbols 2"),
+            "{drawn:?}"
+        );
+    }
 }

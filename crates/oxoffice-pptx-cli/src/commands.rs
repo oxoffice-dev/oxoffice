@@ -806,6 +806,7 @@ pub fn thumbnail(
     let png = oxoffice_pdf::render_page_to_png(&layout, 0, dpi)
         .ok_or("slide one did not rasterize for thumbnail")?;
     stage_and_publish(&[(output.clone(), png)], force)?;
+    write_render_diagnostics(&layout.diagnostics)?;
     writeln!(io::stdout(), "Written to {}", output.display())?;
     Ok(())
 }

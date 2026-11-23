@@ -294,7 +294,7 @@ impl Presentation {
         Ok(oxoffice_pdf::render_to_pdf_checked(&layout)?)
     }
 
-    /// Encode one deterministic caller-font bundle with owned diagnostics.
+    /// Encode the deck to PDF with caller fonts and `options`, retaining owned diagnostics.
     #[cfg(feature = "render")]
     pub fn to_pdf_with_diagnostics(
         &self,
