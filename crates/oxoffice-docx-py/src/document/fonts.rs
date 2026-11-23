@@ -73,6 +73,45 @@ pub(super) fn checked_font_license(
     ))
 }
 
+/// The native definition of a descriptive record: `method` takes no faces.
+pub(super) fn descriptive_font(
+    py: Python<'_>,
+    font: &PyFontDefinition,
+    method: &str,
+) -> PyResult<oxoffice_docx::FontDefinition> {
+    if !font.embedded_fonts.bind(py).is_empty() {
+        return Err(PyValueError::new_err(format!(
+            "{method} accepts descriptive records only, use embed_font"
+        )));
+    }
+    Ok(oxoffice_docx::FontDefinition {
+        name: font.name.clone(),
+        alternate_name: font.alternate_name.clone(),
+        family: font.family.clone(),
+        pitch: font.pitch.clone(),
+        embedded_fonts: Vec::new(),
+    })
+}
+
+/// The checked native face `embed_font` and `embed_font_at` take.
+pub(super) fn embedded_face(
+    py: Python<'_>,
+    font: &Bound<'_, PyAny>,
+    kind: &str,
+    license: &PyFontEmbeddingLicense,
+    font_key: Option<String>,
+    subsetted: bool,
+) -> PyResult<oxoffice_docx::EmbeddedFont> {
+    let kind = checked_font_kind(kind)?;
+    let license = checked_font_license(license)?;
+    let data = checked_font_input(font)?;
+    let key = match font_key {
+        Some(key) => key,
+        None => oxoffice_docx::derive_font_key(&data).map_err(|e| docx_to_pyerr(py, e))?,
+    };
+    Ok(oxoffice_docx::EmbeddedFont::new(kind, data, key, license).with_subsetted(subsetted))
+}
+
 #[pyclass(name = "EmbeddedFont", frozen, get_all, skip_from_py_object)]
 pub struct PyEmbeddedFont {
     pub kind: &'static str,
@@ -163,5 +202,22 @@ impl PyFontDefinition {
                 embedded_fonts,
             },
         )
+    }
+}
+
+impl PyDocument {
+    /// Refuse an index outside `fonts` with `IndexError`, as the other
+    /// indexed calls do.
+    pub(super) fn check_font_index(&self, py: Python<'_>, index: usize) -> PyResult<()> {
+        let count = self
+            .inner
+            .font_record_count()
+            .map_err(|e| docx_to_pyerr(py, e))?;
+        if index >= count {
+            return Err(PyIndexError::new_err(format!(
+                "font record index {index} is out of range: the font table has {count} records"
+            )));
+        }
+        Ok(())
     }
 }

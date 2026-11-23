@@ -2,11 +2,11 @@
   "file": "google/minutes.docx",
   "reason": "a math fallback face renumbers the PDF font resources",
   "resources": "ec5da75808b430ef06b72d812c8b3f4bdc0bb72781da371a723e7ef4cfbcbf41",
-  "outline_and_tags": "1156cad6adc00fee6cc96c5b7a07fe43de3ac8e874e1fb5163f628d72405f77b",
+  "outline_and_tags": "7a3d598e5dc8ba92c883c27b102f11674ced5989a08609b8b845712359bc1228",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
-    {"page": 1, "pixels": "950905ee94236fcf73e3e22b4edb00827d34aff9ebcd9b156e2130399179fd1a", "content": "4bbf8e9701ca9a0df7806a3fa2b9dde60cb5c7ac9d067d8a41d8db37d00ec15f", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "18eb5a37bfb62a91045d76306e45097f22e1594d95c2ddcab52686feaf39d550", "content": "2205271507a1f8d47e7074598de135d462279f4d9f32b411717d5a364ee69f73", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
-    {"page": 3, "pixels": "53e7c2ab23f463477935efb3f604aaf4dbcb153d63914798e1b327ce52ca787c", "content": "d06d497de0464ba93521e5d7fe7c66f6d4d3afc4ca0caa3ed43960cdceb42ff9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
+    {"page": 1, "pixels": "0949730277510031c719fe5eed50926eff2de77a72975938568a3bbfa4efc930", "content": "7142e8bd2fa8a1e5a1e2e1e1b87d0cccaa9049ef42281c1dd0f76d1361382fb5", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
+    {"page": 2, "pixels": "b1377cb105b2be2735ab2c6ba013f710708c456621f72eba99ad1d773b137f2e", "content": "eb6270540dfce4a6b0d1962948528abb61c4bfe305887e07078b4734fa4ed2f9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 3, "pixels": "86afdd1bdb3b0fbb6e77406454528e61e7ae5d88e3baa21cd2090c75b8673fe7", "content": "dd134352bf8eb415fe6c05722539dd904e8bad6deb7eb6857a8994729d61a1b9", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }
