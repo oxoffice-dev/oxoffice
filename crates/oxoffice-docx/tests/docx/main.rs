@@ -2,6 +2,7 @@
 //! `cargo test -p oxoffice-docx --test docx`.
 
 mod attribute_strings;
+mod bibliography_authoring;
 mod body_savability;
 mod checked_replacement;
 mod comment_dates;

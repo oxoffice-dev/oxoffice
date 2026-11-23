@@ -2347,12 +2347,12 @@ fn story_json(story: &StoryId) -> Value {
     })
 }
 
-fn publish_document(doc: &mut Document, output: &Path) -> Result<()> {
+pub(crate) fn publish_document(doc: &mut Document, output: &Path) -> Result<()> {
     let bytes = doc.to_bytes_for_path(output)?;
     stage_and_publish(&[(output.to_path_buf(), bytes)], false)
 }
 
-fn mutation_record(
+pub(crate) fn mutation_record(
     json_output: bool,
     scope: &str,
     action: &str,
@@ -2379,7 +2379,7 @@ fn mutation_record(
     Ok(())
 }
 
-fn print_json(payload: Value) -> Result<()> {
+pub(crate) fn print_json(payload: Value) -> Result<()> {
     writeln!(
         io::stdout(),
         "{}",
