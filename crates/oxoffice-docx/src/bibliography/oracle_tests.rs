@@ -32,17 +32,9 @@ const WORD_PENDING: [&str; 11] = [
 
 /// `(style, field)` pairs whose result differs from Word's today.
 const KNOWN: &[(&str, &str)] = &[
-    ("apa6", r#"CITATION Book \l 1033 \f "see ""#),
-    ("apa6", r#"CITATION Book \l 1033 \m Journal"#),
-    ("apa6", r#"CITATION Book \l 1033 \p 12"#),
-    ("apa6", r#"CITATION Book \l 1033 \p 12 \v 2"#),
-    ("apa6", r#"CITATION Book \l 1033 \p 12-14"#),
-    ("apa6", r#"CITATION Book \l 1033 \s ", emphasis added""#),
-    ("apa6", r#"CITATION Book \l 1033 \v 2"#),
-    ("apa6", r#"CITATION Book \l 1033 \y"#),
-    ("apa6", r#"CITATION NoYear \l 1033"#),
+    // Word ends this entry with a space after the italic patent number. One
+    // sample does not say which field brings it, so it is not guessed.
     ("apa6", "entry Patent"),
-    ("apa6", "entry Sound"),
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

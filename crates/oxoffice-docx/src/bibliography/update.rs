@@ -906,7 +906,16 @@ impl BibliographyUpdateState {
             {
                 return Err(source_not_covered(style, "citation", &source, &locale));
             }
-            fragments.push(apa_citation_member(&source, member, patent_punctuation));
+            let disambiguate = single_citation_creator(&source, style)
+                .map(|creator| has_equivalent_creator(collection, *index, creator, style))
+                .transpose()?
+                .unwrap_or(false);
+            fragments.push(apa_citation_member(
+                &source,
+                member,
+                patent_punctuation,
+                disambiguate,
+            ));
         }
         if let Some((separate, profile, square)) = numeric_profile {
             let separator = if style == BibliographyStyle::Ieee {

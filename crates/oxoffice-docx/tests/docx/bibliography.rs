@@ -547,10 +547,7 @@ fn an_apa_citation_shows_its_page() {
         BibliographyStyle::ApaSixthEdition,
     );
     doc.update_bibliography_with_default_locale(1033).unwrap();
-    // Whether the short title shows beside the page is left to the Word oracle.
-    let citation = &texts(&doc)[0];
-    assert!(citation.starts_with("Cited here  (Smith, "), "{citation}");
-    assert!(citation.ends_with(", 2020, p. 12)"), "{citation}");
+    assert_eq!(texts(&doc)[0], "Cited here  (Smith, 2020, p. 12)");
 }
 
 #[test]
@@ -628,4 +625,43 @@ fn a_refusal_names_the_role_field_or_author_count_it_cannot_render() {
         let message = refusal(doc.update_bibliography_with_default_locale(1033));
         assert_eq!(message, format!("bibliography: {expected}"));
     }
+}
+
+#[test]
+fn an_apa_citation_shows_volume_and_page_as_word_joins_them() {
+    let mut cite = member("Smith20");
+    cite.volume = Some("2".into());
+    cite.pages = Some("12".into());
+    let mut doc = cited(
+        &[source("Smith20", GUID, BibliographySourceKind::Book)],
+        vec![cite],
+        BibliographyStyle::ApaSixthEdition,
+    );
+    doc.update_bibliography_with_default_locale(1033).unwrap();
+    assert_eq!(texts(&doc)[0], "Cited here  (Smith, 2020, 2:12)");
+}
+
+#[test]
+fn an_apa_citation_names_the_title_only_beside_another_work_of_its_author() {
+    let mut cite = member("Smith20");
+    cite.pages = Some("12".into());
+    let alone = source("Smith20", GUID, BibliographySourceKind::Book);
+    let mut doc = cited(
+        &[alone.clone()],
+        vec![cite.clone()],
+        BibliographyStyle::ApaSixthEdition,
+    );
+    doc.update_bibliography_with_default_locale(1033).unwrap();
+    assert_eq!(texts(&doc)[0], "Cited here  (Smith, 2020, p. 12)");
+
+    // Kept from the recorded catalogue; the oracle's sources all have their own author.
+    let mut other = source("Smith21", OTHER_GUID, BibliographySourceKind::Book);
+    other.properties[0].value = "Another study".into();
+    let mut doc = cited(
+        &[alone, other],
+        vec![cite],
+        BibliographyStyle::ApaSixthEdition,
+    );
+    doc.update_bibliography_with_default_locale(1033).unwrap();
+    assert_eq!(texts(&doc)[0], "Cited here  (Smith, Study, 2020, p. 12)");
 }
