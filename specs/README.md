@@ -86,6 +86,7 @@ dependency bumps and documentation.
 | 2026-11-23 | [Restarting a list item numbered through its style](2026-11-23-restart-a-style-numbered-list-item.md) | accepted |
 | 2026-11-23 | [Date controls with a time, and the US Gregorian calendar](2026-11-23-date-controls-with-times.md) | accepted |
 | 2026-11-23 | [One font record addressed by its index](2026-11-23-font-records-by-index.md) | accepted |
+| 2026-11-23 | [Comparison: endnotes compared like footnotes](2026-11-23-comparison-endnote-custody.md) | accepted |
 | 2026-11-23 | [A note's custom mark held by the child after its reference](2026-11-23-a-note-mark-held-by-its-child.md) | accepted |
 | 2026-11-23 | [A tagged link holds its text](2026-11-23-tagged-link-text.md) | accepted |
 | 2026-11-23 | [Comparison: a bookmark both versions hold, in a paragraph replaced whole](2026-11-23-comparison-shared-bookmarks-in-replaced-paragraphs.md) | accepted |
