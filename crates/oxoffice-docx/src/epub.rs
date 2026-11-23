@@ -2413,9 +2413,9 @@ fn emit_list_level(
         let value = list_values.get(index).copied().unwrap_or(expected_value);
         let marker = list
             .item_markers
-            .then(|| list_definition(paragraph, input.numbering.as_ref()))
+            .then(|| effective_list_level(paragraph, source_styles, input.numbering.as_ref()))
             .flatten()
-            .map(|level| item_marker(level, value));
+            .map(|(_, _, level)| item_marker(level, value));
         // The HTML delegate reads only direct numPr. Materialize the already
         // selected source list identity on this detached paragraph projection,
         // because projected styles intentionally omit numbering inheritance.
@@ -3014,6 +3014,27 @@ fn detect_list(
     styles: &CT_Styles,
     numbering: Option<&CT_Numbering>,
 ) -> Option<ListInfo> {
+    let (num_id, level, definition) = effective_list_level(paragraph, styles, numbering)?;
+    let (kind, marker_style) = epub_list_semantics(definition.num_fmt.as_ref())?;
+    Some(ListInfo {
+        num_id,
+        level,
+        kind,
+        start: definition.start.unwrap_or(1),
+        marker_style,
+        // Legal numbering shows Chicago levels as decimal numbers.
+        item_markers: definition.num_fmt == Some(ST_NumberFormat::Chicago)
+            && definition.legal != Some(true),
+    })
+}
+
+/// The list a paragraph is on, its style's included, and the level it
+/// uses, a level override of its instance applied.
+fn effective_list_level<'a>(
+    paragraph: &CT_P,
+    styles: &CT_Styles,
+    numbering: Option<&'a CT_Numbering>,
+) -> Option<(u32, u32, &'a CT_Lvl)> {
     let properties = effective_epub_list_properties(paragraph, styles);
     let num_id = properties.num_id?;
     let level = properties.num_ilvl.unwrap_or(0);
@@ -3043,15 +3064,7 @@ fn detect_list(
         .find(|value| value.ilvl == level)
         .and_then(|value| value.level.as_ref())
         .unwrap_or(base);
-    let (kind, marker_style) = epub_list_semantics(definition.num_fmt.as_ref())?;
-    Some(ListInfo {
-        num_id,
-        level,
-        kind,
-        start: definition.start.unwrap_or(1),
-        marker_style,
-        item_markers: definition.num_fmt == Some(ST_NumberFormat::Chicago),
-    })
+    Some((num_id, level, definition))
 }
 
 /// The marker layout draws for item `value` of a level whose format CSS

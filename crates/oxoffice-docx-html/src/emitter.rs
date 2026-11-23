@@ -183,7 +183,7 @@ fn open_item(out: &mut String, lists: &mut Vec<OpenList>, item: &ListItem) {
         ListKind::UpperLetter => " type=\"A\"",
         ListKind::LowerRoman => " type=\"i\"",
         ListKind::UpperRoman => " type=\"I\"",
-        // Each item writes its own marker (`item_attribute`).
+        // A Chicago item carries its mark (`item_style_attribute`).
         ListKind::Bullet | ListKind::Decimal | ListKind::Chicago => "",
     };
     let start = if item.kind.ordered() && item.count != 1 {

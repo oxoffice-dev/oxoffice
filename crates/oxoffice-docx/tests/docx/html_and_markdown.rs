@@ -1331,6 +1331,64 @@ fn epub_reports_a_table_shading_colour_it_cannot_carry() {
 }
 
 #[test]
+fn a_shaded_epub_list_item_keeps_its_shading() {
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    doc.add_paragraph("Shaded")
+        .numbering(list, 0)
+        .shading("C6EFCE");
+    doc.add_paragraph("Plain").numbering(list, 0);
+    let chapters = epub_chapters(doc.to_epub_bytes().unwrap().bytes);
+    assert!(
+        chapters.contains(r##"<li style="background-color:#C6EFCE">Shaded"##),
+        "{chapters}"
+    );
+    assert!(chapters.contains("<li>Plain"), "{chapters}");
+}
+
+#[test]
+fn a_chicago_list_numbered_through_its_style_gets_its_marks_in_epub_and_legal_numbering_does_not() {
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::new(
+            oxoffice_docx::ListNumberFormat::Chicago,
+        )])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    doc.link_style_to_numbering("Heading2", list, 0).unwrap();
+    for item in ["One", "Two"] {
+        doc.add_paragraph(item).style("Heading2");
+    }
+    let chapters = epub_chapters(doc.to_epub_bytes().unwrap().bytes);
+    let marks = html_elements(&chapters, "li[style]")
+        .into_iter()
+        .map(|(_, attributes)| attributes["style"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        marks,
+        ["list-style-type:'*. '", "list-style-type:'\u{2020}. '"],
+        "{chapters}"
+    );
+
+    // A legal level shows its numbers as decimal ones, as layout does.
+    let mut legal = Document::new();
+    let definition = legal
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::new(
+            oxoffice_docx::ListNumberFormat::Chicago,
+        )
+        .legal_numbering(true)])
+        .unwrap();
+    let list = legal.add_numbering_instance(definition, &[]).unwrap();
+    legal.add_paragraph("One").numbering(list, 0);
+    let chapters = epub_chapters(legal.to_epub_bytes().unwrap().bytes);
+    assert!(!chapters.contains("list-style-type:'"), "{chapters}");
+    assert!(chapters.contains("<ol>"), "{chapters}");
+}
+
+#[test]
 fn chicago_list_marks_are_written_as_the_pdf_draws_them() {
     let mut doc = Document::new();
     let definition = doc
@@ -1376,25 +1434,6 @@ fn chicago_list_marks_are_written_as_the_pdf_draws_them() {
             "{chapters}"
         );
     }
-
-    // A shaded or right-to-left item keeps its shading and direction in the
-    // EPUB list, as in HTML.
-    let mut shaded = Document::new();
-    let definition = shaded
-        .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
-        .unwrap();
-    let list = shaded.add_numbering_instance(definition, &[]).unwrap();
-    shaded
-        .add_paragraph("Shaded")
-        .numbering(list, 0)
-        .shading("C6EFCE");
-    shaded.add_paragraph("Plain").numbering(list, 0);
-    let chapters = epub_chapters(shaded.to_epub_bytes().unwrap().bytes);
-    assert!(
-        chapters.contains(r##"<li style="background-color:#C6EFCE">Shaded"##),
-        "{chapters}"
-    );
-    assert!(chapters.contains("<li>Plain"), "{chapters}");
 
     // Markdown has no list for them: each item is a paragraph led by its
     // mark, escaped where Markdown would read it as emphasis.

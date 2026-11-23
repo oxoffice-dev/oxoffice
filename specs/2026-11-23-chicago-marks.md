@@ -25,13 +25,15 @@ list levels. Two places did not know them (issue #451):
   marker, `style="list-style-type:'†. '"`, because CSS names no Chicago counter. A per-item string needs no style
   sheet, so it also works in a fragment. The other formats keep their CSS `type`.
 - **EPUB**: the same per-item marker, built from the level's text and the item's number in the EPUB list's own count.
-  An item also keeps the direction and the shading the HTML writer gives it. Before, any attribute on the item made the
+  An item also keeps the shading the HTML writer gives it. Before, any attribute on the item made the
   EPUB export fail ("list paragraph projection produced no list item"); a shaded list item hit it after #519.
 - **Markdown**: a list in Markdown is numbered or bulleted, so a Chicago item is a paragraph led by its mark, escaped
   (`\*. One`), as it reads in the PDF.
 
 **Not done**: `@counter-style` (needs a style sheet, so it would not work in a fragment); the marks of other levels
-in a Chicago level's text (EPUB writes only the level's own number, as a Chicago list is read alone).
+in a Chicago level's text (EPUB writes only the level's own number, as a Chicago list is read alone); in Markdown, a
+Chicago level nested in a numbered list is a paragraph after it, not inside the parent item. Legal numbering shows a
+Chicago level as decimal numbers, as the layout does.
 
 ## Plan
 
