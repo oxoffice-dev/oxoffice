@@ -30,3 +30,12 @@ monochrome semantic fallback, not original Symbol or Wingdings outline parity.
 Reproduction uses FontTools 4.66.1 with this command:
 
 pyftsubset NotoSansSymbols2-Regular.ttf --output-file=NotoSansSymbols2-bullets-subset.ttf --unicodes=U+21E8,U+25C6,U+25FB,U+2610,U+2611,U+2612,U+2713,U+2717,U+274D,U+2751,U+2752,U+2756,U+2794,U+27A2,U+29EB,U+2B25,U+2B27 --glyph-names --symbol-cmap --legacy-cmap --notdef-glyph --notdef-outline --recommended-glyphs --name-IDs=* --name-legacy --name-languages=* --layout-features=* --no-hinting
+
+Noto Sans Math subset of the mathematical symbol blocks:
+Upstream: https://github.com/google/fonts, ofl/notosansmath/NotoSansMath-Regular.ttf
+Revision: main at 06bfe0d62a98375cb09c942fa18e68bd32cff057, retrieved 2026-11-23
+Source SHA-256: 3f495fe933c06786e4d5f6d86b8ee70b6753a68ee3b9d87528726de0f6e2c47d
+Subset SHA-256: e09d629faa723d736d884164e38c31ac45523af1b451b10046b346221a61f08e
+The subset keeps the glyphs of seven blocks and no layout or MATH table: it is
+a fallback for the symbols the text faces lack. SUBSET-NotoSansMath.md records
+its repertoire and reproduction.

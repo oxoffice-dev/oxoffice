@@ -487,13 +487,26 @@ impl Document {
     ) -> Result<usize> {
         let mut candidate = self.clone_for_staging();
         candidate.prepare_staged_package()?;
-        let footnote_custody = crate::comparison::validate_note_custody(
-            &candidate,
-            crate::comparison::NoteKind::Footnote,
-            &scope,
-        )?;
+        // Custody resolves per note kind: footnotes, then endnotes when the
+        // document has an endnotes part.
+        let mut custody = Vec::new();
+        for kind in crate::comparison::resolved_note_kinds(&candidate) {
+            custody.push((
+                kind,
+                crate::comparison::validate_note_custody(&candidate, kind, &scope)?,
+            ));
+        }
+        // The note kind whose part a publication trace follows.
+        let mut publication_kind = None;
         if let Some(trace) = publication.as_deref_mut() {
-            if candidate.footnotes_part_name.as_deref() != Some(trace.part_name.as_str()) {
+            for kind in crate::comparison::NoteKind::ALL {
+                if crate::comparison::note_part_name(&candidate, kind)?.as_deref()
+                    == Some(trace.part_name.as_str())
+                {
+                    publication_kind = Some(kind);
+                }
+            }
+            if publication_kind.is_none() {
                 return Err(Error::Other(
                     "publication trace has no positively discovered note part".into(),
                 ));
@@ -533,8 +546,9 @@ impl Document {
             leaf_ranges: Vec::new(),
             leaf_updates: Vec::new(),
             retiring_simple_fields: HashSet::new(),
-            custody_pairs: footnote_custody
+            custody_pairs: custody
                 .iter()
+                .flat_map(|(_, units)| units)
                 .filter_map(|unit| unit.wrapped_body.clone())
                 .collect(),
             absorbed: HashSet::new(),
@@ -546,14 +560,22 @@ impl Document {
         output.extend_from_slice(&source[tree.elements[tree.root].end..]);
         // Resolving a note reference settles the note side of a custody unit as
         // much as resolving the note itself, so it counts for settlement. Read
-        // from this render, only when the document holds custody pairs.
-        let reference_resolved = !footnote_custody.is_empty()
-            && tree.elements.iter().enumerate().any(|(index, node)| {
-                node.word
-                    && node.local == "footnoteReference"
-                    && std::iter::successors(Some(index), |&at| tree.elements[at].parent)
-                        .any(|at| state.resolved.contains(&at))
-            });
+        // from this render, per kind, only when the document holds custody
+        // pairs of that kind.
+        let reference_resolved =
+            |kind: crate::comparison::NoteKind, units: &[crate::comparison::FootnoteCustody]| {
+                !units.is_empty()
+                    && tree.elements.iter().enumerate().any(|(index, node)| {
+                        node.word
+                            && node.local == kind.reference()
+                            && std::iter::successors(Some(index), |&at| tree.elements[at].parent)
+                                .any(|at| state.resolved.contains(&at))
+                    })
+            };
+        let mut note_part_resolved = custody
+            .iter()
+            .map(|(kind, units)| (*kind, reference_resolved(*kind, units)))
+            .collect::<HashMap<_, _>>();
 
         let mut resolved = state.resolved.len();
         if resolved > 0 {
@@ -563,17 +585,23 @@ impl Document {
             candidate.package.set_part(&candidate.doc_part_name, output);
         }
 
-        let removed_note_revisions = crate::comparison::remove_selected_note_definitions(
-            &mut candidate,
-            crate::comparison::NoteKind::Footnote,
-            &footnote_custody,
-            matches!(resolution, Resolution::Accept),
-            publication.as_deref_mut(),
-        )?;
-        resolved = resolved
-            .checked_add(removed_note_revisions)
-            .ok_or_else(|| Error::Other("resolved revision count overflowed".into()))?;
-        let mut note_part_resolved = removed_note_revisions > 0 || reference_resolved;
+        for (kind, units) in &custody {
+            let removed_note_revisions = crate::comparison::remove_selected_note_definitions(
+                &mut candidate,
+                *kind,
+                units,
+                matches!(resolution, Resolution::Accept),
+                publication
+                    .as_deref_mut()
+                    .filter(|_| publication_kind == Some(*kind)),
+            )?;
+            resolved = resolved
+                .checked_add(removed_note_revisions)
+                .ok_or_else(|| Error::Other("resolved revision count overflowed".into()))?;
+            if removed_note_revisions > 0 {
+                note_part_resolved.insert(*kind, true);
+            }
+        }
         let story_parts = crate::comparison::revision_story_parts(&candidate)?;
         for (kind, part_name) in story_parts {
             let part = candidate
@@ -621,7 +649,14 @@ impl Document {
                 resolve_story_xml(&part, resolution, scope.clone())?
             };
             if count > 0 {
-                note_part_resolved |= matches!(kind, crate::StoryKind::Footnote);
+                let note = match kind {
+                    crate::StoryKind::Footnote => Some(crate::comparison::NoteKind::Footnote),
+                    crate::StoryKind::Endnote => Some(crate::comparison::NoteKind::Endnote),
+                    _ => None,
+                };
+                if let Some(note) = note {
+                    note_part_resolved.insert(note, true);
+                }
                 candidate.package.set_part(&part_name, updated);
                 resolved = resolved
                     .checked_add(count)
@@ -679,14 +714,18 @@ impl Document {
         if resolved == 0 {
             return Ok(0);
         }
-        crate::comparison::settle_note_custody(
-            &mut candidate,
-            crate::comparison::NoteKind::Footnote,
-            &footnote_custody,
-            matches!(resolution, Resolution::Accept),
-            note_part_resolved,
-            publication.as_deref_mut(),
-        )?;
+        for (kind, units) in &custody {
+            crate::comparison::settle_note_custody(
+                &mut candidate,
+                *kind,
+                units,
+                matches!(resolution, Resolution::Accept),
+                note_part_resolved[kind],
+                publication
+                    .as_deref_mut()
+                    .filter(|_| publication_kind == Some(*kind)),
+            )?;
+        }
         candidate.reconcile_comment_removal(self)?;
         candidate = crate::comparison::reopen_staged(candidate)?;
         if let Some(trace) = publication {
@@ -1130,9 +1169,10 @@ impl RevisionScope<'_> {
 /// the caller's paragraph root and canonical writer binding, not a new resolver root.
 ///
 /// `published` holds the byte ranges in `source` of paragraph children the
-/// caller already wrapped, each a whole field in a wrapper of its own: they
-/// are written as they are, and the markers next to them stay in the
-/// wrappers of their other neighbours.
+/// caller already wrapped, each a whole field in a wrapper of its own, a
+/// child of the paragraph or of a hyperlink in it: they are written as they
+/// are, and the markers next to them stay in the wrappers of their other
+/// neighbours.
 pub(crate) fn tracked_paragraph_children(
     source: &str,
     deleted: bool,
@@ -1241,7 +1281,7 @@ pub(crate) fn tracked_paragraph_children(
                 .push((input[frame.cursor..child.start].to_owned(), false));
         }
         frame.cursor = child.end;
-        if frame.owner == *paragraph
+        if (frame.owner == *paragraph || owner.word && owner.local == "hyperlink")
             && published.contains(&(child.start - opening.len()..child.end - opening.len()))
         {
             flush(&mut frame.groups, &mut output, wrap)?;

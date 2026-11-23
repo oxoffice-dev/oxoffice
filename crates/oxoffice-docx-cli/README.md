@@ -134,10 +134,11 @@ rebuilt table of contents gives its heading bookmarks are no change: a body
 bookmark both files hold keeps the original's id, a heading paired with one of
 the original's takes its `_Toc` name, a new heading takes a fresh one where the
 original uses its own, and the links and page references of the edited file
-follow them. Footnote ids, which Word also renumbers, take the original's, the
-notes paired in reference order. A footnote whose reference moved is deleted
-with its old reference and inserted again, under a new id, with the new one,
-as Word shows it.
+follow them. Footnote and endnote ids, which Word also renumbers, take the
+original's, the notes of each kind paired in reference order. A footnote or an
+endnote added or removed is inserted or deleted whole with its reference, and
+one whose reference moved is deleted with its old reference and inserted again,
+under a new id, with the new one, as Word shows it.
 No tracked change records a bookmark: a paragraph whose bookmarks differ is
 deleted and inserted whole, the insertion first, and a bookmark both files hold
 is written once, outside the revision marks, its start in the insertion and its

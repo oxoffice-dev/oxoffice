@@ -56,6 +56,9 @@ content type, the `F` of the marker names), about 2,800 lines in
 
 Accepting gives the edited version, rejecting the original, endnotes
 included, under the original's ids or new ones, as for footnotes.
+Accepting and rejecting run the endnote custody only when the document has
+an endnotes part (a relationship from the main part), so a document without
+one, even holding a stray endnote reference, resolves as before.
 
 Deliberately not done:
 
@@ -74,14 +77,16 @@ Two pull requests, each with the full corpus walk
 
 1. `refactor(compare)`: the note kind through the custody, footnotes only,
    no behaviour change. Checked by the existing footnote tests and the
-   corpus walk unchanged; `revision.rs` resolves custody per kind.
-2. `fix(compare)`: endnotes go through the custody. Behaviour tests in
+   corpus walk unchanged.
+2. `fix(compare)`: endnotes go through the custody, and `revision.rs`
+   resolves custody per kind. Behaviour tests in
    `tests/docx/revisions_and_compare.rs`, the footnote set run for endnotes
    (added, removed, the first endnote, moved within and across paragraphs,
    moved and edited, numbered by position, a paragraph moved with its
    endnote, a table replaced whole holding one), each accepted to the
    edited version and rejected to the original; a document with both kinds
-   changed at once; an older redline's footnote markers still resolving.
+   changed at once, which also checks that footnote redlines keep their
+   `F` markers and resolve.
    The limitation `docx-compare-endnotes` removed. Closes #68.
 
 ## Links

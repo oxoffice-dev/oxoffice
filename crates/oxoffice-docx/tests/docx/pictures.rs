@@ -2487,3 +2487,71 @@ fn a_cut_picture_comes_back_after_its_other_occurrence_goes() {
         .expect("the cut picture comes back");
     assert!(saved_entries(&mut doc).contains_key("word/media/shared.png"));
 }
+
+/// `doc` with each body picture as the result of an `INCLUDEPICTURE` field.
+fn as_included_pictures(doc: Document) -> Document {
+    let mut doc = doc;
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let xml = xml
+        .replace(
+            "<w:p><w:r><w:drawing>",
+            r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> INCLUDEPICTURE "logo.png" \* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:drawing>"#,
+        )
+        .replace(
+            "</w:drawing></w:r></w:p>",
+            r#"</w:drawing></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        );
+    assert!(xml.contains("INCLUDEPICTURE"), "{xml}");
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn pictures_shown_by_include_picture_fields_are_compared_by_what_they_show() {
+    // Each picture is the result of an INCLUDEPICTURE field: the comparison
+    // renumbers the drawings it writes, which is no change.
+    use PictureTarget::Media;
+    // The same image through another relationship: no change.
+    let original = as_included_pictures(pictures_document(
+        Placement::Body,
+        &[("r:embed", "rIdShared"), ("r:embed", "rIdShared")],
+        &[("rIdShared", Media("one.png", 40))],
+    ));
+    let edited = as_included_pictures(pictures_document(
+        Placement::Body,
+        &[("r:embed", "rIdShared"), ("r:embed", "rIdOther")],
+        &[
+            ("rIdShared", Media("one.png", 40)),
+            ("rIdOther", Media("two.png", 40)),
+        ],
+    ));
+    let mut doc = compared(original, &edited);
+    assert_eq!(story_revision_kinds(&doc), []);
+    let shown = picture_payloads(&mut doc);
+    assert_eq!(shown[0], shown[1]);
+    // Another image.
+    let original = || {
+        as_included_pictures(pictures_document(
+            Placement::Body,
+            &[("r:embed", "rId5")],
+            &[("rId5", Media("one.png", 40))],
+        ))
+    };
+    let mut edited = as_included_pictures(pictures_document(
+        Placement::Body,
+        &[("r:embed", "rId5")],
+        &[("rId5", Media("one.png", 90))],
+    ));
+    let mut doc = compared(original(), &edited);
+    assert_eq!(
+        resolved_pictures(&mut doc, true),
+        picture_payloads(&mut edited)
+    );
+    assert_eq!(
+        resolved_pictures(&mut doc, false),
+        picture_payloads(&mut original())
+    );
+}

@@ -10,6 +10,7 @@ use oxoffice_docx::paragraph::Alignment;
 use oxoffice_docx::{
     CT_RPr, Document, Length, ListLevel, PdfConformance, PictureOptions, RenderOptions, StoryKind,
 };
+use oxoffice_docx_oxml::shared::ST_SectionType;
 use oxoffice_docx_oxml::table::ST_VerticalJc;
 use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf};
@@ -236,6 +237,124 @@ fn a_page_break_just_before_a_next_page_section_break_adds_no_blank_page() {
     assert_eq!(pdf.page_count(), 3);
     assert_eq!(pdf.page_text(1), "After the break");
     assert_eq!(pdf.page_text(2), "Next section");
+}
+
+// A page break beside a drawing the text wraps around, just before a
+// next-page section break, starts no page of its own either: wrapping the
+// paragraph around the drawing breaks its lines again, and must not bring the
+// break back.
+#[test]
+fn a_page_break_beside_a_wrapping_drawing_before_a_section_break_adds_no_blank_page() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let drawing = |wrap: &str, offset: u32, height: u32| {
+        format!(
+            concat!(
+                r#"<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" "#,
+                r#"relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">"#,
+                r#"<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+                r#"<wp:positionV relativeFrom="paragraph"><wp:posOffset>{offset}</wp:posOffset></wp:positionV>"#,
+                r#"<wp:extent cx="1828800" cy="{height}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>"#,
+                r#"{wrap}<wp:docPr id="7" name="Text Box"/><wp:cNvGraphicFramePr/>"#,
+                r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+                r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+                r#"<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/>"#,
+                r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="{height}"/></a:xfrm>"#,
+                r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>"#,
+                r#"<w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>"#,
+                r#"</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"#,
+            ),
+            wrap = wrap,
+            offset = offset,
+            height = height
+        )
+    };
+    let square = drawing(r#"<wp:wrapSquare wrapText="bothSides"/>"#, 0, 2743200);
+    // A drawing the text clears above and below, anchored in the break's
+    // paragraph a little below it and reaching the bottom margin: the empty
+    // paragraph holding the section break would start below it.
+    let top_and_bottom = drawing("<wp:wrapTopAndBottom/>", 182880, 8046720);
+    // The break in a paragraph of its own, and at the end of the text.
+    for (first, page_break) in [
+        (
+            format!("<w:p>{square}<w:r><w:t>First section</w:t></w:r></w:p>"),
+            r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#.to_owned(),
+        ),
+        (
+            format!(
+                r#"<w:p>{square}<w:r><w:t>First section</w:t><w:br w:type="page"/></w:r></w:p>"#
+            ),
+            String::new(),
+        ),
+        (
+            "<w:p><w:r><w:t>First section</w:t></w:r></w:p>".to_owned(),
+            format!(r#"<w:p><w:r><w:br w:type="page"/></w:r>{top_and_bottom}</w:p>"#),
+        ),
+    ] {
+        let doc = doc_with_body(&format!(
+            r#"{first}{page_break}<w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Second section</w:t></w:r></w:p>"#
+        ));
+        let pdf = pdf_of(&doc);
+        assert_eq!(pdf.page_count(), 2, "{first}{page_break}");
+        assert_eq!(page_with(&pdf, "Second section"), 1);
+    }
+}
+
+// A section that prints its endnotes at its end keeps a page break before
+// its section break: the break ends the text's page and the endnotes fill
+// the page it opens, then the next section starts its own. No page is blank.
+#[test]
+fn a_page_break_before_a_section_printing_its_endnotes_opens_their_page() {
+    let section = r#"<w:sectPr><w:endnotePr><w:pos w:val="sectEnd"/></w:endnotePr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>First section</w:t></w:r></w:p><w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Second section</w:t></w:r></w:p>"#
+    ));
+    let cited = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_endnote(&cited, "Endnote text.").unwrap();
+    let pdf = pdf_of(&reopen(&mut doc));
+    assert_eq!(pdf.page_count(), 3);
+    assert_eq!(page_with(&pdf, "First section"), 0);
+    assert_eq!(page_with(&pdf, "Endnote text."), 1);
+    assert_eq!(page_with(&pdf, "Second section"), 2);
+}
+
+// With even and odd headers on, Word keeps odd page numbers on right-hand
+// pages: a next-page section whose numbering restarts at 1 after an odd page
+// starts after an empty page (Word 16.115 on the Google thesis: an empty page
+// 6 between "List of Figures" on page 5 and chapter 1, numbered 1). A
+// restart that keeps the alternation, or none, adds nothing.
+#[test]
+fn a_restarted_odd_number_after_an_odd_page_starts_after_an_empty_page_with_even_and_odd_headers() {
+    let section = r#"<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>"#;
+    let render = |restart: u32, even_and_odd: bool, start: Option<ST_SectionType>| {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:p><w:r><w:t>Front</w:t></w:r></w:p><w:p><w:pPr>{section}</w:pPr></w:p><w:p><w:r><w:t>Chapter</w:t></w:r></w:p>"#
+        ));
+        let mut chapter = doc.section_mut(1).unwrap();
+        chapter.set_page_number_start(restart).unwrap();
+        if let Some(start) = start {
+            chapter.set_break_type(start);
+        }
+        doc.set_even_and_odd_headers(even_and_odd).unwrap();
+        doc.set_footer("Footer");
+        pdf_of(&reopen(&mut doc))
+    };
+    let pages = |restart, even_and_odd| {
+        let pdf = render(restart, even_and_odd, None);
+        (pdf.page_count(), page_with(&pdf, "Chapter"))
+    };
+    // Front ends on page 1; the chapter restarts at 1, odd again.
+    assert_eq!(pages(1, true), (3, 2), "an empty page 2 before the chapter");
+    assert_eq!(pages(1, false), (2, 1), "only with even and odd headers");
+    assert_eq!(pages(2, true), (2, 1), "an even restart alternates");
+    // The empty page draws nothing, not even the footer the pages around
+    // it have.
+    let pdf = render(1, true, None);
+    assert_eq!(pdf.page_text(1), "");
+    assert!(pdf.page_text(2).contains("Footer"), "{}", pdf.page_text(2));
+    // An even-page section keeps the physical rule: page 2 is even, so the
+    // chapter starts there, numbered 1, with no empty page.
+    let pdf = render(1, true, Some(ST_SectionType::EvenPage));
+    assert_eq!((pdf.page_count(), page_with(&pdf, "Chapter")), (2, 1));
 }
 
 #[test]
@@ -541,6 +660,191 @@ fn a_right_to_left_paragraph_reads_left_and_right_as_start_and_end() {
         .find(|line| line.y < number.y - 0.5)
         .expect("a second numbered line");
     assert!(near(next.right, right - 36.0), "{next:?}");
+}
+
+// Word 16.115 measures every tab stop of a right-to-left paragraph from the
+// right margin, whatever its indents, as it measures a left-to-right one's
+// from the left margin: the text after a 2 in start stop ends 2 in from the
+// right margin with a start indent, an end indent, both, or a hanging indent
+// (its second stop too), the default stops are counted from there, a line
+// after the first of a hanging indent does not stop at the hanging stop, and
+// a decimal stop puts the number's decimal point on the stop (an integer's
+// end, a point in a run of its own, as in a left-to-right paragraph).
+#[test]
+fn tab_stops_in_a_right_to_left_paragraph_are_measured_from_the_right_margin() {
+    let rtl = |ppr: &str, runs: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:bidi/>{ppr}<w:spacing w:before="0" w:after="120"/></w:pPr>{runs}</w:p>"#
+        )
+    };
+    let text = |value: &str| format!(r#"<w:r><w:t xml:space="preserve">{value}</w:t></w:r>"#);
+    let tab = r#"<w:r><w:tab/></w:r>"#;
+    let stops = |stops: &[(&str, u32)]| {
+        let stops = stops
+            .iter()
+            .map(|(kind, pos)| format!(r#"<w:tab w:val="{kind}" w:pos="{pos}"/>"#))
+            .collect::<String>();
+        format!("<w:tabs>{stops}</w:tabs>")
+    };
+    let start_stop = stops(&[("left", 2880)]);
+    let mut body = String::new();
+    for (case, indent) in [
+        ("Plain", ""),
+        ("Start", r#"<w:ind w:left="1440"/>"#),
+        ("End", r#"<w:ind w:right="1440"/>"#),
+        ("Both", r#"<w:ind w:left="720" w:right="1440"/>"#),
+    ] {
+        body.push_str(&rtl(
+            &format!("{start_stop}{indent}"),
+            &[
+                text(&format!("{case}A")),
+                tab.to_owned(),
+                text(&format!("{case}B")),
+            ]
+            .concat(),
+        ));
+    }
+    body.push_str(&rtl(
+        &format!(
+            r#"{}<w:ind w:left="720" w:hanging="360"/>"#,
+            stops(&[("left", 2880), ("left", 5040)])
+        ),
+        &[
+            text("HangA"),
+            tab.to_owned(),
+            text("HangB"),
+            tab.to_owned(),
+            text("HangC"),
+        ]
+        .concat(),
+    ));
+    body.push_str(&rtl(
+        "",
+        &[
+            text("DefA"),
+            tab.to_owned(),
+            text("DefB"),
+            tab.to_owned(),
+            text("DefC"),
+        ]
+        .concat(),
+    ));
+    body.push_str(&rtl(
+        r#"<w:ind w:left="1440" w:hanging="1080"/>"#,
+        &[
+            text("WrapA"),
+            r#"<w:r><w:br/></w:r>"#.to_owned(),
+            text("WrapB"),
+            tab.to_owned(),
+            text("WrapC"),
+        ]
+        .concat(),
+    ));
+    let decimal = stops(&[("decimal", 4320)]);
+    body.push_str(&rtl(
+        &decimal,
+        &[text("NumA"), tab.to_owned(), text("12.50")].concat(),
+    ));
+    // An integer ends on the stop, and a number split across runs aligns as
+    // one run does.
+    body.push_str(&rtl(
+        &decimal,
+        &[text("IntA"), tab.to_owned(), text("7")].concat(),
+    ));
+    body.push_str(&rtl(
+        &decimal,
+        &[text("SplitA"), tab.to_owned(), text("34"), text(".75")].concat(),
+    ));
+    // Split after the point, and an Arabic word with a space of its own.
+    body.push_str(&rtl(
+        &decimal,
+        &[text("TailA"), tab.to_owned(), text("12.5"), text("0")].concat(),
+    ));
+    body.push_str(&rtl(
+        &decimal,
+        &[
+            text("WordA"),
+            tab.to_owned(),
+            text("\u{0631}\u{064a}\u{0627}\u{0644}"),
+            text(" "),
+        ]
+        .concat(),
+    ));
+    body.push_str(&rtl(
+        &decimal,
+        &[
+            text("BareA"),
+            tab.to_owned(),
+            text("\u{0631}\u{064a}\u{0627}\u{0644}"),
+        ]
+        .concat(),
+    ));
+    body.push_str(&format!(
+        r#"<w:p><w:pPr>{decimal}</w:pPr>{}{tab}{}</w:p>"#,
+        text("LtrA"),
+        text("12.50")
+    ));
+    let pdf = pdf_of(&doc_with_body(&body));
+    let drawn = pdf.drawn(0);
+    let piece = |label: &str| {
+        drawn
+            .iter()
+            .find(|piece| piece.text.trim() == label)
+            .unwrap_or_else(|| panic!("{label} is not drawn: {drawn:#?}"))
+    };
+    let right = 540.0;
+    for (label, from_right) in [
+        ("PlainB", 144.0),
+        ("StartB", 144.0),
+        ("EndB", 144.0),
+        ("BothB", 144.0),
+        ("HangB", 144.0),
+        ("HangC", 252.0),
+        ("DefC", 72.0),
+        ("WrapC", 108.0),
+    ] {
+        let end = piece(label).end;
+        assert!(
+            (end - (right - from_right)).abs() < 1.0,
+            "{label} ends at {end:.1}, Word at {:.1}",
+            right - from_right
+        );
+    }
+    // The decimal point sits 216 pt from the margin the paragraph starts at:
+    // 324 here and 288 in the left-to-right paragraph, so the number lies 36
+    // pt further right.
+    let shift = piece("12.50").x
+        - drawn
+            .iter()
+            .rfind(|piece| piece.text.trim() == "12.50")
+            .unwrap()
+            .x;
+    assert!((shift - 36.0).abs() < 0.5, "the number moves {shift:.1}");
+    let integer = piece("7").end;
+    assert!(
+        (integer - 324.0).abs() < 0.5,
+        "the integer ends at {integer:.1}"
+    );
+    let point = piece(".75").x;
+    assert!(
+        (point - 324.0).abs() < 0.5,
+        "the split number's point is at {point:.1}"
+    );
+    let (split, whole) = (piece("12.5").x, piece("12.50").x);
+    assert!(
+        (split - whole).abs() < 0.5,
+        "split after its point the number starts at {split:.1}, whole at {whole:.1}"
+    );
+    // A word with a space after it ends where it ends alone.
+    let words = drawn
+        .iter()
+        .filter(|piece| piece.text.trim() == "\u{0631}\u{064a}\u{0627}\u{0644}")
+        .map(|piece| piece.x)
+        .collect::<Vec<_>>();
+    assert!(
+        words.len() == 2 && (words[0] - words[1]).abs() < 0.5,
+        "the word starts at {words:.1?}"
+    );
 }
 
 // Word and LibreOffice align a right-to-left paragraph on the right margin,
@@ -871,6 +1175,172 @@ fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
             han.1
         );
     }
+}
+
+/// Every glyph run the document draws, as (text, size, colour), and the
+/// diagnostics of its layout.
+fn laid_out_runs(doc: &Document) -> (Vec<(String, f64, oxoffice_layout::Color)>, Vec<String>) {
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut runs = Vec::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                runs.push((run.text.clone(), run.font_size, run.color));
+            }
+        });
+    }
+    let diagnostics = result
+        .layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect();
+    (runs, diagnostics)
+}
+
+const MATH: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+
+// Word writes a w:rPr in every math run and an m:ctrlPr in every
+// construct's properties or at the end of an argument: the equation is drawn
+// whole, with no diagnostic, and a `∼` has a glyph with the bundled fonts.
+#[test]
+fn an_equation_with_the_run_formatting_word_writes_is_drawn_whole() {
+    let cambria = r#"<w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><m:oMathPara xmlns:m="{MATH}"><m:oMath><m:sSub><m:sSubPr><m:ctrlPr>{cambria}</m:ctrlPr></m:sSubPr><m:e><m:r>{cambria}<m:t>y</m:t></m:r><m:ctrlPr>{cambria}</m:ctrlPr></m:e><m:sub><m:r>{cambria}<m:t>i</m:t></m:r></m:sub></m:sSub><m:r>{cambria}<m:t>∼⊤</m:t></m:r></m:oMath></m:oMathPara></w:p>"#
+    );
+    let doc = doc_with_body(&body);
+    let (_, diagnostics) = laid_out_runs(&doc);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|message| !message.contains("OfficeMath")),
+        "{diagnostics:?}"
+    );
+    let pdf = pdf_of(&doc);
+    let drawn = pdf.drawn(0);
+    assert!(
+        drawn.iter().any(|piece| piece.text.contains('∼')),
+        "{drawn:#?}"
+    );
+    assert!(drawn.iter().all(|piece| piece.notdef == 0), "{drawn:#?}");
+}
+
+// A w:rPr that tracks an insertion is not formatting the layout draws, in a
+// math run or in a construct's control properties: the equation still says
+// it left something out.
+#[test]
+fn math_formatting_that_tracks_a_change_is_reported() {
+    let tracked = r#"<w:rPr><w:ins w:id="1" w:author="A" w:date="2026-11-23T00:00:00Z"/></w:rPr>"#;
+    for equation in [
+        format!(r#"<m:r>{tracked}<m:t>x</m:t></m:r>"#),
+        format!(
+            r#"<m:sSup><m:sSupPr><m:ctrlPr>{tracked}</m:ctrlPr></m:sSupPr><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup>"#
+        ),
+    ] {
+        let body = format!(r#"<w:p><m:oMath xmlns:m="{MATH}">{equation}</m:oMath></w:p>"#);
+        let (_, diagnostics) = laid_out_runs(&doc_with_body(&body));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|message| message.contains("could not be rendered")),
+            "{equation}: {diagnostics:?}"
+        );
+    }
+}
+
+// Word draws a math run in the colour and size of its own w:rPr, and a
+// script of that run smaller in proportion.
+#[test]
+fn a_math_run_draws_in_the_colour_and_size_of_its_run_properties() {
+    let red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:r>{red}<m:t>a</m:t></m:r><m:r><m:t>b</m:t></m:r><m:sSup><m:e><m:r><m:t>c</m:t></m:r></m:e><m:sup><m:r>{red}<m:t>d</m:t></m:r></m:sup></m:sSup><m:sSup><m:e><m:r><m:t>f</m:t></m:r></m:e><m:sup><m:r><m:t>g</m:t></m:r></m:sup></m:sSup></m:oMath></w:p>"#
+    );
+    let (runs, _) = laid_out_runs(&doc_with_body(&body));
+    let run = |text: &str| {
+        runs.iter()
+            .find(|run| run.0.contains(text))
+            .unwrap_or_else(|| panic!("{text} drawn: {runs:?}"))
+            .clone()
+    };
+    let (a, b, c, d, g) = (run("a"), run("b"), run("c"), run("d"), run("g"));
+    let red = |color: oxoffice_layout::Color| color.r > 0.99 && color.g < 0.01 && color.b < 0.01;
+    assert!(red(a.2) && !red(b.2) && !red(c.2) && red(d.2), "{runs:?}");
+    assert!((a.1 - 16.0).abs() < 0.01, "{runs:?}");
+    assert!(
+        (b.1 - 11.0).abs() < 0.01 && (c.1 - 11.0).abs() < 0.01,
+        "{runs:?}"
+    );
+    // A 16 pt superscript is to a plain one what 16 pt is to 11.
+    assert!(g.1 < c.1, "{runs:?}");
+    assert!((d.1 - g.1 * 16.0 / 11.0).abs() < 0.01, "{runs:?}");
+}
+
+// Word writes the size and colour of a whole equation in every run: the
+// fraction rule takes them too, and a text fill declared above the equation
+// colours its run.
+#[test]
+fn an_equation_whose_runs_all_carry_one_size_and_colour_draws_its_rules_so() {
+    let red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:f><m:num><m:r>{red}<m:t>a</m:t></m:r></m:num><m:den><m:r>{red}<m:t>b</m:t></m:r></m:den></m:f></m:oMath></w:p><w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><m:oMath xmlns:m="{MATH}"><m:r><w:rPr><w14:textFill><w14:solidFill><w14:srgbClr w14:val="00FF00"/></w14:solidFill></w14:textFill></w:rPr><m:t>g</m:t></m:r></m:oMath></w:p>"#
+    );
+    let doc = doc_with_body(&body);
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut rules = Vec::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Line { color, width, .. } = element {
+                rules.push((*color, *width));
+            }
+        });
+    }
+    let red = |color: oxoffice_layout::Color| color.r > 0.99 && color.g < 0.01 && color.b < 0.01;
+    assert!(
+        !rules.is_empty() && rules.iter().all(|(color, _)| red(*color)),
+        "{rules:?}"
+    );
+    // The rule of a 16 pt fraction against the 11 pt one of plain text.
+    let plain = doc_with_body(&format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath></w:p>"#
+    ));
+    let plain = plain.layout_deterministic().expect("the document lays out");
+    let mut plain_width = None;
+    oxoffice_layout::walk(&plain.layout.pages[0].elements, &mut |element, _| {
+        if let oxoffice_layout::PositionedElement::Line { width, .. } = element {
+            plain_width = Some(*width);
+        }
+    });
+    let plain_width = plain_width.expect("a plain fraction draws its rule");
+    assert!(
+        (rules[0].1 - plain_width * 16.0 / 11.0).abs() < 1e-6,
+        "{rules:?} against {plain_width}"
+    );
+    // In a display group, each equation on its own: a red one beside a
+    // plain one draws its rule red and the other black.
+    let group = doc_with_body(&format!(
+        r#"<w:p><m:oMathPara xmlns:m="{MATH}"><m:oMath><m:f><m:num><m:r>{red}<m:t>a</m:t></m:r></m:num><m:den><m:r>{red}<m:t>b</m:t></m:r></m:den></m:f></m:oMath><m:oMath><m:f><m:num><m:r><m:t>c</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara></w:p>"#,
+        red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#
+    ));
+    let group = group.layout_deterministic().expect("the document lays out");
+    let mut group_rules = Vec::new();
+    oxoffice_layout::walk(&group.layout.pages[0].elements, &mut |element, _| {
+        if let oxoffice_layout::PositionedElement::Line { color, .. } = element {
+            group_rules.push(red(*color));
+        }
+    });
+    assert_eq!(group_rules, [true, false]);
+    let (runs, _) = laid_out_runs(&doc);
+    let green = runs
+        .iter()
+        .find(|run| run.0.contains('g'))
+        .unwrap_or_else(|| panic!("{runs:?}"))
+        .2;
+    assert!(
+        green.g > 0.99 && green.r < 0.01 && green.b < 0.01,
+        "{runs:?}"
+    );
 }
 
 // A phonetic guide as Word writes it, inside a run, draws its base text in
