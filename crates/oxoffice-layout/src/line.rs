@@ -155,6 +155,11 @@ pub struct TextSegment {
     /// Exact source range for this segment, when directly attributable.
     pub source: Option<SourceSpan>,
     pub font_id: FontId,
+    /// The face the line is measured on, when the producer measures on the
+    /// face of the requested family rather than on `font_id`. A face picked
+    /// only because it has the glyphs then draws the text without making its
+    /// line taller or shorter. `None` measures on `font_id`.
+    pub measure_font: Option<FontId>,
     pub font_size: f64,
     pub glyph_ids: Vec<u16>,
     pub advances: Vec<f64>,
@@ -1778,6 +1783,7 @@ fn split_text_subsegment(
         direction: seg.direction,
         source,
         font_id: seg.font_id,
+        measure_font: seg.measure_font,
         font_size: seg.font_size,
         glyph_ids: shaped.glyph_ids,
         advances: shaped.advances,
@@ -1951,6 +1957,7 @@ fn generated_hyphen(segment: &TextSegment, spacing: f64, fm: &FontManager) -> Re
         direction: segment.direction,
         source: None,
         font_id: segment.font_id,
+        measure_font: segment.measure_font,
         font_size: segment.font_size,
         glyph_ids: shaped.glyph_ids,
         advances: shaped.advances,
@@ -2288,6 +2295,7 @@ fn shape_leader(
         direction: TextDirection::Auto,
         source: None,
         font_id,
+        measure_font: None,
         font_size,
         glyph_ids,
         advances,

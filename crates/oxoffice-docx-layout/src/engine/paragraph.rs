@@ -515,7 +515,9 @@ fn layout_paragraph_with_source_and_table(
                         .is_some_and(|threshold| threshold.to_pt() <= marker_font_size),
                 )
             {
-                let metrics = fm.metrics(font_id, marker_font_size)?;
+                let marker_measure_font =
+                    fm.resolve_font_for_metrics(marker_font_family, marker_bold, marker_italic)?;
+                let metrics = fm.metrics(marker_measure_font, marker_font_size)?;
                 for message in fm.unknown_word_symbol_diagnostics(
                     font_id,
                     marker_font_family,
@@ -561,6 +563,7 @@ fn layout_paragraph_with_source_and_table(
                         direction: TextDirection::Auto,
                         source: None,
                         font_id,
+                        measure_font: Some(marker_measure_font),
                         font_size: marker_font_size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -610,6 +613,7 @@ fn layout_paragraph_with_source_and_table(
                             direction: TextDirection::Auto,
                             source: None,
                             font_id,
+                            measure_font: Some(marker_measure_font),
                             font_size: marker_font_size,
                             glyph_ids: shaped.glyph_ids,
                             advances: shaped.advances,
@@ -1021,7 +1025,11 @@ fn layout_paragraph_with_source_and_table(
         // this script is replaced by one that has them.
         let font_id =
             fm.resolve_font_for_split_text(font_family.as_deref(), bold, italic, &run_text)?;
-        let metrics = fm.metrics(font_id, font_size)?;
+        // The face of the requested family measures the run, also where a
+        // face picked for glyphs it lacks draws it: Word measures the line on
+        // the run's font, not on the font that rescued a glyph.
+        let measure_font = fm.resolve_font_for_metrics(font_family.as_deref(), bold, italic)?;
+        let metrics = fm.metrics(measure_font, font_size)?;
 
         // Stored-display expansion replaces the sole Field run with its
         // cache runs. Its instruction events still belong before that display.
@@ -1105,13 +1113,14 @@ fn layout_paragraph_with_source_and_table(
                         size,
                         style_resolver::word_kerning_enabled(&effective_rpr),
                     )?;
-                    let marker_metrics = fm.metrics(marker_font, size)?;
+                    let marker_metrics = fm.metrics(measure_font, size)?;
                     inline_items.push(InlineItem::Text(TextSegment {
                         form_mark: current_form_mark,
                         text,
                         direction: TextDirection::Auto,
                         source: None,
                         font_id: marker_font,
+                        measure_font: Some(measure_font),
                         font_size: size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -1264,6 +1273,7 @@ fn layout_paragraph_with_source_and_table(
                         direction: TextDirection::Auto,
                         source,
                         font_id,
+                        measure_font: Some(measure_font),
                         font_size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -1546,7 +1556,13 @@ fn layout_paragraph_with_source_and_table(
                             segment_italic,
                             value,
                         )?;
-                        let segment_metrics = fm.metrics(segment_font_id, segment_font_size)?;
+                        let segment_measure_font = fm.resolve_font_for_metrics(
+                            segment_font_family.as_deref(),
+                            segment_bold,
+                            segment_italic,
+                        )?;
+                        let segment_metrics =
+                            fm.metrics(segment_measure_font, segment_font_size)?;
 
                         let mut start = 0usize;
                         for (index, character) in value
@@ -1616,6 +1632,7 @@ fn layout_paragraph_with_source_and_table(
                                     direction: word_text_direction(segment_rpr.rtl),
                                     source: None,
                                     font_id: segment_font_id,
+                                    measure_font: Some(segment_measure_font),
                                     font_size: segment_font_size,
                                     glyph_ids: shaped.glyph_ids,
                                     advances: shaped.advances,
@@ -1680,7 +1697,7 @@ fn layout_paragraph_with_source_and_table(
                         sup_size,
                         style_resolver::word_kerning_enabled(&effective_rpr),
                     )?;
-                    let sup_metrics = fm.metrics(font_id, sup_size)?;
+                    let sup_metrics = fm.metrics(measure_font, sup_size)?;
                     let revision_marker = input.revision_view == RevisionView::Tracked
                         && projected.ordinary_run_index.is_none();
                     inline_items.push(InlineItem::Text(TextSegment {
@@ -1689,6 +1706,7 @@ fn layout_paragraph_with_source_and_table(
                         direction: TextDirection::Auto,
                         source: None,
                         font_id,
+                        measure_font: Some(measure_font),
                         font_size: sup_size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -1738,7 +1756,9 @@ fn layout_paragraph_with_source_and_table(
                         &symbol.to_string(),
                         false,
                     )?;
-                    let symbol_metrics = fm.metrics(symbol_font_id, font_size)?;
+                    let symbol_measure_font =
+                        fm.resolve_font_for_metrics(Some(font.as_str()), bold, italic)?;
+                    let symbol_metrics = fm.metrics(symbol_measure_font, font_size)?;
                     let shaped = fm.shape_text_with_kerning(
                         symbol_font_id,
                         &text,
@@ -1778,6 +1798,7 @@ fn layout_paragraph_with_source_and_table(
                         direction: TextDirection::Auto,
                         source: None,
                         font_id: symbol_font_id,
+                        measure_font: Some(symbol_measure_font),
                         font_size,
                         glyph_ids: shaped.glyph_ids,
                         advances: shaped.advances,
@@ -1821,6 +1842,7 @@ fn layout_paragraph_with_source_and_table(
                             direction: TextDirection::Auto,
                             source: None,
                             font_id,
+                            measure_font: Some(measure_font),
                             font_size,
                             glyph_ids: shaped.glyph_ids,
                             advances: shaped.advances,
@@ -1946,6 +1968,7 @@ fn layout_paragraph_with_source_and_table(
                     char_end: 0,
                 }),
                 font_id,
+                measure_font: None,
                 font_size,
                 glyph_ids: Vec::new(),
                 advances: Vec::new(),
@@ -2369,6 +2392,7 @@ fn push_structural_field_marker(
             char_end: 0,
         }),
         font_id,
+        measure_font: None,
         font_size: 1.0,
         glyph_ids: vec![0],
         advances: vec![0.0],

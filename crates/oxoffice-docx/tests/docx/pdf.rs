@@ -7,7 +7,9 @@ use std::io::{Cursor, Read};
 
 use lopdf::Object;
 use oxoffice_docx::paragraph::Alignment;
-use oxoffice_docx::{Document, Length, PdfConformance, PictureOptions, RenderOptions, StoryKind};
+use oxoffice_docx::{
+    CT_RPr, Document, Length, ListLevel, PdfConformance, PictureOptions, RenderOptions, StoryKind,
+};
 use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf};
 
@@ -647,6 +649,114 @@ fn text_around_a_display_equation_in_its_paragraph_takes_lines_of_its_own() {
             (step - lines * line).abs() < 1.0,
             "{from} to {to}: {step:.2} pt, a text line {line:.2}"
         );
+    }
+}
+
+/// A paragraph of single lines holding these runs.
+fn tight_runs(runs: &[String]) -> String {
+    format!(r#"<w:p>{TIGHT}{}</w:p>"#, runs.concat())
+}
+
+/// A paragraph of exact 14 pt lines holding these runs.
+fn exact(runs: &[String]) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="280" w:lineRule="exact"/></w:pPr>{}</w:p>"#,
+        runs.concat()
+    )
+}
+
+fn run_in(fonts: &str, text: &str) -> String {
+    format!(
+        r#"<w:r><w:rPr><w:rFonts {fonts}/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#
+    )
+}
+
+// A glyph the requested family's face lacks is drawn by a face that has it,
+// and its line stays as tall as a line of the requested family: Word
+// measures a line on the run's font, not on the font that rescued a glyph.
+// MS Gothic and SimSun stand in as Carlito here; Noto Sans Symbols 2 and
+// Noto Sans SC, which draw the box, the symbol and the Han character, are
+// taller.
+#[test]
+fn a_glyph_drawn_by_a_fallback_face_leaves_its_line_as_tall_as_the_requested_font() {
+    let gothic = r#"w:ascii="MS Gothic" w:hAnsi="MS Gothic" w:eastAsia="MS Gothic""#;
+    let simsun = r#"w:ascii="SimSun" w:hAnsi="SimSun" w:eastAsia="SimSun""#;
+    let body = [
+        tight_runs(&[run_in(gothic, "Plain one")]),
+        tight_runs(&[run_in(gothic, "Plain two")]),
+        tight_runs(&[run_in(gothic, "\u{2612}"), run_in(gothic, " Boxed")]),
+        tight_runs(&[run_in(gothic, "Below box")]),
+        tight_runs(&[
+            r#"<w:r><w:sym w:font="Wingdings 2" w:char="F054"/></w:r>"#.to_owned(),
+            run_in(gothic, " Symbol"),
+        ]),
+        tight_runs(&[run_in(gothic, "Below symbol")]),
+        tight_runs(&[run_in(simsun, "\u{4e2d}"), run_in(simsun, " Hanzi")]),
+        tight_runs(&[run_in(gothic, "Below hanzi")]),
+        tight_runs(&[
+            format!(
+                r#"<w:r><w:rPr><w:rFonts {gothic}/></w:rPr><w:fldChar w:fldCharType="begin"><w:ffData><w:checkBox><w:sizeAuto/><w:default w:val="1"/></w:checkBox></w:ffData></w:fldChar></w:r><w:r><w:rPr><w:rFonts {gothic}/></w:rPr><w:instrText xml:space="preserve"> FORMCHECKBOX </w:instrText></w:r><w:r><w:rPr><w:rFonts {gothic}/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>"#
+            ),
+            run_in(gothic, " Checked"),
+        ]),
+        tight_runs(&[run_in(gothic, "Below check")]),
+        exact(&[run_in(gothic, "Exact plain")]),
+        exact(&[run_in(gothic, "\u{2612}"), run_in(gothic, " Exact boxed")]),
+        exact(&[run_in(gothic, "Exact below")]),
+    ]
+    .concat();
+    let mut doc = doc_with_body(&body);
+    let marker = CT_RPr {
+        font_ascii: Some("MS Gothic".to_owned()),
+        font_hansi: Some("MS Gothic".to_owned()),
+        ..Default::default()
+    };
+    let list = doc.add_list_definition(&[ListLevel::bullet()
+        .level_text("\u{2612}")
+        .marker_properties(marker)]);
+    for text in ["Listed one", "Listed two"] {
+        doc.add_paragraph(text).set_numbering(list, 0);
+    }
+    for text in ["Unlisted one", "Unlisted two"] {
+        doc.add_paragraph(text);
+    }
+    let pdf = pdf_of(&doc);
+    let line = baseline_step(&pdf, "Plain one", "Plain two");
+    for (from, to) in [
+        ("Plain two", "Boxed"),
+        ("Boxed", "Below box"),
+        ("Below box", "Symbol"),
+        ("Symbol", "Below symbol"),
+        ("Below symbol", "Hanzi"),
+        ("Hanzi", "Below hanzi"),
+        ("Below hanzi", "Checked"),
+        ("Checked", "Below check"),
+    ] {
+        let step = baseline_step(&pdf, from, to);
+        assert!(
+            (step - line).abs() < 0.01,
+            "{from} to {to}: {step:.2} pt, a line of the requested font {line:.2}"
+        );
+    }
+    // An exact line keeps its baseline where a line of the requested font has it.
+    for (from, to) in [
+        ("Exact plain", "Exact boxed"),
+        ("Exact boxed", "Exact below"),
+    ] {
+        let step = baseline_step(&pdf, from, to);
+        assert!(
+            (step - 14.0).abs() < 0.01,
+            "{from} to {to}: {step:.2} pt on exact 14 pt lines"
+        );
+    }
+    let listed = baseline_step(&pdf, "Listed one", "Listed two");
+    let unlisted = baseline_step(&pdf, "Unlisted one", "Unlisted two");
+    assert!(
+        (listed - unlisted).abs() < 0.01,
+        "list items with a box marker step {listed:.2} pt, plain paragraphs {unlisted:.2}"
+    );
+    for drawn in ["\u{2612}", "\u{4e2d}"] {
+        assert!(pdf.page_text(0).contains(drawn), "{drawn} is not drawn");
     }
 }
 
