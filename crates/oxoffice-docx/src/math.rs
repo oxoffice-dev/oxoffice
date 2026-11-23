@@ -679,8 +679,7 @@ fn mathml_element_to_expressions(
         "munder" => &["accentunder"][..],
         "munderover" => &["accent", "accentunder"][..],
         "mfenced" => &["open", "close", "separators"][..],
-        "mi" | "mn" | "mtext" => &["mathvariant"][..],
-        "mo" => &["mathvariant", "stretchy"][..],
+        "mi" | "mn" | "mo" | "mtext" => &["mathvariant"][..],
         "menclose" => &["notation"][..],
         "mtable" => &["columnalign"][..],
         "mspace" => &["width"][..],
@@ -893,9 +892,31 @@ fn mathml_element_to_expressions(
         "menclose" => {
             let mut border =
                 MathBorderBox::new(mathml_children_to_argument(node, path, diagnostics, nodes)?);
-            let notation = node.attribute("notation").unwrap_or("longdiv");
-            let notations = notation.split_whitespace().collect::<Vec<_>>();
-            if !notations.contains(&"box") {
+            // A box, a rounded box or a circle draws all four sides; sides or
+            // strikes named without one draw only what they name; a notation
+            // naming none of them (missing, empty, longdiv) is read as a box.
+            let notations = node
+                .attribute("notation")
+                .unwrap_or("box")
+                .split_whitespace()
+                .collect::<Vec<_>>();
+            let framed = notations
+                .iter()
+                .any(|name| matches!(*name, "box" | "roundedbox" | "circle"));
+            let drawn = notations.iter().any(|name| {
+                matches!(
+                    *name,
+                    "top"
+                        | "bottom"
+                        | "left"
+                        | "right"
+                        | "horizontalstrike"
+                        | "verticalstrike"
+                        | "updiagonalstrike"
+                        | "downdiagonalstrike"
+                )
+            });
+            if !framed && drawn {
                 let hidden = |side: &str| (!notations.contains(&side)).then_some(true);
                 border.hide_top = hidden("top");
                 border.hide_bottom = hidden("bottom");
@@ -904,7 +925,7 @@ fn mathml_element_to_expressions(
             }
             for name in &notations {
                 match *name {
-                    "box" | "top" | "bottom" | "left" | "right" => {}
+                    "box" | "roundedbox" | "circle" | "top" | "bottom" | "left" | "right" => {}
                     "horizontalstrike" => border.strike_horizontal = Some(true),
                     "verticalstrike" => border.strike_vertical = Some(true),
                     "updiagonalstrike" => border.strike_bottom_left_to_top_right = Some(true),
@@ -1131,6 +1152,8 @@ fn is_supported_mathml_element(node: &XmlNode) -> bool {
                 | "mover"
                 | "munderover"
                 | "mfenced"
+                | "menclose"
+                | "mphantom"
                 | "semantics"
         )
 }
@@ -1300,8 +1323,8 @@ fn parse_mathml_matrix(
     Ok(vec![MathExpression::Matrix(MathMatrix::new(rows))])
 }
 
-/// The horizontal braces, brackets and arrows a group character stretches.
-fn is_group_character(text: &str) -> bool {
+/// The horizontal braces and brackets a group character stretches.
+fn is_group_bracket(text: &str) -> bool {
     matches!(
         text,
         "\u{23de}"
@@ -1312,12 +1335,14 @@ fn is_group_character(text: &str) -> bool {
             | "\u{23b5}"
             | "\u{23e0}"
             | "\u{23e1}"
-            | "\u{2190}"
-            | "\u{2192}"
-            | "\u{2194}"
-            | "\u{21d0}"
-            | "\u{21d2}"
-            | "\u{21d4}"
+    )
+}
+
+/// The arrows a group character stretches over or under its base.
+fn is_group_arrow(text: &str) -> bool {
+    matches!(
+        text,
+        "\u{2190}" | "\u{2192}" | "\u{2194}" | "\u{21d0}" | "\u{21d2}" | "\u{21d4}"
     )
 }
 
@@ -1368,6 +1393,11 @@ fn parse_mathml_limits_or_accent(
                 && child.elements().next().is_none()
         })
         .map(|child| (child.text(), child.attribute("stretchy") == Some("true")));
+    // An accent (on the node or its mark) stays an accent, unless its mark is a
+    // brace or bracket, which only a group character draws.
+    let marked_accent = node.attribute("accent") == Some("true")
+        || node.attribute("accentunder") == Some("true")
+        || children[1].attribute("accent") == Some("true");
     if let Some((text, stretchy)) = &mark {
         let over = node.local == "mover";
         if (over && text == "\u{203e}") || (!over && matches!(text.as_str(), "_" | "\u{332}")) {
@@ -1384,7 +1414,11 @@ fn parse_mathml_limits_or_accent(
             ))]);
         }
         if text.chars().count() == 1
-            && (*stretchy || is_group_character(text))
+            && (if marked_accent {
+                is_group_bracket(text)
+            } else {
+                *stretchy || is_group_bracket(text) || is_group_arrow(text)
+            })
             && mathml_nary_operator(children[0], &format!("{path}/*[1]"), diagnostics)?.is_none()
         {
             let mut group = MathGroupCharacter::new(mathml_node_to_argument(
@@ -1434,7 +1468,7 @@ fn parse_mathml_limits_or_accent(
         diagnose_boolean_attribute(children[1], &format!("{path}/*[2]"), "accent", diagnostics)?;
         diagnose_token_children(children[1], &format!("{path}/*[2]"), diagnostics)?;
         let character = match children[1].text().as_str() {
-            "‾" | "¯" => "̄".to_owned(),
+            "¯" => "̄".to_owned(),
             "→" => "⃗".to_owned(),
             value => value.to_owned(),
         };

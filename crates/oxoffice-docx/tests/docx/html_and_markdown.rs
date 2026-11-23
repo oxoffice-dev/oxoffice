@@ -2435,6 +2435,51 @@ fn a_group_character_read_from_mathml_keeps_its_character_and_side() {
     }
 }
 
+// Another producer's vector accent, an arrow marked as an accent, stays an
+// accent; a rounded box or a circle reads as a box, and a strike alone keeps
+// the sides hidden.
+#[test]
+fn accents_and_enclosures_from_other_producers_keep_their_meaning() {
+    let read = |mathml: &str| {
+        let read = oxoffice_docx::equation_from_mathml(&format!(
+            r#"<math xmlns="http://www.w3.org/1998/Math/MathML">{mathml}</math>"#
+        ))
+        .unwrap();
+        let [expression] = read.value.expressions.as_slice() else {
+            panic!("{mathml} reads as {:?}", read.value.expressions);
+        };
+        expression.clone()
+    };
+    let vector = read(r#"<mover accent="true"><mi>v</mi><mo>→</mo></mover>"#);
+    assert!(
+        matches!(&vector, oxoffice_docx::MathExpression::Accent(accent) if accent.character == "\u{20d7}"),
+        "{vector:?}"
+    );
+    for notation in ["roundedbox", "circle", ""] {
+        let boxed = read(&format!(
+            r#"<menclose notation="{notation}"><mi>x</mi></menclose>"#
+        ));
+        assert!(
+            matches!(&boxed, oxoffice_docx::MathExpression::BorderBox(border)
+                if [border.hide_top, border.hide_bottom, border.hide_left, border.hide_right] == [None; 4]),
+            "{notation}: {boxed:?}"
+        );
+    }
+    let struck = read(r#"<menclose notation="horizontalstrike"><mi>x</mi></menclose>"#);
+    assert!(
+        matches!(&struck, oxoffice_docx::MathExpression::BorderBox(border)
+            if border.hide_top == Some(true) && border.strike_horizontal == Some(true)),
+        "{struck:?}"
+    );
+    let wrapped = read(
+        r#"<semantics><mphantom><mi>x</mi></mphantom><annotation encoding="StarMath 5.0">phantom x</annotation></semantics>"#,
+    );
+    assert!(
+        matches!(wrapped, oxoffice_docx::MathExpression::Phantom(_)),
+        "{wrapped:?}"
+    );
+}
+
 #[test]
 fn a_phantom_read_from_mathml_stays_hidden() {
     let expression = through_mathml(&format!(
