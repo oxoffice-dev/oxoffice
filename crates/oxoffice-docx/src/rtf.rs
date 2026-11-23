@@ -1211,14 +1211,14 @@ impl<'a> RtfWriter<'a> {
             .chain(chain(paragraph_style))
             .chain(chain(character_style))
             .chain(direct)
-            .filter_map(|level| {
+            .rev()
+            .find_map(|level| {
                 level
                     .font_ascii_theme
                     .as_deref()
                     .and_then(|reference| self.theme_font(reference))
                     .or_else(|| level.font_ascii.clone())
-            })
-            .last();
+            });
         if let Some(font) = font {
             properties.font_ascii = Some(font);
             properties.font_ascii_theme = None;
