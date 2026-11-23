@@ -656,6 +656,7 @@ fn a_style_numbered_without_a_level_links_at_the_level_its_based_on_chain_gives(
         error.contains("style 'Child' numbering must be changed"),
         "{error}"
     );
+    assert_eq!(doc.to_bytes().unwrap(), before);
     // An instance update that would drop the level's name of Child is refused.
     let plain = doc
         .add_numbering_definition(&[
@@ -671,7 +672,6 @@ fn a_style_numbered_without_a_level_links_at_the_level_its_based_on_chain_gives(
         .to_string();
     assert!(error.contains("style-link"), "{error}");
     assert_eq!(doc.to_bytes().unwrap(), after_definition);
-    assert_ne!(before, after_definition);
 
     // Removing Child, once nothing uses it, releases the level that names it.
     let mut unused = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
