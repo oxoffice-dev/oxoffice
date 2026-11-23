@@ -73,26 +73,33 @@ with a fallback face (the deck keeps measuring on the face that draws).
 
 ## Plan
 
-1. **Rust facade** (`oxoffice-pptx`, `oxoffice-pptx-render`):
-   `PptxRenderOptions` and a `*_with_options` entry per render family, the
-   non-deterministic entries calling them with the default;
-   `configured_font_manager` takes the tier; the run shaper resolves with the
-   split variant so a run the bundled faces partly draw keeps them, and
-   `needs_multilingual_layout` covers every East Asian character. Tests:
-   with fixed fallback fonts (`new_with_fallback_fonts`, as
-   `crates/oxoffice-layout/tests/system_fallback.rs`), a CJK slide draws real
-   glyphs by default and boxes with bundled fonts only, Latin text beside it
-   draws alike in both modes, a Korean run with digits ("2024년 매출") draws
-   its Hangul, the diagnostic names the face.
-2. **CLI and Python**: the commands and methods above call the options
-   entries; `--bundled-fonts-only` on `pptx convert`, `render`, `thumbnail`;
-   `bundled_fonts_only=` on every render method and the stubs;
-   README, `ARCHITECTURE.md`; the limitation becomes CJK-without-a-system-font
-   for decks as for documents; `known.toml` keeps the `multilingual.pptx`
-   entries as `by_design` (bundled-only render tests), as the minutes have.
+One pull request, not the two first planned: the boxes diagnostic names
+`--bundled-fonts-only`, so the Rust option, the CLI switch and the Python
+argument land together.
 
-Each pull request: the pptx tests, CLI `convert.rs` and Python
-`test_missing_glyphs.py` cases for both modes.
+- **Rust facade** (`oxoffice-pptx`, `oxoffice-pptx-render`):
+  `PptxRenderOptions`, a last argument of every `*_with_diagnostics` entry
+  rather than a sibling `*_with_options` entry per family, and
+  `Presentation::render_with_options` for the layout itself;
+  `configured_font_manager` takes the tier; `needs_multilingual_layout` covers
+  every East Asian character; the deck layout and its notes and handout
+  exports name the system font through `glyph_coverage_diagnostics`. A run
+  keeps the face of its family when that face draws part of it, and a run
+  with glyphs that face lacks takes the grapheme split too, so only those
+  graphemes look for a face (a system one included) and the family keeps the
+  rest: a face picked for a whole run used to take its Latin text as well,
+  and draw it as boxes when it had none (an emoji face, Noto Sans Symbols 2
+  for a check box beside words). Tests: with a fixed fallback font, a deck draws only what its
+  fonts lack with it and names it; on any machine, the default render takes a
+  system face or says none was found, bundled fonts only names the switch,
+  and Latin text is drawn alike in both modes; Korean, fullwidth and
+  supplementary-plane runs take the split.
+- **CLI and Python**: `pptx convert`, `render`, `thumbnail` and every Python
+  render method use the options; `--bundled-fonts-only` and
+  `bundled_fonts_only=` everywhere, the stubs, README, `ARCHITECTURE.md`, a
+  `pptx-pdf-cjk` limitation beside `docx-pdf-cjk`, and the
+  `multilingual.pptx` entries of `known.toml` become `by_design`
+  (bundled-only render tests), as the minutes are.
 
 ## Links
 

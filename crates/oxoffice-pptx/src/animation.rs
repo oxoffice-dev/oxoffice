@@ -209,6 +209,7 @@ impl Presentation {
                 &package,
                 true,
                 &crate::caller_font_files(font_files),
+                false,
             )?,
             slide_count: self.slides.len(),
             fallback: options.media_fallback,

@@ -160,6 +160,33 @@ fn plain_path(path: &[usize]) -> String {
         .join("/")
 }
 
+/// Options of a deck render: the fonts it may use.
+///
+/// Built from [`Default`] and set field by field, so that new options break
+/// no caller.
+#[cfg(feature = "render")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PptxRenderOptions {
+    /// Use the embedded, caller and bundled fonts only, never a system font:
+    /// the render is the same on every machine, and characters those fonts
+    /// lack are drawn as empty boxes, which a diagnostic names. By default
+    /// (`false`) a system font found by glyph coverage draws them, such as
+    /// most Chinese, Japanese and Korean text; no family name ever selects a
+    /// system font, and a build without the `system-fonts` feature has none.
+    /// The `*_deterministic` helpers always render with the bundled fonts only.
+    pub bundled_fonts_only: bool,
+}
+
+#[cfg(feature = "render")]
+impl PptxRenderOptions {
+    /// These options with `bundled_fonts_only` set.
+    pub const fn with_bundled_fonts_only(mut self, bundled_fonts_only: bool) -> Self {
+        self.bundled_fonts_only = bundled_fonts_only;
+        self
+    }
+}
+
 #[cfg(feature = "render")]
 #[derive(Debug, PartialEq)]
 struct AutofitOwner {
@@ -173,7 +200,24 @@ impl Presentation {
     /// Resolves and lays out the current presentation with deterministic fonts.
     #[cfg(feature = "render")]
     pub fn render_deterministic(&self) -> Result<(RenderInput, LayoutResult)> {
-        assemble_render_input(&self.staged_package(false)?, &[])
+        assemble_render_input(&self.staged_package(false)?, &[], false)
+    }
+
+    /// Resolves and lays out the presentation with caller fonts over the
+    /// embedded and bundled ones, and with a system font found by glyph
+    /// coverage for the characters they lack, unless `options` asks for the
+    /// bundled fonts only.
+    #[cfg(feature = "render")]
+    pub fn render_with_options(
+        &self,
+        font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
+    ) -> Result<(RenderInput, LayoutResult)> {
+        assemble_render_input(
+            &self.staged_package(false)?,
+            &caller_font_files(font_files),
+            !options.bundled_fonts_only,
+        )
     }
 
     /// Resolve and lay out caller fonts over deterministic bundled fallback.
@@ -182,7 +226,11 @@ impl Presentation {
         &self,
         font_files: &[(&str, &[u8])],
     ) -> Result<(RenderInput, LayoutResult)> {
-        assemble_render_input(&self.staged_package(false)?, &caller_font_files(font_files))
+        assemble_render_input(
+            &self.staged_package(false)?,
+            &caller_font_files(font_files),
+            false,
+        )
     }
 
     /// Encodes selected slides from one caller-font layout, retaining owned diagnostics.
@@ -192,6 +240,7 @@ impl Presentation {
         slide_indices: &[usize],
         options: RasterOptions,
         font_files: &[(&str, &[u8])],
+        render_options: PptxRenderOptions,
     ) -> Result<(RasterOutput, Vec<oxoffice_layout::Diagnostic>)> {
         validate_export_png_pages(&[], options.dpi)?;
         if slide_indices.is_empty() {
@@ -227,7 +276,7 @@ impl Presentation {
                 "raster selection exceeds the decoded-output limit",
             ));
         }
-        let (_, layout) = self.render_deterministic_with_fonts(font_files)?;
+        let (_, layout) = self.render_with_options(font_files, render_options)?;
         let pages = slide_indices
             .iter()
             .map(|index| layout.pages[*index].clone())
@@ -245,13 +294,14 @@ impl Presentation {
         Ok(oxoffice_pdf::render_to_pdf_checked(&layout)?)
     }
 
-    /// Encode one deterministic caller-font bundle with owned diagnostics.
+    /// Encode the deck to PDF with caller fonts and `options`, retaining owned diagnostics.
     #[cfg(feature = "render")]
     pub fn to_pdf_with_diagnostics(
         &self,
         font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
     ) -> Result<(Vec<u8>, Vec<oxoffice_layout::Diagnostic>)> {
-        let (_, layout) = self.render_deterministic_with_fonts(font_files)?;
+        let (_, layout) = self.render_with_options(font_files, options)?;
         let bytes = oxoffice_pdf::render_to_pdf_checked(&layout)?;
         Ok((bytes, layout.diagnostics))
     }
@@ -263,8 +313,9 @@ impl Presentation {
         slide_index: usize,
         dpi: f64,
         font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
     ) -> Result<(Option<Vec<u8>>, Vec<oxoffice_layout::Diagnostic>)> {
-        let (_, layout) = self.render_deterministic_with_fonts(font_files)?;
+        let (_, layout) = self.render_with_options(font_files, options)?;
         let bytes = render_export_png(&layout, slide_index, dpi)?;
         Ok((bytes, layout.diagnostics))
     }
@@ -275,8 +326,9 @@ impl Presentation {
         &self,
         dpi: f64,
         font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
     ) -> Result<(Vec<Vec<u8>>, Vec<oxoffice_layout::Diagnostic>)> {
-        let (_, layout) = self.render_deterministic_with_fonts(font_files)?;
+        let (_, layout) = self.render_with_options(font_files, options)?;
         let bytes = render_export_pngs(&layout, dpi)?;
         Ok((bytes, layout.diagnostics))
     }
@@ -301,8 +353,9 @@ impl Presentation {
         &self,
         profile: oxoffice_pdf::PdfConformance,
         font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
     ) -> Result<(Vec<u8>, Vec<oxoffice_layout::Diagnostic>)> {
-        let (_, layout) = self.render_deterministic_with_fonts(font_files)?;
+        let (_, layout) = self.render_with_options(font_files, options)?;
         let bytes = oxoffice_pdf::render_to_pdf_with_options(
             &layout,
             oxoffice_pdf::PdfOptions::new(profile),
@@ -339,8 +392,11 @@ impl Presentation {
         &self,
         font_files: &[(&str, &[u8])],
     ) -> Result<Vec<u8>> {
-        let layout =
-            render_notes_pages(&self.staged_package(false)?, &caller_font_files(font_files))?;
+        let layout = render_notes_pages(
+            &self.staged_package(false)?,
+            &caller_font_files(font_files),
+            false,
+        )?;
         Ok(oxoffice_pdf::render_to_pdf_checked(&layout)?)
     }
 
@@ -351,8 +407,11 @@ impl Presentation {
         dpi: f64,
         font_files: &[(&str, &[u8])],
     ) -> Result<Vec<Vec<u8>>> {
-        let layout =
-            render_notes_pages(&self.staged_package(false)?, &caller_font_files(font_files))?;
+        let layout = render_notes_pages(
+            &self.staged_package(false)?,
+            &caller_font_files(font_files),
+            false,
+        )?;
         render_export_pngs(&layout, dpi)
     }
 
@@ -367,6 +426,7 @@ impl Presentation {
             &self.staged_package(false)?,
             arrangement,
             &caller_font_files(font_files),
+            false,
         )?;
         Ok(oxoffice_pdf::render_to_pdf_checked(&layout)?)
     }
@@ -383,6 +443,7 @@ impl Presentation {
             &self.staged_package(false)?,
             arrangement,
             &caller_font_files(font_files),
+            false,
         )?;
         render_export_pngs(&layout, dpi)
     }
@@ -392,9 +453,13 @@ impl Presentation {
     pub fn to_notes_pdf_with_diagnostics(
         &self,
         font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
     ) -> Result<(Vec<u8>, Vec<oxoffice_layout::Diagnostic>)> {
-        let layout =
-            render_notes_pages(&self.staged_package(false)?, &caller_font_files(font_files))?;
+        let layout = render_notes_pages(
+            &self.staged_package(false)?,
+            &caller_font_files(font_files),
+            !options.bundled_fonts_only,
+        )?;
         let bytes = oxoffice_pdf::render_to_pdf_checked(&layout)?;
         Ok((bytes, layout.diagnostics))
     }
@@ -405,9 +470,13 @@ impl Presentation {
         &self,
         dpi: f64,
         font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
     ) -> Result<(Vec<Vec<u8>>, Vec<oxoffice_layout::Diagnostic>)> {
-        let layout =
-            render_notes_pages(&self.staged_package(false)?, &caller_font_files(font_files))?;
+        let layout = render_notes_pages(
+            &self.staged_package(false)?,
+            &caller_font_files(font_files),
+            !options.bundled_fonts_only,
+        )?;
         let bytes = render_export_pngs(&layout, dpi)?;
         Ok((bytes, layout.diagnostics))
     }
@@ -418,11 +487,13 @@ impl Presentation {
         &self,
         arrangement: HandoutLayout,
         font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
     ) -> Result<(Vec<u8>, Vec<oxoffice_layout::Diagnostic>)> {
         let layout = render_handout_pages(
             &self.staged_package(false)?,
             arrangement,
             &caller_font_files(font_files),
+            !options.bundled_fonts_only,
         )?;
         let bytes = oxoffice_pdf::render_to_pdf_checked(&layout)?;
         Ok((bytes, layout.diagnostics))
@@ -435,11 +506,13 @@ impl Presentation {
         arrangement: HandoutLayout,
         dpi: f64,
         font_files: &[(&str, &[u8])],
+        options: PptxRenderOptions,
     ) -> Result<(Vec<Vec<u8>>, Vec<oxoffice_layout::Diagnostic>)> {
         let layout = render_handout_pages(
             &self.staged_package(false)?,
             arrangement,
             &caller_font_files(font_files),
+            !options.bundled_fonts_only,
         )?;
         let bytes = render_export_pngs(&layout, dpi)?;
         Ok((bytes, layout.diagnostics))
@@ -514,13 +587,15 @@ impl Presentation {
         font_files: &[oxoffice_layout::FontFile],
     ) -> Result<(DeterministicTimelineFrame, Vec<EvaluatedMediaState>)> {
         let package = self.staged_package(false)?;
-        let mut assembly = prepare_render_context(&package, fallback_policy.is_some(), font_files)?;
+        let mut assembly =
+            prepare_render_context(&package, fallback_policy.is_some(), font_files, false)?;
         // A detached sample starts with fresh glyph identities, unlike an animation sequence.
         assembly.font_manager = configured_font_manager(
             &package,
             &self.presentation_part,
             &self.presentation,
             font_files,
+            false,
         )?;
         render_prepared_timeline_request(
             &mut assembly,
@@ -1118,7 +1193,8 @@ impl Presentation {
             )));
         }
         let package = self.staged_package(false)?;
-        let mut assembly = prepare_render_context(&package, false, &caller_font_files(font_files))?;
+        let mut assembly =
+            prepare_render_context(&package, false, &caller_font_files(font_files), false)?;
         let mut frames = Vec::new();
         for (slide_index, ((prepared, slide), directions)) in assembly
             .slides
@@ -1218,7 +1294,7 @@ impl Presentation {
     #[cfg(feature = "render")]
     pub fn to_notes_pdf_deterministic(&self) -> Result<Vec<u8>> {
         let package = self.staged_package(false)?;
-        let layout = render_notes_pages(&package, &[])?;
+        let layout = render_notes_pages(&package, &[], false)?;
         Ok(oxoffice_pdf::render_to_pdf_checked(&layout)?)
     }
 
@@ -1226,7 +1302,7 @@ impl Presentation {
     #[cfg(feature = "render")]
     pub fn notes_page_pngs_deterministic(&self, dpi: f64) -> Result<Vec<Vec<u8>>> {
         let package = self.staged_package(false)?;
-        let layout = render_notes_pages(&package, &[])?;
+        let layout = render_notes_pages(&package, &[], false)?;
         render_export_pngs(&layout, dpi)
     }
 
@@ -1234,7 +1310,7 @@ impl Presentation {
     #[cfg(feature = "render")]
     pub fn to_handout_pdf_deterministic(&self, layout: HandoutLayout) -> Result<Vec<u8>> {
         let package = self.staged_package(false)?;
-        let layout = render_handout_pages(&package, layout, &[])?;
+        let layout = render_handout_pages(&package, layout, &[], false)?;
         Ok(oxoffice_pdf::render_to_pdf_checked(&layout)?)
     }
 
@@ -1246,7 +1322,7 @@ impl Presentation {
         dpi: f64,
     ) -> Result<Vec<Vec<u8>>> {
         let package = self.staged_package(false)?;
-        let layout = render_handout_pages(&package, layout, &[])?;
+        let layout = render_handout_pages(&package, layout, &[], false)?;
         render_export_pngs(&layout, dpi)
     }
 }
@@ -1454,6 +1530,7 @@ fn configured_font_manager(
     presentation_part: &str,
     presentation: &CT_Presentation,
     callers: &[oxoffice_layout::FontFile],
+    system_fallback: bool,
 ) -> Result<FontManager> {
     let mut sources: Vec<(Vec<String>, std::sync::Arc<[u8]>)> = Vec::new();
     if presentation
@@ -1476,8 +1553,14 @@ fn configured_font_manager(
             }
         }
     }
-    let mut fonts = FontManager::new_deterministic()
-        .map_err(|error| render_failure(format!("deterministic fonts: {error}")))?;
+    // A system font, found by glyph coverage, only draws what the embedded,
+    // caller and bundled fonts lack; no family name selects one.
+    let mut fonts = if system_fallback {
+        FontManager::new_with_system_fallback()
+    } else {
+        FontManager::new_deterministic()
+    }
+    .map_err(|error| render_failure(format!("deck fonts: {error}")))?;
     fonts
         .load_embedded_fonts(&sources)
         .map_err(|error| render_failure(format!("embedded fonts: {error}")))?;
@@ -1500,8 +1583,9 @@ pub(super) fn caller_font_files(font_files: &[(&str, &[u8])]) -> Vec<oxoffice_la
 fn assemble_render_input(
     package: &OpcPackage,
     font_files: &[oxoffice_layout::FontFile],
+    system_fallback: bool,
 ) -> Result<(RenderInput, LayoutResult)> {
-    let assembly = prepare_render_context(package, false, font_files)?;
+    let assembly = prepare_render_context(package, false, font_files, system_fallback)?;
     Ok((assembly.input, assembly.layout))
 }
 
@@ -1560,20 +1644,21 @@ fn validate_export_png_pages(pages: &[std::sync::Arc<PageFrame>], dpi: f64) -> R
     Ok(())
 }
 
-/// The export's text drawn as empty boxes, named once over all its pages
-/// (a slide's text is drawn again in its preview on its notes page), in
-/// place of what the deck's own layout said.
+/// The export's text drawn as empty boxes or with a system font, named once
+/// over all its pages (a slide's text is drawn again in its preview on its
+/// notes page), in place of what the deck's own layout said.
 #[cfg(feature = "render")]
-fn with_export_missing_glyphs(mut result: LayoutResult) -> LayoutResult {
-    let missing = oxoffice_layout::missing_glyph_diagnostics(
+fn with_export_missing_glyphs(mut result: LayoutResult, fonts: &FontManager) -> LayoutResult {
+    let coverage = oxoffice_layout::glyph_coverage_diagnostics(
         &result.pages,
-        &result.fonts,
+        fonts,
         oxoffice_pptx_render::MISSING_GLYPH_WAY_OUT,
     );
-    result
-        .diagnostics
-        .retain(|diagnostic| !diagnostic.message.contains("is drawn as empty boxes"));
-    result.diagnostics.extend(missing);
+    result.diagnostics.retain(|diagnostic| {
+        !diagnostic.message.contains("is drawn as empty boxes")
+            && !diagnostic.message.contains("is drawn with the system font")
+    });
+    result.diagnostics.extend(coverage);
     result
 }
 
@@ -1595,8 +1680,9 @@ fn append_export_font_facts(
 fn render_notes_pages(
     package: &OpcPackage,
     font_files: &[oxoffice_layout::FontFile],
+    system_fallback: bool,
 ) -> Result<LayoutResult> {
-    let mut assembly = prepare_render_context(package, false, font_files)?;
+    let mut assembly = prepare_render_context(package, false, font_files, system_fallback)?;
     if assembly.slides.is_empty() {
         return Ok(LayoutResult::new(
             Vec::new(),
@@ -1751,7 +1837,7 @@ fn render_notes_pages(
         Vec::new(),
     );
     result.diagnostics = diagnostics;
-    Ok(with_export_missing_glyphs(result))
+    Ok(with_export_missing_glyphs(result, &assembly.font_manager))
 }
 
 #[cfg(feature = "render")]
@@ -1855,8 +1941,9 @@ fn render_handout_pages(
     package: &OpcPackage,
     handout_layout: HandoutLayout,
     font_files: &[oxoffice_layout::FontFile],
+    system_fallback: bool,
 ) -> Result<LayoutResult> {
-    let mut assembly = prepare_render_context(package, false, font_files)?;
+    let mut assembly = prepare_render_context(package, false, font_files, system_fallback)?;
     if assembly.slides.is_empty() {
         return Ok(LayoutResult::new(
             Vec::new(),
@@ -1968,7 +2055,7 @@ fn render_handout_pages(
         Vec::new(),
     );
     result.diagnostics = diagnostics;
-    Ok(with_export_missing_glyphs(result))
+    Ok(with_export_missing_glyphs(result, &assembly.font_manager))
 }
 
 #[cfg(feature = "render")]
@@ -2714,6 +2801,7 @@ fn authoring_fonts(presentation: &Presentation, files: &[(&str, &[u8])]) -> Resu
         &presentation.presentation_part,
         &presentation.presentation,
         &caller_font_files(files),
+        false,
     )?;
     fonts.begin_layout();
     Ok(fonts)
@@ -4194,6 +4282,7 @@ pub(super) fn prepare_render_context(
     package: &OpcPackage,
     collect_media_diagnostics: bool,
     font_files: &[oxoffice_layout::FontFile],
+    system_fallback: bool,
 ) -> Result<PreparedRenderAssembly> {
     let presentation_part = package
         .main_document_part()
@@ -4216,8 +4305,13 @@ pub(super) fn prepare_render_context(
         .ok_or_else(|| render_failure("presentation relationships are missing"))?;
 
     let mut media = HashMap::new();
-    let mut font_manager =
-        configured_font_manager(package, &presentation_part, &presentation, font_files)?;
+    let mut font_manager = configured_font_manager(
+        package,
+        &presentation_part,
+        &presentation,
+        font_files,
+        system_fallback,
+    )?;
     let mut resolved_slides = Vec::with_capacity(presentation.slide_ids.len());
     let mut text_directions = Vec::with_capacity(presentation.slide_ids.len());
     let mut prepared_slides = Vec::with_capacity(presentation.slide_ids.len());

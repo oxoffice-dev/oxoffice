@@ -14,7 +14,7 @@ images.
 
 ## Use it when
 
-Use this crate when a custom OOXML frontend already produces shared layout frames. Use `oxoffice_docx::Document::to_pdf` or `oxoffice_pptx::Presentation::to_pdf_deterministic` for normal document conversion.
+Use this crate when a custom OOXML frontend already produces shared layout frames. Use `oxoffice_docx::Document::to_pdf` or `oxoffice_pptx::Presentation::to_pdf_with_diagnostics` for normal document conversion.
 
 ## Relationship
 

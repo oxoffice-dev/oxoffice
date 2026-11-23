@@ -5,7 +5,7 @@ package. The `oxoffice-py` crate builds the wheel.
 
 `oxoffice.pptx` gives Python applications a native PPTX workflow for creating,
 opening, editing, and saving PowerPoint-compatible presentations. It also
-supports comments, speaker notes, and deterministic rendering. It works
+supports comments, speaker notes, and rendering to PDF and images. It works
 directly with OOXML packages and does not require Microsoft PowerPoint,
 LibreOffice, a conversion service, or a Java or .NET runtime.
 

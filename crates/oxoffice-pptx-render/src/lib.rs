@@ -365,9 +365,9 @@ pub fn layout_presentation_with_displayed_numbers(
         Vec::new(),
     );
     // Font facts stay last: exporters split them off by count.
-    diagnostics.extend(oxoffice_layout::missing_glyph_diagnostics(
+    diagnostics.extend(oxoffice_layout::glyph_coverage_diagnostics(
         &layout.pages,
-        &layout.fonts,
+        font_manager,
         MISSING_GLYPH_WAY_OUT,
     ));
     diagnostics.extend(font_manager.current_font_diagnostics().iter().cloned());
