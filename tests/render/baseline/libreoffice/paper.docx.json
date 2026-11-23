@@ -1,12 +1,12 @@
 {
   "file": "libreoffice/paper.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
-  "resources": "d048460b62fd0ed99e1aa1313ac102feef6389a18d67a58977037c10dd1ec0e6",
+  "reason": "equations draw their run formatting and a math fallback face",
+  "resources": "ea2a17c6a75c18b5b073eda6c957e206b232ee895a254eba6100b0b011535458",
   "outline_and_tags": "97fa5af39f6a56bd0de87c7e1996038010f010fc02f2651906a631469bae8f8d",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "d76f73088442341c176f23d107549e396d8059f71a52897355b27b51bf4caf35", "content": "c4393be22231d8b4ee292c03ede96bec20770a553e3a78fc45a2181ebc968e63", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "30ca6e1a175decd5dc69d0bcd36fd431afb5877629cb4f9654688095391756a4", "content": "39715c877de397bb0213b232da1fb6c6b61a065d54f8d045d745de81187a90ba", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 2, "pixels": "22387d912c15d6afcf784e8ef5677ea298f2e53ad52a43c23ed672dc7c48253d", "content": "59bf4657e3d7ade1abeab7ac3454d618f017331f8c2d56ff2007f43fd9055fcf", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
     {"page": 3, "pixels": "8c2ff62b5b89020f4eaaa037c79af15a8ed346ce9258560781aa3f43f6d73bb4", "content": "bbee93a380de99fa0ef7c4ee19f2fb0aa4390d0f2532ff168eea53dc32d4c006", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"},
     {"page": 4, "pixels": "c6849bd98e6f65273cacad6fa96dba4fbd0f2b7e8871290d22883b359024141f", "content": "abad59e38b1e79799c50d84b0dc734eafa53ecd358842a7fcee71a87c0af0d41", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "b2f0f1e0a4487da9bb8eb2b61f9ec7110a58558f2d8a73d3ba0ec5857b32e036"}
   ]

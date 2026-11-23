@@ -4,6 +4,8 @@ use oxoffice_docx_oxml::math::{
     MathProperties, MathRadical, MathRun, MathScript, MathStyle, MathSubSuperscript,
     MatrixBaseJustification, OfficeMath,
 };
+use oxoffice_docx_oxml::properties::CT_RPr;
+use oxoffice_docx_oxml::theme::Theme;
 use oxoffice_layout::{
     Color, Diagnostic, FontManager, GlyphRun, GroupElement, Point, PositionedElement, Rect, Result,
     Transform, walk,
@@ -25,22 +27,32 @@ const NARY_UPPER_GAP_EM: f64 = 0.482;
 const NARY_LOWER_GAP_EM: f64 = 0.3;
 
 #[derive(Debug, Clone, Copy)]
-struct MathLayoutStyle {
+struct MathLayoutStyle<'a> {
     font_size: f64,
     root_size: f64,
     display: bool,
     cramped: bool,
     script_level: u8,
+    runs: RunFormatting<'a>,
 }
 
-impl MathLayoutStyle {
-    fn new(font_size: f64, display: bool) -> Self {
+/// What a math run's own `w:rPr` needs to resolve its colour.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RunFormatting<'a> {
+    pub(crate) theme: Option<&'a Theme>,
+    /// The colour of `auto`, for the fill behind the equation.
+    pub(crate) automatic: Color,
+}
+
+impl<'a> MathLayoutStyle<'a> {
+    fn new(font_size: f64, display: bool, runs: RunFormatting<'a>) -> Self {
         Self {
             font_size,
             root_size: font_size,
             display,
             cramped: false,
             script_level: 0,
+            runs,
         }
     }
 
@@ -115,12 +127,23 @@ pub(crate) fn layout_officemath(
     fm: &mut FontManager,
     font_size: f64,
     color: Color,
+    runs: RunFormatting<'_>,
     available_width: f64,
     math_properties: Option<&MathProperties>,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<(MeasuredMath, bool)> {
-    let size = finite_positive(font_size).unwrap_or(DEFAULT_MATH_SIZE);
+    let paragraph_size = finite_positive(font_size).unwrap_or(DEFAULT_MATH_SIZE);
+    // An equation whose runs all carry one size or colour, as Word writes a
+    // whole equation set to 16 pt or red, takes it for its rules, signs and
+    // delimiters too; each equation of a display group on its own.
+    let formatting = |expressions: &[MathExpression]| {
+        let (size, uniform_color) = uniform_run_formatting(expressions, runs);
+        (
+            size.unwrap_or(paragraph_size),
+            uniform_color.unwrap_or(color),
+        )
+    };
     let font_family = math_properties
         .and_then(|properties| properties.math_font.as_deref())
         .filter(|family| !family.is_empty())
@@ -136,33 +159,41 @@ pub(crate) fn layout_officemath(
     }
 
     match &equation {
-        OfficeMath::Inline(value) => Ok((
-            layout_expressions(
-                &value.expressions,
-                fm,
-                font_family,
-                MathLayoutStyle::new(size, false),
-                color,
-                size * EQUATION_SPACING_EM,
-                source_path,
-                diagnostics,
-            )?,
-            false,
-        )),
+        OfficeMath::Inline(value) => {
+            let (size, color) = formatting(&value.expressions);
+            Ok((
+                layout_expressions(
+                    &value.expressions,
+                    fm,
+                    font_family,
+                    MathLayoutStyle::new(size, false, runs),
+                    color,
+                    size * EQUATION_SPACING_EM,
+                    source_path,
+                    diagnostics,
+                )?,
+                false,
+            ))
+        }
         OfficeMath::Display(value) => {
             let mut equations = Vec::with_capacity(value.equations.len());
+            // The group's frame follows its largest equation.
+            let mut size = 0.0_f64;
             for (index, equation) in value.equations.iter().enumerate() {
+                let (equation_size, color) = formatting(&equation.expressions);
+                size = size.max(equation_size);
                 equations.push(layout_expressions(
                     &equation.expressions,
                     fm,
                     font_family,
-                    MathLayoutStyle::new(size, true),
+                    MathLayoutStyle::new(equation_size, true, runs),
                     color,
-                    size * EQUATION_SPACING_EM,
+                    equation_size * EQUATION_SPACING_EM,
                     &format!("{source_path}/equation/{index}"),
                     diagnostics,
                 )?);
             }
+            let size = if size > 0.0 { size } else { paragraph_size };
             let inter_spacing = math_properties
                 .and_then(|properties| properties.inter_spacing)
                 .map_or(0.0, twips_to_points);
@@ -233,6 +264,43 @@ pub(crate) fn layout_officemath(
             ))
         }
     }
+}
+
+/// The size and colour every run of an equation sets in its own `w:rPr`,
+/// each when all runs set the same.
+fn uniform_run_formatting(
+    expressions: &[MathExpression],
+    runs: RunFormatting<'_>,
+) -> (Option<f64>, Option<Color>) {
+    let mut pending: Vec<&MathExpression> = expressions.iter().collect();
+    let mut sizes = Vec::new();
+    let mut colors = Vec::new();
+    while let Some(expression) = pending.pop() {
+        if let MathExpression::Run(run) = expression {
+            let properties = run.word_properties().unwrap_or_default();
+            sizes.push(properties.sz.and_then(|size| finite_positive(size.to_pt())));
+            colors.push(run_color(&properties, runs));
+        }
+        for argument in expression.arguments() {
+            pending.extend(&argument.expressions);
+        }
+    }
+    fn uniform<T: Copy + PartialEq>(values: &[Option<T>]) -> Option<T> {
+        let first = (*values.first()?)?;
+        values
+            .iter()
+            .all(|value| *value == Some(first))
+            .then_some(first)
+    }
+    (uniform(&sizes), uniform(&colors))
+}
+
+/// The colour a math run's `w:rPr` sets, if it sets one.
+fn run_color(properties: &CT_RPr, runs: RunFormatting<'_>) -> Option<Color> {
+    (properties.color.is_some()
+        || properties.color_theme.is_some()
+        || properties.solid_text_fill().is_some())
+    .then(|| crate::engine::resolve_run_color(properties, runs.theme, runs.automatic))
 }
 
 fn ink_bounds(value: &MeasuredMath, fm: &FontManager) -> Rect {
@@ -337,12 +405,12 @@ fn ink_bounds(value: &MeasuredMath, fm: &FontManager) -> Rect {
     }
 }
 
-fn math_script_context(
+fn math_script_context<'a>(
     fm: &mut FontManager,
     family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'a>,
     levels: u8,
-) -> Result<MathLayoutStyle> {
+) -> Result<MathLayoutStyle<'a>> {
     let font_id = fm.resolve_font_for_text(family, false, false, "x")?;
     let data = fm.font_data(font_id)?;
     let level = context.script_level.saturating_add(levels).min(2);
@@ -389,7 +457,7 @@ fn script_shifts(
     superscript: &MeasuredMath,
     fm: &mut FontManager,
     family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
 ) -> Result<(f64, f64)> {
     let font_size = context.font_size;
     let font_id = fm.resolve_font_for_text(family, false, false, "x")?;
@@ -537,7 +605,7 @@ fn layout_math_variant(
     text: &str,
     fm: &mut FontManager,
     family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     target_height: Option<f64>,
     source_path: &str,
@@ -703,7 +771,7 @@ fn layout_expressions(
     expressions: &[MathExpression],
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     spacing: f64,
     source_path: &str,
@@ -752,7 +820,7 @@ fn layout_argument(
     argument: &MathArgument,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -773,7 +841,7 @@ fn layout_expression(
     expression: &MathExpression,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -908,11 +976,23 @@ fn layout_run(
     run: &MathRun,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<MeasuredMath> {
+    // Word draws a math run with the colour and size of its own w:rPr; a
+    // size scales with the run's script level.
+    let mut context = context;
+    let mut color = color;
+    if let Some(properties) = run.word_properties() {
+        if let Some(run_color) = run_color(&properties, context.runs) {
+            color = run_color;
+        }
+        if let Some(size) = properties.sz.and_then(|size| finite_positive(size.to_pt())) {
+            context.font_size *= size / context.root_size;
+        }
+    }
     let font_size = context.font_size;
     let style = if run.properties.normal == Some(true) || run.properties.literal == Some(true) {
         MathStyle::Plain
@@ -1063,7 +1143,7 @@ fn layout_text(
     text: &str,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     bold: bool,
     italic: bool,
@@ -1170,7 +1250,7 @@ fn layout_fraction(
     value: &MathFraction,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1338,7 +1418,7 @@ fn layout_script(
     superscript: bool,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1373,7 +1453,7 @@ fn layout_script_pair(
     base: MeasuredMath,
     script: MeasuredMath,
     superscript: bool,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     fm: &mut FontManager,
     font_family: Option<&str>,
 ) -> Result<MeasuredMath> {
@@ -1431,7 +1511,7 @@ fn layout_sub_superscript(
     pre: bool,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1455,7 +1535,7 @@ fn layout_pre_sub_superscript(
     value: &MathPreSubSuperscript,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1482,7 +1562,7 @@ fn layout_three_part_script(
     pre: bool,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1536,7 +1616,7 @@ fn layout_measured_scripts(
     subscript: MeasuredMath,
     superscript: MeasuredMath,
     pre: bool,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     shifts: (f64, f64),
     correction: Option<f64>,
 ) -> MeasuredMath {
@@ -1590,7 +1670,7 @@ fn layout_radical(
     value: &MathRadical,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1771,7 +1851,7 @@ fn layout_matrix(
     value: &MathMatrix,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1866,7 +1946,7 @@ fn layout_limit(
     upper: bool,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1929,7 +2009,7 @@ fn layout_nary(
     value: &MathNary,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -2089,7 +2169,7 @@ fn layout_delimiter(
     value: &MathDelimiter,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
@@ -2168,7 +2248,7 @@ fn layout_accent(
     value: &MathAccent,
     fm: &mut FontManager,
     font_family: Option<&str>,
-    context: MathLayoutStyle,
+    context: MathLayoutStyle<'_>,
     color: Color,
     source_path: &str,
     diagnostics: &mut Vec<Diagnostic>,

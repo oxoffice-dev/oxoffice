@@ -873,6 +873,172 @@ fn an_annotated_run_drawn_by_a_fallback_face_measures_on_its_requested_font() {
     }
 }
 
+/// Every glyph run the document draws, as (text, size, colour), and the
+/// diagnostics of its layout.
+fn laid_out_runs(doc: &Document) -> (Vec<(String, f64, oxoffice_layout::Color)>, Vec<String>) {
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut runs = Vec::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Text(run) = element {
+                runs.push((run.text.clone(), run.font_size, run.color));
+            }
+        });
+    }
+    let diagnostics = result
+        .layout
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect();
+    (runs, diagnostics)
+}
+
+const MATH: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+
+// Word writes a w:rPr in every math run and an m:ctrlPr in every
+// construct's properties or at the end of an argument: the equation is drawn
+// whole, with no diagnostic, and a `∼` has a glyph with the bundled fonts.
+#[test]
+fn an_equation_with_the_run_formatting_word_writes_is_drawn_whole() {
+    let cambria = r#"<w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><m:oMathPara xmlns:m="{MATH}"><m:oMath><m:sSub><m:sSubPr><m:ctrlPr>{cambria}</m:ctrlPr></m:sSubPr><m:e><m:r>{cambria}<m:t>y</m:t></m:r><m:ctrlPr>{cambria}</m:ctrlPr></m:e><m:sub><m:r>{cambria}<m:t>i</m:t></m:r></m:sub></m:sSub><m:r>{cambria}<m:t>∼⊤</m:t></m:r></m:oMath></m:oMathPara></w:p>"#
+    );
+    let doc = doc_with_body(&body);
+    let (_, diagnostics) = laid_out_runs(&doc);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|message| !message.contains("OfficeMath")),
+        "{diagnostics:?}"
+    );
+    let pdf = pdf_of(&doc);
+    let drawn = pdf.drawn(0);
+    assert!(
+        drawn.iter().any(|piece| piece.text.contains('∼')),
+        "{drawn:#?}"
+    );
+    assert!(drawn.iter().all(|piece| piece.notdef == 0), "{drawn:#?}");
+}
+
+// A w:rPr that tracks an insertion is not formatting the layout draws, in a
+// math run or in a construct's control properties: the equation still says
+// it left something out.
+#[test]
+fn math_formatting_that_tracks_a_change_is_reported() {
+    let tracked = r#"<w:rPr><w:ins w:id="1" w:author="A" w:date="2026-11-23T00:00:00Z"/></w:rPr>"#;
+    for equation in [
+        format!(r#"<m:r>{tracked}<m:t>x</m:t></m:r>"#),
+        format!(
+            r#"<m:sSup><m:sSupPr><m:ctrlPr>{tracked}</m:ctrlPr></m:sSupPr><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup>"#
+        ),
+    ] {
+        let body = format!(r#"<w:p><m:oMath xmlns:m="{MATH}">{equation}</m:oMath></w:p>"#);
+        let (_, diagnostics) = laid_out_runs(&doc_with_body(&body));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|message| message.contains("could not be rendered")),
+            "{equation}: {diagnostics:?}"
+        );
+    }
+}
+
+// Word draws a math run in the colour and size of its own w:rPr, and a
+// script of that run smaller in proportion.
+#[test]
+fn a_math_run_draws_in_the_colour_and_size_of_its_run_properties() {
+    let red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:r>{red}<m:t>a</m:t></m:r><m:r><m:t>b</m:t></m:r><m:sSup><m:e><m:r><m:t>c</m:t></m:r></m:e><m:sup><m:r>{red}<m:t>d</m:t></m:r></m:sup></m:sSup><m:sSup><m:e><m:r><m:t>f</m:t></m:r></m:e><m:sup><m:r><m:t>g</m:t></m:r></m:sup></m:sSup></m:oMath></w:p>"#
+    );
+    let (runs, _) = laid_out_runs(&doc_with_body(&body));
+    let run = |text: &str| {
+        runs.iter()
+            .find(|run| run.0.contains(text))
+            .unwrap_or_else(|| panic!("{text} drawn: {runs:?}"))
+            .clone()
+    };
+    let (a, b, c, d, g) = (run("a"), run("b"), run("c"), run("d"), run("g"));
+    let red = |color: oxoffice_layout::Color| color.r > 0.99 && color.g < 0.01 && color.b < 0.01;
+    assert!(red(a.2) && !red(b.2) && !red(c.2) && red(d.2), "{runs:?}");
+    assert!((a.1 - 16.0).abs() < 0.01, "{runs:?}");
+    assert!(
+        (b.1 - 11.0).abs() < 0.01 && (c.1 - 11.0).abs() < 0.01,
+        "{runs:?}"
+    );
+    // A 16 pt superscript is to a plain one what 16 pt is to 11.
+    assert!(g.1 < c.1, "{runs:?}");
+    assert!((d.1 - g.1 * 16.0 / 11.0).abs() < 0.01, "{runs:?}");
+}
+
+// Word writes the size and colour of a whole equation in every run: the
+// fraction rule takes them too, and a text fill declared above the equation
+// colours its run.
+#[test]
+fn an_equation_whose_runs_all_carry_one_size_and_colour_draws_its_rules_so() {
+    let red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#;
+    let body = format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:f><m:num><m:r>{red}<m:t>a</m:t></m:r></m:num><m:den><m:r>{red}<m:t>b</m:t></m:r></m:den></m:f></m:oMath></w:p><w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><m:oMath xmlns:m="{MATH}"><m:r><w:rPr><w14:textFill><w14:solidFill><w14:srgbClr w14:val="00FF00"/></w14:solidFill></w14:textFill></w:rPr><m:t>g</m:t></m:r></m:oMath></w:p>"#
+    );
+    let doc = doc_with_body(&body);
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut rules = Vec::new();
+    for page in &result.layout.pages {
+        oxoffice_layout::walk(&page.elements, &mut |element, _| {
+            if let oxoffice_layout::PositionedElement::Line { color, width, .. } = element {
+                rules.push((*color, *width));
+            }
+        });
+    }
+    let red = |color: oxoffice_layout::Color| color.r > 0.99 && color.g < 0.01 && color.b < 0.01;
+    assert!(
+        !rules.is_empty() && rules.iter().all(|(color, _)| red(*color)),
+        "{rules:?}"
+    );
+    // The rule of a 16 pt fraction against the 11 pt one of plain text.
+    let plain = doc_with_body(&format!(
+        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath></w:p>"#
+    ));
+    let plain = plain.layout_deterministic().expect("the document lays out");
+    let mut plain_width = None;
+    oxoffice_layout::walk(&plain.layout.pages[0].elements, &mut |element, _| {
+        if let oxoffice_layout::PositionedElement::Line { width, .. } = element {
+            plain_width = Some(*width);
+        }
+    });
+    let plain_width = plain_width.expect("a plain fraction draws its rule");
+    assert!(
+        (rules[0].1 - plain_width * 16.0 / 11.0).abs() < 1e-6,
+        "{rules:?} against {plain_width}"
+    );
+    // In a display group, each equation on its own: a red one beside a
+    // plain one draws its rule red and the other black.
+    let group = doc_with_body(&format!(
+        r#"<w:p><m:oMathPara xmlns:m="{MATH}"><m:oMath><m:f><m:num><m:r>{red}<m:t>a</m:t></m:r></m:num><m:den><m:r>{red}<m:t>b</m:t></m:r></m:den></m:f></m:oMath><m:oMath><m:f><m:num><m:r><m:t>c</m:t></m:r></m:num><m:den><m:r><m:t>d</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara></w:p>"#,
+        red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#
+    ));
+    let group = group.layout_deterministic().expect("the document lays out");
+    let mut group_rules = Vec::new();
+    oxoffice_layout::walk(&group.layout.pages[0].elements, &mut |element, _| {
+        if let oxoffice_layout::PositionedElement::Line { color, .. } = element {
+            group_rules.push(red(*color));
+        }
+    });
+    assert_eq!(group_rules, [true, false]);
+    let (runs, _) = laid_out_runs(&doc);
+    let green = runs
+        .iter()
+        .find(|run| run.0.contains('g'))
+        .unwrap_or_else(|| panic!("{runs:?}"))
+        .2;
+    assert!(
+        green.g > 0.99 && green.r < 0.01 && green.b < 0.01,
+        "{runs:?}"
+    );
+}
+
 // A phonetic guide as Word writes it, inside a run, draws its base text in
 // the line and its phonetic line above, as the same guide read in its
 // paragraph does.

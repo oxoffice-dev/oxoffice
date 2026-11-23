@@ -62,82 +62,37 @@ by_design = "the render tests use the bundled fonts only, whose Chinese, Japanes
 
 [[known]]
 file = "authored/paper.docx"
-check = "missing-glyph"
-pages = [2]
-issue = 224
-
-[[known]]
-file = "google/paper.docx"
-check = "missing-glyph"
-pages = [2]
-issue = 224
-
-[[known]]
-file = "libreoffice/paper.docx"
-check = "missing-glyph"
-pages = [2]
-issue = 224
-
-[[known]]
-file = "word/paper.docx"
-check = "missing-glyph"
-pages = [2]
-issue = 224
-
-[[known]]
-file = "authored/paper.docx"
 check = "dropped"
 pages = [0]
-finding = "8 diagnostics"
+finding = "1 diagnostics"
 issue = 224
 
 [[known]]
 file = "google/paper.docx"
 check = "dropped"
 pages = [0]
-finding = "7 diagnostics"
+finding = "1 diagnostics"
 issue = 224
 
 [[known]]
 file = "libreoffice/paper.docx"
 check = "dropped"
 pages = [0]
-finding = "8 diagnostics"
+finding = "1 diagnostics"
 issue = 224
 
 [[known]]
 file = "word/paper.docx"
 check = "dropped"
 pages = [0]
-finding = "8 diagnostics"
-issue = 224
-
-[[known]]
-file = "authored/thesis.docx"
-check = "dropped"
-pages = [0]
-finding = "4 diagnostics"
+finding = "1 diagnostics"
 issue = 224
 
 [[known]]
 file = "google/thesis.docx"
 check = "dropped"
 pages = [0]
-finding = "4 diagnostics"
-issue = 224
-
-[[known]]
-file = "libreoffice/thesis.docx"
-check = "dropped"
-pages = [0]
-finding = "4 diagnostics"
-issue = 224
-
-[[known]]
-file = "word/thesis.docx"
-check = "dropped"
-pages = [0]
-finding = "4 diagnostics"
+finding = "1 diagnostics"
 issue = 224
 
 [[known]]
