@@ -222,9 +222,17 @@ impl PyBibliographySource {
             Some(fields) => sequence_items(fields, "fields")?
                 .iter()
                 .map(|pair| {
-                    let (field, value) = pair.extract::<(String, String)>().map_err(|_| {
-                        PyValueError::new_err("a field is a (field, value) pair of strings")
-                    })?;
+                    // Any pair: a tuple, or a list as `json.load` reads `sources --json`.
+                    let shape =
+                        || PyValueError::new_err("a field is a (field, value) pair of strings");
+                    let items = sequence_items(pair, "a field").map_err(|_| shape())?;
+                    let [field, value] = items.as_slice() else {
+                        return Err(shape());
+                    };
+                    let (field, value) = (
+                        field.extract::<String>().map_err(|_| shape())?,
+                        value.extract::<String>().map_err(|_| shape())?,
+                    );
                     let field = BibliographySourceField::from_name(&field).ok_or_else(|| {
                         PyValueError::new_err(format!("unknown source field {field:?}"))
                     })?;
@@ -549,16 +557,26 @@ impl PyDocument {
         source: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
         let mut source = source_argument(source)?;
-        if source.guid.is_empty()
-            && let Some(guid) = self
+        if source.guid.is_empty() {
+            // The refusals `replace-source` gives for the same case.
+            let refused = |message: String| {
+                docx_to_pyerr(
+                    py,
+                    oxoffice_docx::Error::Other(format!("bibliography: {message}")),
+                )
+            };
+            let existing = self
                 .inner
                 .bibliography_sources()
                 .map_err(|error| docx_to_pyerr(py, error))?
                 .into_iter()
                 .find(|info| info.tag == source.tag)
-                .and_then(|info| info.guid)
-        {
-            source.guid = guid;
+                .ok_or_else(|| {
+                    refused(format!("source {:?}: no source has this tag", source.tag))
+                })?;
+            source.guid = existing.guid.ok_or_else(|| {
+                refused(format!("source {:?}: the source has no GUID", source.tag))
+            })?;
         }
         let mut candidate = self.inner.clone_for_staging();
         candidate

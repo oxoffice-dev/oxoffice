@@ -126,3 +126,40 @@ def test_names_and_argument_shapes_are_refused_before_anything_changes():
     with pytest.raises(oxdocx.DocxError, match="has no occurrence 1: it occurs 1 time"):
         doc.insert_citation_after_text("Text", ["Smith20"], occurrence=1)
     assert doc.to_bytes() == before
+
+
+def instructions(doc):
+    """The field instructions of the body, each run of spaces read as one."""
+    xml = doc.part_xml("/word/document.xml")
+    texts = [part.split(">", 1)[1].split("</w:instrText>", 1)[0] for part in xml.split("<w:instrText")[1:]]
+    return [" ".join(text.replace("&quot;", '"').split()) for text in texts]
+
+
+def test_selectors_and_several_cited_sources_reach_the_fields():
+    doc = document("First", "Second")
+    doc.add_bibliography_source(smith())
+    doc.add_bibliography_source(oxdocx.BibliographySource("Doe19", "book", fields=[["title", "Notes"], ["year", "2019"]]))
+    body = next(story for story in doc.stories if story.kind == "body")
+    doc.insert_bibliography(body, "apa6", locale=1033, locale_filter=1036, tags=["Doe19"])
+    doc.insert_citation_after_text("First", [
+        oxdocx.CitationSource("Smith20", volume="2", prefix="see ", suppress_year=True),
+        oxdocx.CitationSource("Doe19", suffix=" more", suppress_title=True),
+    ])
+    assert instructions(doc) == [
+        r'CITATION Smith20 \v 2 \f "see " \y \m Doe19 \s " more" \t',
+        r"BIBLIOGRAPHY \l 1033 \f 1036 \m Doe19",
+    ]
+    doc.set_bibliography_options("chicago", tags=["Smith20"])
+    assert instructions(doc)[1] == r"BIBLIOGRAPHY \m Smith20"
+    assert doc.bibliography_style().supported_style == "chicago"
+
+
+def test_a_listed_source_round_trips_and_a_replacement_names_its_missing_source():
+    doc = document("Text")
+    assert doc.bibliography_style() is None
+    with pytest.raises(oxdocx.DocxError, match='source "Smith20": no source has this tag'):
+        doc.replace_bibliography_source(smith())
+    # Pairs as `json.load` reads `sources --json`: lists.
+    listed = {"tag": "Smith20", "kind": "book", "fields": [["title", "A history"], ["year", "2020"]]}
+    doc.add_bibliography_source(oxdocx.BibliographySource(listed["tag"], listed["kind"], fields=listed["fields"]))
+    assert doc.bibliography_sources()[0].supported.fields == (("title", "A history"), ("year", "2020"))
