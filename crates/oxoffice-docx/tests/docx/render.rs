@@ -437,15 +437,18 @@ fn check_dropped(diagnostics: &[String], find: &mut impl FnMut(Check, usize, Str
 // ---- The package around the render ----
 
 /// The fields whose results the render computes: page numbers and counts,
-/// section numbers, page references and sequence numbers. Their cached
-/// results are not what the page draws.
-const COMPUTED_FIELDS: [&str; 6] = [
+/// section numbers, page references, sequence numbers, and the text of a
+/// bookmark or of a style on the page (whose numbers are checked where they
+/// are written). Their cached results are not what the page draws.
+const COMPUTED_FIELDS: [&str; 8] = [
     "PAGE",
     "NUMPAGES",
     "SECTION",
     "SECTIONPAGES",
     "PAGEREF",
     "SEQ",
+    "REF",
+    "STYLEREF",
 ];
 
 /// Each field of a story part with its result: its code (a simple field's
@@ -947,7 +950,8 @@ fn a_number_outside_fields_must_be_drawn_and_one_in_a_field_need_not() {
     let mut doc = crate::support::doc_with_body(concat!(
         "<w:p><w:r><w:t xml:space=\"preserve\">Revenue 2024 was 1402 on page </w:t></w:r>",
         r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>99</w:t></w:r></w:fldSimple>"#,
-        r#"<w:fldSimple w:instr=" MERGEFIELD Units "><w:r><w:t> 315</w:t></w:r></w:fldSimple></w:p>"#,
+        r#"<w:fldSimple w:instr=" MERGEFIELD Units "><w:r><w:t> 315</w:t></w:r></w:fldSimple>"#,
+        r#"<w:fldSimple w:instr=" REF figure "><w:r><w:t> 77</w:t></w:r></w:fldSimple></w:p>"#,
     ));
     let package = Package::read(&doc.to_bytes().expect("document saves"));
     let findings = |line: &str| {

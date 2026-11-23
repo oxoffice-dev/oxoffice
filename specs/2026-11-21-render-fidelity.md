@@ -118,8 +118,9 @@ nothing in the PDF to read, so it reads the renderer's diagnostics.
    boxes and content controls, the headers and footers each section uses, the
    footnotes and endnotes, in the accepted view; hidden text, comments (never
    drawn) and the numbers in the results of the fields the render computes
-   (`PAGE`, `NUMPAGES`, `SECTION`, `SECTIONPAGES`, `PAGEREF`, `SEQ`) are left
-   out, every other number is checked, and words are compared over the whole
+   (`PAGE`, `NUMPAGES`, `SECTION`, `SECTIONPAGES`, `PAGEREF`, `SEQ`, `REF`,
+   `STYLEREF`) are left out, every other number is checked, and words are
+   compared over the whole
    document. For pptx, the text of each
    slide's own shapes, notes left out, found on that slide's page. Words are
    compared as a multiset; CJK text one character at a time.
