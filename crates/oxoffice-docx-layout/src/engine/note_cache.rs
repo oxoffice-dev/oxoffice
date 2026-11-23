@@ -310,7 +310,7 @@ pub(super) fn content_note_references(
     Ok(contents)
 }
 
-pub(super) fn paragraph_note_references(
+pub(crate) fn paragraph_note_references(
     paragraph: &CT_P,
     view: RevisionView,
 ) -> Result<Vec<NoteRef>> {

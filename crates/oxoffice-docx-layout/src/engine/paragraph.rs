@@ -842,8 +842,8 @@ fn layout_paragraph_with_source_and_table(
             expanded.push((index, projected, start, false, true, None, None, None));
         }
     }
-    // Only a main-story paragraph draws form marks, named after its own
-    // source node: a cached, header, note or text-box layout passes none.
+    // Only a main-story or note paragraph draws form marks, named after its
+    // own source node: a cached, header or text-box layout passes none.
     let form_paragraph = form.filter(|_| input.form_fields);
     let inline_controls = form_paragraph
         .filter(|_| !para.content_controls.is_empty() || !para.revisions.is_empty())

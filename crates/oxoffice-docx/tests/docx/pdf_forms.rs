@@ -1045,3 +1045,111 @@ fn an_empty_control_after_a_tracked_insertion_in_a_container_takes_the_later_nam
         "{named:?}"
     );
 }
+
+/// A text control tagged `tag` showing `value`.
+fn text_control(tag: &str, value: &str) -> String {
+    format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{value}</w:t></w:r></w:sdtContent></w:sdt>"#
+    )
+}
+
+/// A document whose first paragraph references an endnote, then a footnote,
+/// each holding a text control after its own text, and whose second
+/// paragraph holds a control of the body. All three are tagged `name`.
+fn doc_with_note_controls() -> Document {
+    doc_with_notes(|marker, value| format!("{marker} </w:t></w:r>{}", text_control("name", value)))
+}
+
+/// A document whose first paragraph references an endnote, then a footnote,
+/// and whose second paragraph holds a control of the body tagged `name`.
+/// `note` writes what follows each note's text run, given its text and the
+/// value its control shows.
+fn doc_with_notes(note: impl Fn(&str, &str) -> String) -> Document {
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:p>{}</w:p>"#,
+        text_control("name", "Body value")
+    ));
+    let body = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_endnote(&body, "ENDNOTE").unwrap();
+    let body = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.create_footnote(&body, "FOOTNOTE").unwrap();
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    for (part, marker, value) in [
+        ("/word/footnotes.xml", "FOOTNOTE", "Foot value"),
+        ("/word/endnotes.xml", "ENDNOTE", "End value"),
+    ] {
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        let old = format!("{marker}</w:t></w:r>");
+        assert!(xml.contains(&old), "{xml}");
+        let xml = xml.replace(&old, &note(marker, value));
+        package.set_part(part, xml.into_bytes());
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn controls_in_notes_become_fields_after_the_body_footnotes_first() {
+    let doc = doc_with_note_controls();
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Body value".to_owned()),
+            ("name_2".to_owned(), "Foot value".to_owned()),
+            ("name_3".to_owned(), "End value".to_owned()),
+        ]
+    );
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    let mut texts: Vec<String> = fragment_texts(&layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    texts.sort();
+    assert_eq!(texts, ["Body value", "End value", "Foot value"]);
+    // The notes' own text and marks stay on the page.
+    let page = page_text(&layout.pages);
+    assert!(
+        page.contains("FOOTNOTE") && page.contains("ENDNOTE"),
+        "{page}"
+    );
+    assert!(
+        layout
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("stays static")),
+        "{:?}",
+        layout.diagnostics
+    );
+    let (_, fields) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    assert_eq!(fields.len(), 3);
+}
+
+#[test]
+fn a_control_in_a_table_of_a_note_becomes_a_field() {
+    // The table follows the note's paragraph, inside the note.
+    let doc = doc_with_notes(|marker, value| {
+        format!(
+            r#"{marker}</w:t></w:r></w:p><w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t></w:t></w:r>"#,
+            text_control("name", value)
+        )
+    });
+    assert_eq!(
+        named_values(&doc),
+        [
+            ("name".to_owned(), "Body value".to_owned()),
+            ("name_2".to_owned(), "Foot value".to_owned()),
+            ("name_3".to_owned(), "End value".to_owned()),
+        ]
+    );
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let mut texts: Vec<String> = fragment_texts(&result.layout.pages)
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
+    texts.sort();
+    assert_eq!(texts, ["Body value", "End value", "Foot value"]);
+}
