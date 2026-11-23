@@ -4,9 +4,10 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use oxoffice_docx_oxml::math::{
-    FractionType, MathAccent, MathArgument, MathDelimiter, MathExpression, MathFraction, MathLimit,
-    MathMatrix, MathMatrixRow, MathNary, MathPreSubSuperscript, MathRadical, MathRun, MathScript,
-    MathStyle, MathSubSuperscript,
+    FractionType, MathAccent, MathArgument, MathBar, MathBorderBox, MathDelimiter,
+    MathEquationArray, MathExpression, MathFraction, MathFunction, MathGroupCharacter, MathLimit,
+    MathMatrix, MathMatrixRow, MathNary, MathPhantom, MathPreSubSuperscript, MathRadical, MathRun,
+    MathScript, MathStyle, MathSubSuperscript, MathVerticalPosition,
 };
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
@@ -679,6 +680,8 @@ fn mathml_element_to_expressions(
         "munderover" => &["accent", "accentunder"][..],
         "mfenced" => &["open", "close", "separators"][..],
         "mi" | "mn" | "mo" | "mtext" => &["mathvariant"][..],
+        "menclose" => &["notation"][..],
+        "mtable" => &["columnalign"][..],
         "mspace" => &["width"][..],
         "mfrac" => &["linethickness"][..],
         "mstyle" => &["displaystyle"][..],
@@ -715,6 +718,11 @@ fn mathml_element_to_expressions(
                 && let Some(nary) = parse_explicit_nary_row(node, path, diagnostics, nodes)?
             {
                 return Ok(vec![MathExpression::Nary(nary)]);
+            }
+            if node.local == "mrow"
+                && let Some(function) = parse_function_row(node, path, diagnostics, nodes)?
+            {
+                return Ok(vec![MathExpression::Function(function)]);
             }
             Ok(mathml_children_to_argument(node, path, diagnostics, nodes)?.expressions)
         }
@@ -881,6 +889,63 @@ fn mathml_element_to_expressions(
             ))])
         }
         "mtable" => parse_mathml_matrix(node, path, diagnostics, nodes),
+        "menclose" => {
+            let mut border =
+                MathBorderBox::new(mathml_children_to_argument(node, path, diagnostics, nodes)?);
+            // A box, a rounded box or a circle draws all four sides; sides or
+            // strikes named without one draw only what they name, and an empty
+            // notation (the form of a box with every side hidden) draws
+            // nothing; a missing one or longdiv reads as a box.
+            let notations = node
+                .attribute("notation")
+                .unwrap_or("box")
+                .split_whitespace()
+                .collect::<Vec<_>>();
+            let empty = notations.is_empty();
+            let framed = notations
+                .iter()
+                .any(|name| matches!(*name, "box" | "roundedbox" | "circle"));
+            let drawn = notations.iter().any(|name| {
+                matches!(
+                    *name,
+                    "top"
+                        | "bottom"
+                        | "left"
+                        | "right"
+                        | "horizontalstrike"
+                        | "verticalstrike"
+                        | "updiagonalstrike"
+                        | "downdiagonalstrike"
+                )
+            });
+            if !framed && (drawn || empty) {
+                let hidden = |side: &str| (!notations.contains(&side)).then_some(true);
+                border.hide_top = hidden("top");
+                border.hide_bottom = hidden("bottom");
+                border.hide_left = hidden("left");
+                border.hide_right = hidden("right");
+            }
+            for name in &notations {
+                match *name {
+                    "box" | "roundedbox" | "circle" | "top" | "bottom" | "left" | "right" => {}
+                    "horizontalstrike" => border.strike_horizontal = Some(true),
+                    "verticalstrike" => border.strike_vertical = Some(true),
+                    "updiagonalstrike" => border.strike_bottom_left_to_top_right = Some(true),
+                    "downdiagonalstrike" => border.strike_top_left_to_bottom_right = Some(true),
+                    _ => diagnostics.push(
+                        format!("{path}/@notation"),
+                        format!("unsupported MathML enclosure {name} was discarded"),
+                    )?,
+                }
+            }
+            Ok(vec![MathExpression::BorderBox(border)])
+        }
+        "mphantom" => {
+            let mut phantom =
+                MathPhantom::new(mathml_children_to_argument(node, path, diagnostics, nodes)?);
+            phantom.show = Some(false);
+            Ok(vec![MathExpression::Phantom(phantom)])
+        }
         "munder" | "mover" | "munderover" => {
             parse_mathml_limits_or_accent(node, path, diagnostics, nodes)
         }
@@ -1089,6 +1154,8 @@ fn is_supported_mathml_element(node: &XmlNode) -> bool {
                 | "mover"
                 | "munderover"
                 | "mfenced"
+                | "menclose"
+                | "mphantom"
                 | "semantics"
         )
 }
@@ -1188,6 +1255,19 @@ fn parse_mathml_matrix(
     if row_nodes.is_empty() || row_nodes.len() > MAX_ROWS {
         return Err(math_error(format!("{path} exceeds the matrix row limit")));
     }
+    // Rows of two columns, the first right-aligned and the second left-aligned,
+    // are equations aligned on a mark, as an equation array writes them.
+    let aligned = match node.attribute("columnalign") {
+        None => false,
+        Some("right left") => true,
+        Some(_) => {
+            diagnostics.push(
+                format!("{path}/@columnalign"),
+                "unsupported MathML column alignment was discarded",
+            )?;
+            false
+        }
+    };
     let mut rows = Vec::new();
     let mut width = None;
     for (row_index, row) in row_nodes.iter().enumerate() {
@@ -1225,7 +1305,73 @@ fn parse_mathml_matrix(
         }
         rows.push(MathMatrixRow::new(converted));
     }
+    if aligned && width == Some(2) {
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                let mut cells = row.cells.into_iter();
+                let mut expressions = cells.next().unwrap_or_default().expressions;
+                expressions.push(MathRun::new("&").into());
+                expressions.extend(cells.next().unwrap_or_default().expressions);
+                let mut row = MathArgument::new(expressions);
+                normalize_argument(&mut row);
+                row
+            })
+            .collect();
+        return Ok(vec![MathExpression::EquationArray(MathEquationArray::new(
+            rows,
+        ))]);
+    }
     Ok(vec![MathExpression::Matrix(MathMatrix::new(rows))])
+}
+
+/// The horizontal braces and brackets a group character stretches.
+fn is_group_bracket(text: &str) -> bool {
+    matches!(
+        text,
+        "\u{23de}"
+            | "\u{23df}"
+            | "\u{23dc}"
+            | "\u{23dd}"
+            | "\u{23b4}"
+            | "\u{23b5}"
+            | "\u{23e0}"
+            | "\u{23e1}"
+    )
+}
+
+/// The arrows a group character stretches over or under its base.
+fn is_group_arrow(text: &str) -> bool {
+    matches!(
+        text,
+        "\u{2190}" | "\u{2192}" | "\u{2194}" | "\u{21d0}" | "\u{21d2}" | "\u{21d4}"
+    )
+}
+
+/// `<mrow>name<mo>&#x2061;</mo>argument</mrow>`, as Word and oxoffice write
+/// a function apply: a name, the function marker and one argument.
+fn parse_function_row(
+    node: &XmlNode,
+    path: &str,
+    diagnostics: &mut Diagnostics,
+    nodes: &mut usize,
+) -> Result<Option<MathFunction>> {
+    let children = mathml_element_children(node);
+    let [name, marker, argument] = children.as_slice() else {
+        return Ok(None);
+    };
+    if marker.namespace.as_deref() != Some(MATHML_NS)
+        || marker.local != "mo"
+        || !marker.attributes.is_empty()
+        || marker.elements().next().is_some()
+        || marker.text() != "\u{2061}"
+    {
+        return Ok(None);
+    }
+    Ok(Some(MathFunction::new(
+        mathml_node_to_argument(name, &format!("{path}/*[1]"), diagnostics, nodes)?,
+        mathml_node_to_argument(argument, &format!("{path}/*[3]"), diagnostics, nodes)?,
+    )))
 }
 
 fn parse_mathml_limits_or_accent(
@@ -1239,6 +1385,59 @@ fn parse_mathml_limits_or_accent(
     let children = mathml_element_children(node);
     let expected = if node.local == "munderover" { 3 } else { 2 };
     require_child_count(path, &children, expected)?;
+    // A line over or under its base is a bar; a stretched brace, bracket or
+    // arrow is a group character.
+    let mark = (node.local != "munderover")
+        .then(|| children[1])
+        .filter(|child| {
+            child.namespace.as_deref() == Some(MATHML_NS)
+                && child.local == "mo"
+                && child.elements().next().is_none()
+        })
+        .map(|child| (child.text(), child.attribute("stretchy") == Some("true")));
+    // An accent (on the node or its mark) stays an accent, unless its mark is a
+    // brace or bracket, which only a group character draws.
+    let marked_accent = node.local == "mover"
+        && (node.attribute("accent") == Some("true")
+            || children[1].attribute("accent") == Some("true"));
+    if let Some((text, stretchy)) = &mark {
+        let over = node.local == "mover";
+        if (over && text == "\u{203e}") || (!over && matches!(text.as_str(), "_" | "\u{332}")) {
+            let position = if over {
+                MathVerticalPosition::Top
+            } else {
+                MathVerticalPosition::Bottom
+            };
+            let base =
+                mathml_node_to_argument(children[0], &format!("{path}/*[1]"), diagnostics, nodes)?;
+            return Ok(vec![MathExpression::Bar(MathBar::new(
+                Some(position),
+                base,
+            ))]);
+        }
+        if text.chars().count() == 1
+            && (if marked_accent {
+                is_group_bracket(text)
+            } else {
+                *stretchy || is_group_bracket(text) || is_group_arrow(text)
+            })
+            && mathml_nary_operator(children[0], &format!("{path}/*[1]"), diagnostics)?.is_none()
+        {
+            let mut group = MathGroupCharacter::new(mathml_node_to_argument(
+                children[0],
+                &format!("{path}/*[1]"),
+                diagnostics,
+                nodes,
+            )?);
+            group.character = Some(text.clone());
+            group.position = Some(if over {
+                MathVerticalPosition::Top
+            } else {
+                MathVerticalPosition::Bottom
+            });
+            return Ok(vec![MathExpression::GroupCharacter(group)]);
+        }
+    }
     let token_accent = children.get(1).is_some_and(|child| {
         child.namespace.as_deref() == Some(MATHML_NS)
             && child.local == "mo"
@@ -1271,7 +1470,7 @@ fn parse_mathml_limits_or_accent(
         diagnose_boolean_attribute(children[1], &format!("{path}/*[2]"), "accent", diagnostics)?;
         diagnose_token_children(children[1], &format!("{path}/*[2]"), diagnostics)?;
         let character = match children[1].text().as_str() {
-            "‾" | "¯" => "̄".to_owned(),
+            "¯" => "̄".to_owned(),
             "→" => "⃗".to_owned(),
             value => value.to_owned(),
         };
@@ -1552,6 +1751,7 @@ fn normalize_argument(argument: &mut MathArgument) {
             && previous_is_fully_modelled
             && previous.properties == Default::default()
             && run.properties == Default::default()
+            && run_color_and_size(previous) == run_color_and_size(run)
         {
             previous.text.push_str(&run.text);
             continue;
@@ -1608,6 +1808,11 @@ fn normalize_expression(expression: &mut MathExpression) {
             }
         }
         MathExpression::Accent(value) => normalize_argument(&mut value.base),
+        other => {
+            for argument in other.arguments_mut() {
+                normalize_argument(argument);
+            }
+        }
     }
 }
 
@@ -1697,6 +1902,11 @@ fn validate_tree(argument: &MathArgument) -> std::result::Result<(), String> {
                     }
                 }
                 MathExpression::Accent(value) => visit(&value.base, depth + 1, nodes, text)?,
+                other => {
+                    for argument in other.arguments() {
+                        visit(argument, depth + 1, nodes, text)?;
+                    }
+                }
             }
         }
         Ok(())
@@ -1752,6 +1962,11 @@ fn expression_has_direct_unsupported_content(expression: &MathExpression) -> boo
         }
         MathExpression::Delimiter(value) => value.arguments.clear(),
         MathExpression::Accent(value) => value.base = MathArgument::default(),
+        other => {
+            for argument in other.arguments_mut() {
+                *argument = MathArgument::default();
+            }
+        }
     }
     direct.has_unsupported_content()
 }
@@ -1776,6 +1991,108 @@ fn write_mathml_argument(
     Ok(())
 }
 
+fn write_mathml_run(
+    run: &MathRun,
+    path: &str,
+    output: &mut String,
+    diagnostics: &mut Diagnostics,
+) -> Result<()> {
+    if run_has_unconverted_properties(run, true) {
+        diagnostics.push(
+            format!("{path}/rPr"),
+            "OfficeMath run properties were discarded",
+        )?;
+    }
+    if !is_xml_1_0_text(&run.text) {
+        diagnostics.push(
+            path,
+            "OfficeMath run contains a forbidden XML 1.0 character",
+        )?;
+        return Ok(());
+    }
+    if run.properties.normal == Some(true) && run.properties.style == Some(MathStyle::Plain) {
+        let has_content = !run.text.trim_matches(' ').is_empty();
+        let leading = has_content && run.text.starts_with(' ') && !run.text.starts_with("  ");
+        let trailing = has_content && run.text.ends_with(' ') && !run.text.ends_with("  ");
+        if leading {
+            output.push_str("<mspace width=\"0.333em\"/>");
+        }
+        output.push_str("<mtext>");
+        // One lexical boundary space is represented by one explicit marker.
+        let text = if leading {
+            run.text.strip_prefix(' ').unwrap_or(&run.text)
+        } else {
+            &run.text
+        };
+        let text = if trailing {
+            text.strip_suffix(' ').unwrap_or(text)
+        } else {
+            text
+        };
+        output.push_str(&xml_escape(text));
+        output.push_str("</mtext>");
+        if trailing && (!leading || run.text.len() > 1) {
+            output.push_str("<mspace width=\"0.333em\"/>");
+        }
+    } else if run.properties.normal == Some(true) || run.properties.style == Some(MathStyle::Plain)
+    {
+        output.push_str("<mi mathvariant=\"normal\">");
+        output.push_str(&xml_escape(&run.text));
+        output.push_str("</mi>");
+        if run.properties.normal == Some(true) && run.text != "lim" {
+            output.push_str("<mo>⁡</mo>");
+        }
+    } else {
+        let mut part = String::new();
+        for character in run.text.chars() {
+            if let Some(width) = math_space_width(character) {
+                if !part.is_empty() {
+                    write!(output, "<mi>{}</mi>", xml_escape(&part))
+                        .expect("String writes succeed");
+                    part.clear();
+                }
+                write!(output, "<mspace width=\"{width}\"/>").expect("String writes succeed");
+            } else {
+                part.push(character);
+            }
+        }
+        if !part.is_empty() || run.text.is_empty() {
+            write!(output, "<mi>{}</mi>", xml_escape(&part)).expect("String writes succeed");
+        }
+    }
+    Ok(())
+}
+
+/// The `mstyle` start tag that carries the colour (`w:color`) and size
+/// (`w:sz`) of a math run's own run properties, if it sets either.
+fn mathml_run_style(run: &MathRun) -> Option<String> {
+    let (color, size) = run_color_and_size(run);
+    if color.is_none() && size.is_none() {
+        return None;
+    }
+    let mut style = "<mstyle".to_owned();
+    if let Some(color) = color {
+        write!(style, " mathcolor=\"#{color}\"").expect("String writes are infallible");
+    }
+    if let Some(size) = size {
+        write!(style, " mathsize=\"{size}pt\"").expect("String writes are infallible");
+    }
+    style.push('>');
+    Some(style)
+}
+
+/// The colour (six hex digits) and size in points a math run's `w:rPr` sets.
+fn run_color_and_size(run: &MathRun) -> (Option<String>, Option<f64>) {
+    let Some(properties) = run.word_properties() else {
+        return (None, None);
+    };
+    let color = properties
+        .color
+        .filter(|color| color.len() == 6 && color.chars().all(|digit| digit.is_ascii_hexdigit()))
+        .map(|color| color.to_ascii_uppercase());
+    (color, properties.sz.map(|size| size.to_pt()))
+}
+
 fn run_has_unconverted_properties(run: &MathRun, normal_supported: bool) -> bool {
     let properties = &run.properties;
     properties
@@ -1798,76 +2115,22 @@ fn write_mathml_expression(
         diagnostics.push(path, "unmodelled OfficeMath content was discarded")?;
     }
     match expression {
-        MathExpression::Run(run) => {
-            if run_has_unconverted_properties(run, true) {
-                diagnostics.push(
-                    format!("{path}/rPr"),
-                    "OfficeMath run properties were discarded",
-                )?;
-            }
-            if !is_xml_1_0_text(&run.text) {
-                diagnostics.push(
-                    path,
-                    "OfficeMath run contains a forbidden XML 1.0 character",
-                )?;
-                return Ok(());
-            }
-            if run.properties.normal == Some(true) && run.properties.style == Some(MathStyle::Plain)
-            {
-                let has_content = !run.text.trim_matches(' ').is_empty();
-                let leading =
-                    has_content && run.text.starts_with(' ') && !run.text.starts_with("  ");
-                let trailing = has_content && run.text.ends_with(' ') && !run.text.ends_with("  ");
-                if leading {
-                    output.push_str("<mspace width=\"0.333em\"/>");
-                }
-                output.push_str("<mtext>");
-                // One lexical boundary space is represented by one explicit marker.
-                let text = if leading {
-                    run.text.strip_prefix(' ').unwrap_or(&run.text)
+        MathExpression::Run(run) => match mathml_run_style(run) {
+            // A run's own colour and size, which the layout draws, as MathML
+            // style; nothing when the run writes nothing.
+            Some(style) => {
+                let start = output.len();
+                output.push_str(&style);
+                let body = output.len();
+                write_mathml_run(run, path, output, diagnostics)?;
+                if output.len() == body {
+                    output.truncate(start);
                 } else {
-                    &run.text
-                };
-                let text = if trailing {
-                    text.strip_suffix(' ').unwrap_or(text)
-                } else {
-                    text
-                };
-                output.push_str(&xml_escape(text));
-                output.push_str("</mtext>");
-                if trailing && (!leading || run.text.len() > 1) {
-                    output.push_str("<mspace width=\"0.333em\"/>");
-                }
-            } else if run.properties.normal == Some(true)
-                || run.properties.style == Some(MathStyle::Plain)
-            {
-                output.push_str("<mi mathvariant=\"normal\">");
-                output.push_str(&xml_escape(&run.text));
-                output.push_str("</mi>");
-                if run.properties.normal == Some(true) && run.text != "lim" {
-                    output.push_str("<mo>⁡</mo>");
-                }
-            } else {
-                let mut part = String::new();
-                for character in run.text.chars() {
-                    if let Some(width) = math_space_width(character) {
-                        if !part.is_empty() {
-                            write!(output, "<mi>{}</mi>", xml_escape(&part))
-                                .expect("String writes succeed");
-                            part.clear();
-                        }
-                        write!(output, "<mspace width=\"{width}\"/>")
-                            .expect("String writes succeed");
-                    } else {
-                        part.push(character);
-                    }
-                }
-                if !part.is_empty() || run.text.is_empty() {
-                    write!(output, "<mi>{}</mi>", xml_escape(&part))
-                        .expect("String writes succeed");
+                    output.push_str("</mstyle>");
                 }
             }
-        }
+            None => write_mathml_run(run, path, output, diagnostics)?,
+        },
         MathExpression::Fraction(value) => {
             if !matches!(value.fraction_type, FractionType::Bar | FractionType::NoBar) {
                 diagnostics.push(path, "non-bar OfficeMath fraction type was discarded")?;
@@ -2038,6 +2301,131 @@ fn write_mathml_expression(
             )
             .expect("String writes are infallible");
         }
+        MathExpression::Function(value) => {
+            output.push_str("<mrow><mrow>");
+            write_mathml_argument(&value.name, path, output, diagnostics)?;
+            output.push_str("</mrow><mo>\u{2061}</mo><mrow>");
+            write_mathml_argument(&value.argument, path, output, diagnostics)?;
+            output.push_str("</mrow></mrow>");
+        }
+        MathExpression::Bar(value) => {
+            let over = value.position == Some(MathVerticalPosition::Top);
+            output.push_str(if over {
+                "<mover accent=\"true\"><mrow>"
+            } else {
+                "<munder accentunder=\"true\"><mrow>"
+            });
+            write_mathml_argument(&value.base, path, output, diagnostics)?;
+            output.push_str(if over {
+                "</mrow><mo>\u{203e}</mo></mover>"
+            } else {
+                "</mrow><mo>_</mo></munder>"
+            });
+        }
+        MathExpression::Box(value) => {
+            output.push_str("<mrow>");
+            write_mathml_argument(&value.base, path, output, diagnostics)?;
+            output.push_str("</mrow>");
+        }
+        MathExpression::BorderBox(value) => {
+            let on = |flag: Option<bool>| flag == Some(true);
+            let sides = [
+                (!on(value.hide_top), "top"),
+                (!on(value.hide_bottom), "bottom"),
+                (!on(value.hide_left), "left"),
+                (!on(value.hide_right), "right"),
+            ];
+            let mut notation: Vec<&str> = if sides.iter().all(|(shown, _)| *shown) {
+                vec!["box"]
+            } else {
+                sides
+                    .iter()
+                    .filter(|(shown, _)| *shown)
+                    .map(|(_, name)| *name)
+                    .collect()
+            };
+            for (flag, name) in [
+                (value.strike_horizontal, "horizontalstrike"),
+                (value.strike_vertical, "verticalstrike"),
+                (value.strike_bottom_left_to_top_right, "updiagonalstrike"),
+                (value.strike_top_left_to_bottom_right, "downdiagonalstrike"),
+            ] {
+                if on(flag) {
+                    notation.push(name);
+                }
+            }
+            write!(
+                output,
+                "<menclose notation=\"{}\"><mrow>",
+                notation.join(" ")
+            )
+            .expect("String writes are infallible");
+            write_mathml_argument(&value.base, path, output, diagnostics)?;
+            output.push_str("</mrow></menclose>");
+        }
+        MathExpression::GroupCharacter(value) => {
+            let character = value.character.as_deref().unwrap_or("\u{23df}");
+            if character.chars().count() > 1 || !is_xml_1_0_text(character) {
+                diagnostics.push(path, "unsupported OfficeMath group character was discarded")?;
+                return Ok(());
+            }
+            let over = value.position == Some(MathVerticalPosition::Top);
+            output.push_str(if over {
+                "<mover><mrow>"
+            } else {
+                "<munder><mrow>"
+            });
+            write_mathml_argument(&value.base, path, output, diagnostics)?;
+            write!(
+                output,
+                "</mrow><mo stretchy=\"true\">{}</mo>{}",
+                xml_escape(character),
+                if over { "</mover>" } else { "</munder>" }
+            )
+            .expect("String writes are infallible");
+        }
+        MathExpression::Phantom(value) => {
+            if [value.zero_width, value.zero_ascent, value.zero_descent].contains(&Some(true)) {
+                diagnostics.push(path, "OfficeMath phantom dimensions were discarded")?;
+            }
+            let hidden = value.show == Some(false);
+            output.push_str(if hidden { "<mphantom><mrow>" } else { "<mrow>" });
+            write_mathml_argument(&value.base, path, output, diagnostics)?;
+            output.push_str(if hidden {
+                "</mrow></mphantom>"
+            } else {
+                "</mrow>"
+            });
+        }
+        MathExpression::EquationArray(value) => {
+            // Rows aligned on their `&` take two columns; with no mark in any
+            // row, one centred column, as Word draws them.
+            let aligned = value
+                .rows
+                .iter()
+                .any(|row| row.split_at_alignment().is_some());
+            output.push_str(if aligned {
+                "<mtable columnalign=\"right left\">"
+            } else {
+                "<mtable>"
+            });
+            for row in &value.rows {
+                output.push_str("<mtr><mtd>");
+                if aligned {
+                    let (before, after) = row
+                        .split_at_alignment()
+                        .unwrap_or_else(|| (MathArgument::default(), row.clone()));
+                    write_mathml_argument(&before, path, output, diagnostics)?;
+                    output.push_str("</mtd><mtd>");
+                    write_mathml_argument(&after, path, output, diagnostics)?;
+                } else {
+                    write_mathml_argument(row, path, output, diagnostics)?;
+                }
+                output.push_str("</mtd></mtr>");
+            }
+            output.push_str("</mtable>");
+        }
+        _ => diagnostics.push(path, "unmodelled OfficeMath content was discarded")?,
     }
     Ok(())
 }
@@ -3187,6 +3575,11 @@ fn diagnose_empty_latex_runs(
             MathExpression::Accent(value) => {
                 diagnose_empty_latex_runs(&value.base, &expression_path, diagnostics)?;
             }
+            other => {
+                for child in other.arguments() {
+                    diagnose_empty_latex_runs(child, &expression_path, diagnostics)?;
+                }
+            }
         }
     }
     Ok(())
@@ -3238,6 +3631,9 @@ fn write_latex_expression(
             let upright = run.properties.normal == Some(true);
             if run_has_unconverted_properties(run, upright) {
                 diagnostics.push(path, "OfficeMath run properties were discarded")?;
+            }
+            if run_color_and_size(run) != (None, None) {
+                diagnostics.push(path, "OfficeMath run colour and size were discarded")?;
             }
             let literal = run.properties.style == Some(MathStyle::Plain);
             if upright && literal {
@@ -3435,6 +3831,91 @@ fn write_latex_expression(
             write!(output, "\\{command}").expect("String writes are infallible");
             write_latex_group(&value.base, path, output, diagnostics)?;
         }
+        MathExpression::Function(value) => {
+            write_latex_argument(&value.name, path, output, diagnostics)?;
+            output.push_str("\\,");
+            write_latex_argument(&value.argument, path, output, diagnostics)?;
+        }
+        MathExpression::Bar(value) => {
+            output.push_str(if value.position == Some(MathVerticalPosition::Top) {
+                "\\overline"
+            } else {
+                "\\underline"
+            });
+            write_latex_group(&value.base, path, output, diagnostics)?;
+        }
+        MathExpression::Box(value) => write_latex_group(&value.base, path, output, diagnostics)?,
+        MathExpression::BorderBox(value) => {
+            if [
+                value.hide_top,
+                value.hide_bottom,
+                value.hide_left,
+                value.hide_right,
+                value.strike_horizontal,
+                value.strike_vertical,
+                value.strike_bottom_left_to_top_right,
+                value.strike_top_left_to_bottom_right,
+            ]
+            .contains(&Some(true))
+            {
+                diagnostics.push(
+                    path,
+                    "OfficeMath border box sides and strikes were discarded",
+                )?;
+            }
+            output.push_str("\\boxed");
+            write_latex_group(&value.base, path, output, diagnostics)?;
+        }
+        MathExpression::GroupCharacter(value) => {
+            let over = value.position == Some(MathVerticalPosition::Top);
+            let command = match (value.character.as_deref(), over) {
+                (None | Some("\u{23df}"), false) => "\\underbrace",
+                (Some("\u{23de}"), true) => "\\overbrace",
+                _ => {
+                    diagnostics
+                        .push(path, "unsupported OfficeMath group character was discarded")?;
+                    return write_latex_group(&value.base, path, output, diagnostics);
+                }
+            };
+            output.push_str(command);
+            write_latex_group(&value.base, path, output, diagnostics)?;
+        }
+        MathExpression::Phantom(value) => {
+            if [value.zero_width, value.zero_ascent, value.zero_descent].contains(&Some(true)) {
+                diagnostics.push(path, "OfficeMath phantom dimensions were discarded")?;
+            }
+            if value.show == Some(false) {
+                output.push_str("\\phantom");
+            }
+            write_latex_group(&value.base, path, output, diagnostics)?;
+        }
+        MathExpression::EquationArray(value) => {
+            let aligned = value
+                .rows
+                .iter()
+                .any(|row| row.split_at_alignment().is_some());
+            let environment = if aligned { "aligned" } else { "gathered" };
+            write!(output, "\\begin{{{environment}}}").expect("String writes are infallible");
+            for (index, row) in value.rows.iter().enumerate() {
+                if index != 0 {
+                    output.push_str("\\\\");
+                }
+                match row.split_at_alignment() {
+                    Some((before, after)) => {
+                        write_latex_argument(&before, path, output, diagnostics)?;
+                        output.push('&');
+                        write_latex_argument(&after, path, output, diagnostics)?;
+                    }
+                    None if aligned => {
+                        output.push('&');
+                        write_latex_argument(row, path, output, diagnostics)?;
+                    }
+                    None => write_latex_argument(row, path, output, diagnostics)?,
+                }
+            }
+            write!(output, "\\end{{{environment}}}").expect("String writes are infallible");
+        }
+        _ => diagnostics.push(path, "unmodelled OfficeMath content was discarded")?,
     }
     Ok(())
 }

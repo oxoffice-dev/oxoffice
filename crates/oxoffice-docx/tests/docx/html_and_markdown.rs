@@ -2339,12 +2339,281 @@ fn a_delimiter_shape_survives_an_rtf_round_trip() {
     assert!(!xml.contains("<m:shp><m:r>"), "{xml}");
 }
 
+/// The equation `body` (OfficeMath XML) through MathML and back: the one
+/// expression read, after checking that nothing was reported and that it
+/// writes the same MathML again.
+fn through_mathml(body: &str) -> oxoffice_docx::MathExpression {
+    let equation = oxoffice_docx::CT_OMath::from_xml(
+        format!(r#"<m:oMath xmlns:m="{MATH_NAMESPACE}">{body}</m:oMath>"#).as_bytes(),
+    )
+    .unwrap();
+    let argument = oxoffice_docx::MathArgument::new(equation.expressions.clone());
+    let written = oxoffice_docx::equation_to_mathml(&argument).value;
+    let read = oxoffice_docx::equation_from_mathml(&written).unwrap();
+    assert!(
+        read.diagnostics.is_empty(),
+        "{written}: {:?}",
+        read.diagnostics
+    );
+    assert_eq!(
+        oxoffice_docx::equation_to_mathml(&read.value).value,
+        written,
+        "{body}"
+    );
+    let [expression] = read.value.expressions.as_slice() else {
+        panic!("{written} reads as {:?}", read.value.expressions);
+    };
+    expression.clone()
+}
+
+const MATH_X: &str = "<m:e><m:r><m:t>x</m:t></m:r></m:e>";
+
+#[test]
+fn a_function_read_from_mathml_is_a_function_of_its_argument() {
+    let expression = through_mathml(&format!(
+        r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>log</m:t></m:r></m:fName>{MATH_X}</m:func>"#
+    ));
+    let oxoffice_docx::MathExpression::Function(function) = expression else {
+        panic!("{expression:?}");
+    };
+    assert!(
+        matches!(function.name.expressions.as_slice(), [oxoffice_docx::MathExpression::Run(run)] if run.text == "log"),
+        "{function:?}"
+    );
+}
+
+#[test]
+fn a_bar_read_from_mathml_is_a_bar_over_or_under_its_base() {
+    use oxoffice_docx_oxml::math::MathVerticalPosition;
+    for (body, position) in [
+        (
+            format!(r#"<m:bar><m:barPr><m:pos m:val="top"/></m:barPr>{MATH_X}</m:bar>"#),
+            MathVerticalPosition::Top,
+        ),
+        (
+            format!("<m:bar>{MATH_X}</m:bar>"),
+            MathVerticalPosition::Bottom,
+        ),
+    ] {
+        let expression = through_mathml(&body);
+        assert!(
+            matches!(&expression, oxoffice_docx::MathExpression::Bar(bar) if bar.position.unwrap_or(MathVerticalPosition::Bottom) == position),
+            "{body}: {expression:?}"
+        );
+    }
+}
+
+#[test]
+fn a_border_box_read_from_mathml_keeps_its_sides_and_strikes() {
+    for body in [
+        format!("<m:borderBox>{MATH_X}</m:borderBox>"),
+        format!(
+            r#"<m:borderBox><m:borderBoxPr><m:hideTop m:val="1"/><m:hideLeft m:val="1"/><m:strikeBLTR m:val="1"/></m:borderBoxPr>{MATH_X}</m:borderBox>"#
+        ),
+        format!(
+            r#"<m:borderBox><m:borderBoxPr><m:hideTop m:val="1"/><m:hideBot m:val="1"/><m:hideLeft m:val="1"/><m:hideRight m:val="1"/></m:borderBoxPr>{MATH_X}</m:borderBox>"#
+        ),
+    ] {
+        let expression = through_mathml(&body);
+        assert!(
+            matches!(expression, oxoffice_docx::MathExpression::BorderBox(_)),
+            "{body}: {expression:?}"
+        );
+    }
+}
+
+#[test]
+fn a_group_character_read_from_mathml_keeps_its_character_and_side() {
+    for body in [
+        format!("<m:groupChr>{MATH_X}</m:groupChr>"),
+        format!(
+            r#"<m:groupChr><m:groupChrPr><m:chr m:val="→"/><m:pos m:val="top"/></m:groupChrPr>{MATH_X}</m:groupChr>"#
+        ),
+    ] {
+        let expression = through_mathml(&body);
+        assert!(
+            matches!(expression, oxoffice_docx::MathExpression::GroupCharacter(_)),
+            "{body}: {expression:?}"
+        );
+    }
+}
+
+// Another producer's vector accent, an arrow marked as an accent, stays an
+// accent; a rounded box or a circle reads as a box, and a strike alone keeps
+// the sides hidden.
+#[test]
+fn accents_and_enclosures_from_other_producers_keep_their_meaning() {
+    let read = |mathml: &str| {
+        let read = oxoffice_docx::equation_from_mathml(&format!(
+            r#"<math xmlns="http://www.w3.org/1998/Math/MathML">{mathml}</math>"#
+        ))
+        .unwrap();
+        let [expression] = read.value.expressions.as_slice() else {
+            panic!("{mathml} reads as {:?}", read.value.expressions);
+        };
+        expression.clone()
+    };
+    let vector = read(r#"<mover accent="true"><mi>v</mi><mo>→</mo></mover>"#);
+    assert!(
+        matches!(&vector, oxoffice_docx::MathExpression::Accent(accent) if accent.character == "\u{20d7}"),
+        "{vector:?}"
+    );
+    for notation in ["roundedbox", "circle"] {
+        let boxed = read(&format!(
+            r#"<menclose notation="{notation}"><mi>x</mi></menclose>"#
+        ));
+        assert!(
+            matches!(&boxed, oxoffice_docx::MathExpression::BorderBox(border)
+                if [border.hide_top, border.hide_bottom, border.hide_left, border.hide_right] == [None; 4]),
+            "{notation}: {boxed:?}"
+        );
+    }
+    let struck = read(r#"<menclose notation="horizontalstrike"><mi>x</mi></menclose>"#);
+    assert!(
+        matches!(&struck, oxoffice_docx::MathExpression::BorderBox(border)
+            if border.hide_top == Some(true) && border.strike_horizontal == Some(true)),
+        "{struck:?}"
+    );
+    let wrapped = read(
+        r#"<semantics><mphantom><mi>x</mi></mphantom><annotation encoding="StarMath 5.0">phantom x</annotation></semantics>"#,
+    );
+    assert!(
+        matches!(wrapped, oxoffice_docx::MathExpression::Phantom(_)),
+        "{wrapped:?}"
+    );
+}
+
+#[test]
+fn a_phantom_read_from_mathml_stays_hidden() {
+    let expression = through_mathml(&format!(
+        r#"<m:phant><m:phantPr><m:show m:val="0"/></m:phantPr>{MATH_X}</m:phant>"#
+    ));
+    assert!(
+        matches!(&expression, oxoffice_docx::MathExpression::Phantom(phantom) if phantom.show == Some(false)),
+        "{expression:?}"
+    );
+}
+
+#[test]
+fn aligned_equations_read_from_mathml_are_an_equation_array() {
+    let expression = through_mathml(
+        "<m:eqArr><m:e><m:r><m:t>x&amp;=1</m:t></m:r></m:e><m:e><m:r><m:t>y&amp;=2</m:t></m:r></m:e></m:eqArr>",
+    );
+    let oxoffice_docx::MathExpression::EquationArray(array) = expression else {
+        panic!("{expression:?}");
+    };
+    assert_eq!(array.rows.len(), 2, "{array:?}");
+    assert!(
+        array
+            .rows
+            .iter()
+            .all(|row| row.split_at_alignment().is_some()),
+        "{array:?}"
+    );
+}
+
+#[test]
+fn every_officemath_object_reaches_mathml_and_latex() {
+    let x = "<m:e><m:r><m:t>x</m:t></m:r></m:e>";
+    for (body, mathml, latex) in [
+        (
+            format!(r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>log</m:t></m:r></m:fName>{x}</m:func>"#),
+            "<mi mathvariant=\"normal\">log</mi></mrow><mo>\u{2061}</mo><mrow><mi>x</mi>",
+            "\\mathrm{log}\\,x",
+        ),
+        (
+            format!(r#"<m:bar><m:barPr><m:pos m:val="top"/></m:barPr>{x}</m:bar>"#),
+            "<mover accent=\"true\"><mrow><mi>x</mi></mrow><mo>\u{203e}</mo></mover>",
+            "\\overline{x}",
+        ),
+        (
+            format!("<m:bar>{x}</m:bar>"),
+            "<munder accentunder=\"true\"><mrow><mi>x</mi></mrow><mo>_</mo></munder>",
+            "\\underline{x}",
+        ),
+        (
+            format!(r#"<m:box><m:boxPr><m:opEmu m:val="1"/></m:boxPr>{x}</m:box>"#),
+            "<mrow><mi>x</mi></mrow>",
+            "{x}",
+        ),
+        (
+            format!("<m:borderBox>{x}</m:borderBox>"),
+            "<menclose notation=\"box\"><mrow><mi>x</mi></mrow></menclose>",
+            "\\boxed{x}",
+        ),
+        (
+            format!("<m:groupChr>{x}</m:groupChr>"),
+            "<munder><mrow><mi>x</mi></mrow><mo stretchy=\"true\">\u{23df}</mo></munder>",
+            "\\underbrace{x}",
+        ),
+        (
+            format!(r#"<m:phant><m:phantPr><m:show m:val="0"/></m:phantPr>{x}</m:phant>"#),
+            "<mphantom><mrow><mi>x</mi></mrow></mphantom>",
+            "\\phantom{x}",
+        ),
+        (
+            "<m:eqArr><m:e><m:r><m:t>x&amp;=1</m:t></m:r></m:e><m:e><m:r><m:t>y&amp;=2</m:t></m:r></m:e></m:eqArr>".to_owned(),
+            "<mtable columnalign=\"right left\"><mtr><mtd><mi>x</mi></mtd><mtd>",
+            "\\begin{aligned}x&=1\\\\y&=2\\end{aligned}",
+        ),
+        (
+            "<m:eqArr><m:e><m:r><m:t>x</m:t></m:r></m:e><m:e><m:r><m:t>y</m:t></m:r></m:e></m:eqArr>".to_owned(),
+            "<mtable><mtr><mtd><mi>x</mi></mtd></mtr><mtr><mtd><mi>y</mi></mtd></mtr></mtable>",
+            "\\begin{gathered}x\\\\y\\end{gathered}",
+        ),
+    ] {
+        let equation = oxoffice_docx::CT_OMath::from_xml(
+            format!(r#"<m:oMath xmlns:m="{MATH_NAMESPACE}">{body}</m:oMath>"#).as_bytes(),
+        )
+        .unwrap();
+        let argument = oxoffice_docx::MathArgument::new(equation.expressions.clone());
+        let converted = oxoffice_docx::equation_to_mathml(&argument);
+        assert!(converted.diagnostics.is_empty(), "{body}: {:?}", converted.diagnostics);
+        assert!(converted.value.contains(mathml), "{body}: {}", converted.value);
+        let converted = oxoffice_docx::equation_to_latex(&argument);
+        assert!(converted.diagnostics.is_empty(), "{body}: {:?}", converted.diagnostics);
+        assert_eq!(converted.value, latex, "{body}");
+    }
+}
+
+// A math run's own colour and size, which the layout draws, reach MathML as
+// its style; LaTeX says it leaves them out.
+#[test]
+fn a_math_run_colour_and_size_reach_mathml_and_are_reported_by_latex() {
+    let equation = oxoffice_docx::CT_OMath::from_xml(
+        format!(
+            r#"<m:oMath xmlns:m="{MATH_NAMESPACE}" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><m:r><w:rPr><w:color w:val="ff0000"/><w:sz w:val="32"/></w:rPr><m:t>x</m:t></m:r><m:r><w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr><m:t>y</m:t></m:r></m:oMath>"#
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    let argument = oxoffice_docx::MathArgument::new(equation.expressions.clone());
+    let mathml = oxoffice_docx::equation_to_mathml(&argument);
+    assert!(
+        mathml.value.contains(
+            r##"<mstyle mathcolor="#FF0000" mathsize="16pt"><mi>x</mi></mstyle><mi>y</mi>"##
+        ),
+        "{}",
+        mathml.value
+    );
+    let latex = oxoffice_docx::equation_to_latex(&argument);
+    assert!(
+        latex
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == "OfficeMath run colour and size were discarded"),
+        "{:?}",
+        latex.diagnostics
+    );
+}
+
 #[test]
 fn equation_content_outside_the_supported_subset_is_reported() {
-    // m:func (sin x) is kept as preserved XML, not as a typed expression.
+    // A tracked insertion around a math run is kept as preserved XML, not as
+    // a typed expression.
     let func = concat!(
-        r#"<m:func><m:funcPr/><m:fName><m:r><m:t>sin</m:t></m:r></m:fName>"#,
-        r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:func>"#
+        r#"<w:ins w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z">"#,
+        r#"<m:r><m:t>sin x</m:t></m:r></w:ins>"#
     );
     let doc = reopen(&mut doc_with_body(&format!(
         concat!(
