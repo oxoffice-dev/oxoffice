@@ -84,8 +84,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Filter on the run's own conclusion: the API's status=success filter
-          # still sees the first attempt of a run made green by a re-run.
+          # Filter on each run's own conclusion (its latest attempt): the API's
+          # status=success filter lagged behind a run that had just turned green
+          # (0.3.0, a re-run that had finished 45 s before), and refused it.
           green="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
             --jq '[.workflow_runs[] | select(.conclusion == "success")] | length > 0')"
           if [ "$green" != true ]; then
