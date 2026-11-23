@@ -28,7 +28,6 @@ oxoffice-layout = { workspace = true, default-features = false }
 oxoffice-media = { workspace = true }
 oxoffice-opc = { workspace = true }
 oxoffice-pdf = { workspace = true, default-features = false }
-oxoffice-sml = { workspace = true }
 quick-xml = { workspace = true }
 pulldown-cmark = { version = "=0.13.6", default-features = false, features = ["html"] }
 oxoffice-docx-oxml = { workspace = true }

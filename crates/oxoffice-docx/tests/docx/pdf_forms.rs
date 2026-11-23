@@ -1087,22 +1087,24 @@ fn text_controls(values: &[&str]) -> Document {
 
 #[test]
 fn a_field_holding_text_the_typing_font_cannot_encode_names_its_scripts() {
-    let doc = text_controls(&["Москва", "Łódź 東京", "Crème brûlée, 5 € – œuvre"]);
+    let doc = text_controls(&[
+        "東京",
+        "Łódź Москва Ωμέγα שלום",
+        "Crème brûlée, 5 € – œuvre",
+        "Łódź مرحبا 東京",
+    ]);
     let layout = doc.layout_with_options(fillable()).unwrap();
     let said = typing_diagnostics(&layout.layout);
     assert_eq!(said.len(), 2, "{said:?}");
+    assert!(said[0].contains("\"field0\" holds Han text"), "{said:?}");
+    assert!(said[0].contains("2 distinct characters"), "{said:?}");
+    // Latin, Cyrillic, Greek and Hebrew letters are in Liberation Sans.
     assert!(
-        said[0].contains("\"field0\" holds Cyrillic text"),
-        "{said:?}"
-    );
-    assert!(said[0].contains("6 distinct characters"), "{said:?}");
-    // Ł and ź are Latin letters WinAnsi lacks; ó is in WinAnsi.
-    assert!(
-        said[1].contains("\"field1\" holds Han, Latin text"),
+        said[1].contains("\"field3\" holds Arabic, Han text"),
         "{said:?}"
     );
     // The sample is in code point order, like the glyph coverage ones.
-    assert!(said[1].contains("such as \"Łź京東\""), "{said:?}");
+    assert!(said[1].contains("such as \"ابحرم京東\""), "{said:?}");
 
     let (_, diagnostics) = doc.to_pdf_with_diagnostics(&[], fillable()).unwrap();
     let from_pdf: Vec<_> = diagnostics
@@ -1118,29 +1120,32 @@ fn a_field_holding_text_the_typing_font_cannot_encode_names_its_scripts() {
 #[test]
 fn a_field_names_the_typing_font_gap_under_its_pdf_name() {
     let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="a.b"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Ωμέγα</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="a.b"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>नमस्ते</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
     let layout = doc.layout_with_options(fillable()).unwrap();
     let said = typing_diagnostics(&layout.layout);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("\"a_b\" holds Greek text"), "{said:?}");
+    assert!(
+        said[0].contains("\"a_b\" holds Devanagari text"),
+        "{said:?}"
+    );
 }
 
 #[test]
 fn list_options_the_typing_font_cannot_encode_are_named_even_when_not_chosen() {
     let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="country"/><w:dropDownList><w:listItem w:displayText="France" w:value="fr"/><w:listItem w:displayText="Ελλάδα" w:value="gr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>France</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="country"/><w:dropDownList><w:listItem w:displayText="France" w:value="fr"/><w:listItem w:displayText="日本" w:value="jp"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>France</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
     let layout = doc.layout_with_options(fillable()).unwrap();
     let said = typing_diagnostics(&layout.layout);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("\"country\" holds Greek text"), "{said:?}");
+    assert!(said[0].contains("\"country\" holds Han text"), "{said:?}");
 }
 
 #[test]
 fn locked_fields_and_placeholders_say_nothing_about_the_typing_font() {
     let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="locked"/><w:lock w:val="sdtContentLocked"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Москва</w:t></w:r></w:sdtContent></w:sdt></w:p>
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="locked"/><w:lock w:val="sdtContentLocked"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>東京</w:t></w:r></w:sdtContent></w:sdt></w:p>
 <w:p><w:sdt><w:sdtPr><w:tag w:val="prompt"/><w:showingPlcHdr/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>点击这里</w:t></w:r></w:sdtContent></w:sdt></w:p>
 <w:p><w:sdt><w:sdtPr><w:tag w:val="notes"/><w:text w:multiLine="1"/></w:sdtPr><w:sdtContent><w:r><w:t>one</w:t><w:br/><w:t>two</w:t><w:tab/><w:t>three</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
@@ -1156,13 +1161,13 @@ fn locked_fields_and_placeholders_say_nothing_about_the_typing_font() {
 #[test]
 fn a_list_value_counts_only_when_typed_not_when_it_is_an_option_export_value() {
     let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="exported"/><w:dropDownList><w:listItem w:displayText="Greece" w:value="Ελλάδα"/><w:listItem w:displayText="France" w:value="fr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Greece</w:t></w:r></w:sdtContent></w:sdt></w:p>
-<w:p><w:sdt><w:sdtPr><w:tag w:val="typed"/><w:comboBox><w:listItem w:displayText="Paris" w:value="paris"/></w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>Αθήνα</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="exported"/><w:dropDownList><w:listItem w:displayText="Greece" w:value="希腊"/><w:listItem w:displayText="France" w:value="fr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Greece</w:t></w:r></w:sdtContent></w:sdt></w:p>
+<w:p><w:sdt><w:sdtPr><w:tag w:val="typed"/><w:comboBox><w:listItem w:displayText="Paris" w:value="paris"/></w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>雅典</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
     );
     let layout = doc.layout_with_options(fillable()).unwrap();
     let said = typing_diagnostics(&layout.layout);
     assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("\"typed\" holds Greek text"), "{said:?}");
+    assert!(said[0].contains("\"typed\" holds Han text"), "{said:?}");
 }
 
 /// A text control tagged `tag` showing `value`.
@@ -1342,6 +1347,38 @@ fn a_block_control_around_a_note_leaves_the_note_number_on_the_page() {
     );
 }
 
+#[test]
+fn a_wrapped_block_control_around_a_note_says_its_number_sits_under_its_box() {
+    // The later lines start at the margin, so the widget reaches back over
+    // the number on the first line.
+    let long = "Foot value that runs on long enough to wrap onto a second line of the note area, and then on again for good measure, well past the right margin of the page";
+    let doc = doc_with_notes(|xml, marker, _| {
+        let end = xml.find(&format!("{marker}</w:t></w:r>")).unwrap();
+        let start = xml[..end]
+            .rfind("<w:p>")
+            .or_else(|| xml[..end].rfind("<w:p "))
+            .unwrap();
+        let close = end + xml[end..].find("</w:p>").unwrap() + "</w:p>".len();
+        let paragraph = xml[start..close].replace(marker, long);
+        format!(
+            r#"{}<w:sdt><w:sdtPr><w:tag w:val="note"/><w:richText/></w:sdtPr><w:sdtContent>{paragraph}</w:sdtContent></w:sdt>{}"#,
+            &xml[..start],
+            &xml[close..]
+        )
+    });
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(
+        layout
+            .layout
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message
+                == "form control \"note\": other text on its lines sits under its box"),
+        "{:?}",
+        layout.layout.diagnostics
+    );
+}
+
 /// A floating text box holding `content`, as Word writes it, with extra
 /// attributes on its `a:xfrm` (a turn) and its `wps:bodyPr` (vertical text).
 fn floating_text_box(id: u32, content: &str, xfrm: &str, body: &str) -> String {
@@ -1425,38 +1462,6 @@ fn controls_in_turned_vertical_or_nested_text_boxes_stay_static_and_say_so() {
             "form control \"vertical\" stays static: its text box's text is vertical",
             "form control \"nested\" stays static: its text box sits in another text box",
         ]
-    );
-}
-
-#[test]
-fn a_wrapped_block_control_around_a_note_says_its_number_sits_under_its_box() {
-    // The later lines start at the margin, so the widget reaches back over
-    // the number on the first line.
-    let long = "Foot value that runs on long enough to wrap onto a second line of the note area, and then on again for good measure, well past the right margin of the page";
-    let doc = doc_with_notes(|xml, marker, _| {
-        let end = xml.find(&format!("{marker}</w:t></w:r>")).unwrap();
-        let start = xml[..end]
-            .rfind("<w:p>")
-            .or_else(|| xml[..end].rfind("<w:p "))
-            .unwrap();
-        let close = end + xml[end..].find("</w:p>").unwrap() + "</w:p>".len();
-        let paragraph = xml[start..close].replace(marker, long);
-        format!(
-            r#"{}<w:sdt><w:sdtPr><w:tag w:val="note"/><w:richText/></w:sdtPr><w:sdtContent>{paragraph}</w:sdtContent></w:sdt>{}"#,
-            &xml[..start],
-            &xml[close..]
-        )
-    });
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    assert!(
-        layout
-            .layout
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message
-                == "form control \"note\": other text on its lines sits under its box"),
-        "{:?}",
-        layout.layout.diagnostics
     );
 }
 

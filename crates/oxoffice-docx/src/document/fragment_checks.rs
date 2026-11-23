@@ -1,6 +1,7 @@
 //! Content fragments inserted into a story: checking their block content, controls, identities and relationships, then serializing and inserting them.
 
 use super::*;
+use oxoffice_core::xml::is_xml_1_0_character;
 
 pub(crate) fn validate_fragment_block_content(content: &[u8]) -> Result<()> {
     let mut xml = format!(
@@ -477,7 +478,7 @@ fn block_control_reference_is_whitespace(
             "block content control has an invalid character reference: {error}"
         ))
     })? {
-        if !xml_1_0_character_is_valid(character) {
+        if !is_xml_1_0_character(character) {
             return Err(Error::Other(
                 "block content control has an XML 1.0-forbidden character reference".to_owned(),
             ));
@@ -494,7 +495,7 @@ fn block_control_reference_is_whitespace(
             "block content control has an unresolved entity reference: &{name};"
         ))
     })?;
-    if !value.chars().all(xml_1_0_character_is_valid) {
+    if !value.chars().all(is_xml_1_0_character) {
         return Err(Error::Other(format!(
             "block content control entity reference contains an XML 1.0-forbidden character: &{name};"
         )));
@@ -513,13 +514,6 @@ fn block_control_bytes_are_xml_whitespace(bytes: &[u8]) -> Result<bool> {
 
 pub(super) fn xml_1_0_whitespace(character: char) -> bool {
     matches!(character, '\u{20}' | '\u{9}' | '\u{A}' | '\u{D}')
-}
-
-fn xml_1_0_character_is_valid(character: char) -> bool {
-    matches!(character, '\t' | '\n' | '\r')
-        || ('\u{20}'..='\u{D7FF}').contains(&character)
-        || ('\u{E000}'..='\u{FFFD}').contains(&character)
-        || ('\u{10000}'..='\u{10FFFF}').contains(&character)
 }
 
 fn validate_block_control_element(

@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
+use oxoffice_core::xml::is_xml_1_0_character;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
 use oxoffice_docx_oxml::drawing::{CT_Drawing, CT_Inline};
@@ -2190,7 +2191,7 @@ fn valid_ip_literal(literal: &str) -> bool {
 }
 
 fn ensure_xml_value(location: &str, value: &str) -> Result<()> {
-    if value.chars().all(is_xml_10_character) {
+    if value.chars().all(is_xml_1_0_character) {
         return Ok(());
     }
     Err(epub_error(format!(
@@ -2200,13 +2201,6 @@ fn ensure_xml_value(location: &str, value: &str) -> Result<()> {
 
 fn ensure_xml_10(location: &str, xml: &str) -> Result<()> {
     ensure_xml_value(location, xml)
-}
-
-fn is_xml_10_character(character: char) -> bool {
-    matches!(character, '\u{0009}' | '\u{000A}' | '\u{000D}')
-        || ('\u{0020}'..='\u{D7FF}').contains(&character)
-        || ('\u{E000}'..='\u{FFFD}').contains(&character)
-        || ('\u{10000}'..='\u{10FFFF}').contains(&character)
 }
 
 #[derive(Clone, Copy)]

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use oxoffice_core::Length;
 use oxoffice_core::custom_properties::CustomPropertyValue;
-use oxoffice_core::xml::{XmlLexicalError, validate_strict_xml_1_0};
+use oxoffice_core::xml::{XmlLexicalError, is_xml_1_0_character, validate_strict_xml_1_0};
 use oxoffice_docx_oxml::comments::CT_Comments;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body, CT_Document, CT_SectPr};
@@ -729,13 +729,6 @@ struct CachedFieldUpdate {
     dirty: bool,
     typed_runs: Option<Vec<CT_R>>,
     comment_ranges: Vec<CommentRangeMarker>,
-}
-
-fn valid_xml_character(value: char) -> bool {
-    matches!(value, '\u{0009}' | '\u{000A}' | '\u{000D}')
-        || ('\u{0020}'..='\u{D7FF}').contains(&value)
-        || ('\u{E000}'..='\u{FFFD}').contains(&value)
-        || ('\u{10000}'..='\u{10FFFF}').contains(&value)
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use oxoffice_docx_oxml::document::CT_Body;
 use oxoffice_docx_oxml::glossary::{CT_DocPart, CT_GlossaryDocument};
+use oxoffice_docx_oxml::glossary::{valid_doc_part_gallery, valid_guid};
 use oxoffice_opc::OpcPackage;
 use oxoffice_opc::relationship::rel_types;
 
@@ -228,7 +229,7 @@ fn apply_block(part: &mut CT_DocPart, block: BuildingBlock) -> Result<()> {
     if block
         .gallery
         .as_deref()
-        .is_some_and(|gallery| !valid_building_block_gallery(gallery))
+        .is_some_and(|gallery| !valid_doc_part_gallery(gallery))
     {
         return Err(Error::Other(
             "a building block gallery must be a schema enumeration".to_owned(),
@@ -266,63 +267,6 @@ fn apply_block(part: &mut CT_DocPart, block: BuildingBlock) -> Result<()> {
     }
     part.body = block.body;
     Ok(())
-}
-
-fn valid_building_block_gallery(value: &str) -> bool {
-    matches!(
-        value,
-        "placeholder"
-            | "any"
-            | "default"
-            | "docParts"
-            | "coverPg"
-            | "eq"
-            | "ftrs"
-            | "hdrs"
-            | "pgNum"
-            | "tbls"
-            | "watermarks"
-            | "autoTxt"
-            | "txtBox"
-            | "pgNumT"
-            | "pgNumB"
-            | "pgNumMargins"
-            | "tblOfContents"
-            | "bib"
-            | "custQuickParts"
-            | "custCoverPg"
-            | "custEq"
-            | "custFtrs"
-            | "custHdrs"
-            | "custPgNum"
-            | "custTbls"
-            | "custWatermarks"
-            | "custAutoTxt"
-            | "custTxtBox"
-            | "custPgNumT"
-            | "custPgNumB"
-            | "custPgNumMargins"
-            | "custTblOfContents"
-            | "custBib"
-            | "custom1"
-            | "custom2"
-            | "custom3"
-            | "custom4"
-            | "custom5"
-    )
-}
-
-fn valid_guid(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 38
-        && bytes.first() == Some(&b'{')
-        && bytes.last() == Some(&b'}')
-        && [9, 14, 19, 24]
-            .into_iter()
-            .all(|index| bytes.get(index) == Some(&b'-'))
-        && bytes.iter().enumerate().all(|(index, byte)| {
-            matches!(index, 0 | 9 | 14 | 19 | 24 | 37) || matches!(byte, b'0'..=b'9' | b'A'..=b'F')
-        })
 }
 
 impl Document {

@@ -3998,9 +3998,10 @@ pub(super) fn apa_bibliography_language(
             ..APA_BIBLIOGRAPHY_FRENCH
         },
         _ => {
-            return Err(bibliography_error(
-                "localized APA bibliography grammar is still being implemented",
-            ));
+            return Err(not_covered(format!(
+                "an APA bibliography in locale {}",
+                locale_label(&locale)
+            )));
         }
     })
 }
