@@ -438,6 +438,7 @@ fn a_word_wider_than_the_line_is_broken_where_it_overflows() {
     let long = format!("{}internationalization", "q".repeat(150));
     // A decomposed "é": its accent never starts a line.
     let accented = "e\u{301}".repeat(120);
+    let very_long = word.repeat(12);
     let run = |text: &str| {
         format!(r#"<w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:t>{text}</w:t></w:r>"#)
     };
@@ -450,6 +451,8 @@ fn a_word_wider_than_the_line_is_broken_where_it_overflows() {
         ),
         (vec![run(&long)], &long, true),
         (vec![run(&accented)], &accented, false),
+        // Many lines' worth: the rest is cut into line-wide pieces at once.
+        (vec![run(&very_long)], &very_long, false),
     ] {
         let mut doc = doc_with_body(&format!("<w:p>{}</w:p>", runs.concat()));
         if hyphenate {
@@ -474,6 +477,51 @@ fn a_word_wider_than_the_line_is_broken_where_it_overflows() {
         );
         // A hyphen the hyphenation adds is not part of the word.
         assert_eq!(&lines.concat().replace('-', ""), text);
+        // Where Word breaks the full-width word (checked in Word 16).
+        if text == &word {
+            assert!(lines[0].ends_with("coniosisPneum"), "{lines:?}");
+            assert!(lines[1].starts_with("onoultramicroscopic"), "{lines:?}");
+        }
+    }
+}
+
+#[test]
+fn a_word_wider_than_its_cell_or_line_is_broken_between_graphemes() {
+    // In a one-inch cell Word breaks the word inside the cell, one run or two.
+    let cell = |content: &str| {
+        format!(
+            concat!(
+                r#"<w:tbl><w:tblPr><w:tblW w:w="1440" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr>"#,
+                r#"<w:tblGrid><w:gridCol w:w="1440"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"/>"#,
+                r#"</w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl>"#
+            ),
+            content
+        )
+    };
+    let run = |text: &str| format!(r#"<w:r><w:t>{text}</w:t></w:r>"#);
+    for content in [
+        run("Pneumonoultramicroscopic"),
+        [run("Pneumonoultra"), run("microscopic")].concat(),
+    ] {
+        let doc = doc_with_body(&cell(&content));
+        assert_eq!(first_page_lines(&doc), ["Pneumonoultra", "microscopic"]);
+    }
+    // A flag is two regional indicators: a line narrower than one flag holds
+    // a whole flag, never one indicator,
+    // whatever the width left.
+    let flags = "\u{1F1EB}\u{1F1F7}".repeat(8);
+    for right in (9100..9340).step_by(40) {
+        let doc = doc_with_body(&format!(
+            r#"<w:p><w:pPr><w:ind w:right="{right}"/></w:pPr>{}</w:p>"#,
+            run(&flags)
+        ));
+        let lines = first_page_lines(&doc);
+        assert!(lines.len() > 1, "{lines:?}");
+        assert!(
+            lines.iter().all(|line| line.chars().count() % 2 == 0),
+            "{lines:?}"
+        );
+        assert_eq!(lines.concat(), flags);
     }
 }
 
