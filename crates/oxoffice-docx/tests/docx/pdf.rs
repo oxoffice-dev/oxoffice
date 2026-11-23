@@ -684,6 +684,66 @@ fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
 
 // ---- Pictures ----
 
+/// A paragraph that starts with a text box it must clear, Word's "top and
+/// bottom" wrapping, anchored at the paragraph's top.
+fn paragraph_below_its_text_box(text: &str) -> String {
+    format!(
+        concat!(
+            r#"<w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" "#,
+            r#"relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">"#,
+            r#"<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+            r#"<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>"#,
+            r#"<wp:extent cx="1828800" cy="1371600"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/>"#,
+            r#"<wp:docPr id="7" name="Text Box"/><wp:cNvGraphicFramePr/>"#,
+            r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+            r#"<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="1371600"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>"#,
+            r#"<w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>"#,
+            r#"</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>{}</w:t></w:r></w:p>"#,
+        ),
+        text
+    )
+}
+
+// The text box stays with the first part of a paragraph split across pages;
+// the rest starts at the top of the next page, where the cursor is, so the
+// paragraph after it is drawn below it, not over it. The newsletter's
+// three-column pages showed it.
+#[test]
+fn the_rest_of_a_paragraph_below_a_text_box_starts_the_next_page() {
+    let fillers = (1..=20)
+        .map(|number| format!("<w:p><w:r><w:t>Filler {number}</w:t></w:r></w:p>"))
+        .collect::<String>();
+    let words = (1..=160)
+        .map(|number| format!("word{number}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let body = format!(
+        "{fillers}{}<w:p><w:r><w:t>After</w:t></w:r></w:p>",
+        paragraph_below_its_text_box(&words)
+    );
+    let pdf = pdf_of(&doc_with_body(&body));
+    assert_eq!(
+        page_with(&pdf, "word1 "),
+        0,
+        "the paragraph starts on page 1"
+    );
+    assert_eq!(page_with(&pdf, "word160"), 1, "and ends on page 2");
+    let rest = lines(&pdf.drawn(1));
+    let after = line_of(&pdf, 1, "After");
+    for line in rest.iter().filter(|line| line.text.contains("word")) {
+        assert!(
+            line.y > after.y + 1.0,
+            "{:?} at {:.1} is not above the next paragraph at {:.1}",
+            line.text,
+            line.y,
+            after.y
+        );
+    }
+}
+
 #[test]
 fn pictures_are_drawn_once_at_their_size_with_their_pixels() {
     let pixels = [
