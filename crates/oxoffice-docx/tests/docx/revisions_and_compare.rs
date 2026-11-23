@@ -2124,6 +2124,29 @@ fn a_paragraph_appended_after_a_final_block_content_control_is_compared() {
                 RevisionKind::Deletion
             };
             assert_eq!(revision_texts(doc, kind), ["Body."]);
+            // As Word marks it: the change is on the mark of the control's
+            // last paragraph, and the body's final mark is untracked.
+            let xml = main_xml(doc);
+            let tag = if forward { "w:ins" } else { "w:del" };
+            let control =
+                &xml[xml.find("<w:sdtContent").unwrap()..xml.find("</w:sdtContent>").unwrap()];
+            assert!(control.contains(&format!("<w:rPr><{tag} ")), "{xml}");
+            let last = &xml[xml.rfind("<w:p>").unwrap()..];
+            assert!(!last.contains("<w:pPr>"), "{xml}");
+        },
+    );
+    // A centred paragraph appended after a control whose paragraph is not:
+    // each resolution keeps each paragraph's alignment.
+    let centred = "<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:t>Body.</w:t></w:r></w:p>";
+    check_bodies_both_ways(
+        &format!("{INTRO}{control}"),
+        &format!("{INTRO}{control}{centred}"),
+        |doc, forward| {
+            let centred_after =
+                |doc: &mut Document| main_xml(doc).matches("w:val=\"center\"").count();
+            let (accept, reject) = if forward { (1, 0) } else { (0, 1) };
+            assert_eq!(centred_after(&mut accepted(doc)), accept);
+            assert_eq!(centred_after(&mut rejected(doc)), reject);
         },
     );
     // The control's own text changes too.

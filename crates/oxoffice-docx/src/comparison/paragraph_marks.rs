@@ -26,6 +26,15 @@ pub(super) enum EmittedOwner<'a> {
     /// table remove it too, resolving them with the change, the paragraph
     /// goes with the table, and the body ends with what came before it.
     KeptTable,
+    /// A block content control both versions hold, ending with a paragraph
+    /// whose properties after acceptance and after rejection these are. A
+    /// final paragraph change after it marks that last paragraph's mark, as
+    /// Word does: removing it merges the paragraph after the control into
+    /// the control.
+    KeptControl {
+        accepted: PropertySide<'a>,
+        rejected: PropertySide<'a>,
+    },
     Other,
 }
 
@@ -90,6 +99,23 @@ impl<'a> EmittedOwner<'a> {
     ) -> Result<Self> {
         let (accepted, rejected) = PropertySide::matched(original, edited, metadata)?;
         Ok(Self::Paragraph { accepted, rejected })
+    }
+
+    /// The owner of a block content control both versions hold: kept like a
+    /// table, and whose last paragraph takes a final paragraph change after
+    /// it when both versions end the control with one.
+    pub(super) fn kept_control(
+        original: &'a CT_Sdt,
+        edited: &'a CT_Sdt,
+        metadata: &Metadata<'_>,
+    ) -> Result<Self> {
+        match (original.content.last(), edited.content.last()) {
+            (Some(SdtContent::Paragraph(original)), Some(SdtContent::Paragraph(edited))) => {
+                let (accepted, rejected) = PropertySide::matched(original, edited, metadata)?;
+                Ok(Self::KeptControl { accepted, rejected })
+            }
+            _ => Ok(Self::KeptTable),
+        }
     }
 }
 
@@ -162,7 +188,10 @@ pub(super) fn previous_mark_position(
     output.iter().rposition(|(owner, _)| match owner {
         EmittedOwner::MarkedTable(marked) => accept_removes(marked) != accept_removes(kind),
         EmittedOwner::Whitespace => false,
-        EmittedOwner::Paragraph { .. } | EmittedOwner::KeptTable | EmittedOwner::Other => true,
+        EmittedOwner::Paragraph { .. }
+        | EmittedOwner::KeptTable
+        | EmittedOwner::KeptControl { .. }
+        | EmittedOwner::Other => true,
     })
 }
 
@@ -193,8 +222,8 @@ pub(super) fn mark_previous_paragraph<'a>(
     bindings: &[(String, String)],
     metadata: &mut Metadata<'_>,
 ) -> Result<PropertySide<'a>> {
-    let Some((EmittedOwner::Paragraph { accepted, rejected }, paragraph)) =
-        previous_mark_position(output, kind).map(|position| &mut output[position])
+    let Some((accepted, rejected, control, paragraph)) =
+        previous_mark_position(output, kind).and_then(|position| mark_owner(&mut output[position]))
     else {
         return Err(Error::Other(
             "comparison needs an adjacent paragraph for a final paragraph change".to_owned(),
@@ -204,12 +233,69 @@ pub(super) fn mark_previous_paragraph<'a>(
         .ids
         .marker(kind, metadata.author, metadata.timestamp)?;
     let scoped = source_fragment(paragraph, bindings)?;
-    *paragraph = marked_paragraph_xml(&scoped, &marker, &metadata.ids)?;
+    *paragraph = marked_owner_xml(&scoped, control, &marker, &metadata.ids)?;
     Ok(if kind == "del" {
         accepted.clone()
     } else {
         rejected.clone()
     })
+}
+
+/// The properties of an emitted owner whose paragraph mark can carry a
+/// final paragraph change, after acceptance and after rejection, whether it
+/// is a block control (the mark is its last paragraph's), and its XML.
+#[allow(clippy::type_complexity)]
+fn mark_owner<'a, 'o>(
+    (owner, xml): &'o mut (EmittedOwner<'a>, String),
+) -> Option<(
+    &'o PropertySide<'a>,
+    &'o PropertySide<'a>,
+    bool,
+    &'o mut String,
+)> {
+    match owner {
+        EmittedOwner::Paragraph { accepted, rejected } => Some((accepted, rejected, false, xml)),
+        EmittedOwner::KeptControl { accepted, rejected } => Some((accepted, rejected, true, xml)),
+        _ => None,
+    }
+}
+
+/// `owner` with `marker` on its paragraph mark: its own, or for a block
+/// `control` the mark of its last paragraph.
+fn marked_owner_xml(owner: &str, control: bool, marker: &str, ids: &IdAllocator) -> Result<String> {
+    if !control {
+        return marked_paragraph_xml(owner, marker, ids);
+    }
+    let refusal = || {
+        Error::Other("comparison could not find the last paragraph of a content control".to_owned())
+    };
+    let content_span = direct_word_element_spans(owner, "sdtContent")?
+        .into_iter()
+        .next()
+        .ok_or_else(refusal)?;
+    // Marked in place: the content keeps the namespaces the control's root
+    // declares.
+    let content = &owner[content_span.clone()];
+    let other_end = ["tbl", "sdt"]
+        .into_iter()
+        .map(|local| direct_word_element_spans(content, local))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .map(|span| span.end)
+        .max()
+        .unwrap_or(0);
+    let last = direct_word_element_spans(content, "p")?
+        .pop()
+        .filter(|span| span.start >= other_end)
+        .ok_or_else(refusal)?;
+    let marked = marked_paragraph_xml(&content[last.clone()], marker, ids)?;
+    let mut updated = owner.to_owned();
+    updated.replace_range(
+        content_span.start + last.start..content_span.start + last.end,
+        &marked,
+    );
+    Ok(updated)
 }
 
 pub(super) fn marked_paragraph_xml(
@@ -368,8 +454,8 @@ fn mark_previous_paragraph_with_id<'a>(
     bindings: &[(String, String)],
     metadata: &Metadata<'_>,
 ) -> Result<PropertySide<'a>> {
-    let Some((EmittedOwner::Paragraph { accepted, rejected }, paragraph)) =
-        previous_mark_position(output, kind).map(|position| &mut output[position])
+    let Some((accepted, rejected, control, paragraph)) =
+        previous_mark_position(output, kind).and_then(|position| mark_owner(&mut output[position]))
     else {
         return Err(Error::Other(
             "comparison needs an adjacent paragraph for a final paragraph move".to_owned(),
@@ -382,7 +468,7 @@ fn mark_previous_paragraph_with_id<'a>(
         id,
     ))?;
     let scoped = source_fragment(paragraph, bindings)?;
-    *paragraph = marked_paragraph_xml(&scoped, &marker, &metadata.ids)?;
+    *paragraph = marked_owner_xml(&scoped, control, &marker, &metadata.ids)?;
     Ok(if kind == "moveFrom" {
         accepted.clone()
     } else {

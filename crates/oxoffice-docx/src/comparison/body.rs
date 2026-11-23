@@ -282,9 +282,9 @@ fn compare_body_impl(
                     )?
                 };
                 let owner = match (original_content, edited_content) {
-                    (BodyContent::Table(_), BodyContent::Table(_))
-                    | (BodyContent::ContentControl(_), BodyContent::ContentControl(_)) => {
-                        EmittedOwner::KeptTable
+                    (BodyContent::Table(_), BodyContent::Table(_)) => EmittedOwner::KeptTable,
+                    (BodyContent::ContentControl(left), BodyContent::ContentControl(right)) => {
+                        EmittedOwner::kept_control(left, right, metadata)?
                     }
                     _ => EmittedOwner::of(original_content, edited_content, None, metadata)?,
                 };
