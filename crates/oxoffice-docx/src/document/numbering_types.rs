@@ -1410,11 +1410,12 @@ impl Document {
 }
 
 /// The numbering instance and level a paragraph with direct properties
-/// `direct` is numbered at, resolved against `numbering` and `styles`:
-/// direct numbering, then the paragraph style's, the level of a style a
-/// definition links last. `None` when it is not numbered.
+/// `direct` is numbered at, resolved against `styles`: direct numbering,
+/// then the paragraph style chain's, each of `w:numId` and `w:ilvl` on its
+/// own, and level 0 when neither gives a `w:ilvl`. A level that names the
+/// style back does not set it: Word, LibreOffice and layout draw such a
+/// style at its own or inherited `w:ilvl`. `None` when it is not numbered.
 pub(super) fn effective_numbering_reference(
-    numbering: Option<&CT_Numbering>,
     styles: &CT_Styles,
     direct: &CT_PPr,
 ) -> Option<(u32, u32)> {
@@ -1425,33 +1426,6 @@ pub(super) fn effective_numbering_reference(
     });
     let inherited = style::resolve_paragraph_properties(style_id, styles);
     let num_id = direct.num_id.or(inherited.num_id).filter(|id| *id != 0)?;
-    let level = direct
-        .num_ilvl
-        .or(inherited.num_ilvl)
-        .or_else(|| numbering_level_for_style(numbering, styles, num_id, style_id))
-        .unwrap_or(0);
+    let level = direct.num_ilvl.or(inherited.num_ilvl).unwrap_or(0);
     Some((num_id, level))
-}
-
-/// The level of definition `num_id` that names `style_id` or a style it is
-/// based on as its paragraph style.
-pub(super) fn numbering_level_for_style(
-    numbering: Option<&CT_Numbering>,
-    styles: &CT_Styles,
-    num_id: u32,
-    style_id: Option<&str>,
-) -> Option<u32> {
-    let definition = numbering?.get_abstract_num_for(num_id)?;
-    let mut style_id = style_id?;
-    for _ in 0..styles.styles.len() {
-        if let Some(level) = definition
-            .levels
-            .iter()
-            .find(|level| level.p_style.as_deref() == Some(style_id))
-        {
-            return Some(level.ilvl);
-        }
-        style_id = styles.get_by_id(style_id)?.based_on.as_deref()?;
-    }
-    None
 }

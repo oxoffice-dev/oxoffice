@@ -4,4 +4,5 @@
 mod forms;
 mod links;
 mod metadata;
+mod paints;
 mod support;

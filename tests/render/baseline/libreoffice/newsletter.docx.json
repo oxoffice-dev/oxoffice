@@ -1,12 +1,12 @@
 {
   "file": "libreoffice/newsletter.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "the rest of a paragraph split below a text box starts at the top of its column (newsletter page 2)",
   "resources": "49a71d2fbab1dfc44c8a8de475d66fe3ecf7198d4d3c9842dd3977307e99aaa8",
   "outline_and_tags": "2c0c8b41b01261e1381c7a2cc60537b4332a8c6cedfe05b656323f34ddd91906",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "21f5ad5abb275608fcd30a61132929b91e846f5ea9757bf48e18a876619889bc", "content": "30b2e97d9972adbc9acd04b802896edc564d78bf5afcd9b974f0b7c1bc46146c", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
-    {"page": 2, "pixels": "b28681fa8708bb225d2705b3846bd33a4d8b04703ad92ce20b6647071cf3b1fb", "content": "53320e1f4be49ba901bff61db30a5a70fab7c8344d671dae457a65c263994857", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
+    {"page": 2, "pixels": "0996de8d8310e2b6740f6a7ab8fd5aa2ade85240e2c1343adda02584fa518320", "content": "2f7ecfc7ad1e40791d0ff59fc46b6ddadc19a8ccfbb5d0cc42f994bc8f725d89", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "8f650a30b6ad3ec72efd22606cf894543537aa58384089512d5faf7766065eb4"},
     {"page": 3, "pixels": "dc0cee9cc82dc71458ee9b7fe015b045bd77deb9fb3dba5d9f3b3c58a2a5b897", "content": "187825782a0ed1f7f1f3643a528bb4b945cb0df4c85160c5db9bca2b1f810e05", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "bf6a64518cfa5fc29a3450ea2789ead19fda9abcbf19d9f4c3b0b80b65f448a2"}
   ]
 }
