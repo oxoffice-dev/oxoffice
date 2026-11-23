@@ -955,17 +955,18 @@ fn shape_multilingual_items_preserving_controls(
     Ok(items)
 }
 
+/// Whether a run is shaped by grapheme, each taking a face that draws it.
+///
+/// Every East Asian character is, Hangul and the fullwidth forms included,
+/// so that a face found for the characters the bundled fonts lack draws only
+/// those, and the text beside them keeps its bundled face.
 fn needs_multilingual_layout(text: &str) -> bool {
     text.chars().any(|character| {
-        matches!(
-            character as u32,
-            0x0590..=0x08ff
-                | 0x0900..=0x097f
-                | 0x0e00..=0x0e7f
-                | 0x3000..=0x30ff
-                | 0x3400..=0x9fff
-                | 0xf900..=0xfaff
-        )
+        is_east_asian_character(character)
+            || matches!(
+                character as u32,
+                0x0590..=0x08ff | 0x0900..=0x097f | 0x0e00..=0x0e7f
+            )
     })
 }
 
@@ -1735,4 +1736,23 @@ pub(super) fn oriented_content_box(
             degrees, center_x, center_y,
         )),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_multilingual_layout;
+
+    #[test]
+    fn every_east_asian_run_is_shaped_by_grapheme() {
+        for text in [
+            "2024\u{b144} \u{b9e4}\u{cd9c}",
+            "\u{ff21}\u{ff22}",
+            "\u{8ba1}",
+            "\u{3042}",
+            "\u{20000}",
+        ] {
+            assert!(needs_multilingual_layout(text), "{text}");
+        }
+        assert!(!needs_multilingual_layout("Revenue 2024"));
+    }
 }

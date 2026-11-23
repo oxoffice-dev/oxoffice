@@ -1,0 +1,9 @@
+{
+  "id": "pptx-pdf-cjk",
+  "format": "pptx",
+  "area": "pdf",
+  "title": "PDF and slide images: Chinese, Japanese and Korean text is drawn as boxes without a system font for it",
+  "symptom": "by default a system font draws the Chinese, Japanese and Korean characters the deck's embedded fonts and the bundled fonts lack (the bundled CJK faces hold a few characters only); on a machine with no such font, and always with bundled fonts only or from the deterministic helpers, the glyphs are empty boxes, and a diagnostic names the script, the number of characters and the way out",
+  "workaround": "install a CJK font, or pass a CJK font file (CLI convert, render and thumbnail --font-dir; Python fonts=... or font_dir=...; Rust the *_with_diagnostics entries with font files)",
+  "issue": 157
+}

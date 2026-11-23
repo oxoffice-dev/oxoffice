@@ -146,25 +146,25 @@ issue = 224
 file = "authored/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "google/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "libreoffice/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "powerpoint/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "authored/thesis.docx"
@@ -217,25 +217,25 @@ file = "authored/multilingual.pptx"
 check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "google/multilingual.pptx"
 check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "libreoffice/multilingual.pptx"
 check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "powerpoint/multilingual.pptx"
 check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
