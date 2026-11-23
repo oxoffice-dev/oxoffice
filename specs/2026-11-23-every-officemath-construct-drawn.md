@@ -82,8 +82,9 @@ content no reader understands.**
   `menclose` / `\boxed`, `\underbrace` / `\overbrace`, `mphantom` / `\phantom`, `mtable` / `aligned`). What
   they cannot carry (a border box's hidden sides, a phantom's zeroed dimensions, a group character LaTeX has no
   command for) is reported. A math run's own colour and size (`w:color`, `w:sz`), which the layout draws since
-  step 1, reach MathML as an `mstyle` (`mathcolor`, `mathsize`), so the HTML, Markdown, EPUB and ODT exports keep
-  them; LaTeX reports them as left out, and two runs that differ in them are no longer joined. Their readers keep
+  step 1, reach MathML as an `mstyle` (`mathcolor`, `mathsize`), so the HTML and EPUB exports keep them; LaTeX,
+  and so the Markdown export, reports them as left out (the ODT export writes no equation today), and two runs
+  that differ in them are no longer joined. Their readers keep
   producing what they produce today, and the existing constructs convert as before.
 
 **What we do not do**:
