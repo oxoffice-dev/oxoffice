@@ -391,6 +391,41 @@ fn push_displayed_text(
     Ok(())
 }
 
+/// The characters of `text` that draw a glyph of their own: a tab, a space
+/// or a variation selector is no reason to look for another face.
+fn drawn_characters(text: &str) -> String {
+    text.chars()
+        .filter(|character| oxoffice_layout::draws_a_glyph(*character))
+        .collect()
+}
+
+/// Whether `font_id` draws any of the characters of `text` that draw a
+/// glyph; `true` for text with none.
+fn draws_any(
+    font_manager: &FontManager,
+    font_id: oxoffice_layout::FontId,
+    text: &str,
+) -> Result<bool, LayoutError> {
+    let drawn = drawn_characters(text);
+    Ok(drawn.is_empty()
+        || font_manager
+            .shape_text(font_id, &drawn, DEFAULT_FONT_SIZE)?
+            .glyph_ids
+            .iter()
+            .any(|glyph| *glyph != 0))
+}
+
+/// Whether a shaped run's face lacks a character of it that draws a glyph.
+fn lacks_a_glyph(font_manager: &FontManager, segment: &TextSegment) -> bool {
+    segment.glyph_ids.contains(&0) && {
+        let drawn = drawn_characters(&segment.text);
+        !drawn.is_empty()
+            && font_manager
+                .shape_text(segment.font_id, &drawn, segment.font_size)
+                .is_ok_and(|shaped| shaped.glyph_ids.contains(&0))
+    }
+}
+
 fn shape_run(
     font_manager: &mut FontManager,
     text: &str,
@@ -412,7 +447,7 @@ fn shape_run(
     let primary = font_manager.resolve_font(typeface, style.bold, style.italic)?;
     let mut font_id = primary;
     let mut shaped = font_manager.shape_text(primary, &rendered_text, font_size)?;
-    if !shaped.glyph_ids.is_empty() && shaped.glyph_ids.iter().all(|glyph| *glyph == 0) {
+    if shaped.glyph_ids.contains(&0) && !draws_any(font_manager, primary, &rendered_text)? {
         font_id = font_manager.resolve_font_for_text(
             typeface,
             style.bold,
@@ -804,7 +839,7 @@ fn shape_paragraphs(
                     // grapheme it lacks finds a face of its own and the rest
                     // keeps the run's face.
                     matches!(item, InlineItem::Text(segment)
-                        if needs_multilingual_layout(&segment.text) || segment.glyph_ids.contains(&0))
+                        if needs_multilingual_layout(&segment.text) || lacks_a_glyph(font_manager, segment))
                 });
             let mut items = if uses_rich_text {
                 shape_multilingual_items_preserving_controls(
@@ -1761,7 +1796,25 @@ pub(super) fn oriented_content_box(
 
 #[cfg(test)]
 mod tests {
-    use super::needs_multilingual_layout;
+    use super::{ResolvedRunStyle, lacks_a_glyph, needs_multilingual_layout, shape_run};
+    use oxoffice_layout::FontManager;
+
+    fn family(fonts: &FontManager, id: oxoffice_layout::FontId) -> String {
+        fonts.font_data(id).unwrap().family
+    }
+
+    // Only characters that draw a glyph count: a tab or a variation selector
+    // neither sends a run to the grapheme split nor keeps a face that draws
+    // none of the rest.
+    #[test]
+    fn characters_that_draw_nothing_never_choose_a_face() {
+        let mut fonts = FontManager::new_deterministic().unwrap();
+        let style = ResolvedRunStyle::default();
+        let tabbed = shape_run(&mut fonts, "Q1\tQ2", &style).unwrap();
+        assert!(!lacks_a_glyph(&fonts, &tabbed));
+        let check = shape_run(&mut fonts, "\u{2611}\u{fe0f}", &style).unwrap();
+        assert_eq!(family(&fonts, check.font_id), "Noto Sans Symbols 2");
+    }
 
     #[test]
     fn every_east_asian_run_is_shaped_by_grapheme() {
