@@ -16,18 +16,6 @@ finding = "1 words"
 issue = 227
 
 [[known]]
-file = "authored/thesis.docx"
-check = "overlap"
-pages = [25]
-issue = 156
-
-[[known]]
-file = "libreoffice/thesis.docx"
-check = "overlap"
-pages = [25]
-issue = 156
-
-[[known]]
 file = "authored/newsletter.docx"
 check = "overlap"
 pages = [2, 3]

@@ -652,10 +652,7 @@ fn text_around_a_display_equation_in_its_paragraph_takes_lines_of_its_own() {
 
 // ---- Headers, footers and notes ----
 
-// Fails today: endnotes are drawn over a table that ends the document, at
-// the height of its rows. Issue: #156
 #[test]
-#[should_panic(expected = "endnote drawn over the table")]
 fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
     let mut doc = doc_with(&["Has a note"]);
     let cited = doc.paragraph_story_location(0).unwrap().unwrap();
@@ -850,12 +847,7 @@ fn headings_become_the_outline_with_their_levels_and_pages() {
     assert!(pdf.catalog().get(b"Outlines").is_err());
 }
 
-// Fails today: the outline keeps the place a heading had before keep with
-// next moved it to the next page, so the bookmark opens the page before; the
-// four corpus reports show it on "3. Operations", the thesis on "1.2 Research
-// questions". Issue: #156
 #[test]
-#[should_panic(expected = "but the heading is drawn on page")]
 fn an_outline_entry_opens_the_page_its_heading_moved_to() {
     let mut doc = Document::new();
     for number in 1..=27 {
