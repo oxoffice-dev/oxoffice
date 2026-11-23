@@ -15,8 +15,6 @@ use oxoffice_layout::{
 const DEFAULT_MATH_FONT: &str = "Caladea";
 const DEFAULT_MATH_SIZE: f64 = 11.0;
 const SCRIPT_SCALE: f64 = 0.7;
-const SUBSCRIPT_SHIFT_EM: f64 = 0.18;
-const SUPERSCRIPT_SHIFT_EM: f64 = 0.43;
 const GAP_EM: f64 = 0.12;
 const RULE_EM: f64 = 0.055;
 const MAX_DELIMITER_SCALE: f64 = 4.0;
@@ -24,14 +22,168 @@ const EQUATION_SPACING_EM: f64 = 0.107;
 const LIMIT_GAP_EM: f64 = -0.29;
 const MATH_TEXT_X_SCALE: f64 = 1.1;
 const NARY_OPERATOR_X_SCALE: f64 = 1.89;
-const NARY_UPPER_GAP_EM: f64 = 0.482;
-const NARY_LOWER_GAP_EM: f64 = 0.3;
+
+/// The OpenType MATH constants the layout reads, in font units.
+#[derive(Debug, Clone, Copy)]
+struct MathConstants {
+    units_per_em: f64,
+    script_percent_scale_down: f64,
+    script_script_percent_scale_down: f64,
+    delimited_sub_formula_min_height: f64,
+    display_operator_min_height: f64,
+    math_leading: f64,
+    axis_height: f64,
+    subscript_shift_down: f64,
+    subscript_top_max: f64,
+    subscript_baseline_drop_min: f64,
+    superscript_shift_up: f64,
+    superscript_shift_up_cramped: f64,
+    superscript_bottom_min: f64,
+    superscript_baseline_drop_max: f64,
+    sub_superscript_gap_min: f64,
+    space_after_script: f64,
+    upper_limit_gap_min: f64,
+    upper_limit_baseline_rise_min: f64,
+    lower_limit_gap_min: f64,
+    lower_limit_baseline_drop_min: f64,
+    fraction_numerator_shift_up: f64,
+    fraction_numerator_display_style_shift_up: f64,
+    fraction_denominator_shift_down: f64,
+    fraction_denominator_display_style_shift_down: f64,
+    fraction_numerator_gap_min: f64,
+    fraction_num_display_style_gap_min: f64,
+    fraction_rule_thickness: f64,
+    fraction_denominator_gap_min: f64,
+    fraction_denom_display_style_gap_min: f64,
+    radical_vertical_gap: f64,
+    radical_display_style_vertical_gap: f64,
+    radical_rule_thickness: f64,
+    radical_extra_ascender: f64,
+    radical_kern_before_degree: f64,
+    radical_kern_after_degree: f64,
+    radical_degree_bottom_raise_percent: f64,
+}
+
+/// Cambria Math's constants (version 6.90i, as Word 16.115 ships it), for a
+/// face without a MATH table: Word sets equations in Cambria Math, and
+/// Caladea, the bundled math font, is Cambria's metric twin.
+const CAMBRIA_MATH: MathConstants = MathConstants {
+    units_per_em: 2048.0,
+    script_percent_scale_down: 73.0,
+    script_script_percent_scale_down: 60.0,
+    delimited_sub_formula_min_height: 3000.0,
+    display_operator_min_height: 2500.0,
+    math_leading: 300.0,
+    axis_height: 585.0,
+    subscript_shift_down: 418.0,
+    subscript_top_max: 760.0,
+    subscript_baseline_drop_min: 320.0,
+    superscript_shift_up: 750.0,
+    superscript_shift_up_cramped: 615.0,
+    superscript_bottom_min: 239.0,
+    superscript_baseline_drop_max: 460.0,
+    sub_superscript_gap_min: 300.0,
+    space_after_script: 85.0,
+    upper_limit_gap_min: 133.0,
+    upper_limit_baseline_rise_min: 500.0,
+    lower_limit_gap_min: 133.0,
+    lower_limit_baseline_drop_min: 1240.0,
+    fraction_numerator_shift_up: 1200.0,
+    fraction_numerator_display_style_shift_up: 1550.0,
+    fraction_denominator_shift_down: 1030.0,
+    fraction_denominator_display_style_shift_down: 1370.0,
+    fraction_numerator_gap_min: 133.0,
+    fraction_num_display_style_gap_min: 260.0,
+    fraction_rule_thickness: 133.0,
+    fraction_denominator_gap_min: 133.0,
+    fraction_denom_display_style_gap_min: 260.0,
+    radical_vertical_gap: 166.0,
+    radical_display_style_vertical_gap: 345.0,
+    radical_rule_thickness: 133.0,
+    radical_extra_ascender: 133.0,
+    radical_kern_before_degree: 133.0,
+    radical_kern_after_degree: -640.0,
+    radical_degree_bottom_raise_percent: 65.0,
+};
+
+/// The ink of Cambria Math's display-size sum and integral signs, bottom and
+/// top in its font units: the signs Word draws in a display equation (the
+/// first variant at least `DisplayOperatorMinHeight` tall for the sum, the
+/// next one for the integral), for a face without MATH variants.
+const CAMBRIA_DISPLAY_SUM_INK: (f64, f64) = (-1370.0, 2540.0);
+const CAMBRIA_DISPLAY_INTEGRAL_INK: (f64, f64) = (-1623.0, 2782.0);
+
+impl MathConstants {
+    /// The constants of the face that draws `family`'s math, or Cambria
+    /// Math's when it has no MATH table.
+    fn of(fm: &mut FontManager, family: Option<&str>) -> Result<Self> {
+        let font_id = fm.resolve_font_for_text(family, false, false, "x")?;
+        let data = fm.font_data(font_id)?;
+        let Some((face, c)) = ttf_parser::Face::parse(&data.data, data.face_index)
+            .ok()
+            .and_then(|face| Some((face.units_per_em(), face.tables().math?.constants?)))
+        else {
+            return Ok(CAMBRIA_MATH);
+        };
+        let v = |value: ttf_parser::math::MathValue<'_>| f64::from(value.value);
+        Ok(Self {
+            units_per_em: f64::from(face),
+            script_percent_scale_down: f64::from(c.script_percent_scale_down()),
+            script_script_percent_scale_down: f64::from(c.script_script_percent_scale_down()),
+            delimited_sub_formula_min_height: f64::from(c.delimited_sub_formula_min_height()),
+            display_operator_min_height: f64::from(c.display_operator_min_height()),
+            math_leading: v(c.math_leading()),
+            axis_height: v(c.axis_height()),
+            subscript_shift_down: v(c.subscript_shift_down()),
+            subscript_top_max: v(c.subscript_top_max()),
+            subscript_baseline_drop_min: v(c.subscript_baseline_drop_min()),
+            superscript_shift_up: v(c.superscript_shift_up()),
+            superscript_shift_up_cramped: v(c.superscript_shift_up_cramped()),
+            superscript_bottom_min: v(c.superscript_bottom_min()),
+            superscript_baseline_drop_max: v(c.superscript_baseline_drop_max()),
+            sub_superscript_gap_min: v(c.sub_superscript_gap_min()),
+            space_after_script: v(c.space_after_script()),
+            upper_limit_gap_min: v(c.upper_limit_gap_min()),
+            upper_limit_baseline_rise_min: v(c.upper_limit_baseline_rise_min()),
+            lower_limit_gap_min: v(c.lower_limit_gap_min()),
+            lower_limit_baseline_drop_min: v(c.lower_limit_baseline_drop_min()),
+            fraction_numerator_shift_up: v(c.fraction_numerator_shift_up()),
+            fraction_numerator_display_style_shift_up: v(
+                c.fraction_numerator_display_style_shift_up()
+            ),
+            fraction_denominator_shift_down: v(c.fraction_denominator_shift_down()),
+            fraction_denominator_display_style_shift_down: v(
+                c.fraction_denominator_display_style_shift_down()
+            ),
+            fraction_numerator_gap_min: v(c.fraction_numerator_gap_min()),
+            fraction_num_display_style_gap_min: v(c.fraction_num_display_style_gap_min()),
+            fraction_rule_thickness: v(c.fraction_rule_thickness()),
+            fraction_denominator_gap_min: v(c.fraction_denominator_gap_min()),
+            fraction_denom_display_style_gap_min: v(c.fraction_denom_display_style_gap_min()),
+            radical_vertical_gap: v(c.radical_vertical_gap()),
+            radical_display_style_vertical_gap: v(c.radical_display_style_vertical_gap()),
+            radical_rule_thickness: v(c.radical_rule_thickness()),
+            radical_extra_ascender: v(c.radical_extra_ascender()),
+            radical_kern_before_degree: v(c.radical_kern_before_degree()),
+            radical_kern_after_degree: v(c.radical_kern_after_degree()),
+            radical_degree_bottom_raise_percent: f64::from(c.radical_degree_bottom_raise_percent()),
+        })
+    }
+
+    /// `value` font units at `size`, in points.
+    fn at(&self, value: f64, size: f64) -> f64 {
+        value * size / self.units_per_em
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct MathLayoutStyle<'a> {
     font_size: f64,
     root_size: f64,
     display: bool,
+    /// The equation sits in a line of text (`m:oMath` outside `m:oMathPara`):
+    /// Word sets it in the smaller text style, at every depth.
+    inline: bool,
     cramped: bool,
     script_level: u8,
     runs: RunFormatting<'a>,
@@ -51,6 +203,7 @@ impl<'a> MathLayoutStyle<'a> {
             font_size,
             root_size: font_size,
             display,
+            inline: !display,
             cramped: false,
             script_level: 0,
             runs,
@@ -162,19 +315,17 @@ pub(crate) fn layout_officemath(
     match &equation {
         OfficeMath::Inline(value) => {
             let (size, color) = formatting(&value.expressions);
-            Ok((
-                layout_expressions(
-                    &value.expressions,
-                    fm,
-                    font_family,
-                    MathLayoutStyle::new(size, false, runs),
-                    color,
-                    size * EQUATION_SPACING_EM,
-                    source_path,
-                    diagnostics,
-                )?,
-                false,
-            ))
+            let measured = layout_expressions(
+                &value.expressions,
+                fm,
+                font_family,
+                MathLayoutStyle::new(size, false, runs),
+                color,
+                size * EQUATION_SPACING_EM,
+                source_path,
+                diagnostics,
+            )?;
+            Ok((framed(measured, fm, font_family, size)?, false))
         }
         OfficeMath::Display(value) => {
             let mut equations = Vec::with_capacity(value.equations.len());
@@ -198,32 +349,12 @@ pub(crate) fn layout_officemath(
             let inter_spacing = math_properties
                 .and_then(|properties| properties.inter_spacing)
                 .map_or(0.0, twips_to_points);
-            let mut measured = layout_spaced_sequence(equations, inter_spacing);
-            let font_id = fm.resolve_font_for_text(font_family, false, false, "x")?;
-            let data = fm.font_data(font_id)?;
-            if let Some(leading) = ttf_parser::Face::parse(&data.data, data.face_index)
-                .ok()
-                .and_then(|face| {
-                    Some(
-                        f64::from(face.tables().math?.constants?.math_leading().value) * size
-                            / f64::from(face.units_per_em()),
-                    )
-                })
-            {
-                // A display frame starts above its ink by MathLeading. Face
-                // ascenders include blank space and differ across constructs.
-                let shift = leading.max(0.0) + measured.top_padding - ink_bounds(&measured, fm).y;
-                let run_only = value.equations.iter().all(|equation| {
-                    equation
-                        .expressions
-                        .iter()
-                        .all(|expression| matches!(expression, MathExpression::Run(_)))
-                });
-                let lower = if run_only { 0.0 } else { -measured.ascent };
-                let shift = shift.clamp(lower, size * MAX_DELIMITER_SCALE);
-                measured.group.transform.f += shift;
-                measured.ascent += shift;
-            }
+            let measured = framed(
+                layout_spaced_sequence(equations, inter_spacing),
+                fm,
+                font_family,
+                size,
+            )?;
             let left_margin = math_properties
                 .and_then(|properties| properties.left_margin)
                 .map_or(0.0, twips_to_points);
@@ -265,6 +396,32 @@ pub(crate) fn layout_officemath(
             ))
         }
     }
+}
+
+/// An equation's frame, the box its line is measured on: Word starts it
+/// MathLeading above the ink and ends it at the ink's bottom, never inside a
+/// line of the math font at the equation's size.
+fn framed(
+    mut measured: MeasuredMath,
+    fm: &mut FontManager,
+    family: Option<&str>,
+    size: f64,
+) -> Result<MeasuredMath> {
+    let c = MathConstants::of(fm, family)?;
+    let font_id = fm.resolve_font_for_text(family, false, false, "x")?;
+    let metrics = fm.metrics(font_id, size)?;
+    let ink = ink_bounds(&measured, fm);
+    if ink.height <= 0.0 {
+        return Ok(measured);
+    }
+    let top = measured.ascent - ink.y + c.at(c.math_leading, size).max(0.0) + measured.top_padding;
+    let ascent = top.max(metrics.ascent.max(0.0));
+    let descent = (ink.y + ink.height - measured.ascent).max(metrics.descent.max(0.0));
+    measured.group.transform.f += ascent - measured.ascent;
+    measured.ascent = ascent;
+    measured.descent = descent;
+    measured.top_padding = 0.0;
+    Ok(measured)
 }
 
 /// The size and colour every run of an equation sets in its own `w:rPr`,
@@ -412,22 +569,14 @@ fn math_script_context<'a>(
     context: MathLayoutStyle<'a>,
     levels: u8,
 ) -> Result<MathLayoutStyle<'a>> {
-    let font_id = fm.resolve_font_for_text(family, false, false, "x")?;
-    let data = fm.font_data(font_id)?;
+    let c = MathConstants::of(fm, family)?;
     let level = context.script_level.saturating_add(levels).min(2);
-    let ratio = ttf_parser::Face::parse(&data.data, data.face_index)
-        .ok()
-        .and_then(|face| face.tables().math)
-        .and_then(|math| math.constants)
-        .map(|c| {
-            f64::from(if level == 1 {
-                c.script_percent_scale_down()
-            } else {
-                c.script_script_percent_scale_down()
-            }) / 100.0
-        })
-        .filter(|ratio| *ratio > 0.0 && *ratio <= 1.0);
-    if let Some(ratio) = ratio {
+    let ratio = if level == 1 {
+        c.script_percent_scale_down
+    } else {
+        c.script_script_percent_scale_down
+    } / 100.0;
+    if ratio > 0.0 && ratio <= 1.0 {
         Ok(MathLayoutStyle {
             font_size: context.root_size * ratio,
             display: false,
@@ -435,21 +584,13 @@ fn math_script_context<'a>(
             ..context
         })
     } else {
-        // Fonts without MATH keep the historical recursive fallback size.
         Ok((0..levels).fold(context, |style, _| style.script(SCRIPT_SCALE)))
     }
 }
 
 fn space_after_script(fm: &mut FontManager, family: Option<&str>, size: f64) -> Result<f64> {
-    let font_id = fm.resolve_font_for_text(family, false, false, "x")?;
-    let data = fm.font_data(font_id)?;
-    Ok(ttf_parser::Face::parse(&data.data, data.face_index)
-        .ok()
-        .and_then(|face| {
-            let value = face.tables().math?.constants?.space_after_script().value;
-            Some((f64::from(value) * size / f64::from(face.units_per_em())).clamp(0.0, size))
-        })
-        .unwrap_or(0.0))
+    let c = MathConstants::of(fm, family)?;
+    Ok(c.at(c.space_after_script, size).clamp(0.0, size))
 }
 
 fn script_shifts(
@@ -459,64 +600,54 @@ fn script_shifts(
     fm: &mut FontManager,
     family: Option<&str>,
     context: MathLayoutStyle<'_>,
+    extended: bool,
 ) -> Result<(f64, f64)> {
     let font_size = context.font_size;
-    let font_id = fm.resolve_font_for_text(family, false, false, "x")?;
-    let data = fm.font_data(font_id)?;
-    let face = ttf_parser::Face::parse(&data.data, data.face_index).ok();
-    let Some((face, c)) = face
-        .as_ref()
-        .and_then(|face| Some((face, face.tables().math?.constants?)))
-    else {
-        return Ok((
-            font_size * SUBSCRIPT_SHIFT_EM,
-            font_size * SUPERSCRIPT_SHIFT_EM,
-        ));
-    };
-    let em = font_size / f64::from(face.units_per_em());
+    let c = MathConstants::of(fm, family)?;
+    let em = |value: f64| c.at(value, font_size);
     let base_ink = ink_bounds(base, fm);
     let sub_ink = ink_bounds(subscript, fm);
     let sup_ink = ink_bounds(superscript, fm);
-    let simple = single_math_run(base)
-        .filter(|run| run.glyph_ids.len() == 1)
-        .is_some_and(|run| {
-            !face
-                .tables()
-                .math
-                .and_then(|m| m.glyph_info)
-                .and_then(|i| i.extended_shapes)
-                .is_some_and(|coverage| {
-                    coverage
-                        .get(ttf_parser::GlyphId(run.glyph_ids[0]))
-                        .is_some()
-                })
-        });
+    // A single glyph takes the font's fixed shifts, unless it is an extended
+    // shape (an integral, a display operator): then its ink places them.
+    let simple = !extended
+        && single_math_run(base)
+            .filter(|run| run.glyph_ids.len() == 1)
+            .is_some_and(|run| {
+                let Ok(data) = fm.font_data(run.font_id) else {
+                    return true;
+                };
+                !ttf_parser::Face::parse(&data.data, data.face_index)
+                    .ok()
+                    .and_then(|face| face.tables().math?.glyph_info?.extended_shapes)
+                    .is_some_and(|coverage| {
+                        coverage
+                            .get(ttf_parser::GlyphId(run.glyph_ids[0]))
+                            .is_some()
+                    })
+            });
     let initial_down = if simple {
-        f64::from(c.subscript_shift_down().value) * em
+        em(c.subscript_shift_down)
     } else {
-        base_ink.y + base_ink.height - base.ascent
-            + f64::from(c.subscript_baseline_drop_min().value) * em
+        base_ink.y + base_ink.height - base.ascent + em(c.subscript_baseline_drop_min)
     };
     let initial_up = if simple {
-        f64::from(if context.cramped {
-            c.superscript_shift_up_cramped().value
+        em(if context.cramped {
+            c.superscript_shift_up_cramped
         } else {
-            c.superscript_shift_up().value
-        }) * em
+            c.superscript_shift_up
+        })
     } else {
-        base.ascent - base_ink.y - f64::from(c.superscript_baseline_drop_max().value) * em
+        base.ascent - base_ink.y - em(c.superscript_baseline_drop_max)
     };
-    let mut down = initial_down
-        .max(subscript.ascent - sub_ink.y - f64::from(c.subscript_top_max().value) * em);
-    let up = initial_up.max(
-        sup_ink.y + sup_ink.height - superscript.ascent
-            + f64::from(c.superscript_bottom_min().value) * em,
-    );
+    let mut down = initial_down.max(subscript.ascent - sub_ink.y - em(c.subscript_top_max));
+    let up = initial_up
+        .max(sup_ink.y + sup_ink.height - superscript.ascent + em(c.superscript_bottom_min));
     if subscript.width > 0.0 && superscript.width > 0.0 {
         let actual_gap = down + sub_ink.y
             - subscript.ascent
             - (-up + sup_ink.y + sup_ink.height - superscript.ascent);
-        down += (f64::from(c.sub_superscript_gap_min().value) * em - actual_gap).max(0.0);
+        down += (em(c.sub_superscript_gap_min) - actual_gap).max(0.0);
     }
     Ok((down.max(0.0), up.max(0.0)))
 }
@@ -1332,22 +1463,26 @@ fn layout_fraction(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<MeasuredMath> {
     let font_size = context.font_size;
-    let font_id = fm.resolve_font_for_text(font_family, false, false, "+")?;
-    let font_data = fm.font_data(font_id)?;
-    let face = ttf_parser::Face::parse(&font_data.data, font_data.face_index).ok();
-    let constants = face
-        .as_ref()
-        .and_then(|face| face.tables().math)
-        .and_then(|math| math.constants);
-    let em = face
-        .as_ref()
-        .map_or(0.0, |face| font_size / f64::from(face.units_per_em()));
-    let child_size = font_size;
+    let c = MathConstants::of(fm, font_family)?;
+    let em = |value: f64| c.at(value, font_size);
+    // Word keeps a display equation's fractions at full size however deep
+    // they nest; in a line of text a stacked fraction's parts go one script
+    // level down. A linear or skewed fraction keeps its parts at the size of
+    // its slash.
+    let stacked = !matches!(
+        value.fraction_type,
+        FractionType::Linear | FractionType::Skewed
+    );
+    let parts = if context.inline && stacked {
+        math_script_context(fm, font_family, context, 1)?
+    } else {
+        context.with_size(font_size)
+    };
     let numerator = layout_argument(
         &value.numerator,
         fm,
         font_family,
-        context.with_size(child_size),
+        parts,
         color,
         &format!("{source_path}/numerator"),
         diagnostics,
@@ -1356,15 +1491,12 @@ fn layout_fraction(
         &value.denominator,
         fm,
         font_family,
-        context.with_size(child_size).cramped(),
+        parts.cramped(),
         color,
         &format!("{source_path}/denominator"),
         diagnostics,
     )?;
-    if matches!(
-        value.fraction_type,
-        FractionType::Linear | FractionType::Skewed
-    ) {
+    if !stacked {
         let slash = layout_text(
             "/",
             fm,
@@ -1380,7 +1512,7 @@ fn layout_fraction(
     }
     let direct_bar = value.numerator.expressions.iter().chain(&value.denominator.expressions)
         .any(|expression| matches!(expression, MathExpression::Fraction(fraction) if fraction.fraction_type == FractionType::Bar));
-    let padding = if constants.is_some() && value.fraction_type == FractionType::Bar {
+    let padding = if value.fraction_type == FractionType::Bar {
         // Observed nested-bar clearance is atom glue, not a MATH table constant.
         if direct_bar {
             font_size * 2.0 / 18.0
@@ -1393,72 +1525,44 @@ fn layout_fraction(
     let width = numerator.width.max(denominator.width) + padding * 2.0;
     let numerator_x = (width - numerator.width) / 2.0;
     let denominator_x = (width - denominator.width) / 2.0;
-    let (rule, rule_y, ascent, descent, numerator_y, denominator_y) = if let Some(c) = constants {
-        let rule = if value.fraction_type == FractionType::NoBar {
-            0.0
-        } else {
-            f64::from(c.fraction_rule_thickness().value).max(0.0) * em
-        };
-        let axis = f64::from(c.axis_height().value) * em;
-        let numerator_ink = ink_bounds(&numerator, fm);
-        let denominator_ink = ink_bounds(&denominator, fm);
-        let (up, down, num_gap, den_gap) = if context.display {
-            (
-                c.fraction_numerator_display_style_shift_up().value,
-                c.fraction_denominator_display_style_shift_down().value,
-                c.fraction_num_display_style_gap_min().value,
-                c.fraction_denom_display_style_gap_min().value,
-            )
-        } else {
-            (
-                c.fraction_numerator_shift_up().value,
-                c.fraction_denominator_shift_down().value,
-                c.fraction_numerator_gap_min().value,
-                c.fraction_denominator_gap_min().value,
-            )
-        };
-        let up = (f64::from(up) * em).max(
-            numerator_ink.y + numerator_ink.height - numerator.ascent
-                + axis
-                + rule / 2.0
-                + f64::from(num_gap).max(0.0) * em,
-        );
-        let down = (f64::from(down) * em).max(
-            -axis + rule / 2.0 + f64::from(den_gap).max(0.0) * em - denominator_ink.y
-                + denominator.ascent,
-        );
-        let ascent = (up + numerator.ascent).max(axis + rule / 2.0).max(0.0);
-        let descent = (down + denominator.descent).max(0.0);
+    let rule = if value.fraction_type == FractionType::NoBar {
+        0.0
+    } else {
+        em(c.fraction_rule_thickness).max(0.0)
+    };
+    let axis = em(c.axis_height);
+    let numerator_ink = ink_bounds(&numerator, fm);
+    let denominator_ink = ink_bounds(&denominator, fm);
+    let (up, down, num_gap, den_gap) = if context.display {
         (
-            rule,
-            ascent - axis,
-            ascent,
-            descent,
-            ascent - up - numerator.ascent,
-            ascent + down - denominator.ascent,
+            c.fraction_numerator_display_style_shift_up,
+            c.fraction_denominator_display_style_shift_down,
+            c.fraction_num_display_style_gap_min,
+            c.fraction_denom_display_style_gap_min,
         )
     } else {
-        // Preserve legacy non-MATH baselines while clearing measured ink. Full
-        // face metrics contain empty space, so they are not clearance boxes.
-        let gap = font_size * GAP_EM;
-        let rule = font_size * RULE_EM;
-        let numerator_ink = ink_bounds(&numerator, fm);
-        let denominator_ink = ink_bounds(&denominator, fm);
-        let axis = font_size * 0.25;
-        let ascent = (numerator.height() + font_size * 0.55 + rule / 2.0)
-            .max(numerator_ink.y + numerator_ink.height + gap + rule / 2.0 + axis);
-        let rule_y = ascent - axis;
-        let denominator_y =
-            (ascent - font_size * 0.36).max(rule_y + rule / 2.0 + gap - denominator_ink.y);
         (
-            rule,
-            rule_y,
-            ascent,
-            (denominator_y + denominator.height() - ascent).max(0.0),
-            0.0,
-            denominator_y,
+            c.fraction_numerator_shift_up,
+            c.fraction_denominator_shift_down,
+            c.fraction_numerator_gap_min,
+            c.fraction_denominator_gap_min,
         )
     };
+    let up = em(up).max(
+        numerator_ink.y + numerator_ink.height - numerator.ascent
+            + axis
+            + rule / 2.0
+            + em(num_gap).max(0.0),
+    );
+    let down = em(down)
+        .max(-axis + rule / 2.0 + em(den_gap).max(0.0) - denominator_ink.y + denominator.ascent);
+    let ascent = (up + numerator.ascent).max(axis + rule / 2.0).max(0.0);
+    let descent = (down + denominator.descent).max(0.0);
+    let (rule_y, numerator_y, denominator_y) = (
+        ascent - axis,
+        ascent - up - numerator.ascent,
+        ascent + down - denominator.ascent,
+    );
     let mut children = vec![
         translated(numerator.group, numerator_x, numerator_y),
         translated(denominator.group, denominator_x, denominator_y),
@@ -1537,9 +1641,9 @@ fn layout_script_pair(
     let font_size = context.font_size;
     let empty = MeasuredMath::empty();
     let (down, up) = if superscript {
-        script_shifts(&base, &empty, &script, fm, font_family, context)?
+        script_shifts(&base, &empty, &script, fm, font_family, context, false)?
     } else {
-        script_shifts(&base, &script, &empty, fm, font_family, context)?
+        script_shifts(&base, &script, &empty, fm, font_family, context, false)?
     };
     let shift = if superscript { up } else { down };
     let (ascent, descent, script_baseline) = if superscript {
@@ -1671,7 +1775,15 @@ fn layout_three_part_script(
         &format!("{source_path}/superscript"),
         diagnostics,
     )?;
-    let shifts = script_shifts(&base, &subscript, &superscript, fm, font_family, context)?;
+    let shifts = script_shifts(
+        &base,
+        &subscript,
+        &superscript,
+        fm,
+        font_family,
+        context,
+        false,
+    )?;
     let correction = italic_correction(&base, fm);
     let after = space_after_script(fm, font_family, context.font_size)?;
     let mut measured = layout_measured_scripts(
@@ -1761,118 +1873,51 @@ fn layout_radical(
         &format!("{source_path}/base"),
         diagnostics,
     )?;
-    let font_id = fm.resolve_font_for_text(font_family, false, false, "√")?;
-    let data = fm.font_data(font_id)?;
-    let face = ttf_parser::Face::parse(&data.data, data.face_index).ok();
-    if let Some((face, c)) = face
-        .as_ref()
-        .and_then(|face| Some((face, face.tables().math?.constants?)))
-    {
-        let em = font_size / f64::from(face.units_per_em());
-        let ink = ink_bounds(&base, fm);
-        let gap = f64::from(if context.display {
-            c.radical_display_style_vertical_gap().value
-        } else {
-            c.radical_vertical_gap().value
-        })
-        .max(0.0)
-            * em;
-        let extra = f64::from(c.radical_extra_ascender().value).max(0.0) * em;
-        let rule = f64::from(c.radical_rule_thickness().value).max(0.0) * em;
-        if let Some(root) = layout_math_variant(
-            "√",
-            fm,
-            font_family,
-            context,
-            color,
-            Some(ink.height + gap + rule),
-            source_path,
-            diagnostics,
-        )? {
-            let root_ink = ink_bounds(&root, fm);
-            let degree = if value.hide_degree {
-                MeasuredMath::empty()
-            } else {
-                let degree_context = math_script_context(fm, font_family, context, 2)?;
-                layout_argument(
-                    &value.degree,
-                    fm,
-                    font_family,
-                    degree_context,
-                    color,
-                    &format!("{source_path}/degree"),
-                    diagnostics,
-                )?
-            };
-            let before = f64::from(c.radical_kern_before_degree().value) * em;
-            let after = f64::from(c.radical_kern_after_degree().value) * em;
-            let root_x = if value.hide_degree {
-                0.0
-            } else {
-                (before + degree.width + after).max(0.0)
-            };
-            let base_x = root_x + root.width;
-            let rise = (gap + rule + extra - ink.y).max(0.0);
-            let base_y = rise;
-            let rule_y = base_y + ink.y - gap - rule / 2.0;
-            let root_y = rule_y - rule / 2.0 - root_ink.y;
-            let ascent = base_y + base.ascent;
-            let height = (base_y + base.height()).max(root_y + root.height());
-            let mut children = vec![
-                translated(root.group, root_x, root_y),
-                translated(base.group, base_x, base_y),
-                PositionedElement::Line {
-                    start: Point {
-                        x: base_x,
-                        y: rule_y,
-                    },
-                    end: Point {
-                        x: base_x + base.width,
-                        y: rule_y,
-                    },
-                    width: rule,
-                    color,
-                    dash_pattern: None,
-                },
-            ];
-            if !value.hide_degree {
-                let degree_y = (root_y
-                    + root_ink.y
-                    + root_ink.height
-                        * (1.0 - f64::from(c.radical_degree_bottom_raise_percent()) / 100.0)
-                    - degree.height())
-                .max(0.0);
-                children.push(translated(degree.group, before.max(0.0), degree_y));
-            }
-            return Ok(MeasuredMath {
-                terminal_italic_advance: 0.0,
-                top_padding: extra,
-                width: base_x + base.width,
-                ascent,
-                descent: (height - ascent).max(0.0),
-                group: group(children),
-            });
-        }
-    }
-    let root = layout_text(
+    let c = MathConstants::of(fm, font_family)?;
+    let em = |value: f64| c.at(value, font_size);
+    let ink = ink_bounds(&base, fm);
+    let gap = em(if context.display {
+        c.radical_display_style_vertical_gap
+    } else {
+        c.radical_vertical_gap
+    })
+    .max(0.0);
+    let extra = em(c.radical_extra_ascender).max(0.0);
+    let rule = em(c.radical_rule_thickness).max(0.0);
+    let target = ink.height + gap + rule;
+    let root = match layout_math_variant(
         "√",
         fm,
         font_family,
         context,
         color,
-        false,
-        false,
+        Some(target),
         source_path,
         diagnostics,
-    )?;
-    let gap = font_size * GAP_EM;
-    let rule = font_size * RULE_EM;
-    let target_height = base.height() + gap + rule;
-    let root = vertically_scaled(root, target_height);
-    let degree_context = math_script_context(fm, font_family, context, 2)?;
+    )? {
+        Some(root) => root,
+        // Without MATH variants the sign's own glyph is stretched to cover.
+        None => {
+            let glyph = layout_text(
+                "√",
+                fm,
+                font_family,
+                context,
+                color,
+                false,
+                false,
+                source_path,
+                diagnostics,
+            )?;
+            let height = ink_bounds(&glyph, fm).height;
+            on_axis(glyph, fm, 0.0, (target > height).then_some(target))
+        }
+    };
+    let root_ink = ink_bounds(&root, fm);
     let degree = if value.hide_degree {
         MeasuredMath::empty()
     } else {
+        let degree_context = math_script_context(fm, font_family, context, 2)?;
         layout_argument(
             &value.degree,
             fm,
@@ -1883,43 +1928,53 @@ fn layout_radical(
             diagnostics,
         )?
     };
-    let degree_overlap = degree.width * 0.35;
-    let root_x = (degree.width - degree_overlap).max(0.0);
+    let before = em(c.radical_kern_before_degree);
+    let after = em(c.radical_kern_after_degree);
+    let root_x = if value.hide_degree {
+        0.0
+    } else {
+        (before + degree.width + after).max(0.0)
+    };
     let base_x = root_x + root.width;
-    let ascent = root.ascent.max(base.ascent + gap + rule);
-    let descent = root.descent.max(base.descent);
-    let base_y = ascent - base.ascent;
+    let rise = (gap + rule + extra - ink.y).max(0.0);
+    let base_y = rise;
+    let rule_y = base_y + ink.y - gap - rule / 2.0;
+    let root_y = rule_y - rule / 2.0 - root_ink.y;
+    let ascent = base_y + base.ascent;
+    let height = (base_y + base.height()).max(root_y + root.height());
     let mut children = vec![
-        translated(root.group, root_x, ascent - root.ascent),
+        translated(root.group, root_x, root_y),
         translated(base.group, base_x, base_y),
         PositionedElement::Line {
             start: Point {
                 x: base_x,
-                y: base_y - gap / 2.0,
+                y: rule_y,
             },
             end: Point {
                 x: base_x + base.width,
-                y: base_y - gap / 2.0,
+                y: rule_y,
             },
             width: rule,
             color,
             dash_pattern: None,
         },
     ];
-    if degree.width > 0.0 {
-        children.push(translated(degree.group, 0.0, 0.0));
+    if !value.hide_degree {
+        let degree_y = (root_y
+            + root_ink.y
+            + root_ink.height * (1.0 - c.radical_degree_bottom_raise_percent / 100.0)
+            - degree.height())
+        .max(0.0);
+        children.push(translated(degree.group, before.max(0.0), degree_y));
     }
-    Ok(horizontally_scaled(
-        MeasuredMath {
-            terminal_italic_advance: 0.0,
-            top_padding: 0.0,
-            width: base_x + base.width,
-            ascent,
-            descent,
-            group: group(children),
-        },
-        0.9,
-    ))
+    Ok(MeasuredMath {
+        terminal_italic_advance: 0.0,
+        top_padding: extra,
+        width: base_x + base.width,
+        ascent,
+        descent: (height - ascent).max(0.0),
+        group: group(children),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1985,16 +2040,8 @@ fn layout_matrix(
         .map(|(ascent, descent)| ascent + descent)
         .sum::<f64>()
         + row_gap * rows.len().saturating_sub(1) as f64;
-    let ascent = match value.properties.base_justification {
-        Some(MatrixBaseJustification::Top) => row_metrics[0].0,
-        Some(MatrixBaseJustification::Bottom) => {
-            height - row_metrics.last().map_or(0.0, |(_, descent)| *descent)
-        }
-        Some(MatrixBaseJustification::Center) | None => {
-            let (row_ascent, row_descent) = row_metrics[0];
-            height / 2.0 + (row_ascent - row_descent) / 2.0
-        }
-    };
+    let top_row_ascent = row_metrics[0].0;
+    let bottom_row_descent = row_metrics.last().map_or(0.0, |(_, descent)| *descent);
     let justifications = (0..column_count)
         .map(|column| value.column_justification(column))
         .collect::<Vec<_>>();
@@ -2014,13 +2061,34 @@ fn layout_matrix(
         }
         y += row_ascent + row_descent + row_gap;
     }
+    let group = group(children);
+    let ascent = match value.properties.base_justification {
+        Some(MatrixBaseJustification::Top) => top_row_ascent,
+        Some(MatrixBaseJustification::Bottom) => height - bottom_row_descent,
+        // Word centres a matrix's ink on the math axis.
+        Some(MatrixBaseJustification::Center) | None => {
+            let c = MathConstants::of(fm, font_family)?;
+            let ink = ink_bounds(
+                &MeasuredMath {
+                    group: group.clone(),
+                    ..MeasuredMath::empty()
+                },
+                fm,
+            );
+            if ink.height > 0.0 {
+                ink.y + ink.height / 2.0 + c.at(c.axis_height, font_size)
+            } else {
+                height / 2.0
+            }
+        }
+    };
     Ok(MeasuredMath {
         terminal_italic_advance: 0.0,
         top_padding: 0.0,
         width,
         ascent,
         descent: height - ascent,
-        group: group(children),
+        group,
     })
 }
 
@@ -2099,12 +2167,17 @@ fn layout_nary(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<MeasuredMath> {
     let font_size = context.font_size;
+    let c = MathConstants::of(fm, font_family)?;
     let script_context = math_script_context(fm, font_family, context, 1)?;
     let operator_text = if value.character.is_empty() {
         "∫"
     } else {
         value.character.as_str()
     };
+    let integral = operator_text.starts_with(['∫', '∬', '∭', '∮', '∯', '∰', '∱', '∲', '∳', '⨌']);
+    // A display equation draws its signs large; a line of text, a script or
+    // `m:grow` off keeps the text-size sign. Either is centred on the axis.
+    let display_size = !context.inline && context.script_level == 0 && value.grow != Some(false);
     let operator = layout_text(
         operator_text,
         fm,
@@ -2116,21 +2189,33 @@ fn layout_nary(
         source_path,
         diagnostics,
     )?;
-    let operator = if value.grow == Some(false) {
-        operator
+    let axis = c.at(c.axis_height, font_size);
+    let operator = if !display_size {
+        on_axis(operator, fm, axis, None)
     } else if let Some(variant) = layout_math_variant(
         operator_text,
         fm,
         font_family,
         context,
         color,
-        None,
+        Some(c.at(c.display_operator_min_height, font_size)),
         source_path,
         diagnostics,
     )? {
-        variant
+        on_axis(variant, fm, axis, None)
     } else {
-        horizontally_scaled(operator, NARY_OPERATOR_X_SCALE)
+        let (bottom, top) = if integral {
+            CAMBRIA_DISPLAY_INTEGRAL_INK
+        } else {
+            CAMBRIA_DISPLAY_SUM_INK
+        };
+        let height = CAMBRIA_MATH.at(top - bottom, font_size);
+        on_axis(
+            horizontally_scaled(operator, NARY_OPERATOR_X_SCALE),
+            fm,
+            axis,
+            Some(height),
+        )
     };
     let base = layout_argument(
         &value.base,
@@ -2141,7 +2226,8 @@ fn layout_nary(
         &format!("{source_path}/base"),
         diagnostics,
     )?;
-    let under_over = value.limit_location == Some(LimitLocation::UnderOver);
+    // In a line of text Word sets the limits beside the sign.
+    let under_over = value.limit_location == Some(LimitLocation::UnderOver) && !context.inline;
     let mut subscript = MeasuredMath::empty();
     let mut superscript = MeasuredMath::empty();
     if !value.hide_subscript && !value.subscript.expressions.is_empty() {
@@ -2169,10 +2255,10 @@ fn layout_nary(
     let decorated = if under_over {
         let mut decorated = operator;
         if subscript.width > 0.0 {
-            decorated = stack_below(decorated, subscript, font_size);
+            decorated = stack_below(decorated, subscript, fm, &c, font_size);
         }
         if superscript.width > 0.0 {
-            decorated = stack_above(decorated, superscript, font_size);
+            decorated = stack_above(decorated, superscript, fm, &c, font_size);
         }
         decorated
     } else if subscript.width == 0.0 && superscript.width == 0.0 {
@@ -2187,6 +2273,7 @@ fn layout_nary(
             fm,
             font_family,
             context,
+            integral || display_size,
         )?;
         let correction = italic_correction(&operator, fm);
         let after = space_after_script(fm, font_family, font_size)?;
@@ -2213,37 +2300,107 @@ fn layout_nary(
     Ok(layout_sequence(vec![decorated, base]))
 }
 
-fn stack_above(base: MeasuredMath, limit: MeasuredMath, font_size: f64) -> MeasuredMath {
-    let gap = font_size * NARY_UPPER_GAP_EM;
+/// `value` moved, and stretched to `height` of ink when given, so that its
+/// ink is centred on the math axis, `axis` above the baseline. Its box is its
+/// ink.
+fn on_axis(value: MeasuredMath, fm: &FontManager, axis: f64, height: Option<f64>) -> MeasuredMath {
+    let ink = ink_bounds(&value, fm);
+    if ink.height <= 0.0 {
+        return value;
+    }
+    let scale = height
+        .filter(|height| *height > 0.0)
+        .map_or(1.0, |height| (height / ink.height).min(MAX_DELIMITER_SCALE));
+    let half = ink.height * scale / 2.0;
+    let ascent = axis + half;
+    MeasuredMath {
+        terminal_italic_advance: value.terminal_italic_advance,
+        top_padding: 0.0,
+        width: value.width,
+        ascent,
+        descent: (half - axis).max(0.0),
+        group: GroupElement {
+            transform: Transform {
+                d: scale,
+                f: -ink.y * scale,
+                ..Transform::IDENTITY
+            },
+            clip: None,
+            opacity: 1.0,
+            effects: Vec::new(),
+            children: vec![PositionedElement::Group(value.group)],
+        },
+    }
+}
+
+/// `limit` set over `base` as Word sets an n-ary sign's upper limit: its
+/// baseline at least `UpperLimitBaselineRiseMin` above the sign's ink, its ink
+/// at least `UpperLimitGapMin` clear of it.
+fn stack_above(
+    base: MeasuredMath,
+    limit: MeasuredMath,
+    fm: &FontManager,
+    c: &MathConstants,
+    font_size: f64,
+) -> MeasuredMath {
+    let base_ink = ink_bounds(&base, fm);
+    let limit_ink = ink_bounds(&limit, fm);
+    let ink_top = base.ascent - base_ink.y;
+    let limit_depth = limit_ink.y + limit_ink.height - limit.ascent;
+    let rise = (c.at(c.upper_limit_gap_min, font_size) + limit_depth)
+        .max(c.at(c.upper_limit_baseline_rise_min, font_size));
+    let baseline = ink_top + rise;
     let width = base.width.max(limit.width);
-    let limit_height = limit.height();
-    let ascent = limit_height + gap + base.ascent;
+    let ascent = base.ascent.max(baseline + limit.ascent);
     MeasuredMath {
         terminal_italic_advance: 0.0,
         top_padding: 0.0,
         width,
         ascent,
-        descent: base.descent,
+        descent: base.descent.max(limit.descent - baseline),
         group: group(vec![
-            translated(limit.group, (width - limit.width) / 2.0, 0.0),
-            translated(base.group, (width - base.width) / 2.0, limit_height + gap),
+            translated(
+                limit.group,
+                (width - limit.width) / 2.0,
+                ascent - baseline - limit.ascent,
+            ),
+            translated(base.group, (width - base.width) / 2.0, ascent - base.ascent),
         ]),
     }
 }
 
-fn stack_below(base: MeasuredMath, limit: MeasuredMath, font_size: f64) -> MeasuredMath {
-    let gap = font_size * NARY_LOWER_GAP_EM;
+/// `limit` set under `base` as Word sets an n-ary sign's lower limit: its
+/// baseline at least `LowerLimitBaselineDropMin` below the sign's ink, its ink
+/// at least `LowerLimitGapMin` clear of it.
+fn stack_below(
+    base: MeasuredMath,
+    limit: MeasuredMath,
+    fm: &FontManager,
+    c: &MathConstants,
+    font_size: f64,
+) -> MeasuredMath {
+    let base_ink = ink_bounds(&base, fm);
+    let limit_ink = ink_bounds(&limit, fm);
+    let ink_bottom = base_ink.y + base_ink.height - base.ascent;
+    let limit_height = limit.ascent - limit_ink.y;
+    let drop = (c.at(c.lower_limit_gap_min, font_size) + limit_height)
+        .max(c.at(c.lower_limit_baseline_drop_min, font_size));
+    let baseline = ink_bottom + drop;
     let width = base.width.max(limit.width);
-    let base_height = base.height();
+    let ascent = base.ascent.max(limit.ascent - baseline);
     MeasuredMath {
         terminal_italic_advance: 0.0,
         top_padding: 0.0,
         width,
-        ascent: base.ascent,
-        descent: base.descent + gap + limit.height(),
+        ascent,
+        descent: base.descent.max(baseline + limit.descent),
         group: group(vec![
-            translated(base.group, (width - base.width) / 2.0, 0.0),
-            translated(limit.group, (width - limit.width) / 2.0, base_height + gap),
+            translated(base.group, (width - base.width) / 2.0, ascent - base.ascent),
+            translated(
+                limit.group,
+                (width - limit.width) / 2.0,
+                ascent + baseline - limit.ascent,
+            ),
         ]),
     }
 }
@@ -2285,44 +2442,46 @@ fn layout_delimiter(
         )?);
     }
     let contents = layout_sequence(arguments);
-    let target_height = if value.grow == Some(false) {
-        font_size
-    } else {
-        contents.height() * 1.08
+    // Word centres the delimiters on the math axis and grows them to cover
+    // the contents' ink on both sides of it, once that is taller than
+    // DelimitedSubFormulaMinHeight.
+    let c = MathConstants::of(fm, font_family)?;
+    let axis = c.at(c.axis_height, font_size);
+    let ink = ink_bounds(&contents, fm);
+    let reach = (contents.ascent - ink.y - axis)
+        .max(ink.y + ink.height - contents.ascent + axis)
+        .max(0.0);
+    let target_height = (value.grow != Some(false)
+        && ink.height > 0.0
+        && 2.0 * reach > c.at(c.delimited_sub_formula_min_height, font_size))
+    .then_some(2.0 * reach);
+    let mut delimiter = |text: &str| -> Result<MeasuredMath> {
+        let glyph = layout_text(
+            text,
+            fm,
+            font_family,
+            context,
+            color,
+            false,
+            false,
+            source_path,
+            diagnostics,
+        )?;
+        let glyph_height = ink_bounds(&glyph, fm).height;
+        Ok(on_axis(
+            glyph,
+            fm,
+            axis,
+            target_height.filter(|target| *target > glyph_height),
+        ))
     };
     let mut pieces = Vec::new();
     if !value.begin_character.is_empty() {
-        pieces.push(vertically_scaled(
-            layout_text(
-                &value.begin_character,
-                fm,
-                font_family,
-                context,
-                color,
-                false,
-                false,
-                source_path,
-                diagnostics,
-            )?,
-            target_height,
-        ));
+        pieces.push(delimiter(&value.begin_character)?);
     }
     pieces.push(contents);
     if !value.end_character.is_empty() {
-        pieces.push(vertically_scaled(
-            layout_text(
-                &value.end_character,
-                fm,
-                font_family,
-                context,
-                color,
-                false,
-                false,
-                source_path,
-                diagnostics,
-            )?,
-            target_height,
-        ));
+        pieces.push(delimiter(&value.end_character)?);
     }
     Ok(layout_sequence(pieces))
 }
@@ -2762,31 +2921,6 @@ fn layout_equation_array(
         descent: height - ascent,
         group: group(children),
     })
-}
-
-fn vertically_scaled(value: MeasuredMath, target_height: f64) -> MeasuredMath {
-    let height = value.height();
-    if height <= 0.0 || target_height <= height {
-        return value;
-    }
-    let scale = (target_height / height).min(MAX_DELIMITER_SCALE);
-    MeasuredMath {
-        terminal_italic_advance: value.terminal_italic_advance,
-        top_padding: value.top_padding * scale,
-        width: value.width,
-        ascent: value.ascent * scale,
-        descent: value.descent * scale,
-        group: GroupElement {
-            transform: Transform {
-                d: scale,
-                ..Transform::IDENTITY
-            },
-            clip: None,
-            opacity: 1.0,
-            effects: Vec::new(),
-            children: value.group.children,
-        },
-    }
 }
 
 fn horizontally_scaled(value: MeasuredMath, scale: f64) -> MeasuredMath {
