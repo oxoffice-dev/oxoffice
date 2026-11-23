@@ -1290,7 +1290,7 @@ fn rtf_export_lists_paragraph_styles_and_restates_their_formatting() {
     );
     let rtf = String::from_utf8(written.bytes).unwrap();
     let sheet_start = rtf.find(r"{\stylesheet").unwrap_or_else(|| panic!("{rtf}"));
-    let sheet = &rtf[sheet_start..rtf[sheet_start..].find(r"}}\pard").unwrap() + sheet_start];
+    let sheet = &rtf[sheet_start..rtf[sheet_start..].find(";}}").unwrap() + sheet_start + 3];
     // Normal first as \s0, each style after the one it is based on, with
     // its formatting resolved and the heading's keep-with-next.
     assert!(sheet.starts_with(r"{\stylesheet{\s0"), "{sheet}");

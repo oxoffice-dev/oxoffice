@@ -1005,3 +1005,147 @@ fn an_unknown_element_between_header_and_footer_references_keeps_its_place() {
         "{section}"
     );
 }
+
+// ---- Sections in RTF ----
+
+/// Each section's break, orientation, page size, margins and columns, with
+/// Word's defaults (next page, portrait, equal columns) spelled out.
+fn section_layouts(doc: &Document) -> Vec<String> {
+    doc.sections()
+        .map(|section| {
+            let properties = section.properties();
+            let columns = properties.columns.clone().map(|mut columns| {
+                columns.equal_width = columns.equal_width.filter(|equal| !equal);
+                columns
+            });
+            format!(
+                "{:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+                properties.section_type.unwrap_or(ST_SectionType::NextPage),
+                properties
+                    .orientation
+                    .unwrap_or(ST_PageOrientation::Portrait),
+                properties.page_width.zip(properties.page_height),
+                section.margins(),
+                properties.gutter,
+                properties.header_distance.zip(properties.footer_distance),
+                columns,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn rtf_round_trip_keeps_the_layout_of_each_section() {
+    let doc = crate::support::doc_with_body(concat!(
+        r#"<w:p><w:r><w:t>title</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>"#,
+        r#"<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567" w:gutter="0"/>"#,
+        r#"</w:sectPr></w:pPr></w:p>"#,
+        r#"<w:p><w:r><w:t>two columns</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:sectPr><w:type w:val="continuous"/><w:pgSz w:w="11906" w:h="16838"/>"#,
+        r#"<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567" w:gutter="0"/>"#,
+        r#"<w:cols w:num="2" w:space="425" w:sep="1"/></w:sectPr></w:pPr><w:r><w:t>end of two</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>landscape</w:t></w:r></w:p>"#,
+        r#"<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>"#,
+        r#"<w:pgMar w:top="720" w:right="1440" w:bottom="720" w:left="1440" w:header="720" w:footer="720" w:gutter="360"/>"#,
+        r#"<w:cols w:num="2" w:equalWidth="0"><w:col w:w="8000" w:space="720"/><w:col w:w="4240"/></w:cols>"#,
+        r#"</w:sectPr>"#,
+    ));
+    let written = doc.to_rtf_bytes().unwrap();
+    assert!(
+        !written
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("section")),
+        "{:?}",
+        written.diagnostics
+    );
+    let rtf = String::from_utf8(written.bytes).unwrap();
+    // The document's page is the first section's; each section restates its own.
+    assert!(rtf.contains(r"\paperw11906\paperh16838\margl1134"), "{rtf}");
+    assert!(rtf.contains(r"\sect"), "{rtf}");
+    assert!(rtf.contains(r"\sectd\sbknone\pgwsxn11906"), "{rtf}");
+    assert!(rtf.contains(r"\cols2\colsx425\linebetcol"), "{rtf}");
+    assert!(
+        rtf.contains(r"\colno1\colw8000\colsr720\colno2\colw4240"),
+        "{rtf}"
+    );
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
+    assert_eq!(section_layouts(&read), section_layouts(&doc));
+    assert_eq!(texts(&read), texts(&doc));
+}
+
+#[test]
+fn rtf_import_reads_sections_as_word_writes_them() {
+    // The document's page in the header, `\sectd` before the body, and a
+    // section ended by `\sect` in a run group, the next one continuous in
+    // two columns.
+    let rtf = br"{\rtf1\ansi\deff0{\fonttbl{\f0 Calibri;}}
+\paperw11906\paperh16838\margl1134\margr1134\margt1134\margb1134\gutter0\ltrsect
+\widowctrl\sectd \ltrsect\linex0\endnhere\sectlinegrid360\sectdefaultcl\sftnbj
+\pard\plain title\par
+\pard\plain {\insrsid1 \sect }\sectd \ltrsect\sbknone\linex0\cols2\colsx425\endnhere\sftnbj
+\pard\plain body\par}";
+    let read = Document::from_rtf_bytes(rtf).unwrap();
+    assert!(
+        !read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("page geometry")),
+        "{:?}",
+        read.diagnostics
+    );
+    let doc = read.document;
+    assert_eq!(texts(&doc), ["title", "", "body"]);
+    let sections: Vec<_> = doc.sections().collect();
+    assert_eq!(sections.len(), 2);
+    for section in &sections {
+        assert_eq!(
+            section.page_size(),
+            Some((Length::twips(11906), Length::twips(16838)))
+        );
+        assert_eq!(
+            section.margins().map(|margins| margins.0),
+            Some(Length::twips(1134))
+        );
+    }
+    assert_eq!(sections[0].columns(), None);
+    assert_eq!(sections[1].break_type(), Some(ST_SectionType::Continuous));
+    assert_eq!(sections[1].columns(), Some((2, Length::twips(425))));
+}
+
+#[test]
+fn rtf_export_reports_the_section_parts_it_drops() {
+    let mut doc = corpus_doc("word/paper.docx");
+    doc.section_mut(0).unwrap().set_different_first_page(true);
+    let written = doc.to_rtf_bytes().unwrap();
+    let messages: Vec<&str> = written
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert!(
+        messages.contains(&"section first-page setting was dropped during RTF export"),
+        "{messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("paragraph section properties")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn the_word_paper_keeps_its_sections_through_rtf() {
+    let doc = corpus_doc("word/paper.docx");
+    assert!(
+        doc.sections()
+            .any(|section| section.columns().is_some_and(|(count, _)| count == 2)),
+        "{:?}",
+        section_layouts(&doc)
+    );
+    let rtf = doc.to_rtf_bytes().unwrap().bytes;
+    let read = Document::from_rtf_bytes(&rtf).unwrap().document;
+    assert_eq!(section_layouts(&read), section_layouts(&doc));
+}
