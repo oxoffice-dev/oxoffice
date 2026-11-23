@@ -1,21 +1,28 @@
 //! The list numbering of a paragraph as the comparison keys it.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use oxoffice_docx_oxml::properties::CT_PPr;
 use oxoffice_docx_oxml::styles::CT_Styles;
 
 /// The styles of both inputs, to read the level a paragraph `w:numId`
-/// without `w:ilvl` shows.
+/// without `w:ilvl` shows, and the levels read so far by paragraph style
+/// and `w:numId`: each check and signature of a comparison reads them again.
 pub(super) struct NumberingLevels {
     styles: [Arc<CT_Styles>; 2],
+    agreed: RefCell<HashMap<StyleNumbering, Option<u32>>>,
 }
+
+/// A paragraph's style id and `w:numId`.
+type StyleNumbering = (Option<String>, u32);
 
 impl NumberingLevels {
     pub(super) fn new(original: &Arc<CT_Styles>, edited: &Arc<CT_Styles>) -> Self {
         Self {
             styles: [original.clone(), edited.clone()],
+            agreed: RefCell::default(),
         }
     }
 
@@ -29,6 +36,10 @@ impl NumberingLevels {
         if properties.num_ilvl.is_some() {
             return None;
         }
+        let key = (properties.style_id.clone(), num_id);
+        if let Some(level) = self.agreed.borrow().get(&key) {
+            return *level;
+        }
         let direct = CT_PPr {
             style_id: properties.style_id.clone(),
             num_id: Some(num_id),
@@ -37,7 +48,9 @@ impl NumberingLevels {
         let [original, edited] = [&self.styles[0], &self.styles[1]].map(|styles| {
             crate::document::effective_numbering_reference(styles, &direct).map(|(_, level)| level)
         });
-        original.filter(|_| original == edited)
+        let level = original.filter(|_| original == edited);
+        self.agreed.borrow_mut().insert(key, level);
+        level
     }
 
     /// A paragraph's numbering as signatures compare it: its `(w:numId,

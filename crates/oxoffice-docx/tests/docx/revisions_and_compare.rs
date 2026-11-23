@@ -4088,14 +4088,29 @@ fn a_list_item_without_a_level_keeps_that_form_through_a_tracked_property_change
         .paragraph_mut(0)
         .unwrap()
         .set_alignment(Alignment::Center);
-    let mut doc = redline(numbered_items(""), &edited);
-    assert_eq!(kinds(&doc), [RevisionKind::ParagraphPropertyChange]);
-    let mut back = rejected(&mut doc);
-    assert!(!saved_main_xml(&mut back).contains("<w:ilvl"));
-    assert_eq!(
-        accepted(&mut doc).paragraph(0).unwrap().alignment(),
-        Some(Alignment::Center)
-    );
+    // Both routes: compared by word, and run by run.
+    for granularity in [ComparisonGranularity::Word, ComparisonGranularity::Run] {
+        let mut doc = numbered_items("");
+        let options = ComparisonOptions {
+            granularity,
+            ..Default::default()
+        };
+        let diagnostics = doc
+            .compare_with_options(&edited, AUTHOR, DATE, &options)
+            .unwrap();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut doc = reopen(&mut doc);
+        assert_eq!(kinds(&doc), [RevisionKind::ParagraphPropertyChange]);
+        let mut back = rejected(&mut doc);
+        assert!(
+            !saved_main_xml(&mut back).contains("<w:ilvl"),
+            "{granularity:?}"
+        );
+        assert_eq!(
+            accepted(&mut doc).paragraph(0).unwrap().alignment(),
+            Some(Alignment::Center)
+        );
+    }
 }
 
 #[test]
