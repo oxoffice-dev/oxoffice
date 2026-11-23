@@ -1,6 +1,6 @@
-"""Text the bundled fonts cannot draw: a document takes a system font for it by default and names it; with
+"""Text the bundled fonts cannot draw: a document or a deck takes a system font for it by default and names it; with
 bundled_fonts_only=True, or when no system font has it, it is drawn as empty boxes and the diagnostics say which script
-and how to get it drawn. A deck takes a font file. The same messages as the Rust facade and the CLI."""
+and how to get it drawn. The same messages as the Rust facade and the CLI."""
 
 import pytest
 
@@ -56,16 +56,38 @@ def test_system_fonts_and_bundled_fonts_only_exclude_each_other():
         oxdocx.Document().to_pdf(system_fonts=True, bundled_fonts_only=True)
 
 
-def test_a_deck_names_the_scripts_it_draws_as_boxes():
-    _, messages = oxpptx.Presentation(CORPUS / "powerpoint" / "multilingual.pptx").to_pdf_with_diagnostics()
+def test_a_bundled_only_deck_names_the_scripts_it_draws_as_boxes():
+    deck = oxpptx.Presentation(CORPUS / "powerpoint" / "multilingual.pptx")
+    _, messages = deck.to_pdf_with_diagnostics(bundled_fonts_only=True)
     found = boxes(messages)
     assert any(message.startswith("Chinese, Japanese or Korean ideograph (Han)") for message in found), messages
-    assert all(all(way in message for way in DECK_WAYS_OUT) for message in found), found
+    assert all(all(way in message for way in WAYS_OUT + DECK_WAYS_OUT) for message in found), found
     assert not any("system_fonts" in message for message in found), found
+
+
+def test_a_deck_takes_a_system_font_or_says_none_was_found():
+    # Depends on the machine's fonts, so either branch passes, each with its own line.
+    deck = oxpptx.Presentation(CORPUS / "powerpoint" / "multilingual.pptx")
+    for render in (deck.to_pdf_with_diagnostics, deck.to_notes_pdf_with_diagnostics):
+        _, messages = render()
+        han = [message for message in messages if message.startswith("Chinese, Japanese or Korean ideograph (Han)")]
+        assert han, messages
+        for message in han:
+            assert "is drawn with the system font '" in message or (
+                "drawn as empty boxes" in message and "no system font on this machine has them" in message
+            ), message
+
+
+def test_a_deck_the_bundled_fonts_draw_is_the_same_in_both_modes():
+    deck = oxpptx.Presentation(CORPUS / "powerpoint" / "deck.pptx")
+    pdf, messages = deck.to_pdf_with_diagnostics()
+    assert not any("system font '" in message for message in messages), messages
+    assert pdf == deck.to_pdf(bundled_fonts_only=True)
+    assert deck.render_slide_to_png(0, 48.0) == deck.render_slide_to_png(0, 48.0, bundled_fonts_only=True)
 
 
 def test_a_deck_notes_export_names_the_boxes_once():
     deck = oxpptx.Presentation(CORPUS / "powerpoint" / "multilingual.pptx")
-    _, messages = deck.to_notes_pdf_with_diagnostics()
+    _, messages = deck.to_notes_pdf_with_diagnostics(bundled_fonts_only=True)
     han = [message for message in boxes(messages) if message.startswith("Chinese, Japanese or Korean ideograph")]
     assert len(han) == 1, messages

@@ -5,7 +5,8 @@ built by the `oxoffice-cli` crate.
 
 `oxoffice-pptx-cli` makes complete PPTX workflows available to shell scripts. It
 inspects and extracts deck content, validates package invariants, compares or
-replaces text, and produces deterministic fixed output.
+replaces text, and renders to PDF and images, the same on every machine with
+`--bundled-fonts-only`.
 
 ## Capabilities
 
@@ -18,7 +19,7 @@ replaces text, and produces deterministic fixed output.
 - Selected-slide rendering, thumbnails, text diff, replacement, and validation.
 - Modern comment thread listing, addition, replies, resolution, and removal.
 - Scriptable output covers slide order, notes, comments, recursive group
-  content, relationship-backed media, and deterministic rendering diagnostics.
+  content, relationship-backed media, and rendering diagnostics.
 
 `oxoffice pptx validate FILE` validates the stored package through its original XML
 bytes: XML 1.0 lexical and character faults, one complete root per XML part
@@ -119,6 +120,12 @@ neither a clock nor a random source. `resolve` takes a thread id. `remove`
 takes a thread id, which also removes its replies, or a reply id. Every
 mutation requires `-o/--output`, refuses an existing output, publishes only a
 complete presentation, and supports a schema-1 record through `--json`.
+
+`convert`, `render`, and `thumbnail` draw what the deck's embedded fonts, the
+`--font-dir` fonts and the bundled fonts lack, such as most Chinese, Japanese
+and Korean text, with a system font found by glyph coverage, which a line on
+stderr names; `--bundled-fonts-only` never takes one, so the output is the
+same on every machine and such text is drawn as empty boxes.
 
 `convert`, `render`, and `thumbnail` refuse an output file that already exists
 unless `--force` is given. Even with `--force` they refuse their own input file

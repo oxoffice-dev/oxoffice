@@ -11,8 +11,8 @@ use oxoffice_cli_support::{
 use oxoffice_pdf::{RasterFormat, RasterOptions, RasterOutput};
 use oxoffice_pptx::{
     AutofitMode, Comment, CommentAuthor, CommentReply, HeaderFooter, HeaderFooterDate,
-    HeaderFooterFlags, Presentation, ShapeKind, ShapeRef, SlideRef, TextFrameRef, TextParagraphRef,
-    TextRunRef, Theme, ThemeFonts,
+    HeaderFooterFlags, PptxRenderOptions, Presentation, ShapeKind, ShapeRef, SlideRef,
+    TextFrameRef, TextParagraphRef, TextRunRef, Theme, ThemeFonts,
 };
 use serde_json::{Value, json};
 
@@ -24,9 +24,16 @@ const THUMBNAIL_WIDTH: f64 = 320.0;
 
 pub struct ImageOptions<'a> {
     pub font_dir: Option<&'a Path>,
+    /// Never a system font, as `PptxRenderOptions::bundled_fonts_only`.
+    pub bundled_fonts_only: bool,
     pub slides: Option<&'a str>,
     pub quality: u8,
     pub transparent: bool,
+}
+
+/// The render options the image and PDF commands ask for.
+fn render_options(image: &ImageOptions<'_>) -> PptxRenderOptions {
+    PptxRenderOptions::default().with_bundled_fonts_only(image.bundled_fonts_only)
 }
 
 pub fn inspect(file: &Path, as_json: bool) -> Result<()> {
@@ -450,7 +457,8 @@ pub fn convert(
     let mut stdout = io::stdout().lock();
     match format {
         "pdf" => {
-            let (bytes, diagnostics) = presentation.to_pdf_with_diagnostics(&font_refs)?;
+            let (bytes, diagnostics) =
+                presentation.to_pdf_with_diagnostics(&font_refs, render_options(&image))?;
             stage_and_publish(&[(output.clone(), bytes)], force)?;
             write_render_diagnostics(&diagnostics)?;
             writeln!(stdout, "Written to {}", output.display())?;
@@ -459,7 +467,8 @@ pub fn convert(
             if presentation.is_empty() {
                 return Err("cannot convert a presentation with no slides to an image".into());
             }
-            let (_, layout) = presentation.render_deterministic_with_fonts(&font_refs)?;
+            let (_, layout) =
+                presentation.render_with_options(&font_refs, render_options(&image))?;
             if layout.pages.len() != presentation.len() {
                 return Err(format!(
                     "rendered {} image pages for {} slides",
@@ -707,7 +716,7 @@ pub fn render(
     let selected = selected_zero_based_slides(presentation.len(), image.slides)?;
     let output = output.unwrap_or_else(|| Path::new("."));
     let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-    let (_, layout) = presentation.render_deterministic_with_fonts(&font_refs)?;
+    let (_, layout) = presentation.render_with_options(&font_refs, render_options(&image))?;
     for index in &selected {
         let page = layout
             .pages
@@ -763,6 +772,7 @@ pub fn thumbnail(
     output: Option<&Path>,
     force: bool,
     font_dir: Option<&Path>,
+    bundled_fonts_only: bool,
 ) -> Result<()> {
     let fonts = font_dir
         .map(oxoffice_layout::FontFile::from_dir)
@@ -780,7 +790,10 @@ pub fn thumbnail(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| default_output_path(file, "png"));
     ensure_output_paths_allowed(std::slice::from_ref(&output), file, force)?;
-    let (_, layout) = presentation.render_deterministic_with_fonts(&font_refs)?;
+    let (_, layout) = presentation.render_with_options(
+        &font_refs,
+        PptxRenderOptions::default().with_bundled_fonts_only(bundled_fonts_only),
+    )?;
     let page = layout
         .pages
         .first()
@@ -793,6 +806,7 @@ pub fn thumbnail(
     let png = oxoffice_pdf::render_page_to_png(&layout, 0, dpi)
         .ok_or("slide one did not rasterize for thumbnail")?;
     stage_and_publish(&[(output.clone(), png)], force)?;
+    write_render_diagnostics(&layout.diagnostics)?;
     writeln!(io::stdout(), "Written to {}", output.display())?;
     Ok(())
 }

@@ -124,14 +124,12 @@ fn text_drawn_as_empty_boxes_is_named_with_the_way_out() {
         ("pptx", corpus("powerpoint/multilingual.pptx")),
     ] {
         let path = scratch(&format!("boxes-{family}.pdf"));
-        let mut command = Command::new(env!("CARGO_BIN_EXE_oxoffice"));
-        command.args([family, "convert"]).arg(&input);
-        // A Word render takes a system font for what the bundled fonts lack
-        // unless told otherwise; a deck uses its own and the bundled fonts.
-        if family == "docx" {
-            command.arg("--bundled-fonts-only");
-        }
-        let output = command
+        // A render takes a system font for what the bundled fonts lack
+        // unless told otherwise.
+        let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+            .args([family, "convert"])
+            .arg(&input)
+            .arg("--bundled-fonts-only")
             .args(["--to", "pdf", "--force", "-o"])
             .arg(&path)
             .output()
@@ -148,41 +146,92 @@ fn text_drawn_as_empty_boxes_is_named_with_the_way_out() {
             han.contains("drawn as empty boxes") && han.contains("--font-dir"),
             "{family}: {han}"
         );
-        if family == "docx" {
-            assert!(han.contains("drop --bundled-fonts-only"), "{han}");
-        } else {
+        assert!(han.contains("drop --bundled-fonts-only"), "{han}");
+        if family == "pptx" {
             assert!(!han.contains("--system-fonts"), "{han}");
         }
     }
 }
 
-// What the default Word render draws depends on the machine's fonts: the Han
-// text of the minutes is drawn with a system font that the output names, or
-// drawn as boxes with a line saying no system font has it.
+// What the default render draws depends on the machine's fonts: the Han text
+// of the minutes and of the deck is drawn with a system font that the output
+// names, or drawn as boxes with a line saying no system font has it.
 #[test]
-fn a_word_render_names_the_system_font_it_took_or_says_none_was_found() {
-    let path = scratch("fallback-docx.pdf");
-    let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
-        .args(["docx", "convert"])
-        .arg(corpus("word/minutes.docx"))
-        .args(["--to", "pdf", "--force", "-o"])
-        .arg(&path)
-        .output()
-        .expect("oxoffice runs");
-    assert!(output.status.success(), "{}", stderr(&output));
-    let stderr = stderr(&output);
-    let han: Vec<&str> = stderr
-        .lines()
-        .filter(|line| line.starts_with("Chinese, Japanese or Korean ideograph (Han) text"))
-        .collect();
-    assert!(!han.is_empty(), "{stderr}");
-    for line in han {
-        assert!(
-            line.contains("is drawn with the system font '")
-                || (line.contains("drawn as empty boxes")
-                    && line.contains("no system font on this machine has them")),
-            "{line}"
-        );
+fn a_render_names_the_system_font_it_took_or_says_none_was_found() {
+    for (family, input) in [
+        ("docx", corpus("word/minutes.docx")),
+        ("pptx", corpus("powerpoint/multilingual.pptx")),
+    ] {
+        let path = scratch(&format!("fallback-{family}.pdf"));
+        let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+            .args([family, "convert"])
+            .arg(&input)
+            .args(["--to", "pdf", "--force", "-o"])
+            .arg(&path)
+            .output()
+            .expect("oxoffice runs");
+        assert!(output.status.success(), "{family}: {}", stderr(&output));
+        let stderr = stderr(&output);
+        let han: Vec<&str> = stderr
+            .lines()
+            .filter(|line| line.starts_with("Chinese, Japanese or Korean ideograph (Han) text"))
+            .collect();
+        assert!(!han.is_empty(), "{family}: {stderr}");
+        for line in han {
+            assert!(
+                line.contains("is drawn with the system font '")
+                    || (line.contains("drawn as empty boxes")
+                        && line.contains("no system font on this machine has them")),
+                "{family}: {line}"
+            );
+        }
+    }
+}
+
+// The deck's image commands take the same switch and say the same: with it
+// the deck's Han text is boxes that name the switch; without it, it is drawn
+// with a system font that a line names, or boxes on a machine with none.
+#[test]
+fn the_deck_image_commands_take_the_bundled_fonts_only_switch() {
+    for command in ["render", "thumbnail"] {
+        for bundled in [true, false] {
+            let dir = scratch(&format!("deck-{command}-{bundled}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut run = Command::new(env!("CARGO_BIN_EXE_oxoffice"));
+            run.args(["pptx", command])
+                .arg(corpus("powerpoint/multilingual.pptx"));
+            if bundled {
+                run.arg("--bundled-fonts-only");
+            }
+            let output = run
+                .arg("-o")
+                .arg(if command == "render" {
+                    dir.clone()
+                } else {
+                    dir.join("thumb.png")
+                })
+                .output()
+                .expect("oxoffice runs");
+            assert!(output.status.success(), "{command}: {}", stderr(&output));
+            let stderr = stderr(&output);
+            let han = stderr
+                .lines()
+                .find(|line| line.starts_with("Chinese, Japanese or Korean ideograph (Han) text"))
+                .unwrap_or_else(|| panic!("{command} {bundled}: {stderr}"));
+            if bundled {
+                assert!(
+                    han.contains("drop --bundled-fonts-only"),
+                    "{command}: {han}"
+                );
+            } else {
+                assert!(
+                    han.contains("is drawn with the system font '")
+                        || han.contains("no system font on this machine has them"),
+                    "{command}: {han}"
+                );
+            }
+        }
     }
 }
 

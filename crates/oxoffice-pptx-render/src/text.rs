@@ -391,6 +391,41 @@ fn push_displayed_text(
     Ok(())
 }
 
+/// The characters of `text` that draw a glyph of their own: a tab, a space
+/// or a variation selector is no reason to look for another face.
+fn drawn_characters(text: &str) -> String {
+    text.chars()
+        .filter(|character| oxoffice_layout::draws_a_glyph(*character))
+        .collect()
+}
+
+/// Whether `font_id` draws any of the characters of `text` that draw a
+/// glyph; `true` for text with none.
+fn draws_any(
+    font_manager: &FontManager,
+    font_id: oxoffice_layout::FontId,
+    text: &str,
+) -> Result<bool, LayoutError> {
+    let drawn = drawn_characters(text);
+    Ok(drawn.is_empty()
+        || font_manager
+            .shape_text(font_id, &drawn, DEFAULT_FONT_SIZE)?
+            .glyph_ids
+            .iter()
+            .any(|glyph| *glyph != 0))
+}
+
+/// Whether a shaped run's face lacks a character of it that draws a glyph.
+fn lacks_a_glyph(font_manager: &FontManager, segment: &TextSegment) -> bool {
+    segment.glyph_ids.contains(&0) && {
+        let drawn = drawn_characters(&segment.text);
+        !drawn.is_empty()
+            && font_manager
+                .shape_text(segment.font_id, &drawn, segment.font_size)
+                .is_ok_and(|shaped| shaped.glyph_ids.contains(&0))
+    }
+}
+
 fn shape_run(
     font_manager: &mut FontManager,
     text: &str,
@@ -403,10 +438,27 @@ fn shape_run(
     };
     let font_size = style.font_size.unwrap_or(DEFAULT_FONT_SIZE);
     let typeface = typeface_for_text(style, &rendered_text);
-    let font_id =
-        font_manager.resolve_font_for_text(typeface, style.bold, style.italic, &rendered_text)?;
+    // A run keeps the face of its family when that face draws part of it:
+    // the glyphs it lacks are left as .notdef, which sends the paragraph to
+    // the grapheme split, where only those graphemes look for a face, a
+    // system one included. A face picked for the whole run would take the
+    // text the family draws too, and draw it as boxes when it has no Latin.
+    // A run the family draws none of takes a face that covers it.
+    let primary = font_manager.resolve_font(typeface, style.bold, style.italic)?;
+    let mut font_id = primary;
+    let mut shaped = font_manager.shape_text(primary, &rendered_text, font_size)?;
+    if shaped.glyph_ids.contains(&0) && !draws_any(font_manager, primary, &rendered_text)? {
+        font_id = font_manager.resolve_font_for_text(
+            typeface,
+            style.bold,
+            style.italic,
+            &rendered_text,
+        )?;
+        if font_id != primary {
+            shaped = font_manager.shape_text(font_id, &rendered_text, font_size)?;
+        }
+    }
     let metrics = font_manager.metrics(font_id, font_size)?;
-    let mut shaped = font_manager.shape_text(font_id, &rendered_text, font_size)?;
     if let Some(spacing) = style.spacing {
         for advance in &mut shaped.advances {
             *advance += spacing;
@@ -783,7 +835,11 @@ fn shape_paragraphs(
             let legacy_items = inline_items_with_caps(font_manager, &mut shaping_cache, paragraph, page_number, &mut requests, &mut contexts)?;
             let uses_rich_text = requests.iter().any(|(small, all, _, _)| *small || *all) || base_direction != oxoffice_layout::TextDirection::Auto
                 || legacy_items.iter().any(|item| {
-                    matches!(item, InlineItem::Text(segment) if needs_multilingual_layout(&segment.text))
+                    // A run its face cannot wholly draw is split too, so each
+                    // grapheme it lacks finds a face of its own and the rest
+                    // keeps the run's face.
+                    matches!(item, InlineItem::Text(segment)
+                        if needs_multilingual_layout(&segment.text) || lacks_a_glyph(font_manager, segment))
                 });
             let mut items = if uses_rich_text {
                 shape_multilingual_items_preserving_controls(
@@ -955,17 +1011,18 @@ fn shape_multilingual_items_preserving_controls(
     Ok(items)
 }
 
+/// Whether a run is shaped by grapheme, each taking a face that draws it.
+///
+/// Every East Asian character is, Hangul and the fullwidth forms included,
+/// so that a face found for the characters the bundled fonts lack draws only
+/// those, and the text beside them keeps its bundled face.
 fn needs_multilingual_layout(text: &str) -> bool {
     text.chars().any(|character| {
-        matches!(
-            character as u32,
-            0x0590..=0x08ff
-                | 0x0900..=0x097f
-                | 0x0e00..=0x0e7f
-                | 0x3000..=0x30ff
-                | 0x3400..=0x9fff
-                | 0xf900..=0xfaff
-        )
+        is_east_asian_character(character)
+            || matches!(
+                character as u32,
+                0x0590..=0x08ff | 0x0900..=0x097f | 0x0e00..=0x0e7f
+            )
     })
 }
 
@@ -1735,4 +1792,41 @@ pub(super) fn oriented_content_box(
             degrees, center_x, center_y,
         )),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ResolvedRunStyle, lacks_a_glyph, needs_multilingual_layout, shape_run};
+    use oxoffice_layout::FontManager;
+
+    fn family(fonts: &FontManager, id: oxoffice_layout::FontId) -> String {
+        fonts.font_data(id).unwrap().family
+    }
+
+    // Only characters that draw a glyph count: a tab or a variation selector
+    // neither sends a run to the grapheme split nor keeps a face that draws
+    // none of the rest.
+    #[test]
+    fn characters_that_draw_nothing_never_choose_a_face() {
+        let mut fonts = FontManager::new_deterministic().unwrap();
+        let style = ResolvedRunStyle::default();
+        let tabbed = shape_run(&mut fonts, "Q1\tQ2", &style).unwrap();
+        assert!(!lacks_a_glyph(&fonts, &tabbed));
+        let check = shape_run(&mut fonts, "\u{2611}\u{fe0f}", &style).unwrap();
+        assert_eq!(family(&fonts, check.font_id), "Noto Sans Symbols 2");
+    }
+
+    #[test]
+    fn every_east_asian_run_is_shaped_by_grapheme() {
+        for text in [
+            "2024\u{b144} \u{b9e4}\u{cd9c}",
+            "\u{ff21}\u{ff22}",
+            "\u{8ba1}",
+            "\u{3042}",
+            "\u{20000}",
+        ] {
+            assert!(needs_multilingual_layout(text), "{text}");
+        }
+        assert!(!needs_multilingual_layout("Revenue 2024"));
+    }
 }
