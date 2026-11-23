@@ -287,11 +287,13 @@ CELL_CONTENT_OFF_THE_LOCAL_ROUTE = {
                      "</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>",
                      "bare"),
 }
+# The handle of what the cell holds, and how it reads.
+HELD = {
+    "hyperlink": (lambda doc, cell: doc.hyperlinks[0], lambda link: link.text, " link"),
+    "nested table": (lambda doc, cell: cell.tables[0], lambda table: table.cell(0, 0).text, "inner"),
+}
 
 
-# Fails today: a first w:tcPr in a cell holding a hyperlink or a table is published from a candidate whose owners
-# are not relocated, so every handle of the document goes stale, the table's and the body paragraphs' too. Issue: #320
-@pytest.mark.xfail(strict=True, raises=oxdocx.StaleElementError)
 @pytest.mark.parametrize("content", CELL_CONTENT_OFF_THE_LOCAL_ROUTE)
 def test_a_first_property_of_a_cell_holding_a_hyperlink_or_a_table_keeps_the_handles_taken_before(content):
     first_cell, text = CELL_CONTENT_OFF_THE_LOCAL_ROUTE[content]
@@ -300,7 +302,9 @@ def test_a_first_property_of_a_cell_holding_a_hyperlink_or_a_table_keeps_the_han
     cell = table.cell(0, 0)
     paragraph = cell.paragraphs[0]
     after = doc.paragraphs[1]
-    assert (cell.shading, paragraph.text) == (None, text)
+    take, read_held, held_text = HELD[content]
+    held = take(doc, cell)
+    assert (cell.shading, paragraph.text, read_held(held)) == (None, text, held_text)
 
     try:
         cell.shading = "FFFF00"
@@ -311,6 +315,27 @@ def test_a_first_property_of_a_cell_holding_a_hyperlink_or_a_table_keeps_the_han
     assert (saved.cell(0, 0).shading, saved.cell(0, 0).paragraphs[0].text) == (RGBColor(0xFF, 0xFF, 0x00), text)
 
     assert cell.shading == RGBColor(0xFF, 0xFF, 0x00)
-    assert (paragraph.text, after.text) == (text, "after")
+    assert (paragraph.text, after.text, read_held(held)) == (text, "after", held_text)
     assert table.cell(0, 1).shading is None
 
+
+@pytest.mark.parametrize("content", CELL_CONTENT_OFF_THE_LOCAL_ROUTE)
+def test_grid_widths_on_cells_holding_a_hyperlink_or_a_table_keep_the_handles_taken_before(content):
+    """The first w:tcPr of a cell shifts what the cell holds, a nested table or a hyperlink's paragraph too."""
+    first_cell, text = CELL_CONTENT_OFF_THE_LOCAL_ROUTE[content]
+    doc = document_with_body(bare_cells(first_cell))
+    table = doc.tables[0]
+    cell = table.cell(0, 0)
+    paragraph = cell.paragraphs[0]
+    after = doc.paragraphs[1]
+    take, read_held, held_text = HELD[content]
+    held = take(doc, cell)
+
+    table.grid_widths = [Pt(100), Pt(80)]
+
+    assert (cell.width, table.cell(0, 1).width) == (Pt(100), Pt(80))
+    assert (paragraph.text, after.text, read_held(held)) == (text, "after", held_text)
+    paragraph.runs[0].bold = True
+    saved = oxdocx.Document.from_bytes(doc.to_bytes()).tables[0]
+    assert saved.cell(0, 0).width == Pt(100)
+    assert saved.cell(0, 0).paragraphs[0].runs[0].bold is True

@@ -161,17 +161,23 @@ fn word_route_key(
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum OwnerPath {
+    Items(Vec<usize>),
+    Depth(usize),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum PropertyOwnerKey {
     Table {
         story_kind: oxoffice_docx::StoryKind,
         part_name: String,
-        path: Vec<usize>,
+        path: OwnerPath,
         cell: Option<(usize, usize)>,
     },
     Cell {
         story_kind: oxoffice_docx::StoryKind,
         part_name: String,
-        path: Vec<usize>,
+        path: OwnerPath,
         row: usize,
         column: usize,
         parent_cell: Option<(usize, usize)>,
@@ -199,7 +205,7 @@ pub(super) enum PropertyOwnerKey {
     Hyperlink {
         story_kind: oxoffice_docx::StoryKind,
         part_name: String,
-        path: Vec<usize>,
+        path: OwnerPath,
         index: usize,
     },
 }
@@ -217,6 +223,18 @@ fn containing_cell(
     None
 }
 
+/// The path of an owner in its property key. In a cell story, its depth
+/// only, as for the cell's paragraphs and runs: a first `w:tcPr` written in
+/// the cell shifts the raw item indices of what the cell holds (a nested
+/// table, the paragraph of a hyperlink), and the owners keep their order.
+fn owner_path(location: &oxoffice_docx::ContentLocation) -> OwnerPath {
+    if location.story().kind() == oxoffice_docx::StoryKind::TableCell {
+        OwnerPath::Depth(location.index_path().len())
+    } else {
+        OwnerPath::Items(location.index_path().to_vec())
+    }
+}
+
 fn story_part(location: &oxoffice_docx::ContentLocation) -> (oxoffice_docx::StoryKind, String) {
     let story = location.story();
     (story.kind(), story.part_name().to_owned())
@@ -231,7 +249,7 @@ pub(super) fn property_owner_key(addresses: &[WordOwnerAddress], index: usize) -
             PropertyOwnerKey::Table {
                 story_kind,
                 part_name,
-                path: location.index_path().to_vec(),
+                path: owner_path(location),
                 cell,
             }
         }
@@ -245,7 +263,7 @@ pub(super) fn property_owner_key(addresses: &[WordOwnerAddress], index: usize) -
             PropertyOwnerKey::Cell {
                 story_kind,
                 part_name,
-                path: table.index_path().to_vec(),
+                path: owner_path(table),
                 row: *row,
                 column: *column,
                 parent_cell: cell,
@@ -295,7 +313,7 @@ pub(super) fn property_owner_key(addresses: &[WordOwnerAddress], index: usize) -
             PropertyOwnerKey::Hyperlink {
                 story_kind,
                 part_name,
-                path: location.index_path().to_vec(),
+                path: owner_path(location),
                 index: *index,
             }
         }
