@@ -268,8 +268,8 @@ impl Document {
 /// Text is the content of `w:t`, with `w:tab` and `w:ptab` as a tab, `w:br`
 /// and `w:cr` as a line break and `w:noBreakHyphen` as a hyphen, as
 /// `Paragraph::text` reads them, and the base of a
-/// ruby, which `Paragraph::text` also reads when the ruby is a child of the
-/// paragraph, but leaves out with its guide when Word writes it in a run.
+/// ruby, which `Paragraph::text` also reads, in a run as Word writes it or as
+/// a child of the paragraph.
 /// Left out: tracked
 /// deletions and moved-away text, the properties (where a tracked style
 /// change keeps the old style), the phonetic guide of a ruby (`w:rt`), the

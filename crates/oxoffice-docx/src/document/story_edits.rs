@@ -45,6 +45,7 @@ impl Document {
         let result = edit(&mut Paragraph {
             inner: &mut candidate,
         })?;
+        self.localize_run_styles(&mut candidate);
         let mut fragment = ContentFragment::paragraph(candidate.clone())?;
         reject_section_owning_content_fragment(&fragment)?;
         let qualified = (|| -> Option<bool> {
@@ -141,6 +142,9 @@ impl Document {
         let result = edit(&mut Paragraph {
             inner: &mut paragraph,
         })?;
+        // `Paragraph`'s adders name built-in styles by their English id; a
+        // localized file names them otherwise.
+        self.localize_run_styles(&mut paragraph);
         let mut fragment = ContentFragment::paragraph(paragraph)?;
         // This fragment is rebuilt from the checked paragraph of this same owner.
         // Keep relationship admission scoped to that owner, including newly
@@ -350,7 +354,7 @@ impl Document {
 
     /// The character style IDs that mark hyperlink text: the built-in
     /// Hyperlink and FollowedHyperlink styles, by ID and by name.
-    fn hyperlink_character_style_ids(&self) -> HashSet<String> {
+    pub(crate) fn hyperlink_character_style_ids(&self) -> HashSet<String> {
         const NAMES: [&str; 2] = ["Hyperlink", "FollowedHyperlink"];
         let mut ids = NAMES.map(str::to_owned).into_iter().collect::<HashSet<_>>();
         ids.extend(

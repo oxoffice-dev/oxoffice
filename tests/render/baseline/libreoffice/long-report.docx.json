@@ -1,8 +1,8 @@
 {
   "file": "libreoffice/long-report.docx",
-  "reason": "each PDF gets its own file identifier and its font subsets a subset tag (#159)",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "b779702848afaffba1d56da54c7c3d63dfc673a57ee9217ae4516616b543e2ed",
-  "outline_and_tags": "ea76886d213b385f944c7d032c1fa70dbbe72387c626a92a176bb067c8556dd1",
+  "outline_and_tags": "c960e754d5deceb09f3a002e95fc307495044bc13794b11d6d780eee9b02520b",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "afe1f77a0f31e7faf27bdfb7824f7678f6ffb716637b09a6111de369e7b79fda", "content": "8109bfe46590ea6e853c0a1f2b887e49992ad9a1f8987ac793b24b67d6d393b1", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

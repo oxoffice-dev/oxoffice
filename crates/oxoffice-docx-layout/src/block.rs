@@ -75,6 +75,12 @@ pub enum AnchoredContent {
         fill: Option<Color>,
         /// Laid-out paragraphs of the shape's text box.
         text: Vec<ParagraphBlock>,
+        /// Whether the shape keeps its extent whatever its text: then the
+        /// lines that do not fit are hidden, whole.
+        fixed_height: bool,
+        /// Space between the shape's edges and its text, in points: left,
+        /// top, right, bottom.
+        insets: [f64; 4],
     },
 }
 
@@ -1959,9 +1965,13 @@ pub struct ParagraphBlock {
     pub heading_level: Option<u32>,
     /// Heading text for outline generation.
     pub heading_text: Option<String>,
-    /// Names of the bookmarks that start in this paragraph, where internal
-    /// links land.
+    /// Names of the bookmarks that start in this paragraph without a marker
+    /// of their own: internal links to them land at its top.
     pub bookmarks: Vec<String>,
+    /// The bookmarks that start in this paragraph at a page target marker,
+    /// by the marker's target id: internal links to them land on the line,
+    /// and at the place, where the marker is drawn.
+    pub bookmark_targets: Vec<(usize, String)>,
     /// Numbering instance and zero-based nesting level for semantic lists.
     pub list: Option<(u32, u8)>,
     /// Logical paragraph node allocated before pagination.
@@ -2152,6 +2162,7 @@ pub fn build_paragraph_block(
         heading_level: None,
         heading_text: None,
         bookmarks: Vec::new(),
+        bookmark_targets: Vec::new(),
         list: None,
         structure_id: None,
         reflow: None,

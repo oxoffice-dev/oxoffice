@@ -827,6 +827,7 @@ impl Document {
             inner: &mut paragraph,
         }
         .add_hyperlink(text, &relationship_id);
+        candidate.localize_run_styles(&mut paragraph);
         paragraph
             .hyperlinks
             .last_mut()
