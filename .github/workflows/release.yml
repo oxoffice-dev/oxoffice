@@ -1,8 +1,7 @@
 name: Release
 
 # Manual only, from main. Give the version, the workflow does the rest:
-#   1. the commit must have a green run of the full checks (nightly.yml);
-#      every build job checks out that commit and sets the version in its
+#   1. every build job checks out the dispatched commit and sets the version in its
 #      own workspace: the `oxoffice` binary, the Python wheels and the sdist
 #      for every platform; each wheel is installed on its platform, opens,
 #      edits and saves four corpus files, and its conda package is built and
@@ -17,8 +16,8 @@ name: Release
 #      prefix.dev, both through trusted publishers
 # Nothing reaches main or the tags before the push of step 2. Merging into
 # main during the run is fine: those merges are not in the release, and the
-# tag holds exactly the tree that was built. No test suite runs here: the
-# full checks ran on the commit. See docs/RELEASE.md,
+# tag holds exactly the tree that was built. No test suite runs here: run
+# the full checks (nightly.yml) on the commit first. See docs/RELEASE.md,
 # specs/2026-11-21-release-pushes-after-the-builds.md and
 # specs/2026-11-22-a-short-release.md.
 
@@ -51,7 +50,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
     env:
       # Read by scripts/release_highlights.py from the environment, never through a shell.
       HIGHLIGHTS: ${{ inputs.highlights }}
@@ -71,28 +69,15 @@ jobs:
           fi
           # Every release opens with its highlights, written for a reader in a hurry.
           python3 scripts/release_highlights.py --check
-          python3 scripts/release_highlights.py store "$RUNNER_TEMP/highlights" >/dev/null
+          python3 scripts/release_highlights.py validate
           if git ls-remote --exit-code origin "refs/tags/v$VERSION" >/dev/null; then
             # The tag is pushed by the last job: if the run that pushed it
             # failed after that, re-run its failed jobs instead.
             echo "::error::tag v$VERSION already exists"; exit 1
           fi
-      # The tests do not run in the release: the full checks (every test
-      # under debug assertions on three platforms, the whole corpus, every
-      # scaling call, the stack measure) must be green on this very commit.
-      - name: Full checks green on this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Filter on each run's own conclusion (its latest attempt): the API's
-          # status=success filter lagged behind a run that had just turned green
-          # (0.3.0, a re-run that had finished 45 s before), and refused it.
-          green="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
-            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length > 0')"
-          if [ "$green" != true ]; then
-            echo "::error::no green Full checks run on $GITHUB_SHA: run nightly.yml on that commit (gh workflow run nightly.yml --ref main if main is still there, about 30 minutes), then re-run the failed jobs of this run"
-            exit 1
-          fi
+      # The tests do not run in the release. Running the full checks
+      # (nightly.yml) on the commit first is the maintainer's habit, not a gate
+      # (docs/RELEASE.md).
 
   cli:
     name: CLI ${{ matrix.target }}
@@ -324,18 +309,17 @@ jobs:
         with:
           version: v2.14.2
           config: cliff.toml
-          args: --tag v${{ inputs.version }}
+          # Only the new release's section, put on top of the existing
+          # changelog: the sections and highlights of earlier releases stay as
+          # they are.
+          args: --unreleased --tag v${{ inputs.version }} --prepend CHANGELOG.md
         env:
-          OUTPUT: CHANGELOG.md
+          OUTPUT: ${{ runner.temp }}/changelog-section.md
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
-      # git-cliff rewrites the whole changelog: every release's highlights are
-      # kept in changelog/highlights/X.Y.Z.md and put back under their version.
       - name: Highlights in the changelog
         if: ${{ !steps.state.outputs.tagged }}
-        run: |
-          python3 scripts/release_highlights.py store changelog/highlights
-          python3 scripts/release_highlights.py apply changelog/highlights CHANGELOG.md
+        run: python3 scripts/release_highlights.py insert CHANGELOG.md
       # cliff.toml's GitHub remote asks the API for the commit the range ends
       # at: main for --unreleased, the tag's commit for --latest. So no range
       # may end at the unpushed version commit: before it exists the notes
@@ -352,9 +336,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
       - name: Highlights in the release notes
-        run: |
-          python3 scripts/release_highlights.py store "$RUNNER_TEMP/highlights"
-          python3 scripts/release_highlights.py apply "$RUNNER_TEMP/highlights" RELEASE_NOTES.md
+        run: python3 scripts/release_highlights.py insert RELEASE_NOTES.md
       - name: Commit and tag
         env:
           TAGGED: ${{ steps.state.outputs.tagged }}
@@ -366,10 +348,9 @@ jobs:
             echo "v$VERSION is already pushed, going on"
           else
             # On the dispatched commit: the tag holds exactly the tree every
-            # job built, plus the version, the changelog and the release's
-            # highlights file. Empty only if that commit already held them all;
-            # still the commit to tag.
-            git add Cargo.toml Cargo.lock CHANGELOG.md changelog/highlights
+            # job built, plus the version and the changelog. Empty only if that
+            # commit already held them all; still the commit to tag.
+            git add Cargo.toml Cargo.lock CHANGELOG.md
             git commit --allow-empty -m "chore(release): v$VERSION"
             git tag -a "v$VERSION" -m "oxoffice v$VERSION"
           fi
@@ -423,8 +404,8 @@ jobs:
             if [ "$main" != "$GITHUB_SHA" ]; then
               git checkout -q --detach "$main"
               if ! git merge -q --no-ff --no-commit "$release"; then
-                # The release commit changes the version files, CHANGELOG.md
-                # and its new changelog/highlights file. Only the release
+                # The release commit changes the version files and
+                # CHANGELOG.md. Only the release
                 # writes CHANGELOG.md; the version files are main's, with the
                 # version set again below.
                 for f in $(git diff --name-only --diff-filter=U); do

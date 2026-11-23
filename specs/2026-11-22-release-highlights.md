@@ -1,6 +1,6 @@
 ---
 date: 2026-11-22
-status: accepted
+status: shipped
 scope: release
 ---
 
@@ -31,6 +31,14 @@ agent, so the step must be part of the workflow, not a habit.
 - Only the `check` and `release` jobs get the highlights in their environment.
 - The lint job runs the script's self test, so a broken script fails a pull
   request, not a release.
+
+## Learnings
+
+- 2026-11-23: storing every release's highlights in `changelog/highlights/X.Y.Z.md`
+  only worked around git-cliff rewriting the whole changelog. git-cliff now
+  prepends the new release's section (`--unreleased --prepend CHANGELOG.md`), so
+  earlier sections, highlights included, are never rewritten; the script only
+  inserts the new release's highlights, and the folder is gone.
 
 ## Links
 

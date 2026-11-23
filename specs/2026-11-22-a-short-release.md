@@ -46,6 +46,13 @@ One pull request: release.yml, `wheel_smoke.py --files`, the nightly stack
 job, docs/RELEASE.md. Checked by the next release; the light check and the
 stack job run locally before the push, and the nightly job by a dispatch.
 
+## Learnings
+
+- 2026-11-23: the nightly gate is removed (maintainer's decision): a docs or
+  release-tooling change after the last green run cost a new 30-40 minute run
+  before every release. Running the full checks on the commit first stays the
+  habit (docs/RELEASE.md), not a check of the release.
+
 ## Links
 
 - [Release wheels run on the main thread before publishing](2026-11-21-release-wheel-smoke-test.md)
