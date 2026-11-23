@@ -206,6 +206,181 @@ fn one_revision_is_accepted_or_rejected_by_its_id() {
     assert_eq!(doc.text(), "AlphaCharlie\n");
 }
 
+/// A run made bold, a paragraph centred, a table given a width and a
+/// section given a page size, each from no properties: Word writes the empty
+/// prior value (`<w:rPr/>`), LibreOffice writes none (`EMPTY` is `></w:...>`
+/// or `/>`).
+fn changes_from_no_properties(word: bool, form: &str) -> String {
+    let attributes = r#"w:author="Ada" w:date="2026-01-01T00:00:00Z""#;
+    let change = |local: &str, id: u32, prior: &str| {
+        if word {
+            format!(r#"<w:{local}Change w:id="{id}" {attributes}><w:{prior}/></w:{local}Change>"#)
+        } else if form == "/>" {
+            format!(r#"<w:{local}Change w:id="{id}" {attributes}/>"#)
+        } else {
+            format!(r#"<w:{local}Change w:id="{id}" {attributes}></w:{local}Change>"#)
+        }
+    };
+    format!(
+        concat!(
+            r#"<w:p><w:r><w:rPr><w:b/>{}</w:rPr><w:t>bolded</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:jc w:val="center"/>{}</w:pPr><w:r><w:t>centred</w:t></w:r></w:p>"#,
+            r#"<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/>{}</w:tblPr>"#,
+            r#"<w:tblGrid><w:gridCol w:w="9000"/></w:tblGrid>"#,
+            r#"<w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+            r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="11906" w:h="16838"/>{}</w:sectPr></w:pPr>"#,
+            r#"<w:r><w:t>sized</w:t></w:r></w:p>"#,
+        ),
+        change("rPr", 1, "rPr"),
+        change("pPr", 2, "pPr"),
+        change("tblPr", 3, "tblPr"),
+        change("sectPr", 4, "sectPr"),
+    )
+}
+
+#[test]
+fn a_property_change_with_no_prior_value_resolves_as_one_from_no_properties() {
+    for form in ["></w:...>", "/>"] {
+        let resolved = |word: bool, accept: bool, id: Option<i32>| {
+            let mut doc = doc_with_body(&changes_from_no_properties(word, form));
+            let count = match (accept, id) {
+                (true, None) => doc.accept_all(),
+                (false, None) => doc.reject_all(),
+                (true, Some(id)) => doc.accept_revision_id(id),
+                (false, Some(id)) => doc.reject_revision_id(id),
+            }
+            .unwrap_or_else(|error| {
+                panic!("{form} word={word} accept={accept} id={id:?}: {error}")
+            });
+            (count, main_part_xml(&mut reopen(&mut doc)))
+        };
+        // The changes left unresolved keep the form they were written in.
+        let libreoffice_form = |(count, mut xml): (usize, String)| {
+            for local in ["rPr", "pPr", "tblPr", "sectPr"] {
+                let end = if form == "/>" {
+                    "/>".to_owned()
+                } else {
+                    format!("></w:{local}Change>")
+                };
+                xml = xml.replace(&format!("><w:{local}/></w:{local}Change>"), &end);
+            }
+            (count, xml)
+        };
+        for accept in [true, false] {
+            for id in [None, Some(1), Some(2), Some(3), Some(4)] {
+                assert_eq!(
+                    resolved(false, accept, id),
+                    libreoffice_form(resolved(true, accept, id)),
+                    "{form} accept={accept} id={id:?}"
+                );
+            }
+        }
+
+        let mut doc = doc_with_body(&changes_from_no_properties(false, form));
+        assert_eq!(doc.reject_all().unwrap(), 4, "{form}");
+        let doc = reopen(&mut doc);
+        assert!(doc.revisions().is_empty(), "{form}");
+        assert!(
+            !doc.paragraph(0).unwrap().runs().any(|run| run.is_bold()),
+            "{form}"
+        );
+        assert_eq!(doc.paragraph(1).unwrap().alignment(), None, "{form}");
+    }
+}
+
+#[test]
+fn a_range_marker_between_merged_paragraphs_stays_around_the_merged_paragraph() {
+    let attributes = r#"w:author="Ada" w:date="2026-01-01T00:00:00Z""#;
+    // A paragraph added before a heading whose bookmark starts between the
+    // two, as Google Docs writes a heading's bookmark: rejecting it merges
+    // the added paragraph into the heading across the bookmark start.
+    let added = format!(
+        concat!(
+            r#"<w:p><w:pPr><w:rPr><w:ins w:id="1" {0}/></w:rPr></w:pPr>"#,
+            r#"<w:ins w:id="2" {0}><w:r><w:t>added</w:t></w:r></w:ins></w:p>"#,
+            r#"<w:bookmarkStart w:id="7" w:name="_Toc1"/>"#,
+            r#"<w:p><w:r><w:t>Heading</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>"#,
+            r#"<w:p><w:r><w:t>after</w:t></w:r></w:p>"#,
+        ),
+        attributes
+    );
+    // A paragraph mark removed with a bookmark ending after it: accepting
+    // merges the two paragraphs across the bookmark end.
+    let removed = format!(
+        concat!(
+            r#"<w:bookmarkStart w:id="8" w:name="kept"/>"#,
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="3" {0}/></w:rPr></w:pPr><w:r><w:t>first</w:t></w:r></w:p>"#,
+            r#"<w:bookmarkEnd w:id="8"/><w:p><w:r><w:t>second</w:t></w:r></w:p>"#,
+        ),
+        attributes
+    );
+    for (body, accept, text, bookmark, expected) in [
+        (
+            &added,
+            false,
+            vec!["Heading", "after"],
+            "_Toc1",
+            r#"<w:bookmarkStart w:id="7" w:name="_Toc1"/><w:p>"#,
+        ),
+        (
+            &removed,
+            true,
+            vec!["firstsecond"],
+            "kept",
+            r#"</w:p><w:bookmarkEnd w:id="8"/><w:sectPr"#,
+        ),
+    ] {
+        let mut doc = doc_with_body(body);
+        if accept {
+            doc.accept_all()
+        } else {
+            doc.reject_all()
+        }
+        .unwrap_or_else(|error| panic!("{body}: {error}"));
+        let mut doc = reopen(&mut doc);
+        assert!(doc.revisions().is_empty(), "{body}");
+        assert_eq!(texts(&doc), text, "{body}");
+        let names = doc
+            .bookmarks()
+            .iter()
+            .filter_map(|bookmark| bookmark.name().map(str::to_owned))
+            .collect::<Vec<_>>();
+        assert_eq!(names, [bookmark], "{body}");
+        let xml = main_part_xml(&mut doc);
+        assert!(xml.contains(expected), "{xml}");
+    }
+}
+
+#[test]
+fn every_producer_copy_with_tracked_changes_accepts_and_rejects_them_all() {
+    // The LibreOffice contract on a pull request (empty prior run
+    // properties); every contract and record copy with `OXOFFICE_WORKFLOWS=full`.
+    let mut copies = crate::support::every_tracked_copy();
+    if !crate::support::every_copy() {
+        copies.truncate(1);
+    }
+    crate::support::run_workflow("resolve-all", &copies, |path| {
+        let source = crate::support::workflow_source(path);
+        let doc = Document::from_bytes(&source).expect("corpus copy opens");
+        assert!(!doc.revisions().is_empty(), "{path} has tracked changes");
+        let shown = doc.text();
+        for accept in [true, false] {
+            let mut copy = Document::from_bytes(&source).unwrap();
+            let resolved = if accept {
+                copy.accept_all()
+            } else {
+                copy.reject_all()
+            };
+            resolved.unwrap_or_else(|error| panic!("{path} accept={accept}: {error}"));
+            let copy = reopen(&mut copy);
+            assert!(copy.revisions().is_empty(), "{path} accept={accept}");
+            if accept {
+                assert_eq!(copy.text(), shown, "{path}: accepting keeps the text shown");
+            }
+        }
+    });
+}
+
 #[test]
 fn revisions_are_resolved_by_author() {
     let mut doc = doc_with_body(THREE_INSERTIONS);

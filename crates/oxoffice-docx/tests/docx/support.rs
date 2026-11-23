@@ -321,6 +321,16 @@ pub fn every_record_copy() -> Vec<String> {
         .to_vec()
 }
 
+/// Every corpus copy with tracked changes of more than one kind: the
+/// contract and record copies of every producer.
+pub fn every_tracked_copy() -> Vec<String> {
+    let mut copies = ["libreoffice", "word", "google", "authored"]
+        .map(|producer| format!("{producer}/contract.docx"))
+        .to_vec();
+    copies.extend(every_record_copy());
+    copies
+}
+
 /// The bytes of a workflow copy: the small thesis, or a corpus file.
 pub fn workflow_source(copy: &str) -> Vec<u8> {
     if copy == SMALL_THESIS {
@@ -350,13 +360,14 @@ pub type Workflow = (&'static str, fn() -> Vec<String>);
 /// `OXOFFICE_WORKFLOWS=full`: an entry of `workflows-known.toml` must name
 /// one of them and one of its copies, so that a renamed walk or a dropped
 /// copy shows.
-pub const WORKFLOWS: [Workflow; 6] = [
+pub const WORKFLOWS: [Workflow; 7] = [
     ("page-numbers", every_page_numbers_copy),
     ("redline", every_thesis_copy),
     ("redline-rebuilt-toc", every_thesis_copy),
     ("record-edit", every_record_copy),
     ("record-review", every_record_copy),
     ("restyle", every_record_copy),
+    ("resolve-all", every_tracked_copy),
 ];
 
 /// The page-number pass walks the thesis and the record.
