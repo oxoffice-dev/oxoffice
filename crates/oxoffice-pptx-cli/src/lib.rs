@@ -118,6 +118,11 @@ enum Command {
         /// Directory containing caller font files (.ttf/.otf/.ttc)
         #[arg(long)]
         font_dir: Option<PathBuf>,
+        /// Use the embedded, caller and bundled fonts only, never a system
+        /// font: the same output on every machine, characters they lack as
+        /// empty boxes
+        #[arg(long)]
+        bundled_fonts_only: bool,
         #[arg(long, short = 't')]
         to: String,
         #[arg(long, short = 'o')]
@@ -185,12 +190,17 @@ enum Command {
     /// overrides, and the existing parsed-model issues. This is not a full
     /// schema validator.
     Validate { file: PathBuf },
-    /// Render selected slides to deterministic image files
+    /// Render selected slides to image files
     Render {
         file: PathBuf,
         /// Directory containing caller font files (.ttf/.otf/.ttc)
         #[arg(long)]
         font_dir: Option<PathBuf>,
+        /// Use the embedded, caller and bundled fonts only, never a system
+        /// font: the same output on every machine, characters they lack as
+        /// empty boxes
+        #[arg(long)]
+        bundled_fonts_only: bool,
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
         /// Replace existing slide images, but never the input file
@@ -216,6 +226,11 @@ enum Command {
         /// Directory containing caller font files (.ttf/.otf/.ttc)
         #[arg(long)]
         font_dir: Option<PathBuf>,
+        /// Use the embedded, caller and bundled fonts only, never a system
+        /// font: the same output on every machine, characters they lack as
+        /// empty boxes
+        #[arg(long)]
+        bundled_fonts_only: bool,
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
         /// Replace an existing output file, but never the input file
@@ -635,6 +650,7 @@ pub fn run(cli: Cli) {
         Command::Convert {
             file,
             font_dir,
+            bundled_fonts_only,
             to,
             output,
             force,
@@ -648,6 +664,7 @@ pub fn run(cli: Cli) {
         } => {
             if matches!(to.as_str(), "html" | "md") {
                 if font_dir.is_some()
+                    || bundled_fonts_only
                     || dpi.is_some()
                     || slides.is_some()
                     || quality.is_some()
@@ -681,6 +698,7 @@ pub fn run(cli: Cli) {
                     dpi.unwrap_or(150.0),
                     commands::ImageOptions {
                         font_dir: font_dir.as_deref(),
+                        bundled_fonts_only,
                         slides: slides.as_deref(),
                         quality: quality.unwrap_or(90),
                         transparent,
@@ -709,6 +727,7 @@ pub fn run(cli: Cli) {
         Command::Render {
             file,
             font_dir,
+            bundled_fonts_only,
             output,
             force,
             dpi,
@@ -724,6 +743,7 @@ pub fn run(cli: Cli) {
             &format,
             commands::ImageOptions {
                 font_dir: font_dir.as_deref(),
+                bundled_fonts_only,
                 slides: slide.as_deref(),
                 quality,
                 transparent,
@@ -732,9 +752,16 @@ pub fn run(cli: Cli) {
         Command::Thumbnail {
             file,
             font_dir,
+            bundled_fonts_only,
             output,
             force,
-        } => commands::thumbnail(&file, output.as_deref(), force, font_dir.as_deref()),
+        } => commands::thumbnail(
+            &file,
+            output.as_deref(),
+            force,
+            font_dir.as_deref(),
+            bundled_fonts_only,
+        ),
         Command::Shapes { file, slide, json } => commands::shapes(&file, slide, json),
         Command::Outline { file, json, notes } => commands::outline(&file, json, notes),
         Command::Footer {

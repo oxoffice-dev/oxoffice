@@ -1081,13 +1081,14 @@ impl PyPresentation {
             .map_err(|error| pptx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn to_pdf<'py>(
         &self,
         py: Python<'py>,
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1097,21 +1098,24 @@ impl PyPresentation {
                 .collect::<Vec<_>>()
         });
 
-        py.detach(|| match &font_refs {
-            None => self.inner.to_pdf_deterministic(),
-            Some(fonts) => self.inner.to_pdf_deterministic_with_fonts(fonts),
+        let font_refs = font_refs.as_deref().unwrap_or(&[]);
+        py.detach(|| {
+            self.inner
+                .to_pdf_with_diagnostics(font_refs, render_options(bundled_fonts_only))
+                .map(|(bytes, _)| bytes)
         })
         .map(|bytes| PyBytes::new(py, &bytes))
         .map_err(|error| pptx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn to_pdf_with_diagnostics<'py>(
         &self,
         py: Python<'py>,
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyTuple>)> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1122,12 +1126,15 @@ impl PyPresentation {
         });
         let font_refs = font_refs.as_deref().unwrap_or(&[]);
         let (payload, diagnostics) = py
-            .detach(|| self.inner.to_pdf_with_diagnostics(font_refs))
+            .detach(|| {
+                self.inner
+                    .to_pdf_with_diagnostics(font_refs, render_options(bundled_fonts_only))
+            })
             .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((PyBytes::new(py, &payload), messages))
     }
-    #[pyo3(signature = (slide_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (slide_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     #[allow(clippy::too_many_arguments)]
     fn render_slide_to_png<'py>(
         &self,
@@ -1137,6 +1144,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1146,17 +1154,22 @@ impl PyPresentation {
                 .collect::<Vec<_>>()
         });
 
-        py.detach(|| match &font_refs {
-            None => self.inner.slide_png_deterministic(slide_index, dpi),
-            Some(fonts) => self
-                .inner
-                .slide_png_deterministic_with_fonts(slide_index, dpi, fonts),
+        let font_refs = font_refs.as_deref().unwrap_or(&[]);
+        py.detach(|| {
+            self.inner
+                .render_slide_to_png_with_diagnostics(
+                    slide_index,
+                    dpi,
+                    font_refs,
+                    render_options(bundled_fonts_only),
+                )
+                .map(|(bytes, _)| bytes)
         })
         .map(|bytes| bytes.map(|bytes| PyBytes::new(py, &bytes)))
         .map_err(|error| pptx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (slide_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (slide_index, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     #[allow(clippy::too_many_arguments)]
     fn render_slide_to_png_with_diagnostics<'py>(
         &self,
@@ -1166,6 +1179,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<(Option<Bound<'py, PyBytes>>, Bound<'py, PyTuple>)> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1177,14 +1191,18 @@ impl PyPresentation {
         let font_refs = font_refs.as_deref().unwrap_or(&[]);
         let (payload, diagnostics) = py
             .detach(|| {
-                self.inner
-                    .render_slide_to_png_with_diagnostics(slide_index, dpi, font_refs)
+                self.inner.render_slide_to_png_with_diagnostics(
+                    slide_index,
+                    dpi,
+                    font_refs,
+                    render_options(bundled_fonts_only),
+                )
             })
             .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((payload.map(|bytes| PyBytes::new(py, &bytes)), messages))
     }
-    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn render_all_slides<'py>(
         &self,
         py: Python<'py>,
@@ -1192,6 +1210,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Bound<'py, PyList>> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1202,15 +1221,20 @@ impl PyPresentation {
         });
 
         let slides = py
-            .detach(|| match &font_refs {
-                None => self.inner.slide_pngs_deterministic(dpi),
-                Some(fonts) => self.inner.slide_pngs_deterministic_with_fonts(dpi, fonts),
+            .detach(|| {
+                self.inner
+                    .render_all_slides_with_diagnostics(
+                        dpi,
+                        font_refs.as_deref().unwrap_or(&[]),
+                        render_options(bundled_fonts_only),
+                    )
+                    .map(|(slides, _)| slides)
             })
             .map_err(|error| pptx_to_pyerr(py, error))?;
         PyList::new(py, slides.iter().map(|slide| PyBytes::new(py, slide)))
     }
 
-    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn render_all_slides_with_diagnostics<'py>(
         &self,
         py: Python<'py>,
@@ -1218,6 +1242,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyTuple>)> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1229,8 +1254,11 @@ impl PyPresentation {
         let font_refs = font_refs.as_deref().unwrap_or(&[]);
         let (payload, diagnostics) = py
             .detach(|| {
-                self.inner
-                    .render_all_slides_with_diagnostics(dpi, font_refs)
+                self.inner.render_all_slides_with_diagnostics(
+                    dpi,
+                    font_refs,
+                    render_options(bundled_fonts_only),
+                )
             })
             .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
@@ -1271,7 +1299,7 @@ impl PyPresentation {
     /// multi-page TIFF. `slides` picks zero-based slides, all by default.
     /// `quality` (JPEG, 90 by default) and `transparent` (PNG) raise for
     /// another format rather than being ignored.
-    #[pyo3(signature = (*, dpi = 150.0, format = "png", quality = None, transparent = false, slides = None, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (*, dpi = 150.0, format = "png", quality = None, transparent = false, slides = None, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     #[allow(clippy::too_many_arguments)] // Preserve the eight public keyword options at this PyO3 boundary.
     fn render_slides<'py>(
         &self,
@@ -1284,6 +1312,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Py<PyAny>> {
         let format = raster_format(format, quality, transparent)?;
         let slides = slides.unwrap_or_else(|| (0..self.inner.len()).collect());
@@ -1298,6 +1327,7 @@ impl PyPresentation {
                     &slides,
                     oxoffice_pptx::RasterOptions { dpi, format },
                     &refs,
+                    render_options(bundled_fonts_only),
                 )
             })
             .map_err(|error| pptx_to_pyerr(py, error))?;
@@ -1354,13 +1384,14 @@ impl PyPresentation {
         Ok(crate::layout::PyAutofitRefreshResult::from(&result))
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn to_notes_pdf<'py>(
         &self,
         py: Python<'py>,
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1370,16 +1401,18 @@ impl PyPresentation {
                 .collect::<Vec<_>>()
         });
 
-        py.detach(|| match &font_refs {
-            None => self.inner.to_notes_pdf_deterministic(),
-            Some(fonts) => self.inner.to_notes_pdf_deterministic_with_fonts(fonts),
+        let font_refs = font_refs.as_deref().unwrap_or(&[]);
+        py.detach(|| {
+            self.inner
+                .to_notes_pdf_with_diagnostics(font_refs, render_options(bundled_fonts_only))
+                .map(|(bytes, _)| bytes)
         })
         .map(|bytes| PyBytes::new(py, &bytes))
         .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Archival PDF from one caller-font bundle with the selected exact profile.
-    #[pyo3(signature = (profile = "pdfa-2b", *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (profile = "pdfa-2b", *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn to_pdfa<'py>(
         &self,
         py: Python<'py>,
@@ -1387,6 +1420,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let profile = match profile {
             "pdfa-2b" => oxoffice_pptx::PdfConformance::PdfA2b,
@@ -1398,13 +1432,17 @@ impl PyPresentation {
             .iter()
             .map(|font| (font.family.as_str(), font.data.as_slice()))
             .collect::<Vec<_>>();
-        py.detach(|| self.inner.to_pdfa_deterministic_with_fonts(profile, &refs))
-            .map(|bytes| PyBytes::new(py, &bytes))
-            .map_err(|error| pptx_to_pyerr(py, error))
+        py.detach(|| {
+            self.inner
+                .to_pdfa_with_diagnostics(profile, &refs, render_options(bundled_fonts_only))
+                .map(|(bytes, _)| bytes)
+        })
+        .map(|bytes| PyBytes::new(py, &bytes))
+        .map_err(|error| pptx_to_pyerr(py, error))
     }
 
     /// Audience handout PDF. Legal absent masters use read-only neutral defaults.
-    #[pyo3(signature = (slides_per_page = 6, *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (slides_per_page = 6, *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn to_handout_pdf<'py>(
         &self,
         py: Python<'py>,
@@ -1412,6 +1450,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let arrangement = handout_layout(slides_per_page)?;
         let files = collect_caller_fonts(py, fonts, font_dir, font_dirs)?.unwrap_or_default();
@@ -1421,13 +1460,19 @@ impl PyPresentation {
             .collect::<Vec<_>>();
         py.detach(|| {
             self.inner
-                .to_handout_pdf_deterministic_with_fonts(arrangement, &refs)
+                .to_handout_pdf_with_diagnostics(
+                    arrangement,
+                    &refs,
+                    render_options(bundled_fonts_only),
+                )
+                .map(|(bytes, _)| bytes)
         })
         .map(|bytes| PyBytes::new(py, &bytes))
         .map_err(|error| pptx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (slides_per_page = 6, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (slides_per_page = 6, dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
+    #[allow(clippy::too_many_arguments)]
     fn render_all_handouts<'py>(
         &self,
         py: Python<'py>,
@@ -1436,6 +1481,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Bound<'py, PyList>> {
         let arrangement = handout_layout(slides_per_page)?;
         let files = collect_caller_fonts(py, fonts, font_dir, font_dirs)?.unwrap_or_default();
@@ -1446,7 +1492,13 @@ impl PyPresentation {
         let pages = py
             .detach(|| {
                 self.inner
-                    .handout_page_pngs_deterministic_with_fonts(arrangement, dpi, &refs)
+                    .render_all_handouts_with_diagnostics(
+                        arrangement,
+                        dpi,
+                        &refs,
+                        render_options(bundled_fonts_only),
+                    )
+                    .map(|(pages, _)| pages)
             })
             .map_err(|error| pptx_to_pyerr(py, error))?;
         PyList::new(py, pages.iter().map(|bytes| PyBytes::new(py, bytes)))
@@ -1621,7 +1673,7 @@ impl PyPresentation {
             .map_err(|error| pptx_to_pyerr(py, error))
     }
 
-    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn render_all_notes<'py>(
         &self,
         py: Python<'py>,
@@ -1629,6 +1681,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<Bound<'py, PyList>> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1639,23 +1692,27 @@ impl PyPresentation {
         });
 
         let notes = py
-            .detach(|| match &font_refs {
-                None => self.inner.notes_page_pngs_deterministic(dpi),
-                Some(fonts) => self
-                    .inner
-                    .notes_page_pngs_deterministic_with_fonts(dpi, fonts),
+            .detach(|| {
+                self.inner
+                    .render_all_notes_with_diagnostics(
+                        dpi,
+                        font_refs.as_deref().unwrap_or(&[]),
+                        render_options(bundled_fonts_only),
+                    )
+                    .map(|(pages, _)| pages)
             })
             .map_err(|error| pptx_to_pyerr(py, error))?;
         PyList::new(py, notes.iter().map(|page| PyBytes::new(py, page)))
     }
 
-    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (*, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn to_notes_pdf_with_diagnostics<'py>(
         &self,
         py: Python<'py>,
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyTuple>)> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1666,12 +1723,15 @@ impl PyPresentation {
         });
         let font_refs = font_refs.as_deref().unwrap_or(&[]);
         let (payload, diagnostics) = py
-            .detach(|| self.inner.to_notes_pdf_with_diagnostics(font_refs))
+            .detach(|| {
+                self.inner
+                    .to_notes_pdf_with_diagnostics(font_refs, render_options(bundled_fonts_only))
+            })
             .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((PyBytes::new(py, &payload), messages))
     }
-    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None))]
+    #[pyo3(signature = (dpi = 150.0, *, fonts = None, font_dir = None, font_dirs = None, bundled_fonts_only = false))]
     fn render_all_notes_with_diagnostics<'py>(
         &self,
         py: Python<'py>,
@@ -1679,6 +1739,7 @@ impl PyPresentation {
         fonts: Option<Vec<(String, Bound<'py, PyBytes>)>>,
         font_dir: Option<PathBuf>,
         font_dirs: Option<Bound<'py, PyAny>>,
+        bundled_fonts_only: bool,
     ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyTuple>)> {
         let caller_fonts = collect_caller_fonts(py, fonts, font_dir, font_dirs)?;
         let font_refs = caller_fonts.as_ref().map(|files| {
@@ -1689,7 +1750,13 @@ impl PyPresentation {
         });
         let font_refs = font_refs.as_deref().unwrap_or(&[]);
         let (payload, diagnostics) = py
-            .detach(|| self.inner.render_all_notes_with_diagnostics(dpi, font_refs))
+            .detach(|| {
+                self.inner.render_all_notes_with_diagnostics(
+                    dpi,
+                    font_refs,
+                    render_options(bundled_fonts_only),
+                )
+            })
             .map_err(|error| pptx_to_pyerr(py, error))?;
         let messages = PyTuple::new(py, diagnostics.iter().map(|d| d.message.as_str()))?;
         Ok((
@@ -5788,4 +5855,9 @@ impl PyPresentation {
             self.prepare_owners(&candidate, operation, &survivors, false, false, false)?;
         self.publish_owners(candidate, prepared)
     }
+}
+
+/// The deck render options a Python render method asks for.
+fn render_options(bundled_fonts_only: bool) -> oxoffice_pptx::PptxRenderOptions {
+    oxoffice_pptx::PptxRenderOptions::default().with_bundled_fonts_only(bundled_fonts_only)
 }

@@ -64,25 +64,25 @@ by_design = "the render tests use the bundled fonts only, whose Chinese, Japanes
 file = "authored/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "google/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "libreoffice/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "powerpoint/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "authored/thesis.docx"
@@ -101,6 +101,12 @@ file = "word/thesis.docx"
 check = "empty-page"
 pages = [6]
 by_design = "the blank page that sends the odd-page first chapter to a right-hand page, as LibreOffice prints it"
+
+[[known]]
+file = "google/thesis.docx"
+check = "empty-page"
+pages = [6]
+by_design = "the empty page Word 16.115 leaves before chapter 1: with even and odd headers on, its numbering restarts at 1 after page 5, and odd numbers stay on right-hand pages"
 
 [[known]]
 file = "authored/minutes.docx"
@@ -135,25 +141,25 @@ file = "authored/multilingual.pptx"
 check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "google/multilingual.pptx"
 check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "libreoffice/multilingual.pptx"
 check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
 file = "powerpoint/multilingual.pptx"
 check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
-issue = 157
+by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"

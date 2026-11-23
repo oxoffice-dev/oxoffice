@@ -790,6 +790,7 @@ impl Engine {
                             written_tb_rl_band: sect_pr.text_direction.as_deref() == Some("tbRl"),
                             continuous: sect_pr.section_type
                                 == Some(oxoffice_docx_oxml::shared::ST_SectionType::Continuous),
+                            odd_numbers_on_right_pages: input.even_and_odd_headers,
                             parity: match sect_pr.section_type {
                                 Some(oxoffice_docx_oxml::shared::ST_SectionType::OddPage) => {
                                     Some(paginator::SectionParity::Odd)
@@ -904,6 +905,7 @@ impl Engine {
             written_tb_rl_band: final_sect_pr.text_direction.as_deref() == Some("tbRl"),
             continuous: final_sect_pr.section_type
                 == Some(oxoffice_docx_oxml::shared::ST_SectionType::Continuous),
+            odd_numbers_on_right_pages: input.even_and_odd_headers,
             parity: match final_sect_pr.section_type {
                 Some(oxoffice_docx_oxml::shared::ST_SectionType::OddPage) => {
                     Some(paginator::SectionParity::Odd)
