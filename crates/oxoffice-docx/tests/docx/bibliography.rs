@@ -12,7 +12,7 @@ use oxoffice_docx::{
 
 use crate::support::{doc_with, package_parts, reopen, texts};
 
-const GUID: &str = "{11111111-2222-3333-4444-555555555555}";
+const GUID: &str = "{1A2B3C4D-2222-3333-4444-55555555EEEE}";
 const OTHER_GUID: &str = "{66666666-7777-8888-9999-000000000000}";
 
 fn person(first: &str, last: &str) -> BibliographyPerson {
@@ -209,7 +209,7 @@ fn a_source_identity_is_unique_and_a_refused_add_changes_nothing() {
     // The GUID matches without braces and whatever its case.
     let same_guid = source(
         "Other",
-        "11111111-2222-3333-4444-555555555555",
+        "1a2b3c4d-2222-3333-4444-55555555eeee",
         BibliographySourceKind::Book,
     );
     assert!(refusal(doc.add_bibliography_source(&same_guid)).contains("already exists"));
@@ -561,7 +561,8 @@ fn an_update_needs_a_locale_when_neither_the_field_nor_the_source_gives_one() {
         BibliographyStyle::ApaSixthEdition,
     );
     let before = main_xml(&mut doc);
-    refusal(doc.update_bibliography());
+    let message = refusal(doc.update_bibliography());
+    assert!(message.contains("application default locale"), "{message}");
     assert_eq!(main_xml(&mut doc), before);
 }
 
@@ -586,4 +587,45 @@ fn an_uncovered_field_refuses_the_whole_update_and_names_what_is_missing() {
     );
     // The citation of the book is covered, but nothing is published.
     assert_eq!(main_xml(&mut doc), before);
+}
+
+#[test]
+fn a_refusal_names_the_role_field_or_author_count_it_cannot_render() {
+    use BibliographyContributorRole as R;
+    let mut edited = source("Edited", GUID, BibliographySourceKind::Book);
+    edited
+        .contributors
+        .push(people(R::Editor, &[("Ann", "Doe")]));
+    let mut paged = source("Paged", GUID, BibliographySourceKind::Book);
+    paged
+        .properties
+        .extend(fields(&[(BibliographySourceField::Pages, "320")]));
+    let mut pair = source("Pair", GUID, BibliographySourceKind::Book);
+    pair.contributors = vec![people(R::Author, &[("John", "Smith"), ("Ann", "Doe")])];
+    let cases = [
+        (
+            edited,
+            "Chicago has no bibliography entry with the Editor role yet for the Book source \"Edited\" in locale 1033",
+        ),
+        (
+            paged,
+            "Chicago has no bibliography entry with the Pages field yet for the Book source \"Paged\" in locale 1033",
+        ),
+        (
+            pair,
+            "Chicago has no bibliography entry with more than one author yet for the Book source \"Pair\" in locale 1033",
+        ),
+    ];
+    // The cited book is covered, so the refusal comes from the uncovered entry.
+    let mut covered = source("Covered", OTHER_GUID, BibliographySourceKind::Book);
+    covered.contributors = vec![people(R::Author, &[("Lena", "Lund")])];
+    for (book, expected) in cases {
+        let mut doc = cited(
+            &[covered.clone(), book],
+            vec![member("Covered")],
+            BibliographyStyle::Chicago,
+        );
+        let message = refusal(doc.update_bibliography_with_default_locale(1033));
+        assert_eq!(message, format!("bibliography: {expected}"));
+    }
 }

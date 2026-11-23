@@ -177,14 +177,16 @@ impl BibliographyUpdateState {
             else {
                 return Ok(None);
             };
-            if (style != BibliographyStyle::ApaSixthEdition
-                && locale != BibliographyFormattingLocale::Numeric(1033))
-                || (style != BibliographyStyle::ApaSixthEdition
-                    && source.kind != BibliographySourceKind::Book)
-                || (style != BibliographyStyle::ApaSixthEdition
-                    && (source.contributors.iter().any(|contributor| {
-                        contributor.role != BibliographyContributorRole::Author
-                    }) || source.properties.iter().any(|property| {
+            if style != BibliographyStyle::ApaSixthEdition {
+                let role = source
+                    .contributors
+                    .iter()
+                    .find(|contributor| contributor.role != BibliographyContributorRole::Author)
+                    .map(|contributor| contributor.role.xml_name());
+                let field = source
+                    .properties
+                    .iter()
+                    .find(|property| {
                         !matches!(
                             property.field,
                             BibliographySourceField::Title
@@ -194,14 +196,20 @@ impl BibliographyUpdateState {
                                 | BibliographySourceField::Publisher
                                 | BibliographySourceField::ReferenceOrder
                         )
-                    })))
-            {
-                return Err(source_not_covered(
-                    style,
-                    "bibliography entry",
-                    &source,
-                    &locale,
-                ));
+                    })
+                    .map(|property| property.field.xml_name());
+                let part = if locale != BibliographyFormattingLocale::Numeric(1033)
+                    || source.kind != BibliographySourceKind::Book
+                {
+                    Some("bibliography entry".to_owned())
+                } else if let Some(role) = role {
+                    Some(format!("bibliography entry with the {role} role"))
+                } else {
+                    field.map(|field| format!("bibliography entry with the {field} field"))
+                };
+                if let Some(part) = part {
+                    return Err(source_not_covered(style, &part, &source, &locale));
+                }
             }
 
             let reference = self.reference_numbers.get(&source.tag).copied();
@@ -595,7 +603,7 @@ impl BibliographyUpdateState {
                 && let Some(grammar) = apa_patent_run_grammar(&locale)
             {
                 return Ok(Some(source_citation_runs(
-                    &source, None, grammar.0, grammar.1,
+                    &source, style, &locale, None, grammar.0, grammar.1,
                 )?));
             }
             if style == BibliographyStyle::ApaSixthEdition
@@ -613,7 +621,7 @@ impl BibliographyUpdateState {
                 && let Some(grammar) = apa_case_run_grammar(&locale)
             {
                 return Ok(Some(source_citation_runs(
-                    &source, None, grammar.0, grammar.1,
+                    &source, style, &locale, None, grammar.0, grammar.1,
                 )?));
             }
             if style == BibliographyStyle::Chicago
@@ -633,12 +641,17 @@ impl BibliographyUpdateState {
                 && let Some(grammar) = chicago_run_grammar(&locale)
             {
                 if has_equivalent_creator(collection, *index, creator, style)? {
-                    return Err(not_covered(
-                        "telling apart two sources whose authors share a name",
+                    return Err(source_not_covered(
+                        style,
+                        "citation telling it apart from another source by the same author",
+                        &source,
+                        &locale,
                     ));
                 }
                 return Ok(Some(source_citation_runs(
                     &source,
+                    style,
+                    &locale,
                     Some(creator),
                     grammar.0,
                     grammar.1,
@@ -668,6 +681,8 @@ impl BibliographyUpdateState {
             {
                 return Ok(Some(source_citation_runs(
                     &source,
+                    style,
+                    &locale,
                     Some(creator),
                     grammar.0,
                     grammar.1,
@@ -723,8 +738,11 @@ impl BibliographyUpdateState {
                 if let Some(creator) = creator
                     && has_equivalent_creator(collection, *index, creator, style)?
                 {
-                    return Err(not_covered(
-                        "telling apart two sources whose authors share a name",
+                    return Err(source_not_covered(
+                        style,
+                        "citation telling it apart from another source by the same author",
+                        &source,
+                        &locale,
                     ));
                 }
                 let grammar = match style {
@@ -736,7 +754,7 @@ impl BibliographyUpdateState {
                 };
                 if let Some(grammar) = grammar {
                     return Ok(Some(source_citation_runs(
-                        &source, creator, grammar.0, grammar.1,
+                        &source, style, &locale, creator, grammar.0, grammar.1,
                     )?));
                 }
             }
@@ -813,13 +831,16 @@ impl BibliographyUpdateState {
                 if let Some(creator) = creator
                     && has_equivalent_creator(collection, *index, creator, style)?
                 {
-                    return Err(not_covered(
-                        "telling apart two sources whose authors share a name",
+                    return Err(source_not_covered(
+                        style,
+                        "citation telling it apart from another source by the same author",
+                        &source,
+                        &locale,
                     ));
                 }
                 if let Some(grammar) = other_style_citation_run_grammar(style, &locale, title) {
                     return Ok(Some(source_citation_runs(
-                        &source, creator, grammar.0, grammar.1,
+                        &source, style, &locale, creator, grammar.0, grammar.1,
                     )?));
                 }
             }
