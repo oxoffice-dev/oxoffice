@@ -1123,10 +1123,7 @@ fn threads_and_resolved_state_are_written_on_the_last_paragraph_of_a_comment() {
     );
 }
 
-// Known failure #443: a comment's edge inside a tracked insertion is refused.
-// When it passes, drop the `should_panic`.
 #[test]
-#[should_panic(expected = "falls inside a tracked insertion or move")]
 fn a_comment_on_part_of_a_tracked_insertion_stays_inside_it() {
     let mut doc = doc_with_body(
         r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words here</w:t></w:r></w:ins></w:p>"#,
@@ -1149,4 +1146,100 @@ fn a_comment_on_part_of_a_tracked_insertion_stays_inside_it() {
     let revisions = doc.story_revisions().unwrap();
     assert_eq!(revisions.len(), 1);
     assert_eq!(revisions[0].text(), "new words here");
+    // The markers and the styled comment mark are inside the insertion.
+    let mut doc = doc;
+    let body = main_body(&mut doc);
+    let inserted = &body[body.find("<w:ins ").unwrap()..body.find("</w:ins>").unwrap()];
+    for part in [
+        "<w:commentRangeStart w:id=\"0\"/>",
+        "<w:commentRangeEnd w:id=\"0\"/>",
+        "<w:rStyle w:val=\"CommentReference\"/>",
+    ] {
+        assert!(inserted.contains(part), "{part} in {body}");
+    }
+    // Accepting keeps the comment; rejecting removes it with its text.
+    let mut accepted = reopen(&mut doc);
+    accepted.accept_all().unwrap();
+    assert_eq!(
+        accepted.comments()[0].anchor_text().unwrap().as_deref(),
+        Some("words")
+    );
+    let mut rejected = reopen(&mut doc);
+    rejected.reject_all().unwrap();
+    assert!(rejected.comments().is_empty());
+}
+
+/// The body of the saved main document part, without its section properties.
+fn main_body(doc: &mut Document) -> String {
+    let parts = crate::support::package_parts(&doc.to_bytes().unwrap());
+    let xml = String::from_utf8(parts["word/document.xml"].clone()).unwrap();
+    let start = xml.find("<w:body>").unwrap();
+    let end = xml.find("<w:sectPr").unwrap_or(xml.len());
+    xml[start..end].to_owned()
+}
+
+/// Comment `text` in a paragraph whose middle is a tracked insertion, then
+/// what the comment covers as written, once the insertion is accepted and
+/// once it is rejected.
+fn comment_across_an_insertion_edge(text: &str) -> (String, String, String) {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words here</w:t></w:r></w:ins><w:r><w:t> tail</w:t></w:r></w:p>"#,
+    );
+    doc.add_comment_on_text(
+        text,
+        REVIEWER,
+        "Check",
+        TextCommentOptions {
+            date: CommentDate::Undated,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let mut doc = reopen(&mut doc);
+    assert_eq!(doc.story_revisions().unwrap()[0].text(), "new words here");
+    let anchor = |doc: &Document| doc.comments()[0].anchor_text().unwrap().unwrap_or_default();
+    let written = anchor(&doc);
+    let mut accepted = reopen(&mut doc);
+    accepted.accept_all().unwrap();
+    let mut rejected = reopen(&mut doc);
+    rejected.reject_all().unwrap();
+    (written, anchor(&accepted), anchor(&rejected))
+}
+
+#[test]
+fn a_comment_from_text_into_a_tracked_insertion_survives_accept_and_reject() {
+    // The comment mark follows the insertion, so rejecting it keeps the
+    // comment on the text that stays.
+    assert_eq!(
+        comment_across_an_insertion_edge("Kept new"),
+        ("Kept new".into(), "Kept new".into(), "Kept ".into())
+    );
+}
+
+#[test]
+fn a_comment_from_a_tracked_insertion_into_text_survives_accept_and_reject() {
+    assert_eq!(
+        comment_across_an_insertion_edge("here t"),
+        ("here t".into(), "here t".into(), " t".into())
+    );
+}
+
+#[test]
+fn a_bookmark_on_part_of_a_tracked_insertion_stays_inside_it() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">new </w:t></w:r><w:r><w:t>words</w:t></w:r><w:r><w:t xml:space="preserve"> here</w:t></w:r></w:ins></w:p>"#,
+    );
+    doc.add_bookmark("phrase", run_range(0, 2, 0, 3)).unwrap();
+    let mut doc = reopen(&mut doc);
+    let bookmark = doc
+        .bookmarks()
+        .into_iter()
+        .find(|bookmark| bookmark.name() == Some("phrase"))
+        .unwrap();
+    assert_eq!(bookmark.text(), "words");
+    assert_eq!(doc.story_revisions().unwrap().len(), 1);
+    let body = main_body(&mut doc);
+    let inserted = &body[body.find("<w:ins ").unwrap()..body.find("</w:ins>").unwrap()];
+    assert!(inserted.contains("w:bookmarkStart"), "{body}");
+    assert!(inserted.contains("w:bookmarkEnd"), "{body}");
 }

@@ -1119,6 +1119,17 @@ pub enum RangeAnchorError {
     Write,
 }
 
+/// A run with nothing but the reference to comment `id`.
+fn comment_reference_run(id: i32) -> CT_R {
+    CT_R {
+        properties: None,
+        content: vec![RunContent::CommentReference { id, raw_before: 0 }],
+        extra_xml: Vec::new(),
+        extra_xml_positions: Vec::new(),
+        alt_drawings: Vec::new(),
+    }
+}
+
 /// One physical place for a range marker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MarkerSite {
@@ -4729,20 +4740,231 @@ impl CT_P {
         end: Option<usize>,
         anchor: RangeAnchor<'_>,
     ) -> std::result::Result<(), RangeAnchorError> {
+        self.anchor_range_with_reference(start, end, anchor, true)
+    }
+
+    /// [`Self::anchor_accepted_range`], with or without the comment reference
+    /// run after the end marker.
+    fn anchor_range_with_reference(
+        &mut self,
+        start: Option<usize>,
+        end: Option<usize>,
+        anchor: RangeAnchor<'_>,
+        reference: bool,
+    ) -> std::result::Result<(), RangeAnchorError> {
+        if let Some(anchored) = self.anchor_inside_revisions(start, end, anchor, reference) {
+            return anchored;
+        }
         let (start_site, end_site) = self.accepted_range_sites(start, end)?;
         let mut paragraph = self.clone();
         // The end goes first. A start site never follows it, so the end and
         // its reference run leave the start site where it was.
         if let Some(site) = end_site {
-            paragraph.insert_range_marker(site, anchor, false)?;
+            paragraph.insert_range_marker(site, anchor, false, reference)?;
         }
         if let Some(site) = start_site {
-            paragraph.insert_range_marker(site, anchor, true)?;
+            paragraph.insert_range_marker(site, anchor, true, reference)?;
         }
         if !paragraph.refresh_bookmark_projection() {
             return Err(RangeAnchorError::Write);
         }
         *self = paragraph;
+        Ok(())
+    }
+
+    /// Write range markers when an edge falls between two runs of one tracked
+    /// insertion or move destination, as Word does: inside the wrapper, which
+    /// keeps its identifier, author and date, with a comment reference run
+    /// after the end marker. Each edge is placed on its own, so a range may
+    /// start inside one insertion and end outside it. When only the end is
+    /// inside, the reference run follows the wrapper instead: rejecting the
+    /// insertion then keeps the comment mark of a range that survives.
+    /// `None` when no edge falls inside a revision.
+    fn anchor_inside_revisions(
+        &mut self,
+        start: Option<usize>,
+        end: Option<usize>,
+        anchor: RangeAnchor<'_>,
+        reference: bool,
+    ) -> Option<std::result::Result<(), RangeAnchorError>> {
+        let paths = self.accepted_run_paths();
+        let run_count = paths.len();
+        // The revision holding the runs on both sides of a boundary, and the
+        // boundary among the accepted runs of that revision.
+        let inside = |boundary: usize| {
+            let left = paths.get(boundary.checked_sub(1)?)?.segments()[0];
+            let right = paths.get(boundary)?.segments()[0];
+            match (left, right) {
+                (AcceptedRunPathSegment::Revision(a), AcceptedRunPathSegment::Revision(b))
+                    if a == b =>
+                {
+                    let first = paths.iter().position(|path| path.segments()[0] == left)?;
+                    Some((a, first))
+                }
+                _ => None,
+            }
+        };
+        let (start_inside, end_inside) = (start.and_then(inside), end.and_then(inside));
+        if start_inside.is_none() && end_inside.is_none() {
+            return None;
+        }
+        Some(
+            (|| {
+                for boundary in [start, end].into_iter().flatten() {
+                    if boundary > run_count {
+                        return Err(RangeAnchorError::OutOfRange {
+                            boundary,
+                            run_count,
+                        });
+                    }
+                }
+                if let (Some(start), Some(end)) = (start, end)
+                    && start > end
+                {
+                    return Err(RangeAnchorError::Reversed { start, end });
+                }
+                let mut paragraph = self.clone();
+                match (start, end, start_inside, end_inside) {
+                    (Some(start), Some(end), Some((revision, first)), Some((other, _)))
+                        if revision == other =>
+                    {
+                        paragraph.anchor_in_revision(
+                            revision,
+                            first,
+                            Some(start - first),
+                            Some(end - first),
+                            anchor,
+                            reference,
+                        )?;
+                    }
+                    _ => {
+                        // The end goes first: its reference run comes after the
+                        // start, which keeps its boundary.
+                        if let Some(end) = end {
+                            match end_inside {
+                                Some((revision, first)) => {
+                                    paragraph.anchor_in_revision(
+                                        revision,
+                                        first,
+                                        None,
+                                        Some(end - first),
+                                        anchor,
+                                        false,
+                                    )?;
+                                    if let RangeAnchor::Comment(id) = anchor
+                                        && reference
+                                    {
+                                        // Just after the wrapper, which the paths
+                                        // of this unchanged paragraph still give.
+                                        let MarkerSite::Paragraph { boundary, position } =
+                                            self.marker_site(&paths, &[], end, false)?
+                                        else {
+                                            return Err(RangeAnchorError::Write);
+                                        };
+                                        if !paragraph.insert_run_after_boundary_items(
+                                            boundary,
+                                            position,
+                                            comment_reference_run(id),
+                                        ) {
+                                            return Err(RangeAnchorError::Write);
+                                        }
+                                    }
+                                }
+                                None => paragraph.anchor_range_with_reference(
+                                    None,
+                                    Some(end),
+                                    anchor,
+                                    reference,
+                                )?,
+                            }
+                        }
+                        if let Some(start) = start {
+                            match start_inside {
+                                Some((revision, first)) => paragraph.anchor_in_revision(
+                                    revision,
+                                    first,
+                                    Some(start - first),
+                                    None,
+                                    anchor,
+                                    reference,
+                                )?,
+                                None => paragraph.anchor_range_with_reference(
+                                    Some(start),
+                                    None,
+                                    anchor,
+                                    reference,
+                                )?,
+                            }
+                        }
+                    }
+                }
+                if !paragraph.refresh_bookmark_projection() {
+                    return Err(RangeAnchorError::Write);
+                }
+                Ok(paragraph)
+            })()
+            .map(|paragraph| *self = paragraph),
+        )
+    }
+
+    /// Anchor a range among the accepted runs of revision `revision`, whose
+    /// first run is accepted run `first` of this paragraph.
+    fn anchor_in_revision(
+        &mut self,
+        revision: usize,
+        first: usize,
+        start: Option<usize>,
+        end: Option<usize>,
+        anchor: RangeAnchor<'_>,
+        reference: bool,
+    ) -> std::result::Result<(), RangeAnchorError> {
+        let (_, _, wrapper) = self
+            .revisions
+            .get_mut(revision)
+            .ok_or(RangeAnchorError::Write)?;
+        let mut anchored = Ok(());
+        let edited = wrapper
+            .edit_accepted_paragraph(|paragraph| {
+                anchored = paragraph.anchor_range_with_reference(start, end, anchor, reference);
+                Ok(anchored.is_ok())
+            })
+            .map_err(|_| RangeAnchorError::Write)?;
+        // Report the boundaries of this paragraph, not of the revision.
+        anchored.map_err(|error| match error {
+            RangeAnchorError::OutOfRange {
+                boundary,
+                run_count,
+            } => RangeAnchorError::OutOfRange {
+                boundary: boundary + first,
+                run_count: run_count + first,
+            },
+            RangeAnchorError::Reversed { start, end } => RangeAnchorError::Reversed {
+                start: start + first,
+                end: end + first,
+            },
+            RangeAnchorError::CrossesControl { start, end } => RangeAnchorError::CrossesControl {
+                start: start + first,
+                end: end + first,
+            },
+            RangeAnchorError::InsideControl { boundary } => RangeAnchorError::InsideControl {
+                boundary: boundary + first,
+            },
+            RangeAnchorError::InsideRevision { boundary } => RangeAnchorError::InsideRevision {
+                boundary: boundary + first,
+            },
+            RangeAnchorError::HyperlinkRevision { boundary } => {
+                RangeAnchorError::HyperlinkRevision {
+                    boundary: boundary + first,
+                }
+            }
+            RangeAnchorError::Write => RangeAnchorError::Write,
+        })?;
+        // A wrapper whose content cannot be written back keeps the refusal.
+        if !edited {
+            return Err(RangeAnchorError::InsideRevision {
+                boundary: start.or(end).unwrap_or_default() + first,
+            });
+        }
         Ok(())
     }
 
@@ -4752,6 +4974,18 @@ impl CT_P {
     /// mark. Returns whether such a run was found.
     #[doc(hidden)]
     pub fn style_comment_reference_run(&mut self, id: i32, style_id: &str) -> bool {
+        // A run inside a tracked insertion is written back through its
+        // wrapper, or the style would not reach the saved XML.
+        for (_, _, revision) in &mut self.revisions {
+            let mut styled = false;
+            let edited = revision.edit_accepted_paragraph(|paragraph| {
+                styled = paragraph.style_comment_reference_run(id, style_id);
+                Ok(styled)
+            });
+            if styled && edited.is_ok_and(|edited| edited) {
+                return true;
+            }
+        }
         for path in self.accepted_run_paths() {
             let Some(run) = self.accepted_run_segments_mut(path.segments()) else {
                 continue;
@@ -5027,16 +5261,12 @@ impl CT_P {
         site: MarkerSite,
         anchor: RangeAnchor<'_>,
         start: bool,
+        with_reference: bool,
     ) -> std::result::Result<(), RangeAnchorError> {
         let marker_xml = range_marker_xml(anchor, start).ok_or(RangeAnchorError::Write)?;
         let reference = match anchor {
-            RangeAnchor::Comment(id) if !start => Some(CT_R {
-                properties: None,
-                content: vec![RunContent::CommentReference { id, raw_before: 0 }],
-                extra_xml: Vec::new(),
-                extra_xml_positions: Vec::new(),
-                alt_drawings: Vec::new(),
-            }),
+            RangeAnchor::Comment(id) if !start && with_reference => Some(comment_reference_run(id)),
+            RangeAnchor::Comment(_) if !start => None,
             RangeAnchor::Comment(_)
             | RangeAnchor::Bookmark { .. }
             | RangeAnchor::Permission { .. }
