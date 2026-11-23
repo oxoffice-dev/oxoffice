@@ -2410,6 +2410,9 @@ fn a_border_box_read_from_mathml_keeps_its_sides_and_strikes() {
         format!(
             r#"<m:borderBox><m:borderBoxPr><m:hideTop m:val="1"/><m:hideLeft m:val="1"/><m:strikeBLTR m:val="1"/></m:borderBoxPr>{MATH_X}</m:borderBox>"#
         ),
+        format!(
+            r#"<m:borderBox><m:borderBoxPr><m:hideTop m:val="1"/><m:hideBot m:val="1"/><m:hideLeft m:val="1"/><m:hideRight m:val="1"/></m:borderBoxPr>{MATH_X}</m:borderBox>"#
+        ),
     ] {
         let expression = through_mathml(&body);
         assert!(
@@ -2455,7 +2458,7 @@ fn accents_and_enclosures_from_other_producers_keep_their_meaning() {
         matches!(&vector, oxoffice_docx::MathExpression::Accent(accent) if accent.character == "\u{20d7}"),
         "{vector:?}"
     );
-    for notation in ["roundedbox", "circle", ""] {
+    for notation in ["roundedbox", "circle"] {
         let boxed = read(&format!(
             r#"<menclose notation="{notation}"><mi>x</mi></menclose>"#
         ));

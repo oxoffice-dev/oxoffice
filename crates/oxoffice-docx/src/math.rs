@@ -893,13 +893,15 @@ fn mathml_element_to_expressions(
             let mut border =
                 MathBorderBox::new(mathml_children_to_argument(node, path, diagnostics, nodes)?);
             // A box, a rounded box or a circle draws all four sides; sides or
-            // strikes named without one draw only what they name; a notation
-            // naming none of them (missing, empty, longdiv) is read as a box.
+            // strikes named without one draw only what they name, and an empty
+            // notation (the form of a box with every side hidden) draws
+            // nothing; a missing one or longdiv reads as a box.
             let notations = node
                 .attribute("notation")
                 .unwrap_or("box")
                 .split_whitespace()
                 .collect::<Vec<_>>();
+            let empty = notations.is_empty();
             let framed = notations
                 .iter()
                 .any(|name| matches!(*name, "box" | "roundedbox" | "circle"));
@@ -916,7 +918,7 @@ fn mathml_element_to_expressions(
                         | "downdiagonalstrike"
                 )
             });
-            if !framed && drawn {
+            if !framed && (drawn || empty) {
                 let hidden = |side: &str| (!notations.contains(&side)).then_some(true);
                 border.hide_top = hidden("top");
                 border.hide_bottom = hidden("bottom");
@@ -1395,9 +1397,9 @@ fn parse_mathml_limits_or_accent(
         .map(|child| (child.text(), child.attribute("stretchy") == Some("true")));
     // An accent (on the node or its mark) stays an accent, unless its mark is a
     // brace or bracket, which only a group character draws.
-    let marked_accent = node.attribute("accent") == Some("true")
-        || node.attribute("accentunder") == Some("true")
-        || children[1].attribute("accent") == Some("true");
+    let marked_accent = node.local == "mover"
+        && (node.attribute("accent") == Some("true")
+            || children[1].attribute("accent") == Some("true"));
     if let Some((text, stretchy)) = &mark {
         let over = node.local == "mover";
         if (over && text == "\u{203e}") || (!over && matches!(text.as_str(), "_" | "\u{332}")) {
