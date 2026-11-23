@@ -54,6 +54,7 @@ mod sections;
 mod table_rows;
 mod wraps;
 
+pub(crate) use anchors::inline_shape_elements;
 use anchors::{
     AnchorPaintOwner, anchored_elements, anchored_rect, resolve_anchor_h, resolve_anchor_v,
     translate_element_tree,

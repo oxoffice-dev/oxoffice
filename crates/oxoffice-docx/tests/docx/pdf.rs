@@ -2126,6 +2126,46 @@ fn a_text_box_text_keeps_its_insets_from_the_box_edges() {
     }
 }
 
+// Word draws a text box placed in line with text (`wp:inline`, written in
+// `mc:AlternateContent` with a VML fallback) on the line that holds it: the
+// box stands on the baseline, the line is as tall as the box, and the box's
+// text sits inside it, within its insets.
+#[test]
+fn an_inline_text_box_draws_its_text_inside_its_extent_on_its_line() {
+    let body = format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{}"#,
+            r#"<w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#,
+        ),
+        crate::support::text_box_run(9, "<w:p><w:r><w:t>Boxed</w:t></w:r></w:p>")
+    );
+    let pdf = pdf_of(&doc_with_body(&body));
+    let drawn = pdf.drawn(0);
+    let piece = |text: &str| {
+        drawn
+            .iter()
+            .find(|piece| piece.text.contains(text))
+            .unwrap_or_else(|| panic!("page 0 draws no {text:?}: {drawn:?}"))
+    };
+    let (before, boxed, after) = (piece("Before"), piece("Boxed"), piece("after"));
+    assert!((before.y - after.y).abs() < 0.5, "{before:?} {after:?}");
+    // The box is one inch square, on the baseline: the first baseline is at
+    // least one inch below the top margin, and the text after the box starts
+    // one inch after the text before it.
+    assert!(before.y <= 792.0 - 72.0 - 72.0 + 0.5, "{before:?}");
+    assert!(after.x >= before.end + 72.0 - 0.5, "{before:?} {after:?}");
+    // The box's text starts 0.1 inch inside its left edge and stands inside
+    // the box, above the baseline.
+    assert!(
+        (boxed.x - (before.end + 7.2)).abs() < 4.0,
+        "{before:?} {boxed:?}"
+    );
+    assert!(
+        boxed.y > before.y + 36.0 && boxed.y < before.y + 72.0,
+        "{before:?} {boxed:?}"
+    );
+}
+
 /// A paragraph that starts with a text box it must clear, Word's "top and
 /// bottom" wrapping, anchored at the paragraph's top.
 fn paragraph_below_its_text_box(text: &str) -> String {

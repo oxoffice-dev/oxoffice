@@ -1490,6 +1490,9 @@ pub struct CT_Inline {
     /// drawing read from a file never carries this mark, whatever its id.
     #[doc(hidden)]
     pub doc_pr_id_unallocated: bool,
+    /// Shape content, when the drawing holds a `wps:wsp` rather than a
+    /// picture: a text box placed in line with text.
+    pub shape: Option<CT_Shape>,
 }
 
 impl CT_Inline {
@@ -1508,6 +1511,7 @@ impl CT_Inline {
             source_rect: None,
             raw_xml: None,
             doc_pr_id_unallocated: false,
+            shape: None,
         }
     }
 
@@ -1527,6 +1531,7 @@ impl CT_Inline {
             source_rect: None,
             raw_xml: None,
             doc_pr_id_unallocated: false,
+            shape: None,
         }
     }
 
@@ -1555,6 +1560,7 @@ impl CT_Inline {
         let mut name = None;
         let mut source_rect = None;
         let mut doc_pr_id = None;
+        let mut shape: Option<CT_Shape> = None;
         let mut buf = Vec::new();
 
         loop {
@@ -1589,18 +1595,47 @@ impl CT_Inline {
                         }
                     } else if action == DrawingChildAction::SourceRect {
                         source_rect = Some(parse_source_rect(e)?);
+                    } else if let Some(shape) = shape.as_mut() {
+                        // Inside the shape's `wps:bodyPr`, or `wps:bodyPr`
+                        // itself when it has no children.
+                        if matches_local_name(ename.as_ref(), b"spAutoFit") {
+                            shape.grows_to_fit_text = true;
+                        } else if matches_local_name(ename.as_ref(), b"bodyPr") {
+                            read_body_properties(e, shape);
+                        }
                     }
                 }
                 Ok(Event::Start(ref e)) => {
                     let ename = e.name();
+                    let is_word_text_box = {
+                        let (namespace, local) = reader.resolver().resolve_element(e.name());
+                        namespace_matches(&namespace, crate::namespace::W_NS, b"w")
+                            && local.as_ref() == b"txbxContent"
+                    };
                     let action = DrawingChildAction::for_name(
                         DrawingContainerKind::Inline,
                         ename.as_ref(),
                         false,
                         canonical_wp_element(reader, e, b"docPr"),
-                        false,
+                        is_word_text_box,
                     );
-                    if action == DrawingChildAction::SourceRect {
+                    // A shape's `wps:bodyPr` follows its `wps:spPr`, which
+                    // made the shape.
+                    if matches_local_name(ename.as_ref(), b"bodyPr")
+                        && let Some(shape) = shape.as_mut()
+                    {
+                        read_body_properties(e, shape);
+                    }
+                    if action == DrawingChildAction::ShapeProperties {
+                        let raw = capture_ns_element(reader, e)?;
+                        let (preset, solid_fill) = parse_shape_props(&raw);
+                        let s = shape.get_or_insert_with(CT_Shape::default);
+                        s.preset = preset;
+                        s.solid_fill = solid_fill;
+                    } else if action == DrawingChildAction::TextBox {
+                        let body = text_box_body(reader, e, None, 0)?;
+                        shape.get_or_insert_with(CT_Shape::default).text_body = Some(body);
+                    } else if action == DrawingChildAction::SourceRect {
                         source_rect = Some(parse_source_rect(e)?);
                         reader.read_to_end_into(ename, &mut Vec::new())?;
                     } else if action == DrawingChildAction::Blip {
@@ -1654,6 +1689,7 @@ impl CT_Inline {
             source_rect,
             raw_xml: None, // Will be set by CT_Drawing::from_xml
             doc_pr_id_unallocated: false,
+            shape,
         })
     }
 
@@ -2334,24 +2370,20 @@ impl DrawingChildAction {
             }
         } else if matches_local_name(name, b"srcRect") {
             Self::SourceRect
-        } else if kind == DrawingContainerKind::Anchor {
-            if matches_local_name(name, b"positionH") {
-                Self::PositionH
-            } else if let Some(wrap) = wrap_type_of(name) {
-                Self::Wrap(wrap)
-            } else if matches_local_name(name, b"positionV") {
-                Self::PositionV
-            } else if matches_local_name(name, b"spPr") {
-                Self::ShapeProperties
-            } else if word_text_box {
-                Self::TextBox
-            } else if matches_local_name(name, b"blip") {
-                Self::Blip
-            } else if doc_pr {
-                Self::DocPr
-            } else {
-                Self::Walk
-            }
+        } else if kind == DrawingContainerKind::Anchor && matches_local_name(name, b"positionH") {
+            Self::PositionH
+        } else if let Some(wrap) =
+            wrap_type_of(name).filter(|_| kind == DrawingContainerKind::Anchor)
+        {
+            Self::Wrap(wrap)
+        } else if kind == DrawingContainerKind::Anchor && matches_local_name(name, b"positionV") {
+            Self::PositionV
+        } else if matches_local_name(name, b"spPr") {
+            // A shape placed in line with text has its geometry and its
+            // text box as one floating has.
+            Self::ShapeProperties
+        } else if word_text_box {
+            Self::TextBox
         } else if matches_local_name(name, b"blip") {
             Self::Blip
         } else if doc_pr {
