@@ -1995,13 +1995,16 @@ fn layout_matrix(
             height / 2.0 + (row_ascent - row_descent) / 2.0
         }
     };
+    let justifications = (0..column_count)
+        .map(|column| value.column_justification(column))
+        .collect::<Vec<_>>();
     let mut children = Vec::new();
     let mut y = 0.0;
     for (row, (row_ascent, row_descent)) in rows.into_iter().zip(row_metrics) {
         let mut x = 0.0;
         for (column_index, cell) in row.into_iter().enumerate() {
             let room = column_widths[column_index] - cell.width;
-            let cell_x = x + match value.column_justification(column_index) {
+            let cell_x = x + match justifications[column_index] {
                 MatrixColumnJustification::Left => 0.0,
                 MatrixColumnJustification::Center => room / 2.0,
                 MatrixColumnJustification::Right => room,
@@ -2658,6 +2661,8 @@ fn layout_phantom(
         base.width = 0.0;
     }
     if value.zero_ascent == Some(true) {
+        // The ink keeps its baseline: the box's top moves down to it.
+        base.group = group(vec![translated(base.group, 0.0, -base.ascent)]);
         base.ascent = 0.0;
     }
     if value.zero_descent == Some(true) {
@@ -2678,10 +2683,17 @@ fn layout_equation_array(
 ) -> Result<MeasuredMath> {
     let font_size = context.font_size;
     // Each row aligns on its first `&`, which is not drawn: the part before
-    // it ends at one column, the part after it starts there.
+    // it ends at one column, the part after it starts there; a row with no
+    // mark starts at the column. With no mark in any row, Word centres them.
+    let aligned = value
+        .rows
+        .iter()
+        .any(|row| row.split_at_alignment().is_some());
     let mut rows = Vec::with_capacity(value.rows.len());
     for (index, row) in value.rows.iter().enumerate() {
-        let (before, after) = row.split_at_alignment();
+        let (before, after) = row
+            .split_at_alignment()
+            .unwrap_or_else(|| (MathArgument::default(), row.clone()));
         let path = format!("{source_path}/row/{index}");
         let before = layout_argument(&before, fm, font_family, context, color, &path, diagnostics)?;
         let after = layout_argument(&after, fm, font_family, context, color, &path, diagnostics)?;
@@ -2709,7 +2721,7 @@ fn layout_equation_array(
     let mut baseline = 0.0;
     let mut previous_descent = None;
     let mut first_ascent = 0.0;
-    for (index, (before, after)) in rows.into_iter().enumerate() {
+    for (before, after) in rows {
         let ascent = before.ascent.max(after.ascent);
         let descent = before.descent.max(after.descent);
         baseline = match previous_descent {
@@ -2719,13 +2731,17 @@ fn layout_equation_array(
             }
             Some(previous) => baseline + step(previous + ascent),
         };
-        let _ = index;
         children.push(translated(
             before.group,
             column - before.width,
             baseline - before.ascent,
         ));
-        children.push(translated(after.group, column, baseline - after.ascent));
+        let after_x = if aligned {
+            column
+        } else {
+            (width - after.width) / 2.0
+        };
+        children.push(translated(after.group, after_x, baseline - after.ascent));
         previous_descent = Some(descent);
     }
     let height = baseline + previous_descent.unwrap_or(0.0);

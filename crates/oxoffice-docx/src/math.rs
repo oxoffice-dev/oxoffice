@@ -1530,6 +1530,7 @@ fn normalize_argument(argument: &mut MathArgument) {
             && previous_is_fully_modelled
             && previous.properties == Default::default()
             && run.properties == Default::default()
+            && run_color_and_size(previous) == run_color_and_size(run)
         {
             previous.text.push_str(&run.text);
             continue;
@@ -1769,6 +1770,108 @@ fn write_mathml_argument(
     Ok(())
 }
 
+fn write_mathml_run(
+    run: &MathRun,
+    path: &str,
+    output: &mut String,
+    diagnostics: &mut Diagnostics,
+) -> Result<()> {
+    if run_has_unconverted_properties(run, true) {
+        diagnostics.push(
+            format!("{path}/rPr"),
+            "OfficeMath run properties were discarded",
+        )?;
+    }
+    if !is_xml_1_0_text(&run.text) {
+        diagnostics.push(
+            path,
+            "OfficeMath run contains a forbidden XML 1.0 character",
+        )?;
+        return Ok(());
+    }
+    if run.properties.normal == Some(true) && run.properties.style == Some(MathStyle::Plain) {
+        let has_content = !run.text.trim_matches(' ').is_empty();
+        let leading = has_content && run.text.starts_with(' ') && !run.text.starts_with("  ");
+        let trailing = has_content && run.text.ends_with(' ') && !run.text.ends_with("  ");
+        if leading {
+            output.push_str("<mspace width=\"0.333em\"/>");
+        }
+        output.push_str("<mtext>");
+        // One lexical boundary space is represented by one explicit marker.
+        let text = if leading {
+            run.text.strip_prefix(' ').unwrap_or(&run.text)
+        } else {
+            &run.text
+        };
+        let text = if trailing {
+            text.strip_suffix(' ').unwrap_or(text)
+        } else {
+            text
+        };
+        output.push_str(&xml_escape(text));
+        output.push_str("</mtext>");
+        if trailing && (!leading || run.text.len() > 1) {
+            output.push_str("<mspace width=\"0.333em\"/>");
+        }
+    } else if run.properties.normal == Some(true) || run.properties.style == Some(MathStyle::Plain)
+    {
+        output.push_str("<mi mathvariant=\"normal\">");
+        output.push_str(&xml_escape(&run.text));
+        output.push_str("</mi>");
+        if run.properties.normal == Some(true) && run.text != "lim" {
+            output.push_str("<mo>⁡</mo>");
+        }
+    } else {
+        let mut part = String::new();
+        for character in run.text.chars() {
+            if let Some(width) = math_space_width(character) {
+                if !part.is_empty() {
+                    write!(output, "<mi>{}</mi>", xml_escape(&part))
+                        .expect("String writes succeed");
+                    part.clear();
+                }
+                write!(output, "<mspace width=\"{width}\"/>").expect("String writes succeed");
+            } else {
+                part.push(character);
+            }
+        }
+        if !part.is_empty() || run.text.is_empty() {
+            write!(output, "<mi>{}</mi>", xml_escape(&part)).expect("String writes succeed");
+        }
+    }
+    Ok(())
+}
+
+/// The `mstyle` start tag that carries the colour (`w:color`) and size
+/// (`w:sz`) of a math run's own run properties, if it sets either.
+fn mathml_run_style(run: &MathRun) -> Option<String> {
+    let (color, size) = run_color_and_size(run);
+    if color.is_none() && size.is_none() {
+        return None;
+    }
+    let mut style = "<mstyle".to_owned();
+    if let Some(color) = color {
+        write!(style, " mathcolor=\"#{color}\"").expect("String writes are infallible");
+    }
+    if let Some(size) = size {
+        write!(style, " mathsize=\"{size}pt\"").expect("String writes are infallible");
+    }
+    style.push('>');
+    Some(style)
+}
+
+/// The colour (six hex digits) and size in points a math run's `w:rPr` sets.
+fn run_color_and_size(run: &MathRun) -> (Option<String>, Option<f64>) {
+    let Some(properties) = run.word_properties() else {
+        return (None, None);
+    };
+    let color = properties
+        .color
+        .filter(|color| color.len() == 6 && color.chars().all(|digit| digit.is_ascii_hexdigit()))
+        .map(|color| color.to_ascii_uppercase());
+    (color, properties.sz.map(|size| size.to_pt()))
+}
+
 fn run_has_unconverted_properties(run: &MathRun, normal_supported: bool) -> bool {
     let properties = &run.properties;
     properties
@@ -1791,76 +1894,22 @@ fn write_mathml_expression(
         diagnostics.push(path, "unmodelled OfficeMath content was discarded")?;
     }
     match expression {
-        MathExpression::Run(run) => {
-            if run_has_unconverted_properties(run, true) {
-                diagnostics.push(
-                    format!("{path}/rPr"),
-                    "OfficeMath run properties were discarded",
-                )?;
-            }
-            if !is_xml_1_0_text(&run.text) {
-                diagnostics.push(
-                    path,
-                    "OfficeMath run contains a forbidden XML 1.0 character",
-                )?;
-                return Ok(());
-            }
-            if run.properties.normal == Some(true) && run.properties.style == Some(MathStyle::Plain)
-            {
-                let has_content = !run.text.trim_matches(' ').is_empty();
-                let leading =
-                    has_content && run.text.starts_with(' ') && !run.text.starts_with("  ");
-                let trailing = has_content && run.text.ends_with(' ') && !run.text.ends_with("  ");
-                if leading {
-                    output.push_str("<mspace width=\"0.333em\"/>");
-                }
-                output.push_str("<mtext>");
-                // One lexical boundary space is represented by one explicit marker.
-                let text = if leading {
-                    run.text.strip_prefix(' ').unwrap_or(&run.text)
+        MathExpression::Run(run) => match mathml_run_style(run) {
+            // A run's own colour and size, which the layout draws, as MathML
+            // style; nothing when the run writes nothing.
+            Some(style) => {
+                let start = output.len();
+                output.push_str(&style);
+                let body = output.len();
+                write_mathml_run(run, path, output, diagnostics)?;
+                if output.len() == body {
+                    output.truncate(start);
                 } else {
-                    &run.text
-                };
-                let text = if trailing {
-                    text.strip_suffix(' ').unwrap_or(text)
-                } else {
-                    text
-                };
-                output.push_str(&xml_escape(text));
-                output.push_str("</mtext>");
-                if trailing && (!leading || run.text.len() > 1) {
-                    output.push_str("<mspace width=\"0.333em\"/>");
-                }
-            } else if run.properties.normal == Some(true)
-                || run.properties.style == Some(MathStyle::Plain)
-            {
-                output.push_str("<mi mathvariant=\"normal\">");
-                output.push_str(&xml_escape(&run.text));
-                output.push_str("</mi>");
-                if run.properties.normal == Some(true) && run.text != "lim" {
-                    output.push_str("<mo>⁡</mo>");
-                }
-            } else {
-                let mut part = String::new();
-                for character in run.text.chars() {
-                    if let Some(width) = math_space_width(character) {
-                        if !part.is_empty() {
-                            write!(output, "<mi>{}</mi>", xml_escape(&part))
-                                .expect("String writes succeed");
-                            part.clear();
-                        }
-                        write!(output, "<mspace width=\"{width}\"/>")
-                            .expect("String writes succeed");
-                    } else {
-                        part.push(character);
-                    }
-                }
-                if !part.is_empty() || run.text.is_empty() {
-                    write!(output, "<mi>{}</mi>", xml_escape(&part))
-                        .expect("String writes succeed");
+                    output.push_str("</mstyle>");
                 }
             }
-        }
+            None => write_mathml_run(run, path, output, diagnostics)?,
+        },
         MathExpression::Fraction(value) => {
             if !matches!(value.fraction_type, FractionType::Bar | FractionType::NoBar) {
                 diagnostics.push(path, "non-bar OfficeMath fraction type was discarded")?;
@@ -2128,13 +2177,29 @@ fn write_mathml_expression(
             });
         }
         MathExpression::EquationArray(value) => {
-            output.push_str("<mtable columnalign=\"right left\">");
+            // Rows aligned on their `&` take two columns; with no mark in any
+            // row, one centred column, as Word draws them.
+            let aligned = value
+                .rows
+                .iter()
+                .any(|row| row.split_at_alignment().is_some());
+            output.push_str(if aligned {
+                "<mtable columnalign=\"right left\">"
+            } else {
+                "<mtable>"
+            });
             for row in &value.rows {
-                let (before, after) = row.split_at_alignment();
                 output.push_str("<mtr><mtd>");
-                write_mathml_argument(&before, path, output, diagnostics)?;
-                output.push_str("</mtd><mtd>");
-                write_mathml_argument(&after, path, output, diagnostics)?;
+                if aligned {
+                    let (before, after) = row
+                        .split_at_alignment()
+                        .unwrap_or_else(|| (MathArgument::default(), row.clone()));
+                    write_mathml_argument(&before, path, output, diagnostics)?;
+                    output.push_str("</mtd><mtd>");
+                    write_mathml_argument(&after, path, output, diagnostics)?;
+                } else {
+                    write_mathml_argument(row, path, output, diagnostics)?;
+                }
                 output.push_str("</mtd></mtr>");
             }
             output.push_str("</mtable>");
@@ -3346,6 +3411,9 @@ fn write_latex_expression(
             if run_has_unconverted_properties(run, upright) {
                 diagnostics.push(path, "OfficeMath run properties were discarded")?;
             }
+            if run_color_and_size(run) != (None, None) {
+                diagnostics.push(path, "OfficeMath run colour and size were discarded")?;
+            }
             let literal = run.properties.style == Some(MathStyle::Plain);
             if upright && literal {
                 output.push_str("\\text{");
@@ -3601,17 +3669,30 @@ fn write_latex_expression(
             write_latex_group(&value.base, path, output, diagnostics)?;
         }
         MathExpression::EquationArray(value) => {
-            output.push_str("\\begin{aligned}");
+            let aligned = value
+                .rows
+                .iter()
+                .any(|row| row.split_at_alignment().is_some());
+            let environment = if aligned { "aligned" } else { "gathered" };
+            write!(output, "\\begin{{{environment}}}").expect("String writes are infallible");
             for (index, row) in value.rows.iter().enumerate() {
                 if index != 0 {
                     output.push_str("\\\\");
                 }
-                let (before, after) = row.split_at_alignment();
-                write_latex_argument(&before, path, output, diagnostics)?;
-                output.push('&');
-                write_latex_argument(&after, path, output, diagnostics)?;
+                match row.split_at_alignment() {
+                    Some((before, after)) => {
+                        write_latex_argument(&before, path, output, diagnostics)?;
+                        output.push('&');
+                        write_latex_argument(&after, path, output, diagnostics)?;
+                    }
+                    None if aligned => {
+                        output.push('&');
+                        write_latex_argument(row, path, output, diagnostics)?;
+                    }
+                    None => write_latex_argument(row, path, output, diagnostics)?,
+                }
             }
-            output.push_str("\\end{aligned}");
+            write!(output, "\\end{{{environment}}}").expect("String writes are infallible");
         }
         _ => diagnostics.push(path, "unmodelled OfficeMath content was discarded")?,
     }

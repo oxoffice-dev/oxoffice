@@ -1992,7 +1992,7 @@ fn every_officemath_object_reaches_mathml_and_latex() {
         (
             format!(r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>log</m:t></m:r></m:fName>{x}</m:func>"#),
             "<mi mathvariant=\"normal\">log</mi></mrow><mo>\u{2061}</mo><mrow><mi>x</mi>",
-            "\\,",
+            "\\mathrm{log}\\,x",
         ),
         (
             format!(r#"<m:bar><m:barPr><m:pos m:val="top"/></m:barPr>{x}</m:bar>"#),
@@ -2029,6 +2029,11 @@ fn every_officemath_object_reaches_mathml_and_latex() {
             "<mtable columnalign=\"right left\"><mtr><mtd><mi>x</mi></mtd><mtd>",
             "\\begin{aligned}x&=1\\\\y&=2\\end{aligned}",
         ),
+        (
+            "<m:eqArr><m:e><m:r><m:t>x</m:t></m:r></m:e><m:e><m:r><m:t>y</m:t></m:r></m:e></m:eqArr>".to_owned(),
+            "<mtable><mtr><mtd><mi>x</mi></mtd></mtr><mtr><mtd><mi>y</mi></mtd></mtr></mtable>",
+            "\\begin{gathered}x\\\\y\\end{gathered}",
+        ),
     ] {
         let equation = oxoffice_docx::CT_OMath::from_xml(
             format!(r#"<m:oMath xmlns:m="{MATH_NAMESPACE}">{body}</m:oMath>"#).as_bytes(),
@@ -2040,8 +2045,39 @@ fn every_officemath_object_reaches_mathml_and_latex() {
         assert!(converted.value.contains(mathml), "{body}: {}", converted.value);
         let converted = oxoffice_docx::equation_to_latex(&argument);
         assert!(converted.diagnostics.is_empty(), "{body}: {:?}", converted.diagnostics);
-        assert!(converted.value.contains(latex), "{body}: {}", converted.value);
+        assert_eq!(converted.value, latex, "{body}");
     }
+}
+
+// A math run's own colour and size, which the layout draws, reach MathML as
+// its style; LaTeX says it leaves them out.
+#[test]
+fn a_math_run_colour_and_size_reach_mathml_and_are_reported_by_latex() {
+    let equation = oxoffice_docx::CT_OMath::from_xml(
+        format!(
+            r#"<m:oMath xmlns:m="{MATH_NAMESPACE}" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><m:r><w:rPr><w:color w:val="ff0000"/><w:sz w:val="32"/></w:rPr><m:t>x</m:t></m:r><m:r><w:rPr><w:rFonts w:ascii="Cambria Math"/></w:rPr><m:t>y</m:t></m:r></m:oMath>"#
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    let argument = oxoffice_docx::MathArgument::new(equation.expressions.clone());
+    let mathml = oxoffice_docx::equation_to_mathml(&argument);
+    assert!(
+        mathml.value.contains(
+            r##"<mstyle mathcolor="#FF0000" mathsize="16pt"><mi>x</mi></mstyle><mi>y</mi>"##
+        ),
+        "{}",
+        mathml.value
+    );
+    let latex = oxoffice_docx::equation_to_latex(&argument);
+    assert!(
+        latex
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message == "OfficeMath run colour and size were discarded"),
+        "{:?}",
+        latex.diagnostics
+    );
 }
 
 #[test]

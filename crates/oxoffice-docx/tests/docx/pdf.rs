@@ -1175,6 +1175,15 @@ fn a_hidden_phantom_takes_the_room_of_its_base_and_draws_nothing() {
         (glyph(&glyphs, "c").1 - glyph(&shown, "c").1).abs() < 0.5,
         "{glyphs:?} against {shown:?}"
     );
+    // A shown phantom with no ascent (Word's smash) keeps its ink on the
+    // baseline.
+    let (smashed, _, _) = equation_ink(
+        r#"<m:r><m:t>a</m:t></m:r><m:phant><m:phantPr><m:zeroAsc m:val="1"/></m:phantPr><m:e><m:r><m:t>X</m:t></m:r></m:e></m:phant>"#,
+    );
+    assert!(
+        (glyph(&smashed, "X").2 - glyph(&smashed, "a").2).abs() < 0.01,
+        "{smashed:?}"
+    );
 }
 
 #[test]
@@ -1190,6 +1199,15 @@ fn the_rows_of_an_equation_array_align_on_their_marks() {
         glyphs.iter().all(|glyph| !glyph.0.contains('&')),
         "{glyphs:?}"
     );
+    // With no mark in any row, the rows are centred.
+    let (glyphs, _, _) = equation_ink(
+        r#"<m:eqArr><m:e><m:r><m:t>a</m:t></m:r></m:e><m:e><m:r><m:t>bbbbb</m:t></m:r></m:e></m:eqArr>"#,
+    );
+    let centre = |text: &str| {
+        let glyph = glyph(&glyphs, text);
+        (glyph.1 + glyph.3) / 2.0
+    };
+    assert!((centre("a") - centre("bbbbb")).abs() < 0.01, "{glyphs:?}");
 }
 
 #[test]

@@ -588,8 +588,8 @@ impl MathArgument {
 
     /// The expressions of an equation array's row before and after its
     /// first `&`, the column the rows align on, with every `&` left out of
-    /// the run text. A row with no `&` is all after it.
-    pub fn split_at_alignment(&self) -> (MathArgument, MathArgument) {
+    /// the run text; `None` for a row with no `&`.
+    pub fn split_at_alignment(&self) -> Option<(MathArgument, MathArgument)> {
         let mut before = Vec::new();
         let mut after = Vec::new();
         let mut aligned = false;
@@ -618,10 +618,7 @@ impl MathArgument {
                 other => before.push(other.clone()),
             }
         }
-        if !aligned {
-            return (MathArgument::default(), MathArgument::new(before));
-        }
-        (MathArgument::new(before), MathArgument::new(after))
+        aligned.then(|| (MathArgument::new(before), MathArgument::new(after)))
     }
 
     /// Whether this argument retains content outside the typed OfficeMath subset.
@@ -5157,7 +5154,8 @@ mod tests {
             ),
             (2, Some(MatrixBaseJustification::Top), Some(3), Some(120))
         );
-        let (before, after) = array.rows[1].split_at_alignment();
+        assert!(array.rows[0].split_at_alignment().is_none());
+        let (before, after) = array.rows[1].split_at_alignment().unwrap();
         let text = |argument: &super::MathArgument| match argument.expressions.as_slice() {
             [MathExpression::Run(run)] => run.text.clone(),
             other => panic!("{other:?}"),
