@@ -86,3 +86,4 @@ dependency bumps and documentation.
 | 2026-11-23 | [Restarting a list item numbered through its style](2026-11-23-restart-a-style-numbered-list-item.md) | accepted |
 | 2026-11-23 | [Date controls with a time, and the US Gregorian calendar](2026-11-23-date-controls-with-times.md) | accepted |
 | 2026-11-23 | [One font record addressed by its index](2026-11-23-font-records-by-index.md) | accepted |
+| 2026-11-23 | [Comparison: endnotes compared like footnotes](2026-11-23-comparison-endnote-custody.md) | accepted |
