@@ -308,6 +308,9 @@ pub(super) fn modeled_paragraph_properties(properties: Option<&CT_PPr>) -> Optio
         properties.change = None;
         properties.revision_xml.clear();
         properties.revision_xml_positions.clear();
+        // Compared, never written: a `w:numId` without `w:ilvl` takes the
+        // level both inputs show.
+        super::numbering::normalize_numbering(&mut properties);
         nonempty_paragraph_properties(properties)
     })
 }
@@ -332,6 +335,7 @@ pub(super) fn paragraph_properties_differ(
             if let Some(section) = properties.sect_pr.as_mut() {
                 clear_default_orientation(section);
             }
+            super::numbering::normalize_numbering(&mut properties);
             nonempty_paragraph_properties(properties)
         })
     };

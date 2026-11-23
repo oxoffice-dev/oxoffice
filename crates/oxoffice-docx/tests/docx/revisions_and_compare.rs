@@ -4020,3 +4020,52 @@ fn a_range_ending_in_a_removed_final_control_still_ends_after_it_starts() {
     assert!(start < end, "{xml}");
     assert_eq!(bookmark_names(&accepted), ["span"]);
 }
+
+/// Two numbered items and a third in a table cell, saved with each one's
+/// `w:ilvl` element replaced by `level` (empty: none), as producers write it.
+fn numbered_items(level: &str) -> Document {
+    let mut doc = Document::new();
+    doc.add_numbered_list_item("one", 0);
+    doc.add_numbered_list_item("two", 0);
+    let list = doc.paragraph(0).unwrap().numbering().unwrap().0;
+    doc.add_table(1, 1)
+        .cell(0, 0)
+        .unwrap()
+        .add_paragraph("three")
+        .numbering(list, 0);
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    assert!(xml.contains(r#"<w:ilvl w:val="0"/>"#), "{xml}");
+    package.set_part(
+        &main,
+        xml.replace(r#"<w:ilvl w:val="0"/>"#, level).into_bytes(),
+    );
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn a_copy_that_writes_the_list_level_its_items_show_is_no_change() {
+    // Word or python-docx write a `w:numId` alone; LibreOffice writes the
+    // `w:ilvl 0` it shows.
+    let doc = redline(
+        numbered_items(""),
+        &numbered_items(r#"<w:ilvl w:val="0"/>"#),
+    );
+    assert_eq!(kinds(&doc), []);
+    let doc = redline(
+        numbered_items(r#"<w:ilvl w:val="0"/>"#),
+        &numbered_items(""),
+    );
+    assert_eq!(kinds(&doc), []);
+    // A real change of level is still one.
+    let doc = redline(
+        numbered_items(""),
+        &numbered_items(r#"<w:ilvl w:val="1"/>"#),
+    );
+    assert!(!kinds(&doc).is_empty());
+}

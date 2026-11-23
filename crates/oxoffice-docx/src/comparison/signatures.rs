@@ -90,11 +90,10 @@ fn paragraph_signature(paragraph: &CT_P) -> String {
     )
 }
 
+/// A paragraph's `(w:numId, w:ilvl)`, a missing `w:ilvl` read at the level
+/// both inputs show, as [`super::numbering::numbering_key`] gives it.
 fn paragraph_numbering(paragraph: &CT_P) -> Option<(Option<u32>, Option<u32>)> {
-    paragraph.properties.as_ref().and_then(|properties| {
-        (properties.num_id.is_some() || properties.num_ilvl.is_some())
-            .then_some((properties.num_id, properties.num_ilvl))
-    })
+    super::numbering::numbering_key(paragraph.properties.as_ref())
 }
 
 pub(super) fn run_signature(run: &CT_R) -> String {
