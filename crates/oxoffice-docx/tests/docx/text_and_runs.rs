@@ -370,6 +370,94 @@ fn a_paragraph_holding_a_non_breaking_hyphen_and_a_positional_tab_lays_out() {
     assert_eq!(result.layout.pages.len(), 1);
 }
 
+/// The text of each line of the first page, top to bottom.
+fn first_page_lines(doc: &Document) -> Vec<String> {
+    fn collect(elements: &[oxoffice_layout::PositionedElement], out: &mut Vec<(f64, String)>) {
+        for element in elements {
+            match element {
+                oxoffice_layout::PositionedElement::MarkedContent { children, .. } => {
+                    collect(children, out)
+                }
+                oxoffice_layout::PositionedElement::Text(run) => {
+                    match out
+                        .iter_mut()
+                        .find(|(y, _)| (*y - run.origin.y).abs() < 1.0)
+                    {
+                        Some((_, line)) => line.push_str(&run.text),
+                        None => out.push((run.origin.y, run.text.clone())),
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut lines = Vec::new();
+    collect(&result.layout.pages[0].elements, &mut lines);
+    lines.into_iter().map(|(_, line)| line).collect()
+}
+
+#[test]
+fn a_word_split_across_runs_is_not_broken_where_its_runs_meet() {
+    // Word splits a word's runs at each editing session. Whichever line the
+    // word lands on, it stays whole, hyphenated or not.
+    for (start, rest, hyphenate) in [
+        ("keepi", "ng the existing budget", false),
+        ("inter", "nationalization of the budget", true),
+    ] {
+        for width in 0..12 {
+            let filler = format!("{}{}", "word ".repeat(16), "i".repeat(width));
+            let run = |text: &str| {
+                format!(
+                    r#"<w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#
+                )
+            };
+            let mut doc = doc_with_body(&format!(
+                "<w:p>{}{}</w:p>",
+                run(&format!("{filler} {start}")),
+                run(&format!("{rest} and more words to wrap.")),
+            ));
+            if hyphenate {
+                doc.set_auto_hyphenation(true).unwrap();
+            }
+            let lines = first_page_lines(&doc);
+            assert!(
+                lines.iter().all(|line| !line.trim_end().ends_with(start)),
+                "{start}|{rest} breaks where its runs meet: {lines:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_field_marker_between_two_words_leaves_the_break_between_them() {
+    // A bookmark a PAGEREF points at puts a zero-width marker where it
+    // starts. It must not join the word after it to the space before it.
+    let ends_on_first_word = (0..12).any(|width| {
+        let filler = format!("{}{}", "word ".repeat(16), "i".repeat(width));
+        let doc = doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:r><w:t xml:space="preserve">{} foo </w:t></w:r>"#,
+                r#"<w:bookmarkStart w:id="1" w:name="_Ref1"/>"#,
+                r#"<w:r><w:t xml:space="preserve">barbarbar and more words to wrap.</w:t></w:r>"#,
+                r#"<w:bookmarkEnd w:id="1"/></w:p>"#,
+                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+                r#"<w:r><w:instrText xml:space="preserve"> PAGEREF _Ref1 </w:instrText></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>"#,
+                r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+            ),
+            filler
+        ));
+        first_page_lines(&doc)
+            .iter()
+            .any(|line| line.trim_end().ends_with("foo"))
+    });
+    assert!(
+        ends_on_first_word,
+        "no line breaks between foo and the marker after it"
+    );
+}
+
 // ---- Unicode ----
 
 #[test]
