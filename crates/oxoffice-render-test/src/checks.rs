@@ -157,29 +157,16 @@ pub fn check_empty_pages(
 }
 
 /// The words of a text: runs of letters, runs of digits, and each Chinese,
-/// Japanese or Korean character on its own. Numbers are left out: page
-/// numbers, sequence numbers and page counts are computed by the render, so
-/// the text of their fields is not what the page draws. A digit next to a
-/// letter starts a new word, so that a note mark drawn against its word
-/// (`rate¹`) still reads as the word.
-pub fn words(text: &str) -> Vec<String> {
-    split_words(text, false)
-}
-
-/// [`words`], numbers included: for a deck, whose only computed numbers are
-/// its slide numbers and dates.
+/// Japanese or Korean character on its own. A digit next to a letter starts
+/// a new word, so that a note mark drawn against its word (`rate¹`) still
+/// reads as the word.
 pub fn all_words(text: &str) -> Vec<String> {
-    split_words(text, true)
-}
-
-fn split_words(text: &str, numbers: bool) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
     let flush = |word: &mut String, words: &mut Vec<String>| {
-        if !word.is_empty() && (numbers || !is_number(word)) {
+        if !word.is_empty() {
             words.push(std::mem::take(word));
         }
-        word.clear();
     };
     for ch in text.chars() {
         if is_cjk(ch) {
@@ -206,45 +193,6 @@ fn split_words(text: &str, numbers: bool) -> Vec<String> {
 pub fn is_cjk(ch: char) -> bool {
     matches!(u32::from(ch),
         0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF)
-}
-
-/// Whether a word is a number in digits, or a page number in small Roman
-/// numerals as Word writes front matter (`iv`, `xii`): only up to `xxxix`,
-/// so that `mix`, `cm` or the pronoun `I` stay words.
-pub fn is_number(word: &str) -> bool {
-    if word.chars().all(|ch| ch.is_ascii_digit()) {
-        return true;
-    }
-    if !word.chars().all(|ch| matches!(ch, 'i' | 'v' | 'x')) {
-        return false;
-    }
-    (1..40).any(|value| roman(value) == word)
-}
-
-pub fn roman(mut value: u32) -> String {
-    const DIGITS: [(u32, &str); 13] = [
-        (1000, "m"),
-        (900, "cm"),
-        (500, "d"),
-        (400, "cd"),
-        (100, "c"),
-        (90, "xc"),
-        (50, "l"),
-        (40, "xl"),
-        (10, "x"),
-        (9, "ix"),
-        (5, "v"),
-        (4, "iv"),
-        (1, "i"),
-    ];
-    let mut out = String::new();
-    for (step, digits) in DIGITS {
-        while value >= step {
-            out.push_str(digits);
-            value -= step;
-        }
-    }
-    out
 }
 
 /// The text of each line of a page: the pieces drawn one after the other
@@ -379,11 +327,17 @@ pub fn drawn_pictures(pdf: &Pdf) -> HashSet<String> {
 /// underline under a short word is not counted.
 pub const RULE: f64 = 36.0;
 
-/// How many horizontal rules a page draws: its stroked horizontal segments
-/// and rectangle edges, and its thin filled rectangles, joined where they
-/// meet on one line (a table border is drawn one cell edge at a time), and
-/// counted when the joined rule is at least [`RULE`] long.
+/// How many horizontal rules a page draws: see [`horizontal_rule_heights`].
 pub fn horizontal_rules(pdf: &Pdf, page: usize) -> usize {
+    horizontal_rule_heights(pdf, page).len()
+}
+
+/// The height of each horizontal rule a page draws, in default user space:
+/// its stroked horizontal segments and rectangle edges, and its thin filled
+/// rectangles, joined where they meet on one line (a table border is drawn
+/// one cell edge at a time), and kept when the joined rule is at least
+/// [`RULE`] long.
+pub fn horizontal_rule_heights(pdf: &Pdf, page: usize) -> Vec<f64> {
     let content = pdf.doc.get_page_content(pdf.page_ids()[page]);
     let operations = Content::decode(&content)
         .expect("content stream decodes")
@@ -466,7 +420,60 @@ pub fn horizontal_rules(pdf: &Pdf, page: usize) -> usize {
     rules
         .iter()
         .filter(|(_, left, right)| right - left >= RULE)
-        .count()
+        .map(|(y, _, _)| *y)
+        .collect()
+}
+
+/// How many horizontal rules each table of a tagged PDF draws, its tables
+/// in reading order, a nested table counted with the table around it. A
+/// table's rules are those of each page it draws text on, between the text
+/// drawn just above its own and the text drawn just below: so the borders of
+/// its rows without text count, and those of another table do not while
+/// text stands between the two.
+pub fn table_rules(pdf: &Pdf) -> Vec<usize> {
+    let elements = pdf.structure();
+    let pages: Vec<(Vec<Drawn>, Vec<f64>)> = (0..pdf.page_count())
+        .map(|page| (pdf.drawn(page), horizontal_rule_heights(pdf, page)))
+        .collect();
+    let mut counts = Vec::new();
+    let mut index = 0;
+    while index < elements.len() {
+        let (role, depth, _, marks) = &elements[index];
+        if role != "Table" {
+            index += 1;
+            continue;
+        }
+        let mut own: HashSet<(usize, i64)> = marks.iter().copied().collect();
+        let mut end = index + 1;
+        while end < elements.len() && elements[end].1 > *depth {
+            own.extend(elements[end].3.iter().copied());
+            end += 1;
+        }
+        let mut count = 0;
+        for (page, (drawn, rules)) in pages.iter().enumerate() {
+            let (inside, outside): (Vec<&Drawn>, Vec<&Drawn>) = drawn
+                .iter()
+                .partition(|piece| piece.mcid.is_some_and(|mcid| own.contains(&(page, mcid))));
+            let Some(top) = inside.iter().map(|piece| piece.y).reduce(f64::max) else {
+                continue;
+            };
+            let bottom = inside.iter().map(|piece| piece.y).fold(top, f64::min);
+            let above = outside
+                .iter()
+                .map(|piece| piece.y)
+                .filter(|y| *y > top)
+                .fold(f64::INFINITY, f64::min);
+            let below = outside
+                .iter()
+                .map(|piece| piece.y)
+                .filter(|y| *y < bottom)
+                .fold(f64::NEG_INFINITY, f64::max);
+            count += rules.iter().filter(|y| below < **y && **y < above).count();
+        }
+        counts.push(count);
+        index = end;
+    }
+    counts
 }
 
 /// An entry of `tests/render/known.toml`: a file that fails a check on some

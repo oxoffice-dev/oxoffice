@@ -117,8 +117,9 @@ nothing in the PDF to read, so it reads the renderer's diagnostics.
    through the PDF's ToUnicode maps. For docx, the body with its tables, text
    boxes and content controls, the headers and footers each section uses, the
    footnotes and endnotes, in the accepted view; hidden text, comments (never
-   drawn) and field results (the render computes them) are left out, and
-   words are compared over the whole document. For pptx, the text of each
+   drawn) and the numbers of field results (the render computes page
+   numbers, counts and dates) are left out, every other number is checked,
+   and words are compared over the whole document. For pptx, the text of each
    slide's own shapes, notes left out, found on that slide's page. Words are
    compared as a multiset; CJK text one character at a time.
 4. The text is inside its page: no glyph box crosses the page edge (0.5 pt).
@@ -128,8 +129,13 @@ nothing in the PDF to read, so it reads the renderer's diagnostics.
    than half the smaller line's height and more than one em across.
 7. Every picture of the document is drawn at least once, at a non-zero size,
    inside its page; for pptx, every picture of a slide on that slide's page.
+   A JPEG reaches the PDF as written and is found by its bytes; another
+   picture is decoded again, so those are counted against the pictures
+   drawn that are no written JPEG.
 8. Every table is drawn: the text of each cell is there (3), and a table with
-   borders draws at least as many horizontal rules as it has rows.
+   borders draws at least as many horizontal rules as it has rows, table by
+   table: the rules between the text drawn above it and the text drawn below
+   it, found through the tagged PDF's `Table` elements.
 9. Nothing is dropped: a renderer diagnostic that says content was not drawn
    (an equation that could not be rendered, a dropped shape) fails the file.
 

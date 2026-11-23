@@ -21,10 +21,10 @@ use std::sync::OnceLock;
 use lopdf::Object;
 use oxoffice_docx::{Document, StoryKind, TableBorderEdge};
 use oxoffice_render_test::checks::{
-    Check, Finding, Rendered, Set, assert_baselines, assert_check,
+    Check, Finding, Rendered, Set, all_words, assert_baselines, assert_check,
     assert_every_file_has_a_baseline, assert_render_files_within_budget, check_empty_pages,
     check_glyphs, check_off_page, check_overlap, drawn_lines, drawn_pictures, horizontal_rules,
-    is_long, parse_known, render_set, report_page, words,
+    is_long, parse_known, render_set, report_page, table_rules,
 };
 use oxoffice_render_test::fingerprint::{
     Fingerprint, PageHashes, Pixels, fingerprint, moved, sha256,
@@ -231,11 +231,20 @@ fn check_text(
             _ => true,
         };
         if shown {
-            for word in words(&paragraph.text) {
+            for word in all_words(&paragraph.text) {
                 *expected.entry(word).or_default() += 1;
             }
         }
     }
+    // Page numbers, sequence numbers, page counts and dates are computed by
+    // the render: the numbers a field result holds are not what the page
+    // draws. Every other number is.
+    for (number, count) in package.field_result_numbers() {
+        if let Some(expected) = expected.get_mut(&number) {
+            *expected = expected.saturating_sub(count);
+        }
+    }
+    expected.retain(|_, count| *count > 0);
     if expected.is_empty() {
         find(Check::Text, 0, "no text read from the document".to_owned());
         return;
@@ -243,7 +252,7 @@ fn check_text(
     let mut seen: HashMap<String, usize> = HashMap::new();
     for pieces in drawn {
         for line in drawn_lines(pieces) {
-            for word in words(&line) {
+            for word in all_words(&line) {
                 *seen.entry(word).or_default() += 1;
             }
         }
@@ -291,16 +300,29 @@ fn check_pictures(package: &Package, pdf: &Pdf, find: &mut impl FnMut(Check, usi
             }
         }
     }
+    // A JPEG reaches the PDF as written, so it is found by its bytes; other
+    // pictures are decoded and re-encoded, so they are counted against the
+    // pictures drawn that are no written JPEG.
     let drawn = drawn_pictures(pdf);
-    if drawn.len() < written.len() {
+    let mut lost: Vec<&str> = written
+        .iter()
+        .filter(|(hash, jpeg)| **jpeg && !drawn.contains(*hash))
+        .map(|(hash, _)| hash.as_str())
+        .collect();
+    let others = written.values().filter(|jpeg| !**jpeg).count();
+    let others_drawn = drawn
+        .iter()
+        .filter(|hash| written.get(*hash) != Some(&true))
+        .count();
+    if !lost.is_empty() || others_drawn < others {
+        lost.sort_unstable();
         find(
             Check::Pictures,
             0,
             format!(
-                "{} distinct pictures drawn, {} in the document ({})",
-                drawn.len(),
-                written.len(),
-                written.iter().cloned().collect::<Vec<_>>().join(", ")
+                "{} JPEG pictures not drawn ({}), {others_drawn} other pictures drawn for {others}",
+                lost.len(),
+                lost.join(", ")
             ),
         );
     }
@@ -313,22 +335,43 @@ fn check_tables(
     find: &mut impl FnMut(Check, usize, String),
 ) {
     let wanted = rules_wanted(doc, package);
-    let rules: usize = (0..pdf.page_count())
-        .map(|page| horizontal_rules(pdf, page))
-        .sum();
-    if rules < wanted {
+    let drawn = table_rules(pdf);
+    if drawn.len() != wanted.len() {
         find(
             Check::Tables,
             0,
-            format!("{rules} horizontal rules drawn, the tables' borders need {wanted}"),
+            format!(
+                "{} tables tagged in the PDF, {} in the body",
+                drawn.len(),
+                wanted.len()
+            ),
+        );
+        return;
+    }
+    let short: Vec<String> = drawn
+        .iter()
+        .zip(&wanted)
+        .enumerate()
+        .filter(|(_, (drawn, wanted))| drawn < wanted)
+        .map(|(index, (drawn, wanted))| format!("table {} ({drawn} of {wanted})", index + 1))
+        .collect();
+    if !short.is_empty() {
+        find(
+            Check::Tables,
+            0,
+            format!(
+                "{} tables draw fewer horizontal rules than their borders need: {}",
+                short.len(),
+                short.join(", ")
+            ),
         );
     }
 }
 
-/// How many horizontal rules the tables of a document need at least: one a
-/// row for a table with borders between its rows (its own or its style's),
-/// two for one with a top or bottom border only.
-fn rules_wanted(doc: &Document, package: &Package) -> usize {
+/// How many horizontal rules each table of the body needs at least, in
+/// order: one a row for a table with borders between its rows (its own or
+/// its style's), two for one with a top or bottom border only.
+fn rules_wanted(doc: &Document, package: &Package) -> Vec<usize> {
     let styles = package.table_style_borders();
     doc.tables()
         .iter()
@@ -351,7 +394,7 @@ fn rules_wanted(doc: &Document, package: &Package) -> usize {
                 0
             }
         })
-        .sum()
+        .collect()
 }
 
 fn visible(style: &str) -> bool {
@@ -392,6 +435,70 @@ fn check_dropped(diagnostics: &[String], find: &mut impl FnMut(Check, usize, Str
 /// The parts of a Word package the checks read: which headers and footers
 /// a reader sees, which pictures the shown stories hold, and the borders of
 /// the table styles.
+/// The text of each outermost field result of a story part: the content of
+/// a simple field, or what stands between a complex field's `separate` and
+/// `end` characters, a nested field's result included.
+fn field_results(xml: &str) -> Vec<String> {
+    #[derive(PartialEq)]
+    enum Part {
+        Code,
+        Result,
+    }
+    let mut fields: Vec<Part> = Vec::new();
+    let mut simple = 0usize;
+    let mut in_text = false;
+    let mut results = Vec::new();
+    let mut current = String::new();
+    let mut rest = xml;
+    while let Some(open) = rest.find('<') {
+        let in_result = simple > 0 || fields.contains(&Part::Result);
+        if in_text && in_result {
+            current.push_str(&rest[..open]);
+        }
+        let Some(length) = rest[open..].find('>') else {
+            break;
+        };
+        let tag = &rest[open + 1..open + length];
+        rest = &rest[open + length + 1..];
+        let closing = tag.starts_with('/');
+        let empty = tag.ends_with('/');
+        let name = tag
+            .trim_start_matches('/')
+            .split([' ', '/', '\t', '\n', '\r'])
+            .next()
+            .unwrap_or_default();
+        match name {
+            "w:t" => in_text = !closing && !empty,
+            "w:tab" | "w:br" | "w:cr" | "w:p" if in_result => current.push(' '),
+            "w:fldSimple" if !empty => {
+                if closing {
+                    simple = simple.saturating_sub(1);
+                } else {
+                    simple += 1;
+                }
+            }
+            "w:fldChar" => match attribute(tag, "w:fldCharType") {
+                Some("begin") => fields.push(Part::Code),
+                Some("separate") => {
+                    if let Some(part) = fields.last_mut() {
+                        *part = Part::Result;
+                    }
+                }
+                Some("end") => {
+                    fields.pop();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        let still = simple > 0 || fields.contains(&Part::Result);
+        if in_result && !still && !current.is_empty() {
+            results.push(std::mem::take(&mut current));
+        }
+    }
+    results
+}
+
 struct Package {
     parts: BTreeMap<String, String>,
     media: BTreeMap<String, Vec<u8>>,
@@ -483,9 +590,9 @@ impl Package {
         shown
     }
 
-    /// The pictures of the stories a reader sees, by the hash of their
-    /// bytes: the body, the shown headers and footers, and the notes.
-    fn shown_pictures(&self) -> BTreeSet<String> {
+    /// The parts of the stories a reader sees: the body, the shown headers
+    /// and footers, and the notes.
+    fn shown_stories(&self) -> Vec<String> {
         let mut stories = vec!["word/document.xml".to_owned()];
         stories.extend(
             self.shown_header_footer_parts()
@@ -496,8 +603,37 @@ impl Package {
             "word/footnotes.xml".to_owned(),
             "word/endnotes.xml".to_owned(),
         ]);
-        let mut pictures = BTreeSet::new();
-        for story in stories {
+        stories
+    }
+
+    /// The numbers the field results of the shown stories hold, with how
+    /// often: in digits, or in Roman numerals as a page number field writes
+    /// front matter.
+    fn field_result_numbers(&self) -> HashMap<String, usize> {
+        let mut numbers = HashMap::new();
+        for story in self.shown_stories() {
+            let Some(xml) = self.parts.get(&story) else {
+                continue;
+            };
+            for result in field_results(xml) {
+                for word in all_words(&result) {
+                    let digits = word.chars().all(|ch| ch.is_ascii_digit());
+                    let roman = word.chars().all(|ch| "ivxlcdmIVXLCDM".contains(ch));
+                    if digits || roman {
+                        *numbers.entry(word).or_default() += 1;
+                    }
+                }
+            }
+        }
+        numbers
+    }
+
+    /// The pictures of the stories a reader sees, by the hash of their
+    /// bytes, each with whether it is a JPEG: the body, the shown headers
+    /// and footers, and the notes.
+    fn shown_pictures(&self) -> BTreeMap<String, bool> {
+        let mut pictures = BTreeMap::new();
+        for story in self.shown_stories() {
             let Some(xml) = self.parts.get(&story) else {
                 continue;
             };
@@ -518,7 +654,7 @@ impl Package {
                     .get(id)
                     .and_then(|target| self.media.get(target))
                 {
-                    pictures.insert(sha256(bytes));
+                    pictures.insert(sha256(bytes), bytes.starts_with(&[0xFF, 0xD8, 0xFF]));
                 }
             }
         }
@@ -700,13 +836,60 @@ fn a_corpus_render_leaves_nothing_out() {
 }
 
 #[test]
-fn words_leave_numbers_out_and_split_chinese_by_character() {
+fn words_split_digits_from_letters_and_chinese_by_character() {
     assert_eq!(
-        words("Page 12 of iv: mid civil XII, I mix 3 cm"),
-        ["Page", "of", "mid", "civil", "XII", "I", "mix", "cm"]
+        all_words("Page 12 of iv: rate1 2Kyoto CO2"),
+        [
+            "Page", "12", "of", "iv", "rate", "1", "2", "Kyoto", "CO", "2"
+        ]
     );
-    assert_eq!(words("rate1 2Kyoto CO2"), ["rate", "Kyoto", "CO"]);
-    assert_eq!(words("会议纪要 Hello"), ["会", "议", "纪", "要", "Hello"]);
+    assert_eq!(
+        all_words("会议纪要 Hello"),
+        ["会", "议", "纪", "要", "Hello"]
+    );
+}
+
+#[test]
+fn field_results_are_read_from_simple_complex_and_nested_fields() {
+    let xml = concat!(
+        "<w:p><w:r><w:t>Revenue 2024</w:t></w:r>",
+        r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>7</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        "<w:r><w:instrText> REF total </w:instrText></w:r>",
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        "<w:r><w:t>see</w:t></w:r><w:r><w:tab/></w:r>",
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        "<w:r><w:instrText> PAGEREF total </w:instrText></w:r>",
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        "<w:r><w:t>12</w:t></w:r>",
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        "<w:r><w:t>1402</w:t></w:r></w:p>",
+    );
+    assert_eq!(field_results(xml), ["7", "see 12"]);
+}
+
+#[test]
+fn a_number_outside_fields_must_be_drawn_and_one_in_a_field_need_not() {
+    let mut doc = crate::support::doc_with_body(concat!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">Revenue 2024 was 1402 on page </w:t></w:r>",
+        r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>99</w:t></w:r></w:fldSimple></w:p>"#,
+    ));
+    let package = Package::read(&doc.to_bytes().expect("document saves"));
+    let findings = |line: &str| {
+        let mut found = Vec::new();
+        check_text(
+            &doc,
+            &package,
+            &[vec![piece(line, 72.0, 700.0, 400.0)]],
+            &mut |check, _, why| found.push((check, why)),
+        );
+        found
+    };
+    assert!(findings("Revenue 2024 was 1402 on page 1").is_empty());
+    let found = findings("Revenue 2024 was 1420 on page 1");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].1.contains("1402 (0 of 1)"), "{}", found[0].1);
 }
 
 /// A piece of text as the PDF reader reads it back.
@@ -774,13 +957,62 @@ fn a_bordered_table_needs_a_rule_a_row_and_a_borderless_one_none() {
              <w:gridCol w:w=\"3000\"/></w:tblGrid>{rows}</w:tbl><w:p/>"
         ));
         let package = Package::read(&doc.to_bytes().expect("document saves"));
-        assert_eq!(rules_wanted(&doc, &package), wanted, "{border} borders");
-        let drawn = horizontal_rules(&draw(&doc).expect("the table draws").pdf, 0);
+        assert_eq!(rules_wanted(&doc, &package), [wanted], "{border} borders");
+        let pdf = draw(&doc).expect("the table draws").pdf;
         // Three cells a row, each with its own top and bottom edge: one rule
         // above each row and one below the last.
         let rules = if wanted == 0 { 0 } else { wanted + 1 };
-        assert_eq!(drawn, rules, "{border} borders");
+        assert_eq!(horizontal_rules(&pdf, 0), rules, "{border} borders");
+        assert_eq!(table_rules(&pdf), [rules], "{border} borders");
     }
+}
+
+/// A body of tables of `rows` rows each, `border` on all their edges, a
+/// paragraph between two.
+fn tables(specs: &[(&str, usize)]) -> Document {
+    let table = |(border, rows): &(&str, usize)| {
+        let rows: String = (1..=*rows)
+            .map(|row| {
+                format!(
+                    "<w:tr><w:tc><w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>\
+                     <w:p><w:r><w:t>Row {row}</w:t></w:r></w:p></w:tc></w:tr>"
+                )
+            })
+            .collect();
+        format!(
+            "<w:tbl><w:tblPr><w:tblBorders>\
+             <w:top w:val=\"{border}\" w:sz=\"4\"/><w:bottom w:val=\"{border}\" w:sz=\"4\"/>\
+             <w:insideH w:val=\"{border}\" w:sz=\"4\"/></w:tblBorders></w:tblPr>\
+             <w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>{rows}</w:tbl>\
+             <w:p><w:r><w:t>Between the tables</w:t></w:r></w:p>"
+        )
+    };
+    crate::support::doc_with_body(&specs.iter().map(table).collect::<String>())
+}
+
+#[test]
+fn a_table_that_lost_its_borders_is_caught_though_another_draws_more() {
+    // The document asks for two bordered tables of four rows; the PDF draws
+    // the first without borders and the second with eight rows. Together
+    // they draw more rules than the document needs.
+    let mut wanted = tables(&[("single", 4), ("single", 4)]);
+    let package = Package::read(&wanted.to_bytes().expect("document saves"));
+    let drawn = draw(&tables(&[("none", 4), ("single", 8)]))
+        .expect("the tables draw")
+        .pdf;
+    assert_eq!(table_rules(&drawn), [0, 9]);
+    let mut found = Vec::new();
+    check_tables(&wanted, &package, &drawn, &mut |check, _, why| {
+        found.push((check, why))
+    });
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].1.contains("table 1 (0 of 4)"), "{}", found[0].1);
+    let mut found = Vec::new();
+    let own = draw(&wanted).expect("the tables draw").pdf;
+    check_tables(&wanted, &package, &own, &mut |check, _, why| {
+        found.push((check, why))
+    });
+    assert!(found.is_empty(), "{found:?}");
 }
 
 #[test]
@@ -836,7 +1068,63 @@ fn the_pictures_of_a_corpus_report_are_found_in_its_package_and_its_pdf() {
         let drawn = drawn_pictures(&draw(&doc).expect("the report draws").pdf);
         assert!(!written.is_empty(), "{file} has pictures");
         assert_eq!(drawn.len(), written.len(), "{file}");
+        for (hash, _) in written.iter().filter(|(_, jpeg)| **jpeg) {
+            assert!(drawn.contains(hash), "{file}: a JPEG is drawn as written");
+        }
     }
+}
+
+/// A JPEG of the corpus, made distinct by a comment segment after its start
+/// marker: the same picture, other bytes.
+fn jpeg(comment: &[u8]) -> Vec<u8> {
+    let bytes = fs::read(corpus_root().join("files/authored/contract.docx")).expect("corpus file");
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("package is a ZIP");
+    let mut jpeg = Vec::new();
+    zip.by_name("docProps/thumbnail.jpeg")
+        .expect("a thumbnail")
+        .read_to_end(&mut jpeg)
+        .expect("thumbnail inflates");
+    let length = u16::try_from(comment.len() + 2).expect("a short comment");
+    let segment = [&[0xFF, 0xFE][..], &length.to_be_bytes(), comment].concat();
+    jpeg.splice(2..2, segment);
+    jpeg
+}
+
+fn pictures(jpegs: &[&[u8]]) -> Document {
+    let mut doc = Document::new();
+    for (index, jpeg) in jpegs.iter().enumerate() {
+        doc.add_picture(
+            jpeg,
+            &format!("picture{index}.jpeg"),
+            oxoffice_docx::Length::inches(1.0),
+            oxoffice_docx::Length::inches(1.0),
+        );
+    }
+    doc
+}
+
+#[test]
+fn a_dropped_jpeg_is_caught_though_another_picture_is_drawn_in_its_place() {
+    let (a, b, c) = (jpeg(b"a"), jpeg(b"b"), jpeg(b"c"));
+    let mut written = pictures(&[&a, &b]);
+    let package = Package::read(&written.to_bytes().expect("document saves"));
+    let check = |doc: &Document| {
+        let pdf = draw(doc).expect("the pictures draw").pdf;
+        let mut found = Vec::new();
+        check_pictures(&package, &pdf, &mut |check, _, why| {
+            found.push((check, why))
+        });
+        found
+    };
+    assert!(check(&written).is_empty());
+    // As many distinct pictures drawn as written, but the second is not it.
+    let found = check(&pictures(&[&a, &c]));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].1.starts_with("1 JPEG pictures not drawn"),
+        "{}",
+        found[0].1
+    );
 }
 
 #[test]
@@ -879,8 +1167,8 @@ fn a_diagnostic_fails_its_file_unless_it_changes_nothing_drawn() {
 
 #[test]
 fn a_changed_font_width_moves_the_resources_and_nothing_else() {
-    let doc = crate::support::corpus_doc("word/report.docx");
-    let mut drawing = draw(&doc).expect("the report draws");
+    let doc = crate::support::doc_with(&["Quarterly results grew in every region."]);
+    let mut drawing = draw(&doc).expect("the paragraph draws");
     let before = fingerprint(&drawing.pdf, &drawing.pixels);
     // The glyph widths of a font live in its CIDFont dictionary, an object
     // that is no stream: the content streams only name the font.
@@ -909,8 +1197,14 @@ fn a_changed_font_width_moves_the_resources_and_nothing_else() {
 
 #[test]
 fn a_landscape_section_drawn_portrait_is_caught() {
-    let doc = crate::support::corpus_doc("authored/thesis.docx");
-    let mut drawing = draw(&doc).expect("the thesis draws");
+    let doc = crate::support::doc_with_body(concat!(
+        "<w:p><w:pPr><w:sectPr>",
+        r#"<w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>"#,
+        r#"<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#,
+        "</w:sectPr></w:pPr><w:r><w:t>A wide table section</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>A tall closing section</w:t></w:r></w:p>",
+    ));
+    let mut drawing = draw(&doc).expect("the sections draw");
     let mut found = Vec::new();
     check_pages(
         &doc,
@@ -918,32 +1212,27 @@ fn a_landscape_section_drawn_portrait_is_caught() {
         &drawing.pixels,
         &mut |check, page, _| found.push((check, page)),
     );
-    assert!(found.is_empty(), "the thesis has the sizes of its sections");
-    // The renderer loses the orientation of the landscape section: all its
-    // pages come out portrait.
-    let landscape: Vec<usize> = (0..drawing.pdf.page_count())
-        .filter(|page| {
-            let (width, height) = drawing.pdf.page_size(*page);
-            width > height
-        })
-        .collect();
-    assert!(!landscape.is_empty(), "the thesis has a landscape section");
-    for page in landscape {
-        let id = drawing.pdf.page_ids()[page];
-        let (width, height) = drawing.pdf.page_size(page);
-        let portrait = vec![
-            0.into(),
-            0.into(),
-            Object::Real(height as f32),
-            Object::Real(width as f32),
-        ];
-        drawing
-            .pdf
-            .doc
-            .get_dictionary_mut(id)
-            .expect("page dictionary")
-            .set("MediaBox", Object::Array(portrait));
-    }
+    assert!(
+        found.is_empty(),
+        "the pages have the sizes of their sections"
+    );
+    // The renderer loses the orientation of the landscape section: its page
+    // comes out portrait.
+    let (width, height) = drawing.pdf.page_size(0);
+    assert!(width > height, "the first page is landscape");
+    let id = drawing.pdf.page_ids()[0];
+    let portrait = vec![
+        0.into(),
+        0.into(),
+        Object::Real(height as f32),
+        Object::Real(width as f32),
+    ];
+    drawing
+        .pdf
+        .doc
+        .get_dictionary_mut(id)
+        .expect("page dictionary")
+        .set("MediaBox", Object::Array(portrait));
     check_pages(
         &doc,
         &drawing.pdf,
