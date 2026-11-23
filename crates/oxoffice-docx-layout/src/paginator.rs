@@ -1110,7 +1110,11 @@ fn absorb_into_section_break(paragraph: &mut ParagraphBlock) {
             paragraph.lines[last_break].forced_break_after = None;
             last_break + 1
         }
-        None => 0,
+        None => {
+            // Nothing of it is drawn, so nothing must clear a drawing.
+            paragraph.content_offset_top = 0.0;
+            0
+        }
     };
     paragraph.lines[rest..].iter_mut().for_each(take_no_room);
     paragraph.absorbed_by_section_break = true;
