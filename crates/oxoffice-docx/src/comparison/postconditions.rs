@@ -113,18 +113,16 @@ pub(super) fn resolved_candidate(
     custody_ids: Option<&HashSet<i32>>,
 ) -> Result<Document> {
     let mut resolved = candidate.clone_for_staging();
-    let units = custody_ids
-        .map(|ids| {
-            validate_note_custody(
-                candidate,
-                NoteKind::Footnote,
-                &crate::revision::RevisionScope::Ids(ids),
-            )
-        })
-        .transpose()?;
+    let mut units = Vec::new();
+    if let Some(ids) = custody_ids {
+        for kind in NoteKind::ALL {
+            let scope = crate::revision::RevisionScope::Ids(ids);
+            units.push((kind, validate_note_custody(candidate, kind, &scope)?));
+        }
+    }
     resolve(&mut resolved)?;
-    if let Some(units) = units {
-        project_resolved_note_tombstones(candidate, &mut resolved, &units)?;
+    for (kind, units) in units {
+        project_resolved_note_tombstones(candidate, &mut resolved, kind, &units)?;
     }
     Ok(resolved)
 }
@@ -134,13 +132,10 @@ pub(super) fn resolved_candidate(
 fn project_resolved_note_tombstones(
     before: &Document,
     after: &mut Document,
+    kind: NoteKind,
     units: &[FootnoteCustody],
 ) -> Result<()> {
-    let current = validate_note_custody(
-        after,
-        NoteKind::Footnote,
-        &crate::revision::RevisionScope::All,
-    )?;
+    let current = validate_note_custody(after, kind, &crate::revision::RevisionScope::All)?;
     if !current.iter().any(|unit| !unit.revisions.is_empty()) {
         return Ok(());
     }
@@ -158,11 +153,11 @@ fn project_resolved_note_tombstones(
     {
         return Ok(());
     }
-    let prior = note_markers(before, NoteKind::Footnote)?
+    let prior = note_markers(before, kind)?
         .into_iter()
         .filter(|marker| retained.contains(&marker.token))
         .collect::<Vec<_>>();
-    let actual = note_markers(after, NoteKind::Footnote)?;
+    let actual = note_markers(after, kind)?;
     for marker in prior {
         let found = actual
             .iter()
@@ -208,7 +203,7 @@ fn project_resolved_note_tombstones(
             ));
         }
     }
-    retire_note_markers(after, NoteKind::Footnote, &projected, None)
+    retire_note_markers(after, kind, &projected, None)
 }
 
 pub(super) fn normalized_package(
@@ -235,17 +230,19 @@ pub(super) fn normalized_package(
             )?,
         ));
     }
-    if !story_ignored(options, ComparisonStoryKind::Footnote)
-        && !stories
-            .iter()
-            .any(|story| story.kind == ComparisonStoryKind::Footnote)
-        && let Some(part) = NotePart::of(document, NoteKind::Footnote)?
-    {
+    for kind in NoteKind::ALL {
+        let story = kind.story_kind();
+        if story_ignored(options, story) || stories.iter().any(|other| other.kind == story) {
+            continue;
+        }
+        let Some(part) = NotePart::of(document, kind)? else {
+            continue;
+        };
         let groups = guard_story_owners(
             document,
             &part.name,
             part.xml.as_bytes(),
-            ComparisonStoryKind::Footnote,
+            story,
             options,
             text_box_markers.related.get(&part.name).map(String::as_str),
             true,
@@ -258,7 +255,7 @@ pub(super) fn normalized_package(
         related.extend(
             groups
                 .into_iter()
-                .map(|items| (ComparisonStoryKind::Footnote, part.name.clone(), items)),
+                .map(|items| (story, part.name.clone(), items)),
         );
     }
     let source = document

@@ -11,6 +11,18 @@ pub(crate) enum NoteKind {
 }
 
 impl NoteKind {
+    /// Both kinds, footnotes first: every custody step runs once per kind.
+    pub(crate) const ALL: [Self; 2] = [Self::Footnote, Self::Endnote];
+
+    /// The note kind of a notes story, if it is one.
+    pub(crate) const fn of_story(kind: ComparisonStoryKind) -> Option<Self> {
+        match kind {
+            ComparisonStoryKind::Footnote => Some(Self::Footnote),
+            ComparisonStoryKind::Endnote => Some(Self::Endnote),
+            _ => None,
+        }
+    }
+
     /// The local name of the notes part's root.
     pub(crate) const fn part_root(self) -> &'static str {
         match self {
@@ -104,6 +116,15 @@ impl NoteKind {
     pub(crate) const fn plural(self) -> &'static str {
         self.part_root()
     }
+}
+
+/// The notes an earlier comparison pass gave new ids, by kind and new id.
+pub(super) type RenumberedNotes = Vec<(NoteKind, i32)>;
+
+/// The name of the notes part of this kind, found through the main part's
+/// relationship, without reading the part.
+pub(crate) fn note_part_name(document: &Document, kind: NoteKind) -> Result<Option<String>> {
+    NotePart::name_of(document, kind)
 }
 
 #[derive(PartialEq, Eq)]
@@ -1685,8 +1706,13 @@ pub(super) fn reconcile_note_custody_inputs(
     if left_markers.is_empty() {
         return Ok(());
     }
-    let mut occupied = note_custody_reserved_ids(original, kind)?;
-    occupied.extend(note_custody_reserved_ids(edited, kind)?);
+    // Tokens and pair ids come from one allocator for both kinds, so a new
+    // token never repeats one of the other kind's.
+    let mut occupied = HashSet::new();
+    for other in NoteKind::ALL {
+        occupied.extend(note_custody_reserved_ids(original, other)?);
+        occupied.extend(note_custody_reserved_ids(edited, other)?);
+    }
     for document in [original, &*edited] {
         let mut parts = vec![document.doc_part_name.clone()];
         parts.extend(
@@ -1950,17 +1976,18 @@ fn moved_pending_references(
 /// paired note takes its id or both versions reference a note under it. A
 /// pair is dropped when it would take the id of a note the edited version
 /// does not reference, or move an edited note away from the id of a note the
-/// original does not reference. Notes in `renumbered`, moved to new ids by an
-/// earlier pass, are left out of the pairing: pairing them back would undo
-/// the move and the passes would never end. Nothing changes when a note is
-/// referenced twice or outside the main story, when a reference sits in a
-/// tracked change, or while note custody of an earlier comparison is
-/// pending. Returns each edited id it changed, mapped to the id it gave.
+/// original does not reference. The notes of this kind in `renumbered`,
+/// moved to new ids by an earlier pass, are left out of the pairing: pairing
+/// them back would undo the move and the passes would never end. Nothing
+/// changes when a note is referenced twice or outside the main story, when a
+/// reference sits in a tracked change, or while note custody of an earlier
+/// comparison is pending. Returns each edited id it changed, mapped to the id
+/// it gave.
 pub(super) fn reconcile_note_ids(
     original: &Document,
     edited: &mut Document,
     kind: NoteKind,
-    renumbered: &[i32],
+    renumbered: &[(NoteKind, i32)],
 ) -> Result<HashMap<i32, i32>> {
     let (Some(left_part), Some(right_part)) =
         (NotePart::of(original, kind)?, NotePart::of(edited, kind)?)
@@ -2015,7 +2042,7 @@ pub(super) fn reconcile_note_ids(
         };
     let left = sequence(&left_ids, &left_texts, &left_normal);
     let mut right = sequence(&right_ids, &right_texts, &right_normal);
-    right.retain(|(id, _)| !renumbered.contains(id));
+    right.retain(|(id, _)| !renumbered.contains(&(kind, *id)));
     let text_of = |notes: &[(i32, String)]| {
         notes
             .iter()
@@ -2185,11 +2212,11 @@ fn note_reference_counts(document: &Document) -> Result<HashMap<(String, i32), u
 /// No note may reach the result with more references than either input gives
 /// it. A reference that moved, or the content holding it written as a
 /// deletion and an insertion, leaves a deleted and an inserted reference
-/// naming one note, which Word for Mac cannot open. Moved footnotes became
-/// new notes before this point. Endnotes, and footnotes whose story is
-/// ignored, have no such path: the pair is refused. Nor may the result name
-/// an endnote the original does not hold while endnotes are ignored, since
-/// the result keeps the original's endnotes.
+/// naming one note, which Word for Mac cannot open. Moved notes became new
+/// notes before this point. Notes whose story is ignored have no such path:
+/// the pair is refused. Nor may the result name an endnote the original does
+/// not hold while endnotes are ignored, since the result keeps the original's
+/// endnotes; the preflight refuses most such references first.
 pub(super) fn refuse_shared_note_references(
     original: &Document,
     edited: &Document,
@@ -2247,7 +2274,7 @@ pub(super) fn renumbered_notes(
     edited: &Document,
     kind: NoteKind,
     moved: &[i32],
-) -> Result<Option<(Document, Vec<i32>)>> {
+) -> Result<Option<(Document, RenumberedNotes)>> {
     let mut renumbered = comparison_input(edited)?;
     // Completed custody is retired as the first pass retired it.
     let units = validate_note_custody(&renumbered, kind, &crate::revision::RevisionScope::All)?;
@@ -2298,7 +2325,10 @@ pub(super) fn renumbered_notes(
         &ids,
     )?;
     crate::document::set_story_source_xml(&mut renumbered, &main, body)?;
-    Ok(Some((renumbered, ids.into_values().collect())))
+    Ok(Some((
+        renumbered,
+        ids.into_values().map(|id| (kind, id)).collect(),
+    )))
 }
 
 /// `xml` with the `w:id` of every Word element of this local name mapped.
