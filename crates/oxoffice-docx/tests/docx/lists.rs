@@ -567,6 +567,156 @@ fn linking_a_style_refuses_conflicts_and_styles_that_cannot_hold_a_list() {
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
 
+/// `doc` saved with `edit` applied to its styles part, opened again.
+fn with_styles_xml(doc: &mut Document, edit: impl FnOnce(String) -> String) -> Document {
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    package.set_part("/word/styles.xml", edit(xml).into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// The style's own `(w:numId, w:ilvl)`.
+fn style_numbering(doc: &Document, style: &str) -> (Option<u32>, Option<u32>) {
+    doc.style(style)
+        .unwrap()
+        .paragraph_properties()
+        .map_or((None, None), |p| (p.num_id, p.num_ilvl))
+}
+
+#[test]
+fn a_style_numbered_without_a_level_links_at_the_level_its_based_on_chain_gives() {
+    // Child holds only a `w:numId`; the `w:ilvl 2` it shows comes from Deep,
+    // through Mid, which holds no numbering.
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal().level_text("%1."),
+        ListLevel::decimal().level_text("%1.%2."),
+        ListLevel::decimal().level_text("%1.%2.%3."),
+    ]);
+    let mut doc = with_styles_xml(&mut doc, |xml| {
+        xml.replace(
+            "</w:styles>",
+            &format!(
+                concat!(
+                    r#"<w:style w:type="paragraph" w:styleId="Deep"><w:name w:val="Deep"/>"#,
+                    r#"<w:pPr><w:numPr><w:ilvl w:val="2"/></w:numPr></w:pPr></w:style>"#,
+                    r#"<w:style w:type="paragraph" w:styleId="Mid"><w:name w:val="Mid"/>"#,
+                    r#"<w:basedOn w:val="Deep"/></w:style>"#,
+                    r#"<w:style w:type="paragraph" w:styleId="Child"><w:name w:val="Child"/>"#,
+                    r#"<w:basedOn w:val="Mid"/><w:pPr><w:numPr><w:numId w:val="{id}"/>"#,
+                    r#"</w:numPr></w:pPr></w:style></w:styles>"#
+                ),
+                id = id
+            ),
+        )
+    });
+    doc.add_paragraph("item").style("Child");
+    assert_eq!(markers(&doc), ["1.1.1."], "Child shows at level 2");
+
+    // A new `w:basedOn` would move its paragraphs to level 0: only the link
+    // calls change a style's numbering.
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .set_style(StyleBuilder::paragraph("Child", "Child").based_on("Normal"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("numbering must be changed"), "{error}");
+    let error = doc
+        .link_style_to_numbering("Child", id, 0)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("already references a different numbering level"),
+        "{error}"
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+
+    doc.link_style_to_numbering("Child", id, 2).unwrap();
+    let mut doc = reopen(&mut doc);
+    doc.validate_numbering_graph().unwrap();
+    assert_eq!(
+        style_numbering(&doc, "Child"),
+        (Some(id), None),
+        "its form is kept"
+    );
+    assert_eq!(
+        doc.numbering_level(id, 2).unwrap().paragraph_style,
+        Some("Child")
+    );
+    assert_eq!(markers(&doc), ["1.1.1."]);
+
+    // A new `w:basedOn` higher up the chain would move Child too.
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .set_style(StyleBuilder::paragraph("Mid", "Mid").based_on("Normal"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("style 'Child' numbering must be changed"),
+        "{error}"
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    // An instance update that would drop the level's name of Child is refused.
+    let plain = doc
+        .add_numbering_definition(&[
+            ListLevel::decimal(),
+            ListLevel::decimal(),
+            ListLevel::decimal(),
+        ])
+        .unwrap();
+    let after_definition = doc.to_bytes().unwrap();
+    let error = doc
+        .update_numbering_instance(id, plain, &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("style-link"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), after_definition);
+
+    // Removing Child, once nothing uses it, releases the level that names it.
+    let mut unused = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
+    let item = unused.content_index_of_paragraph(0).unwrap();
+    assert!(unused.remove_content(item));
+    assert!(unused.remove_style("Child").unwrap());
+    unused.validate_numbering_graph().unwrap();
+    assert_eq!(unused.numbering_level(id, 2).unwrap().paragraph_style, None);
+
+    doc.unlink_style_from_numbering("Child", id, 2).unwrap();
+    let doc = reopen(&mut doc);
+    doc.validate_numbering_graph().unwrap();
+    assert_eq!(style_numbering(&doc, "Child"), (None, None));
+    assert_eq!(doc.numbering_level(id, 2).unwrap().paragraph_style, None);
+}
+
+#[test]
+fn a_style_numbered_without_a_level_reads_at_level_zero_when_a_level_names_it() {
+    // Heading2 holds only a `w:numId` and level 1 names it back. Word,
+    // LibreOffice and layout draw it at level 0: the name does not set the
+    // level, so the facade reads level 0 too, and the graph check finds the
+    // link one way only.
+    let (mut doc, id) = numbered_headings();
+    let doc = with_styles_xml(&mut doc, |xml| {
+        let style = xml.find(r#"w:styleId="Heading2""#).unwrap();
+        let level = style + xml[style..].find(r#"<w:ilvl w:val="1"/>"#).unwrap();
+        format!(
+            "{}{}",
+            &xml[..level],
+            &xml[level + r#"<w:ilvl w:val="1"/>"#.len()..]
+        )
+    });
+    assert_eq!(style_numbering(&doc, "Heading2"), (Some(id), None));
+    assert_eq!(markers(&doc), ["1", "2", "3", "", "4", "5"]);
+    let scope = doc.paragraph(1).unwrap();
+    assert_eq!(
+        doc.effective_paragraph_properties(&scope)
+            .num_ilvl
+            .unwrap_or(0),
+        0
+    );
+    let error = doc.validate_numbering_graph().unwrap_err().to_string();
+    assert!(error.contains("are not reciprocally linked"), "{error}");
+}
+
 // The numbering graph.
 
 #[test]

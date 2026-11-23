@@ -325,11 +325,7 @@ fn a_minimal_document_gets_a_font_table_and_a_theme_when_first_given_them() {
 
 // ---- Removing the records Word and LibreOffice write ----
 
-// Fails today: describing or embedding refuses an unmodelled font table, but
-// both removals answer that there is nothing to remove and keep the record.
-// Issue: #319
 #[test]
-#[should_panic(expected = "a removal from a font table it cannot read reported nothing to remove")]
 fn removing_from_a_font_table_that_cannot_be_read_is_refused() {
     // The family before the charset is out of schema order: the table is
     // kept as written and not modelled.
@@ -351,10 +347,12 @@ fn removing_from_a_font_table_that_cannot_be_read_is_refused() {
             .map(|removed| removed.is_some()),
     ];
     assert_eq!(doc.to_bytes().expect("document saves"), before);
-    assert!(
-        removals.iter().all(Result::is_err),
-        "a removal from a font table it cannot read reported nothing to remove: {removals:?}"
-    );
+    for removal in removals {
+        let error = removal.expect_err("a removal from a font table it cannot read is refused");
+        assert!(error.to_string().contains("unmodeled"), "{error}");
+    }
+    let error = doc.font_part_metadata(0, 0).unwrap_err().to_string();
+    assert!(error.contains("unmodeled"), "{error}");
 }
 
 #[test]
