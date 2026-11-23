@@ -6653,7 +6653,25 @@ fn render_paragraph_lines(
                     _accumulated_extra += segment_extra;
                     x += effective_width;
                 }
-                LineItem::Tab { width, leader, .. } => {
+                LineItem::Tab {
+                    width,
+                    leader,
+                    fill,
+                    ..
+                } => {
+                    // A tab in a filled run is filled across its width,
+                    // like the run's text.
+                    if let Some(color) = fill {
+                        elements.push(PositionedElement::FilledRect {
+                            rect: Rect {
+                                x,
+                                y: geometry.margin_top + y,
+                                width: *width,
+                                height: line.height,
+                            },
+                            color: *color,
+                        });
+                    }
                     mark_item(
                         &mut elements,
                         enclosed_tab_mark(&line.items, visual_item),
@@ -7371,7 +7389,7 @@ fn logical_tab_ranks(
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
-            matches!(item, oxoffice_layout::InlineItem::Tab).then_some(index)
+            matches!(item, oxoffice_layout::InlineItem::Tab { .. }).then_some(index)
         })
         .collect::<Vec<_>>();
     if logical_tabs.len() < tabs.len() {

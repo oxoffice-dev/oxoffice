@@ -1,12 +1,12 @@
 {
   "file": "libreoffice/contract.docx",
-  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
+  "reason": "tagged links hold their text: the structure tree and the links' /Contents change",
   "resources": "53f6f9736438fa17c482a33244072b4defdda0613b9b9ca4143fbfca3dac9ff5",
-  "outline_and_tags": "8b372c9f2ae8648e1a81d67b876a85b88aeb5797c30e875f03587f1b4e0dcddc",
+  "outline_and_tags": "9b0a1158bda0e44916b7cc903187a4de3855e530566ae50f5b20431a443816fd",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "43f017633c504a3db90e7509a7d043708b0ed3b09b8318285c656f7a3a0f9bbb", "content": "f02f488ac1590cd3ae15a23427e2ad4304bd969bd1b2ad65dd239a4543478e5d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
     {"page": 2, "pixels": "73fae8e295925030b2b60ba6efa99a0b122d686abaeadfb5fa4cf11f3a6dd816", "content": "44081abf35eb2d5b57c5a118ce09d5fdf55fa2ef07a0e7886a448d3db129df29", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
-    {"page": 3, "pixels": "883e439bb17dab5479219653fad7907e36a4bdab8a78b82f61e6178b2ddf6b14", "content": "d61ac0fb6a6d910a98651d369b99a377ce240d32df7b5f6d09f970331bdb9e1e", "annotations": "4302cc590c269ce53c7e90807d5d7524414711183325e3c74f6175f773333e5a", "dictionary": "eae7bd678eb91277c6c7e72836059384a7bb05df1f88b5688d346036951b5537"}
+    {"page": 3, "pixels": "883e439bb17dab5479219653fad7907e36a4bdab8a78b82f61e6178b2ddf6b14", "content": "d61ac0fb6a6d910a98651d369b99a377ce240d32df7b5f6d09f970331bdb9e1e", "annotations": "4216cd4c8f846bc5ae3e6791845e962da8d4aa6e82d0ed1193bd05e2b929ba9e", "dictionary": "eae7bd678eb91277c6c7e72836059384a7bb05df1f88b5688d346036951b5537"}
   ]
 }
