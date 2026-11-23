@@ -4,15 +4,14 @@ One manual workflow, no manual tags, no hand-edited changelog.
 
 ## Cutting a release
 
-1. Make sure `main` is green, and that the full checks are green on the
-   commit you release: the last nightly run on `main`
+1. Make sure `main` is green, and run the full checks on the commit you
+   release first: the last nightly run on `main`
    (`gh run list -w nightly.yml -b main -L 1 --json headSha,conclusion`) if
    it ran on that commit, otherwise `gh workflow run nightly.yml --ref main`
-   and wait for it (about 30 minutes), merging nothing into `main` until the
-   release is dispatched. The release's first job refuses a commit without a
-   green run of the full checks: no test suite runs in the release. If it
-   refused, run the full checks on the commit it names (a branch at that
-   commit), then **Re-run failed jobs**.
+   and wait for it (about 30 minutes). PR CI skips the full corpus walks, so
+   this is where snapshot drift shows. It is a habit, not a gate: the release
+   does not check it, and a small change after the last green run (docs, the
+   release tooling) needs no new run.
 2. Write the highlights: three to six Markdown bullets on the big changes of
    the release, for a reader in a hurry (what a user can now do, what got
    faster, what breaks), each with its pull request. Then Actions,

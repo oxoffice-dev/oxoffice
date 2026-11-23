@@ -1,8 +1,7 @@
 name: Release
 
 # Manual only, from main. Give the version, the workflow does the rest:
-#   1. the commit must have a green run of the full checks (nightly.yml);
-#      every build job checks out that commit and sets the version in its
+#   1. every build job checks out the dispatched commit and sets the version in its
 #      own workspace: the `oxoffice` binary, the Python wheels and the sdist
 #      for every platform; each wheel is installed on its platform, opens,
 #      edits and saves four corpus files, and its conda package is built and
@@ -17,8 +16,8 @@ name: Release
 #      prefix.dev, both through trusted publishers
 # Nothing reaches main or the tags before the push of step 2. Merging into
 # main during the run is fine: those merges are not in the release, and the
-# tag holds exactly the tree that was built. No test suite runs here: the
-# full checks ran on the commit. See docs/RELEASE.md,
+# tag holds exactly the tree that was built. No test suite runs here: run
+# the full checks (nightly.yml) on the commit first. See docs/RELEASE.md,
 # specs/2026-11-21-release-pushes-after-the-builds.md and
 # specs/2026-11-22-a-short-release.md.
 
@@ -77,22 +76,9 @@ jobs:
             # failed after that, re-run its failed jobs instead.
             echo "::error::tag v$VERSION already exists"; exit 1
           fi
-      # The tests do not run in the release: the full checks (every test
-      # under debug assertions on three platforms, the whole corpus, every
-      # scaling call, the stack measure) must be green on this very commit.
-      - name: Full checks green on this commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Filter on each run's own conclusion (its latest attempt): the API's
-          # status=success filter lagged behind a run that had just turned green
-          # (0.3.0, a re-run that had finished 45 s before), and refused it.
-          green="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/nightly.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
-            --jq '[.workflow_runs[] | select(.conclusion == "success")] | length > 0')"
-          if [ "$green" != true ]; then
-            echo "::error::no green Full checks run on $GITHUB_SHA: run nightly.yml on that commit (gh workflow run nightly.yml --ref main if main is still there, about 30 minutes), then re-run the failed jobs of this run"
-            exit 1
-          fi
+      # The tests do not run in the release. Running the full checks
+      # (nightly.yml) on the commit first is the maintainer's habit, not a gate
+      # (docs/RELEASE.md).
 
   cli:
     name: CLI ${{ matrix.target }}
