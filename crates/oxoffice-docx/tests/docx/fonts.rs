@@ -268,6 +268,86 @@ fn describing_a_font_again_updates_its_record_in_place() {
 }
 
 #[test]
+fn a_font_name_written_twice_is_changed_and_removed_by_its_index() {
+    // LibreOffice writes Symbol twice: records 1 and 8.
+    let mut doc = corpus_doc("libreoffice/report.docx");
+    let names = font_names(&doc);
+    assert_eq!(names[1], "Symbol");
+    assert_eq!(names[8], "Symbol");
+    assert_eq!(names.iter().filter(|name| *name == "Symbol").count(), 2);
+
+    // By name, every call refuses to pick one and points at the index.
+    let before = doc.to_bytes().unwrap();
+    let refusals = [
+        doc.set_font(FontDefinition::new("Symbol")).unwrap_err(),
+        doc.remove_font("Symbol").unwrap_err(),
+        doc.embed_font("Symbol", face(Regular, tiny_font("Symbol face")))
+            .unwrap_err(),
+        doc.remove_embedded_font("Symbol", Regular).unwrap_err(),
+    ];
+    for error in refusals {
+        let error = error.to_string();
+        assert!(
+            error.contains("2 records are named Symbol") && error.contains("index"),
+            "{error}"
+        );
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+
+    // An index outside the table, or a name that is not the record's.
+    let error = doc
+        .set_font_at(9, FontDefinition::new("Symbol"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("out of range"), "{error}");
+    let error = doc
+        .set_font_at(8, FontDefinition::new("Wingdings"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("does not rename"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+
+    // The second record changes; the first stays as LibreOffice wrote it.
+    doc.set_font_at(
+        8,
+        FontDefinition::new("Symbol")
+            .with_family("decorative")
+            .with_pitch("variable"),
+    )
+    .unwrap();
+    doc.embed_font_at(8, face(Regular, tiny_font("Symbol face")))
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    let fonts = doc.try_fonts().unwrap();
+    assert_eq!(fonts[1].family.as_deref(), Some("roman"));
+    assert!(fonts[1].embedded_fonts.is_empty());
+    assert_eq!(fonts[8].family.as_deref(), Some("decorative"));
+    assert_eq!(fonts[8].pitch.as_deref(), Some("variable"));
+    assert_eq!(fonts[8].embedded_fonts.len(), 1);
+    assert_eq!(fonts[8].embedded_fonts[0].data, tiny_font("Symbol face"));
+
+    let removed = doc.remove_embedded_font_at(8, Regular).unwrap();
+    assert_eq!(
+        removed.map(|face| face.data),
+        Some(tiny_font("Symbol face"))
+    );
+    assert_eq!(doc.remove_embedded_font_at(8, Regular).unwrap(), None);
+    assert!(font_parts(&saved_package(&mut doc)).is_empty());
+
+    // Once the second record is gone, the name is unique again.
+    let removed = doc.remove_font_at(8).unwrap();
+    assert_eq!(removed.family.as_deref(), Some("decorative"));
+    assert!(doc.remove_font_at(8).is_err());
+    let doc = reopen(&mut doc);
+    assert_eq!(font_names(&doc), names[..8]);
+    let mut doc = doc;
+    assert_eq!(
+        doc.remove_font("Symbol").unwrap().map(|font| font.name),
+        Some("Symbol".to_owned())
+    );
+}
+
+#[test]
 fn font_descriptions_outside_the_schema_are_refused_and_change_nothing() {
     let mut doc = Document::new();
     let before = doc.to_bytes().unwrap();

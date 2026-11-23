@@ -474,6 +474,10 @@ oxoffice docx font settings embedded.docx --embed-true-type-fonts false --output
 oxoffice docx font remove embedded.docx --name "My Face" --kind regular --output removed.docx
 ```
 
+A name several records carry (LibreOffice writes `Symbol` twice) is refused;
+`--index N`, the record's `index` in `font list --json`, addresses one of
+them in `font embed` and `font remove`.
+
 The four CLI kinds are regular, bold, italic and bold-italic. Settings accept
 true, false or none, with none removing the owned value. Listing reports actual
 native part, format and byte-length facts in the schema1 JSON envelope.
