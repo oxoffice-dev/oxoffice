@@ -4999,7 +4999,17 @@ fn render_shape_text(
     }
     let mut local = PaintLayers::default();
     let mut y = 0.0;
+    let mut previous_space_after = 0.0;
     for (index, para) in text.iter().enumerate() {
+        // Paragraph spacing as in the body: none above the first line, then
+        // the part of the space before that exceeds the space after above.
+        y += if y == 0.0 {
+            0.0
+        } else if geometry.do_not_use_html_paragraph_auto_spacing {
+            para.space_before
+        } else {
+            (para.space_before - previous_space_after).max(0.0)
+        };
         let mut bottom = y + para.content_offset_top;
         let fit = height.map_or(para.lines.len(), |height| {
             para.lines
@@ -5046,7 +5056,8 @@ fn render_shape_text(
         if fit < text[index].lines.len() {
             break;
         }
-        y += para.content_height();
+        y += para.content_height() + para.space_after;
+        previous_space_after = para.space_after;
     }
     let dx = rect.x - geometry.margin_left;
     let dy = rect.y - geometry.margin_top;

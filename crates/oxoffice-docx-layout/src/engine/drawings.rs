@@ -319,7 +319,10 @@ pub(super) fn collect_anchored_drawings(
                             preset: block::ShapePreset::from_prst(shape.preset.as_deref()),
                             fill: shape.solid_fill.as_deref().map(Color::from_hex),
                             text,
-                            fixed_height: !shape.grows_to_fit_text,
+                            // Vertical text is still laid out across the
+                            // box, so its lines are not measured against the
+                            // box's height.
+                            fixed_height: !shape.grows_to_fit_text && !shape.vertical_text,
                             insets: [
                                 insets.left.to_pt(),
                                 insets.top.to_pt(),

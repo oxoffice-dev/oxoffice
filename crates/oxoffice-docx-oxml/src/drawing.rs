@@ -491,6 +491,9 @@ pub struct CT_Shape {
     pub grows_to_fit_text: bool,
     /// Space between the shape's edges and its text, from `wps:bodyPr`.
     pub text_insets: TextInsets,
+    /// Whether the text runs vertically (`wps:bodyPr@vert` other than
+    /// `horz`).
+    pub vertical_text: bool,
     /// Authoritative parsed block body, including tables and modeled controls.
     /// The paragraph-only projection is used for authored legacy shapes when absent.
     pub text_body: Option<crate::document::CT_Body>,
@@ -521,15 +524,20 @@ impl Default for TextInsets {
     }
 }
 
-/// Read the insets a `wps:bodyPr` states; an unreadable value keeps the
-/// default.
-fn read_text_insets(element: &BytesStart<'_>, insets: &mut TextInsets) {
+/// Read the insets and the text direction a `wps:bodyPr` states; an
+/// unreadable inset keeps the default.
+fn read_body_properties(element: &BytesStart<'_>, shape: &mut CT_Shape) {
+    let insets = &mut shape.text_insets;
     for attribute in element.attributes().flatten() {
         let side = match attribute.key.as_ref() {
             b"lIns" => &mut insets.left,
             b"tIns" => &mut insets.top,
             b"rIns" => &mut insets.right,
             b"bIns" => &mut insets.bottom,
+            b"vert" => {
+                shape.vertical_text = attribute.value.as_ref() != b"horz";
+                continue;
+            }
             _ => continue,
         };
         if let Some(value) = std::str::from_utf8(&attribute.value)
@@ -1130,7 +1138,7 @@ impl CT_Anchor {
                         if matches_local_name(ename.as_ref(), b"spAutoFit") {
                             shape.grows_to_fit_text = true;
                         } else if matches_local_name(ename.as_ref(), b"bodyPr") {
-                            read_text_insets(e, &mut shape.text_insets);
+                            read_body_properties(e, shape);
                         }
                     }
                 }
@@ -1153,7 +1161,7 @@ impl CT_Anchor {
                     if matches_local_name(ename.as_ref(), b"bodyPr")
                         && let Some(shape) = shape.as_mut()
                     {
-                        read_text_insets(e, &mut shape.text_insets);
+                        read_body_properties(e, shape);
                     }
                     if action == DrawingChildAction::SourceRect {
                         source_rect = Some(parse_source_rect(e)?);
