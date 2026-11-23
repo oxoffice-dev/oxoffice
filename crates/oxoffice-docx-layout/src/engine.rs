@@ -1078,6 +1078,8 @@ struct AnnotationLine {
     /// annotation halves when `w:hps` is absent.
     primary_font_size: f64,
     runs: Vec<GlyphRun>,
+    /// Each run's fill (highlight or shading), drawn behind it.
+    fills: Vec<Option<Color>>,
 }
 
 /// The paragraph context an annotation resolves its runs against.

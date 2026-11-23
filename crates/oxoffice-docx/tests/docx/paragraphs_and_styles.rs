@@ -1079,3 +1079,169 @@ fn empty_paragraph_and_mark_properties_reach_their_written_form_in_one_save() {
         assert_eq!(main_xml(&again), main_xml(&once), "{form}");
     }
 }
+
+/// `doc` saved with the character styles a French Word file gives the
+/// built-in Hyperlink and note mark styles, under their localized ids.
+fn with_french_character_styles(doc: &mut Document) -> Document {
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    assert!(!xml.contains(r#"w:styleId="Hyperlink""#), "{xml}");
+    let xml = xml.replace(
+        "</w:styles>",
+        concat!(
+            r#"<w:style w:type="character" w:styleId="Lienhypertexte"><w:name w:val="Hyperlink"/>"#,
+            r#"<w:rPr><w:color w:val="0000FF"/><w:u w:val="single"/></w:rPr></w:style>"#,
+            r#"<w:style w:type="character" w:styleId="Appelnotedebasdep"><w:name w:val="footnote reference"/>"#,
+            r#"<w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>"#,
+            r#"<w:style w:type="character" w:styleId="Appeldenotedefin"><w:name w:val="endnote reference"/>"#,
+            r#"<w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style></w:styles>"#
+        ),
+    );
+    package.set_part("/word/styles.xml", xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn links_and_note_marks_a_session_adds_take_a_localized_file_s_own_styles() {
+    let mut doc = doc_with(&["body"]);
+    doc.set_header("head");
+    // A table in the header, for the table edit route.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let header =
+        String::from_utf8(package.get_part("/word/header1.xml").unwrap().to_vec()).unwrap();
+    let header = header.replace(
+        "</w:hdr>",
+        concat!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>"#,
+            r#"<w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/></w:hdr>"#
+        ),
+    );
+    package.set_part("/word/header1.xml", header.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let mut doc = with_french_character_styles(&mut doc);
+    let relationship = doc.add_hyperlink_relationship("https://example.com/");
+    let note = doc.add_footnote("note");
+    {
+        let mut paragraph = doc.paragraph_mut(0).unwrap();
+        paragraph.add_hyperlink("site", &relationship);
+        paragraph.add_internal_hyperlink("top", "_top", None);
+        paragraph.add_footnote_ref(note);
+    }
+    let header = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == oxoffice_docx::StoryKind::Header)
+        .unwrap();
+    doc.add_hyperlink_to_story(&header, "head link", "https://example.com/head")
+        .unwrap();
+    // The routes Python's paragraph and table edits take in a header.
+    let item = |doc: &Document, kind: oxoffice_docx::StoryItemKind, text: Option<&str>| {
+        let header = doc
+            .stories()
+            .unwrap()
+            .into_iter()
+            .find(|story| story.kind() == oxoffice_docx::StoryKind::Header)
+            .unwrap();
+        doc.story_items(&header)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.kind() == kind && item.text().unwrap().as_deref() == text)
+            .unwrap()
+            .location()
+            .clone()
+    };
+    let paragraph = item(&doc, oxoffice_docx::StoryItemKind::Paragraph, Some("head"));
+    doc.edit_story_paragraph(&paragraph, |paragraph| {
+        paragraph.add_internal_hyperlink("head top", "_top", None);
+        Ok(())
+    })
+    .unwrap();
+    // HTML inserted into the header.
+    let paragraph = item(
+        &doc,
+        oxoffice_docx::StoryItemKind::Paragraph,
+        Some("headhead top"),
+    );
+    doc.insert_html_fragment(
+        &paragraph,
+        r#"<p><a href="https://example.com/html">html link</a></p>"#,
+        &[],
+    )
+    .unwrap();
+    let table = item(&doc, oxoffice_docx::StoryItemKind::Table, None);
+    doc.edit_story_table(&table, |table| {
+        table
+            .cell(0, 0)
+            .unwrap()
+            .paragraph_mut(0)
+            .unwrap()
+            .add_internal_hyperlink("cell top", "_top", None);
+        Ok(())
+    })
+    .unwrap();
+
+    let mut doc = reopen(&mut doc);
+    let names = |name: &str| {
+        doc.styles()
+            .iter()
+            .filter(|style| {
+                style
+                    .name()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(name))
+            })
+            .map(|style| style.style_id().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names("Hyperlink"), ["Lienhypertexte"]);
+    assert_eq!(names("footnote reference"), ["Appelnotedebasdep"]);
+    let bytes = doc.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    for (part, count) in [("/word/document.xml", 3), ("/word/header1.xml", 4)] {
+        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
+        assert!(!xml.contains(r#"w:val="Hyperlink""#), "{part}: {xml}");
+        assert!(
+            !xml.contains(r#"w:val="FootnoteReference""#),
+            "{part}: {xml}"
+        );
+        let localized = xml.matches(r#"w:rStyle w:val="Lienhypertexte""#).count()
+            + xml.matches(r#"w:rStyle w:val="Appelnotedebasdep""#).count();
+        assert_eq!(localized, count, "{part}: {xml}");
+    }
+}
+
+#[test]
+fn a_localized_index_styled_as_hyperlinks_is_rebuilt_as_hyperlinks() {
+    // The index's mark takes the French file's Hyperlink style, as Word
+    // writes an index whose entries link to their pages.
+    let mut doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t>Fruit</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> XE "Apple" </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:rPr><w:rStyle w:val="Lienhypertexte"/></w:rPr></w:pPr>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> INDEX </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    ));
+    let mut doc = with_french_character_styles(&mut doc);
+    let report = doc.rebuild_generated_tables().unwrap();
+    assert_eq!(report.index_entries, 1, "{report:?}");
+
+    let package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let entry = xml.find(">Apple<").expect("the rebuilt entry");
+    let run = xml[..entry].rfind("<w:r>").unwrap();
+    assert!(
+        xml[run..entry].contains(r#"<w:rStyle w:val="Lienhypertexte"/>"#),
+        "{}",
+        &xml[run..entry]
+    );
+    assert!(!xml.contains(r#"w:val="Hyperlink""#), "{xml}");
+    let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
+    assert!(!styles.contains(r#"w:styleId="Hyperlink""#), "{styles}");
+}

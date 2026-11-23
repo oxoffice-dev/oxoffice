@@ -4563,6 +4563,7 @@ impl Importer<'_> {
                 }
             }
         }
+        self.document.localize_run_styles(&mut output);
         Ok(output)
     }
 
