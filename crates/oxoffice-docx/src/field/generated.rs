@@ -302,6 +302,7 @@ impl Document {
     ) -> Result<crate::ContentLocation> {
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
+        let hyperlink_style = candidate.hyperlink_style_id();
         let index = before
             .index_path()
             .first()
@@ -334,7 +335,7 @@ impl Document {
             };
             if hyperlink && instruction.name == "INDEX" {
                 properties.rpr = Some(CT_RPr {
-                    style_id: Some("Hyperlink".into()),
+                    style_id: Some(hyperlink_style.clone()),
                     ..Default::default()
                 });
             }
@@ -342,7 +343,7 @@ impl Document {
             let mut run = CT_R::new("");
             if hyperlink {
                 run.properties = Some(CT_RPr {
-                    style_id: Some("Hyperlink".into()),
+                    style_id: Some(hyperlink_style.clone()),
                     ..Default::default()
                 });
             }
@@ -660,6 +661,7 @@ fn generated_table_owners(
     original_sources: &[GeneratedTableSource],
     diagnostics: &mut Vec<String>,
 ) -> Result<Vec<GeneratedTableOwner>> {
+    let links = document.hyperlink_character_style_ids();
     let mut result = Vec::new();
     for (story_index, story) in stories.iter().enumerate() {
         let mut paragraphs = Vec::new();
@@ -693,20 +695,23 @@ fn generated_table_owners(
             match generated_table_definition(&field.effective_instruction()) {
                 Ok(Some(mut definition)) => {
                     if let GeneratedTableDefinition::Index { options, .. } = &mut definition {
-                        options.hyperlink = paragraphs
-                            .get(span.begin_paragraph)
-                            .and_then(|paragraph| paragraph.properties.as_ref())
-                            .and_then(|properties| properties.rpr.as_ref())
-                            .and_then(|properties| properties.style_id.as_deref())
-                            == Some("Hyperlink")
-                            || field
-                                .cached_display_segments()
-                                .iter()
-                                .any(|(_, properties)| {
-                                    properties.is_some_and(|properties| {
-                                        properties.style_id.as_deref() == Some("Hyperlink")
-                                    })
-                                });
+                        // A localized file names its Hyperlink style otherwise
+                        // (`Lienhypertexte` in French).
+                        let hyperlink = |id: Option<&str>| id.is_some_and(|id| links.contains(id));
+                        options.hyperlink = hyperlink(
+                            paragraphs
+                                .get(span.begin_paragraph)
+                                .and_then(|paragraph| paragraph.properties.as_ref())
+                                .and_then(|properties| properties.rpr.as_ref())
+                                .and_then(|properties| properties.style_id.as_deref()),
+                        ) || field.cached_display_segments().iter().any(
+                            |(_, properties)| {
+                                hyperlink(
+                                    properties
+                                        .and_then(|properties| properties.style_id.as_deref()),
+                                )
+                            },
+                        );
                     }
                     result.push(GeneratedTableOwner {
                         story_index,
@@ -1617,6 +1622,7 @@ fn generated_render_table(
             cross_reference_separator,
         } => generated_render_index(
             &section_formats,
+            &document.hyperlink_style_id(),
             owner,
             &selected,
             options,
@@ -1933,6 +1939,7 @@ fn generated_append_pages(
 
 fn generated_render_index(
     section_formats: &[Option<String>],
+    hyperlink_style: &str,
     owner: &GeneratedTableOwner,
     selected: &[&GeneratedTableSource],
     options: &IndexOptions,
@@ -2008,7 +2015,7 @@ fn generated_render_index(
             label
                 .properties
                 .get_or_insert_with(CT_RPr::default)
-                .style_id = Some("Hyperlink".into());
+                .style_id = Some(hyperlink_style.to_owned());
         }
         paragraph.runs.push(label);
         if options.hyperlink

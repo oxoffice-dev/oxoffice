@@ -83,6 +83,7 @@ fn compare_body_impl(
         &original_signatures,
         &edited_signatures,
         metadata.options,
+        &metadata.shared_bookmarks,
     )?;
     let moves = pair_moves(
         &aligned,

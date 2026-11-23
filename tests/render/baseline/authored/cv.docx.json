@@ -1,10 +1,10 @@
 {
   "file": "authored/cv.docx",
-  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "reason": "tagged links hold their text: the structure tree and the links' /Contents change",
   "resources": "abc26612fe06fbc48665e6a253fb62cd2725f19a96a1fbceeb323d1e05681606",
-  "outline_and_tags": "8d2f18f5f126dfeb268b3e271ec725d7b09a430b895b356821a1afb4e15911a1",
+  "outline_and_tags": "54258b9a9ebbe83270e52f577dc32ddb677c1318921ed6b5fa4586c11a82ec4e",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
-    {"page": 1, "pixels": "32c4c33f510d2879100da9ccb0817f4f8983294710046499a673c89de914ff6f", "content": "0f8d431cf14a29de400ff61c087149d3ef75d7e526be08463a4c735eb2290d3b", "annotations": "59a0c228193027c9aaa7b5d634853f0f15748cd5d6a59bed892611c0ad3b02b7", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"}
+    {"page": 1, "pixels": "32c4c33f510d2879100da9ccb0817f4f8983294710046499a673c89de914ff6f", "content": "0f8d431cf14a29de400ff61c087149d3ef75d7e526be08463a4c735eb2290d3b", "annotations": "c915cdefc33a343638debab1706b8333697e315185e6fbff53e6aa7c628bd91b", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"}
   ]
 }

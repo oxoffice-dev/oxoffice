@@ -452,11 +452,21 @@ pub(super) fn compare_paragraph(
         if original.bookmark_markers == edited.bookmark_markers
             && paragraph_boundaries_differ(original, edited, metadata.options)
         {
-            return Ok(format!(
-                "{}{}",
-                deleted_paragraph(original, false, metadata)?,
-                inserted_paragraph(edited, false, metadata)?
-            ));
+            let deleted = deleted_paragraph(original, false, metadata)?;
+            let inserted = inserted_paragraph(edited, false, metadata)?;
+            // A bookmark both inputs hold is written once, its start in the
+            // insertion and its end in the deletion (see
+            // `place_shared_bookmarks`), so the insertion comes first.
+            let shared = original.bookmark_markers.iter().any(|marker| {
+                marker
+                    .id()
+                    .is_some_and(|id| metadata.shared_bookmarks.contains(&id))
+            });
+            return Ok(if shared {
+                format!("{inserted}{deleted}")
+            } else {
+                format!("{deleted}{inserted}")
+            });
         }
         if metadata.options.ignore_formatting
             && metadata.options.ignore_fields

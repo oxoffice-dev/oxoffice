@@ -779,6 +779,7 @@ fn compare_aligned_cell_children(
         &original_signatures,
         &edited_signatures,
         options,
+        &metadata.shared_bookmarks,
     )?;
     let is_paragraph =
         |child: Option<&CellContent>| matches!(child, Some(CellContent::Paragraph(_)));
