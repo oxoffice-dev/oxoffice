@@ -167,12 +167,12 @@ use signatures::{
 use xml::{
     append_word_child, body_content_xml, cell_child_spans, cell_xml, control_xml, deleted_run,
     deleted_run_xml, detach_field_spans, direct_element_spans, direct_word_element_spans,
-    direct_word_element_spans_in_scope, element_local_name, extract_body_inner,
-    inject_before_close, main_body_source, modeled_paragraph_run_spans, paragraph_close_start,
-    paragraph_owned_run_xml, paragraph_run_spans, paragraph_xml, property_xml, replace_body_inner,
-    replace_direct_word_elements, replace_element_inner, replace_paragraph_run_elements,
-    replace_ranges, row_xml, run_xml, section_property_xml, table_xml, utf8_error,
-    with_mark_revision, word_ids,
+    direct_word_element_spans_in_scope, element_local_name, element_opening, extract_body_inner,
+    inject_before_close, insert_first_child, main_body_source, modeled_paragraph_run_spans,
+    paragraph_close_start, paragraph_owned_run_xml, paragraph_run_spans, paragraph_xml,
+    property_xml, replace_body_inner, replace_direct_word_elements, replace_element_inner,
+    replace_paragraph_run_elements, replace_ranges, row_xml, run_xml, section_property_xml,
+    table_xml, utf8_error, with_mark_revision, word_element_starts, word_ids,
 };
 
 mod attributed_runs;
@@ -193,8 +193,8 @@ use attributed_runs::{
     ignored_run_content, run_is_ignored, validate_raw_attribution,
 };
 use body::{
-    compare_body, moved_body_content, moved_paragraph, moved_table, restore_current_property_roots,
-    restore_extracted_root, retain_source_root_namespaces,
+    body_location, compare_body, moved_body_content, moved_paragraph, moved_table,
+    restore_current_property_roots, restore_extracted_root, retain_source_root_namespaces,
 };
 use controls::{compare_control, compare_control_from_xml, marked_control};
 use fields::{
@@ -253,6 +253,13 @@ use tables::{
 pub struct ComparisonDiagnostic {
     pub location: String,
     pub message: String,
+}
+
+fn formatting_diagnostic(diagnostics: &mut Vec<ComparisonDiagnostic>, location: String) {
+    diagnostics.push(ComparisonDiagnostic {
+        location,
+        message: "formatting differs and the original formatting was retained".to_owned(),
+    });
 }
 
 /// A Word story category that can be excluded from document comparison.
@@ -1505,14 +1512,6 @@ struct GuardHost {
     drawing: Option<oxoffice_docx_oxml::drawing::CT_Drawing>,
 }
 
-/// Compare the owners of one story and return the tracked story content.
-///
-/// `held` names the owners of each side that hold an existing modeled
-/// revision. Such an owner is kept only when both sides hold it unchanged,
-/// and then its original bytes are emitted. Any other change that would
-/// revise, delete, insert or move it, or mark its paragraph mark, is refused.
-// Frames contain only live immutable parse owners. Nested body calls push a
-// separate frame, and pop on every Result exit before their owners can drop.
 #[derive(Clone)]
 struct RunSource {
     owner: usize,
@@ -1622,34 +1621,6 @@ struct TrailingRun<'a, 'l> {
     location: &'l str,
 }
 
-fn element_opening(xml: &str) -> Result<(usize, bool, String)> {
-    let mut reader = Reader::from_str(xml);
-    let event = reader
-        .read_event()
-        .map_err(|error| Error::Other(format!("comparison owner start failed: {error}")))?;
-    let (element, empty) = match event {
-        Event::Start(element) => (element, false),
-        Event::Empty(element) => (element, true),
-        _ => return Err(Error::Other("comparison owner has no start element".into())),
-    };
-    let name = std::str::from_utf8(element.name().as_ref())
-        .map_err(utf8_error)?
-        .to_owned();
-    Ok((reader.buffer_position() as usize, empty, name))
-}
-
-fn insert_first_child(xml: &str, child: &str) -> Result<String> {
-    let (end, empty, name) = element_opening(xml)?;
-    if empty {
-        return Ok(format!(
-            "{}>{child}</{name}>{}",
-            &xml[..end - 2],
-            &xml[end..]
-        ));
-    }
-    Ok(format!("{}{child}{}", &xml[..end], &xml[end..]))
-}
-
 #[derive(Clone)]
 struct AttributedRunUnit {
     run: CT_R,
@@ -1659,48 +1630,6 @@ struct AttributedRunUnit {
     raw_sources: Vec<(usize, usize, usize)>,
     // A whole unchanged typed atom, or generated authority for a split atom.
     typed_sources: Vec<Option<TypedSourceSelection>>,
-}
-
-/// Expanded Word names in a serialized owner. The writer supplies canonical
-/// `w` names, while preserved children can shadow that binding or use aliases.
-fn word_element_starts(xml: &str) -> Result<HashSet<usize>> {
-    let opening = format!(r#"<scope xmlns:w="{W_NS}">"#);
-    let scoped = format!("{opening}{xml}</scope>");
-    let mut reader = NsReader::from_reader(scoped.as_bytes());
-    let mut starts = HashSet::new();
-    let mut buffer = Vec::new();
-    loop {
-        let before = reader.buffer_position() as usize;
-        let (namespace, event) = reader
-            .read_resolved_event_into(&mut buffer)
-            .map_err(|error| Error::Other(format!("comparison XML scan failed: {error}")))?;
-        if matches!(event, Event::Start(_) | Event::Empty(_))
-            && matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
-            && let Some(start) = before.checked_sub(opening.len())
-        {
-            starts.insert(start);
-        }
-        if matches!(event, Event::Eof) {
-            return Ok(starts);
-        }
-        buffer.clear();
-    }
-}
-
-fn formatting_diagnostic(diagnostics: &mut Vec<ComparisonDiagnostic>, location: String) {
-    diagnostics.push(ComparisonDiagnostic {
-        location,
-        message: "formatting differs and the original formatting was retained".to_owned(),
-    });
-}
-
-fn body_location(location: &str, content: &BodyContent, index: usize) -> String {
-    match content {
-        BodyContent::Paragraph(_) => format!("{location}/paragraph[{index}]"),
-        BodyContent::Table(_) => format!("{location}/table[{index}]"),
-        BodyContent::ContentControl(_) => format!("{location}/content-control[{index}]"),
-        BodyContent::RawXml(_) => format!("{location}/raw[{index}]"),
-    }
 }
 
 /// The paragraphs, by index on each side, that a replaced run deletes or
