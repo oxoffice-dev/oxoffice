@@ -587,6 +587,33 @@ fn a_custom_property_without_a_name_or_with_a_taken_id_is_refused() {
 }
 
 #[test]
+fn a_property_part_with_no_relationship_id_left_is_refused_and_changes_nothing() {
+    // The package relationships hold the last numeric id, so the custom
+    // properties part, reserved first, can get no relationship.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc_with(&["Body"]).to_bytes().unwrap())).unwrap();
+    package.package_rels.add_with_id(
+        "rId4294967295",
+        "http://example.com/relationships/probe",
+        "word/document.xml",
+    );
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let before = doc.to_bytes().unwrap();
+
+    for _ in 0..2 {
+        let error = doc
+            .set_custom_property(custom("Approved", 2, CustomPropertyValue::Bool(true)))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exhausted"), "{error}");
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert!(custom_names(&doc).is_empty());
+}
+
+#[test]
 fn a_custom_number_property_may_be_nan() {
     let mut doc = doc_with(&["Body"]);
     let outcome = catch_unwind(AssertUnwindSafe(|| {

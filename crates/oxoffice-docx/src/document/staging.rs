@@ -192,29 +192,37 @@ impl Document {
     ///
     /// `edit` first reserves the properties part in the package graph and the
     /// identifier registry, which can fail, then writes the properties model
-    /// and its part name, which cannot. The package graph, whose part bytes
-    /// are shared, and the registry are saved first and put back on refusal,
-    /// so a refused edit leaves no reserved name or relationship id. A
-    /// success leaves what [`Self::commit_staged_mutation`] leaves for a
-    /// staged clone: the derived layout is dropped and a signed package
+    /// and its part name, which cannot. The registry journals what the
+    /// reservation adds to both, and a refusal removes it again, so a refused
+    /// edit leaves no reserved name or relationship id and the edit copies
+    /// neither. A success leaves what [`Self::commit_staged_mutation`] leaves
+    /// for a staged clone: the derived layout is dropped and a signed package
     /// records a package mutation. Debug builds run the staged edit on a
     /// clone and compare. `edit` is `Fn` for that second run.
     pub(super) fn edit_properties(&mut self, edit: impl Fn(&mut Self) -> Result<()>) -> Result<()> {
         #[cfg(debug_assertions)]
         let staged = self.clone_for_staging();
-        let package = self.package.clone();
-        let identifiers = self.identifiers.clone();
+        self.identifiers.open_journal();
         let result = edit(self);
+        let journal = self.identifiers.close_journal();
+        let signed = self
+            .package
+            .package_rels
+            .items
+            .iter()
+            .any(|relationship| relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN);
         match &result {
             Ok(()) => {
-                self.package_signatures_invalidated |=
-                    self.package.package_rels.items.iter().any(|relationship| {
-                        relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN
-                    }) && (self.package_signatures_invalidated
-                        || crate::embedded::synchronized_package_mutation_invalidates_signature(
-                            &package,
-                            &self.package,
-                        ));
+                #[cfg(debug_assertions)]
+                assert_eq!(
+                    signed && journal.changed_package(),
+                    crate::embedded::synchronized_package_mutation_invalidates_signature(
+                        &staged.package,
+                        &self.package,
+                    ),
+                    "the properties journal tells another package change"
+                );
+                self.package_signatures_invalidated |= signed && journal.changed_package();
                 self.layout_cache
                     .get_mut()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -225,8 +233,18 @@ impl Document {
                     .take();
             }
             Err(_) => {
-                self.package = package;
-                self.identifiers = identifiers;
+                self.undo_reservations(journal);
+                #[cfg(debug_assertions)]
+                {
+                    assert!(
+                        staged.package.same_package_as(&self.package),
+                        "a refused properties edit left another package graph"
+                    );
+                    assert_eq!(
+                        staged.identifiers, self.identifiers,
+                        "a refused properties edit left another identifier registry"
+                    );
+                }
             }
         }
         #[cfg(debug_assertions)]

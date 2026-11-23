@@ -910,6 +910,39 @@ fn a_new_list_skips_an_identifier_named_inside_raw_content() {
 }
 
 #[test]
+fn a_list_item_with_no_relationship_id_left_for_its_numbering_part_is_refused_without_a_change() {
+    // The main part's relationships hold the last numeric id, so the
+    // numbering part, reserved first, can get no relationship.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc_with(&["first"]).to_bytes().unwrap())).unwrap();
+    package
+        .get_or_create_part_rels("/word/document.xml")
+        .add_with_id(
+            "rId4294967295",
+            "http://example.com/relationships/probe",
+            "document.xml",
+        );
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let before = doc.to_bytes().unwrap();
+
+    for _ in 0..2 {
+        let error = doc
+            .try_add_bullet_list_item("item", 0)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("numbering relationship allocation failed"),
+            "{error}"
+        );
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert!(doc.numbering_instances().is_empty());
+}
+
+#[test]
 fn list_items_are_refused_on_a_body_a_typed_edit_cannot_leave_savable() {
     // The w:body element declares a namespace of its own, as some producers
     // write it: the body saves as it was opened, and a typed edit of it

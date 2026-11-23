@@ -1,5 +1,6 @@
 //! Lists and numbering: list items, definitions, instances, levels and their links to styles.
 
+use super::identifiers::ReservationJournal;
 use super::*;
 
 /// The list a list item joins, as [`Document::begin_list_item`] finds or
@@ -15,16 +16,15 @@ pub enum ListItemKind {
 }
 
 /// What an in-place numbering edit replaced: the numbering model and its
-/// part name, and the package graph and identifier registry, where the edit
-/// reserves the numbering part and its identifiers. The package graph shares
-/// its part bytes, so keeping it costs the parts and relationships, not the
-/// content. [`Document::undo_numbering_edit`] puts it back, so that a call
-/// whose later step fails leaves the document as it was; dropping it keeps
-/// the edit.
+/// part name, and what it reserved in the package graph and the identifier
+/// registry (the numbering part, its relationship and content type, and the
+/// numbering identifiers), never a copy of either.
+/// [`Document::undo_numbering_edit`] puts it back, so that a call whose
+/// later step fails leaves the document as it was; dropping it keeps the
+/// edit.
 #[doc(hidden)]
 pub struct NumberingJournal {
-    package: OpcPackage,
-    identifiers: DocumentIdentifiers,
+    reservations: ReservationJournal,
     numbering: Option<CT_Numbering>,
     numbering_part_name: Option<String>,
     package_signatures_invalidated: bool,
@@ -179,15 +179,13 @@ impl Document {
     pub(super) fn reserve_numbering_bundle(&mut self) -> Result<()> {
         self.identifiers.observe_package_graph(&self.package)?;
         if let Some(numbering) = &self.numbering {
-            self.identifiers.abstract_numbering_ids.extend(
-                numbering
-                    .abstract_nums
-                    .iter()
-                    .map(|definition| definition.abstract_num_id),
-            );
-            self.identifiers
-                .numbering_instance_ids
-                .extend(numbering.nums.iter().map(|instance| instance.num_id));
+            for definition in &numbering.abstract_nums {
+                self.identifiers
+                    .hold_abstract_numbering_id(definition.abstract_num_id);
+            }
+            for instance in &numbering.nums {
+                self.identifiers.hold_numbering_instance_id(instance.num_id);
+            }
         }
         let part_name = match self.numbering_part_name.as_deref() {
             Some(part_name) => part_name.to_owned(),
@@ -219,15 +217,12 @@ impl Document {
                     })?,
             )
         };
-        self.package
-            .content_types
-            .add_override(&part_name, NUMBERING_CONTENT_TYPE);
+        self.add_override_journaled(&part_name, NUMBERING_CONTENT_TYPE);
         self.identifiers.register_content_type_override(&part_name);
         if let Some(id) = pending_id {
-            let target = relative_target(&self.doc_part_name, &part_name);
-            self.package
-                .get_or_create_part_rels(&self.doc_part_name)
-                .add_with_id(&id, rel_types::NUMBERING, &target);
+            let owner = self.doc_part_name.clone();
+            let target = relative_target(&owner, &part_name);
+            self.add_relationship_journaled(Some(&owner), &id, rel_types::NUMBERING, &target);
         }
         self.numbering_part_name = Some(part_name);
         Ok(())
@@ -314,27 +309,15 @@ impl Document {
         let mut occupied = self.identifiers.numbering_instance_ids.clone();
         occupied.extend(self.content_numbering_instance_ids());
         let id = reserve_u32_or_lowest_free(&mut occupied, 1, "numbering instance")?;
-        self.identifiers.numbering_instance_ids.insert(id);
+        self.identifiers.hold_numbering_instance_id(id);
         Ok(id)
     }
 
-    /// Keep what a numbering edit is about to replace.
-    fn numbering_journal(&self) -> NumberingJournal {
-        NumberingJournal {
-            package: self.package.clone(),
-            identifiers: self.identifiers.clone(),
-            numbering: self.numbering.clone(),
-            numbering_part_name: self.numbering_part_name.clone(),
-            package_signatures_invalidated: self.package_signatures_invalidated,
-        }
-    }
-
     /// Put back what an in-place numbering edit replaced, and drop the layout
-    /// derived from the edited numbering.
+    /// derived from the edited numbering. Valid only before another edit.
     #[doc(hidden)]
     pub fn undo_numbering_edit(&mut self, journal: NumberingJournal) {
-        self.package = journal.package;
-        self.identifiers = journal.identifiers;
+        self.undo_reservations(journal.reservations);
         self.numbering = journal.numbering;
         self.numbering_part_name = journal.numbering_part_name;
         self.package_signatures_invalidated = journal.package_signatures_invalidated;
@@ -371,8 +354,17 @@ impl Document {
     ) -> Result<(T, NumberingJournal)> {
         #[cfg(debug_assertions)]
         let before = self.clone_for_staging();
-        let journal = self.numbering_journal();
-        let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(self))) {
+        let numbering = self.numbering.clone();
+        let numbering_part_name = self.numbering_part_name.clone();
+        self.identifiers.open_journal();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(self)));
+        let journal = NumberingJournal {
+            reservations: self.identifiers.close_journal(),
+            numbering,
+            numbering_part_name,
+            package_signatures_invalidated: self.package_signatures_invalidated,
+        };
+        let result = match result {
             Ok(result) => result,
             Err(panic) => {
                 self.undo_numbering_edit(journal);
@@ -387,10 +379,7 @@ impl Document {
                     self.package.package_rels.items.iter().any(|relationship| {
                         relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN
                     }) && (journal.package_signatures_invalidated
-                        || crate::embedded::synchronized_package_mutation_invalidates_signature(
-                            &journal.package,
-                            &self.package,
-                        ));
+                        || journal.reservations.changed_package());
                 self.drop_numbering_layout();
                 Ok((value, journal))
             }

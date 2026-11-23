@@ -618,6 +618,8 @@ pub(crate) struct DocumentIdentifiers {
     /// part only when its bytes and categories still match. This is the
     /// current scan, not a history of earlier ones.
     scanned_parts: Arc<HashMap<String, ScannedIdentifierPart>>,
+    /// What the in-place edit under way has reserved, if one journals.
+    journal: identifiers::JournalSlot,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

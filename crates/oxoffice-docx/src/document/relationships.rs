@@ -144,13 +144,11 @@ impl Document {
         } else {
             Some(self.identifiers.reserve_relationship_id_checked("/")?)
         };
-        self.package
-            .content_types
-            .add_override(&part_name, content_type);
+        self.add_override_journaled(&part_name, content_type);
         self.identifiers.register_content_type_override(&part_name);
         if let Some(id) = pending_id {
-            let target = part_name.strip_prefix('/').unwrap_or(&part_name);
-            self.package.package_rels.add_with_id(&id, rel_type, target);
+            let target = part_name.strip_prefix('/').unwrap_or(&part_name).to_owned();
+            self.add_relationship_journaled(None, &id, rel_type, &target);
         }
         Ok(part_name)
     }
