@@ -1124,9 +1124,10 @@ impl RevisionScope<'_> {
 /// the caller's paragraph root and canonical writer binding, not a new resolver root.
 ///
 /// `published` holds the byte ranges in `source` of paragraph children the
-/// caller already wrapped, each a whole field in a wrapper of its own: they
-/// are written as they are, and the markers next to them stay in the
-/// wrappers of their other neighbours.
+/// caller already wrapped, each a whole field in a wrapper of its own, a
+/// child of the paragraph or of a hyperlink in it: they are written as they
+/// are, and the markers next to them stay in the wrappers of their other
+/// neighbours.
 pub(crate) fn tracked_paragraph_children(
     source: &str,
     deleted: bool,
@@ -1235,7 +1236,7 @@ pub(crate) fn tracked_paragraph_children(
                 .push((input[frame.cursor..child.start].to_owned(), false));
         }
         frame.cursor = child.end;
-        if frame.owner == *paragraph
+        if (frame.owner == *paragraph || owner.word && owner.local == "hyperlink")
             && published.contains(&(child.start - opening.len()..child.end - opening.len()))
         {
             flush(&mut frame.groups, &mut output, wrap)?;

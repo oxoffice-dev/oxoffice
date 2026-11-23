@@ -275,12 +275,12 @@ fn compare_field_xml(
     let original_complex = if original_complex_form {
         original_xml
     } else {
-        clean_simple_complex_source(&original_xml, &old_scope, original)?
+        clean_simple_complex_source(&original_xml, &old_scope, Some(original))?
     };
     let edited_complex = if edited_complex_form {
         edited_xml
     } else {
-        clean_simple_complex_source(&edited_xml, &new_scope, edited)?
+        clean_simple_complex_source(&edited_xml, &new_scope, Some(edited))?
     };
     let deleted_source =
         qualified_complete_field_payload(&original_complex, &old_scope, true, false, true, &mut 0)?;
@@ -659,12 +659,60 @@ pub(super) fn conversion_source_inventory(
     // Namespace declarations introduced by closure may differ at a result root.
     // Compare their actual effective bindings, every other root attribute and
     // the complete untouched descendant bytes independently.
+    // A field nested in the result is read as its own facts, in either form:
+    // the converter writes a nested simple field as a complex one.
     fn result_facts(result: &str, scope: &NamespaceBindings) -> Result<String> {
+        fn fld_char_kind(run: &str, scope: &NamespaceBindings) -> Option<String> {
+            let raw = run_child(run, scope).ok()?;
+            let attributes =
+                element(raw, scope, "fldChar", &["fldCharType", "dirty", "fldLock"]).ok()?;
+            attributes
+                .get("fldCharType")
+                .map(|(_, value)| value.clone())
+        }
         let wrapped = format!("<result>{result}</result>");
         let spans = direct_element_spans(&wrapped)?;
         let mut output = String::new();
         let mut cursor = "<result>".len();
-        for span in spans {
+        let mut index = 0;
+        while index < spans.len() {
+            let span = spans[index].clone();
+            let nested_end = if element(
+                &wrapped[span.clone()],
+                scope,
+                "fldSimple",
+                &["instr", "dirty", "fldLock"],
+            )
+            .is_ok()
+            {
+                Some(index)
+            } else if fld_char_kind(&wrapped[span.clone()], scope).as_deref() == Some("begin") {
+                let mut depth = 0usize;
+                spans[index..]
+                    .iter()
+                    .position(|run| {
+                        match fld_char_kind(&wrapped[run.clone()], scope).as_deref() {
+                            Some("begin") => depth += 1,
+                            Some("end") => depth -= 1,
+                            _ => {}
+                        }
+                        depth == 0
+                    })
+                    .map(|offset| index + offset)
+            } else {
+                None
+            };
+            if let Some(end) = nested_end {
+                let source = &wrapped[span.start..spans[end].end];
+                if let Ok(facts) = conversion_source_inventory(source, scope) {
+                    output.push_str(&wrapped[cursor..span.start]);
+                    output.push_str(&format!("\0field{facts:?}"));
+                    cursor = spans[end].end;
+                    index = end + 1;
+                    continue;
+                }
+            }
+            index += 1;
             output.push_str(&wrapped[cursor..span.start]);
             let (lexical, bindings) = raw_occurrence_representation(&wrapped[span.clone()], scope)?;
             let bindings = conversion_namespace_facts(bindings, &wrapped[span.clone()])?;
@@ -757,7 +805,7 @@ pub(super) fn conversion_source_inventory(
 fn clean_simple_complex_source(
     xml: &str,
     inherited: &NamespaceBindings,
-    field: &oxoffice_docx_oxml::text::Field,
+    field: Option<&oxoffice_docx_oxml::text::Field>,
 ) -> Result<String> {
     let closed = actual_field_source_fragment(xml, inherited)?;
     let scope = actual_root_bindings(xml, inherited)?;
@@ -861,8 +909,8 @@ fn clean_simple_complex_source(
         ));
     }
     let result_start = data.first().map_or(inner.start, |span| span.end);
-    let result = &expanded[result_start..inner.end];
-    let result = qualified_complete_field_payload(result, &scope, false, false, true, &mut 0)?;
+    let result = nested_simple_fields_as_complex(&expanded[result_start..inner.end], &scope)?;
+    let result = qualified_complete_field_payload(&result, &scope, false, false, true, &mut 0)?;
     let mut namespace_root = BytesStart::new(format!("{prefix}:r"));
     for (name, uri) in &scope {
         namespace_root.push_attribute((name.as_str(), uri.as_str()));
@@ -888,6 +936,10 @@ fn clean_simple_complex_source(
         "{run_open}{begin}{run_close}{run_open}<{prefix}:instrText xml:space=\"preserve\">{}</{prefix}:instrText>{run_close}{run_open}<{prefix}:fldChar {prefix}:fldCharType=\"separate\"/>{run_close}{result}{run_open}<{prefix}:fldChar {prefix}:fldCharType=\"end\"/>{run_close}",
         quick_xml::escape::escape(&instruction)
     );
+    // A nested field is proved through the root field that holds it.
+    let Some(field) = field else {
+        return Ok(output);
+    };
     // An independent read of emitted source must actually group a root Field.
     // No witness is allowed to fill a missing parsed owner or cached display.
     let root = format!("<w:p xmlns:w=\"{W_NS}\">{output}</w:p>");
@@ -926,6 +978,41 @@ fn clean_simple_complex_source(
     Ok(output)
 }
 
+/// A simple field's result with each simple field it holds written as a
+/// complex field too: Word nests complex fields only, and a whole field
+/// payload holds runs.
+fn nested_simple_fields_as_complex(result: &str, scope: &NamespaceBindings) -> Result<String> {
+    let (opening, closing) = ("<nested>", "</nested>");
+    let wrapped = format!("{opening}{result}{closing}");
+    let spans = direct_word_element_spans_in_scope(&wrapped, "fldSimple", scope)?;
+    let mut output = wrapped.clone();
+    for span in spans.into_iter().rev() {
+        let nested = clean_simple_complex_source(&wrapped[span.clone()], scope, None)?;
+        output.replace_range(span, &nested);
+    }
+    // One reached through a control, smart tag or custom XML would stay a
+    // simple field, whose text a deletion cannot mark (Word repairs it).
+    let mut reader = Reader::from_str(&output);
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| Error::Other(error.to_string()))?
+        {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == b"fldSimple" =>
+            {
+                return Err(Error::Other(
+                    "comparison cannot track a whole paragraph's simple field nested in another field's result inside another owner"
+                        .into(),
+                ));
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    Ok(output[opening.len()..output.len() - closing.len()].to_owned())
+}
+
 /// One simple field of a paragraph inserted or deleted whole, as the complex
 /// field that `compare_field_xml` writes for a change of form, in a wrapper
 /// of its own under one new revision id. The witness names the occurrence of
@@ -937,7 +1024,7 @@ pub(super) fn whole_simple_field(
     metadata: &mut Metadata<'_>,
 ) -> Result<String> {
     let scope = field_result_scope(field, metadata);
-    let complex = clean_simple_complex_source(&field_xml(field)?, &scope, field)?;
+    let complex = clean_simple_complex_source(&field_xml(field)?, &scope, Some(field))?;
     let payload = qualified_complete_field_payload(&complex, &scope, deleted, false, true, &mut 0)?;
     let id = metadata.ids.allocate()?;
     let wrapper = metadata.ids.generated(IdAllocator::revision_with_id(
@@ -1241,7 +1328,10 @@ fn qualified_complete_field_payload(
                             ));
                         }
                     }
-                } else if deleted && *field_depth == 1 {
+                } else if deleted && *field_depth > 0 {
+                    // Every text of a deleted field is deleted text, that of
+                    // a field nested in it too: Word repairs a deletion that
+                    // holds a w:t or a w:instrText.
                     let target = match local.as_ref() {
                         b"t" => Some("delText"),
                         b"instrText" => Some("delInstrText"),
@@ -1618,18 +1708,18 @@ pub(super) fn actual_field_result_range(
 }
 
 fn complex_field_result(xml: &str) -> Result<(String, String, String)> {
-    let separate = field_character(xml, 0, "separate")
+    let separate = field_character(xml, "separate")
         .ok_or_else(|| Error::Other("complex field source has no separate boundary".to_owned()))?;
     // A producer may pack a whole field in one run, as Google Docs writes page
     // fields. Ending a run after `separate` and starting one at `end` reads it
     // as the same field written one run per part.
     let xml = split_field_run(xml, separate, true)?;
     let (_, result_start) = containing_run(&xml, separate)?;
-    let end_marker = field_character(&xml, result_start, "end")
+    let end_marker = field_character(&xml, "end")
         .ok_or_else(|| Error::Other("complex field source has no end boundary".to_owned()))?;
     let xml = split_field_run(&xml, end_marker, false)?;
     // The split may have moved the `end` character further along.
-    let end_marker = field_character(&xml, result_start, "end")
+    let end_marker = field_character(&xml, "end")
         .ok_or_else(|| Error::Other("complex field source has no end boundary".to_owned()))?;
     let (result_end, _) = containing_run(&xml, end_marker)?;
     Ok((
@@ -1639,11 +1729,24 @@ fn complex_field_result(xml: &str) -> Result<(String, String, String)> {
     ))
 }
 
-fn field_character(xml: &str, from: usize, kind: &str) -> Option<usize> {
-    let tail = &xml[from..];
-    tail.find(&format!("fldCharType=\"{kind}\""))
-        .or_else(|| tail.find(&format!("fldCharType='{kind}'")))
-        .map(|offset| from + offset)
+/// Where the field this source begins has its `separate` or `end` character:
+/// the characters of a field nested in its instruction or its result are
+/// skipped.
+fn field_character(xml: &str, kind: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, _) in xml.match_indices("fldCharType=") {
+        let value = &xml[at + "fldCharType=".len()..];
+        let quote = value.chars().next()?;
+        let value = value[1..].split(quote).next()?;
+        match value {
+            "begin" => depth += 1,
+            "separate" if depth == 1 && kind == "separate" => return Some(at),
+            "end" if depth == 1 && kind == "end" => return Some(at),
+            "end" => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Split the run holding the field character at `marker` so that the
