@@ -269,6 +269,9 @@ pub struct LayoutInput {
     /// Bookmark markers between blocks, read once from this input.
     #[doc(hidden)]
     pub block_bookmarks: BlockBookmarkCache,
+    /// The bookmark names the layout looks up, read once from this input.
+    #[doc(hidden)]
+    pub bookmark_names: BookmarkNameCache,
     /// Header parts keyed by relationship ID.
     pub headers: HashMap<String, CT_HdrFtr>,
     /// Footer parts keyed by relationship ID.
@@ -321,6 +324,37 @@ impl Clone for BlockBookmarkCache {
 impl std::fmt::Debug for BlockBookmarkCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("BlockBookmarkCache")
+    }
+}
+
+/// The bookmark names of a layout input: the page target names, by target
+/// id, and the spelling of each bookmark that starts in it.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct BookmarkNameCache(
+    pub(crate) std::sync::OnceLock<((usize, RevisionView), BookmarkNames)>,
+);
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct BookmarkNames {
+    /// The bookmarks a page target marker records, by target id.
+    pub(crate) page_targets: Vec<String>,
+    /// The target id of each of them, by folded name.
+    pub(crate) page_target_ids: HashMap<String, usize>,
+    /// The first spelling of each bookmark that starts in the input, by
+    /// folded name.
+    pub(crate) spellings: HashMap<String, String>,
+}
+
+impl Clone for BookmarkNameCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for BookmarkNameCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BookmarkNameCache")
     }
 }
 
