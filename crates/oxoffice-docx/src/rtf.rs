@@ -251,9 +251,15 @@ impl<'a> RtfWriter<'a> {
         self.write_color_table(&mut output)?;
         self.write_stylesheet(&mut output)?;
         self.write_list_tables(&mut output)?;
-        // Paragraph spacing as a docx file has it: without \htmautsp, Word reads an RTF
+        // Paragraph spacing as the docx file asks: without \htmautsp, Word reads an RTF
         // file with the HTML auto spacing of older versions, which moves every heading.
-        write!(output, "\\htmautsp")?;
+        if self
+            .document
+            .compatibility_option(crate::CompatibilityOption::DoNotUseHTMLParagraphAutoSpacing)
+            != Some(true)
+        {
+            write!(output, "\\htmautsp")?;
+        }
         // The document's page is its first section's, as Word writes it.
         if let Some(section) = self.sections.first() {
             write_page_layout(&mut output, section, "")?;
