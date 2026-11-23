@@ -836,6 +836,66 @@ fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
 
 // ---- Pictures ----
 
+/// A paragraph that starts with a text box it must clear, Word's "top and
+/// bottom" wrapping, anchored at the paragraph's top.
+fn paragraph_below_its_text_box(text: &str) -> String {
+    format!(
+        concat!(
+            r#"<w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" "#,
+            r#"relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">"#,
+            r#"<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+            r#"<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>"#,
+            r#"<wp:extent cx="1828800" cy="1371600"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/>"#,
+            r#"<wp:docPr id="7" name="Text Box"/><wp:cNvGraphicFramePr/>"#,
+            r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+            r#"<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="1371600"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>"#,
+            r#"<w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp>"#,
+            r#"</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r><w:r><w:t>{}</w:t></w:r></w:p>"#,
+        ),
+        text
+    )
+}
+
+// The text box stays with the first part of a paragraph split across pages;
+// the rest starts at the top of the next page, where the cursor is, so the
+// paragraph after it is drawn below it, not over it. The newsletter's
+// three-column pages showed it.
+#[test]
+fn the_rest_of_a_paragraph_below_a_text_box_starts_the_next_page() {
+    let fillers = (1..=20)
+        .map(|number| format!("<w:p><w:r><w:t>Filler {number}</w:t></w:r></w:p>"))
+        .collect::<String>();
+    let words = (1..=160)
+        .map(|number| format!("word{number}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let body = format!(
+        "{fillers}{}<w:p><w:r><w:t>After</w:t></w:r></w:p>",
+        paragraph_below_its_text_box(&words)
+    );
+    let pdf = pdf_of(&doc_with_body(&body));
+    assert_eq!(
+        page_with(&pdf, "word1 "),
+        0,
+        "the paragraph starts on page 1"
+    );
+    assert_eq!(page_with(&pdf, "word160"), 1, "and ends on page 2");
+    let rest = lines(&pdf.drawn(1));
+    let after = line_of(&pdf, 1, "After");
+    for line in rest.iter().filter(|line| line.text.contains("word")) {
+        assert!(
+            line.y > after.y + 1.0,
+            "{:?} at {:.1} is not above the next paragraph at {:.1}",
+            line.text,
+            line.y,
+            after.y
+        );
+    }
+}
+
 #[test]
 fn pictures_are_drawn_once_at_their_size_with_their_pixels() {
     let pixels = [
@@ -1409,6 +1469,42 @@ fn a_solid_or_percentage_shading_paints_its_pattern_colour() {
     assert!(pixels_in_text_box(&doc, "Table", [0xFF, 0x00, 0xFF]) > 20);
     // So does it under a table style, over the style's own.
     assert!(pixels_in_text_box(&doc, "Styled", [0x00, 0xFF, 0xFF]) > 20);
+}
+
+#[test]
+fn a_dark_highlight_paints_words_palette() {
+    // Word's dark highlights are half intensity, not the CSS colours of the
+    // same names (dark blue is 000080, not 00008B), and its greys are
+    // 808080 and C0C0C0.
+    let run = |value: &str| {
+        format!(
+            r#"<w:p><w:r><w:rPr><w:highlight w:val="{value}"/></w:rPr><w:t>{value}</w:t></w:r></w:p>"#
+        )
+    };
+    let doc = doc_with_body(&[run("darkBlue"), run("darkGray"), run("lightGray")].concat());
+    assert!(pixels_in_text_box(&doc, "darkBlue", [0x00, 0x00, 0x80]) > 20);
+    assert!(pixels_in_text_box(&doc, "darkGray", [0x80, 0x80, 0x80]) > 20);
+    assert!(pixels_in_text_box(&doc, "lightGray", [0xC0, 0xC0, 0xC0]) > 20);
+}
+
+#[test]
+fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_render() {
+    // A shading or a text colour read from the file unchecked, with a
+    // character of more than one byte where a digit belongs.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:rPr><w:shd w:val="clear" w:fill="Aé0000"/></w:rPr><w:t>Fill</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:color w:val="Aé0000"/></w:rPr><w:t>Colour</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="00FF00;x" w:fill="FF0000"/></w:rPr><w:t>Pattern</w:t></w:r></w:p>"#,
+    ));
+    // The page stays white behind the fill that is not a colour.
+    assert_eq!(pixels_in_text_box(&doc, "Fill", [0xA0, 0x00, 0x00]), 0);
+    assert!(pixels_in_text_box(&doc, "Fill", [0xFF, 0xFF, 0xFF]) > 20);
+    // A foreground that is not a colour is automatic: black under a
+    // pattern, so 25 % of it over red is BF0000 (not BF4000, a quarter of
+    // the green the value starts with).
+    assert!(pixels_in_text_box(&doc, "Pattern", [0xBF, 0x00, 0x00]) > 20);
+    let html = doc.to_html_fragment();
+    assert!(!html.contains("background-color:#A0"), "{html}");
 }
 
 // ---- Corpus ----

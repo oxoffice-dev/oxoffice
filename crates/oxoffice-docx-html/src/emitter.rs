@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use oxoffice_docx_layout::Color;
+use oxoffice_docx_layout::engine::shading_color;
 use oxoffice_docx_oxml::math::OfficeMath;
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
 use oxoffice_docx_oxml::shared::ST_Jc;
@@ -73,28 +75,32 @@ pub(crate) fn emit_body(
                     while lists.len() > index + 1 {
                         close_list(&mut out, &mut lists);
                     }
-                    out.push_str("<p>");
+                    out.push_str(&format!("<p{}>", background_attribute(&p)));
                     emit_paragraph_content(
                         &mut out,
                         &p,
-                        styles,
                         images,
                         hyperlink_urls,
                         options,
                         equations,
+                        None,
                     );
                     out.push_str("</p>");
                 } else if let Some(item) = item {
                     open_item(&mut out, &mut lists, &item);
-                    out.push_str(&format!("<li{}>", direction_attribute(&p, styles)));
+                    out.push_str(&format!(
+                        "<li{}{}>",
+                        direction_attribute(&p, styles),
+                        background_attribute(&p)
+                    ));
                     emit_paragraph_content(
                         &mut out,
                         &p,
-                        styles,
                         images,
                         hyperlink_urls,
                         options,
                         equations,
+                        None,
                     );
                 } else {
                     close_lists(&mut out, &mut lists);
@@ -106,6 +112,7 @@ pub(crate) fn emit_body(
                         hyperlink_urls,
                         options,
                         equations,
+                        None,
                     );
                 }
                 for id in crate::paragraph_chart_ids(&p) {
@@ -235,6 +242,7 @@ fn detect_heading_level(ppr: Option<&CT_PPr>, styles: &CT_Styles) -> Option<u32>
 }
 
 /// Emit a complete paragraph element.
+#[allow(clippy::too_many_arguments)]
 fn emit_paragraph(
     out: &mut String,
     para: &CT_P,
@@ -243,6 +251,7 @@ fn emit_paragraph(
     hyperlink_urls: &crate::Links<'_>,
     options: &HtmlOptions,
     equations: &dyn EquationWriter,
+    behind: Option<Color>,
 ) {
     let heading_level = detect_heading_level(para.properties.as_ref(), styles);
 
@@ -270,14 +279,27 @@ fn emit_paragraph(
     emit_paragraph_content(
         out,
         para,
-        styles,
         images,
         hyperlink_urls,
         options,
         equations,
+        behind,
     );
 
     out.push_str(&format!("</{tag}>\n"));
+}
+
+/// ` style="background-color:..."` for a paragraph written without its
+/// other properties (a list item), so that its shading still shows behind
+/// the text whose automatic colour contrasts with it; empty otherwise.
+fn background_attribute(para: &CT_P) -> String {
+    css::shading_background(
+        para.properties
+            .as_ref()
+            .and_then(|properties| properties.shading.as_deref()),
+    )
+    .map(|color| format!(" style=\"background-color:{color}\""))
+    .unwrap_or_default()
 }
 
 /// ` dir="rtl"` for a right-to-left paragraph, so that a browser lays it out
@@ -322,12 +344,14 @@ fn direction_attribute(para: &CT_P, styles: &CT_Styles) -> &'static str {
 fn emit_paragraph_content(
     out: &mut String,
     para: &CT_P,
-    _styles: &CT_Styles,
     images: &HashMap<String, ImageData>,
     hyperlink_urls: &crate::Links<'_>,
     options: &HtmlOptions,
     equations: &dyn EquationWriter,
+    behind: Option<Color>,
 ) {
+    // The fill behind the runs: the paragraph's shading, or the cell's.
+    let behind = css::paragraph_fill(para.properties.as_ref(), behind);
     // The bookmarks a link targets, read before the accepted view drops
     // the markers.
     let anchors = crate::bookmark_anchors(para, &hyperlink_urls.bookmarks);
@@ -377,7 +401,7 @@ fn emit_paragraph_content(
             _ => {}
         }
 
-        emit_run(out, run, images, options);
+        emit_run(out, run, images, options, behind);
     }
 
     // Close any open link
@@ -419,9 +443,10 @@ fn emit_run(
     run: &CT_R,
     images: &HashMap<String, ImageData>,
     options: &HtmlOptions,
+    behind: Option<Color>,
 ) {
     let tags = css::run_tags(run.properties.as_ref());
-    let style = css::run_style(run.properties.as_ref());
+    let style = css::run_style(run.properties.as_ref(), behind);
 
     // Open semantic tags
     let has_style = !style.is_empty();
@@ -489,7 +514,7 @@ fn emit_run(
             }
             RunContent::Field(field) => {
                 for (text, properties) in field.cached_display_segments() {
-                    emit_field_display(out, text, properties);
+                    emit_field_display(out, text, properties, behind);
                 }
             }
             // A symbol is font-encoded rather than Unicode, so there is no
@@ -531,9 +556,14 @@ fn emit_run(
     }
 }
 
-fn emit_field_display(out: &mut String, text: &str, properties: Option<&CT_RPr>) {
+fn emit_field_display(
+    out: &mut String,
+    text: &str,
+    properties: Option<&CT_RPr>,
+    behind: Option<Color>,
+) {
     let tags = css::run_tags(properties);
-    let style = css::run_style(properties);
+    let style = css::run_style(properties, behind);
     if !style.is_empty() {
         out.push_str(&format!("<span style=\"{}\">", escape_html_attr(&style)));
     }
@@ -634,7 +664,17 @@ fn emit_table(
         {
             table_style.push_str("border:1px solid #000;");
         }
+
+        // The table's own shading, under every cell that has none.
+        if let Some(color) = css::shading_background(props.shading.as_ref()) {
+            table_style.push_str(&format!("background-color:{color};"));
+        }
     }
+    let table_fill = tbl
+        .properties
+        .as_ref()
+        .and_then(|properties| properties.shading.as_ref())
+        .and_then(shading_color);
 
     if table_style.is_empty() {
         out.push_str("<table>\n");
@@ -712,12 +752,8 @@ fn emit_table(
                     td_style.push_str(&format!("vertical-align:{css_va};"));
                 }
 
-                // Cell shading
-                if let Some(shd) = &props.shading
-                    && let Some(fill) = &shd.fill
-                    && fill != "FFFFFF"
-                    && let Some(color) = crate::sanitize::hex_color(fill)
-                {
+                // Cell shading, as layout paints it.
+                if let Some(color) = css::shading_background(props.shading.as_ref()) {
                     td_style.push_str(&format!("background-color:{color};"));
                 }
 
@@ -741,10 +777,29 @@ fn emit_table(
                 ));
             }
 
+            // A cell's own shading, even an automatic one, replaces the
+            // table's, as layout reads it.
+            let cell_fill = match cell
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.shading.as_ref())
+            {
+                Some(shading) => shading_color(shading),
+                None => table_fill,
+            };
             for block in cell_blocks(cell) {
                 match block {
                     Block::Paragraph(p, _) => {
-                        emit_paragraph(out, &p, styles, images, hyperlink_urls, options, equations);
+                        emit_paragraph(
+                            out,
+                            &p,
+                            styles,
+                            images,
+                            hyperlink_urls,
+                            options,
+                            equations,
+                            cell_fill,
+                        );
                     }
                     Block::Table(nested) => {
                         emit_table(

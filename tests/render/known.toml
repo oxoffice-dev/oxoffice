@@ -9,13 +9,6 @@
 # entry is updated or goes.
 
 [[known]]
-file = "word/long-report.docx"
-check = "text"
-pages = [0]
-finding = "1 words"
-issue = 227
-
-[[known]]
 file = "authored/thesis.docx"
 check = "overlap"
 pages = [25]
@@ -30,19 +23,19 @@ issue = 156
 [[known]]
 file = "authored/newsletter.docx"
 check = "overlap"
-pages = [2, 3]
+pages = [3]
 issue = 226
 
 [[known]]
 file = "libreoffice/newsletter.docx"
 check = "overlap"
-pages = [2, 3]
+pages = [3]
 issue = 226
 
 [[known]]
 file = "word/newsletter.docx"
 check = "overlap"
-pages = [2, 3]
+pages = [3]
 issue = 226
 
 [[known]]
