@@ -273,28 +273,6 @@ impl Default for CT_PlotArea {
     }
 }
 
-pub(super) fn chart_root_local(
-    xml: &[u8],
-    inherited: &NamespaceBindings,
-) -> Result<Option<Vec<u8>>> {
-    let mut reader = Reader::from_reader(xml);
-    let mut buffer = Vec::new();
-    loop {
-        match reader
-            .read_event_into(&mut buffer)
-            .map_err(OxmlError::from)?
-        {
-            Event::Start(element) | Event::Empty(element) => {
-                return Ok(element_is_in_namespace(&element, C_NS, inherited)?
-                    .then(|| local_name(element.name().as_ref()).to_vec()));
-            }
-            Event::Eof => return Ok(None),
-            _ => {}
-        }
-        buffer.clear();
-    }
-}
-
 fn is_plot_container(local: &[u8]) -> bool {
     matches!(
         local,

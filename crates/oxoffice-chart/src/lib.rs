@@ -72,7 +72,6 @@ pub use number_format::NumberFormat;
 use number_format::numeric_sections;
 pub use plot::{BarDirection, BarGrouping, Grouping, Plot, RadarStyle, ScatterStyle};
 pub use plot_area::CT_PlotArea;
-use plot_area::chart_root_local;
 use plot_parse::parse_plot;
 use plot_write::write_plot;
 use references::{
@@ -91,11 +90,12 @@ use xml::{
     attribute_value, bindings_with_local, capture_attributes, capture_attributes_except,
     capture_attributes_excluding, capture_fixed_attributes, capture_fixed_root_attributes,
     capture_root_attributes, chart_bindings, chart_child_local, chart_namespace_defaults,
-    chart_root_prefix, element_is_in_namespace, namespace_bindings, parse_chart_shape_properties,
-    parse_raw_shell, raw_children_in_schema_order, reject_conflicting_prefix,
-    reject_conflicting_prefix_in_xml, reject_rewritten_foreign_elements, require_fixed_namespace,
-    root_chart_bindings, standalone_namespace_declarations, typed_rewrite_bindings,
-    upsert_namespace_binding, validate_chart_space_namespace, write_raw_shell,
+    chart_root_local, chart_root_prefix, element_is_in_namespace, namespace_bindings,
+    parse_chart_shape_properties, parse_raw_shell, raw_children_in_schema_order,
+    reject_conflicting_prefix, reject_conflicting_prefix_in_xml, reject_rewritten_foreign_elements,
+    require_fixed_namespace, root_chart_bindings, standalone_namespace_declarations,
+    typed_rewrite_bindings, upsert_namespace_binding, validate_chart_space_namespace,
+    write_raw_shell,
 };
 
 /// The transitional ChartML namespace used by OOXML packages.

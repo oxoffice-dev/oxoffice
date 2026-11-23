@@ -1,4 +1,4 @@
-//! Data labels: positions, the shown parts, parsing and writing.
+//! Data labels: positions, parsing and writing.
 
 use super::*;
 

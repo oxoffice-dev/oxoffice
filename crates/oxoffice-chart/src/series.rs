@@ -1,4 +1,4 @@
-//! Chart series and their string and numeric references: the typed model, parsing and writing.
+//! Chart series and their string and numeric references: parsing, checks and writing (their structs stay in lib.rs).
 
 use super::*;
 

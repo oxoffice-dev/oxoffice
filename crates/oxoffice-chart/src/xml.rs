@@ -220,6 +220,28 @@ pub(super) fn parse_chart_shape_properties(
     set_once(slot, properties, "c:spPr")
 }
 
+pub(super) fn chart_root_local(
+    xml: &[u8],
+    inherited: &NamespaceBindings,
+) -> Result<Option<Vec<u8>>> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(OxmlError::from)?
+        {
+            Event::Start(element) | Event::Empty(element) => {
+                return Ok(element_is_in_namespace(&element, C_NS, inherited)?
+                    .then(|| local_name(element.name().as_ref()).to_vec()));
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
 pub(super) fn parse_raw_shell(
     xml: &[u8],
     local: &[u8],
