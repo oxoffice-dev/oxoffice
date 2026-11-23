@@ -112,9 +112,7 @@ pub(super) fn parse_hyperlink_children(
                     } else {
                         extra_xml.push((runs.len(), revisions_at_boundary, raw));
                     }
-                } else if source_facts.is_none()
-                    && is_word_element(element.name().as_ref(), b"fldSimple", &prefixes)
-                {
+                } else if is_word_element(element.name().as_ref(), b"fldSimple", &prefixes) {
                     // A simple field in a link is a field run, as it is in the
                     // paragraph, so its result reads in the link's text.
                     let prepared_header = cursor.as_ref().and_then(|cursor| {
@@ -152,11 +150,7 @@ pub(super) fn parse_hyperlink_children(
                 } else {
                     let raw = capture_element(&mut reader, &element)?;
                     if let Some(facts) = source_facts.as_deref_mut() {
-                        if is_word_element(element.name().as_ref(), b"fldSimple", &prefixes) {
-                            // Read later, as the paragraph defers its own.
-                            facts.simple_fields_deferred = true;
-                        } else if is_word_element(element.name().as_ref(), b"hyperlink", &prefixes)
-                        {
+                        if is_word_element(element.name().as_ref(), b"hyperlink", &prefixes) {
                             facts.append_opaque_hyperlink(&raw, &prefixes)?;
                         } else if crate::revision::revision_kind(element.name().as_ref(), &prefixes)
                             .is_some()
@@ -209,9 +203,7 @@ pub(super) fn parse_hyperlink_children(
                     } else {
                         extra_xml.push((runs.len(), revisions_at_boundary, raw));
                     }
-                } else if source_facts.is_none()
-                    && is_word_element(element.name().as_ref(), b"fldSimple", &prefixes)
-                {
+                } else if is_word_element(element.name().as_ref(), b"fldSimple", &prefixes) {
                     let mapped = cursor.as_ref().and_then(|cursor| {
                         cursor.field_input(&reader, event_start..reader.buffer_position(), &raw)
                     });
@@ -234,11 +226,6 @@ pub(super) fn parse_hyperlink_children(
                         extra_xml.push((runs.len(), revisions_at_boundary, raw));
                     }
                 } else {
-                    if let Some(facts) = source_facts.as_deref_mut()
-                        && is_word_element(element.name().as_ref(), b"fldSimple", &prefixes)
-                    {
-                        facts.simple_fields_deferred = true;
-                    }
                     extra_xml.push((runs.len(), revisions_at_boundary, raw));
                 }
             }
@@ -695,6 +682,42 @@ pub(super) fn current_control_bookmark_projection(control: &CT_Sdt) -> AcceptedB
         }
     }
     output
+}
+
+/// The bookmarks that start in one child of a content control that is not
+/// a run, a control or a paragraph (a raw marker, or a table, row or cell
+/// read as its runs), each at its run boundary in that child.
+pub(super) fn sdt_content_bookmark_starts(
+    content: &SdtContent,
+    word_prefixes: &[String],
+) -> Vec<(usize, String)> {
+    let mut output = AcceptedBookmarkProjection::default();
+    match content {
+        SdtContent::RawXml(raw) => {
+            output.markers.extend(bookmark_marker_projection_from_raw(
+                raw,
+                word_prefixes,
+                0,
+                0,
+                0,
+                0,
+            ));
+        }
+        SdtContent::Table(table) => {
+            append_current_control_table_bookmark_projection(&mut output, table)
+        }
+        SdtContent::Row(row) => append_current_control_row_bookmark_projection(&mut output, row),
+        SdtContent::Cell(cell) => {
+            append_current_control_cell_bookmark_projection(&mut output, cell)
+        }
+        SdtContent::Run(_) | SdtContent::ContentControl(_) | SdtContent::Paragraph(_) => {}
+    }
+    output
+        .markers
+        .into_iter()
+        .filter(|marker| marker.is_start())
+        .filter_map(|marker| Some((marker.projected_run_index(), marker.name()?.to_owned())))
+        .collect()
 }
 
 fn append_current_control_table_bookmark_projection(

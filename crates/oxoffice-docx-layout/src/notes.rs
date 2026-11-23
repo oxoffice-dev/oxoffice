@@ -230,7 +230,9 @@ impl NoteRegistry {
                                             source,
                                             source,
                                             None,
-                                            None,
+                                            crate::forms::story_form_paragraph(
+                                                input, sources, &story, source,
+                                            ),
                                         )?;
                                     if let Some(registry) = sources {
                                         registry.bind_text_boxes(&mut block, &mut paint, source)?;

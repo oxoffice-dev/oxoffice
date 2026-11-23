@@ -119,3 +119,117 @@ fn an_inline_content_control_and_a_field_hyperlink_read_a_simple_field_result() 
     assert_eq!(doc.content_controls()[0].text(), "No. 7");
     assert_eq!(doc.links()[0].text, "our site, page 3");
 }
+
+/// An inline content control holding `content`, after a run `A`.
+fn in_inline_control(content: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:t>A</w:t></w:r><w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt></w:p>"#
+    )
+}
+
+/// A tracked insertion of `B`, a simple field reading `12` over two runs,
+/// and `C`.
+const INSERTED_TWO_RUN_FIELD: &str = concat!(
+    r#"<w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>B</w:t></w:r>"#,
+    r#"<w:fldSimple w:instr=" QUOTE a "><w:r><w:t>1</w:t></w:r><w:r><w:t>2</w:t></w:r></w:fldSimple>"#,
+    r#"<w:r><w:t>C</w:t></w:r></w:ins>"#,
+);
+
+/// An equation reading `x=1`.
+const EQUATION: &str = concat!(
+    r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">"#,
+    r#"<m:r><m:t>x=1</m:t></m:r></m:oMath>"#,
+);
+
+fn run_texts(paragraph: &oxoffice_docx::ParagraphRef<'_>) -> Vec<String> {
+    paragraph.runs().map(|run| run.text().to_owned()).collect()
+}
+
+#[test]
+fn a_tracked_insertion_lists_the_runs_of_its_simple_field() {
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t>B</w:t></w:r>{INSERTED_FIELD}</w:p>"#
+    ));
+    let paragraph = doc.paragraph(0).unwrap();
+    assert_eq!(paragraph.text(), "B12C");
+    assert_eq!(run_texts(&paragraph), ["B", "12", "C"]);
+    let revisions = doc.revisions();
+    let insertion = revisions[0].insertion_paragraph().unwrap();
+    assert_eq!(run_texts(&insertion), ["12", "C"]);
+    // The insertion is written back as it was read.
+    let bytes = crate::support::reopen(&mut doc).to_bytes().unwrap();
+    let xml = String::from_utf8(crate::support::package_parts(&bytes)["word/document.xml"].clone())
+        .unwrap();
+    assert!(xml.contains(INSERTED_FIELD), "{xml}");
+}
+
+#[test]
+fn an_insertion_in_an_inline_control_reads_its_simple_field_in_text_and_html() {
+    let doc = doc_with_body(&in_inline_control(&format!(
+        r#"<w:r><w:t>B</w:t></w:r>{INSERTED_FIELD}"#
+    )));
+    assert_eq!(doc.paragraph(0).unwrap().text(), "AB12C");
+    assert_eq!(doc.content_controls()[0].text(), "B12C");
+    let html = doc.to_html_fragment();
+    assert!(html.contains("AB12C"), "{html}");
+}
+
+#[test]
+fn an_anchor_after_an_inserted_field_in_an_inline_control_follows_the_field_result() {
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:hyperlink w:anchor="mark"><w:r><w:t>go</w:t></w:r></w:hyperlink></w:p>{}"#,
+        in_inline_control(&INSERTED_TWO_RUN_FIELD.replace(
+            "<w:r><w:t>C</w:t></w:r></w:ins>",
+            r#"<w:r><w:t>C</w:t></w:r><w:bookmarkStart w:id="1" w:name="mark"/><w:r><w:t>D</w:t></w:r><w:bookmarkEnd w:id="1"/></w:ins>"#,
+        ))
+    ));
+    let anchored = r#"AB12C<a id="mark"></a>D"#;
+    let html = doc.to_html_fragment();
+    assert!(html.contains(anchored), "{html}");
+    let markdown = doc.to_markdown();
+    assert!(markdown.contains(anchored), "{markdown}");
+}
+
+#[test]
+fn an_equation_in_an_inline_control_is_exported_in_place() {
+    for content in [
+        format!(r#"<w:r><w:t>B</w:t></w:r>{EQUATION}<w:r><w:t>C</w:t></w:r>"#),
+        format!(
+            r#"<w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>B</w:t></w:r>{EQUATION}</w:ins><w:r><w:t>C</w:t></w:r>"#
+        ),
+    ] {
+        let doc = doc_with_body(&in_inline_control(&content));
+        let html = doc.to_html_fragment();
+        assert!(
+            html.contains("AB<math") && html.contains("</math>C"),
+            "{html}"
+        );
+        let markdown = doc.to_markdown();
+        assert!(markdown.contains("AB$x=1$C"), "{markdown}");
+    }
+}
+
+#[test]
+fn removing_a_run_of_an_insertion_counts_its_simple_field_as_one_run() {
+    let body = format!(r#"<w:p><w:r><w:t>B</w:t></w:r>{INSERTED_FIELD}</w:p>"#);
+    for (index, text, kept, removed) in [
+        (
+            2,
+            "B12",
+            r#"<w:fldSimple w:instr=" QUOTE a ">"#,
+            "<w:t>C</w:t>",
+        ),
+        (1, "BC", "<w:t>C</w:t>", "w:fldSimple"),
+    ] {
+        let mut doc = doc_with_body(&body);
+        doc.paragraph_mut(0).unwrap().remove_run(index).unwrap();
+        assert_eq!(doc.paragraph(0).unwrap().text(), text);
+        let mut reopened = crate::support::reopen(&mut doc);
+        assert_eq!(reopened.paragraph(0).unwrap().text(), text);
+        let bytes = reopened.to_bytes().unwrap();
+        let xml =
+            String::from_utf8(crate::support::package_parts(&bytes)["word/document.xml"].clone())
+                .unwrap();
+        assert!(xml.contains(kept) && !xml.contains(removed), "{xml}");
+    }
+}
