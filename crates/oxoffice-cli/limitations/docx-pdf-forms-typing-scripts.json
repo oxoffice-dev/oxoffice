@@ -3,7 +3,7 @@
   "format": "docx",
   "area": "pdf forms",
   "title": "Typed text in scripts the form font lacks depends on the PDF viewer",
-  "symptom": "in a fillable PDF, text typed in Chinese, Japanese, Korean, Arabic, Devanagari or Thai is drawn with a font the viewer picks, or saved without an appearance (Firefox) that other viewers then draw without those characters; some viewers draw characters their font lacks as nothing or boxes, and some do not join Arabic letters; the export names each field already holding such text",
+  "symptom": "in a fillable PDF, text typed in Chinese, Japanese, Korean, Arabic, Devanagari or Thai is drawn with a font the viewer picks, or saved without an appearance (Firefox) that poppler-based viewers (Evince, Okular) then draw without those characters; some viewers draw characters their font lacks as nothing or boxes, and some do not join Arabic letters; the export names each field already holding such text",
   "workaround": "fill those values in the Word document before exporting, or use Acrobat Reader or Preview, which substitute fonts and shape Arabic",
   "issue": 132
 }
