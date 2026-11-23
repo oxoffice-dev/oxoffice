@@ -172,6 +172,9 @@ impl SourceSnapshots {
                                     inline.embed_id.clone(),
                                 ));
                             }
+                            if let Some(id) = &inline.link_id {
+                                graphs.push((format!("drawing[{slot}]/inline/link"), id.clone()));
+                            }
                             if let Some(id) = &inline.chart_rel_id {
                                 graphs.push((format!("drawing[{slot}]/inline/chart"), id.clone()));
                             }
@@ -182,6 +185,9 @@ impl SourceSnapshots {
                                     format!("drawing[{slot}]/anchor/image"),
                                     anchor.embed_id.clone(),
                                 ));
+                            }
+                            if let Some(id) = &anchor.link_id {
+                                graphs.push((format!("drawing[{slot}]/anchor/link"), id.clone()));
                             }
                             if let Some(id) = &anchor.chart_rel_id {
                                 graphs.push((format!("drawing[{slot}]/anchor/chart"), id.clone()));
