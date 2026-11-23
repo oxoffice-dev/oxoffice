@@ -75,6 +75,12 @@ pub enum AnchoredContent {
         fill: Option<Color>,
         /// Laid-out paragraphs of the shape's text box.
         text: Vec<ParagraphBlock>,
+        /// Whether the shape keeps its extent whatever its text: then the
+        /// lines that do not fit are hidden, whole.
+        fixed_height: bool,
+        /// Space between the shape's edges and its text, in points: left,
+        /// top, right, bottom.
+        insets: [f64; 4],
     },
 }
 

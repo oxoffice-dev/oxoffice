@@ -984,6 +984,112 @@ fn a_vertically_centred_page_centres_a_table_that_ends_the_body() {
 
 // ---- Pictures ----
 
+/// A paragraph anchoring, at the top left of the text area, a text box one
+/// inch wide and `height` EMU tall holding `content`, with this `wps:bodyPr`.
+fn text_box_of(height: u32, content: &str, body_pr: &str) -> String {
+    format!(
+        concat!(
+            r#"<w:p><w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" "#,
+            r#"relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">"#,
+            r#"<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:posOffset>0</wp:posOffset></wp:positionH>"#,
+            r#"<wp:positionV relativeFrom="margin"><wp:posOffset>0</wp:posOffset></wp:positionV>"#,
+            r#"<wp:extent cx="914400" cy="{height}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>"#,
+            r#"<wp:docPr id="7" name="Text Box"/><wp:cNvGraphicFramePr/>"#,
+            r#"<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+            r#"<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:cNvSpPr txBox="1"/>"#,
+            r#"<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="{height}"/></a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{content}"#,
+            r#"</w:txbxContent></wps:txbx>{body_pr}</wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r></w:p>"#,
+        ),
+        height = height,
+        content = content,
+        body_pr = body_pr
+    )
+}
+
+/// [`text_box_of`] holding `lines` paragraphs "Line 1", "Line 2"..., each one
+/// line, with `after` twips of space after.
+fn text_box_of_lines(height: u32, lines: usize, after: u32, body_pr: &str) -> String {
+    let content = (1..=lines)
+        .map(|line| format!(r#"<w:p><w:pPr><w:spacing w:before="0" w:after="{after}"/></w:pPr><w:r><w:t>Line {line}</w:t></w:r></w:p>"#))
+        .collect::<String>();
+    text_box_of(height, &content, body_pr)
+}
+
+/// The lines a text box draws, by their text.
+fn box_lines(body: &str) -> Vec<String> {
+    let pdf = pdf_of(&doc_with_body(body));
+    lines(&pdf.drawn(0))
+        .into_iter()
+        .map(|line| line.text)
+        .collect()
+}
+
+// Word 16.115 draws a text box that keeps its size line by line: the first
+// line that does not fit inside it, insets included, is hidden whole, and so
+// is every line after it; nothing is cut at the edge (the newsletter's
+// "Dates for your diary" box). A box that grows to fit its text shows it all,
+// and so does vertical text, which is still laid out across the box.
+#[test]
+fn a_text_box_of_fixed_size_hides_the_lines_that_do_not_fit_whole() {
+    let two = ["Line 1", "Line 2"].map(String::from).to_vec();
+    let all = (1..=6)
+        .map(|line| format!("Line {line}"))
+        .collect::<Vec<_>>();
+    // 0.65 inch: 46.8 pt, less 7.2 pt of insets, holds two lines of 11 pt
+    // text (about 14.5 pt each), where the whole box would hold three.
+    let fixed = r#"<wps:bodyPr><a:noAutofit/></wps:bodyPr>"#;
+    assert_eq!(box_lines(&text_box_of_lines(594360, 6, 0, fixed)), two);
+    // Without an autofit element the size is fixed too.
+    assert_eq!(
+        box_lines(&text_box_of_lines(594360, 6, 0, "<wps:bodyPr/>")),
+        two
+    );
+    // The space between paragraphs counts: 0.55 inch less the insets holds
+    // two lines, but not with 6 pt between them.
+    assert_eq!(box_lines(&text_box_of_lines(502920, 6, 0, fixed)), two);
+    assert_eq!(
+        box_lines(&text_box_of_lines(502920, 6, 120, fixed)),
+        ["Line 1"].map(String::from).to_vec()
+    );
+
+    let grows = r#"<wps:bodyPr><a:spAutoFit/></wps:bodyPr>"#;
+    assert_eq!(box_lines(&text_box_of_lines(594360, 6, 0, grows)), all);
+    let vertical = r#"<wps:bodyPr vert="vert270"><a:noAutofit/></wps:bodyPr>"#;
+    assert_eq!(box_lines(&text_box_of_lines(594360, 6, 0, vertical)), all);
+}
+
+// A text box's text sits inside its insets: Word's 0.1 inch left and right
+// and 0.05 inch top and bottom by default, or what `wps:bodyPr` says.
+#[test]
+fn a_text_box_text_keeps_its_insets_from_the_box_edges() {
+    let first_line = |body_pr: &str| {
+        let pdf = pdf_of(&doc_with_body(&text_box_of_lines(914400, 1, 0, body_pr)));
+        let line = line_of(&pdf, 0, "Line 1");
+        (line.left, line.y)
+    };
+    let (default_left, default_y) = first_line("<wps:bodyPr/>");
+    assert!((default_left - (72.0 + 7.2)).abs() < 0.5, "{default_left}");
+    let (left, y) = first_line(r#"<wps:bodyPr lIns="0" tIns="91440"/>"#);
+    assert!((left - 72.0).abs() < 0.5, "{left}");
+    // 0.1 inch of top inset rather than 0.05: the line is 3.6 pt lower.
+    assert!((default_y - y - 3.6).abs() < 0.5, "{default_y} {y}");
+
+    // The text wraps at the width inside the left and right insets.
+    let words = "<w:p><w:r><w:t>one two three four five six seven eight nine ten</w:t></w:r></w:p>";
+    let pdf = pdf_of(&doc_with_body(&text_box_of(
+        914400,
+        words,
+        r#"<wps:bodyPr><a:spAutoFit/></wps:bodyPr>"#,
+    )));
+    let drawn = lines(&pdf.drawn(0));
+    assert!(drawn.len() > 2, "{drawn:?}");
+    for line in &drawn {
+        assert!(line.right <= 72.0 + 72.0 - 7.2 + 0.5, "{line:?}");
+    }
+}
+
 /// A paragraph that starts with a text box it must clear, Word's "top and
 /// bottom" wrapping, anchored at the paragraph's top.
 fn paragraph_below_its_text_box(text: &str) -> String {
