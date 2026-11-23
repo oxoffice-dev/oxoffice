@@ -1,12 +1,12 @@
 {
   "file": "libreoffice/contract.docx",
-  "reason": "merge of main: tagged links and internal GoTo links on per-document file ids, /Lang and subset tags (#454)",
+  "reason": "cross-references are links and links land where their bookmark starts",
   "resources": "53f6f9736438fa17c482a33244072b4defdda0613b9b9ca4143fbfca3dac9ff5",
-  "outline_and_tags": "c9c433183c945c72439fcb2dd782e026db47b5b8f720e74fdca782d979df0e86",
+  "outline_and_tags": "0366510e5dda809f1a3d345c4cf7b7a122efe3fef9d617d611fb8a25e55af9dd",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "43f017633c504a3db90e7509a7d043708b0ed3b09b8318285c656f7a3a0f9bbb", "content": "f02f488ac1590cd3ae15a23427e2ad4304bd969bd1b2ad65dd239a4543478e5d", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"},
-    {"page": 2, "pixels": "73fae8e295925030b2b60ba6efa99a0b122d686abaeadfb5fa4cf11f3a6dd816", "content": "44081abf35eb2d5b57c5a118ce09d5fdf55fa2ef07a0e7886a448d3db129df29", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "a5718a71f0919025b4e7d627bd658a7cf7c26368c86a5eab9c3536421e2cdd27"},
-    {"page": 3, "pixels": "883e439bb17dab5479219653fad7907e36a4bdab8a78b82f61e6178b2ddf6b14", "content": "d61ac0fb6a6d910a98651d369b99a377ce240d32df7b5f6d09f970331bdb9e1e", "annotations": "4302cc590c269ce53c7e90807d5d7524414711183325e3c74f6175f773333e5a", "dictionary": "eae7bd678eb91277c6c7e72836059384a7bb05df1f88b5688d346036951b5537"}
+    {"page": 2, "pixels": "73fae8e295925030b2b60ba6efa99a0b122d686abaeadfb5fa4cf11f3a6dd816", "content": "44081abf35eb2d5b57c5a118ce09d5fdf55fa2ef07a0e7886a448d3db129df29", "annotations": "61f181c7eab87fc8d3415148081d3fa7e91097e33edf2428bdff3bcb39c4599d", "dictionary": "67f335298eb4fec63d4dc11b7fb927667b2f502097fc1ce00a9cad30407475b1"},
+    {"page": 3, "pixels": "883e439bb17dab5479219653fad7907e36a4bdab8a78b82f61e6178b2ddf6b14", "content": "d61ac0fb6a6d910a98651d369b99a377ce240d32df7b5f6d09f970331bdb9e1e", "annotations": "1e23d6a64970bc80c2d04766cf154b58596681b2318eadf2525f0bae4d28777b", "dictionary": "eae7bd678eb91277c6c7e72836059384a7bb05df1f88b5688d346036951b5537"}
   ]
 }
