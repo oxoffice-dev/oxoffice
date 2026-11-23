@@ -499,7 +499,6 @@ impl MediaStore {
         self.insert_with_id(package, MediaId::from_bytes(bytes), bytes, filename)
     }
 
-    #[allow(dead_code)]
     fn insert_with_id(
         &mut self,
         package: &mut OpcPackage,

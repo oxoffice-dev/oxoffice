@@ -258,7 +258,6 @@ def render_table(definitions: dict[str, bytes]) -> bytes:
     lines.extend(
         [
             "",
-            "#[allow(dead_code)]",
             "#[rustfmt::skip]",
             "pub(crate) fn preset_shape_definition(name: &str) -> Option<&'static [u8]> {",
             "    match name {",

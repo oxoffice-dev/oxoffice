@@ -1626,50 +1626,6 @@ impl FontManager {
         });
     }
 
-    /// Finish the legacy resolution-only projection without adding contribution IDs.
-    #[doc(hidden)]
-    pub fn finish_paragraph_font_trace(&mut self) -> Option<Vec<FontId>> {
-        if self.paragraph_font_trace.as_ref()?.scope_depth != 0 {
-            return None;
-        }
-        let trace = self.paragraph_font_trace.take()?;
-        if trace.overflowed {
-            return None;
-        }
-        let mut ids = trace
-            .events
-            .into_iter()
-            .filter_map(|event| match event {
-                FontTraceEvent::Resolution(id) => Some(id),
-                FontTraceEvent::Contribution(_) => None,
-            })
-            .collect::<Vec<_>>();
-        ids.shrink_to_fit();
-        Some(ids)
-    }
-
-    /// Finish only final contributions. Resolution attempts never establish identity.
-    #[doc(hidden)]
-    pub fn finish_paragraph_font_contributions(&mut self) -> Option<Vec<FontContribution>> {
-        if self.paragraph_font_trace.as_ref()?.scope_depth != 0 {
-            return None;
-        }
-        let trace = self.paragraph_font_trace.take()?;
-        if trace.overflowed {
-            return None;
-        }
-        let mut contributions = trace
-            .events
-            .into_iter()
-            .filter_map(|event| match event {
-                FontTraceEvent::Contribution(contribution) => Some(contribution),
-                FontTraceEvent::Resolution(_) => None,
-            })
-            .collect::<Vec<_>>();
-        contributions.shrink_to_fit();
-        Some(contributions)
-    }
-
     /// Finish one ordered bounded cache carrier, preserving resolution inventory.
     #[doc(hidden)]
     pub fn finish_paragraph_font_events(&mut self) -> Option<Vec<FontTraceEvent>> {
