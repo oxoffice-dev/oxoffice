@@ -206,6 +206,10 @@ value.embed_true_type_fonts = False
 value.remove_embedded_font("My Face", "regular")
 ```
 
+A name several records carry (LibreOffice writes `Symbol` twice) is refused
+by the name calls; `set_font_at`, `embed_font_at`, `remove_font_at` and
+`remove_embedded_font_at` address one record by its index in `fonts`.
+
 Kinds are regular, bold, italic and bold_italic. Snapshots are immutable and
 remain readable after later native edits. Flags distinguish None, False and
 True, where None removes only the owned setting. Explicit caller render fonts

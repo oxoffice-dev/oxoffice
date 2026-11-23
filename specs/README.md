@@ -84,3 +84,4 @@ dependency bumps and documentation.
 | 2026-11-22 | [Characters XML cannot carry: refused or dropped at the setter](2026-11-22-characters-xml-cannot-carry.md) | shipped |
 | 2026-11-23 | [A deck draws the characters its fonts lack with a system font](2026-11-23-deck-system-font-fallback.md) | accepted |
 | 2026-11-23 | [Date controls with a time, and the US Gregorian calendar](2026-11-23-date-controls-with-times.md) | accepted |
+| 2026-11-23 | [One font record addressed by its index](2026-11-23-font-records-by-index.md) | accepted |
