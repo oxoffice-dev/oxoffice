@@ -2289,6 +2289,10 @@ pub(super) fn compare_footnote_parts(
     {
         return Err(Error::Other("footnote retained owner order changed".into()));
     }
+    let _classes = left
+        .as_ref()
+        .map(|part| relationship_classes(original, &part.name).map(RelationshipClassScope::enter))
+        .transpose()?;
     let mut emitted = false;
     for (&id, left_owner) in &left_normal {
         if let Some(right_owner) = right_normal.get(&id) {

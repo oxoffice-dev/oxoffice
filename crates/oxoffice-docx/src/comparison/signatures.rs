@@ -11,6 +11,49 @@ type ControlPropertySignature<'a> = Option<(
 /// without changing what it holds, by their `w:sdtPr` element names.
 const CONTROL_METADATA: [&str; 5] = ["tag", "alias", "lock", "placeholder", "docPartGallery"];
 
+thread_local! {
+    static RELATIONSHIP_CLASSES: std::cell::RefCell<HashMap<String, String>> =
+        std::cell::RefCell::default();
+}
+
+/// While alive, signatures read a relationship id of `classes` as the first
+/// id of its class (`relationship_classes`), so a picture, chart or link
+/// reached through another relationship to the same payload is no change.
+/// The classes are those of the story owner being compared: the edited
+/// version's relationships were remapped to the original's ids before.
+pub(super) struct RelationshipClassScope(HashMap<String, String>);
+
+impl RelationshipClassScope {
+    pub(super) fn enter(classes: HashMap<String, String>) -> Self {
+        Self(RELATIONSHIP_CLASSES.replace(classes))
+    }
+}
+
+impl Drop for RelationshipClassScope {
+    fn drop(&mut self) {
+        RELATIONSHIP_CLASSES.set(std::mem::take(&mut self.0));
+    }
+}
+
+fn classify_relationship(id: &mut String) {
+    RELATIONSHIP_CLASSES.with_borrow(|classes| {
+        if let Some(class) = classes.get(id.as_str()) {
+            id.clone_from(class);
+        }
+    });
+}
+
+/// A copy of `link` that names its relationship by its class.
+pub(super) fn classified_hyperlink(
+    link: &oxoffice_docx_oxml::text::HyperlinkSpan,
+) -> oxoffice_docx_oxml::text::HyperlinkSpan {
+    let mut link = link.clone();
+    if let Some(id) = &mut link.rel_id {
+        classify_relationship(id);
+    }
+    link
+}
+
 pub(super) fn body_signature(content: &BodyContent) -> String {
     match content {
         BodyContent::Paragraph(paragraph) => format!("p:{}", paragraph_signature(paragraph)),
@@ -26,7 +69,11 @@ fn paragraph_signature(paragraph: &CT_P) -> String {
     format!(
         "{numbering:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}",
         paragraph.runs.iter().map(run_signature).collect::<Vec<_>>(),
-        paragraph.hyperlinks,
+        paragraph
+            .hyperlinks
+            .iter()
+            .map(classified_hyperlink)
+            .collect::<Vec<_>>(),
         paragraph.comment_ranges,
         paragraph.bookmark_markers,
         extra_xml,
@@ -82,7 +129,26 @@ pub(super) fn semantic_run_raw(run: &CT_R) -> Vec<(&[u8], usize)> {
 pub(super) fn run_content_signature(content: &RunContent) -> String {
     match content {
         RunContent::Field(_) => "field-owner".to_owned(),
-        RunContent::Drawing(drawing) => format!("Drawing({:?})", drawing_signature(drawing)),
+        RunContent::Drawing(drawing) => {
+            let mut signature = drawing_signature(drawing);
+            if let Some(inline) = &mut signature.inline {
+                classify_relationship(&mut inline.embed_id);
+                inline.link_id.iter_mut().for_each(classify_relationship);
+                inline
+                    .chart_rel_id
+                    .iter_mut()
+                    .for_each(classify_relationship);
+            }
+            if let Some(anchor) = &mut signature.anchor {
+                classify_relationship(&mut anchor.embed_id);
+                anchor.link_id.iter_mut().for_each(classify_relationship);
+                anchor
+                    .chart_rel_id
+                    .iter_mut()
+                    .for_each(classify_relationship);
+            }
+            format!("Drawing({signature:?})")
+        }
         RunContent::Text(text) => format!("Text({:?})", text_signature(text)),
         RunContent::DeletedText(text) => format!("DeletedText({:?})", text_signature(text)),
         content => format!("{content:?}"),
@@ -446,7 +512,7 @@ pub(super) fn paragraph_signature_with_options(
         .iter()
         .map(|link| {
             (
-                &link.rel_id,
+                classified_hyperlink(link).rel_id,
                 &link.anchor,
                 &link.tooltip,
                 &link.doc_location,
