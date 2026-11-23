@@ -14,6 +14,8 @@ pub(super) fn page_ref_id(input: &LayoutInput, name: &str) -> Option<usize> {
         .position(|candidate| same_bookmark_name(candidate, name))
 }
 
+/// The bookmarks a page target marker records, by target id: those of
+/// `PAGEREF` fields first, then those an internal link goes to.
 pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
     let mut names = Vec::<String>::new();
     visit_input_paragraphs(input, &mut |paragraph| {
@@ -38,7 +40,76 @@ pub(crate) fn page_reference_names(input: &LayoutInput) -> Vec<String> {
             }
         }
     });
+    // Then the bookmarks an internal link goes to, whose start a marker
+    // records so the link lands on the line where the bookmark starts.
+    let mut add = |name: &str| {
+        if !name.is_empty()
+            && !names
+                .iter()
+                .any(|candidate| same_bookmark_name(candidate, name))
+        {
+            names.push(name.to_owned());
+        }
+    };
+    visit_input_paragraphs(input, &mut |paragraph| {
+        for hyperlink in &paragraph.hyperlinks {
+            if hyperlink.rel_id.is_none()
+                && let Some(anchor) = hyperlink.anchor.as_deref()
+            {
+                add(anchor);
+            }
+        }
+        for projected in project_paragraph_runs(paragraph, input.revision_view) {
+            for content in &projected.run.content {
+                let RunContent::Field(field) = content else {
+                    continue;
+                };
+                let mut fields = vec![field];
+                while let Some(field) = fields.pop() {
+                    if let Some(name) = field_link(&field.effective_instruction())
+                        .as_deref()
+                        .and_then(|link| link.strip_prefix('#'))
+                    {
+                        add(name);
+                    }
+                    fields.extend(field.all_nested_fields_in_source_order().into_iter().rev());
+                }
+            }
+        }
+    });
     names
+}
+
+/// Where a field links to: `HYPERLINK` to its target, its `\l` anchor
+/// appended (`#anchor` alone for an anchor only), and `REF`, `PAGEREF` or
+/// `NOTEREF` with `\h` to `#` and their bookmark.
+pub(crate) fn field_link(instruction: &FieldInstruction) -> Option<String> {
+    match instruction.name.as_str() {
+        "HYPERLINK" => {
+            let anchor = instruction
+                .switches
+                .iter()
+                .find(|field_switch| field_switch.name == "l")
+                .and_then(|field_switch| match &field_switch.argument {
+                    Some(FieldArgument::Text(anchor)) => Some(anchor.as_str()),
+                    _ => None,
+                })
+                .filter(|anchor| !anchor.is_empty());
+            let target = field_text_argument(instruction, 0).filter(|target| !target.is_empty());
+            match (target, anchor) {
+                (Some(target), Some(anchor)) => Some(format!("{target}#{anchor}")),
+                (Some(target), None) => Some(target.to_owned()),
+                (None, Some(anchor)) => Some(format!("#{anchor}")),
+                (None, None) => None,
+            }
+        }
+        "REF" | "PAGEREF" | "NOTEREF" if field_has_switch(instruction, "h") => {
+            field_text_argument(instruction, 0)
+                .filter(|bookmark| !bookmark.is_empty())
+                .map(|bookmark| format!("#{bookmark}"))
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn document_has_sequence_fields(input: &LayoutInput) -> bool {

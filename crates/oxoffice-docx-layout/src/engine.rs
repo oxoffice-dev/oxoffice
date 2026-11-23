@@ -126,7 +126,7 @@ use header_footer::layout_header_footer;
 pub(crate) use input_scan::page_reference_names;
 use input_scan::{
     bookmark_exists, bookmark_text, document_has_page_ref, document_has_ref_projection,
-    document_has_section_fields, document_has_sequence_fields, field_has_switch,
+    document_has_section_fields, document_has_sequence_fields, field_has_switch, field_link,
     field_text_argument, input_uses_page_note_restart, note_labels, note_reference_pages,
     numbered_ref_text, page_ref_id, visit_input_paragraphs,
 };

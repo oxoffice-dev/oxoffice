@@ -771,6 +771,75 @@ fn doc_linking_to(target: &str) -> Document {
 }
 
 #[test]
+fn cross_references_with_h_and_hyperlink_fields_with_l_are_links_to_their_bookmark() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" REF results \h "><w:r><w:t>Results</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:t xml:space="preserve"> on page </w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGEREF results \h </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve"> and in </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" HYPERLINK \l &quot;results&quot; "><w:r><w:t>the summary</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:t xml:space="preserve">, but not </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" REF results "><w:r><w:t>Results</w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:t xml:space="preserve"> nor </w:t></w:r>"#,
+        r#"<w:fldSimple w:instr=" REF nowhere \h "><w:r><w:t>Gone</w:t></w:r></w:fldSimple></w:p>"#,
+        r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#,
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Results</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let results = pdf.page_count() - 1;
+    assert_eq!(results, 1);
+    let links = pdf.internal_links(0);
+    assert!(links.iter().all(|(page, ..)| *page == results), "{links:?}");
+    let linked: Vec<String> = links
+        .iter()
+        .map(|(_, _, [left, bottom, right, top])| {
+            pdf.drawn(0)
+                .into_iter()
+                .filter(|piece| {
+                    piece.x >= left - 0.01
+                        && piece.end <= right + 0.01
+                        && piece.y > *bottom
+                        && piece.y < *top
+                })
+                .map(|piece| piece.text)
+                .collect()
+        })
+        .collect();
+    // The two cross-references with `\h` and the hyperlink field, one piece
+    // a word; neither the plain cross-reference nor the one to no bookmark.
+    assert_eq!(linked.concat(), "Results2the summary", "{linked:?}");
+}
+
+#[test]
+fn a_link_lands_on_the_page_where_its_bookmark_starts_inside_a_paragraph() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:hyperlink w:anchor="results"><w:r><w:t>Go to the results</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:r><w:t>The method comes first.</w:t></w:r><w:r><w:br w:type="page"/></w:r>"#,
+        r#"<w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Results come next.</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let results = page_with(&pdf, "Results come next.");
+    assert_eq!(results, 1);
+    let links = pdf.internal_links(0);
+    assert!(!links.is_empty());
+    let line = line_of(&pdf, results, "Results come next.");
+    for (page, top, _) in &links {
+        assert_eq!(*page, results, "not the page where the paragraph starts");
+        assert!(
+            *top > line.y && *top < line.y + 30.0,
+            "the destination {top} is the top of the bookmark's line at {}",
+            line.y
+        );
+    }
+}
+
+#[test]
 fn an_internal_hyperlink_goes_to_the_top_of_its_bookmark() {
     let doc = reopen(&mut doc_linking_to("results"));
     // One page's SVG has nowhere to land, so it draws no dead anchor.
