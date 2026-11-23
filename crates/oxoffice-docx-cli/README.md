@@ -244,11 +244,11 @@ Unknown view names are usage errors. HTML and Markdown conversion refuse
 the tracked view before creating output.
 
 `convert --to pdf --fillable-forms` exports the content controls and legacy
-form fields of the body and the notes as fillable PDF form fields: text, check boxes, lists and dates, with their
+form fields of the body, its text boxes and the notes as fillable PDF form fields: text, check boxes, lists and dates, with their
 current values. A control tagged `signature` or `signature:<name>` becomes an
 empty signature field. The flag needs `--to pdf` and the accepted view.
 `oxoffice limitations` lists the kinds of controls it leaves static, and a
-control of the body or the notes that would be a field but is left static says why on
+control of the body, a text box or a note that would be a field but is left static says why on
 standard error; a picture control without a signature tag or a group control
 is no field, and stays static without a message.
 

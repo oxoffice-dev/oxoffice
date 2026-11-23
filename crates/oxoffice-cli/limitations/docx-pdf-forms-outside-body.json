@@ -3,7 +3,7 @@
   "format": "docx",
   "area": "pdf forms",
   "title": "Fillable PDF forms leave some controls static",
-  "symptom": "with fillable_forms, controls in headers, footers and text boxes export as page content, not fields, without a diagnostic; controls in rotated cells and vertical sections export as page content too, with a diagnostic",
-  "workaround": "move the control into the body, outside text boxes, rotated cells and vertical sections",
+  "symptom": "with fillable_forms, controls in headers and footers export as page content, not fields, without a diagnostic; controls in rotated cells, vertical sections and turned or vertical text boxes export as page content too, with a diagnostic",
+  "workaround": "move the control into the body, outside rotated cells, vertical sections and turned text boxes",
   "issue": 131
 }

@@ -607,6 +607,19 @@ orchestration of run FBCF decided, per place, what becomes a field:
   mark.
 - **Nothing lost silently** holds as before: a mapped control of a drawn
   story that ends without a field says why.
+- **Text boxes, as built.** A floating text box's paragraphs are laid out
+  under its own local sources; when the owning paragraph is one the
+  inventory walks, they draw marks named by those local nodes, and the
+  marks move with the text to the registry's nodes when the box binds its
+  sources. The registry keeps each anchored drawing's story, and the
+  inventory and layout list a paragraph's anchors with one walk
+  (`paragraph_anchors`). An anchored drawing wraps each element it paints in
+  marked content of its own, so gathering lifts a marker out of such a
+  wrapper to meet its neighbours. A box turned by any angle, with vertical
+  text, inside another box, or a table inside a box, stays static with a
+  diagnostic (turns by a multiple of 90 degrees join with the `/MK /R` pull
+  request). An inline text box draws no text today (#585), so it has nothing to
+  map.
 - **Pull requests.** Notes, then text boxes, then headers and footers (the
   writer learns several widgets per field), then rotated cells and vertical
   sections (the writer learns `/MK /R`). Each removes its places from the

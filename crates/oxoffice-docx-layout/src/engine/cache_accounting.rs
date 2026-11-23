@@ -1558,6 +1558,11 @@ pub(super) fn remap_text_box_sources(
         if let Some(source) = &mut text.field_source {
             source.node = node(source.node, nodes)?;
         }
+        // A form mark names its paragraph's source node, so it moves with
+        // the text to the node the inventory knows.
+        if let Some(mark) = &mut text.form_mark {
+            mark.node = node(mark.node, nodes)?;
+        }
         Ok(())
     }
     fn multilingual(
@@ -1618,6 +1623,10 @@ pub(super) fn remap_text_box_sources(
             } => text(value, nodes)?,
             LineItem::Group { group, .. } => remap_elements(&mut group.children, nodes)?,
             LineItem::Figure { item, .. } => line(item, nodes)?,
+            LineItem::Image {
+                form_mark: Some(mark),
+                ..
+            } => mark.node = node(mark.node, nodes)?,
             _ => {}
         }
         Ok(())
@@ -1630,6 +1639,10 @@ pub(super) fn remap_text_box_sources(
             InlineItem::MultilingualText(value) => multilingual(value, nodes)?,
             InlineItem::Group { group, .. } => remap_elements(&mut group.children, nodes)?,
             InlineItem::Figure { item, .. } => inline(item, nodes)?,
+            InlineItem::Image {
+                form_mark: Some(mark),
+                ..
+            } => mark.node = node(mark.node, nodes)?,
             _ => {}
         }
         Ok(())
