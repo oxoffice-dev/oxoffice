@@ -985,13 +985,30 @@ fn nested_simple_fields_as_complex(result: &str, scope: &NamespaceBindings) -> R
     let (opening, closing) = ("<nested>", "</nested>");
     let wrapped = format!("{opening}{result}{closing}");
     let spans = direct_word_element_spans_in_scope(&wrapped, "fldSimple", scope)?;
-    if spans.is_empty() {
-        return Ok(result.to_owned());
-    }
     let mut output = wrapped.clone();
     for span in spans.into_iter().rev() {
         let nested = clean_simple_complex_source(&wrapped[span.clone()], scope, None)?;
         output.replace_range(span, &nested);
+    }
+    // One reached through a control, smart tag or custom XML would stay a
+    // simple field, whose text a deletion cannot mark (Word repairs it).
+    let mut reader = Reader::from_str(&output);
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| Error::Other(error.to_string()))?
+        {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == b"fldSimple" =>
+            {
+                return Err(Error::Other(
+                    "comparison cannot track a whole paragraph's simple field nested in another field's result inside another owner"
+                        .into(),
+                ));
+            }
+            Event::Eof => break,
+            _ => {}
+        }
     }
     Ok(output[opening.len()..output.len() - closing.len()].to_owned())
 }
@@ -1511,6 +1528,9 @@ fn tracked_field_result(
         leaf_publications: Vec::new(),
         field_conversions: Vec::new(),
         whole_field_conversions: Vec::new(),
+        shared_bookmarks: HashSet::new(),
+        point_bookmarks: HashSet::new(),
+        relocated_bookmarks: HashSet::new(),
     };
     let mut diagnostics = Vec::new();
     let result = compare_paragraph(

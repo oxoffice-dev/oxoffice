@@ -7,6 +7,8 @@ scope: docx
 # A whole paragraph's simple field is tracked as Word tracks it
 
 > Amended on 2026-11-21 after the Word check (issue #66). The first version retired the `w:fldSimple` shell in the revision engine. Word does not do that, so the rule is dropped: the comparison writes the field in the shape Word writes itself.
+>
+> Amended again on 2026-11-23 (#66 closed): a simple field inside a hyperlink or nested in another simple field is no longer refused (see the end of Learnings); the refusals the Decision and Plan list for them are history.
 
 ## Context
 
@@ -75,6 +77,7 @@ Then the rewriting in `comparison.rs`, the one-sided witness in its checks, the 
   - *Inside a hyperlink*: the field is written the same way, its one wrapper inside the `w:hyperlink` (a hyperlink may hold revision wrappers); the publisher keeps a published field that is a child of a hyperlink of the paragraph.
   - *Nested in another simple field*: each simple field of the result is written complex too, inside the outer one's result, all in the one wrapper (Word nests complex fields only). The guard reads a nested field in either form as its own facts, and gives every nested field the form of the input.
   - *Found on the way*: a complex field whose instruction or result holds another field had its result cut at the nested field's `separate` or `end`; it is found by depth now. A picture in a field result was compared with its drawing id, which the comparison renumbers; the field's residual sets it aside, as the guard does outside fields.
+  - A simple field reached through a control, smart tag or custom XML inside another field's result stays refused: it would stay a simple field inside the deletion, whose text Word requires as deleted text.
   - The limitation is removed.
 
 ## Links

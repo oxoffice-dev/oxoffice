@@ -2083,7 +2083,10 @@ fn a_simple_field_nested_in_another_is_tracked_whole_with_its_paragraph() {
         "{xml}"
     );
     assert_eq!(field.matches(r#"fldCharType="begin""#).count(), 2, "{xml}");
-    assert!(field.find(" IF 1 = 1 ") < field.find(" PAGE "), "{xml}");
+    assert!(
+        field.find(" IF 1 = 1 ").unwrap() < field.find(" PAGE ").unwrap(),
+        "{xml}"
+    );
     // Deleted, every text of both fields is deleted text, which Word
     // requires.
     let mut doc = redline(
@@ -2150,6 +2153,635 @@ fn a_comparison_tracks_a_break_that_only_changes_where_its_text_restarts() {
     assert!(!xml.contains("<w:ins") && !xml.contains("<w:del"), "{xml}");
 }
 
+/// The same redline once both versions carry the contents oxoffice rebuilt,
+/// as a tool that rebuilds them on each pass compares its versions. The
+/// rebuild writes page references as simple fields, which the new heading's
+/// entry carries as one complex field in its tracked paragraph. In Google's
+/// copy the heading after the new one gains a contents bookmark beside its
+/// own, which a bookmark both versions hold lets the comparison replace.
+#[test]
+fn a_redline_of_two_thesis_versions_with_rebuilt_contents_resolves_to_either() {
+    let copies = crate::support::thesis_copies();
+    crate::support::run_workflow("redline-rebuilt-toc", &copies, |path| {
+        let (mut doc, edited) = thesis_versions(path, true);
+        let original = story_texts(&doc);
+        compare_versions(&mut doc, &edited);
+        let mut doc = reopen(&mut doc);
+        assert_eq!(
+            story_texts(&accepted(&mut doc)),
+            story_texts(&edited),
+            "{path}"
+        );
+        assert_eq!(story_texts(&rejected(&mut doc)), original, "{path}");
+    });
+}
+
+/// A heading holding these bookmarks, as (id, name).
+fn heading_with(text: &str, marks: &[(u32, &str)]) -> String {
+    let starts = marks
+        .iter()
+        .map(|(id, name)| format!(r#"<w:bookmarkStart w:id="{id}" w:name="{name}"/>"#))
+        .collect::<String>();
+    let ends = marks
+        .iter()
+        .map(|(id, _)| format!(r#"<w:bookmarkEnd w:id="{id}"/>"#))
+        .collect::<String>();
+    format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{starts}<w:r><w:t>{text}</w:t></w:r>{ends}</w:p>"#
+    )
+}
+
+// ---- A bookmark both versions hold ----
+//
+// No tracked change records a bookmark. A paragraph whose bookmarks differ is
+// replaced whole, the insertion first, and a bookmark both versions hold is
+// written once, outside the revision marks: its start in the insertion, its
+// end in the deletion, so that Word's Reject All keeps it. Both resolutions
+// keep it over the same text.
+
+fn plain_paragraph(text: &str) -> String {
+    format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
+}
+
+/// Check that a redline's part XML writes the bookmark `name` both versions
+/// hold as Word's Reject All keeps it: its start in an inserted paragraph,
+/// its end in a deleted one after it, or, for a point, both in the inserted
+/// paragraph.
+fn assert_shared_bookmark_layout(xml: &str, name: &str, point: bool) {
+    let paragraphs = xml.split("</w:p>").collect::<Vec<_>>();
+    // The revision marks on a paragraph's mark.
+    let marked = |paragraph: &str, kind: &str| {
+        paragraph.rfind("<w:pPr").is_some_and(|at| {
+            paragraph[at..at + paragraph[at..].find("</w:pPr>").unwrap()]
+                .contains(&format!("<w:{kind} "))
+        })
+    };
+    let named = format!(r#"w:name="{name}""#);
+    let start = paragraphs
+        .iter()
+        .position(|paragraph| paragraph.contains(&named))
+        .unwrap_or_else(|| panic!("no start of {name}: {xml}"));
+    let tag = &paragraphs[start][..paragraphs[start].find(&named).unwrap()];
+    let tag = &tag[tag.rfind("<w:bookmarkStart").unwrap()..];
+    let id = tag[tag.find(r#"w:id=""#).unwrap() + 6..]
+        .split('"')
+        .next()
+        .unwrap();
+    let end = paragraphs
+        .iter()
+        .position(|paragraph| paragraph.contains(&format!(r#"<w:bookmarkEnd w:id="{id}"/>"#)))
+        .unwrap_or_else(|| panic!("no end of {name}: {xml}"));
+    assert!(marked(paragraphs[start], "ins"), "{name} starts in: {xml}");
+    if point {
+        assert_eq!(end, start, "{name} is a point: {xml}");
+    } else {
+        // A story's last paragraph keeps its mark, unmarked: its deleted
+        // content holds the end then.
+        let ending = paragraphs[end];
+        assert!(end > start, "{name} ends after the insertion: {xml}");
+        assert!(
+            !marked(ending, "ins") && (marked(ending, "del") || ending.contains("<w:del ")),
+            "{name} ends in: {xml}"
+        );
+    }
+}
+
+/// The body index where each bookmark starts, by name.
+fn bookmark_starts(doc: &Document) -> Vec<(String, usize)> {
+    doc.bookmarks()
+        .iter()
+        .map(|bookmark| {
+            (
+                bookmark.name().unwrap_or_default().to_owned(),
+                bookmark
+                    .range()
+                    .expect("a bookmark in the body")
+                    .start
+                    .body_index,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_heading_that_keeps_its_bookmark_and_gains_another_is_replaced_whole() {
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}",
+            plain_paragraph("One"),
+            heading_with("Heading", &[(1, "Kept")]),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}",
+        plain_paragraph("One"),
+        heading_with("Heading", &[(2, "Added"), (1, "Kept")]),
+        plain_paragraph("Two")
+    ));
+    let mut doc = redline(original(), &edited);
+    assert_eq!(revision_texts(&doc, RevisionKind::Deletion), ["Heading"]);
+    assert_eq!(revision_texts(&doc, RevisionKind::Insertion), ["Heading"]);
+    let names = |doc: &Document| {
+        let mut names = bookmark_names(doc);
+        names.sort();
+        names
+    };
+    assert_eq!(
+        names(&doc),
+        ["Added", "Kept"],
+        "each bookmark is written once"
+    );
+    assert_shared_bookmark_layout(&main_part_xml(&mut doc), "Kept", false);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+    // As in Word, the end the deletion held lands just after the inserted
+    // paragraph's mark.
+    assert!(
+        copy.bookmarks()
+            .iter()
+            .all(|bookmark| bookmark.text().trim_end_matches('\n') == "Heading")
+    );
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original()));
+    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
+}
+
+#[test]
+fn a_paragraph_inserted_before_a_heading_that_gains_a_bookmark_is_compared() {
+    // As a contents rebuilt after the insertion gives the heading a new
+    // bookmark beside the one the producer wrote (Google's copy of #448).
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}",
+            plain_paragraph("One"),
+            heading_with("Future work", &[(1, "_hjerlw5ntnls")]),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}",
+        plain_paragraph("One"),
+        heading_with("Limitations", &[(2, "_Toc7")]),
+        heading_with("Future work", &[(3, "_Toc8"), (1, "_hjerlw5ntnls")]),
+        plain_paragraph("Two")
+    ));
+    let mut doc = redline(original(), &edited);
+    let inserted = revision_texts(&doc, RevisionKind::Insertion);
+    assert!(
+        inserted.iter().any(|text| text == "Limitations"),
+        "{inserted:?}"
+    );
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original()));
+    assert_eq!(bookmark_starts(&copy), [("_hjerlw5ntnls".to_owned(), 1)]);
+}
+
+#[test]
+fn a_cell_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
+    let table = |marks: &[(u32, &str)]| {
+        doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}{}</w:tc></w:tr></w:tbl>{}"#,
+            heading_with("Cell", marks),
+            plain_paragraph("Below"),
+            plain_paragraph("After")
+        ))
+    };
+    let edited = table(&[(2, "Added"), (1, "Kept")]);
+    let mut doc = redline(table(&[(1, "Kept")]), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    let mut names = bookmark_names(&copy);
+    names.sort();
+    assert_eq!(names, ["Added", "Kept"]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&table(&[(1, "Kept")])));
+    assert_eq!(bookmark_names(&copy), ["Kept"]);
+}
+
+#[test]
+fn a_last_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
+    let document = |marks: &[(u32, &str)]| {
+        doc_with_body(&format!(
+            "{}{}",
+            plain_paragraph("One"),
+            heading_with("Last", marks)
+        ))
+    };
+    let edited = document(&[(2, "Added"), (1, "Kept")]);
+    let mut doc = redline(document(&[(1, "Kept")]), &edited);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["One", "Last"]);
+    assert_eq!(bookmark_names(&copy), ["Kept"]);
+}
+
+/// `xml` with these bookmarks, as (id, name), around the run that shows
+/// `text`.
+fn bookmarked_run(xml: &str, text: &str, marks: &[(u32, &str)]) -> String {
+    let at = xml.find(&format!(">{text}</w:t>")).expect("the run's text");
+    let start = xml[..at].rfind("<w:r>").expect("the run");
+    let end = at + xml[at..].find("</w:r>").expect("the run's end") + "</w:r>".len();
+    let starts = marks
+        .iter()
+        .map(|(id, name)| format!(r#"<w:bookmarkStart w:id="{id}" w:name="{name}"/>"#))
+        .collect::<String>();
+    let ends = marks
+        .iter()
+        .map(|(id, _)| format!(r#"<w:bookmarkEnd w:id="{id}"/>"#))
+        .collect::<String>();
+    format!(
+        "{}{starts}{}{ends}{}",
+        &xml[..start],
+        &xml[start..end],
+        &xml[end..]
+    )
+}
+
+/// `xml` with these bookmarks, as (id, name), around the whole content of
+/// the paragraph that shows `text`.
+fn bookmarked_paragraph(xml: &str, text: &str, marks: &[(u32, &str)]) -> String {
+    let at = xml
+        .find(&format!(">{text}</w:t>"))
+        .expect("the paragraph's text");
+    let paragraph = xml[..at]
+        .rfind("<w:p>")
+        .into_iter()
+        .chain(xml[..at].rfind("<w:p "))
+        .max()
+        .expect("the paragraph");
+    let start = match xml[paragraph..at].find("</w:pPr>") {
+        Some(properties) => paragraph + properties + "</w:pPr>".len(),
+        None => paragraph + xml[paragraph..].find('>').expect("the paragraph's tag") + 1,
+    };
+    let end = at + xml[at..].find("</w:p>").expect("the paragraph's end");
+    let starts = marks
+        .iter()
+        .map(|(id, name)| format!(r#"<w:bookmarkStart w:id="{id}" w:name="{name}"/>"#))
+        .collect::<String>();
+    let ends = marks
+        .iter()
+        .map(|(id, _)| format!(r#"<w:bookmarkEnd w:id="{id}"/>"#))
+        .collect::<String>();
+    format!(
+        "{}{starts}{}{ends}{}",
+        &xml[..start],
+        &xml[start..end],
+        &xml[end..]
+    )
+}
+
+/// How many bookmark starts of the part ending with `suffix` take each name.
+fn part_bookmark_counts(doc: &mut Document, suffix: &str, names: &[&str]) -> Vec<usize> {
+    let xml = part_xml(doc, suffix);
+    names
+        .iter()
+        .map(|name| xml.matches(&format!(r#"w:name="{name}""#)).count())
+        .collect()
+}
+
+#[test]
+fn a_header_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
+    let document = |marks: &[(u32, &str)]| {
+        let mut doc = doc_with(&["body"]);
+        doc.set_header("Running title");
+        with_part(&mut doc, "header1.xml", |xml| {
+            bookmarked_run(xml, "Running title", marks)
+        })
+    };
+    let mut edited = document(&[(2, "Added"), (1, "Kept")]);
+    let mut doc = redline(document(&[(1, "Kept")]), &edited);
+    let names = ["Kept", "Added"];
+    assert_eq!(
+        part_bookmark_counts(&mut doc, "header1.xml", &names),
+        [1, 1]
+    );
+    assert_shared_bookmark_layout(&part_xml(&mut doc, "header1.xml"), "Kept", false);
+    let mut copy = accepted(&mut doc);
+    assert_eq!(copy.header_text(), edited.header_text());
+    assert_eq!(
+        part_bookmark_counts(&mut copy, "header1.xml", &names),
+        part_bookmark_counts(&mut edited, "header1.xml", &names)
+    );
+    let mut copy = rejected(&mut doc);
+    assert_eq!(copy.header_text().as_deref(), Some("Running title"));
+    assert_eq!(
+        part_bookmark_counts(&mut copy, "header1.xml", &names),
+        [1, 0]
+    );
+}
+
+#[test]
+fn a_footnote_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
+    let document = |marks: &[(u32, &str)]| {
+        let mut doc = doc_with_notes(&[("Text", Some("A note.")), ("After", None)]);
+        with_part(&mut doc, "footnotes.xml", |xml| {
+            bookmarked_paragraph(xml, "A note.", marks)
+        })
+    };
+    let mut edited = document(&[(42, "Added"), (41, "Kept")]);
+    let mut doc = redline(document(&[(41, "Kept")]), &edited);
+    let names = ["Kept", "Added"];
+    assert_eq!(
+        part_bookmark_counts(&mut doc, "footnotes.xml", &names),
+        [1, 1]
+    );
+    assert_shared_bookmark_layout(&part_xml(&mut doc, "footnotes.xml"), "Kept", false);
+    let mut copy = accepted(&mut doc);
+    assert_eq!(story_texts(&copy), story_texts(&edited));
+    assert_eq!(
+        part_bookmark_counts(&mut copy, "footnotes.xml", &names),
+        part_bookmark_counts(&mut edited, "footnotes.xml", &names)
+    );
+    let mut copy = rejected(&mut doc);
+    assert_eq!(story_texts(&copy), story_texts(&document(&[(41, "Kept")])));
+    assert_eq!(
+        part_bookmark_counts(&mut copy, "footnotes.xml", &names),
+        [1, 0]
+    );
+}
+
+#[test]
+fn a_heading_whose_link_changed_keeps_its_bookmark_on_rejection() {
+    let document = |anchor: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="1" w:name="Kept"/><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = document("Second");
+    let mut doc = redline(document("First"), &edited);
+    assert_eq!(bookmark_names(&doc), ["Kept"]);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), ["One", "Heading", "Two"]);
+    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
+}
+
+#[test]
+fn a_bookmark_held_under_another_id_is_refused_rather_than_written_twice() {
+    // A header keeps the ids its producer wrote, which Word renumbers on a
+    // save: the bookmark could not be written once.
+    let document = |marks: &[(u32, &str)]| {
+        let mut doc = doc_with(&["body"]);
+        doc.set_header("Running title");
+        with_part(&mut doc, "header1.xml", |xml| {
+            bookmarked_run(xml, "Running title", marks)
+        })
+    };
+    let mut doc = document(&[(1, "Kept")]);
+    let error = doc
+        .compare(&document(&[(2, "Added"), (7, "Kept")]), AUTHOR, DATE)
+        .unwrap_err();
+    assert!(error.to_string().contains("boundary structures"), "{error}");
+}
+
+#[test]
+fn a_bookmark_inside_a_hyperlink_is_refused_rather_than_written_twice() {
+    let document = |added: bool| {
+        let (start, end) = if added {
+            (
+                r#"<w:bookmarkStart w:id="2" w:name="Added"/>"#,
+                r#"<w:bookmarkEnd w:id="2"/>"#,
+            )
+        } else {
+            ("", "")
+        };
+        doc_with_body(&format!(
+            r#"{}<w:p>{start}<w:hyperlink w:anchor="Target"><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Linked</w:t></w:r><w:bookmarkEnd w:id="1"/></w:hyperlink>{end}</w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let mut doc = document(false);
+    let error = doc.compare(&document(true), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("boundary structures at body/paragraph[1]"),
+        "{error}"
+    );
+}
+
+/// A heading holding `Kept` around a link to `anchor`.
+fn linked_heading(anchor: &str) -> String {
+    format!(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="1" w:name="Kept"/><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>"#
+    )
+}
+
+#[test]
+fn a_heading_whose_link_changed_before_a_new_or_removed_last_paragraph_is_compared() {
+    // The paragraph marks of a trailing change close on the heading's own.
+    for (original, edited) in [
+        (
+            format!("{}{}", plain_paragraph("A"), linked_heading("First")),
+            format!(
+                "{}{}{}",
+                plain_paragraph("A"),
+                linked_heading("Second"),
+                plain_paragraph("Tail")
+            ),
+        ),
+        (
+            format!(
+                "{}{}{}",
+                plain_paragraph("A"),
+                linked_heading("First"),
+                plain_paragraph("Gone")
+            ),
+            format!("{}{}", plain_paragraph("A"), linked_heading("Second")),
+        ),
+    ] {
+        let edited = doc_with_body(&edited);
+        let mut doc = redline(doc_with_body(&original), &edited);
+        let copy = accepted(&mut doc);
+        assert_eq!(texts(&copy), texts(&edited));
+        assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+        let copy = rejected(&mut doc);
+        assert_eq!(texts(&copy), texts(&doc_with_body(&original)));
+        assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
+    }
+}
+
+#[test]
+fn a_bookmark_half_inside_a_hyperlink_is_refused_rather_than_written_twice() {
+    let document = |added: bool| {
+        let (start, end) = if added {
+            (
+                r#"<w:bookmarkStart w:id="2" w:name="Added"/>"#,
+                r#"<w:bookmarkEnd w:id="2"/>"#,
+            )
+        } else {
+            ("", "")
+        };
+        doc_with_body(&format!(
+            r#"{}<w:p>{start}<w:hyperlink w:anchor="Target"><w:bookmarkStart w:id="1" w:name="Kept"/><w:r><w:t>Linked</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/>{end}</w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let mut doc = document(false);
+    let error = doc.compare(&document(true), AUTHOR, DATE).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("boundary structures at body/paragraph[1]"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_bookmark_ending_in_a_replaced_paragraph_still_covers_it_on_rejection() {
+    let document = |anchor: &str| {
+        doc_with_body(&format!(
+            r#"<w:p><w:bookmarkStart w:id="1" w:name="Span"/><w:r><w:t>From</w:t></w:r></w:p><w:p><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>{}"#,
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = document("Second");
+    let mut doc = redline(document("First"), &edited);
+    let span = |doc: &Document| {
+        let bookmarks = doc.bookmarks();
+        let [bookmark] = bookmarks.as_slice() else {
+            panic!("one bookmark: {bookmarks:?}")
+        };
+        (
+            bookmark.text().to_owned(),
+            bookmark.range().unwrap().end.body_index,
+        )
+    };
+    // Accepting leaves the end the deletion held at the start of the next
+    // paragraph, as Word does: over the same text.
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(span(&copy), ("From\nHeading\n".to_owned(), 2));
+    // Rejecting restores it exactly.
+    let original = document("First");
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original));
+    assert_eq!(span(&copy), span(&original));
+}
+
+#[test]
+fn a_heading_that_keeps_its_point_bookmark_and_gains_another_is_compared() {
+    // Google writes its heading bookmarks as points before the text.
+    let heading = |added: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{added}<w:bookmarkStart w:id="1" w:name="_hjerlw5ntnls"/><w:bookmarkEnd w:id="1"/><w:r><w:t>Heading</w:t></w:r></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = heading(r#"<w:bookmarkStart w:id="2" w:name="_Toc2"/><w:bookmarkEnd w:id="2"/>"#);
+    let mut doc = redline(heading(""), &edited);
+    assert_shared_bookmark_layout(&main_part_xml(&mut doc), "_hjerlw5ntnls", true);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&heading("")));
+    assert_eq!(bookmark_starts(&copy), [("_hjerlw5ntnls".to_owned(), 1)]);
+}
+
+#[test]
+fn a_point_bookmark_both_versions_hold_after_text_in_a_replaced_paragraph_is_refused() {
+    // Rejecting would leave it at the start of the restored paragraph, and
+    // its position is all a point has.
+    let paragraph = |added: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p>{added}<w:r><w:t xml:space="preserve">Hello </w:t></w:r><w:bookmarkStart w:id="1" w:name="B"/><w:bookmarkEnd w:id="1"/><w:r><w:t>world</w:t></w:r></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited =
+        paragraph(r#"<w:bookmarkStart w:id="2" w:name="Added"/><w:bookmarkEnd w:id="2"/>"#);
+    let error = paragraph("")
+        .compare(&edited, AUTHOR, DATE)
+        .expect_err("the point cannot be kept after the text");
+    assert!(error.to_string().contains("over the same text"), "{error}");
+}
+
+#[test]
+fn a_bookmark_both_versions_hold_that_would_cross_a_picture_is_refused() {
+    // The end after a line break and before the paragraph's text: accepting
+    // the deletion would move it after all of it, across no counted text
+    // but the break.
+    let paragraph = |added: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p>{added}<w:bookmarkStart w:id="1" w:name="B"/><w:r><w:br/></w:r><w:bookmarkEnd w:id="1"/><w:r><w:sym w:font="Symbol" w:char="F0B7"/></w:r></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited =
+        paragraph(r#"<w:bookmarkStart w:id="2" w:name="Added"/><w:bookmarkEnd w:id="2"/>"#);
+    let error = paragraph("")
+        .compare(&edited, AUTHOR, DATE)
+        .expect_err("the end cannot be kept before the symbol");
+    assert!(error.to_string().contains("over the same text"), "{error}");
+}
+
+#[test]
+fn a_rewritten_heading_that_keeps_its_bookmark_goes_before_the_deletion_that_held_it() {
+    // A paragraph inserted before the heading takes its place in the pair,
+    // and the rewritten heading is inserted after the deletion: the
+    // comparison moves it before that deletion, so that the bookmark's start
+    // lands in it.
+    let original = || {
+        doc_with_body(&format!(
+            "{}{}{}",
+            plain_paragraph("One"),
+            heading_with("Future work", &[(1, "Kept")]),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = doc_with_body(&format!(
+        "{}{}{}{}",
+        plain_paragraph("One"),
+        plain_paragraph("Limitations"),
+        heading_with("Future work, revised", &[(1, "Kept")]),
+        plain_paragraph("Two")
+    ));
+    let mut doc = redline(original(), &edited);
+    assert_shared_bookmark_layout(&main_part_xml(&mut doc), "Kept", false);
+    let copy = accepted(&mut doc);
+    assert_eq!(texts(&copy), texts(&edited));
+    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 2)]);
+    let copy = rejected(&mut doc);
+    assert_eq!(texts(&copy), texts(&original()));
+    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
+}
+
+#[test]
+fn a_bookmark_both_versions_hold_ending_inside_a_replaced_paragraph_is_refused() {
+    // Neither resolution can keep the end inside the text: the insertion
+    // cannot hold it (Word's Reject All drops it with the paragraph), and
+    // accepting the deletion that holds it leaves it after the paragraph.
+    let caption = |marks: &str| {
+        doc_with_body(&format!(
+            r#"{}<w:p>{marks}<w:bookmarkStart w:id="1" w:name="_Ref1"/><w:r><w:t>Figure 1</w:t></w:r><w:bookmarkEnd w:id="1"/><w:r><w:t xml:space="preserve">: results</w:t></w:r></w:p>{}"#,
+            plain_paragraph("One"),
+            plain_paragraph("Two")
+        ))
+    };
+    let edited = caption(r#"<w:bookmarkStart w:id="2" w:name="Added"/><w:bookmarkEnd w:id="2"/>"#);
+    let error = caption("")
+        .compare(&edited, AUTHOR, DATE)
+        .expect_err("the end cannot be kept inside the text");
+    assert!(error.to_string().contains("over the same text"), "{error}");
+}
+
 #[test]
 fn a_changed_field_holding_a_nested_field_is_deleted_as_deleted_text() {
     // The outer instruction changes: the field is deleted and inserted
@@ -2165,7 +2797,14 @@ fn a_changed_field_holding_a_nested_field_is_deleted_as_deleted_text() {
     let deletions = xml
         .split("<w:del ")
         .skip(1)
-        .map(|tail| &tail[..tail.find("</w:del>").unwrap()]);
+        .map(|tail| &tail[..tail.find("</w:del>").unwrap()])
+        .collect::<Vec<_>>();
+    assert!(
+        deletions
+            .iter()
+            .any(|deletion| deletion.matches("<w:delInstrText").count() == 3),
+        "the deletion holds both instructions: {xml}"
+    );
     for deletion in deletions {
         assert!(
             !deletion.contains("<w:instrText")
@@ -2219,5 +2858,25 @@ fn a_field_whose_result_changes_beside_a_nested_field_is_compared() {
         let mut doc = redline(doc_with_body(&original), &doc_with_body(&edited));
         assert_eq!(texts(&accepted(&mut doc)), texts(&doc_with_body(&edited)));
         assert_eq!(texts(&rejected(&mut doc)), texts(&doc_with_body(&original)));
+    }
+}
+
+#[test]
+fn a_simple_field_nested_through_a_control_in_another_keeps_a_refusal_when_its_paragraph_goes_whole()
+ {
+    // Nested through an inline content control, it would stay a simple
+    // field inside the deletion, whose text Word requires as deleted text.
+    let nested = r#"<w:p><w:fldSimple w:instr=" IF 1 = 1 "><w:sdt><w:sdtPr/><w:sdtContent><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:sdtContent></w:sdt></w:fldSimple></w:p>"#;
+    let after = plain("After.");
+    for (original, edited) in [
+        (after.clone(), format!("{nested}{after}")),
+        (format!("{nested}{after}"), after.clone()),
+    ] {
+        let mut doc = doc_with_body(&original);
+        let error = doc
+            .compare(&doc_with_body(&edited), AUTHOR, DATE)
+            .expect_err("refused");
+        assert!(error.to_string().contains("simple field nested"), "{error}");
+        assert!(doc.revisions().is_empty());
     }
 }

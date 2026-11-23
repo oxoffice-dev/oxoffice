@@ -430,6 +430,25 @@ pub(crate) fn prepare_fonts(
     Ok(prepared)
 }
 
+/// The `CFF ` table of a font subset with CFF outlines (an `OTTO` font), or
+/// `None` for TrueType outlines. Its glyphs are CID-keyed, a glyph's CID its
+/// glyph id in the subset, so it embeds as a `CIDFontType0C` program.
+pub(crate) fn cff_table(subset: &[u8]) -> Option<&[u8]> {
+    if subset.get(..4)? != b"OTTO" {
+        return None;
+    }
+    let tables = u16::from_be_bytes(subset.get(4..6)?.try_into().ok()?);
+    (0..usize::from(tables)).find_map(|index| {
+        let record = subset.get(12 + 16 * index..28 + 16 * index)?;
+        if &record[..4] != b"CFF " {
+            return None;
+        }
+        let offset = u32::from_be_bytes(record[8..12].try_into().ok()?) as usize;
+        let length = u32::from_be_bytes(record[12..16].try_into().ok()?) as usize;
+        subset.get(offset..offset.checked_add(length)?)
+    })
+}
+
 /// Subset a font and prepare it for PDF embedding.
 pub(crate) fn prepare_font(font_data: &FontData, usage: &mut FontUsage) -> Option<PreparedFont> {
     // Subset the font
