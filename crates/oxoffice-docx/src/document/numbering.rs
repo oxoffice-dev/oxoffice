@@ -744,7 +744,19 @@ impl Document {
             _ => unreachable!("the paragraph was just appended"),
         }
     }
-    /// Restart one current direct-body numbered paragraph without changing its peers.
+    /// Restart the list a direct body paragraph shows at `start`, as Word's
+    /// "Restart at 1": the paragraph and the rest of its list at its level
+    /// move to a new instance, a copy of the old one whose level starts at
+    /// `start`.
+    ///
+    /// The paragraph's numbering is the one it shows: its own `w:numPr`, else
+    /// its style chain's, as [`Self::effective_paragraph_properties`] reads
+    /// it. The rest of its list is the body paragraphs after it, in tables
+    /// and content controls too, that show the same instance at its level or
+    /// deeper, up to the first one above its level; each
+    /// keeps its level and gets a direct `w:numPr`, so an item numbered
+    /// through its style keeps its style. Earlier items, and the items of
+    /// other stories, keep the old instance. Returns the new instance's id.
     pub fn restart_numbering(&mut self, paragraph: usize, start: u32) -> Result<u32> {
         if self.content_index_of_paragraph(paragraph).is_none() {
             return Err(Error::Other(
@@ -752,22 +764,12 @@ impl Document {
             ));
         }
         self.validate_numbering_graph()?;
-        let properties = self
+        let target = self
             .paragraph(paragraph)
-            .and_then(|p| p.inner.properties.as_ref())
-            .ok_or_else(|| Error::Other("paragraph has no explicit numbering".into()))?;
-        // A `w:numId` without `w:ilvl` numbers at the level its style chain
-        // gives, else 0, as the layout reads it.
-        let (id, level) = properties
-            .num_id
-            .map(|id| {
-                let level = properties.num_ilvl.unwrap_or_else(|| {
-                    super::numbering_types::effective_numbering_reference(&self.styles, properties)
-                        .map_or(0, |(_, level)| level)
-                });
-                (id, level)
-            })
-            .ok_or_else(|| Error::Other("paragraph has no explicit numbering level".into()))?;
+            .expect("a direct body paragraph was found above")
+            .inner;
+        let (id, level) = shown_numbering(&self.styles, target)
+            .ok_or_else(|| Error::Other("paragraph is not numbered".into()))?;
         if level > 8
             || self
                 .effective_numbering_format(id, level)
@@ -804,10 +806,32 @@ impl Document {
         let mut candidate = self.clone_for_staging();
         let new_id =
             candidate.add_numbering_instance(instance.definition_id, &instance.level_overrides)?;
-        candidate
-            .paragraph_mut(paragraph)
-            .ok_or_else(|| Error::Other("numbering paragraph disappeared".into()))?
-            .set_numbering(new_id, level);
+        candidate.invalidate_layout();
+        let target: *const CT_P = candidate
+            .paragraph(paragraph)
+            .expect("the staged copy holds the paragraph")
+            .inner;
+        let styles = &candidate.styles;
+        // The rest of the list at the restarted level: a later item of the
+        // instance above that level ends it, so that the copied overrides of
+        // the levels above never apply to items that did not have them.
+        let (mut started, mut ended) = (false, false);
+        walkers::visit_body_paragraphs_mut(&mut candidate.document.body.content, &mut |item| {
+            let first = std::ptr::eq(item, target);
+            started |= first;
+            if !started || ended {
+                return;
+            }
+            if let Some((item_id, item_level)) = shown_numbering(styles, item)
+                && item_id == id
+            {
+                if item_level < level && !first {
+                    ended = true;
+                    return;
+                }
+                Paragraph { inner: item }.set_numbering(new_id, item_level);
+            }
+        });
         candidate.validate_numbering_graph()?;
         self.commit_staged_mutation(candidate);
         Ok(new_id)
@@ -1908,6 +1932,16 @@ impl Document {
         self.commit_staged_mutation(candidate);
         Ok(())
     }
+}
+
+/// The `(numId, level)` a paragraph shows: its own `w:numPr`, else its style
+/// chain's, as layout reads it; `None` when it is not a list item.
+fn shown_numbering(styles: &CT_Styles, paragraph: &CT_P) -> Option<(u32, u32)> {
+    let direct = CT_PPr::default();
+    super::numbering_types::effective_numbering_reference(
+        styles,
+        paragraph.properties.as_ref().unwrap_or(&direct),
+    )
 }
 
 /// The values of the `numId` elements in raw XML read without its namespace

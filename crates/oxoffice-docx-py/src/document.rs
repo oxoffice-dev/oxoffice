@@ -56,7 +56,7 @@ pub use conversions::{
 };
 use conversions::{html_diagnostics, read_import_text};
 pub use fonts::{PyEmbeddedFont, PyFontDefinition, PyFontEmbeddingLicense};
-use fonts::{checked_font_input, checked_font_kind, checked_font_license, collect_caller_fonts};
+use fonts::{checked_font_kind, collect_caller_fonts, descriptive_font, embedded_face};
 pub use forms::{
     PyFormFieldAssignment, PyFormFieldRule, PyFormFieldTarget, PyFormFieldValue, PyFormResetValue,
     PyFormValidationIssue, PyLegacyFormField, PyLegacyFormFieldDefinition,

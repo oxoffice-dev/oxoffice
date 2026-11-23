@@ -152,6 +152,163 @@ fn restarting_while_adding_starts_a_new_count_that_later_items_follow() {
 }
 
 #[test]
+fn restarting_an_item_numbered_through_its_style_moves_the_rest_of_its_list() {
+    // Word's List Number items take their numbering from the style alone.
+    let mut doc = corpus_doc("word/report.docx");
+    let hire = texts(&doc)
+        .iter()
+        .position(|text| text.starts_with("Hire two"))
+        .unwrap();
+    let style_numbered = doc.paragraph(hire).unwrap().numbering();
+    assert_eq!(style_numbered, None, "no direct numbering");
+    assert_eq!(&markers(&doc)[hire..hire + 3], ["1.", "2.", "3."]);
+
+    let new = doc.restart_numbering(hire + 1, 1).unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(&markers(&doc)[hire..hire + 3], ["1.", "1.", "2."]);
+    assert_eq!(doc.paragraph(hire).unwrap().numbering(), None);
+    for item in [hire + 1, hire + 2] {
+        let paragraph = doc.paragraph(item).unwrap();
+        assert_eq!(paragraph.numbering(), Some((new, 0)), "item {item}");
+        assert_eq!(paragraph.style_id(), Some("Listenumros"), "item {item}");
+    }
+
+    // A numbered item added later goes on with the restarted count.
+    doc.add_numbered_list_item("Hire a third", 0);
+    let last = doc.paragraph_count() - 1;
+    assert_eq!(doc.paragraph(last).unwrap().numbering(), Some((new, 0)));
+    assert_eq!(markers(&doc)[last], "3.");
+}
+
+#[test]
+fn restarting_an_item_moves_every_later_item_of_its_list_at_every_level() {
+    let (mut doc, id) = single_list(&[
+        ListLevel::decimal().level_text("%1."),
+        ListLevel::decimal().level_text("%1.%2."),
+    ]);
+    let other = doc
+        .add_numbering_instance(definition_of(&doc, id), &[])
+        .unwrap();
+    for (text, level) in [("one", 0), ("one a", 1), ("two", 0), ("two a", 1)] {
+        doc.add_paragraph(text).numbering(id, level);
+    }
+    doc.add_table(1, 1)
+        .cell(0, 0)
+        .unwrap()
+        .add_paragraph("in a table")
+        .numbering(id, 0);
+    for (text, list) in [("in a control", id), ("three", id), ("another list", other)] {
+        doc.add_paragraph(text).numbering(list, 0);
+    }
+    // "in a control" as Word wraps a selection in a rich text control.
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    let text = xml.find(">in a control<").unwrap();
+    let start = xml[..text].rfind("<w:p>").unwrap();
+    let end = text + xml[text..].find("</w:p>").unwrap() + "</w:p>".len();
+    let xml = format!(
+        "{}<w:sdt><w:sdtPr><w:id w:val=\"5\"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>{}",
+        &xml[..start],
+        &xml[start..end],
+        &xml[end..]
+    );
+    package.set_part(&main, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    assert_eq!(
+        texts(&doc),
+        [
+            "one",
+            "one a",
+            "two",
+            "two a",
+            "in a control",
+            "three",
+            "another list"
+        ]
+    );
+
+    let new = doc.restart_numbering(2, 1).unwrap();
+    let doc = reopen(&mut doc);
+    let numbering: Vec<_> = (0..doc.paragraph_count())
+        .map(|index| doc.paragraph(index).unwrap().numbering())
+        .collect();
+    assert_eq!(
+        numbering,
+        [
+            Some((id, 0)),
+            Some((id, 1)),
+            Some((new, 0)),
+            Some((new, 1)),
+            Some((new, 0)),
+            Some((new, 0)),
+            Some((other, 0)),
+        ]
+    );
+    let in_table = doc
+        .table(0)
+        .unwrap()
+        .cell(0, 0)
+        .unwrap()
+        .paragraphs()
+        .find(|paragraph| paragraph.text() == "in a table")
+        .unwrap()
+        .numbering();
+    assert_eq!(in_table, Some((new, 0)));
+    assert_eq!(markers(&doc)[..4], ["1.", "1.1.", "1.", "1.1."]);
+    assert_eq!(markers(&doc)[5], "4.");
+}
+
+#[test]
+fn restarting_a_sub_item_moves_only_the_rest_of_its_sublist() {
+    // The instance restarts level 0, as Word's own restarted lists and
+    // `add_numbered_list_item(restart=True)` write it.
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[
+            ListLevel::decimal().level_text("%1."),
+            ListLevel::decimal().level_text("%2."),
+        ])
+        .unwrap();
+    let id = doc
+        .add_numbering_instance(definition, &[NumberingLevelOverride::new(0).start(1)])
+        .unwrap();
+    for (text, level) in [
+        ("one", 0),
+        ("one a", 1),
+        ("one b", 1),
+        ("one c", 1),
+        ("two", 0),
+        ("two a", 1),
+        ("two b", 1),
+    ] {
+        doc.add_paragraph(text).numbering(id, level);
+    }
+    assert_eq!(markers(&doc), ["1.", "1.", "2.", "3.", "2.", "1.", "2."]);
+
+    let new = doc.restart_numbering(2, 5).unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(markers(&doc), ["1.", "1.", "5.", "6.", "2.", "1.", "2."]);
+    let numbering: Vec<_> = (0..doc.paragraph_count())
+        .map(|index| doc.paragraph(index).unwrap().numbering())
+        .collect();
+    assert_eq!(
+        numbering,
+        [
+            Some((id, 0)),
+            Some((id, 1)),
+            Some((new, 1)),
+            Some((new, 1)),
+            Some((id, 0)),
+            Some((id, 1)),
+            Some((id, 1)),
+        ]
+    );
+}
+
+#[test]
 fn restart_numbering_refuses_bullets_plain_paragraphs_and_missing_ones() {
     let mut doc = Document::new();
     doc.add_bullet_list_item("bullet", 0);
@@ -159,7 +316,7 @@ fn restart_numbering_refuses_bullets_plain_paragraphs_and_missing_ones() {
     let before = doc.to_bytes().unwrap();
     for (paragraph, message) in [
         (0, "numbered non-bullet level"),
-        (1, "no explicit numbering"),
+        (1, "is not numbered"),
         (5, "direct body paragraph"),
     ] {
         let error = doc.restart_numbering(paragraph, 1).unwrap_err().to_string();

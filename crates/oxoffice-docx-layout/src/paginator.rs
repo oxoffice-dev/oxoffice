@@ -1892,15 +1892,11 @@ fn paginate_pass_from<B: LayoutBlockLike>(
 
         pager.select_empty_page_member();
         if let Some(para) = block.paragraph() {
-            // Record heading outline entry before rendering
-            if let (Some(level), Some(title)) = (para.heading_level, &para.heading_text) {
-                pager.outlines.push(OutlineEntry {
-                    title: title.clone(),
-                    level,
-                    page_index: pager.page_number - 1,
-                    y_position: pager.geometry.margin_top + pager.cursor_y,
-                });
-            }
+            // The entry is recorded where the paragraph's first line lands.
+            pager.pending_outline = para
+                .heading_level
+                .zip(para.heading_text.clone())
+                .map(|(level, title)| (title, level));
             paginate_paragraph(para, block.body_index(), block_idx, blocks, &mut pager);
             if pager.stopped_at.is_some() {
                 break;
@@ -2204,6 +2200,9 @@ fn paint_flowed_table_row(
         draw_bottom_border,
     ));
     pager.cursor_y += row.height;
+    // A row is ink like a line: notes beneath the text and endnotes that
+    // follow the body start below it, and vertical alignment measures it.
+    pager.ink_bottom = pager.cursor_y;
     pager.previous_space_after = 0.0;
     pager.mark_content();
 }
@@ -2324,6 +2323,9 @@ struct Pager<'a> {
     header_footer_semantics: Option<&'a HeaderFooterSemantics>,
     has_content_flag: bool,
     outlines: Vec<OutlineEntry>,
+    /// The heading whose outline entry waits for the page and height its
+    /// first line lands on, which keep with next or widow control may move.
+    pending_outline: Option<(String, u32)>,
     /// Whether the current page is the first page of the section.
     is_first_page: bool,
     /// Whether this section uses different first page header/footer.
@@ -2437,6 +2439,7 @@ impl<'a> Pager<'a> {
             member_first_pages: HashMap::new(),
             has_content_flag: false,
             outlines: Vec::new(),
+            pending_outline: None,
             is_first_page,
             title_pg,
             footnotes_beneath_text,
@@ -2884,6 +2887,19 @@ impl<'a> Pager<'a> {
             }
         }
         self.has_content_flag = true;
+    }
+
+    /// Record the waiting heading's outline entry at the cursor, which is
+    /// where the paragraph that carries it starts.
+    fn record_pending_outline(&mut self) {
+        if let Some((title, level)) = self.pending_outline.take() {
+            self.outlines.push(OutlineEntry {
+                title,
+                level,
+                page_index: self.page_number - 1,
+                y_position: self.geometry.margin_top + self.cursor_y,
+            });
+        }
     }
 
     fn record_body_fragment(&mut self, body_index: usize, x: f64, y: f64, width: f64, height: f64) {
@@ -5583,6 +5599,7 @@ fn paginate_paragraph<B: LayoutBlockLike>(
     } else {
         0.0
     };
+    pager.record_pending_outline();
     pager.cursor_y += pager.space_before(para.space_before);
 
     if let Some(body_index) = body_index {
@@ -5730,6 +5747,7 @@ fn render_para_split(
     } else {
         0.0
     };
+    pager.record_pending_outline();
     pager.cursor_y += space_before;
     // A split paragraph anchors its drawings to where it starts.
     pager.place_anchored(
@@ -6623,7 +6641,25 @@ fn render_paragraph_lines(
                     _accumulated_extra += segment_extra;
                     x += effective_width;
                 }
-                LineItem::Tab { width, leader, .. } => {
+                LineItem::Tab {
+                    width,
+                    leader,
+                    fill,
+                    ..
+                } => {
+                    // A tab in a filled run is filled across its width,
+                    // like the run's text.
+                    if let Some(color) = fill {
+                        elements.push(PositionedElement::FilledRect {
+                            rect: Rect {
+                                x,
+                                y: geometry.margin_top + y,
+                                width: *width,
+                                height: line.height,
+                            },
+                            color: *color,
+                        });
+                    }
                     mark_item(
                         &mut elements,
                         enclosed_tab_mark(&line.items, visual_item),
@@ -7325,7 +7361,7 @@ fn logical_tab_ranks(
         .iter()
         .enumerate()
         .filter_map(|(index, item)| {
-            matches!(item, oxoffice_layout::InlineItem::Tab).then_some(index)
+            matches!(item, oxoffice_layout::InlineItem::Tab { .. }).then_some(index)
         })
         .collect::<Vec<_>>();
     if logical_tabs.len() < tabs.len() {

@@ -421,6 +421,70 @@ pub(super) fn built_in_character_style_id(
         .map(|style| style.style_id.clone())
 }
 
+/// The built-in character styles that [`crate::Paragraph`]'s adders name
+/// by their English id, without the document's styles at hand, with their
+/// built-in names.
+const SESSION_RUN_STYLES: [(&str, &str); 3] = [
+    ("Hyperlink", "Hyperlink"),
+    ("FootnoteReference", "footnote reference"),
+    ("EndnoteReference", "endnote reference"),
+];
+
+/// The run style ids to rename on a localized file: each id of
+/// [`SESSION_RUN_STYLES`] that `styles` does not define, with the id of the
+/// character style that carries its built-in name (`Lienhypertexte` for
+/// `Hyperlink` in a French Word file). Empty on most files.
+pub(super) fn localized_run_style_ids(styles: &CT_Styles) -> Vec<(&'static str, String)> {
+    SESSION_RUN_STYLES
+        .iter()
+        .filter(|(id, _)| styles.get_by_id(id).is_none())
+        .filter_map(|(id, name)| {
+            built_in_character_style_id(styles, id, name).map(|localized| (*id, localized))
+        })
+        .collect()
+}
+
+/// Whether a direct run or the mark of `paragraph` names an id `renames`
+/// renames.
+pub(super) fn names_renamed_run_style(paragraph: &CT_P, renames: &[(&str, String)]) -> bool {
+    let renamed = |properties: Option<&CT_RPr>| {
+        properties
+            .and_then(|properties| properties.style_id.as_deref())
+            .is_some_and(|id| renames.iter().any(|(from, _)| *from == id))
+    };
+    paragraph
+        .runs
+        .iter()
+        .any(|run| renamed(run.properties.as_ref()))
+        || renamed(
+            paragraph
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.rpr.as_ref()),
+        )
+}
+
+/// Give the direct runs and the mark of `paragraph` that name an id of
+/// `renames` its localized id.
+pub(super) fn rename_run_styles(paragraph: &mut CT_P, renames: &[(&str, String)]) {
+    let rename = |properties: Option<&mut CT_RPr>| {
+        if let Some(id) = properties.and_then(|properties| properties.style_id.as_mut())
+            && let Some((_, localized)) = renames.iter().find(|(from, _)| from == id)
+        {
+            *id = localized.clone();
+        }
+    };
+    for run in &mut paragraph.runs {
+        rename(run.properties.as_mut());
+    }
+    rename(
+        paragraph
+            .properties
+            .as_mut()
+            .and_then(|properties| properties.rpr.as_mut()),
+    );
+}
+
 pub(super) fn serialized_note_fragment(
     note: &oxoffice_docx_oxml::footnotes::CT_Footnote,
     kind: StoryKind,

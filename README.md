@@ -120,7 +120,7 @@ refused at open when one of its parts holds a control character.
 | --- | :---: | :---: | :---: | --- |
 | Text, runs, find and replace | ⚠️ | ⚠️ | ✅ | counted replacements that keep formatting and refuse text they cannot reach; non-breaking hyphens and positional tabs are not read yet |
 | Styles | ✅ | ✅ | ✅ | |
-| Lists and numbering | ✅ | ⚠️ | ✅ | a list numbered through its style cannot be restarted |
+| Lists and numbering | ✅ | ✅ | ✅ | |
 | Tables | ✅ | ✅ | ✅ | merges, borders, shading, nested tables |
 | Sections, headers and footers | ✅ | ⚠️ | ✅ | the document-wide header or footer setter reaches the last section only |
 | Footnotes and endnotes | ✅ | ⚠️ | ✅ | removing a paragraph leaves its notes behind, and removing a note leaves its custom mark |
