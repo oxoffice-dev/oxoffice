@@ -684,10 +684,17 @@ orchestration of run FBCF decided, per place, what becomes a field:
 - **Headers, footers and rotations, as built.** Headers and footers join
   the inventory after the body, only the variants a page can draw (a first
   page header with `w:titlePg`, an even one when the section has one), and a
-  part is walked once by its relationship. Their paragraphs draw marks on
+  part is walked once by its relationship. A part no page draws, as the
+  default header of a one-page document with a first page header, says
+  nothing, but its controls keep their names, which stay a function of the
+  document. Their paragraphs draw marks on
   the uncached path; a part holding a control is never cached. A field of a
   header or footer may draw on several pages: the checks for columns and
-  wrapped lines run page by page, and the writer gives a field with widgets
+  wrapped lines run page by page (a multiline field when any page wraps
+  it), and the check for text under a widget runs in each drawing space,
+  a group's own coordinates included. A signature drawn on several pages
+  stays static, with a diagnostic: a signer expects one widget. The writer
+  gives a field with widgets
   on several pages a parent with `/Kids`, one widget per page, each with
   its own appearance, `/Form` element and parent tree key. Every widget's
   `/MK /R` comes from the transform its fragment is drawn through, rounded to

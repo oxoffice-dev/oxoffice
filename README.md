@@ -173,7 +173,7 @@ pdf = Document("form.docx").to_pdf(fillable_forms=True)
 - **Names.** A field takes the control's tag, else its title, or the legacy field's name. A `.` becomes `_`, and a name used again takes `_2`, `_3`... The `signature` tag ignores case.
 - **Values.** A control showing its placeholder exports empty, with the placeholder as the field's tooltip.
 - **Notes, headers, footers and text boxes.** Controls in footnotes and endnotes become fields too, named after those of the body and of the headers and footers: footnotes first, then endnotes, in the order of their references. A control in a header or footer is one field with a widget on each page that draws it, so a value typed once shows on every page. Controls in a floating text box become fields where the box is anchored. In a rotated cell, a vertical section or a text box turned by a right angle, the widget turns with its text.
-- **What stays static.** Controls split across pages or columns stay static, with a diagnostic. So do controls in stacked upright text, in a text box turned by another angle, one with vertical text, a text box inside another or a table inside a text box, or around a floating picture. The controls of an inline text box are not fields yet, and say nothing. See `oxoffice limitations`.
+- **What stays static.** Controls split across pages or columns stay static, with a diagnostic. So do controls in stacked upright text, in a text box turned by another angle, one with vertical text, a text box inside another or a table inside a text box, or around a floating picture, and a signature in a header or footer that repeats on several pages. The controls of an inline text box are not fields yet, and say nothing. See `oxoffice limitations`.
 
 ## 🧭 How the library is meant to be used
 

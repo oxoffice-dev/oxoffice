@@ -167,6 +167,23 @@ fn controls_in_headers_and_footers_become_one_field_with_a_widget_on_each_page()
                 );
             }
         }
+        // Tagged output: each widget its own parent tree key.
+        let keys: std::collections::BTreeSet<i64> = exported[1..]
+            .iter()
+            .flat_map(|(_, field)| widgets(&pdf, field))
+            .filter_map(|kid| {
+                kid.get(b"StructParent")
+                    .ok()
+                    .map(|key| key.as_i64().unwrap())
+            })
+            .collect();
+        if pdf.catalog().unwrap().get(b"StructTreeRoot").is_ok() {
+            assert_eq!(keys.len(), 2 * pages.len(), "one key per widget");
+            assert!(
+                exported[1].1.get(b"StructParent").is_err(),
+                "the parent is no widget"
+            );
+        }
         assert_eq!(text(exported[2].1.get(b"V").unwrap()), "REF-1");
         assert_eq!(exported[1].1.get(b"V").unwrap().as_name().unwrap(), b"Yes");
     }
@@ -195,6 +212,170 @@ fn a_control_in_a_text_box_of_a_header_is_a_field_on_each_page() {
     assert!(!page_text(&layout.layout.pages).contains("Draft"));
     let (pdf, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
     assert_eq!(widgets(&pdf, &exported[0].1).len(), 2);
+}
+
+/// A document of `pages` pages with a default, a first page and an even
+/// header, each holding a control tagged `ref`.
+fn doc_with_header_variants(pages: usize) -> Document {
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let mut doc =
+        doc_with_body(&vec!["<w:p><w:r><w:t>Page</w:t></w:r></w:p>"; pages].join(page_break));
+    doc.set_different_first_page(true);
+    doc.set_even_and_odd_headers(true).unwrap();
+    for (variant, value) in [
+        (oxoffice_docx::HdrFtrType::Default, "Odd"),
+        (oxoffice_docx::HdrFtrType::First, "First"),
+        (oxoffice_docx::HdrFtrType::Even, "Even"),
+    ] {
+        doc.set_raw_header_with_images(
+            format!(
+                r#"<w:hdr {W_NS}><w:p>{}</w:p></w:hdr>"#,
+                text_control("ref", value)
+            )
+            .into_bytes(),
+            &[],
+            variant,
+        );
+    }
+    doc
+}
+
+#[test]
+fn header_variants_are_named_in_order_and_one_no_page_draws_says_nothing() {
+    // Names come from the document: default, first page, even page.
+    let expected = [
+        ("ref".to_owned(), "Odd".to_owned()),
+        ("ref_2".to_owned(), "First".to_owned()),
+        ("ref_3".to_owned(), "Even".to_owned()),
+    ];
+    for (pages, exported) in [
+        (1, vec!["ref_2"]),
+        (2, vec!["ref_2", "ref_3"]),
+        (3, vec!["ref", "ref_2", "ref_3"]),
+    ] {
+        let doc = doc_with_header_variants(pages);
+        assert_eq!(named_values(&doc), expected, "{pages} pages");
+        let layout = doc.layout_with_options(fillable()).unwrap();
+        assert_eq!(layout.layout.pages.len(), pages);
+        assert!(
+            layout
+                .layout
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.message.contains("ref")),
+            "{pages} pages: {:?}",
+            layout.layout.diagnostics
+        );
+        let (pdf, fields) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+        let names: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, exported, "{pages} pages");
+        for (name, field) in &fields {
+            assert_eq!(widgets(&pdf, field).len(), 1, "{pages} pages: {name}");
+        }
+    }
+}
+
+#[test]
+fn a_signature_in_a_header_stays_static_when_it_repeats() {
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let mut doc = doc_with_body(&format!(
+        "<w:p><w:r><w:t>First</w:t></w:r></w:p>{page_break}<w:p><w:r><w:t>Second</w:t></w:r></w:p>"
+    ));
+    doc.set_raw_header_with_images(
+        format!(
+            r#"<w:hdr {W_NS}><w:p>{}</w:p></w:hdr>"#,
+            text_control("signature:approver", "Sign here")
+        )
+        .into_bytes(),
+        &[],
+        oxoffice_docx::HdrFtrType::Default,
+    );
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(fragment_texts(&layout.layout.pages).is_empty());
+    let said = diagnostics_about(&layout.layout, "signature:approver");
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].contains("a signature cannot repeat on every page"),
+        "{said:?}"
+    );
+}
+
+/// A rotated cell's widget is measured in the cell's own coordinates: text
+/// beside a wrapped control there sits under its box, and says so.
+#[test]
+fn an_inline_control_that_wraps_beside_text_in_a_rotated_cell_says_so() {
+    let words = "wrapping words ".repeat(6);
+    let doc = doc_with_body(&cell_with_direction(
+        "btLr",
+        &format!(
+            r#"<w:r><w:t xml:space="preserve">Label: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="beside"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">{words}</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> after</w:t></w:r>"#
+        ),
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(matches!(
+        layout.layout.form_fields[0].kind,
+        FormFieldKind::Text {
+            multiline: true,
+            ..
+        }
+    ));
+    let said = diagnostics_about(&layout.layout, "beside");
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("sits under its box"), "{said:?}");
+}
+
+#[test]
+fn a_shared_header_field_wrapping_only_in_a_narrower_later_section_is_multiline() {
+    let mut doc = doc_with_body(
+        "<w:p><w:r><w:t>Wide</w:t></w:r></w:p><w:p><w:r><w:t>Narrow</w:t></w:r></w:p>",
+    );
+    doc.set_raw_header_with_images(
+        format!(
+            r#"<w:hdr {W_NS}><w:p>{}</w:p></w:hdr>"#,
+            text_control(
+                "title",
+                "A header value that wraps in a narrow section only"
+            )
+        )
+        .into_bytes(),
+        &[],
+        oxoffice_docx::HdrFtrType::Default,
+    );
+    // The first section keeps the page's margins; the last one, sharing
+    // its header, has wide margins.
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let start = xml.rfind("<w:sectPr").unwrap();
+    let end = xml.rfind("</w:sectPr>").unwrap() + "</w:sectPr>".len();
+    let section = xml[start..end].to_owned();
+    let margins = regex::Regex::new(r#"w:(left|right)="\d+""#).unwrap();
+    let narrow = margins.replace_all(&section, r#"w:$1="4000""#).into_owned();
+    assert_ne!(narrow, section);
+    let second = xml.find("<w:p><w:r><w:t>Narrow</w:t>").unwrap();
+    let xml = format!(
+        "{}<w:p><w:pPr>{section}</w:pPr></w:p>{}{narrow}{}",
+        &xml[..second],
+        &xml[second..start],
+        &xml[end..]
+    );
+    package.set_part(&part, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert_eq!(field_names(&layout.layout), ["title"]);
+    assert!(layout.layout.pages.len() >= 2);
+    assert!(matches!(
+        layout.layout.form_fields[0].kind,
+        FormFieldKind::Text {
+            multiline: true,
+            ..
+        }
+    ));
 }
 
 #[test]

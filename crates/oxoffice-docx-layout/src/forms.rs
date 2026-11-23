@@ -1920,6 +1920,58 @@ fn gather(
     }
 }
 
+/// The fields of these elements under whose widget other text lies, one
+/// drawing space at a time: a group's children, a rotated cell's or a text
+/// box's, are measured in the group's own coordinates, as its fragments are.
+/// Several boxes make one widget over their union: wrapped lines, or pieces
+/// that bidi reordering set apart on one line. An empty control's box
+/// reaches past its anchor, over what follows it.
+fn covered_fields(
+    elements: &[oxoffice_layout::PositionedElement],
+    inked: &std::collections::HashSet<u32>,
+    split: &HashMap<u32, &str>,
+    covering: &mut std::collections::BTreeSet<u32>,
+) {
+    use oxoffice_layout::PositionedElement as E;
+    fn scope<'e>(
+        elements: &'e [E],
+        boxes: &mut std::collections::BTreeMap<u32, Vec<oxoffice_layout::Rect>>,
+        groups: &mut Vec<&'e [E]>,
+    ) {
+        for element in elements {
+            match element {
+                E::FormField(fragment) => boxes
+                    .entry(fragment.field.0)
+                    .or_default()
+                    .push(fragment.rect),
+                E::MarkedContent { children, .. } => scope(children, boxes, groups),
+                E::Group(group) => groups.push(&group.children),
+                _ => {}
+            }
+        }
+    }
+    let mut boxes = std::collections::BTreeMap::new();
+    let mut groups = Vec::new();
+    scope(elements, &mut boxes, &mut groups);
+    let mut extents = None;
+    for (field, boxes) in boxes {
+        if split.contains_key(&field) || (boxes.len() < 2 && inked.contains(&field)) {
+            continue;
+        }
+        let union = union_rect(&boxes);
+        if extents
+            .get_or_insert_with(|| page_text_extents(elements))
+            .iter()
+            .any(|extent| starts_inside(union, *extent))
+        {
+            covering.insert(field);
+        }
+    }
+    for group in groups {
+        covered_fields(group, inked, split, covering);
+    }
+}
+
 /// The pages a field draws on, in order, each once.
 fn pages_of(places: &[(usize, oxoffice_layout::Rect)]) -> Vec<usize> {
     let mut pages: Vec<usize> = places.iter().map(|(page, _)| *page).collect();
@@ -2105,8 +2157,12 @@ pub(crate) fn number_form_fields(
                     .windows(2)
                     .any(|pair| pair[1].1.y + pair[1].1.height <= pair[0].1.y + 0.01)
             });
-            if !repeats && places.iter().any(|(page, _)| *page != places[0].0) {
+            let pages = pages_of(places).len();
+            if !repeats && pages > 1 {
                 Some((*field, "it is split across pages"))
+            } else if signature && pages > 1 {
+                // One signature signs one place: signers expect one widget.
+                Some((*field, "a signature cannot repeat on every page"))
             } else if columns {
                 Some((*field, "it is split across columns"))
             } else if !gathered.contains(field) && !signature {
@@ -2122,44 +2178,38 @@ pub(crate) fn number_form_fields(
             flatten_fields(&mut std::sync::Arc::make_mut(page).elements, &split);
         }
     }
-    // How many lines each field's widget spans, and the fields under whose
-    // widget other text of the page lies: text before a wrapped inline
-    // control on its first line, after it on its last, or between pieces.
+    // How many lines each field's widget spans, the most any page draws: a
+    // header shared by sections of other widths may wrap otherwise there.
     let mut lines_of: HashMap<u32, usize> = HashMap::new();
-    let mut covering: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
     for (field, places) in &placed {
         if split.contains_key(field) {
             continue;
         }
-        // Every page of a header field draws the same lines: the first says.
-        let mut boxes: Vec<oxoffice_layout::Rect> = places
-            .iter()
-            .filter(|(page, _)| *page == places[0].0)
-            .map(|(_, rect)| *rect)
-            .collect();
-        boxes.sort_by(|a, b| a.y.total_cmp(&b.y));
-        let mut lines = 0;
-        let mut bottom = f64::NEG_INFINITY;
-        for rect in &boxes {
-            if rect.y >= bottom - 0.01 {
-                lines += 1;
-            }
-            bottom = bottom.max(rect.y + rect.height);
-        }
-        lines_of.insert(*field, lines);
-        // Several boxes make one widget over their union: wrapped lines, or
-        // pieces that bidi reordering set apart on one line. An empty
-        // control's box reaches past its anchor, over what follows it.
-        if boxes.len() > 1 || !inked.contains(field) {
-            let union = union_rect(&boxes);
-            let page = &result.pages[places[0].0];
-            if page_text_extents(&page.elements)
+        for page in pages_of(places) {
+            let mut boxes: Vec<oxoffice_layout::Rect> = places
                 .iter()
-                .any(|extent| starts_inside(union, *extent))
-            {
-                covering.insert(*field);
+                .filter(|(at, _)| *at == page)
+                .map(|(_, rect)| *rect)
+                .collect();
+            boxes.sort_by(|a, b| a.y.total_cmp(&b.y));
+            let mut lines = 0;
+            let mut bottom = f64::NEG_INFINITY;
+            for rect in &boxes {
+                if rect.y >= bottom - 0.01 {
+                    lines += 1;
+                }
+                bottom = bottom.max(rect.y + rect.height);
             }
+            let most = lines_of.entry(*field).or_default();
+            *most = (*most).max(lines);
         }
+    }
+    // The fields under whose widget other text lies, on any page: text
+    // before a wrapped inline control on its first line, after it on its
+    // last, or between pieces.
+    let mut covering: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    for page in &result.pages {
+        covered_fields(&page.elements, &inked, &split, &mut covering);
     }
 
     let mut fields: Vec<FormField> = inventory
@@ -2213,7 +2263,10 @@ pub(crate) fn number_form_fields(
         });
     }
     for (index, entry) in inventory.entries.iter().enumerate() {
-        if drawn.contains(&index) {
+        // A header or footer part no page draws, as the default header of a
+        // one-page document with a first page header, has nothing to say:
+        // its story is not drawn.
+        if drawn.contains(&index) || (entry.repeats && !placed.contains_key(&(index as u32))) {
             continue;
         }
         let reason = split
