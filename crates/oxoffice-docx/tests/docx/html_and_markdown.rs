@@ -1152,6 +1152,46 @@ fn an_odt_list_runs_on_through_a_bookmark_between_its_items() {
 }
 
 #[test]
+fn a_link_anchor_lands_at_its_bookmark_after_wrappers_and_across_a_deleted_mark() {
+    let doc = reopen(&mut doc_with_body(concat!(
+        r#"<w:p><w:hyperlink w:anchor="here"><w:r><w:t>here</w:t></w:r></w:hyperlink>"#,
+        r#"<w:hyperlink w:anchor="first"><w:r><w:t>first</w:t></w:r></w:hyperlink>"#,
+        r#"<w:hyperlink w:anchor="second"><w:r><w:t>second</w:t></w:r></w:hyperlink>"#,
+        r#"<w:hyperlink w:anchor="inside"><w:r><w:t>inside</w:t></w:r></w:hyperlink></w:p>"#,
+        // A smart tag and a simple field before the bookmark hold runs the
+        // exports write; a bookmark inside a custom XML element too.
+        r#"<w:p><w:r><w:t xml:space="preserve">A </w:t></w:r>"#,
+        r#"<w:smartTag w:uri="u" w:element="e"><w:r><w:t xml:space="preserve">B </w:t></w:r><w:r><w:t xml:space="preserve">C </w:t></w:r></w:smartTag>"#,
+        r#"<w:fldSimple w:instr=" DATE "><w:r><w:t xml:space="preserve">D </w:t></w:r></w:fldSimple>"#,
+        r#"<w:r><w:t xml:space="preserve">E </w:t></w:r><w:bookmarkStart w:id="1" w:name="here"/><w:r><w:t>HERE</w:t></w:r><w:bookmarkEnd w:id="1"/>"#,
+        r#"<w:customXml w:uri="u" w:element="x"><w:r><w:t xml:space="preserve"> F</w:t></w:r><w:bookmarkStart w:id="4" w:name="inside"/><w:r><w:t>INSIDE</w:t></w:r><w:bookmarkEnd w:id="4"/></w:customXml></w:p>"#,
+        // A paragraph whose mark is deleted joins the next one, and keeps
+        // its bookmark.
+        r#"<w:p><w:pPr><w:rPr><w:del w:id="9" w:author="Ada" w:date="2020-01-01T00:00:00Z"/></w:rPr></w:pPr>"#,
+        r#"<w:bookmarkStart w:id="2" w:name="first"/><w:r><w:t xml:space="preserve">FIRST </w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">Then </w:t></w:r><w:bookmarkStart w:id="3" w:name="second"/><w:r><w:t>SECOND</w:t></w:r><w:bookmarkEnd w:id="3"/></w:p>"#,
+    )));
+    let html = doc.to_html_fragment();
+    for expected in [
+        r#"A B C D E <a id="here"></a>HERE"#,
+        r#" F<a id="inside"></a>INSIDE"#,
+        r#"<a id="first"></a>FIRST Then <a id="second"></a>SECOND"#,
+        r##"<a href="#first">first</a>"##,
+    ] {
+        assert!(html.contains(expected), "{expected} in {html}");
+    }
+    let markdown = doc.to_markdown();
+    for expected in [
+        r#"A B C D E <a id="here"></a>HERE"#,
+        r#" F<a id="inside"></a>INSIDE"#,
+        r#"<a id="first"></a>FIRST Then <a id="second"></a>SECOND"#,
+        "[first](#first)",
+    ] {
+        assert!(markdown.contains(expected), "{expected} in {markdown}");
+    }
+}
+
+#[test]
 fn internal_links_reach_their_bookmark_in_both_exports() {
     let doc = reopen(&mut doc_with_body(concat!(
         r#"<w:p><w:bookmarkStart w:id="1" w:name="goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/>"#,
