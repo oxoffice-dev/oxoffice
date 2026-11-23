@@ -429,6 +429,9 @@ impl CT_RubyRun {
         let mut ruby = None;
         let mut properties = None;
         let mut empty_properties = false;
+        // The run's start tag ends at `open`, its end tag starts at `close`.
+        let mut open = 0;
+        let mut close = raw.len();
         let mut buffer = Vec::new();
         let mut prefixes = word_prefixes.to_vec();
         let mut depth = 0usize;
@@ -455,6 +458,7 @@ impl CT_RubyRun {
                             .push((std::str::from_utf8(local)?.to_owned(), value.into_owned()));
                     }
                     prefixes = word_prefixes_at(&element, &prefixes)?.into_owned();
+                    open = reader.buffer_position() as usize;
                     depth = 1;
                 }
                 Event::Start(element) => {
@@ -488,7 +492,12 @@ impl CT_RubyRun {
                         return Ok(None);
                     }
                 }
-                Event::End(_) => depth = depth.saturating_sub(1),
+                Event::End(_) => {
+                    if depth == 1 {
+                        close = start;
+                    }
+                    depth = depth.saturating_sub(1);
+                }
                 Event::Eof => break,
                 Event::Decl(_) | Event::Comment(_) | Event::PI(_) if depth == 1 => {
                     return Ok(None);
@@ -504,29 +513,12 @@ impl CT_RubyRun {
         // The properties read as a run's, through the run reader: the run
         // without its `w:ruby`. An empty `w:rPr` reads as none, as for a run.
         if let Some(range) = properties {
-            run.properties = Self::properties(raw, &prefixes, range)?;
+            let mut properties_run = raw[..open].to_vec();
+            properties_run.extend_from_slice(&raw[range]);
+            properties_run.extend_from_slice(&raw[close..]);
+            run.properties = parse_run_raw(&properties_run, word_prefixes, None)?.properties;
         }
         Ok(Some((run, ruby)))
-    }
-
-    /// The `w:rPr` at `range` of the run `raw`, read by the run reader.
-    fn properties(
-        raw: &[u8],
-        prefixes: &[String],
-        range: std::ops::Range<usize>,
-    ) -> Result<Option<CT_RPr>> {
-        let open = raw
-            .iter()
-            .position(|byte| *byte == b'>')
-            .map_or(raw.len(), |at| at + 1);
-        let close = raw
-            .iter()
-            .rposition(|byte| *byte == b'<')
-            .unwrap_or(raw.len());
-        let mut run = raw[..open].to_vec();
-        run.extend_from_slice(&raw[range]);
-        run.extend_from_slice(&raw[close..]);
-        Ok(parse_run_raw(&run, prefixes, None)?.properties)
     }
 }
 

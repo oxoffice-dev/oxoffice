@@ -1067,6 +1067,63 @@ fn a_ruby_in_a_run_with_the_empty_properties_libreoffice_writes_reads_as_a_guide
 }
 
 #[test]
+fn a_ruby_run_whose_attribute_holds_a_greater_than_sign_keeps_its_properties() {
+    let body = RUBY_IN_A_RUN.replace(
+        r#"w:rsidR="00AB12CD""#,
+        r#"w:rsidR="00AB12CD" w:rsidRPr="a>b""#,
+    );
+    let doc = crate::support::doc_with_body(&body);
+    let ruby = doc
+        .paragraph(0)
+        .unwrap()
+        .ruby(0)
+        .cloned()
+        .expect("the guide is read");
+    let run = ruby.run.expect("the guide remembers its run");
+    assert_eq!(run.attributes[1], ("rsidRPr".to_owned(), "a>b".to_owned()));
+    assert_eq!(run.properties.and_then(|rpr| rpr.bold), Some(true));
+}
+
+#[test]
+fn a_ruby_read_in_its_paragraph_is_written_back_there() {
+    let body = RUBY_IN_A_RUN
+        .replace(
+            r#"<w:r w:rsidR="00AB12CD"><w:rPr><w:b/></w:rPr><w:ruby>"#,
+            "<w:ruby>",
+        )
+        .replace("</w:ruby></w:r>", "</w:ruby>");
+    let mut doc = crate::support::doc_with_body(&body);
+    assert!(doc.paragraph(0).unwrap().ruby(0).unwrap().run.is_none());
+    doc.replace_text("Ground", "Earth");
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(
+        xml.contains(" </w:t></w:r><w:ruby>") && xml.contains("</w:rubyBase></w:ruby><w:r>"),
+        "{xml}"
+    );
+    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Earth after");
+}
+
+#[test]
+fn an_inserted_ruby_in_a_run_is_the_content_of_its_insertion() {
+    let body = RUBY_IN_A_RUN
+        .replace(
+            r#"<w:r w:rsidR="00AB12CD">"#,
+            r#"<w:ins w:id="7" w:author="A" w:date="2026-11-23T00:00:00Z"><w:r w:rsidR="00AB12CD">"#,
+        )
+        .replace("</w:ruby></w:r>", "</w:ruby></w:r></w:ins>");
+    let mut doc = crate::support::doc_with_body(&body);
+    let revisions = doc.story_revisions().unwrap();
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(revisions[0].text(), "Ground");
+    assert_eq!(doc.accept_all().unwrap(), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Ground after");
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains("<w:ruby>") && !xml.contains("w:ins"), "{xml}");
+}
+
+#[test]
 fn a_run_holding_a_ruby_and_text_stays_a_run() {
     let body = RUBY_IN_A_RUN.replace(
         r#"<w:rPr><w:b/></w:rPr><w:ruby>"#,

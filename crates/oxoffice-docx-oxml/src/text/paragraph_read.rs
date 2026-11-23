@@ -398,6 +398,13 @@ impl CT_P {
                             projected_run_count += base_runs.len();
                             tracked_run_count += base_runs.len();
                             run_sources.extend(base_runs.iter().map(|_| None));
+                            if let Some(facts) = source_facts.as_deref_mut() {
+                                // A tracked insertion's content holds the
+                                // base runs: they are what it adds.
+                                for (index, base) in base_runs.iter().enumerate() {
+                                    facts.push_run(base, if index == 0 { &raw } else { &[] })?;
+                                }
+                            }
                             runs.extend(base_runs);
                             rubies.push(ruby);
                         } else {
@@ -662,6 +669,13 @@ impl CT_P {
                             projected_run_count += base_runs.len();
                             tracked_run_count += base_runs.len();
                             run_sources.extend(base_runs.iter().map(|_| None));
+                            if let Some(facts) = source_facts.as_deref_mut() {
+                                // A tracked insertion's content holds the
+                                // base runs: they are what it adds.
+                                for (index, base) in base_runs.iter().enumerate() {
+                                    facts.push_run(base, if index == 0 { &raw } else { &[] })?;
+                                }
+                            }
                             runs.extend(base_runs);
                             rubies.push(ruby);
                         } else {
