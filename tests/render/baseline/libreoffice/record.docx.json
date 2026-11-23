@@ -1,8 +1,8 @@
 {
   "file": "libreoffice/record.docx",
-  "reason": "a face picked for its glyphs no longer measures the line",
+  "reason": "outline entries open the page a heading moved to; endnotes follow a table that ends the thesis",
   "resources": "f837c9590baa0a5ae33609cc68dc6084a55581d2cd7b445e65090377b95b778f",
-  "outline_and_tags": "0b302bfa05a319287ad859c4b8a2e76209666298c5f2af770eb1fd1bf93ba261",
+  "outline_and_tags": "de857451cf5f62756a07b0ec232dd2f3a9fea0300083ddf10ddcaf83e83f2d83",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "8adf4b6ef1852881d0e2c990431b5e87a3a90e5daadd30268b57238d95037668", "content": "90321daa15f244438436ce962f9b3c170b5c822e8de0a831a7b5ac1c559969f0", "annotations": "ec8c11c4352c06005efbba2392f05ee66418f4bf56178e8862e881c663aa54a8", "dictionary": "60c14b5891b0f912cb440bacd4e6ecd47bb243c8ff155afa8949fdbad0481ba8"},

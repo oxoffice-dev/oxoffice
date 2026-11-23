@@ -2,7 +2,7 @@
   "file": "libreoffice/minutes.docx",
   "reason": "a math fallback face renumbers the PDF font resources",
   "resources": "e524e092cf516bd5b400c96dc34bdaf7f6d3dc7062c0416721bd2c7a8b366013",
-  "outline_and_tags": "d83f5f011fd865cd1d497042730da1ec2ef0191c80f6907c970b2b921852ec6b",
+  "outline_and_tags": "a4845d2f806363bc03a1e57b00d90033b23612c8a0e7e44dadd5446f0f0ea807",
   "catalog": "a9e4b2cc7df4be3a7a8121c2aa3ddad285221844c3002308b4185c7112186773",
   "pages": [
     {"page": 1, "pixels": "dc9e9b11df2846da953954f699287a6daab852be0b5c71a87ff3f137039516c8", "content": "c13cc93b5363b9461c0bbb7ff52267c63628ba9396bcd968e70cc242d7c41af4", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},

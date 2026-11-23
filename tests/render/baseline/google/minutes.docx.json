@@ -2,7 +2,7 @@
   "file": "google/minutes.docx",
   "reason": "a math fallback face renumbers the PDF font resources",
   "resources": "ec5da75808b430ef06b72d812c8b3f4bdc0bb72781da371a723e7ef4cfbcbf41",
-  "outline_and_tags": "7a3d598e5dc8ba92c883c27b102f11674ced5989a08609b8b845712359bc1228",
+  "outline_and_tags": "a09264ea3b646313b4d89d45ebd1b429ee69af8dc367217b8559933a35bbe938",
   "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
   "pages": [
     {"page": 1, "pixels": "0949730277510031c719fe5eed50926eff2de77a72975938568a3bbfa4efc930", "content": "7142e8bd2fa8a1e5a1e2e1e1b87d0cccaa9049ef42281c1dd0f76d1361382fb5", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "7379f4af563c865cabc097d531ecca56378b6ea786523a7ded5c3500692cb76c"},
