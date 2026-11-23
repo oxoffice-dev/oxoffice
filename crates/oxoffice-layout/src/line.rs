@@ -2375,13 +2375,22 @@ fn cut_text_item(
     // graphemes are added. The estimate bounds the search, so only prefixes of
     // about a line are shaped.
     let estimate = estimated.partition_point(|width| *width <= room + 0.01);
-    let (mut low, mut high) = (0, bounds.len().min(2 * estimate + 8));
-    while low < high {
-        let middle = (low + high).div_ceil(2);
-        if inline_item_width(&piece(0, bounds[middle - 1])?) <= room + 0.01 {
-            low = middle;
-        } else {
-            high = middle - 1;
+    let cap = bounds.len().min(2 * estimate + 8);
+    let mut low = 0;
+    // Past the bound, when even it fits: an estimate from the mean advance can
+    // be far off (narrow characters first, wide ones after).
+    for high in [cap, bounds.len()] {
+        let mut high = high;
+        while low < high {
+            let middle = (low + high).div_ceil(2);
+            if inline_item_width(&piece(0, bounds[middle - 1])?) <= room + 0.01 {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        if low < cap {
+            break;
         }
     }
     let cut = match (low, line_empty) {

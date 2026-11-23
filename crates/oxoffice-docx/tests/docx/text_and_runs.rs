@@ -506,6 +506,24 @@ fn a_word_wider_than_its_cell_or_line_is_broken_between_graphemes() {
         let doc = doc_with_body(&cell(&content));
         assert_eq!(first_page_lines(&doc), ["Pneumonoultra", "microscopic"]);
     }
+    // Decomposed text shapes into fewer glyphs than characters, so the cut is
+    // estimated from the mean advance: narrow letters first, wide ones after,
+    // and the line still fills to the margin.
+    let skewed = format!("e\u{301}{}{}", "i".repeat(300), "M".repeat(3000));
+    let doc = doc_with_body(&format!("<w:p>{}</w:p>", run(&skewed)));
+    let result = doc.layout_deterministic().expect("the document lays out");
+    let mut first_line_end = 0.0_f64;
+    oxoffice_layout::walk(&result.layout.pages[0].elements, &mut |element, _| {
+        if let oxoffice_layout::PositionedElement::Text(run) = element
+            && run.text.starts_with('e')
+        {
+            first_line_end = run.origin.x + run.advances.iter().sum::<f64>();
+        }
+    });
+    assert!(
+        first_line_end > 520.0,
+        "the first line ends at {first_line_end}"
+    );
     // A flag is two regional indicators: a line narrower than one flag holds
     // a whole flag, never one indicator,
     // whatever the width left.
