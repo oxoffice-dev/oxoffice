@@ -308,14 +308,28 @@ fn form_marker(
 /// outside any field, `None` for an item that is neither.
 fn item_form_mark(item: &LineItem) -> Option<Option<oxoffice_layout::FormMark>> {
     match item {
-        LineItem::Text(segment) if !segment.text.is_empty() => Some(segment.form_mark),
-        LineItem::MultilingualText(segment) if !segment.base().text.is_empty() => {
+        LineItem::Text(segment) if !segment.text.is_empty() || is_form_anchor(segment) => {
+            Some(segment.form_mark)
+        }
+        LineItem::MultilingualText(segment)
+            if !segment.base().text.is_empty() || is_form_anchor(segment.base()) =>
+        {
             Some(segment.base().form_mark)
         }
         LineItem::Image { form_mark, .. } => Some(*form_mark),
         LineItem::Figure { item, .. } => item_form_mark(item),
         _ => None,
     }
+}
+
+/// Whether a segment is the anchor of an empty form control: it draws
+/// nothing, and is neither a field's result nor a field event, which can be
+/// empty too.
+fn is_form_anchor(segment: &oxoffice_layout::TextSegment) -> bool {
+    segment.form_mark.is_some()
+        && segment.text.is_empty()
+        && segment.field_kind.is_none()
+        && segment.field_source.is_none()
 }
 
 /// The field a tab sits inside: the one mark of the drawn items on both
@@ -793,16 +807,35 @@ pub(super) fn render_paragraph_lines(
                             url: url.clone(),
                         });
                     }
-                    mark_item(
-                        &mut elements,
-                        seg.form_mark,
-                        Rect {
-                            x,
-                            y: geometry.margin_top + y,
-                            width: effective_width,
-                            height: line.height,
-                        },
-                    );
+                    let marked = Rect {
+                        x,
+                        y: geometry.margin_top + y,
+                        width: effective_width,
+                        height: line.height,
+                    };
+                    match seg.form_mark.filter(|_| is_form_anchor(seg)) {
+                        // An empty control's anchor gathers only itself; its
+                        // widget takes 6 em of the paragraph mark's font from
+                        // where it stands, unless it has its line's band.
+                        Some(mark) => elements.push(form_marker(
+                            mark,
+                            marked,
+                            line_band.or(Some(Rect {
+                                // Kept to the line's end.
+                                width: (6.0 * seg.font_size)
+                                    .min(
+                                        geometry.margin_left
+                                            + line.indent_left
+                                            + line.available_width
+                                            - x,
+                                    )
+                                    .max(0.0),
+                                ..marked
+                            })),
+                            geometry.margin_left,
+                        )),
+                        None => mark_item(&mut elements, seg.form_mark, marked),
+                    }
 
                     _accumulated_extra += segment_extra;
                     x += effective_width;

@@ -490,7 +490,10 @@ Rust first, then the CLI and Python. Each pull request has its own check.
        over, and other paint that lies wholly inside it. A paragraph or cell shading, a border, a list
        number, a leader outside the control or a floating picture stays on
        the page, and so does a floating text box's text that names its own
-       paragraph; its fills and its text without a source can still join. Markers move with the page when it is aligned vertically,
+       paragraph. With fillable forms, the paginator brackets what each
+       anchored drawing paints, and gathering never joins bracketed paint
+       to a field whose marker sits outside those brackets: a stamp's
+       capitals or fills over a value stay on the page (#178). Markers move with the page when it is aligned vertically,
        and with realigned tab-aligned text, as link rectangles do.
      - **Why not wrap when drawing.** The paginator reorders elements for
        bidi reflow and tracks them by position. About twenty element passes
@@ -525,8 +528,15 @@ Rust first, then the CLI and Python. Each pull request has its own check.
          by item as layout reads them, and a block field with any
          paragraph in a vertical section as a whole;
        - one holding a floating picture;
-       - one whose properties do not decode;
-       - one that draws nothing, since empty controls have no anchor yet.
+       - one whose properties do not decode.
+     - **Empty controls, as built (#133).** A mapped control that draws no
+       run in the accepted view gets an anchor where it starts: an empty
+       segment in its paragraph mark's font, as an empty paragraph's caret
+       is. Its marker gathers only that anchor; the widget takes the line's
+       band when the control is alone on its line, else 6 em of the mark's
+       font, and says so when other text starts under it. A block field
+       over empty paragraphs stands on their carets. The default
+       appearance takes the mark's font size.
      - **Containers and wrappers.** A block field may hold block-level
        markers (bookmarks) and unmapped wrappers. Block controls nested in
        a cell-level control are walked as table layout walks them.

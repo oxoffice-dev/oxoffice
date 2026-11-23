@@ -22,6 +22,9 @@ use std::sync::Arc;
 pub struct AnchoredDrawing {
     /// Rotation of a modeled shape around its own physical center.
     pub rotation_degrees: f64,
+    /// Whether the layout makes form fields: the paginator then brackets
+    /// what the drawing paints, so that no field but its own gathers it.
+    pub form_fields: bool,
     /// Render underneath the text rather than on top of it.
     pub behind_doc: bool,
     /// Frame the horizontal offset is measured from.
