@@ -813,7 +813,8 @@ fn direct_word_child_start(
 
 /// Whether a block control one side alone holds, `position` in `aligned`,
 /// ends the story after an emitted paragraph whose mark can carry its
-/// change. Its own last mark is then the story's, which Word cannot
+/// change (not a kept control's last paragraph: resolving it would need a
+/// paragraph after that control). Its own last mark is then the story's, which Word cannot
 /// resolve, so the paragraph before it carries the change instead, as for
 /// a final paragraph (see [`marked_control`]).
 fn final_control_takes_previous_mark(
@@ -827,7 +828,7 @@ fn final_control_takes_previous_mark(
         && matches!(control.content.last(), Some(SdtContent::Paragraph(_)))
         && matches!(
             previous_mark_position(output, kind).map(|position| &output[position].0),
-            Some(EmittedOwner::Paragraph { .. } | EmittedOwner::KeptControl { .. })
+            Some(EmittedOwner::Paragraph { .. })
         )
 }
 

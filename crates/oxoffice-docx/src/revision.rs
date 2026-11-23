@@ -2831,6 +2831,7 @@ impl<'a> XmlTree<'a> {
                 // A control that goes but for its last paragraph, which ends
                 // the chain (see `control_last_paragraph_takes_merge`).
                 let mut merged_control = None;
+                let mut crossed_ends = Vec::new();
                 loop {
                     // The end of the body after a table that stays: as before
                     // a table, the paragraphs go, and the body ends with that
@@ -2938,14 +2939,18 @@ impl<'a> XmlTree<'a> {
                     );
                     // A crossed table yields no bytes, a crossed control only
                     // the range markers it leaves (see `render_removed_control`).
-                    if let Some((control, last)) = merged_control
-                        && pair[1] == control
-                    {
-                        let markers = self.render_control_markers(control, Some(last), state)?;
-                        output.extend_from_slice(&markers);
-                    } else if matches!(self.elements[pair[1]].local.as_str(), "tbl" | "sdt") {
-                        let crossed = self.render(pair[1], state, false)?;
-                        output.extend_from_slice(&crossed);
+                    // A crossed control's range starts stay in place and its
+                    // ends follow the merged paragraph, which holds the
+                    // chain's own markers: no range ends before it starts.
+                    if self.elements[pair[1]].local == "sdt" {
+                        let merged = merged_control
+                            .filter(|(control, _)| *control == pair[1])
+                            .map(|(_, last)| last);
+                        let (starts, ends) = self.render_control_markers(pair[1], merged, state)?;
+                        output.extend_from_slice(&starts);
+                        crossed_ends.extend_from_slice(&ends);
+                    } else if self.elements[pair[1]].local == "tbl" {
+                        self.render(pair[1], state, false)?;
                     }
                 }
                 if before_table {
@@ -2956,6 +2961,7 @@ impl<'a> XmlTree<'a> {
                     state.shift_leaves(leaf_mark, output.len());
                     output.extend_from_slice(&merged);
                 }
+                output.extend_from_slice(&crossed_ends);
                 cursor = self.elements[*siblings.last().expect("paragraph chain exists")].end;
                 child_index = next_index;
                 continue;
@@ -3355,7 +3361,22 @@ impl<'a> XmlTree<'a> {
     ) -> Option<usize> {
         let owners = self.block_control_owners(index)?;
         let (&last, others) = owners.split_last()?;
-        (self.elements[last].local == "p"
+        let siblings = &self.elements[self.elements[index].parent?].children;
+        let position = siblings.iter().position(|child| *child == index)?;
+        let ends_story = siblings[position + 1..]
+            .iter()
+            .all(|child| !self.story_owner(*child));
+        // Its content goes, which an empty paragraph has none of: an empty
+        // control stays, as a table does.
+        let holds_content = self.elements[last].children.iter().any(|child| {
+            let element = &self.elements[*child];
+            !(element.word
+                && (matches!(element.local.as_str(), "pPr" | "proofErr")
+                    || range_marker(&element.local)))
+        });
+        (ends_story
+            && holds_content
+            && self.elements[last].local == "p"
             && !self.paragraph_mark_removes(last, state)
             && self.paragraph_content_all_removes(last, state)
             && others
@@ -3418,17 +3439,21 @@ impl<'a> XmlTree<'a> {
     /// that a bookmark, comment or permission range that only starts or ends
     /// in it keeps both ends.
     fn render_removed_control(&self, index: usize, state: &mut RenderState<'_>) -> Result<Vec<u8>> {
-        self.render_control_markers(index, None, state)
+        let (mut markers, ends) = self.render_control_markers(index, None, state)?;
+        markers.extend_from_slice(&ends);
+        Ok(markers)
     }
 
     /// [`Self::render_removed_control`] for a control whose paragraph
-    /// `merged`, if any, a merge takes elsewhere.
+    /// `merged`, if any, a merge takes elsewhere: the range starts it leaves,
+    /// then the range ends, so that writing the starts before and the ends
+    /// after other content never ends a range before it starts.
     fn render_control_markers(
         &self,
         index: usize,
         merged: Option<usize>,
         state: &mut RenderState<'_>,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
         let mut markers = Vec::new();
         self.collect_removed_control_markers(index, merged, state, &mut markers)?;
         let bookmark_ids = |local: &str| -> HashSet<String> {
@@ -3442,7 +3467,7 @@ impl<'a> XmlTree<'a> {
             .intersection(&bookmark_ids("bookmarkEnd"))
             .cloned()
             .collect::<HashSet<_>>();
-        let mut output = Vec::new();
+        let (mut starts, mut ends) = (Vec::new(), Vec::new());
         for marker in markers {
             let element = &self.elements[marker];
             if matches!(element.local.as_str(), "bookmarkStart" | "bookmarkEnd")
@@ -3452,9 +3477,14 @@ impl<'a> XmlTree<'a> {
             {
                 continue;
             }
-            output.extend_from_slice(&self.render(marker, state, false)?);
+            let rendered = self.render(marker, state, false)?;
+            if element.local.ends_with("End") {
+                ends.extend_from_slice(&rendered);
+            } else {
+                starts.extend_from_slice(&rendered);
+            }
         }
-        Ok(output)
+        Ok((starts, ends))
     }
 
     /// The range markers of a block content control that goes whole, in

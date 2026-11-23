@@ -2202,6 +2202,12 @@ fn a_block_content_control_added_or_removed_whole_is_tracked_and_resolves_to_eit
             assert!(main_xml(doc).contains(r#"<w:alias w:val="Box"/>"#));
         });
     }
+    // After a control both versions hold, ending the body.
+    check_bodies_both_ways(
+        &format!("{INTRO}{control}{}", block_control("Two", &plain("Second"))),
+        &format!("{INTRO}{control}"),
+        |_, _| {},
+    );
 }
 
 #[test]
@@ -2290,6 +2296,16 @@ fn a_paragraph_removed_next_to_a_block_content_control_is_compared() {
         ),
         // With the control after it, ending the body.
         (format!("{INTRO}{removed}{first}"), INTRO.to_owned()),
+        // Before a control both versions hold empty, in the middle and
+        // ending the body.
+        (
+            format!("{INTRO}{removed}{}{BODY}", block_control("Empty", "<w:p/>")),
+            format!("{INTRO}{}{BODY}", block_control("Empty", "<w:p/>")),
+        ),
+        (
+            format!("{INTRO}{removed}{}", block_control("Empty", "<w:p/>")),
+            format!("{INTRO}{}", block_control("Empty", "<w:p/>")),
+        ),
         // In a cell, before a control.
         (
             one_cell_table(&format!("{removed}{first}{INTRO}")),
@@ -2488,4 +2504,44 @@ fn a_block_content_control_ending_the_body_leaves_the_final_mark_untracked() {
         assert!(intro.contains("Intro") && marks(intro), "{xml}");
         assert!(last.contains("Last<") && !marks(last), "{xml}");
     });
+}
+
+#[test]
+fn a_range_ending_in_a_removed_final_control_still_ends_after_it_starts() {
+    // A Word-style redline of a control removed at the end of the body: the
+    // paragraph before it carries the change, and a bookmark that starts
+    // there ends in the control's first paragraph.
+    let mark = |kind: &str, id: u32| {
+        format!(
+            r#"<w:pPr><w:rPr><w:{kind} w:id="{id}" w:author="Ada" w:date="{DATE}"/></w:rPr></w:pPr>"#
+        )
+    };
+    let deleted = |id: u32, text: &str| {
+        format!(
+            r#"<w:del w:id="{id}" w:author="Ada" w:date="{DATE}"><w:r><w:delText>{text}</w:delText></w:r></w:del>"#
+        )
+    };
+    let body = format!(
+        concat!(
+            r#"<w:p>{intro_mark}<w:bookmarkStart w:id="9" w:name="span"/><w:r><w:t>Intro</w:t></w:r></w:p>"#,
+            r#"<w:sdt><w:sdtPr><w:alias w:val="Box"/></w:sdtPr><w:sdtContent>"#,
+            r#"<w:p>{first_mark}{first}<w:bookmarkEnd w:id="9"/></w:p><w:p>{last}</w:p>"#,
+            r#"</w:sdtContent></w:sdt>"#
+        ),
+        intro_mark = mark("del", 1),
+        first_mark = mark("del", 2),
+        first = deleted(3, "Inside"),
+        last = deleted(4, "Last"),
+    );
+    let mut accepted = accepted(&mut doc_with_body(&body));
+    // The end stays at block level, after the merged paragraph.
+    let owners = body_owners(&accepted);
+    assert_eq!(owners.len(), 2, "{owners:?}");
+    assert_eq!(owners[0], "Intro");
+    assert!(owners[1].starts_with("<w:bookmarkEnd "), "{owners:?}");
+    let xml = main_xml(&mut accepted);
+    let start = xml.find("<w:bookmarkStart").expect("the bookmark starts");
+    let end = xml.find("<w:bookmarkEnd").expect("the bookmark ends");
+    assert!(start < end, "{xml}");
+    assert_eq!(bookmark_names(&accepted), ["span"]);
 }

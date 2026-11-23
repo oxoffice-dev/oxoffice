@@ -36,15 +36,16 @@ body. A block content control (`w:sdt` holding paragraphs and tables) has no suc
   control into it, inside the control, as Word does (its own Compare and Reject All, checked on Word 16.115).
 - **Range markers** of a control that goes: a bookmark whose both ends it holds goes with it, as Word drops a
   bookmark whose whole range is deleted (a heading's `_Toc` bookmark, `_GoBack`). Every other bookmark, comment or
-  permission marker stays where the control was, at block level, so that a range that only starts or ends in it
-  keeps both ends.
+  permission marker of its paragraphs stays where the control was, at block level (a start in place, an end after
+  a paragraph merged across the control), so that a range that only starts or ends in it keeps both ends. A table
+  inside the control goes with its markers, as a table removed whole does.
 - **Comparison**: a control added, removed or moved whole keeps its properties and has each paragraph and table
   inside marked as added, removed or moved whole, nested controls alike: the OOXML has no mark for the control
   itself, so the marks go on what it holds. In the body, in a cell and inside another control. It is an owner a
   change of the same resolution crosses, and a control both versions hold is kept like a table: a paragraph
   before it carries its own change.
-- **A control added or removed whole that ends the body** keeps its last paragraph's mark, the body's last,
-  untracked, and the mark of the paragraph before it carries the change, as for a final paragraph; resolving it
+- **A control added or removed whole that ends the body** after a paragraph keeps its last paragraph's mark, the
+  body's last, untracked, and the mark of the paragraph before it carries the change, as for a final paragraph; resolving it
   merges that paragraph with the control's last one, and the control goes (Word check round 3: no revision left).
 - **A final paragraph added or removed after a control both versions hold** puts its change on the mark of the
   control's last paragraph, and the body's final mark stays untracked: Word's own shape. Word cannot resolve a
