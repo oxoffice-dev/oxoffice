@@ -1182,6 +1182,10 @@ fn shading_and_highlight_export_as_the_pdf_paints_them() {
         r#"<w:tc><w:tcPr><w:shd w:val="pct25" w:color="FF0000" w:fill="FFFFFF"/></w:tcPr><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr>"#,
         r#"<w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:fill="1F3864"/></w:tcPr><w:p><w:r><w:t>Dark</w:t></w:r></w:p></w:tc>"#,
         r#"<w:tc><w:p><w:r><w:t>Plain</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        // A cell's own automatic shading replaces the table's dark one.
+        r#"<w:tbl><w:tblPr><w:shd w:val="clear" w:fill="1F3864"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:shd w:val="clear" w:fill="auto"/></w:tcPr><w:p><w:r><w:t>Own</w:t></w:r></w:p></w:tc>"#,
+        r#"<w:tc><w:p><w:r><w:t>Inherited</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
     ));
     let styles = |html: &str, selector: &str| -> HashMap<String, String> {
         html_elements(html, selector)
@@ -1229,18 +1233,40 @@ fn shading_and_highlight_export_as_the_pdf_paints_them() {
         let cell_runs = styles(&html, "td span");
         assert_eq!(cell_runs["Dark"], "color:#FFFFFF", "{html}");
         assert!(!cell_runs.contains_key("Plain"), "{html}");
+        assert!(!cell_runs.contains_key("Own"), "{html}");
+        assert_eq!(cell_runs["Inherited"], "color:#FFFFFF", "{html}");
     }
 
     // RTF writes the fill drawn behind each run as its highlight colour,
     // ODT as its background.
     let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
-    for colour in [
-        r"\red198\green239\blue206",
-        r"\red255\green255\blue0",
-        r"\red0\green0\blue128",
-        r"\red31\green56\blue100",
+    // The colour table, then each run's `\highlightN` naming its entry.
+    let table = rtf
+        .split_once(r"{\colortbl;")
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .map(|(table, _)| table)
+        .unwrap_or_else(|| panic!("a colour table in {rtf}"));
+    let entries = table.split(';').collect::<Vec<_>>();
+    for (colour, text) in [
+        (r"\red198\green239\blue206", "Done"),
+        (r"\red255\green255\blue0", "Marked"),
+        (r"\red0\green0\blue128", "Both"),
+        (r"\red31\green56\blue100", "Solid"),
     ] {
-        assert!(rtf.contains(colour), "{colour} in {rtf}");
+        let index = entries
+            .iter()
+            .position(|entry| *entry == colour)
+            .unwrap_or_else(|| panic!("{colour} in {table}"))
+            + 1;
+        let run = rtf
+            .split('{')
+            .find(|group| group.contains(text))
+            .unwrap_or_else(|| panic!("{text} in {rtf}"));
+        assert!(
+            run.contains(&format!(r"\highlight{index} "))
+                || run.contains(&format!(r"\highlight{index}\")),
+            "{text}: {run}"
+        );
     }
     assert!(!rtf.contains(r"\red255\green199\blue206"), "{rtf}");
     let odt = doc.to_odt_bytes().unwrap();
@@ -1263,6 +1289,45 @@ fn shading_and_highlight_export_as_the_pdf_paints_them() {
         );
     }
     assert!(!content.contains("#FFC7CE"), "{content}");
+}
+
+#[test]
+fn a_list_item_keeps_its_shading_and_a_fill_written_with_a_hash_is_painted() {
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    let mut item = doc.add_paragraph("").numbering(list, 0).shading("1F3864");
+    item.add_run("Item");
+    // The run builder keeps the `#` it is given.
+    doc.add_paragraph("").add_run("Hash").highlight("#C6EFCE");
+    let html = doc.to_html_fragment();
+    let items = html_elements(&html, "li");
+    assert_eq!(items[0].1["style"], "background-color:#1F3864", "{html}");
+    // Automatic text is white on the item's dark shading.
+    let runs = html_elements(&html, "span")
+        .into_iter()
+        .map(|(text, attributes)| (text, attributes["style"].clone()))
+        .collect::<HashMap<_, _>>();
+    assert_eq!(runs["Item"], "color:#FFFFFF", "{html}");
+    assert_eq!(runs["Hash"], "background-color:#C6EFCE", "{html}");
+}
+
+#[test]
+fn epub_reports_a_table_shading_colour_it_cannot_carry() {
+    let doc = doc_with_body(concat!(
+        r#"<w:tbl><w:tblPr><w:shd w:val="clear" w:fill="4472C4" w:themeFill="accent1"/></w:tblPr>"#,
+        r#"<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+    ));
+    let epub = doc.to_epub_bytes().unwrap();
+    assert!(
+        epub.diagnostics.iter().any(|diagnostic| diagnostic.message
+            == "table shading theme colour or invalid colour was simplified during EPUB export"),
+        "{:?}",
+        epub.diagnostics
+    );
+    assert!(epub_chapters(epub.bytes).contains("background-color:#4472C4"));
 }
 
 #[test]

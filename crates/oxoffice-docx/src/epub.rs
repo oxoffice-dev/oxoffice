@@ -795,6 +795,17 @@ impl<'a> EpubWriter<'a> {
                 "table border details were simplified during EPUB export".to_owned(),
             )?;
         }
+        if properties
+            .shading
+            .as_ref()
+            .is_some_and(shading_is_simplified)
+        {
+            self.diagnose(
+                format!("{path}/properties/shading"),
+                "table shading theme colour or invalid colour was simplified during EPUB export"
+                    .to_owned(),
+            )?;
+        }
         for (index, _) in properties.revision_xml.iter().enumerate() {
             self.diagnose(
                 format!("{path}/properties/xml[{index}]"),
@@ -3821,11 +3832,13 @@ fn measure_shading(
 }
 
 fn shading_is_simplified(shading: &oxoffice_docx_oxml::properties::CT_Shd) -> bool {
-    // Layout reads `auto` or six hex digits, anything else as automatic.
+    // Layout reads `auto` or six hex digits (after a `#`), anything else as
+    // automatic.
     let invalid = |value: Option<&str>| {
         value.is_some_and(|value| {
+            let digits = value.strip_prefix('#').unwrap_or(value);
             !value.eq_ignore_ascii_case("auto")
-                && !(value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                && !(digits.len() == 6 && digits.bytes().all(|byte| byte.is_ascii_hexdigit()))
         })
     };
     invalid(shading.color.as_deref())

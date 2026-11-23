@@ -777,12 +777,16 @@ fn emit_table(
                 ));
             }
 
-            let cell_fill = cell
+            // A cell's own shading, even an automatic one, replaces the
+            // table's, as layout reads it.
+            let cell_fill = match cell
                 .properties
                 .as_ref()
                 .and_then(|properties| properties.shading.as_ref())
-                .and_then(shading_color)
-                .or(table_fill);
+            {
+                Some(shading) => shading_color(shading),
+                None => table_fill,
+            };
             for block in cell_blocks(cell) {
                 match block {
                     Block::Paragraph(p, _) => {

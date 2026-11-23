@@ -1203,12 +1203,14 @@ pub(super) fn resolve_run_color(
 /// and nothing for `nil` or an automatic fill. Under a pattern Word paints an
 /// automatic foreground black and an automatic fill white. Other patterns
 /// (stripes, crosses) are painted as their fill. A colour that is not six hex
-/// digits is read as automatic. The HTML and EPUB exports read shading here
-/// too, so that they paint what the PDF paints.
+/// digits (after a `#` the run builders accept) is read as automatic. The
+/// HTML and EPUB exports read shading here too, so that they paint what the
+/// PDF paints.
 pub fn shading_color(shading: &CT_Shd) -> Option<Color> {
     let hex = |value: &Option<String>| {
         value
             .as_deref()
+            .map(|value| value.strip_prefix('#').unwrap_or(value))
             .filter(|value| value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map(Color::from_hex)
     };
