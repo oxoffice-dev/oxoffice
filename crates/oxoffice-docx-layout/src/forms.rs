@@ -340,15 +340,23 @@ impl<'a> InlineControls<'a> {
 /// Whether an inline control draws no run in the accepted view: no run of
 /// its own, of a control inside it or of a tracked insertion in it.
 fn draws_no_run(control: &CT_Sdt) -> bool {
+    // A run that holds only empty text draws nothing, as one emptied by a
+    // tool that sets its text to "" or keeps only its formatting.
+    let draws = |run: &CT_R| {
+        run.content
+            .iter()
+            .any(|content| !matches!(content, RunContent::Text(text) if text.text.is_empty()))
+    };
     control.content.iter().all(|content| match content {
         SdtContent::ContentControl(nested) => draws_no_run(nested),
+        SdtContent::Run(run) => !draws(run),
         SdtContent::RawXml(_) => true,
         _ => false,
     }) && control.revisions().iter().all(|(_, revision)| {
         deletes(revision)
             || revision
                 .content_paragraph()
-                .is_none_or(|paragraph| paragraph.source_runs().is_empty())
+                .is_none_or(|paragraph| !paragraph.source_runs().into_iter().any(draws))
     })
 }
 
@@ -1543,6 +1551,12 @@ fn gather(
                 && !matches!(element, E::FormField(_) | E::Destination { .. });
             if free && gathers(*rect, *node, element) {
                 owner[index] = Some(marker_index);
+                // An empty control's marker takes its own anchor only, the
+                // first free one where it stands: two empty controls side by
+                // side stand at one place.
+                if rect.width <= 0.01 {
+                    break;
+                }
             }
         }
     }

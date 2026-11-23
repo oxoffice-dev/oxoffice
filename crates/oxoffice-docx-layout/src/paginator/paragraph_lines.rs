@@ -821,7 +821,15 @@ pub(super) fn render_paragraph_lines(
                             mark,
                             marked,
                             line_band.or(Some(Rect {
-                                width: 6.0 * seg.font_size,
+                                // Kept to the line's end.
+                                width: (6.0 * seg.font_size)
+                                    .min(
+                                        geometry.margin_left
+                                            + line.indent_left
+                                            + line.available_width
+                                            - x,
+                                    )
+                                    .max(0.0),
                                 ..marked
                             })),
                             geometry.margin_left,

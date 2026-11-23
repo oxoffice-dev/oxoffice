@@ -1492,3 +1492,59 @@ fn a_floating_stamp_over_a_field_stays_on_the_page() {
     let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
     assert_eq!(exported.len(), 1);
 }
+
+/// Where each text run that draws `text` starts, page by page.
+fn text_origins(
+    pages: &[std::sync::Arc<oxoffice_layout::PageFrame>],
+    text: &str,
+) -> Vec<(f64, f64)> {
+    fn visit(elements: &[PositionedElement], text: &str, out: &mut Vec<(f64, f64)>) {
+        for element in elements {
+            match element {
+                PositionedElement::Text(run) if run.text == text => {
+                    out.push((run.origin.x, run.origin.y))
+                }
+                PositionedElement::FormField(fragment) => visit(&fragment.children, text, out),
+                PositionedElement::MarkedContent { children, .. } => visit(children, text, out),
+                PositionedElement::Group(group) => visit(&group.children, text, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for page in pages {
+        visit(&page.elements, text, &mut out);
+    }
+    out
+}
+
+#[test]
+fn an_empty_control_draws_the_page_the_static_export_draws() {
+    // A large paragraph mark beside small text, a control emptied to an
+    // empty run before a date field, and one near the end of a full line.
+    let emptied = r#"<w:sdt><w:sdtPr><w:tag w:val="emptied"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t></w:t></w:r></w:sdtContent></w:sdt>"#;
+    let date = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> DATE \@ "yyyy" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2026</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:sz w:val="48"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Dated </w:t></w:r>{emptied}{}{date}</w:p><w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r>{}</w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p>"#,
+        empty_control("dated"),
+        "word ".repeat(17),
+        empty_control("late"),
+    ));
+    let fillable = doc.layout_with_options(fillable()).unwrap();
+    let plain = doc.layout_with_options(RenderOptions::default()).unwrap();
+    assert_eq!(field_names(&fillable.layout), ["emptied", "dated", "late"]);
+    assert_eq!(
+        text_origins(&fillable.layout.pages, "Next"),
+        text_origins(&plain.layout.pages, "Next")
+    );
+    let rects = fragment_rects(&fillable.layout.pages);
+    // A control with no run stands before the date the field after it draws.
+    let (year_x, _) = text_origins(&fillable.layout.pages, "2026")[0];
+    assert!(rects[1].x <= year_x + 0.01, "{rects:?} {year_x}");
+    // The late one keeps to its line's end.
+    let page_width = 612.0;
+    assert!(
+        rects[2].x + rects[2].width <= page_width - 72.0 + 0.01,
+        "{rects:?}"
+    );
+}

@@ -856,11 +856,13 @@ fn layout_paragraph_with_source_and_table(
     let mut trailing_form_anchors = Vec::new();
     if let (Some(controls), Some(form)) = (&inline_controls, form_paragraph) {
         let runs = para.source_runs();
+        // By the source run, not the prepared one: a run holding a field is
+        // laid out from a prepared copy.
         let mut projected_at: HashMap<*const CT_R, usize> = HashMap::new();
-        for (index, projected, ..) in &expanded {
+        for (index, projected) in original_runs.iter().enumerate() {
             projected_at
                 .entry(std::ptr::from_ref(projected.run))
-                .or_insert(*index);
+                .or_insert(index);
         }
         for (control, start) in para.source_control_starts() {
             let Some(field) = controls.empty_field(control) else {
@@ -916,6 +918,11 @@ fn layout_paragraph_with_source_and_table(
                     automatic_color,
                     Some(mark),
                 )?;
+                let anchor = TextSegment {
+                    ascent: 0.0,
+                    descent: 0.0,
+                    ..anchor
+                };
                 multilingual_styles.insert(
                     inline_items.len(),
                     WordMultilingualStyle {
@@ -2066,6 +2073,11 @@ fn layout_paragraph_with_source_and_table(
             automatic_color,
             Some(mark),
         )?;
+        let anchor = TextSegment {
+            ascent: 0.0,
+            descent: 0.0,
+            ..anchor
+        };
         multilingual_styles.insert(
             inline_items.len(),
             WordMultilingualStyle {
@@ -2076,6 +2088,36 @@ fn layout_paragraph_with_source_and_table(
         inline_items.push(InlineItem::Text(anchor));
     }
 
+    // An anchor takes no height beside other items, so the line is the one
+    // the static export draws; a paragraph of empty controls only stands,
+    // as an empty paragraph's caret does, on its mark's metrics.
+    let only_anchors = !inline_items.is_empty()
+        && inline_items.iter().all(|item| {
+            matches!(item, InlineItem::Text(segment)
+                if segment.form_mark.is_some()
+                    && segment.text.is_empty()
+                    && segment.field_kind.is_none()
+                    && segment.field_source.is_none())
+        });
+    if only_anchors {
+        let (mark, _) = paragraph_mark_segment(
+            para_style_id,
+            styles,
+            table_run_properties,
+            direct_ppr,
+            input,
+            fm,
+            source_node,
+            automatic_color,
+            None,
+        )?;
+        for item in &mut inline_items {
+            if let InlineItem::Text(segment) = item {
+                segment.ascent = mark.ascent;
+                segment.descent = mark.descent;
+            }
+        }
+    }
     let attributed_empty_paragraph = inline_items.is_empty()
         || inline_items.iter().enumerate().all(|(index, _)| {
             multilingual_styles
@@ -2556,10 +2598,6 @@ fn push_sequence_context_markers(
     }
 }
 
-/// Push a zero-width marker recording a structural field event at
-/// `char_offset`, the paragraph character the text after it starts at. Its
-/// source is an empty span there, so the paint keeps it, and any field
-/// result drawn after it, in reading order behind the text before it.
 /// What a paragraph mark draws: an empty segment in the mark's font, the
 /// caret of an empty paragraph and the anchor of an empty form control.
 /// The flag is whether the mark's font kerns.
@@ -2623,6 +2661,10 @@ fn paragraph_mark_segment(
     Ok((segment, style_resolver::word_kerning_enabled(&caret_rpr)))
 }
 
+/// Push a zero-width marker recording a structural field event at
+/// `char_offset`, the paragraph character the text after it starts at. Its
+/// source is an empty span there, so the paint keeps it, and any field
+/// result drawn after it, in reading order behind the text before it.
 fn push_structural_field_marker(
     items: &mut Vec<InlineItem>,
     styles: &mut HashMap<usize, WordMultilingualStyle>,
