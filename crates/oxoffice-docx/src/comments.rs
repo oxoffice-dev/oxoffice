@@ -346,18 +346,15 @@ fn scan_story_markers(xml: &[u8], location: &ContentLocation) -> Result<(Vec<Sto
     Ok((markers, run_index))
 }
 
-fn same_marker_identity(start: &StoryRangeKind, end: &StoryRangeKind) -> bool {
-    match (start, end) {
-        (StoryRangeKind::Bookmark { id: left, .. }, StoryRangeKind::Bookmark { id: right, .. })
-        | (StoryRangeKind::Comment { id: left }, StoryRangeKind::Comment { id: right })
-        | (
-            StoryRangeKind::Permission { id: left, .. },
-            StoryRangeKind::Permission { id: right, .. },
-        ) => left == right,
-        (StoryRangeKind::Proofing { kind: left }, StoryRangeKind::Proofing { kind: right }) => {
-            left == right
+/// What pairs a start with its end: the family and identifier, or the kind of
+/// a proofing range, which has no identifier.
+fn pairing_key(kind: &StoryRangeKind) -> (u8, i32, &str) {
+    match kind {
+        StoryRangeKind::Proofing { kind } => (3, 0, kind),
+        _ => {
+            let (family, id) = marker_identity_key(kind).expect("only proofing has no identity");
+            (family, id, "")
         }
-        _ => false,
     }
 }
 
@@ -619,7 +616,10 @@ fn pair_located_story_markers(
         }
         Ok(())
     };
-    let mut open = Vec::<usize>::new();
+    // Word and Google write overlapping ranges with crossing markers, so an
+    // end closes the open start of its own identity, not the last one. Proofing
+    // ranges have none and nest within their own kind.
+    let mut open = HashMap::<(u8, i32, &str), Vec<usize>>::new();
     let mut current_source: Option<(usize, String)> = None;
     let mut ranges = Vec::<(usize, StoryRangeRef)>::new();
     let mut across = Vec::<(u8, i32, StoryRangeKind)>::new();
@@ -629,27 +629,24 @@ fn pair_located_story_markers(
         let is_start = located[index].3.start;
         let next_source = (source_index, part_name);
         if current_source.as_ref() != Some(&next_source) {
-            if !open.is_empty() {
+            if open.values().any(|starts| !starts.is_empty()) {
                 return Err(Error::Other(
                     "paired marker crosses a story owner".to_owned(),
                 ));
             }
             current_source = Some(next_source);
         }
+        let key = pairing_key(&located[index].3.kind);
         if is_start {
-            open.push(index);
+            open.entry(key).or_default().push(index);
             continue;
         }
         let start_index = open
-            .pop()
+            .get_mut(&key)
+            .and_then(Vec::pop)
             .ok_or_else(|| Error::Other("paired marker has an unmatched end".to_owned()))?;
         let start = &located[start_index].3;
         let end = &located[index].3;
-        if !same_marker_identity(&start.kind, &end.kind) {
-            return Err(Error::Other(
-                "paired markers cross or use different identities".to_owned(),
-            ));
-        }
         let same_owner = start.location.story() == end.location.story();
         let same_part = start.location.story().part_name() == end.location.story().part_name();
         let start_kind = start.kind.clone();
@@ -700,7 +697,7 @@ fn pair_located_story_markers(
         reserve(&start_kind)?;
         across.push((identity.0, identity.1, start_kind));
     }
-    if !open.is_empty() {
+    if open.values().any(|starts| !starts.is_empty()) {
         return Err(Error::Other(
             "paired marker has an unmatched start".to_owned(),
         ));
@@ -711,67 +708,6 @@ fn pair_located_story_markers(
         ranges.into_iter().map(|(_, range)| range).collect(),
         across.into_iter().map(|(_, _, kind)| kind).collect(),
     ))
-}
-
-/// Qualify a comment publication without relaxing the generic nested-range API.
-/// Noncomment pairing and exact physical frames retain mixed-boundary refusals.
-fn qualify_crossing_comment_ranges(document: &Document, id: i32) -> Result<()> {
-    document.validate_comment_ownership()?;
-    if document.comment_anchor(id)?.is_none() {
-        return Err(Error::Other(
-            "new comment has no accepted source range".into(),
-        ));
-    }
-    let (sources, paragraphs) = document.story_range_located_paragraphs_with_sources()?;
-    let sources = sources.iter().map(AsRef::as_ref).collect::<Vec<_>>();
-    let blocks = sources_block_bookmarks(&sources)?;
-    let (located, identity_counts) = located_story_markers(&paragraphs, &blocks)?;
-    let noncomments = located
-        .iter()
-        .filter(|(_, _, _, marker)| !matches!(marker.kind, StoryRangeKind::Comment { .. }))
-        .cloned()
-        .collect::<Vec<_>>();
-    pair_located_story_markers(&noncomments, &identity_counts)?;
-    let mut order = (0..located.len()).collect::<Vec<_>>();
-    order.sort_by_key(|&index| (located[index].0, located[index].1, located[index].2));
-    let mut frames = Vec::new();
-    let mut comments = HashMap::new();
-    let mut current_source = None;
-    for index in order {
-        let (source_index, _, _, marker) = &located[index];
-        let source = (*source_index, marker.location.story().part_name());
-        if current_source != Some(source) {
-            frames.clear();
-            current_source = Some(source);
-        }
-        let frame = frames.last().copied().unwrap_or(0);
-        if let StoryRangeKind::Comment { id } = marker.kind {
-            if identity_counts.get(&(1, id)).copied() != Some((1, 1)) {
-                return Err(Error::Other("paired marker identity is duplicated".into()));
-            }
-            if marker.start {
-                if comments.insert(id, (source, frame)).is_some() {
-                    return Err(Error::Other("paired marker identity is duplicated".into()));
-                }
-            } else if comments.remove(&id) != Some((source, frame)) {
-                return Err(Error::Other(
-                    "comment crosses an unrelated paired marker".into(),
-                ));
-            }
-        } else if marker.start {
-            // The token names this physical frame, not merely its
-            // depth. Popping restores the exact enclosing token.
-            frames.push(index + 1);
-        } else {
-            frames
-                .pop()
-                .ok_or_else(|| Error::Other("paired marker has an unmatched end".into()))?;
-        }
-    }
-    if !comments.is_empty() {
-        return Err(Error::Other("paired marker has an unmatched start".into()));
-    }
-    Ok(())
 }
 
 /// Immutable summary of one correlated bookmark or one reported marker issue.
@@ -1305,8 +1241,10 @@ impl Document {
 
     /// Return checked paired-marker ranges in legacy story order.
     ///
-    /// Unmatched, reversed, crossing, duplicate and cross-part markers are
-    /// rejected, including an omitted pair that crosses a local pair. A unique
+    /// Each end closes the start of its own identifier, so overlapping
+    /// ranges, whose markers cross as Word and Google write them, are listed
+    /// each with its own start and end. Unmatched, reversed, duplicate and
+    /// cross-part markers are rejected. A unique
     /// bookmark, comment or permission pair with one start and one end in two
     /// owners of one part is omitted when its physical order and nesting are
     /// valid. Its name and identifier still count as taken. Proofing is never
@@ -1795,15 +1733,7 @@ impl Document {
         let mut candidate = self.clone_for_staging();
         let id = candidate.add_story_comment_staged(range, author, initials, text, date)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
-        if let Err(original_error) = reopened.story_ranges() {
-            // The generic range API deliberately requires nested pairs. A
-            // valid reply has crossing comment pairs, so qualify those on
-            // their own while retaining every noncomment and mixed boundary.
-            let qualified = qualify_crossing_comment_ranges(&reopened, id);
-            if qualified.is_err() {
-                return Err(original_error);
-            }
-        }
+        reopened.story_ranges()?;
         self.commit_staged_mutation(reopened);
         Ok(id)
     }
