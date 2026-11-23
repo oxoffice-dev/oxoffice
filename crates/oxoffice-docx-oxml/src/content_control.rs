@@ -1,5 +1,6 @@
 //! WordprocessingML structured document tags (`w:sdt`).
 
+use crate::date_format::{WordDateTime, word_date_format_shows_time};
 use crate::text::XmlWriteRole;
 use std::io::Write;
 use std::ops::Range;
@@ -331,7 +332,7 @@ impl CT_SdtPr {
         oxoffice_core::xml::reject_non_xml_characters("content-control value", value)?;
         match self.control_type {
             Some(SdtType::Date) => {
-                let (year, month, day) = civil_date(value)?;
+                let at = WordDateTime::parse_value(value)?;
                 let children = self.value_children()?;
                 let metadata = |name: &[u8]| -> Result<Option<&str>> {
                     let mut matches = children.iter().filter(|child| child.name == name);
@@ -343,7 +344,10 @@ impl CT_SdtPr {
                     }
                     Ok(first.and_then(|child| child.value.as_deref()))
                 };
-                if !matches!(metadata(b"calendar")?, None | Some("gregorian")) {
+                if !matches!(
+                    metadata(b"calendar")?,
+                    None | Some("gregorian" | "gregorianUs")
+                ) {
                     return Err(OxmlError::InvalidValue(
                         "unsupported date calendar".to_owned(),
                     ));
@@ -351,17 +355,16 @@ impl CT_SdtPr {
                 let Some(pattern) = metadata(b"dateFormat")? else {
                     return Err(OxmlError::InvalidValue("missing date format".to_owned()));
                 };
-                let display = crate::date_format::format_word_date(
-                    pattern,
-                    metadata(b"lid")?,
-                    year,
-                    month,
-                    day,
-                )?;
-                let full_date = format!("{value}T00:00:00Z");
+                if !at.is_midnight() && !word_date_format_shows_time(pattern) {
+                    return Err(OxmlError::InvalidValue(format!(
+                        "date format {pattern:?} shows no time, give a date without one"
+                    )));
+                }
+                let display = crate::date_format::format_word_date(pattern, metadata(b"lid")?, at)?;
+                let full_date = at.full_date();
                 let bound = match metadata(b"storeMappedDataAs")? {
                     None | Some("text") => display.clone(),
-                    Some("date") => value.to_owned(),
+                    Some("date") => at.date(),
                     Some("dateTime") => full_date.clone(),
                     _ => {
                         return Err(OxmlError::InvalidValue(
@@ -429,14 +432,12 @@ impl CT_SdtPr {
     pub fn set_value_metadata(&mut self, full_date: Option<&str>) -> Result<()> {
         let date_attribute = if let Some(value) = full_date {
             if self.control_type != Some(SdtType::Date)
-                || value.len() != 20
-                || !value.ends_with("T00:00:00Z")
+                || WordDateTime::parse_full_date(value).is_none()
             {
                 return Err(OxmlError::InvalidValue(
-                    "fullDate must be a selected Gregorian UTC midnight".to_owned(),
+                    "fullDate must be a Gregorian YYYY-MM-DDTHH:MM:SSZ".to_owned(),
                 ));
             }
-            civil_date(&value[..10])?;
             let element = self.type_element.as_ref().ok_or_else(|| {
                 OxmlError::InvalidValue("date type payload is missing".to_owned())
             })?;
@@ -4181,40 +4182,6 @@ fn word_attribute_value(
         }
     }
     Ok(None)
-}
-
-fn civil_date(value: &str) -> Result<(u16, u8, u8)> {
-    let bytes = value.as_bytes();
-    let invalid = || {
-        OxmlError::InvalidValue(format!(
-            "expected a Gregorian YYYY-MM-DD date, got {value:?}"
-        ))
-    };
-    if bytes.len() != 10
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || bytes
-            .iter()
-            .enumerate()
-            .any(|(index, byte)| index != 4 && index != 7 && !byte.is_ascii_digit())
-    {
-        return Err(invalid());
-    }
-    let year: u16 = value[..4].parse().map_err(|_| invalid())?;
-    let month: u8 = value[5..7].parse().map_err(|_| invalid())?;
-    let day: u8 = value[8..].parse().map_err(|_| invalid())?;
-    let leap = year.is_multiple_of(400) || year.is_multiple_of(4) && !year.is_multiple_of(100);
-    let maximum = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if leap => 29,
-        2 => 28,
-        _ => return Err(invalid()),
-    };
-    if year == 0 || day == 0 || day > maximum {
-        return Err(invalid());
-    }
-    Ok((year, month, day))
 }
 
 fn is_word_attribute(key: &[u8], local: &[u8], prefixes: &[String]) -> bool {

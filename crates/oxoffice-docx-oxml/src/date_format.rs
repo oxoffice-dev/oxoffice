@@ -4,8 +4,8 @@
 //! month and day names in the language of `w:lid`. The patterns are those Word
 //! offers in the control's properties: `d dd ddd dddd`, `M MM MMM MMMM`,
 //! `yy yyyy`, quoted `'literals'`, and the time tokens `h hh H HH m mm s ss`
-//! with `AM/PM` or `am/pm`. The value is a date, so a time shows midnight, as
-//! Word shows a date picked from its calendar. Names exist for English (full
+//! with `AM/PM` or `am/pm`. A value without a time shows midnight, as Word
+//! shows a date picked from its calendar. Names exist for English (full
 //! and short) and, full names only, for French, German, Spanish, Italian,
 //! Portuguese and Dutch: short names differ between Windows and Office
 //! versions outside English. The day period is the locale's designator whatever
@@ -297,23 +297,164 @@ fn names_of(language: Option<&str>) -> Option<&'static Names> {
     })
 }
 
-/// The morning designator of a `w:lid` value, known for `en-US` only.
-fn morning_of(language: Option<&str>) -> Option<&'static str> {
+/// The morning and afternoon designators of a `w:lid` value, known for
+/// `en-US` only.
+fn day_periods_of(language: Option<&str>) -> Option<[&'static str; 2]> {
+    let periods = Some(["AM", "PM"]);
     let Some(language) = language else {
-        return Some("AM");
+        return periods;
     };
-    matches!(subtags(language), Some(("en", region)) if region == "us").then_some("AM")
+    if matches!(subtags(language), Some(("en", region)) if region == "us") {
+        periods
+    } else {
+        None
+    }
 }
 
-/// Show the Gregorian date `year-month-day` (already checked) in the Word date
-/// pattern `pattern`, with the names of the language `language` (`w:lid`).
+/// A checked Gregorian date, with the time of day Word saves when one is
+/// typed into a control whose format shows a time (midnight otherwise).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WordDateTime {
+    pub year: u16,
+    pub month: u8,
+    pub day: u8,
+    pub hour: u8,
+    pub minute: u8,
+    pub second: u8,
+}
+
+impl WordDateTime {
+    /// Read a value given to a date control: `YYYY-MM-DD`, or with a time
+    /// `YYYY-MM-DDTHH:MM` or `YYYY-MM-DDTHH:MM:SS` (24-hour, no zone).
+    pub fn parse_value(value: &str) -> Result<Self> {
+        let invalid = || {
+            OxmlError::InvalidValue(format!(
+                "expected a Gregorian YYYY-MM-DD date, optionally with THH:MM or THH:MM:SS, got {value:?}"
+            ))
+        };
+        let (date, time) = match value.split_once('T') {
+            Some((date, time)) => (date, Some(time)),
+            None => (value, None),
+        };
+        let (year, month, day) = civil_date(date).ok_or_else(invalid)?;
+        let (hour, minute, second) = match time {
+            None => (0, 0, 0),
+            Some(time) => {
+                let fields = time.split(':').collect::<Vec<_>>();
+                let field = |index: usize, maximum: u8| {
+                    fields
+                        .get(index)
+                        .filter(|field| {
+                            field.len() == 2 && field.bytes().all(|b| b.is_ascii_digit())
+                        })
+                        .and_then(|field| field.parse::<u8>().ok())
+                        .filter(|number| *number <= maximum)
+                        .ok_or_else(invalid)
+                };
+                if !matches!(fields.len(), 2 | 3) {
+                    return Err(invalid());
+                }
+                let second = if fields.len() == 3 { field(2, 59)? } else { 0 };
+                (field(0, 23)?, field(1, 59)?, second)
+            }
+        };
+        Ok(Self {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+        })
+    }
+
+    /// Read a `w:fullDate` as Word writes it, `YYYY-MM-DDTHH:MM:SSZ`.
+    pub fn parse_full_date(value: &str) -> Option<Self> {
+        let value = value.strip_suffix('Z')?;
+        (value.len() == 19)
+            .then(|| Self::parse_value(value).ok())
+            .flatten()
+    }
+
+    /// The `w:fullDate` of this value, `YYYY-MM-DDTHH:MM:SSZ`.
+    pub fn full_date(&self) -> String {
+        format!(
+            "{}T{:02}:{:02}:{:02}Z",
+            self.date(),
+            self.hour,
+            self.minute,
+            self.second
+        )
+    }
+
+    /// The date alone, `YYYY-MM-DD`.
+    pub fn date(&self) -> String {
+        format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
+    }
+
+    /// The value as given to a setter: the date, followed by the time when
+    /// it is not midnight.
+    pub fn value(&self) -> String {
+        if self.is_midnight() {
+            self.date()
+        } else {
+            format!(
+                "{}T{:02}:{:02}:{:02}",
+                self.date(),
+                self.hour,
+                self.minute,
+                self.second
+            )
+        }
+    }
+
+    pub fn is_midnight(&self) -> bool {
+        (self.hour, self.minute, self.second) == (0, 0, 0)
+    }
+}
+
+/// A Gregorian `YYYY-MM-DD` date that exists.
+fn civil_date(value: &str) -> Option<(u16, u8, u8)> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes
+            .iter()
+            .enumerate()
+            .any(|(index, byte)| index != 4 && index != 7 && !byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let year: u16 = value[..4].parse().ok()?;
+    let month: u8 = value[5..7].parse().ok()?;
+    let day: u8 = value[8..].parse().ok()?;
+    let leap = year.is_multiple_of(400) || year.is_multiple_of(4) && !year.is_multiple_of(100);
+    let maximum = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    (year != 0 && day != 0 && day <= maximum).then_some((year, month, day))
+}
+
+/// Show the checked date and time `at` in the Word date pattern `pattern`,
+/// with the names of the language `language` (`w:lid`).
 pub(crate) fn format_word_date(
     pattern: &str,
     language: Option<&str>,
-    year: u16,
-    month: u8,
-    day: u8,
+    at: WordDateTime,
 ) -> Result<String> {
+    let WordDateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+    } = at;
     let unsupported =
         |why: &str| OxmlError::InvalidValue(format!("unsupported date format {pattern:?}: {why}"));
     let names = |kind: &str| {
@@ -372,13 +513,13 @@ pub(crate) fn format_word_date(
         }
         let rest: String = chars[index..chars.len().min(index + 5)].iter().collect();
         if rest.eq_ignore_ascii_case("AM/PM") {
-            let morning = morning_of(language).ok_or_else(|| {
+            let periods = day_periods_of(language).ok_or_else(|| {
                 unsupported(&format!(
                     "the day period in language {:?} cannot be shown, 24-hour times can",
                     language.unwrap_or_default()
                 ))
             })?;
-            output.push_str(morning);
+            output.push_str(periods[usize::from(hour >= 12)]);
             index += 5;
             continue;
         }
@@ -399,10 +540,14 @@ pub(crate) fn format_word_date(
             ('M', 4) => output.push_str(names("a month name")?.months[month_index]),
             ('y', 2) => output.push_str(&format!("{:02}", year % 100)),
             ('y', 4) => output.push_str(&format!("{year:04}")),
-            ('h', 1) => output.push_str("12"),
-            ('h' | 'H', 2) => output.push_str(if current == 'h' { "12" } else { "00" }),
-            ('H' | 'm' | 's', 1) => output.push('0'),
-            ('m' | 's', 2) => output.push_str("00"),
+            ('h', 1) => output.push_str(&twelve_hour(hour).to_string()),
+            ('h', 2) => output.push_str(&format!("{:02}", twelve_hour(hour))),
+            ('H', 1) => output.push_str(&hour.to_string()),
+            ('H', 2) => output.push_str(&format!("{hour:02}")),
+            ('m', 1) => output.push_str(&minute.to_string()),
+            ('m', 2) => output.push_str(&format!("{minute:02}")),
+            ('s', 1) => output.push_str(&second.to_string()),
+            ('s', 2) => output.push_str(&format!("{second:02}")),
             _ => {
                 let token: String = chars[index..index + count].iter().collect();
                 return Err(unsupported(&format!("unknown token {token:?}")));
@@ -411,6 +556,14 @@ pub(crate) fn format_word_date(
         index += count;
     }
     Ok(output)
+}
+
+/// The hour on a 12-hour clock: midnight and noon are 12.
+fn twelve_hour(hour: u8) -> u8 {
+    match hour % 12 {
+        0 => 12,
+        hour => hour,
+    }
 }
 
 /// Whether the date pattern `pattern` shows a time (an hour, minute, second
@@ -428,7 +581,12 @@ pub fn word_date_format_shows_time(pattern: &str) -> bool {
 /// Refuse a pattern Word date controls cannot show in `language`.
 pub fn check_word_date_format(pattern: &str, language: Option<&str>) -> Result<()> {
     // A Wednesday in September: every token and name kind is exercised.
-    format_word_date(pattern, language, 2026, 9, 30).map(|_| ())
+    format_word_date(
+        pattern,
+        language,
+        WordDateTime::parse_value("2026-09-30").expect("a valid date"),
+    )
+    .map(|_| ())
 }
 
 /// Day of the week of a Gregorian date, Sunday 0 (Sakamoto's method).
@@ -445,6 +603,10 @@ fn weekday(year: u16, month: u8, day: u8) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(value: &str) -> WordDateTime {
+        WordDateTime::parse_value(value).unwrap()
+    }
 
     #[test]
     fn the_weekday_is_the_calendar_one() {
@@ -480,10 +642,68 @@ mod tests {
             ("'Day' d 'of' MMMM", "Day 2 of January"),
         ] {
             assert_eq!(
-                format_word_date(pattern, Some("en-US"), 2015, 1, 2).unwrap(),
+                format_word_date(pattern, Some("en-US"), at("2015-01-02")).unwrap(),
                 shown,
                 "{pattern}"
             );
+        }
+    }
+
+    #[test]
+    fn a_time_of_day_is_shown_in_the_tokens_of_the_format() {
+        for (pattern, value, shown) in [
+            (
+                "M/d/yyyy h:mm AM/PM",
+                "2015-01-02T15:05",
+                "1/2/2015 3:05 PM",
+            ),
+            (
+                "M/d/yyyy h:mm am/pm",
+                "2015-01-02T00:30",
+                "1/2/2015 12:30 AM",
+            ),
+            ("hh:mm:ss AM/PM", "2015-01-02T12:07:09", "12:07:09 PM"),
+            ("hh AM/PM", "2015-01-02T09:00", "09 AM"),
+            ("HH:mm:ss", "2015-01-02T15:05:09", "15:05:09"),
+            ("H:m:s", "2015-01-02T08:05:09", "8:5:9"),
+            ("h:mm", "2015-01-02T23:59", "11:59"),
+            ("d MMMM yyyy HH:mm", "2015-01-02", "2 January 2015 00:00"),
+        ] {
+            assert_eq!(
+                format_word_date(pattern, Some("en-US"), at(value)).unwrap(),
+                shown,
+                "{pattern} {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_is_a_date_with_an_optional_time_and_round_trips_through_full_date() {
+        let value = at("2015-01-02T15:05:09");
+        assert_eq!(value.full_date(), "2015-01-02T15:05:09Z");
+        assert_eq!(
+            WordDateTime::parse_full_date(&value.full_date()),
+            Some(value)
+        );
+        assert_eq!(value.value(), "2015-01-02T15:05:09");
+        assert_eq!(at("2015-01-02T15:05").full_date(), "2015-01-02T15:05:00Z");
+        assert_eq!(at("2015-01-02").full_date(), "2015-01-02T00:00:00Z");
+        assert_eq!(at("2015-01-02T00:00").value(), "2015-01-02");
+        for invalid in [
+            "2015-02-29",
+            "2015-01-02T",
+            "2015-01-02T24:00",
+            "2015-01-02T12:60",
+            "2015-01-02T12:00:60",
+            "2015-01-02T1:05",
+            "2015-01-02T12:05:00Z",
+            "2015-01-02T12:05:00.5",
+            "2015-01-02 12:05",
+        ] {
+            assert!(WordDateTime::parse_value(invalid).is_err(), "{invalid}");
+        }
+        for invalid in ["2015-01-02T15:05:09", "2015-01-02Z", "2015-01-02T15:05Z"] {
+            assert_eq!(WordDateTime::parse_full_date(invalid), None, "{invalid}");
         }
     }
 
@@ -511,7 +731,7 @@ mod tests {
             ("en-GB", "Friday 2 January"),
         ] {
             assert_eq!(
-                format_word_date("dddd d MMMM", Some(language), 2015, 1, 2).unwrap(),
+                format_word_date("dddd d MMMM", Some(language), at("2015-01-02")).unwrap(),
                 shown,
                 "{language}"
             );

@@ -1502,21 +1502,20 @@ fn with_main_part_edit(doc: &mut Document, from: &str, to: &str) -> Document {
 }
 
 #[test]
-fn a_time_typed_in_word_is_reported_as_unsupported_not_as_a_wrong_value() {
+fn a_time_typed_in_word_is_checked_like_a_date() {
     let mut doc = date_control("due", "M/d/yyyy h:mm am/pm", Some("en-US"));
     set_value(&mut doc, "due", "2015-01-02", false);
     let rule = prompt(target("due"), false, "");
-    assert!(
-        doc.validate_form(std::slice::from_ref(&rule))
-            .unwrap()
-            .is_empty()
-    );
     // Word saves the time typed in the control, 3:05 PM.
     let mut doc = with_main_part_edit(&mut doc, "2015-01-02T00:00:00Z", "2015-01-02T15:05:00Z");
     let mut doc = with_main_part_edit(&mut doc, "1/2/2015 12:00 AM", "1/2/2015 3:05 PM");
     let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
+    // Text that is not what the saved time shows is a wrong value.
+    let mut doc = with_main_part_edit(&mut doc, "1/2/2015 3:05 PM", "1/2/2015 3:06 PM");
+    let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
     assert_eq!(issues.len(), 1, "{issues:?}");
-    assert_eq!(issues[0].message, "unsupported date metadata");
+    assert_eq!(issues[0].message, "current form value is invalid");
     // A date followed by anything but a time is a wrong value.
     let doc = with_main_part_edit(&mut doc, "2015-01-02T15:05:00Z", "2015-01-02xyz");
     let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
@@ -1528,6 +1527,93 @@ fn a_time_typed_in_word_is_reported_as_unsupported_not_as_a_wrong_value() {
     let issues = doc.validate_form(&[rule]).unwrap();
     assert_eq!(issues.len(), 1, "{issues:?}");
     assert_eq!(issues[0].message, "current form value is invalid");
+}
+
+#[test]
+fn a_control_whose_format_shows_a_time_takes_a_date_and_time() {
+    let rule = prompt(target("due"), false, "");
+    for by_form in [false, true] {
+        let mut doc = date_control("due", "M/d/yyyy h:mm am/pm", Some("en-US"));
+        set_value(&mut doc, "due", "2015-01-02T15:05", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(value(&doc, "due"), "1/2/2015 3:05 PM", "{}", way(by_form));
+        let properties = saved_properties(&doc, "word/document.xml", 1);
+        assert_eq!(
+            attribute(&properties, "w:date", "w:fullDate").as_deref(),
+            Some("2015-01-02T15:05:00Z")
+        );
+        let issues = doc.validate_form(std::slice::from_ref(&rule)).unwrap();
+        assert!(issues.is_empty(), "{}: {issues:?}", way(by_form));
+
+        // A format that shows no time cannot show one: refused, unchanged.
+        let mut doc = date_control("due", "d MMMM yyyy", None);
+        let before = doc.to_bytes().unwrap();
+        let result = if by_form {
+            doc.fill_form(
+                std::slice::from_ref(&rule),
+                &[assign(target("due"), text("2015-01-02T15:05"))],
+            )
+            .map(|_| ())
+        } else {
+            doc.set_content_control_value_by_tag("due", "2015-01-02T15:05")
+                .map(|_| ())
+        };
+        let error = result.expect_err("a date-only format shows no time");
+        assert!(error.to_string().contains("shows no time"), "{error}");
+        assert_eq!(doc.to_bytes().unwrap(), before, "{}", way(by_form));
+    }
+}
+
+#[test]
+fn a_bound_date_and_time_stores_what_its_mapping_asks() {
+    for (store, stored) in [
+        ("text", "1/2/2015 3:05 PM"),
+        ("date", "2015-01-02"),
+        ("dateTime", "2015-01-02T15:05:00Z"),
+    ] {
+        let mut doc = date_control("due", "M/d/yyyy h:mm am/pm", Some("en-US"));
+        let mut doc = with_main_part_edit(
+            &mut doc,
+            r#"<w:storeMappedDataAs w:val="text"/>"#,
+            &format!(r#"<w:storeMappedDataAs w:val="{store}"/>"#),
+        );
+        let custom = doc
+            .add_custom_xml_store(b"<order><due/></order>", &[])
+            .unwrap();
+        let location = control_at(&doc, &body(&doc), "due");
+        doc.set_content_control_binding(&location, &custom, "/order/due", None)
+            .unwrap();
+        set_value(&mut doc, "due", "2015-01-02T15:05", false);
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.part_xml("customXml/item1.xml").unwrap(),
+            format!("<order><due>{stored}</due></order>"),
+            "{store}"
+        );
+        let issues = doc
+            .validate_form(&[prompt(target("due"), false, "")])
+            .unwrap();
+        assert!(issues.is_empty(), "{store}: {issues:?}");
+    }
+}
+
+#[test]
+fn a_date_control_on_the_us_gregorian_calendar_is_set_and_checked() {
+    let mut doc = date_control("due", "MMMM d, yyyy", Some("en-US"));
+    let mut doc = with_main_part_edit(
+        &mut doc,
+        r#"<w:calendar w:val="gregorian"/>"#,
+        r#"<w:calendar w:val="gregorianUs"/>"#,
+    );
+    for by_form in [false, true] {
+        set_value(&mut doc, "due", "2015-01-02", by_form);
+        assert_eq!(value(&doc, "due"), "January 2, 2015", "{}", way(by_form));
+    }
+    let doc = reopen(&mut doc);
+    let issues = doc
+        .validate_form(&[prompt(target("due"), false, "")])
+        .unwrap();
+    assert!(issues.is_empty(), "{issues:?}");
 }
 
 #[test]
