@@ -135,12 +135,18 @@ pub(super) fn anchored_elements(
         }))?;
     }
     let mut result = PaintedElements::default();
+    if anchor.form_fields {
+        result.push_non_field(crate::forms::anchored_bracket(true))?;
+    }
     while produced.len() > 0 {
         let child = produced.splice_at(&[], 0..1, &mut PaintedElements::default())?;
         result.append(&mut child.wrap(PositionedElement::MarkedContent {
             structure: anchor.structure_id,
             children: Vec::new(),
         })?)?;
+    }
+    if anchor.form_fields {
+        result.push_non_field(crate::forms::anchored_bracket(false))?;
     }
     Ok(result)
 }

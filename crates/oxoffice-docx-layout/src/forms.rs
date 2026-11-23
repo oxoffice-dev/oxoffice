@@ -315,6 +315,13 @@ impl<'a> InlineControls<'a> {
         }
     }
 
+    /// The mark of a mapped control that draws no run in the accepted
+    /// view: its field needs an anchor to have a place.
+    pub(crate) fn empty_field(&self, control: &CT_Sdt) -> Option<u32> {
+        let ordinal = self.index.get(&std::ptr::from_ref(control)).copied()?;
+        (self.mark_of(control) == Some(ordinal) && draws_no_run(control)).then_some(ordinal)
+    }
+
     /// Whether `control` is `ancestor` or sits inside it.
     fn within(&self, control: &CT_Sdt, ancestor: &CT_Sdt) -> bool {
         let mut current = control;
@@ -328,6 +335,21 @@ impl<'a> InlineControls<'a> {
             }
         }
     }
+}
+
+/// Whether an inline control draws no run in the accepted view: no run of
+/// its own, of a control inside it or of a tracked insertion in it.
+fn draws_no_run(control: &CT_Sdt) -> bool {
+    control.content.iter().all(|content| match content {
+        SdtContent::ContentControl(nested) => draws_no_run(nested),
+        SdtContent::RawXml(_) => true,
+        _ => false,
+    }) && control.revisions().iter().all(|(_, revision)| {
+        deletes(revision)
+            || revision
+                .content_paragraph()
+                .is_none_or(|paragraph| paragraph.source_runs().is_empty())
+    })
 }
 
 /// Appends the text a run shows. A line feed inside a text node shows as a
@@ -1317,6 +1339,14 @@ fn gathers(
         }
         E::Text(run) if !own(run.source) => false,
         E::MultilingualText(run) if !own(run.source) => false,
+        // An empty control's marker has no width: it gathers its anchor, the
+        // empty run that starts where it stands, and nothing after it.
+        E::Text(run) if rect.width <= EPSILON => {
+            run.glyph_ids.is_empty()
+                && (run.origin.x - rect.x).abs() < EPSILON
+                && run.origin.y >= rect.y - EPSILON
+                && run.origin.y <= rect.y + rect.height + EPSILON
+        }
         E::Text(_) | E::MultilingualText(_) => extent(element).is_some_and(|start| {
             start.x >= rect.x - EPSILON
                 && start.x < rect.x + rect.width - EPSILON
@@ -1412,6 +1442,16 @@ fn gather(
     tracks: &mut HashMap<u32, Vec<f64>>,
 ) {
     use oxoffice_layout::{FormFieldFragment, FormFieldId, PositionedElement as E};
+    // A bracket a drawing's own wrapper holds stands at this level.
+    for element in elements.iter_mut() {
+        if let E::MarkedContent { children, .. } = element
+            && let [only] = children.as_slice()
+            && bracket(only).is_some()
+            && let Some(only) = children.pop()
+        {
+            *element = only;
+        }
+    }
     for element in elements.iter_mut() {
         match element {
             E::MarkedContent { children, .. } => gather(children, resolve, figure, tracks),
@@ -1459,12 +1499,36 @@ fn gather(
     if markers.is_empty() {
         return;
     }
+    // What an anchored drawing paints sits between its brackets: no field
+    // gathers it but one whose marker sits there too, its own text box's.
+    // Floating paint without a source, a stamp's capitals or a fill, would
+    // otherwise join a field it only lies over.
+    let mut drawing_of: Vec<Option<usize>> = Vec::with_capacity(elements.len());
+    let mut current = None;
+    let mut drawings = 0;
+    for element in elements.iter() {
+        match bracket(element) {
+            Some(true) => {
+                current = Some(drawings);
+                drawings += 1;
+                drawing_of.push(current);
+            }
+            Some(false) => {
+                drawing_of.push(current);
+                current = None;
+            }
+            None => drawing_of.push(current),
+        }
+    }
     let mut owner: Vec<Option<usize>> = vec![None; elements.len()];
-    for (marker_index, (_, rect, field, _, node)) in markers.iter().enumerate() {
+    for (marker_index, (at, rect, field, _, node)) in markers.iter().enumerate() {
         if field.is_none() {
             continue;
         }
         for (index, element) in elements.iter().enumerate() {
+            if drawing_of[index] != drawing_of[*at] {
+                continue;
+            }
             let tagged_figure =
                 matches!(element, E::MarkedContent { structure: Some(id), .. } if figure(*id));
             // A link stays on the page, bare or in its paragraph's marked
@@ -1559,6 +1623,61 @@ fn gather(
     }
 }
 
+/// The empty run an empty control's anchor draws, wrappers looked through.
+fn anchor_run(
+    elements: &[oxoffice_layout::PositionedElement],
+) -> Option<&oxoffice_layout::GlyphRun> {
+    use oxoffice_layout::PositionedElement as E;
+    elements.iter().find_map(|element| match element {
+        E::Text(run) if run.glyph_ids.is_empty() => Some(run),
+        E::MarkedContent { children, .. } => anchor_run(children),
+        _ => None,
+    })
+}
+
+/// The mark node of the brackets around what an anchored drawing paints.
+const BRACKET_NODE: u32 = u32::MAX;
+
+/// A non-drawing bracket around what an anchored drawing paints, the
+/// opening one or the closing one. Gathering reads and removes them.
+pub(crate) fn anchored_bracket(open: bool) -> oxoffice_layout::PositionedElement {
+    oxoffice_layout::PositionedElement::FormField(oxoffice_layout::FormFieldFragment {
+        field: oxoffice_layout::FormFieldId(u32::MAX),
+        rect: oxoffice_layout::Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        },
+        children: Vec::new(),
+        alternate: Vec::new(),
+        mark: Some(oxoffice_layout::FormMarker {
+            mark: oxoffice_layout::FormMark {
+                node: oxoffice_layout::SourceNodeId::new(BRACKET_NODE)
+                    .expect("the bracket node is not zero"),
+                field: u32::from(open),
+            },
+            band: None,
+            track: 0.0,
+        }),
+    })
+}
+
+/// Whether an element is a drawing's opening bracket, its closing one, or
+/// neither.
+fn bracket(element: &oxoffice_layout::PositionedElement) -> Option<bool> {
+    match element {
+        oxoffice_layout::PositionedElement::FormField(oxoffice_layout::FormFieldFragment {
+            mark: Some(marker),
+            children,
+            ..
+        }) if children.is_empty() && marker.mark.node.get() == BRACKET_NODE => {
+            Some(marker.mark.field == 1)
+        }
+        _ => None,
+    }
+}
+
 /// Visit every fragment of a page, wrappers looked through.
 fn fragments_mut(
     elements: &mut [oxoffice_layout::PositionedElement],
@@ -1631,6 +1750,8 @@ pub(crate) fn number_form_fields(
     // the fields whose fragments gathered something.
     let mut placed: HashMap<u32, Vec<(usize, oxoffice_layout::Rect)>> = HashMap::new();
     let mut gathered: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    // The fields that draw a glyph: an empty control draws only its anchor.
+    let mut inked: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for (page_index, page) in result.pages.iter_mut().enumerate() {
         let page = std::sync::Arc::make_mut(page);
         fragments_mut(&mut page.elements, &mut |fragment| {
@@ -1640,6 +1761,12 @@ pub(crate) fn number_form_fields(
                 .push((page_index, fragment.rect));
             if !fragment.children.is_empty() {
                 gathered.insert(fragment.field.0);
+            }
+            if text_runs(&fragment.children)
+                .iter()
+                .any(|run| !run.glyph_ids.is_empty())
+            {
+                inked.insert(fragment.field.0);
             }
         });
     }
@@ -1702,8 +1829,9 @@ pub(crate) fn number_form_fields(
         }
         lines_of.insert(*field, lines);
         // Several boxes make one widget over their union: wrapped lines, or
-        // pieces that bidi reordering set apart on one line.
-        if boxes.len() > 1 {
+        // pieces that bidi reordering set apart on one line. An empty
+        // control's box reaches past its anchor, over what follows it.
+        if boxes.len() > 1 || !inked.contains(field) {
             let union = union_rect(&boxes);
             let page = &result.pages[places[0].0];
             if page_text_extents(&page.elements)
@@ -1747,7 +1875,12 @@ pub(crate) fn number_form_fields(
                 return;
             };
             let runs = text_runs(&fragment.children);
-            if let Some(run) = runs.first()
+            // An empty control has only its anchor, in its paragraph mark's
+            // font: the default appearance takes that font's size.
+            if let Some(run) = runs
+                .first()
+                .copied()
+                .or_else(|| anchor_run(&fragment.children))
                 && !drawn.contains(&index)
             {
                 field.font_size = run.font_size;
