@@ -3006,6 +3006,7 @@ fn project_styles(
         }
     }
     ids.retain(|_, id| document.styles.get_by_id(id).is_some());
+    let mut refused = Vec::new();
     for (number, entry) in styles {
         let Some(id) = ids.get(number) else {
             continue;
@@ -3028,30 +3029,53 @@ fn project_styles(
             apply_run_format(&mut run, &entry.format, fonts, colors)?;
             run.inner.properties.clone()
         };
-        let mut builder = StyleBuilder::paragraph(id, &name);
-        if let Some(properties) = scratch.properties.take() {
-            builder = builder.paragraph_properties(properties);
-        }
-        if let Some(properties) = run_properties {
-            builder = builder.run_properties(properties);
-        }
-        if let Some(based_on) = entry
-            .based_on
-            .filter(|based_on| based_on != number)
-            .and_then(|based_on| ids.get(&based_on))
-        {
-            builder = builder.based_on(based_on);
-        }
-        if let Some(next) = entry.next.and_then(|next| ids.get(&next)) {
-            builder = builder.next_style(next);
-        }
-        if let Err(error) = document.set_style(builder) {
-            diagnostics.push(RtfDiagnostic {
-                offset: 0,
-                destination: Some("stylesheet".to_owned()),
-                message: format!("RTF style {:?} lost its formatting: {error}", entry.name),
-            });
-        }
+        let paragraph_properties = scratch.properties.take();
+        let builder = |linked: bool| {
+            let mut builder = StyleBuilder::paragraph(id, &name);
+            if let Some(properties) = paragraph_properties.clone() {
+                builder = builder.paragraph_properties(properties);
+            }
+            if let Some(properties) = run_properties.clone() {
+                builder = builder.run_properties(properties);
+            }
+            if !linked {
+                return builder;
+            }
+            if let Some(based_on) = entry
+                .based_on
+                .filter(|based_on| based_on != number)
+                .and_then(|based_on| ids.get(&based_on))
+            {
+                builder = builder.based_on(based_on);
+            }
+            if let Some(next) = entry.next.and_then(|next| ids.get(&next)) {
+                builder = builder.next_style(next);
+            }
+            builder
+        };
+        // A style refused with its links (a based-on cycle) is kept without
+        // them; one refused even then gives up its paragraphs' formatting.
+        let Err(error) = document.set_style(builder(true)) else {
+            continue;
+        };
+        let message = match document.set_style(builder(false)) {
+            Ok(()) => format!(
+                "RTF style {:?} lost its based-on and next styles: {error}",
+                entry.name
+            ),
+            Err(error) => {
+                refused.push(*number);
+                format!("RTF style {:?} was dropped: {error}", entry.name)
+            }
+        };
+        diagnostics.push(RtfDiagnostic {
+            offset: 0,
+            destination: Some("stylesheet".to_owned()),
+            message,
+        });
+    }
+    for number in refused {
+        ids.remove(&number);
     }
     Ok(ids)
 }

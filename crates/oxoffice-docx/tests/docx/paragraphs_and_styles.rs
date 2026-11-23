@@ -1609,3 +1609,24 @@ fn rtf_export_keeps_s0_for_the_default_style_when_there_is_none() {
     let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
     assert_eq!(read.paragraph(0).unwrap().style_id(), Some("Lead"));
 }
+
+#[test]
+fn rtf_import_keeps_a_style_whose_based_on_chain_loops() {
+    let rtf = br"{\rtf1\ansi\deff0{\fonttbl{\f0 Calibri;}}
+{\stylesheet{\fs20 Normal;}{\s1\i\fs20 \sbasedon2 First;}{\s2\b\fs28 \sbasedon1 Second;}}
+\pard\plain \s2\b\fs28 {looped}\par}";
+    let read = Document::from_rtf_bytes(rtf).unwrap();
+    assert!(
+        read.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("lost its based-on")),
+        "{:?}",
+        read.diagnostics
+    );
+    let mut doc = read.document;
+    assert_eq!(doc.paragraph(0).unwrap().style_id(), Some("Second"));
+    let second = doc.style("Second").unwrap();
+    assert_eq!(second.run_properties().unwrap().bold, Some(true));
+    let xml = reopen(&mut doc).part_xml("word/document.xml").unwrap();
+    assert!(!xml.contains("<w:b/>") && !xml.contains("<w:sz "), "{xml}");
+}
