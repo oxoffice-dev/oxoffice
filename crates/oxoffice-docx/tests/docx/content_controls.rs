@@ -2339,3 +2339,16 @@ fn an_inline_control_text_reads_its_tracked_insertions() {
     assert_eq!(doc.paragraph(0).unwrap().text(), "ABCDE");
     assert_eq!(doc.content_controls()[0].text(), "BCDE");
 }
+
+#[test]
+fn a_value_an_inline_control_already_shows_with_its_insertion_is_left_as_is() {
+    let mut doc = doc_with_body(concat!(
+        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="t"/></w:sdtPr><w:sdtContent>"#,
+        r#"<w:r><w:t>B</w:t></w:r>"#,
+        r#"<w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>C</w:t></w:r></w:ins>"#,
+        r#"</w:sdtContent></w:sdt></w:p>"#,
+    ));
+    doc.set_content_control_value_by_tag("t", "BC").unwrap();
+    assert_eq!(doc.content_controls()[0].text(), "BC");
+    assert_eq!(doc.paragraph(0).unwrap().text(), "BC");
+}
