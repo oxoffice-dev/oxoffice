@@ -94,7 +94,7 @@ fn a_layout_without_fragments_writes_no_acroform() {
     assert!(read.catalog().get(b"AcroForm").is_err());
     assert!(read.page_widgets(0).is_empty());
     assert!(
-        !contains(&bytes, b"WinAnsiEncoding"),
+        !contains(&bytes, b"/BaseFont /LiberationSans"),
         "no typing font without fields"
     );
 }
@@ -340,7 +340,7 @@ fn every_widget_is_printed_with_no_actions_and_no_need_appearances() {
 }
 
 #[test]
-fn the_typing_font_is_embedded_whole_with_win_ansi_widths() {
+fn the_typing_font_is_embedded_whole_as_a_unicode_font() {
     let layout = with_fields(
         layout(vec![vec![fragment(0, line(72.0, 100.0, 150.0), "Jane")]]),
         vec![field("name", text_kind("Jane"))],
@@ -350,24 +350,48 @@ fn the_typing_font_is_embedded_whole_with_win_ansi_widths() {
     assert_eq!(text(form.get(b"DA").unwrap()), "/LibSans 0 Tf 0 g");
     let fonts = read.dict(read.dict(form, b"DR"), b"Font");
     let font = read.dict(fonts, b"LibSans");
-    assert_eq!(
-        font.get(b"Subtype").unwrap().as_name().unwrap(),
-        b"TrueType"
-    );
-    assert_eq!(
-        font.get(b"Encoding").unwrap().as_name().unwrap(),
-        b"WinAnsiEncoding"
-    );
-    assert_eq!(font.get(b"FirstChar").unwrap().as_i64().unwrap(), 32);
-    assert_eq!(font.get(b"LastChar").unwrap().as_i64().unwrap(), 255);
-    let widths = font.get(b"Widths").unwrap().as_array().unwrap();
-    assert_eq!(widths.len(), 224);
-    assert!(widths[usize::from(b'A' - 32)].as_float().unwrap() > 500.0);
-    assert!(
-        widths[0x81 - 32].as_float().unwrap() == 0.0,
-        "a WinAnsi hole has no glyph"
-    );
-    let descriptor = read.dict(font, b"FontDescriptor");
+    let name = |dict: &lopdf::Dictionary, key: &[u8]| {
+        String::from_utf8(dict.get(key).unwrap().as_name().unwrap().to_vec()).unwrap()
+    };
+    assert_eq!(name(font, b"Subtype"), "Type0");
+    assert_eq!(name(font, b"Encoding"), "Identity-H");
+    assert_eq!(name(font, b"BaseFont"), "LiberationSans", "not a subset");
+    let descendants = read.resolve(font.get(b"DescendantFonts").unwrap());
+    let cid = read
+        .resolve(&descendants.as_array().unwrap()[0])
+        .as_dict()
+        .unwrap();
+    assert_eq!(name(cid, b"Subtype"), "CIDFontType2");
+    assert_eq!(name(cid, b"CIDToGIDMap"), "Identity");
+
+    let face = ttf_parser::Face::parse(oxoffice_layout::bundled_fonts::LIBERATION_SANS_REGULAR, 0)
+        .unwrap();
+    // `W` is `[0 [w0 w1 ...]]`: one width per glyph of the whole font.
+    let w = read.resolve(cid.get(b"W").unwrap()).as_array().unwrap();
+    let widths = read.resolve(&w[1]).as_array().unwrap();
+    assert_eq!(widths.len(), usize::from(face.number_of_glyphs()));
+    let glyph_a = face.glyph_index('A').unwrap();
+    let advance = f32::from(face.glyph_hor_advance(glyph_a).unwrap()) * 1000.0
+        / f32::from(face.units_per_em());
+    let written = widths[usize::from(glyph_a.0)].as_float().unwrap();
+    assert!((written - advance).abs() < 0.01, "{written} vs {advance}");
+
+    // The ToUnicode map pairs each glyph with its character, beyond WinAnsi.
+    let cmap = String::from_utf8(read.stream(font.get(b"ToUnicode").unwrap())).unwrap();
+    for ch in ['A', 'Ł', 'Ж', 'Ω', 'ש'] {
+        let glyph = face.glyph_index(ch).unwrap().0;
+        let unicode: String = ch
+            .encode_utf16(&mut [0; 2])
+            .iter()
+            .map(|unit| format!("{unit:04X}"))
+            .collect();
+        assert!(
+            cmap.contains(&format!("<{glyph:04X}> <{unicode}>")),
+            "{ch:?} as glyph {glyph}"
+        );
+    }
+
+    let descriptor = read.dict(cid, b"FontDescriptor");
     let file = read.stream(descriptor.get(b"FontFile2").unwrap());
     assert_eq!(
         file,
