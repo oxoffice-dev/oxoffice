@@ -113,6 +113,22 @@ impl Diagnostics {
 
 /// Import Presentation MathML into the normalized OfficeMath argument tree.
 pub fn equation_from_mathml(input: &str) -> Result<MathConversionResult<MathArgument>> {
+    mathml_to_argument(input, &[])
+}
+
+/// Read the MathML of a formula object (ODF): its root may say
+/// `display="block"`, as LibreOffice writes on every formula, which says
+/// nothing of where the formula stands in its paragraph.
+pub(crate) fn equation_from_formula_object(
+    input: &str,
+) -> Result<MathConversionResult<MathArgument>> {
+    mathml_to_argument(input, &["display"])
+}
+
+fn mathml_to_argument(
+    input: &str,
+    root_attributes: &[&str],
+) -> Result<MathConversionResult<MathArgument>> {
     if input.len() > MAX_INPUT_BYTES {
         return Err(math_error("MathML input exceeds the byte limit"));
     }
@@ -124,7 +140,7 @@ pub fn equation_from_mathml(input: &str) -> Result<MathConversionResult<MathArgu
     }
     let mut diagnostics = Diagnostics::new();
     let mut nodes = 0_usize;
-    diagnose_attributes(&root, "/math[1]", &[], &mut diagnostics)?;
+    diagnose_attributes(&root, "/math[1]", root_attributes, &mut diagnostics)?;
     let mut value = mathml_children_to_argument(&root, "/math[1]", &mut diagnostics, &mut nodes)?;
     normalize_argument(&mut value);
     validate_tree(&value).map_err(math_error)?;
@@ -207,6 +223,12 @@ impl ExportEquations {
     /// The messages of the conversions so far, in order.
     pub(crate) fn into_diagnostics(self) -> Vec<String> {
         self.diagnostics.into_inner()
+    }
+
+    /// The messages since the last call, for a writer that reports each
+    /// equation at its own place.
+    pub(crate) fn take_diagnostics(&self) -> Vec<String> {
+        std::mem::take(&mut *self.diagnostics.borrow_mut())
     }
 
     fn write(
@@ -349,7 +371,7 @@ pub fn equation_to_latex(expression: &MathArgument) -> MathConversionResult<Stri
     }
 }
 
-fn math_error(message: impl Into<String>) -> Error {
+pub(crate) fn math_error(message: impl Into<String>) -> Error {
     Error::Other(format!("math conversion error: {}", message.into()))
 }
 
