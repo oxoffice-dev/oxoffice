@@ -215,7 +215,7 @@ enum Command {
         #[arg(long)]
         transparent: bool,
         /// Export the content controls and legacy form fields of the body, its
-        /// text boxes and the notes as fillable PDF form fields (PDF only, accepted view). A control tagged `signature` or
+        /// text boxes, the headers and footers and the notes as fillable PDF form fields (PDF only, accepted view). A control tagged `signature` or
         /// `signature:<name>` becomes an empty signature field.
         #[arg(long)]
         fillable_forms: bool,
