@@ -1580,27 +1580,28 @@ fn equations_reach_both_exports_in_their_place() {
     assert!(chapters.contains("<math display=\"block\""), "{chapters}");
     assert!(package.contains("properties=\"mathml\""), "{package}");
 
-    // RTF and ODT cannot write an equation yet: each says so.
+    // RTF and ODT write them too, in their own math, and drop none.
     let rtf = doc.to_rtf_bytes().unwrap();
-    let dropped = |messages: Vec<&str>, format: &str| {
-        assert_eq!(
-            messages
-                .iter()
-                .filter(|message| **message
-                    == format!("Word equation was dropped during {format} export"))
-                .count(),
-            2,
-            "{messages:?}"
-        );
-    };
-    dropped(
-        rtf.diagnostics.iter().map(|d| d.message.as_str()).collect(),
-        "RTF",
-    );
     let odt = doc.to_odt_bytes().unwrap();
-    dropped(
-        odt.diagnostics.iter().map(|d| d.message.as_str()).collect(),
-        "ODT",
+    let messages = rtf
+        .diagnostics
+        .iter()
+        .map(|d| d.message.as_str())
+        .chain(odt.diagnostics.iter().map(|d| d.message.as_str()))
+        .collect::<Vec<_>>();
+    assert!(
+        !messages.iter().any(
+            |message| message.contains("equation") && message.contains("dropped")
+                || message.contains("left out of the")
+        ),
+        "{messages:?}"
+    );
+    assert_eq!(
+        String::from_utf8(rtf.bytes)
+            .unwrap()
+            .matches(r"{\*\moMath ")
+            .count(),
+        2
     );
 
     // MHTML holds the same HTML and no longer reports the equations dropped.
@@ -1760,6 +1761,155 @@ fn text_around_an_equation_keeps_its_place_in_rtf() {
     let markdown = read.to_markdown();
     assert!(markdown.starts_with("Let $"), "{markdown}");
     assert!(markdown.trim_end().ends_with("$ hold."), "{markdown}");
+}
+
+#[test]
+fn every_equation_of_the_word_paper_survives_an_odt_round_trip() {
+    let doc = corpus_doc("word/paper.docx");
+    let expected = equations_as_mathml(&doc);
+    let written = doc.to_odt_bytes().unwrap();
+    // MathML loses what it does not model, reported as the HTML export
+    // reports it; no equation is left out.
+    assert!(
+        !written.diagnostics.iter().any(|diagnostic| {
+            diagnostic.message.contains("left out of the")
+                || diagnostic.message.contains("dropped") && diagnostic.message.contains("equation")
+        }),
+        "{:?}",
+        written.diagnostics
+    );
+    // One formula object per equation, listed in the manifest.
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(written.bytes.clone())).unwrap();
+    let mut manifest = String::new();
+    std::io::Read::read_to_string(
+        &mut archive.by_name("META-INF/manifest.xml").unwrap(),
+        &mut manifest,
+    )
+    .unwrap();
+    assert_eq!(
+        manifest
+            .matches("application/vnd.oasis.opendocument.formula")
+            .count(),
+        expected.len()
+    );
+    for number in 1..=expected.len() {
+        let mut object = String::new();
+        std::io::Read::read_to_string(
+            &mut archive
+                .by_name(&format!("Object {number}/content.xml"))
+                .unwrap(),
+            &mut object,
+        )
+        .unwrap();
+        assert!(
+            object.contains("<math xmlns=\"http://www.w3.org/1998/Math/MathML\">"),
+            "{object}"
+        );
+    }
+    let read = Document::from_odt_bytes(&written.bytes).unwrap();
+    assert!(
+        !read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("formula")
+                || diagnostic.message.contains("object")),
+        "{:?}",
+        read.diagnostics
+    );
+    assert_eq!(equations_as_mathml(&read.document), expected);
+    // A display group stays one: alone in its paragraph.
+    let displays = |doc: &Document| {
+        doc.paragraphs()
+            .iter()
+            .flat_map(|paragraph| paragraph.equations().cloned().collect::<Vec<_>>())
+            .filter(|equation| matches!(equation, oxoffice_docx_oxml::math::OfficeMath::Display(_)))
+            .count()
+    };
+    assert_eq!(displays(&read.document), displays(&doc));
+}
+
+#[test]
+fn text_around_an_equation_keeps_its_place_in_odt() {
+    let mut doc = Document::new();
+    let mut paragraph = doc.add_paragraph("Let ");
+    paragraph
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
+            oxoffice_docx::equation_from_latex(r"x=\frac{1}{2}")
+                .unwrap()
+                .value
+                .expressions,
+        ))
+        .unwrap();
+    paragraph.add_run(" hold.");
+    let odt = doc.to_odt_bytes().unwrap().bytes;
+    let read = Document::from_odt_bytes(&odt).unwrap().document;
+    let paragraph = read.paragraph(0).unwrap();
+    assert!(matches!(
+        paragraph.equations().collect::<Vec<_>>()[..],
+        [oxoffice_docx_oxml::math::OfficeMath::Inline(_)]
+    ));
+    assert_eq!(equations_as_mathml(&read), equations_as_mathml(&doc));
+    let markdown = read.to_markdown();
+    assert!(markdown.starts_with("Let $"), "{markdown}");
+    assert!(markdown.trim_end().ends_with("$ hold."), "{markdown}");
+}
+
+#[test]
+fn a_formula_libreoffice_writes_reads_as_an_equation() {
+    let mut doc = Document::new();
+    doc.add_paragraph("Let ")
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
+            oxoffice_docx::equation_from_latex("x=1")
+                .unwrap()
+                .value
+                .expressions,
+        ))
+        .unwrap();
+    let odt = doc.to_odt_bytes().unwrap().bytes;
+    // The formula as LibreOffice writes it: `display="block"` whatever its
+    // place, and its StarMath source beside the MathML.
+    let libreoffice = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><math xmlns="http://www.w3.org/1998/Math/MathML" display="block">"#,
+        r#"<semantics><mrow><mi>x</mi><mo>=</mo><mn>1</mn></mrow>"#,
+        r#"<annotation encoding="StarMath 5.0">x=1</annotation></semantics></math>"#,
+    );
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(odt)).unwrap();
+    let mut output = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).unwrap();
+        if name == "Object 1/content.xml" {
+            bytes = libreoffice.as_bytes().to_vec();
+        }
+        output
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut output, &bytes).unwrap();
+    }
+    let odt = output.finish().unwrap().into_inner();
+    let read = Document::from_odt_bytes(&odt).unwrap();
+    assert!(
+        !read
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("display")),
+        "{:?}",
+        read.diagnostics
+    );
+    assert!(matches!(
+        read.document
+            .paragraph(0)
+            .unwrap()
+            .equations()
+            .collect::<Vec<_>>()[..],
+        [oxoffice_docx_oxml::math::OfficeMath::Inline(_)]
+    ));
+    assert_eq!(
+        equations_as_mathml(&read.document),
+        equations_as_mathml(&doc)
+    );
 }
 
 #[test]

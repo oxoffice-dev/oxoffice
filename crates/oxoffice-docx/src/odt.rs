@@ -177,6 +177,9 @@ struct OdtWriter<'a> {
     used_list_levels: BTreeSet<(u32, u32)>,
     media: Vec<OdtMedia>,
     media_at: BTreeMap<String, usize>,
+    /// The formula object of each equation, by its path: `Object N`.
+    objects_at: BTreeMap<String, usize>,
+    equations: crate::math::ExportEquations,
     diagnostics: Vec<OdtDiagnostic>,
     diagnostic_keys: BTreeSet<(String, String)>,
     retained_output_estimate: usize,
@@ -202,6 +205,8 @@ impl<'a> OdtWriter<'a> {
             used_list_levels: BTreeSet::new(),
             media: Vec::new(),
             media_at: BTreeMap::new(),
+            objects_at: BTreeMap::new(),
+            equations: crate::math::ExportEquations::default(),
             diagnostics: Vec::new(),
             diagnostic_keys: BTreeSet::new(),
             retained_output_estimate: 2_048,
@@ -483,6 +488,7 @@ impl<'a> OdtWriter<'a> {
                 self.ensure_list_style(num_id, path)?;
             }
         }
+        self.scan_equations(paragraph, path)?;
         let mut trailing_text_style = None;
         let mut projected_runs = 0_usize;
         // The runs of the accepted view are exported, see `write_runs`.
@@ -643,6 +649,46 @@ impl<'a> OdtWriter<'a> {
         Ok(())
     }
 
+    /// Give each equation of the paragraph's accepted view its formula
+    /// object, the MathML the HTML export writes, with its diagnostics.
+    fn scan_equations(&mut self, paragraph: &CT_P, path: &str) -> Result<()> {
+        use oxoffice_docx_html::EquationWriter as _;
+        use oxoffice_docx_oxml::math::OfficeMath;
+        let view = paragraph.accepted_view();
+        for (index, (_, _, equation)) in view.equations.iter().enumerate() {
+            let equation_path = format!("{path}/equation[{index}]");
+            let maths = match equation {
+                OfficeMath::Inline(math) => vec![(equation_path, math)],
+                OfficeMath::Display(display) => {
+                    self.equations.display(display);
+                    display
+                        .equations
+                        .iter()
+                        .enumerate()
+                        .map(|(at, math)| (format!("{equation_path}/oMath[{at}]"), math))
+                        .collect()
+                }
+            };
+            for (math_path, math) in maths {
+                self.reserve_output(256)?;
+                if let Some(mathml) = self.equations.mathml(math) {
+                    let number = self.objects_at.len() + 1;
+                    self.objects_at.insert(math_path.clone(), number);
+                    self.media.push(OdtMedia {
+                        path: format!("Object {number}/content.xml"),
+                        media_type: "text/xml",
+                        bytes: format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{mathml}")
+                            .into_bytes(),
+                    });
+                }
+                for message in self.equations.take_diagnostics() {
+                    self.diagnose(&math_path, &message)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn scan_paragraph_losses(
         &mut self,
         paragraph: &CT_P,
@@ -725,8 +771,10 @@ impl<'a> OdtWriter<'a> {
             )?;
         }
         for (raw_index, (index, raw)) in paragraph.extra_xml.iter().enumerate() {
+            // An equation is written as a formula object (`scan_equations`).
             if CT_P::raw_is_root_attributes(*index, raw)
                 || raw_is_typed_revision(paragraph, raw_index)
+                || crate::math::raw_is_equation(paragraph, raw_index)
             {
                 continue;
             }
@@ -734,8 +782,6 @@ impl<'a> OdtWriter<'a> {
                 &format!("{path}/raw[{index}]"),
                 if CT_P::raw_run_wrapper_content(raw).is_some() {
                     "smart tag or custom XML wrapper was flattened during ODT export"
-                } else if crate::math::raw_is_equation(paragraph, raw_index) {
-                    "Word equation was dropped during ODT export"
                 } else {
                     "unmodelled paragraph XML was dropped during ODT export"
                 },
@@ -1671,8 +1717,11 @@ impl<'a> OdtWriter<'a> {
 
     fn write_runs(&self, output: &mut String, paragraph: &CT_P, path: &str) -> Result<()> {
         // The runs the text readers read, those of content controls, tracked
-        // insertions, smart tags and custom XML included, deleted ones left out.
-        for (run_index, run) in paragraph.accepted_view().runs.iter().enumerate() {
+        // insertions, smart tags and custom XML included, deleted ones left out;
+        // each equation at its run boundary.
+        let view = paragraph.accepted_view();
+        for (run_index, run) in view.runs.iter().enumerate() {
+            self.write_equations(output, &view, run_index, path);
             let run_path = format!("{path}/run[{run_index}]");
             let properties = self.effective_run_properties(paragraph, run);
             let style_xml = text_style_xml(&properties);
@@ -1731,7 +1780,42 @@ impl<'a> OdtWriter<'a> {
                 output.push_str("</text:span>");
             }
         }
+        self.write_equations(output, &view, view.runs.len(), path);
         Ok(())
+    }
+
+    /// Write the formula objects of the equations at run boundary `boundary`
+    /// of the accepted view `view`; the equations of a display group are
+    /// separated by line breaks, as Word shows them one per line.
+    fn write_equations(&self, output: &mut String, view: &CT_P, boundary: usize, path: &str) {
+        use oxoffice_docx_oxml::math::OfficeMath;
+        for (index, (_, _, equation)) in view
+            .equations
+            .iter()
+            .enumerate()
+            .filter(|(_, (at, _, _))| *at == boundary)
+        {
+            let equation_path = format!("{path}/equation[{index}]");
+            let paths = match equation {
+                OfficeMath::Inline(_) => vec![equation_path],
+                OfficeMath::Display(display) => (0..display.equations.len())
+                    .map(|at| format!("{equation_path}/oMath[{at}]"))
+                    .collect(),
+            };
+            for (at, math_path) in paths.iter().enumerate() {
+                let Some(number) = self.objects_at.get(math_path) else {
+                    continue;
+                };
+                if at > 0 {
+                    output.push_str("<text:line-break/>");
+                }
+                write!(
+                    output,
+                    "<draw:frame draw:name=\"Object{number}\" text:anchor-type=\"as-char\"><draw:object xlink:href=\"./Object {number}\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/></draw:frame>"
+                )
+                .unwrap();
+            }
+        }
     }
 
     fn list_level_marker(&mut self, num_id: u32, level: u32, path: &str) -> Result<ListMarker> {
@@ -1852,6 +1936,13 @@ impl<'a> OdtWriter<'a> {
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?><manifest:manifest xmlns:manifest=\"{MANIFEST_NS}\" manifest:version=\"1.3\"><manifest:file-entry manifest:full-path=\"/\" manifest:media-type=\"{}\"/><manifest:file-entry manifest:full-path=\"content.xml\" manifest:media-type=\"text/xml\"/>",
             std::str::from_utf8(ODT_MIMETYPE).expect("ASCII MIME type")
         );
+        for number in 1..=self.objects_at.len() {
+            write!(
+                output,
+                "<manifest:file-entry manifest:full-path=\"Object {number}/\" manifest:media-type=\"application/vnd.oasis.opendocument.formula\"/>"
+            )
+            .unwrap();
+        }
         for media in &self.media {
             write!(
                 output,
@@ -3757,6 +3848,25 @@ impl<'a> Importer<'a> {
             if let Some((num_id, level)) = list {
                 target.set_numbering(num_id, level as u32);
             }
+            // A paragraph that holds only formulas is a display group, as
+            // Word shows an equation that stands alone on its line.
+            let display = pieces
+                .iter()
+                .any(|piece| matches!(piece, InlinePiece::Equation(_)))
+                && pieces
+                    .iter()
+                    .all(|piece| matches!(piece, InlinePiece::Equation(_) | InlinePiece::Break));
+            if display {
+                let equations = std::mem::take(&mut pieces)
+                    .into_iter()
+                    .filter_map(|piece| match piece {
+                        InlinePiece::Equation(math) => Some(*math),
+                        _ => None,
+                    })
+                    .collect();
+                self.bump_runs()?;
+                target.add_equation(oxoffice_docx_oxml::math::OfficeMath::display(equations))?;
+            }
             for piece in pieces {
                 match piece {
                     InlinePiece::Text(text, style) => {
@@ -3779,6 +3889,10 @@ impl<'a> Importer<'a> {
                     } => {
                         self.bump_runs()?;
                         target.add_picture(&relationship, width, height);
+                    }
+                    InlinePiece::Equation(math) => {
+                        self.bump_runs()?;
+                        target.add_equation(oxoffice_docx_oxml::math::OfficeMath::Inline(*math))?;
                     }
                 }
             }
@@ -3848,7 +3962,12 @@ impl<'a> Importer<'a> {
                     let index = element_positions.entry(key).or_default();
                     *index += 1;
                     let child_path = format!("{path}/draw:frame[{}]", *index);
-                    if let Some(image) = self.project_image(element, &child_path)? {
+                    let piece = if element.elements().any(|node| node.is(DRAW_NS, "object")) {
+                        self.project_formula(element, &child_path)?
+                    } else {
+                        self.project_image(element, &child_path)?
+                    };
+                    if let Some(image) = piece {
                         output.push(image);
                         whitespace.pending = false;
                         whitespace.style = None;
@@ -3868,6 +3987,65 @@ impl<'a> Importer<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Read a formula object (`draw:object` whose sub-document is MathML)
+    /// back as an equation. One it cannot read is reported and left out.
+    fn project_formula(&mut self, frame: &XmlNode, path: &str) -> Result<Option<InlinePiece>> {
+        let object = frame
+            .elements()
+            .find(|node| node.is(DRAW_NS, "object"))
+            .expect("the caller found the object");
+        let Some(href) = object.attr(Some(XLINK_NS), "href") else {
+            self.diagnostic(path, "ODT object has no package target")?;
+            return Ok(None);
+        };
+        let target = href
+            .strip_prefix("./")
+            .unwrap_or(href)
+            .trim_end_matches('/')
+            .to_owned()
+            + "/content.xml";
+        let target = safe_image_target(&target).ok_or_else(|| {
+            odt_error(
+                Some("content.xml"),
+                0,
+                format!("unsafe ODT object target {href}"),
+            )
+        })?;
+        if self.encrypted.contains(&target) {
+            return Err(odt_error(
+                Some(&target),
+                0,
+                "referenced ODT object is encrypted",
+            ));
+        }
+        let Some(bytes) = self.archive.read_optional(&target)? else {
+            self.diagnostic(path, format!("missing ODT object content {target}"))?;
+            return Ok(None);
+        };
+        let read = std::str::from_utf8(&bytes)
+            .map_err(|_| crate::math::math_error("formula object is not UTF-8"))
+            .and_then(crate::math::equation_from_formula_object);
+        let read = match read {
+            Ok(read) => read,
+            Err(error) => {
+                self.diagnostic(
+                    path,
+                    format!("ODT object {target} is not a formula this reader reads: {error}"),
+                )?;
+                return Ok(None);
+            }
+        };
+        for diagnostic in &read.diagnostics {
+            self.diagnostic(
+                path,
+                format!("formula at {}: {}", diagnostic.path, diagnostic.message),
+            )?;
+        }
+        Ok(Some(InlinePiece::Equation(Box::new(
+            oxoffice_docx_oxml::math::CT_OMath::new(read.value.expressions),
+        ))))
     }
 
     fn project_image(&mut self, frame: &XmlNode, path: &str) -> Result<Option<InlinePiece>> {
@@ -4215,6 +4393,8 @@ enum InlinePiece {
         width: Length,
         height: Length,
     },
+    /// A formula object, read back from its MathML.
+    Equation(Box<oxoffice_docx_oxml::math::CT_OMath>),
 }
 
 #[derive(Default)]

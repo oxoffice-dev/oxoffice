@@ -1,6 +1,6 @@
 ---
 date: 2026-11-23
-status: draft
+status: accepted
 scope: docx
 ---
 
@@ -35,8 +35,10 @@ Both formats have a native carrier:
   flags; its `w:rPr` (font, bold, italic, colour) as the character formatting RTF already writes for a run. The
   first element is starred (`{\mmath{\*\moMath ...}}`, `{\mmath{\*\moMathPara ...}}` for a display group), as Word
   and LibreOffice write it. The spelling of what the generic rule does not cover (`m:sty`, `m:scr` and the other
-  run flags, the `\mmathPr` header) is taken from an RTF that Word saves (checked on the Mac, see Plan); until then
-  those flags are left out and reported.
+  run flags, the `\mmathPr` header) is taken from an RTF that Word saves (Word 16.115 on the Mac,
+  `word-paper.rtf`): values are group text with the OMML string (`{\mpos top}`, `{\mdegHide on}`), numbers only
+  for `\mjc` (center 2, centerGroup 1) and the run flags `\mscr0` (roman), `\msty0` (p), `\msty2` (i). The other
+  `sty`, `scr` and `jc` values have no Word file showing their numbers: they are left out and reported.
 - **No picture fallback**: Word adds `{\mmathPict ...}`, a picture of the equation, for readers that do not know
   math. We do not draw one: the RTF writer does not render.
 - **RTF reader**: `\mmath` is read back into the paragraph's equation at its place, by the inverse walk; a group it
@@ -44,10 +46,13 @@ Both formats have a native carrier:
   the reader keeps the letters as body text.
 - **ODT writer**: an equation is a `draw:frame` anchored `as-char` holding a `draw:object` that points at its own
   sub-document `Object N/content.xml`, the MathML that `equation_to_mathml` writes for the HTML export, with the same
-  diagnostics (`ExportEquations`). A display group is one frame per equation, in a paragraph of its own as Word
-  shows it. The frame has no size: LibreOffice sizes a formula object from its content when it opens it.
-- **ODT reader**: a `draw:object` whose sub-document is a formula is read back through `equation_from_mathml`; an
-  object it cannot read stays reported as dropped, as today.
+  diagnostics (`ExportEquations`), each reported at its equation. The equations of a display group are frames
+  separated by line breaks. The frame has no size: LibreOffice sizes a formula object from its content when it
+  opens it.
+- **ODT reader**: a `draw:object` whose sub-document is a formula is read back through the MathML reader, its root
+  `display` attribute accepted (LibreOffice writes `display="block"` on every formula, wherever it stands); an
+  object it cannot read is reported and left out. A paragraph that holds only formulas (and line breaks) reads
+  as a display group, as Word shows an equation alone on its line; a formula among text is inline.
 - **Diagnostics**: `Word equation was dropped during RTF/ODT export` goes; what the conversion loses is reported per
   equation as the HTML export reports it.
 - **Surface**: no new call. `to_rtf_bytes`, `to_odt_bytes`, `from_rtf_bytes`, `from_odt_bytes`, their Python
