@@ -61,41 +61,6 @@ pages = [1, 2]
 by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
 
 [[known]]
-file = "authored/paper.docx"
-check = "dropped"
-pages = [0]
-finding = "1 diagnostics"
-issue = 224
-
-[[known]]
-file = "google/paper.docx"
-check = "dropped"
-pages = [0]
-finding = "1 diagnostics"
-issue = 224
-
-[[known]]
-file = "libreoffice/paper.docx"
-check = "dropped"
-pages = [0]
-finding = "1 diagnostics"
-issue = 224
-
-[[known]]
-file = "word/paper.docx"
-check = "dropped"
-pages = [0]
-finding = "1 diagnostics"
-issue = 224
-
-[[known]]
-file = "google/thesis.docx"
-check = "dropped"
-pages = [0]
-finding = "1 diagnostics"
-issue = 224
-
-[[known]]
 file = "authored/multilingual.pptx"
 check = "missing-glyph"
 pages = [4, 5, 6]
