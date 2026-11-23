@@ -29,7 +29,10 @@ pub struct StoryParagraph {
     /// paragraph of a block content control has the control's index then its
     /// own index in the control; one of a block element the story model
     /// keeps verbatim, such as a block `w:customXml`, the element's index
-    /// then its own index in it. Story range calls refuse the latter.
+    /// then its own index in it; one of a text box that is no story of its
+    /// own, in a run inside an inline smart tag or custom XML element, the
+    /// anchoring paragraph's path then its own index among the paragraphs
+    /// of that anchor's boxes. Story range calls refuse the last two.
     pub location: ContentLocation,
     /// The style the paragraph names in its own properties (`w:pStyle`), or
     /// `None` when it names none and the default paragraph style applies.
@@ -41,8 +44,8 @@ pub struct StoryParagraph {
     /// text box is listed on its own, after the paragraph that anchors it:
     /// as a text box story, or, inside a block element the story model keeps
     /// verbatim, as a paragraph of that element. Its text is not in the
-    /// paragraph that anchors it. One exception, not listed at all yet: a box
-    /// in a run inside an inline smart tag or custom XML element (#78).
+    /// paragraph that anchors it, a box in a run inside an inline smart tag
+    /// or custom XML element too.
     pub text: String,
 }
 
@@ -112,6 +115,60 @@ impl Document {
                 &inventories,
                 &control_scopes,
             )?;
+            // The paragraphs of a text box that is no story of its own, as one
+            // in a run inside an inline smart tag or custom XML element, after
+            // the paragraph that anchors it.
+            let owned_boxes = owners
+                .iter()
+                .filter(|(_, owner)| owner.kind == StoryKind::TextBox)
+                .map(|(_, owner)| owner.full.start)
+                .collect::<HashSet<_>>();
+            let anchors = spans
+                .iter()
+                .enumerate()
+                .flat_map(|(owner, paragraphs)| {
+                    paragraphs
+                        .iter()
+                        .filter(|(_, span)| {
+                            xml[span.clone()]
+                                .windows(b"txbxContent".len())
+                                .any(|window| window == b"txbxContent")
+                        })
+                        .map(move |(location, span)| (owner, location.clone(), span.clone()))
+                })
+                .collect::<Vec<_>>();
+            let anchor_scopes =
+                story_namespace_scopes_at(xml, anchors.iter().map(|(_, _, span)| span.start))?;
+            let mut boxes = Vec::new();
+            for (owner, location, span) in anchors {
+                let scope = anchor_scopes.get(&span.start).ok_or_else(|| {
+                    Error::Other("text box anchor namespace scope was not inventoried".to_owned())
+                })?;
+                for full in unowned_text_boxes(xml, &span, scope, &owned_boxes)? {
+                    boxes.push((owner, location.clone(), full));
+                }
+            }
+            let box_scopes =
+                story_namespace_scopes_at(xml, boxes.iter().map(|(_, _, full)| full.start))?;
+            let mut box_paragraphs: BTreeMap<(usize, Vec<usize>), usize> = BTreeMap::new();
+            for (owner, location, full) in boxes {
+                let scope = box_scopes.get(&full.start).ok_or_else(|| {
+                    Error::Other("text box namespace scope was not inventoried".to_owned())
+                })?;
+                let path = location.index_path.clone();
+                for span in preserved_paragraph_spans(xml, &full, scope)? {
+                    let next = box_paragraphs.entry((owner, path.clone())).or_default();
+                    let mut index_path = path.clone();
+                    index_path.push(*next);
+                    *next += 1;
+                    let location = ContentLocation::new(
+                        location.story.clone(),
+                        StoryItemKind::Paragraph,
+                        index_path,
+                    );
+                    spans[owner].push((location, span));
+                }
+            }
             // The paragraphs of a direct item the story model keeps verbatim.
             let preserved = inventories
                 .iter()
@@ -377,6 +434,94 @@ fn field_char(
         }
     }
     Ok(())
+}
+
+/// The text boxes (`w:txbxContent`) in `paragraph` that are no story owner,
+/// outermost first: a box in a run inside an inline smart tag or custom XML
+/// element, which the story scan keeps opaque. A box inside such a box is
+/// listed with it. Left out, as the story scan leaves them out: what a box
+/// that is a story of its own holds, an `mc:Fallback` copy, and every
+/// `mc:Choice` after the first one that holds a box.
+fn unowned_text_boxes(
+    xml: &[u8],
+    paragraph: &Range<usize>,
+    scope: &BTreeMap<String, String>,
+    owned: &HashSet<usize>,
+) -> Result<Vec<Range<usize>>> {
+    let (closed, added) = scoped_story_fragment(xml, paragraph.clone(), scope)?;
+    let source = |local: usize| {
+        if local == 0 {
+            paragraph.start
+        } else {
+            paragraph.start + local - added
+        }
+    };
+    let mut reader = NsReader::from_reader(closed.as_slice());
+    let mut boxes = Vec::new();
+    let mut depth = 0usize;
+    // The depth and start of the unowned box open here.
+    let mut open: Option<(usize, usize)> = None;
+    // The depth of the subtree left out, while inside it.
+    let mut skipped: Option<usize> = None;
+    // For each `mc:AlternateContent` open here, its depth and whether one of
+    // its choices held a box.
+    let mut alternates: Vec<(usize, bool)> = Vec::new();
+    let mut buffer = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("text box scan failed: {error}")))?;
+        let kind = story_namespace(&namespace);
+        match event {
+            Event::Start(element) => {
+                let local = element.local_name();
+                let local = local.as_ref();
+                if skipped.is_none() && open.is_none() {
+                    let markup = kind == StoryNamespace::MarkupCompatibility;
+                    if markup && local == b"AlternateContent" {
+                        alternates.push((depth, false));
+                    } else if markup
+                        && (local == b"Fallback"
+                            || (local == b"Choice"
+                                && alternates.last().is_some_and(|(_, held)| *held)))
+                    {
+                        skipped = Some(depth);
+                    } else if kind == StoryNamespace::Word && local == b"txbxContent" {
+                        if let Some((_, held)) = alternates.last_mut() {
+                            *held = true;
+                        }
+                        if owned.contains(&source(before)) {
+                            skipped = Some(depth);
+                        } else {
+                            open = Some((depth, before));
+                        }
+                    }
+                }
+                depth += 1;
+            }
+            Event::End(_) => {
+                depth -= 1;
+                if skipped == Some(depth) {
+                    skipped = None;
+                } else if let Some((at, start)) = open
+                    && at == depth
+                {
+                    open = None;
+                    let after = reader.buffer_position() as usize;
+                    boxes.push(source(start)..source(after));
+                } else if skipped.is_none()
+                    && open.is_none()
+                    && alternates.last().is_some_and(|(at, _)| *at == depth)
+                {
+                    alternates.pop();
+                }
+            }
+            Event::Eof => return Ok(boxes),
+            _ => {}
+        }
+        buffer.clear();
+    }
 }
 
 /// The paragraphs inside a block element the story model keeps verbatim, in
