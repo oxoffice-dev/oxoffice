@@ -89,6 +89,7 @@ use templates::{template_render_pyerr, template_value};
 mod block_edits;
 mod body_splice;
 mod inventory_matches;
+mod owner_anchors;
 mod owner_facts;
 mod owner_locations;
 mod owner_pieces;
@@ -103,13 +104,15 @@ use inventory_matches::{
     append_word_owners_with_states, indexed_inventory_matches, property_owner_key,
     relocated_property_owners, word_owners_with_states,
 };
+use owner_anchors::{AnchoredRoute, WordBodyItems, WordOwner, route_key};
 use owner_facts::{
     FormOwnerRoute, FormSourceKey, FormStoryKey, WordOwnerSnapshots, WordParagraphFacts,
     form_owner_route, form_source_key, word_owner_facts, word_piece_owner_addresses,
     word_table_facts, word_table_read_facts,
 };
 use owner_locations::{
-    IndexMap, WordReadFacts, same_content_owner, same_story_owner, word_owner_capture,
+    CellParagraphIndex, IndexMap, WordReadFacts, same_content_owner, same_story_owner,
+    word_owner_capture,
 };
 pub(crate) use owner_locations::{WordOwnerLocation, WordView};
 use owner_pieces::{
@@ -417,6 +420,7 @@ pub struct PyCoreProperties {
     document: Py<PyDocument>,
 }
 
+#[derive(Clone)]
 #[cfg_attr(debug_assertions, derive(Debug, PartialEq, Eq))]
 struct WordOwnerAddress {
     location: WordOwnerLocation,
@@ -426,27 +430,20 @@ struct WordOwnerAddress {
     read_facts: WordReadFacts,
 }
 
-// Debug checks keep the inventory a local edit replaces, to compare.
-#[cfg_attr(debug_assertions, derive(Clone))]
-pub(crate) struct WordOwner {
-    location: WordOwnerLocation,
-    parent: Option<usize>,
-    body_slot: Option<usize>,
-    projection_ordinal: Option<usize>,
-    read_facts: WordReadFacts,
-    owner: RevisionState,
-    content: Option<RevisionState>,
-    properties: Option<RevisionState>,
-    grid: Option<RevisionState>,
-}
-
+/// The indexes of an owner inventory. An owner's key is its index in the
+/// inventory, which an insertion never changes.
 struct WordOwnerIndexes {
+    /// The body items the body owners and projection routes are stored
+    /// relative to.
+    items: WordBodyItems,
     by_generation: IndexMap<u64, usize>,
+    /// Owner keys by [`route_key`] of their stored route.
     by_route: IndexMap<u64, Vec<usize>>,
-    direct_body_paragraphs: IndexMap<usize, usize>,
-    body_paragraphs: Option<Vec<Option<oxoffice_docx::ContentLocation>>>,
-    body_tables: Vec<Option<oxoffice_docx::ContentLocation>>,
-    cell_paragraphs: HashMap<(usize, usize, usize), Vec<oxoffice_docx::ContentLocation>>,
+    /// The direct body paragraph owner of each direct body slot.
+    direct_body_paragraphs: Vec<Option<usize>>,
+    body_paragraphs: Option<Vec<Option<AnchoredRoute>>>,
+    body_tables: Vec<Option<AnchoredRoute>>,
+    cell_paragraphs: CellParagraphIndex,
     paragraphs_by_parent: IndexMap<usize, Vec<usize>>,
     tables_by_parent: IndexMap<usize, Vec<usize>>,
     cells_by_parent: IndexMap<usize, Vec<usize>>,

@@ -14,13 +14,13 @@ impl PyDocument {
                 let (_, run) = self.indexed_owner(state).ok_or_else(|| {
                     PyValueError::new_err("run physical owner is no longer current")
                 })?;
-                if !matches!(run.location, WordOwnerLocation::Run(..)) {
+                if !matches!(run.route_shape(), WordOwnerLocation::Run(..)) {
                     return Err(PyValueError::new_err("run owner has the wrong kind"));
                 }
                 run.parent
                     .filter(|parent| {
                         self.owners.get(*parent).is_some_and(|owner| {
-                            matches!(owner.location, WordOwnerLocation::Paragraph(_))
+                            matches!(owner.route_shape(), WordOwnerLocation::Paragraph(_))
                         })
                     })
                     .ok_or_else(|| PyValueError::new_err("run has no current paragraph owner"))
@@ -133,9 +133,8 @@ impl PyDocument {
         if !owner.owner.same_state(state) {
             return None;
         }
-        let slot = owner.body_slot?;
-        (self.indexes.direct_body_paragraphs.get(&slot) == Some(&selected))
-            .then_some((selected, slot))
+        let slot = owner.body_slot()?;
+        (self.indexes.direct_body_paragraph(slot) == Some(selected)).then_some((selected, slot))
     }
 
     pub(super) fn prepare_tail_body_removal(
@@ -145,7 +144,7 @@ impl PyDocument {
         if slot.checked_add(1) != Some(self.inner.content_count()) {
             return Ok(None);
         }
-        let Some(&selected) = self.indexes.direct_body_paragraphs.get(&slot) else {
+        let Some(selected) = self.indexes.direct_body_paragraph(slot) else {
             return Ok(None);
         };
         let mut end = selected + 1;
@@ -153,9 +152,9 @@ impl PyDocument {
             end += 1;
         }
         for owner in &self.owners[end..] {
-            let independent_run = matches!(owner.location, WordOwnerLocation::Run(..))
+            let independent_run = matches!(owner.route_shape(), WordOwnerLocation::Run(..))
                 && owner.parent.is_some_and(|parent| parent < selected);
-            if !matches!(owner.location, WordOwnerLocation::Section(_)) && !independent_run {
+            if !matches!(owner.route_shape(), WordOwnerLocation::Section(_)) && !independent_run {
                 return Ok(None);
             }
         }
@@ -191,9 +190,15 @@ impl PyDocument {
             .map_err(revision_to_pyerr)?;
         let start = range.start;
         let end = range.end;
+        // The removed paragraph's body item goes, the last one.
+        if let WordOwnerLocation::Paragraph(location) = &*self.owners[start].location()
+            && let Some(item) = location.index_path().first()
+        {
+            self.indexes.items.remove(*item, 1);
+        }
         for (offset, owner) in self.owners.drain(range).enumerate() {
             self.indexes.by_generation.remove(&owner.owner.generation());
-            let hash = owner.location.route_hash();
+            let hash = owner.route_key();
             let bucket = self
                 .indexes
                 .by_route
@@ -217,7 +222,7 @@ impl PyDocument {
             for index in self
                 .indexes
                 .by_route
-                .get_mut(&owner.location.route_hash())
+                .get_mut(&owner.route_key())
                 .expect("surviving suffix route is indexed")
             {
                 if *index == end + offset {
@@ -229,7 +234,7 @@ impl PyDocument {
                 .by_generation
                 .get_mut(&owner.owner.generation())
                 .expect("surviving suffix owner is indexed") = start + offset;
-            if matches!(owner.location, WordOwnerLocation::Run(..))
+            if matches!(owner.route_shape(), WordOwnerLocation::Run(..))
                 && let Some(parent) = owner.parent
                 && let Some(runs) = self.indexes.runs_by_parent.get_mut(&parent)
                 && let Some(index) = runs.iter_mut().find(|index| **index == end + offset)
@@ -237,7 +242,7 @@ impl PyDocument {
                 *index = start + offset;
             }
         }
-        self.indexes.direct_body_paragraphs.remove(&slot);
+        self.indexes.direct_body_paragraphs.truncate(slot);
         self.snapshot_scope = Some(snapshot_scope);
         self.pieces
             .as_mut()
@@ -256,7 +261,7 @@ impl PyDocument {
                 if !owner.owner.same_state(state) {
                     return None;
                 }
-                match &owner.location {
+                match &*owner.location() {
                     WordOwnerLocation::Paragraph(location) => Some(location.clone()),
                     _ => None,
                 }
@@ -282,7 +287,7 @@ impl PyDocument {
                 if !owner.owner.same_state(state) {
                     return None;
                 }
-                match &owner.location {
+                match &*owner.location() {
                     WordOwnerLocation::Run(location, path) => {
                         Some((location.clone(), path.clone()))
                     }
@@ -308,7 +313,7 @@ impl PyDocument {
                 if !owner.owner.same_state(state) {
                     return None;
                 }
-                match &owner.location {
+                match &*owner.location() {
                     WordOwnerLocation::Table(location) => Some(location.clone()),
                     _ => None,
                 }
@@ -331,7 +336,7 @@ impl PyDocument {
                 if !owner.owner.same_state(state) {
                     return None;
                 }
-                match &owner.location {
+                match &*owner.location() {
                     WordOwnerLocation::Cell {
                         table, row, cell, ..
                     } => Some((table.clone(), *row, *cell)),
@@ -352,7 +357,8 @@ impl PyDocument {
         selected: usize,
         paragraph: &oxoffice_docx_oxml::CT_P,
     ) -> PyResult<PreparedPlainParagraphXml> {
-        let WordOwnerLocation::Paragraph(location) = &self.owners[selected].location else {
+        let WordOwnerLocation::Paragraph(location) = self.owners[selected].location().into_owned()
+        else {
             return Err(PyValueError::new_err("local XML owner is not a paragraph"));
         };
         let mut runs = Vec::new();
@@ -416,10 +422,11 @@ impl PyDocument {
         let states = (0..scopes.len())
             .map(|index| revision.born(index).expect("prepared paragraph scope"))
             .collect::<Vec<_>>();
-        let newborn = word_owners_with_states(addresses, &states[retired.len()..]);
+        let newborn =
+            word_owners_with_states(addresses, &states[retired.len()..], &self.indexes.items);
         let mut route_buckets = HashMap::<u64, Vec<usize>>::new();
         for (offset, owner) in newborn.iter().enumerate() {
-            let hash = owner.location.route_hash();
+            let hash = owner.route_key();
             route_buckets
                 .entry(hash)
                 .or_insert_with(|| {
@@ -587,28 +594,28 @@ impl PyDocument {
             }
             WordPublication::CellText(table, row, cell)
             | WordPublication::CellInsert(table, row, cell) => {
-                self.owners.iter().find_map(|owner| match &owner.location {
-                    WordOwnerLocation::Cell {
-                        table: owned,
-                        row: r,
-                        cell: c,
-                        ..
-                    } if same_content_owner(owned, table) && r == row && c == cell => {
-                        Some(owner.location.clone())
-                    }
-                    _ => None,
-                })
+                self.owners
+                    .iter()
+                    .find_map(|owner| match &*owner.location() {
+                        WordOwnerLocation::Cell {
+                            table: owned,
+                            row: r,
+                            cell: c,
+                            ..
+                        } if same_content_owner(owned, table) && r == row && c == cell => {
+                            Some(owner.location().into_owned())
+                        }
+                        _ => None,
+                    })
             }
             WordPublication::ElementXml(location)
             | WordPublication::RunText(location)
             | WordPublication::HyperlinkRemove(location) => Some(location.clone()),
             _ => None,
         };
-        let selected_index = selected.as_ref().and_then(|selected| {
-            self.owners
-                .iter()
-                .position(|owner| owner.location.same_route(selected))
-        });
+        let selected_index = selected
+            .as_ref()
+            .and_then(|selected| self.indexes.find(&self.owners, selected));
         // A block edit whose element has no owner retires every handle, as
         // the run edits and cell insertions did before.
         let publication = if shift.is_some() && selected_index.is_none() {
@@ -725,7 +732,7 @@ impl PyDocument {
                         // part. Its owner scope retires with the edit, so the
                         // handle that made the change cannot be reused.
                         if matches!(
-                            &self.owners[before].location,
+                            &*self.owners[before].location(),
                             WordOwnerLocation::Paragraph(location)
                                 if location.story().kind() == oxoffice_docx::StoryKind::TextBox
                         ) {
@@ -737,7 +744,7 @@ impl PyDocument {
                     while let Some(parent) = self.owners[root].parent {
                         root = parent;
                     }
-                    match &self.owners[root].location {
+                    match &*self.owners[root].location() {
                         WordOwnerLocation::Section(_) => true,
                         WordOwnerLocation::Hyperlink(..) => matches!(
                             publication,
@@ -746,7 +753,9 @@ impl PyDocument {
                         ),
                         WordOwnerLocation::Paragraph(location)
                         | WordOwnerLocation::Table(location) => match location.story().kind() {
-                            oxoffice_docx::StoryKind::Body => self.owners[root].body_slot.is_some(),
+                            oxoffice_docx::StoryKind::Body => {
+                                self.owners[root].body_slot().is_some()
+                            }
                             oxoffice_docx::StoryKind::TextBox
                             | oxoffice_docx::StoryKind::Comment => false,
                             oxoffice_docx::StoryKind::Header
@@ -863,7 +872,9 @@ impl PyDocument {
         } else {
             revision.born(born).expect("prepared snapshot birth")
         };
-        let owners = word_owners_with_states(locations, &states);
+        let projections = projections.unwrap_or_else(|| WordIndexProjections::of(candidate));
+        let items = WordBodyItems::derive(&locations, &projections);
+        let owners = word_owners_with_states(locations, &states, &items);
         #[cfg(debug_assertions)]
         if let (Some(shift), Some(selected)) = (&shift, selected_index) {
             assert_kept_owners_name_their_elements(
@@ -872,8 +883,7 @@ impl PyDocument {
                 Some((shift, &self.owners[selected].owner)),
             );
         }
-        let projections = projections.unwrap_or_else(|| WordIndexProjections::of(candidate));
-        let indexes = WordOwnerIndexes::prepare(&owners, projections)?;
+        let indexes = WordOwnerIndexes::prepare(&owners, items, projections)?;
         Ok(PreparedWordRevision {
             revision,
             owners,
@@ -1009,7 +1019,7 @@ impl PyDocument {
         let (slot, row, cell) = self.direct_body_cell_slot(state)?;
         let (_, owner) = self.indexed_owner(state)?;
         let parent = self.owners.get(owner.parent?)?;
-        Some((slot, parent.projection_ordinal?, row, cell))
+        Some((slot, parent.projection_ordinal()?, row, cell))
     }
 
     pub(crate) fn try_local_cell_paragraph_text(
@@ -1034,9 +1044,18 @@ impl PyDocument {
         else {
             return Ok(false);
         };
-        let Some(paragraphs) = self.indexes.cell_paragraphs.get(&(table, row, cell)) else {
+        let Some(paragraphs) = self
+            .indexes
+            .cell_paragraphs
+            .get(table)
+            .and_then(|cells| cells.get(&(row, cell)))
+        else {
             return Ok(false);
         };
+        let paragraphs = paragraphs
+            .iter()
+            .map(AnchoredRoute::location)
+            .collect::<Vec<_>>();
         let Some(position) = paragraphs
             .iter()
             .position(|candidate| same_content_owner(candidate, location))
@@ -1152,7 +1171,7 @@ impl PyDocument {
             .body_tables
             .get(table_ordinal)
             .and_then(Option::as_ref)
-            .cloned()
+            .map(AnchoredRoute::location)
         else {
             return Ok(false);
         };
@@ -1162,7 +1181,7 @@ impl PyDocument {
         ) else {
             return Ok(false);
         };
-        if self.owners[table_index].body_slot != Some(body_slot)
+        if self.owners[table_index].body_slot() != Some(body_slot)
             || table_location.index_path().len() != 1
             || !matches!(&self.owners[table_index].read_facts, WordReadFacts::Table(rows)
                 if rows.get(row).and_then(|cells| cells.get(cell)).is_some())
@@ -1173,14 +1192,14 @@ impl PyDocument {
             return Ok(false);
         };
         let Some(selected) = cell_indices.iter().copied().find(|index| {
-            matches!(&self.owners[*index].location,
+            matches!(&*self.owners[*index].location(),
             WordOwnerLocation::Cell { row: r, cell: c, .. } if *r == row && *c == cell)
         }) else {
             return Ok(false);
         };
         let WordOwnerLocation::Cell {
             story: cell_story, ..
-        } = &self.owners[selected].location
+        } = &*self.owners[selected].location()
         else {
             return Ok(false);
         };
@@ -1219,11 +1238,10 @@ impl PyDocument {
                     || !self
                         .indexes
                         .cell_paragraphs
-                        .get(&(table_ordinal, row, cell))
+                        .get(table_ordinal)
+                        .and_then(|cells| cells.get(&(row, cell)))
                         .is_some_and(|paragraphs| {
-                            paragraphs
-                                .iter()
-                                .any(|current| same_content_owner(current, location))
+                            paragraphs.iter().any(|current| current.names(location))
                         })
                 {
                     return Ok(false);
@@ -1329,12 +1347,12 @@ impl PyDocument {
         for index in &previous {
             let old = &self.owners[*index];
             old_addresses.push(WordOwnerAddress {
-                location: old.location.clone(),
+                location: old.location().into_owned(),
                 parent: old
                     .parent
                     .and_then(|parent| local_positions.get(&parent).copied()),
-                body_slot: old.body_slot,
-                projection_ordinal: old.projection_ordinal,
+                body_slot: old.body_slot(),
+                projection_ordinal: old.projection_ordinal(),
                 read_facts: old.read_facts.clone(),
             });
         }
@@ -1389,7 +1407,7 @@ impl PyDocument {
         let mut memberships = Vec::new();
         let mut route_buckets = HashMap::<u64, Vec<usize>>::new();
         for index in &previous {
-            let hash = self.owners[*index].location.route_hash();
+            let hash = self.owners[*index].route_key();
             route_buckets.entry(hash).or_insert_with(|| {
                 self.indexes
                     .by_route
@@ -1401,7 +1419,8 @@ impl PyDocument {
         for (index, address) in addresses.iter_mut().enumerate() {
             // The cell's parent is the table, outside the replaced owners.
             address.parent = Some(address.parent.map_or(table_index, |parent| targets[parent]));
-            let hash = address.location.route_hash();
+            let (route, anchor) = self.indexes.items.stored(&address.location);
+            let hash = route_key(&route, anchor);
             route_buckets.entry(hash).or_insert_with(|| {
                 self.indexes
                     .by_route
@@ -1585,7 +1604,7 @@ impl PyDocument {
         let snapshot = revision
             .as_ref()
             .map(|revision| revision.born(born).expect("prepared snapshot"));
-        let owners = word_owners_with_states(addresses, &states);
+        let owners = word_owners_with_states(addresses, &states, &self.indexes.items);
         if let Some(revision) = revision {
             self.revisions
                 .commit_scopes(revision)
@@ -1633,9 +1652,11 @@ impl PyDocument {
             }
             map.extend(prepared);
         }
-        self.indexes
-            .cell_paragraphs
-            .insert((table_ordinal, row, cell), cell_routes);
+        let cell_routes = cell_routes
+            .into_iter()
+            .map(|location| self.indexes.items.route(location))
+            .collect();
+        self.indexes.cell_paragraphs[table_ordinal].insert((row, cell), cell_routes);
         if let Some(snapshot) = snapshot {
             self.snapshot_scope = Some(snapshot);
         }
@@ -1882,13 +1903,13 @@ impl PyDocument {
         table_ordinal: usize,
     ) {
         let fresh = self.assert_table_piece_reads_fresh(body_slot);
-        let WordOwnerLocation::Table(location) = &self.owners[table_index].location else {
+        let WordOwnerLocation::Table(location) = &*self.owners[table_index].location() else {
             panic!("a local cell table owner")
         };
         let cells = &self.indexes.cells_by_parent[&table_index];
         let base = cells
             .iter()
-            .filter_map(|index| match &self.owners[*index].location {
+            .filter_map(|index| match &*self.owners[*index].location() {
                 WordOwnerLocation::Cell { story, .. } => Some(story.owner_index()),
                 _ => None,
             })
@@ -1940,15 +1961,11 @@ impl PyDocument {
         let mut pending = vec![table_index];
         while let Some(index) = pending.pop() {
             let owner = &self.owners[index];
-            let address = WordOwnerAddress {
-                location: owner.location.clone(),
-                parent: owner.parent,
-                body_slot: owner.body_slot,
-                projection_ordinal: owner.projection_ordinal,
-                read_facts: owner.read_facts.clone(),
-            };
-            let parent = owner.parent.map(|parent| &self.owners[parent].location);
-            actual.push(record(&address, parent));
+            let address = owner.address();
+            let parent = owner
+                .parent
+                .map(|parent| self.owners[parent].location().into_owned());
+            actual.push(record(&address, parent.as_ref()));
             for children in [
                 self.indexes.cells_by_parent.get(&index),
                 self.indexes.paragraphs_by_parent.get(&index),
@@ -1969,8 +1986,13 @@ impl PyDocument {
                 assert_eq!(
                     self.indexes
                         .cell_paragraphs
-                        .get(&(table_ordinal, *row, *cell)),
-                    Some(&routes.iter().map(place).collect::<Vec<_>>()),
+                        .get(table_ordinal)
+                        .and_then(|cells| cells.get(&(*row, *cell)))
+                        .map(|routes| routes
+                            .iter()
+                            .map(AnchoredRoute::location)
+                            .collect::<Vec<_>>()),
+                    Some(routes.iter().map(place).collect::<Vec<_>>()),
                     "local cell paragraph routes"
                 );
             }
@@ -2002,14 +2024,17 @@ impl PyDocument {
                 None,
             ),
         };
-        if let Some(owners) = relocated_property_owners(&self.owners, &locations) {
+        if self.owners.len() == locations.len() {
             let projections = projections.unwrap_or_else(|| WordIndexProjections::of(&candidate));
-            let indexes = WordOwnerIndexes::prepare(&owners, projections)?;
-            self.pending_pieces = Some(pieces);
-            self.owners = owners;
-            self.indexes = indexes;
-            self.install_inner(candidate);
-            return Ok(());
+            let items = WordBodyItems::derive(&locations, &projections);
+            if let Some(owners) = relocated_property_owners(&self.owners, &locations, &items) {
+                let indexes = WordOwnerIndexes::prepare(&owners, items, projections)?;
+                self.pending_pieces = Some(pieces);
+                self.owners = owners;
+                self.indexes = indexes;
+                self.install_inner(candidate);
+                return Ok(());
+            }
         }
         self.publish_owner_candidate(py, candidate, operation, WordPublication::Conservative)
     }
@@ -2234,14 +2259,20 @@ impl PyDocument {
         owners.try_reserve(locations.len()).map_err(|_| {
             pyo3::exceptions::PyMemoryError::new_err("Word owner allocation failed")
         })?;
-        let mut indexes = WordOwnerIndexes::prepare_addresses(&locations, projections)?;
+        let items = WordBodyItems::derive(&locations, &projections);
+        let mut indexes = WordOwnerIndexes::prepare_addresses(&locations, items, projections)?;
         // This is the last recoverably fallible step. All packet storage is reserved.
         let states = self
             .revisions
             .initialize_scopes(&scopes)
             .map_err(revision_to_pyerr)?;
         let snapshot_scope = states.last().expect("snapshot scope allocated").clone();
-        append_word_owners_with_states(&mut owners, locations, &states[..states.len() - 1]);
+        append_word_owners_with_states(
+            &mut owners,
+            locations,
+            &states[..states.len() - 1],
+            &indexes.items,
+        );
         for (index, owner) in owners.iter().enumerate() {
             indexes
                 .by_generation

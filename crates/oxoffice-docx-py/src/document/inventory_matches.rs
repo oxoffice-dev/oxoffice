@@ -13,14 +13,14 @@ fn same_inventory_route(
         let address = &new[after];
         let b = &address.location;
         let parent = address.parent;
-        let equal = match (&record.location, b) {
+        let equal = match (&*record.location(), b) {
             (WordOwnerLocation::Paragraph(a), WordOwnerLocation::Paragraph(b))
                 if a.story().kind() == oxoffice_docx::StoryKind::Body
                     && b.story().kind() == oxoffice_docx::StoryKind::Body
-                    && record.body_slot.is_some()
+                    && record.body_slot().is_some()
                     && address.body_slot.is_some() =>
             {
-                record.body_slot == address.body_slot
+                record.body_slot() == address.body_slot
                     && a.index_path().len() <= 2
                     && b.index_path().len() <= 2
                     && a.index_path().get(1..) == b.index_path().get(1..)
@@ -28,27 +28,27 @@ fn same_inventory_route(
             (WordOwnerLocation::Table(a), WordOwnerLocation::Table(b))
                 if a.story().kind() == oxoffice_docx::StoryKind::Body
                     && b.story().kind() == oxoffice_docx::StoryKind::Body
-                    && record.body_slot.is_some()
+                    && record.body_slot().is_some()
                     && address.body_slot.is_some() =>
             {
-                record.body_slot == address.body_slot
+                record.body_slot() == address.body_slot
             }
             (WordOwnerLocation::Paragraph(a), WordOwnerLocation::Paragraph(b))
             | (WordOwnerLocation::Table(a), WordOwnerLocation::Table(b))
                 if record.parent.is_some_and(|index| {
-                    matches!(old[index].location, WordOwnerLocation::Cell { .. })
+                    matches!(old[index].route_shape(), WordOwnerLocation::Cell { .. })
                 }) && parent.is_some_and(|index| {
                     matches!(new[index].location, WordOwnerLocation::Cell { .. })
                 }) =>
             {
                 a.item_kind() == b.item_kind()
-                    && record.projection_ordinal == address.projection_ordinal
+                    && record.projection_ordinal() == address.projection_ordinal
             }
             (WordOwnerLocation::Paragraph(a), WordOwnerLocation::Paragraph(b))
             | (WordOwnerLocation::Table(a), WordOwnerLocation::Table(b)) => {
                 same_story_owner(a.story(), b.story())
                     && a.item_kind() == b.item_kind()
-                    && record.projection_ordinal == address.projection_ordinal
+                    && record.projection_ordinal() == address.projection_ordinal
             }
             (
                 WordOwnerLocation::Cell {
@@ -323,20 +323,12 @@ pub(super) fn property_owner_key(addresses: &[WordOwnerAddress], index: usize) -
 pub(super) fn relocated_property_owners(
     old: &[WordOwner],
     new_addresses: &[WordOwnerAddress],
+    items: &WordBodyItems,
 ) -> Option<Vec<WordOwner>> {
     if old.len() != new_addresses.len() {
         return None;
     }
-    let old_addresses = old
-        .iter()
-        .map(|owner| WordOwnerAddress {
-            location: owner.location.clone(),
-            parent: owner.parent,
-            body_slot: owner.body_slot,
-            projection_ordinal: owner.projection_ordinal,
-            read_facts: owner.read_facts.clone(),
-        })
-        .collect::<Vec<_>>();
+    let old_addresses = old.iter().map(WordOwner::address).collect::<Vec<_>>();
     let mut buckets: HashMap<PropertyOwnerKey, Vec<usize>> = HashMap::new();
     for index in 0..old_addresses.len() {
         buckets
@@ -355,18 +347,11 @@ pub(super) fn relocated_property_owners(
         }
         let previous = &old[bucket[*cursor]];
         *cursor += 1;
-        let address = &new_addresses[index];
-        owners.push(WordOwner {
-            location: address.location.clone(),
-            parent: address.parent,
-            body_slot: address.body_slot,
-            projection_ordinal: address.projection_ordinal,
-            read_facts: address.read_facts.clone(),
-            owner: previous.owner.clone(),
-            content: previous.content.clone(),
-            properties: previous.properties.clone(),
-            grid: previous.grid.clone(),
-        });
+        owners.push(WordOwner::with_states_of(
+            new_addresses[index].clone(),
+            previous,
+            items,
+        ));
     }
     if cursors.len() != buckets.len()
         || cursors
@@ -386,20 +371,14 @@ pub(super) fn indexed_inventory_matches(
     let mut index = HashMap::<(Option<usize>, usize, WordRouteKey), Vec<usize>>::new();
     let mut links = HashMap::<WordRouteKey, Vec<usize>>::new();
     for (before, owner) in old.iter().enumerate() {
-        let address = WordOwnerAddress {
-            location: owner.location.clone(),
-            parent: owner.parent,
-            body_slot: owner.body_slot,
-            projection_ordinal: owner.projection_ordinal,
-            read_facts: owner.read_facts.clone(),
-        };
-        let parent_cell = owner
-            .parent
-            .is_some_and(|parent| matches!(old[parent].location, WordOwnerLocation::Cell { .. }));
-        let body_slot = match &owner.location {
+        let address = owner.address();
+        let parent_cell = owner.parent.is_some_and(|parent| {
+            matches!(old[parent].route_shape(), WordOwnerLocation::Cell { .. })
+        });
+        let body_slot = match &address.location {
             WordOwnerLocation::Paragraph(location) | WordOwnerLocation::Table(location) => {
                 location.story().kind() == oxoffice_docx::StoryKind::Body
-                    && owner.body_slot.is_some()
+                    && address.body_slot.is_some()
             }
             _ => false,
         };
@@ -419,7 +398,7 @@ pub(super) fn indexed_inventory_matches(
                 .entry((owner.parent, class, key.clone()))
                 .or_default()
                 .push(before);
-            if matches!(owner.location, WordOwnerLocation::Hyperlink(..)) {
+            if matches!(owner.route_shape(), WordOwnerLocation::Hyperlink(..)) {
                 links.entry(key).or_default().push(before);
             }
         }
@@ -530,12 +509,15 @@ impl WordOwner {
     }
 }
 
+/// The owners of `locations` with their scope states, in order, stored
+/// relative to the body items of `items`.
 pub(super) fn word_owners_with_states(
     locations: Vec<WordOwnerAddress>,
     states: &[RevisionState],
+    items: &WordBodyItems,
 ) -> Vec<WordOwner> {
     let mut result = Vec::with_capacity(locations.len());
-    append_word_owners_with_states(&mut result, locations, states);
+    append_word_owners_with_states(&mut result, locations, states, items);
     result
 }
 
@@ -543,36 +525,12 @@ pub(super) fn append_word_owners_with_states(
     result: &mut Vec<WordOwner>,
     locations: Vec<WordOwnerAddress>,
     states: &[RevisionState],
+    items: &WordBodyItems,
 ) {
     let mut offset = 0;
     result.extend(locations.into_iter().map(|address| {
-        let WordOwnerAddress {
-            location,
-            parent,
-            body_slot,
-            projection_ordinal,
-            read_facts,
-        } = address;
-        let scopes = &states[offset..offset + location.scopes().len()];
+        let scopes = &states[offset..offset + address.location.scopes().len()];
         offset += scopes.len();
-        let (content, properties, grid) = match &location {
-            WordOwnerLocation::Paragraph(_) => {
-                (Some(scopes[1].clone()), Some(scopes[2].clone()), None)
-            }
-            WordOwnerLocation::Table(_) => (None, None, Some(scopes[1].clone())),
-            WordOwnerLocation::Hyperlink(..) => (None, None, None),
-            _ => (Some(scopes[1].clone()), None, None),
-        };
-        WordOwner {
-            location,
-            parent,
-            body_slot,
-            projection_ordinal,
-            read_facts,
-            owner: scopes[0].clone(),
-            content,
-            properties,
-            grid,
-        }
+        WordOwner::new(address, scopes, items)
     }));
 }

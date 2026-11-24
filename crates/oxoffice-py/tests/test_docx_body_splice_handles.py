@@ -8,7 +8,7 @@ saved still takes the whole route, which retires every handle (oxoffice-dev/oxof
 import pytest
 
 import oxoffice.docx as oxdocx
-from test_docx_block_handles import IDS, STALE, control, document, outcome, p, table
+from test_docx_block_handles import IDS, STALE, control, document, outcome, p, table, text_box
 
 
 def body(ids):
@@ -207,3 +207,90 @@ def test_removing_the_last_paragraph_after_a_run_was_added_to_an_earlier_one_kee
     assert runs_text(first) == "x"
     assert runs_text(second) == "b"
     assert texts(doc) == ["x", "b"]
+
+
+@IDS
+def test_handles_follow_their_block_after_a_paragraph_gained_runs_in_place(ids):
+    # The runs a local replacement adds are owners kept after those of every later block: the splices that follow
+    # move the records of the blocks, never these owners.
+    doc = body(ids)
+    target = doc.paragraphs[2]
+    target.replace_xml(target.xml.replace("</w:p>", "<w:r><w:t>x</w:t></w:r></w:p>"))
+    taken = handles(doc)
+    doc.insert_paragraph(0, "first")
+    doc.insert_table(3, 1, 1)
+    doc.insert_paragraph(len(doc.paragraphs) + len(doc.tables), "last")
+    check(taken)
+    assert texts(doc)[0] == "first" and texts(doc)[-1] == "last"
+
+
+def test_handles_follow_their_block_through_removals_and_insertions():
+    doc = body(ids=False)
+    taken = handles(doc)
+    assert doc.remove_content(3)  # p2
+    doc.insert_paragraph(0, "first")
+    assert doc.remove_content(1)  # p0
+    doc.insert_table(2, 1, 1)
+    doc.insert_paragraph(4, "middle")
+    check(taken, retired={"p0", "p2"})
+    taken["t1 cell paragraph"][0].text = "t1 edited"
+    assert doc.tables[-1].cell(0, 0).text == "t1 edited"
+    assert texts(doc) == ["first", "p1 tail", "middle", "p3 tail", "p4 tail"]
+
+
+@IDS
+def test_handles_follow_their_block_after_an_edit_of_the_whole_document(ids):
+    doc = body(ids)
+    doc.add_footnote(doc.paragraphs[1], "note")
+    taken = handles(doc)
+    doc.insert_paragraph(0, "first")
+    doc.insert_table(0, 1, 1)
+    check(taken)
+
+
+@IDS
+def test_a_body_with_a_text_box_keeps_its_handles_through_insertions(ids):
+    # The text box's cell stories, were it to hold a table, would be numbered among those of the body tables: a table
+    # inserted takes the whole route there, and a paragraph inserted moves the records of the blocks after it.
+    doc = document(p("a", text_box("boxed")) + table2("t0") + p("b") + table(p("t1 a")) + p("c"), ids=ids)
+    cell = doc.tables[1].cell(0, 0).paragraphs[0]
+    last = doc.paragraphs[-1]
+    doc.insert_paragraph(0, "new")
+    assert runs_text(cell) == "t1 a"
+    assert runs_text(last) == "c"
+    doc.insert_table(1, 1, 1)
+    assert outcome(lambda: runs_text(cell)) in ("t1 a", STALE)
+    assert outcome(lambda: runs_text(last)) in ("c", STALE)
+    assert doc.tables[-1].cell(0, 0).text == "t1 a"
+    assert texts(doc)[-1] == "c"
+
+
+@IDS
+def test_handles_into_nested_tables_follow_their_block(ids):
+    # The cell stories of a nested table are numbered with those of the body table that holds it: a table inserted
+    # before both moves their record, and the nested cell's handles still read and edit their own cell.
+    nested = table(table(p("inner")) + p("outer"))
+    doc = document(table(table(p("early")) + p("first")) + p("a") + nested + p("b"), ids=ids)
+    inner = doc.tables[1].cell(0, 0).tables[0].cell(0, 0)
+    paragraph = inner.paragraphs[0]
+    last = doc.paragraphs[-1]
+    doc.insert_table(0, 1, 1)
+    doc.insert_paragraph(2, "middle")
+    doc.insert_table(len(doc.paragraphs) + len(doc.tables) - 1, 1, 1)
+    assert runs_text(paragraph) == "inner"
+    assert inner.text == "inner"
+    assert runs_text(last) == "b"
+    paragraph.text = "inner edited"
+    assert doc.tables[2].cell(0, 0).tables[0].cell(0, 0).text == "inner edited"
+    assert doc.tables[1].cell(0, 0).tables[0].cell(0, 0).text == "early"
+
+
+@IDS
+def test_a_table_inserted_before_a_table_in_a_block_content_control_keeps_every_table_in_place(ids):
+    # The cells of the table in the control have no owner: a table inserted takes the whole route there.
+    doc = document(table(p("a")) + control(table(p("b"))) + p("x") + table(p("d")), ids=ids)
+    later = doc.tables[-1]
+    doc.insert_table(0, 1, 1)
+    doc.insert_paragraph(0, "new")
+    assert outcome(lambda: later.cell(0, 0).text) in ("d", STALE)
+    assert [table.cell(0, 0).text for table in doc.tables] == ["", "a", "b", "d"]

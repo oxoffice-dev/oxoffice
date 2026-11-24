@@ -110,23 +110,20 @@ impl WordOwnerLocation {
     }
 }
 
+/// The routes of the paragraphs of each cell of each facade table, by
+/// facade table index, then by row and cell.
+pub(super) type CellParagraphIndex = Vec<HashMap<(usize, usize), Vec<AnchoredRoute>>>;
+
 impl WordOwnerIndexes {
-    pub(super) fn prepare(
-        owners: &[WordOwner],
-        projections: WordIndexProjections,
-    ) -> PyResult<Self> {
-        let WordIndexProjections {
-            body_paragraphs,
-            cell_paragraphs,
-            table_slots,
-        } = projections;
+    fn empty(items: WordBodyItems, owners: usize) -> PyResult<Self> {
         let mut indexes = Self {
+            items,
             by_generation: IndexMap::default(),
             by_route: IndexMap::default(),
-            direct_body_paragraphs: IndexMap::default(),
-            body_paragraphs,
+            direct_body_paragraphs: Vec::new(),
+            body_paragraphs: None,
             body_tables: Vec::new(),
-            cell_paragraphs,
+            cell_paragraphs: Vec::new(),
             paragraphs_by_parent: IndexMap::default(),
             tables_by_parent: IndexMap::default(),
             cells_by_parent: IndexMap::default(),
@@ -134,69 +131,108 @@ impl WordOwnerIndexes {
         };
         let fail =
             |_| pyo3::exceptions::PyMemoryError::new_err("Word owner index allocation failed");
-        indexes
-            .by_generation
-            .try_reserve(owners.len())
-            .map_err(fail)?;
-        indexes.by_route.try_reserve(owners.len()).map_err(fail)?;
-        indexes
-            .direct_body_paragraphs
-            .try_reserve(owners.len())
-            .map_err(fail)?;
-        let body_tables = indexes.index_owners(owners);
-        indexes.body_tables = table_slots
-            .into_iter()
-            .map(|slot| slot.and_then(|slot| body_tables.get(&slot).cloned()))
-            .collect();
+        indexes.by_generation.try_reserve(owners).map_err(fail)?;
+        indexes.by_route.try_reserve(owners).map_err(fail)?;
         Ok(indexes)
     }
 
-    pub(super) fn prepare_addresses(
-        locations: &[WordOwnerAddress],
+    /// The projections of the document, stored relative to the body items,
+    /// with the body table owner route of each direct body slot.
+    fn project(
+        &mut self,
         projections: WordIndexProjections,
-    ) -> PyResult<Self> {
+        tables: &HashMap<usize, AnchoredRoute>,
+    ) {
         let WordIndexProjections {
             body_paragraphs,
             cell_paragraphs,
             table_slots,
         } = projections;
-        let mut indexes = Self::prepare(
-            &[],
-            WordIndexProjections {
-                body_paragraphs,
-                cell_paragraphs,
-                table_slots: Vec::new(),
-            },
-        )?;
-        let fail =
-            |_| pyo3::exceptions::PyMemoryError::new_err("Word owner index allocation failed");
-        indexes
-            .by_generation
-            .try_reserve(locations.len())
-            .map_err(fail)?;
-        indexes
-            .by_route
-            .try_reserve(locations.len())
-            .map_err(fail)?;
-        let mut tables = HashMap::new();
-        for (index, address) in locations.iter().enumerate() {
-            indexes.index_location(
-                index,
-                &address.location,
-                address.parent,
-                address.body_slot,
-                &mut tables,
-            );
-        }
-        indexes.body_tables = table_slots
-            .into_iter()
+        let items = &self.items;
+        self.body_paragraphs = body_paragraphs.map(|locations| {
+            locations
+                .into_iter()
+                .map(|location| location.map(|location| items.route(location)))
+                .collect()
+        });
+        self.body_tables = table_slots
+            .iter()
             .map(|slot| slot.and_then(|slot| tables.get(&slot).cloned()))
             .collect();
+        let mut cells = vec![HashMap::new(); table_slots.len()];
+        for ((table, row, cell), locations) in cell_paragraphs {
+            if table >= cells.len() {
+                cells.resize_with(table + 1, HashMap::new);
+            }
+            cells[table].insert(
+                (row, cell),
+                locations
+                    .into_iter()
+                    .map(|location| items.route(location))
+                    .collect(),
+            );
+        }
+        self.cell_paragraphs = cells;
+    }
+
+    /// Index `owners`, which are stored relative to `items`.
+    pub(super) fn prepare(
+        owners: &[WordOwner],
+        items: WordBodyItems,
+        projections: WordIndexProjections,
+    ) -> PyResult<Self> {
+        let mut indexes = Self::empty(items, owners.len())?;
+        let mut tables = HashMap::new();
+        for (key, owner) in owners.iter().enumerate() {
+            indexes.by_generation.insert(owner.owner.generation(), key);
+            indexes.index_entry(
+                key,
+                owner.route_key(),
+                owner.route_shape(),
+                owner.parent,
+                owner.body_slot(),
+            );
+            if let (WordOwnerLocation::Table(location), Some(slot)) =
+                (&*owner.location(), owner.body_slot())
+                && location.story().kind() == oxoffice_docx::StoryKind::Body
+            {
+                tables
+                    .entry(slot)
+                    .or_insert_with(|| indexes.items.route(location.clone()));
+            }
+        }
+        indexes.project(projections, &tables);
         Ok(indexes)
     }
 
-    /// Index `owners` again after they moved in place, keeping the document
-    /// projections, which the caller moves with them.
+    /// Index the owners of `addresses` before they hold states: an owner's
+    /// key is its address's index. Its generation is indexed with its states.
+    pub(super) fn prepare_addresses(
+        addresses: &[WordOwnerAddress],
+        items: WordBodyItems,
+        projections: WordIndexProjections,
+    ) -> PyResult<Self> {
+        let mut indexes = Self::empty(items, addresses.len())?;
+        let mut tables = HashMap::new();
+        for (key, address) in addresses.iter().enumerate() {
+            let (route, anchor) = indexes.items.stored(&address.location);
+            let hash = route_key(&route, anchor);
+            indexes.index_entry(key, hash, &route, address.parent, address.body_slot);
+            if let (WordOwnerLocation::Table(location), Some(slot)) =
+                (&address.location, address.body_slot)
+                && location.story().kind() == oxoffice_docx::StoryKind::Body
+            {
+                tables
+                    .entry(slot)
+                    .or_insert_with(|| indexes.items.route(location.clone()));
+            }
+        }
+        indexes.project(projections, &tables);
+        Ok(indexes)
+    }
+
+    /// Index `owners` again after their keys changed, keeping the body items
+    /// and the projections, which the caller moves with them.
     pub(super) fn index_owners_again(&mut self, owners: &[WordOwner]) {
         self.by_generation.clear();
         self.by_generation.reserve(owners.len());
@@ -209,91 +245,85 @@ impl WordOwnerIndexes {
         self.tables_by_parent.clear();
         self.cells_by_parent.clear();
         self.runs_by_parent.clear();
-        self.index_owners(owners);
+        for (key, owner) in owners.iter().enumerate() {
+            self.index_owner(key, owner);
+        }
         self.by_route.retain(|_, bucket| !bucket.is_empty());
     }
 
-    /// Index every owner, and return the first body table owner of each
-    /// direct body slot.
-    fn index_owners(
-        &mut self,
-        owners: &[WordOwner],
-    ) -> HashMap<usize, oxoffice_docx::ContentLocation> {
-        let indexes = self;
-        let mut body_tables = HashMap::new();
-        for (index, owner) in owners.iter().enumerate() {
-            indexes
-                .by_generation
-                .insert(owner.owner.generation(), index);
-            indexes.index_location(
-                index,
-                &owner.location,
-                owner.parent,
-                owner.body_slot,
-                &mut body_tables,
-            );
-        }
-        body_tables
+    /// Index one owner at `key`.
+    pub(super) fn index_owner(&mut self, key: usize, owner: &WordOwner) {
+        self.by_generation.insert(owner.owner.generation(), key);
+        self.index_entry(
+            key,
+            owner.route_key(),
+            owner.route_shape(),
+            owner.parent,
+            owner.body_slot(),
+        );
     }
 
-    /// The same route/parent classification is used before and after scope initialization.
-    fn index_location(
+    /// The route and parent indexes of one owner. `route` is read for its
+    /// kind, its story kind and its path length alone.
+    fn index_entry(
         &mut self,
-        index: usize,
-        location: &WordOwnerLocation,
+        key: usize,
+        hash: u64,
+        route: &WordOwnerLocation,
         parent: Option<usize>,
         body_slot: Option<usize>,
-        body_tables: &mut HashMap<usize, oxoffice_docx::ContentLocation>,
     ) {
-        self.by_route
-            .entry(location.route_hash())
-            .or_default()
-            .push(index);
-        match location {
+        self.by_route.entry(hash).or_default().push(key);
+        match route {
             WordOwnerLocation::Paragraph(location) => {
                 if location.story().kind() == oxoffice_docx::StoryKind::Body
                     && location.index_path().len() == 1
                     && let Some(slot) = body_slot
                 {
-                    self.direct_body_paragraphs.entry(slot).or_insert(index);
+                    if self.direct_body_paragraphs.len() <= slot {
+                        self.direct_body_paragraphs.resize(slot + 1, None);
+                    }
+                    self.direct_body_paragraphs[slot].get_or_insert(key);
                 }
                 if let Some(parent) = parent {
                     self.paragraphs_by_parent
                         .entry(parent)
                         .or_default()
-                        .push(index);
+                        .push(key);
                 }
             }
-            WordOwnerLocation::Table(location) => {
-                if location.story().kind() == oxoffice_docx::StoryKind::Body
-                    && let Some(slot) = body_slot
-                {
-                    body_tables.entry(slot).or_insert_with(|| location.clone());
-                }
+            WordOwnerLocation::Table(_) => {
                 if let Some(parent) = parent {
-                    self.tables_by_parent.entry(parent).or_default().push(index);
+                    self.tables_by_parent.entry(parent).or_default().push(key);
                 }
             }
             WordOwnerLocation::Cell { .. } => {
                 if let Some(parent) = parent {
-                    self.cells_by_parent.entry(parent).or_default().push(index);
+                    self.cells_by_parent.entry(parent).or_default().push(key);
                 }
             }
             WordOwnerLocation::Run(..) => {
                 if let Some(parent) = parent {
-                    self.runs_by_parent.entry(parent).or_default().push(index);
+                    self.runs_by_parent.entry(parent).or_default().push(key);
                 }
             }
             _ => {}
         }
     }
 
+    /// The key of the owner at a current route.
     pub(super) fn find(&self, owners: &[WordOwner], location: &WordOwnerLocation) -> Option<usize> {
+        let (route, anchor) = self.items.stored(location);
         self.by_route
-            .get(&location.route_hash())?
+            .get(&route_key(&route, anchor))?
             .iter()
             .copied()
-            .find(|index| owners[*index].location.same_route(location))
+            .find(|key| owners[*key].has_stored_route(&route, anchor))
+    }
+
+    /// The direct body paragraph owner of direct body slot `slot`.
+    pub(super) fn direct_body_paragraph(&self, slot: usize) -> Option<usize> {
+        self.direct_body_paragraphs.get(slot).copied().flatten()
     }
 }
 
@@ -310,7 +340,7 @@ pub(super) fn word_owner_capture(
     // Every structural publisher retires unproved current-owner states. Actual
     // Run handles retain the conservative document epoch and its first cause.
     let mut states = vec![target.owner.clone()];
-    if matches!(&target.location, WordOwnerLocation::Run(..)) {
+    if matches!(target.route_shape(), WordOwnerLocation::Run(..)) {
         states.push(document_scope);
     }
     if let Some(scope) = furniture_scope {

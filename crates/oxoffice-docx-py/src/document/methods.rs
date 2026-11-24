@@ -3444,9 +3444,9 @@ impl PyDocument {
                     .owners
                     .iter()
                     .find(|owner| {
-                        matches!(&owner.location, WordOwnerLocation::Hyperlink(current, _)
+                        matches!(&*owner.location(), WordOwnerLocation::Hyperlink(current, _)
                         if same_content_owner(current, &location))
-                            && owner.projection_ordinal == Some(*next)
+                            && owner.projection_ordinal() == Some(*next)
                     })
                     .ok_or_else(|| {
                         PyValueError::new_err("hyperlink has no checked physical source owner")
@@ -3497,12 +3497,12 @@ impl PyDocument {
         let selected = self
             .owners
             .iter()
-            .find_map(|owner| match &owner.location {
+            .find_map(|owner| match &*owner.location() {
                 WordOwnerLocation::Hyperlink(location, _)
                     if same_story_owner(location.story(), &story)
-                        && owner.projection_ordinal == Some(link_index) =>
+                        && owner.projection_ordinal() == Some(link_index) =>
                 {
-                    Some(owner.location.clone())
+                    Some(owner.location().into_owned())
                 }
                 _ => None,
             })

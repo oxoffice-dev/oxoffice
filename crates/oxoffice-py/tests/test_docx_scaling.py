@@ -849,10 +849,17 @@ GROWING = {
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 
+# A body splice costs its own block (oxoffice-dev/oxoffice#466): these calls are held to FIXED times plus
+# SPLICE_FLOOR_MS, a band the cost of indexing every owner again fails (3.1 ms at 16N against 0.6 ms at N on macOS).
+SPLICES = {"Document.add_paragraph", "Document.insert_paragraph", "Document.insert_table",
+           "Paragraph.insert_paragraph_before"}
+SPLICE_FLOOR_MS = 1
+
 # ci.yml times these on every pull request and push to main: the edits #6 names, and one call of each area.
 QUICK = {
     "Run.text", "Run.bold", "Paragraph.text", "Paragraph.add_run", "ParagraphFormat.alignment", "Table.add_row",
     "Cell.text", "Document.add_paragraph", "Document.add_heading", "Document.add_table", "Document.remove_content",
+    "Document.insert_paragraph",
     "Document.add_footnote", "Document.add_comment", "Document.add_picture", "SectionHandle.page_width",
     "CoreProperties.title",
 }
@@ -869,8 +876,9 @@ def test_call_cost_does_not_grow_with_the_document(documents, name):
             pytest.fail(f"grows faster than the body: {message}")
         assert large < FIXED * small + FLOOR_MS, message
         return
-    small, large = measured(documents, name, lambda s, l: l < RATIO * s + FLOOR_MS)
-    assert large < RATIO * small + FLOOR_MS, f"{name}: {large:.1f} ms at {LARGE * N} paragraphs, {small:.1f} ms at {N}"
+    ratio, floor = (FIXED, SPLICE_FLOOR_MS) if name in SPLICES else (RATIO, FLOOR_MS)
+    small, large = measured(documents, name, lambda s, l: l < ratio * s + floor)
+    assert large < ratio * small + floor, f"{name}: {large:.1f} ms at {LARGE * N} paragraphs, {small:.1f} ms at {N}"
 
 
 # Reads of every story by design: their cost grows with the document, but no faster. Timed only with OXOFFICE_SCALING,
@@ -968,6 +976,7 @@ def test_row_and_cell_setters_cost_does_not_grow_with_the_table(table_documents,
 def test_every_mutating_call_is_timed():
     assert sorted(GROWING - set(TIMED) - set(READS_TIMED)) == []
     assert sorted(QUICK - set(TIMED)) == []
+    assert sorted(SPLICES - set(TIMED) | SPLICES & GROWING) == []
     timed = {name.split(" (")[0] for name in TIMED}
     assert sorted(mutating_surface() - timed - set(WHOLE_DOCUMENT)) == []
     assert sorted((timed | set(WHOLE_DOCUMENT)) - mutating_surface()) == []
