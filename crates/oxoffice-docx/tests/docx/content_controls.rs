@@ -2686,9 +2686,30 @@ fn every_body_paragraph_route_is_the_same_one_by_one_and_all_at_once() {
             + &text_paragraph("nested b")),
     );
     let sibling = block_control("sibling", &text_paragraph("sibling a"));
+    // A block control in a cell belongs to the cell story.
+    let control_in_cell = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>"#,
+        block_control("in cell", &text_paragraph("control in cell"))
+    );
+    let empty = r#"<w:sdt><w:sdtPr><w:tag w:val="empty"/></w:sdtPr><w:sdtContent/></w:sdt>"#;
+    let custom = format!(
+        r#"<w:customXml w:element="item">{}{}</w:customXml>"#,
+        text_paragraph("custom xml"),
+        block_control("in custom", &text_paragraph("custom control"))
+    );
+    let after = block_control(
+        "after",
+        &(empty.to_owned() + &custom + &text_paragraph("after a")),
+    );
     let outer = block_control(
         "outer",
-        &(one_cell_table("outer cell") + &text_paragraph("outer a") + &nested + &sibling),
+        &(one_cell_table("outer cell")
+            + &text_paragraph("outer a")
+            + &nested
+            + &control_in_cell
+            + &sibling
+            + &after
+            + &text_paragraph("outer b")),
     );
     let body = text_paragraph("first")
         + &inline("body")
@@ -2710,5 +2731,30 @@ fn every_body_paragraph_route_is_the_same_one_by_one_and_all_at_once() {
         } else {
             assert_eq!(single.as_ref(), Some(&routes[text]), "{text}");
         }
+    }
+}
+
+#[test]
+fn a_literal_replacement_at_a_paragraph_of_a_nested_control_changes_that_paragraph_only() {
+    let inner = block_control(
+        "inner",
+        &(text_paragraph("same") + &text_paragraph("inner")),
+    );
+    let middle = block_control("middle", &(text_paragraph("same") + &inner));
+    let outer = block_control("outer", &(text_paragraph("same") + &middle));
+    let body = text_paragraph("same") + &outer + &text_paragraph("same");
+    for (index, expected) in [
+        (1, ["same", "new", "same", "same", "inner", "same"]),
+        (2, ["same", "same", "new", "same", "inner", "same"]),
+        (3, ["same", "same", "same", "new", "inner", "same"]),
+    ] {
+        let mut doc = doc_with_body(&body);
+        let location = doc.paragraph_story_location(index).unwrap().unwrap();
+        assert_eq!(
+            doc.try_replace_text_at(&location, "same", "new", Some(1))
+                .unwrap(),
+            Ok(1)
+        );
+        assert_eq!(texts(&reopen(&mut doc)), expected, "paragraph {index}");
     }
 }

@@ -531,6 +531,10 @@ NESTED_EDITS = {
         lambda para: para.text == "edited two" and len(para.equations()) == 1,
     ),
     "Run.remove": (lambda para: para.runs[1].remove(), lambda para: para.text == "edited"),
+    "Paragraph.replace_text": (
+        lambda para: para.replace_text("ed tw", "ed, tw", expect=1),
+        lambda para: para.text == "edited, two",
+    ),
     "Run.add_field": (
         lambda para: para.runs[0].add_field("PAGE", "1"),
         lambda para: para.text == "edited1 two",
@@ -558,7 +562,18 @@ def test_a_run_edit_works_in_a_block_content_control_at_any_depth(call, depth):
     edit, edited_as_asked = NESTED_EDITS[call]
     edit(para)
 
-    assert edited_as_asked(para), para.text
+    if call == "Paragraph.replace_text":
+        # A replacement retires the paragraph handles, at any depth: the
+        # others are fetched again.
+        others = {
+            paragraph.text: (paragraph, paragraph.runs[0], run_text)
+            for paragraph in doc.paragraphs
+            for text, (_, _, run_text) in others.items()
+            if paragraph.text == text
+        }
+    else:
+        assert edited_as_asked(para), para.text
+    assert edited_as_asked(edited_paragraph(doc))
     assert edited_as_asked(edited_paragraph(oxdocx.Document.from_bytes(doc.to_bytes())))
     # Every other paragraph and run handle keeps reading and editing its own element.
     for text, (paragraph, run, run_text) in others.items():

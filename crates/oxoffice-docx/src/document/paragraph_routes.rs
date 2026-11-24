@@ -45,7 +45,7 @@ fn control_paragraphs<'a>(
 
 /// The story item indexes of the direct body control at `item` and of the
 /// block content controls the scan lists inside it, in document order.
-fn control_items(items: &[StoryItemSpan], item: usize) -> Vec<usize> {
+pub(super) fn control_items(items: &[StoryItemSpan], item: usize) -> Vec<usize> {
     let end = items[item].full.end;
     std::iter::once(item)
         .chain(
@@ -78,6 +78,10 @@ fn paragraph_route(
     };
     if item.kind != StoryItemKind::ContentControl {
         return None;
+    }
+    // A paragraph directly in the direct control needs no nested match.
+    if nested == 0 {
+        return Some(vec![item_index, ordinal]);
     }
     let listed = control_items(items, item_index);
     (listed.len() == controls).then(|| vec![listed[nested], ordinal])
@@ -257,4 +261,42 @@ fn direct_item_indexes(items: &[StoryItemSpan]) -> Vec<usize> {
         .filter(|(_, item)| item.direct_owner_child)
         .map(|(index, _)| index)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(kind: StoryItemKind, full: Range<usize>, direct: bool) -> StoryItemSpan {
+        StoryItemSpan {
+            kind,
+            scan: full.clone(),
+            full,
+            direct_owner_child: direct,
+            complex_field: false,
+            complex_ancestors: Vec::new(),
+            sdt_context: Some(StorySdtContext::Block),
+        }
+    }
+
+    #[test]
+    fn a_paragraph_of_the_direct_control_keeps_its_route_when_nested_controls_do_not_match() {
+        // A direct paragraph, then a direct control holding one block control
+        // the scan lists, where the model counts two nested controls.
+        let items = [
+            item(StoryItemKind::Paragraph, 0..10, true),
+            item(StoryItemKind::ContentControl, 10..100, true),
+            item(StoryItemKind::ContentControl, 20..40, false),
+        ];
+        let direct = direct_item_indexes(&items);
+        assert_eq!(
+            paragraph_route(&items, &direct, (1, Some((0, 2))), 3),
+            Some(vec![1, 2])
+        );
+        assert_eq!(paragraph_route(&items, &direct, (1, Some((1, 0))), 3), None);
+        assert_eq!(
+            paragraph_route(&items, &direct, (1, Some((1, 0))), 2),
+            Some(vec![2, 0])
+        );
+    }
 }

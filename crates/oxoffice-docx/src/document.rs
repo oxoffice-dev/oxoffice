@@ -153,7 +153,7 @@ mod media;
 mod notes;
 mod numbering;
 mod paragraph_routes;
-use paragraph_routes::body_paragraph_routes;
+use paragraph_routes::{body_paragraph_routes, control_items};
 mod replace;
 mod sections;
 mod styles;
