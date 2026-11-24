@@ -1,9 +1,0 @@
-{
-  "id": "docx-python-replace-slower",
-  "format": "docx",
-  "area": "replace",
-  "title": "Text replacement through Python is slower than the CLI",
-  "symptom": "about 1.5 times the time of the CLI for the same pairs",
-  "workaround": "when only replacing, use `oxoffice docx replace FILE --map pairs.json`",
-  "issue": 5
-}
