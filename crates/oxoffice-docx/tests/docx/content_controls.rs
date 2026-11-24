@@ -2758,3 +2758,30 @@ fn a_literal_replacement_at_a_paragraph_of_a_nested_control_changes_that_paragra
         assert_eq!(texts(&reopen(&mut doc)), expected, "paragraph {index}");
     }
 }
+
+#[test]
+fn a_store_refused_after_its_reservations_leaves_the_document_as_it_was() {
+    // An item whose properties relationship names a missing part: the new
+    // store's part names and relationship id are reserved before the scan of
+    // the store identities refuses.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(Document::new().to_bytes().unwrap())).unwrap();
+    package.set_part("/customXml/item90.xml", b"<data/>".to_vec());
+    package
+        .get_or_create_part_rels("/customXml/item90.xml")
+        .add_with_id(
+            "rId1",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps",
+            "itemProps90.xml",
+        );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .add_custom_xml_store(b"<data/>", &[])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("dangling custom XML edge"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
