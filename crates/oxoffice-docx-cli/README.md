@@ -433,10 +433,13 @@ an unsupported bound owner refuse the complete batch. Each matching control,
 in the body, a header, a footer, a note, a comment or a text box, and its
 supported custom XML binding changes together. A value replaces the control's
 content as an edit made with track changes off: the tracked insertions,
-deletions and moves in it, its paragraph marks' included, go with it, and a
-change holding a comment or note mark, a content control, one end of a
-bookmark or tracked range, or part of a field is refused (accept or reject it
-first). Counts follow the supplied tag order.
+deletions and moves in it, those of its paragraph marks included, go with it,
+with the other end of a spelling or grammar mark they hold. A change holding a
+comment or note mark, a content control, one end of a bookmark or tracked
+range whose other end is outside it, one end of a spelling or grammar mark
+whose other end is outside the control's content or paragraph, or part of a
+field is refused (accept or reject it first). Counts follow the supplied tag
+order.
 
 `meta set` changes supplied core fields and preserves unspecified metadata.
 An empty core string removes that value. Custom syntax is `NAME=TYPE:VALUE`:
