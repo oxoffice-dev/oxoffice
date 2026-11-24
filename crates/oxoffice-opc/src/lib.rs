@@ -5,8 +5,11 @@
 //! - Parsing `[Content_Types].xml`
 //! - Parsing `.rels` relationship files
 //! - Navigating parts by URI and resolving relationships
+//! - Checking embedded content (OLE, ActiveX, VBA) and the package
+//!   signature graph around it
 
 pub mod content_types;
+pub mod embedded;
 #[cfg(feature = "agile-encryption")]
 mod encryption;
 mod error;

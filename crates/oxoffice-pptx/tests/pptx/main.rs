@@ -3,6 +3,7 @@
 
 mod charts;
 mod corpus;
+mod embedded;
 mod fonts;
 mod notes_and_comments;
 mod pictures;
