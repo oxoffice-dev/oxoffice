@@ -623,9 +623,17 @@ impl Document {
         match (result, &staged_result) {
             (Ok(direct), Ok(staged_value)) => {
                 assert_eq!(direct, staged_value, "in-place edit answered otherwise");
+                // The staged route splices a rewritten fragment into the
+                // part's bytes and may repeat the root's namespace
+                // declarations on it; the in-place model writes them once.
                 assert_eq!(
-                    live,
-                    before.to_bytes().map_err(|e| e.to_string()),
+                    live.as_deref()
+                        .map(saved_without_repeated_namespaces)
+                        .map_err(Clone::clone),
+                    before
+                        .to_bytes()
+                        .map(|saved| saved_without_repeated_namespaces(&saved))
+                        .map_err(|e| e.to_string()),
                     "in-place edit saves other bytes than the staged edit"
                 );
                 assert_eq!(
@@ -655,6 +663,63 @@ impl Document {
             (Err(direct), Ok(_)) => panic!("in-place edit refused with {direct}"),
         }
     }
+}
+
+/// The parts a saved package holds, each XML part without the namespace
+/// declarations that repeat one of its root element's, for the debug oracle.
+#[cfg(debug_assertions)]
+fn saved_without_repeated_namespaces(saved: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(saved.to_vec()))
+        .expect("a saved package opens");
+    package
+        .zip_entries()
+        .expect("a saved package lists its entries")
+        .into_iter()
+        .map(|(name, bytes)| {
+            let bytes = if name.ends_with(".xml") || name.ends_with(".rels") {
+                without_repeated_namespaces(&bytes)
+            } else {
+                bytes.into_owned()
+            };
+            (name, bytes)
+        })
+        .collect()
+}
+
+/// `xml` without the ` xmlns:p="uri"` declarations below its root element
+/// that the root already makes.
+#[cfg(debug_assertions)]
+fn without_repeated_namespaces(xml: &[u8]) -> Vec<u8> {
+    let Ok(text) = std::str::from_utf8(xml) else {
+        return xml.to_vec();
+    };
+    let Some(root_start) = text
+        .match_indices('<')
+        .map(|(at, _)| at)
+        .find(|&at| !text[at + 1..].starts_with(['?', '!']))
+    else {
+        return xml.to_vec();
+    };
+    let Some(root_end) = text[root_start..].find('>').map(|end| root_start + end + 1) else {
+        return xml.to_vec();
+    };
+    let root = &text[root_start..root_end];
+    let declarations = root
+        .match_indices(" xmlns:")
+        .filter_map(|(at, _)| {
+            let rest = &root[at..];
+            let value_start = rest.find("=\"")? + 2;
+            let value_end = value_start + rest[value_start..].find('"')?;
+            Some(rest[..=value_end].to_owned())
+        })
+        .collect::<Vec<_>>();
+    let mut below = text[root_end..].to_owned();
+    for declaration in &declarations {
+        below = below.replace(declaration.as_str(), "");
+    }
+    let mut out = text[..root_end].as_bytes().to_vec();
+    out.extend_from_slice(below.as_bytes());
+    out
 }
 
 #[cfg(test)]

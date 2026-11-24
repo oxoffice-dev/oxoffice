@@ -1752,6 +1752,51 @@ impl Document {
         reject_non_xml_comment(author, initials, text)?;
         let date = date.resolve()?;
         let date = date.as_deref();
+        // The paragraphs of the range, when they are in the body: the
+        // comment is anchored on them in place; else the staged route
+        // answers the refusal.
+        let slots = range.start.body_index..range.end.body_index.saturating_add(1);
+        if slots.is_empty() || slots.end > self.document.body.content.len() {
+            return self.add_comment_with_date_staged(range, author, initials, text, date);
+        }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(
+            // The flush of pending typed notes and comments writes their
+            // parts; the first comment adds its parts, relationships and
+            // overrides.
+            &[
+                crate::EditUnit::BodyBlocks {
+                    slot: slots.start,
+                    count: slots.len(),
+                },
+                crate::EditUnit::Comments,
+                crate::EditUnit::Footnotes,
+                crate::EditUnit::Styles,
+                crate::EditUnit::Parts,
+            ],
+            |document| {
+                let id = document.add_comment_staged(range, author, initials, text, date)?;
+                document.flush_dirty_related_story_models()?;
+                Ok(id)
+            },
+        );
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            staged.add_comment_with_date_staged(range, author, initials, text, date)
+        });
+        result
+    }
+
+    /// The staged route of [`Self::add_comment_with_date`], its debug oracle.
+    fn add_comment_with_date_staged(
+        &mut self,
+        range: RunRange,
+        author: &str,
+        initials: Option<&str>,
+        text: &str,
+        date: Option<&str>,
+    ) -> Result<i32> {
         let mut candidate = self.clone_for_staging();
         let id = candidate.add_comment_staged(range, author, initials, text, date)?;
         candidate.flush_dirty_related_story_models()?;
@@ -1916,8 +1961,7 @@ impl Document {
         self.validate_run_range(range)?;
         self.ensure_comment_models()?;
         self.ensure_comment_relationships()?;
-        let mut identifiers = self.identifiers.clone();
-        let id = identifiers.reserve_comment_id()?;
+        let id = self.identifiers.reserve_comment_id()?;
         let styles = self.prepare_comment_authoring()?;
         self.push_comment_definition(id, author, initials, text, date, &styles)?;
         anchor_body_range(
@@ -1932,7 +1976,6 @@ impl Document {
             id,
             &styles.1,
         )?;
-        self.identifiers = identifiers;
         self.comments_dirty = true;
         self.invalidate_layout();
         Ok(id)

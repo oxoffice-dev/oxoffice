@@ -627,8 +627,23 @@ impl Document {
     /// a based-on, next or linked style, and any font, colour or other
     /// property the builder sets.
     pub fn add_style(&mut self, builder: StyleBuilder) -> Result<()> {
+        // Inside an in-place edit (a note reference or comment style a route
+        // adds), the open call's copies and journals undo the style: no copy.
+        if self.in_place_is_open() {
+            return self.edit_in_place(&[EditUnit::Styles], |document| {
+                document.add_style_here(builder)
+            });
+        }
         let mut candidate = self.clone_for_staging();
-        candidate.reserve_styles_bundle()?;
+        candidate.add_style_here(builder)?;
+        self.commit_staged_mutation(candidate);
+        Ok(())
+    }
+
+    /// [`Self::add_style`] on this document, left half-done on an error.
+    fn add_style_here(&mut self, builder: StyleBuilder) -> Result<()> {
+        let before = Arc::clone(&self.styles);
+        self.reserve_styles_bundle()?;
         let (authored, _, _) = builder.build();
         oxoffice_core::xml::reject_non_xml_characters("style ID", &authored.style_id)?;
         for (what, value) in [
@@ -642,7 +657,7 @@ impl Document {
             }
         }
         refuse_non_xml_style_values(&authored)?;
-        if candidate.styles.get_by_id(&authored.style_id).is_some() {
+        if self.styles.get_by_id(&authored.style_id).is_some() {
             return Err(Error::Other(format!(
                 "style '{}' already exists",
                 authored.style_id
@@ -660,16 +675,15 @@ impl Document {
         }
         let linked_style = authored.linked_style.clone();
         let style_id = authored.style_id.clone();
-        Arc::make_mut(&mut candidate.styles).styles.push(authored);
+        Arc::make_mut(&mut self.styles).styles.push(authored);
         update_reciprocal_style_link(
-            Arc::make_mut(&mut candidate.styles),
+            Arc::make_mut(&mut self.styles),
             &style_id,
             None,
             linked_style.as_deref(),
         );
-        style::validate_style_graph_change(&self.styles, &candidate.styles)?;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
+        style::validate_style_graph_change(&before, &self.styles)?;
+        self.invalidate_layout();
         Ok(())
     }
 
