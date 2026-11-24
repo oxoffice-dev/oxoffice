@@ -232,26 +232,6 @@ impl WordOwnerIndexes {
         Ok(indexes)
     }
 
-    /// Index `owners` again after their keys changed, keeping the body items
-    /// and the projections, which the caller moves with them.
-    pub(super) fn index_owners_again(&mut self, owners: &[WordOwner]) {
-        self.by_generation.clear();
-        self.by_generation.reserve(owners.len());
-        // Route buckets keep their allocations, and those left empty go.
-        self.by_route.values_mut().for_each(Vec::clear);
-        self.by_route
-            .reserve(owners.len().saturating_sub(self.by_route.len()));
-        self.direct_body_paragraphs.clear();
-        self.paragraphs_by_parent.clear();
-        self.tables_by_parent.clear();
-        self.cells_by_parent.clear();
-        self.runs_by_parent.clear();
-        for (key, owner) in owners.iter().enumerate() {
-            self.index_owner(key, owner);
-        }
-        self.by_route.retain(|_, bucket| !bucket.is_empty());
-    }
-
     /// Index one owner at `key`.
     pub(super) fn index_owner(&mut self, key: usize, owner: &WordOwner) {
         self.by_generation.insert(owner.owner.generation(), key);

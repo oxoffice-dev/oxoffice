@@ -430,6 +430,9 @@ impl PyDocument {
             if let Some(paragraphs) = &mut self.indexes.body_paragraphs {
                 paragraphs.drain(plan.paragraph..plan.paragraph + plan.removed);
             }
+            // The slots after the removed ones moved with their records.
+            let slots = &mut self.indexes.direct_body_paragraphs;
+            slots.drain(plan.slot.min(slots.len())..(plan.slot + plan.removed).min(slots.len()));
             self.remove_owners(&plan.removed_owners);
         } else {
             let indexes = &mut self.indexes;
@@ -499,30 +502,161 @@ impl PyDocument {
         Ok(())
     }
 
-    /// Remove the owners at `removed` (keys), and give the others the keys of
-    /// their order: the inventory is indexed again, linear in its owners.
-    fn remove_owners(&mut self, removed: &[usize]) {
-        let mut gone = vec![false; self.owners.len()];
+    /// Remove the owners at `removed` (keys), which hold every child of each
+    /// of them. Each removed key takes the last owner of the inventory, and
+    /// every reference to that owner is rewritten in place: its children's
+    /// parent, its generation, its route bucket, its place in its parent's
+    /// list and in the direct body paragraphs, and its own lists of children.
+    /// The work is in the removed owners and the children of the moved ones,
+    /// never in the inventory; every list keeps its order.
+    pub(super) fn remove_owners(&mut self, removed: &[usize]) {
+        #[cfg(debug_assertions)]
+        {
+            let gone = removed
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>();
+            assert_eq!(gone.len(), removed.len(), "owners removed once");
+            for key in removed {
+                for map in [
+                    &self.indexes.paragraphs_by_parent,
+                    &self.indexes.tables_by_parent,
+                    &self.indexes.cells_by_parent,
+                    &self.indexes.runs_by_parent,
+                ] {
+                    assert!(
+                        map.get(key).is_none_or(|children| children
+                            .iter()
+                            .all(|child| gone.contains(child))),
+                        "a removed owner's children are removed with it"
+                    );
+                }
+            }
+        }
         for key in removed {
-            gone[*key] = true;
+            self.unindex_owner(*key);
         }
-        let mut next = Vec::with_capacity(gone.len());
-        let mut kept = 0;
-        for gone in &gone {
-            next.push((!gone).then_some(kept));
-            kept += usize::from(!gone);
+        let mut keys = removed.to_vec();
+        keys.sort_unstable_by(|a, b| b.cmp(a));
+        for key in keys {
+            let last = self.owners.len() - 1;
+            if key != last {
+                self.move_owner_key(last, key);
+            }
+            self.owners.swap_remove(key);
         }
-        let mut key = 0;
-        self.owners.retain(|_| {
-            key += 1;
-            !gone[key - 1]
-        });
-        for owner in &mut self.owners {
-            owner.parent = owner
-                .parent
-                .map(|parent| next[parent].expect("a kept owner's parent is kept"));
+    }
+
+    /// The parent list of an owner of kind `route`.
+    fn parent_list(
+        &mut self,
+        route: &WordOwnerLocation,
+    ) -> Option<&mut IndexMap<usize, Vec<usize>>> {
+        Some(match route {
+            WordOwnerLocation::Paragraph(_) => &mut self.indexes.paragraphs_by_parent,
+            WordOwnerLocation::Table(_) => &mut self.indexes.tables_by_parent,
+            WordOwnerLocation::Cell { .. } => &mut self.indexes.cells_by_parent,
+            WordOwnerLocation::Run(..) => &mut self.indexes.runs_by_parent,
+            _ => return None,
+        })
+    }
+
+    /// Drop every index entry of the owner at `key`, which stays in place.
+    fn unindex_owner(&mut self, key: usize) {
+        let owner = &self.owners[key];
+        let generation = owner.owner.generation();
+        let hash = owner.route_key();
+        let parent = owner.parent;
+        let route = owner.route_shape().clone();
+        let slot = match &route {
+            WordOwnerLocation::Paragraph(_) => owner.body_slot(),
+            _ => None,
+        };
+        if self.indexes.by_generation.get(&generation) == Some(&key) {
+            self.indexes.by_generation.remove(&generation);
         }
-        self.indexes.index_owners_again(&self.owners);
+        if let Some(bucket) = self.indexes.by_route.get_mut(&hash) {
+            bucket.retain(|index| *index != key);
+            if bucket.is_empty() {
+                self.indexes.by_route.remove(&hash);
+            }
+        }
+        if let Some(parent) = parent
+            && let Some(map) = self.parent_list(&route)
+            && let Some(children) = map.get_mut(&parent)
+        {
+            children.retain(|child| *child != key);
+            if children.is_empty() {
+                map.remove(&parent);
+            }
+        }
+        for map in [
+            &mut self.indexes.paragraphs_by_parent,
+            &mut self.indexes.tables_by_parent,
+            &mut self.indexes.cells_by_parent,
+            &mut self.indexes.runs_by_parent,
+        ] {
+            map.remove(&key);
+        }
+        if let Some(slot) = slot
+            && let Some(entry) = self.indexes.direct_body_paragraphs.get_mut(slot)
+            && *entry == Some(key)
+        {
+            *entry = None;
+        }
+    }
+
+    /// Give the owner at `from` the key `to`, whose owner was unindexed:
+    /// rewrite in place every reference to `from`. The caller then moves the
+    /// owner itself.
+    fn move_owner_key(&mut self, from: usize, to: usize) {
+        let owner = &self.owners[from];
+        let generation = owner.owner.generation();
+        let hash = owner.route_key();
+        let parent = owner.parent;
+        let route = owner.route_shape().clone();
+        let slot = match &route {
+            WordOwnerLocation::Paragraph(_) => owner.body_slot(),
+            _ => None,
+        };
+        let rename = |list: &mut Vec<usize>| {
+            for index in list.iter_mut().filter(|index| **index == from) {
+                *index = to;
+            }
+        };
+        if let Some(index) = self.indexes.by_generation.get_mut(&generation)
+            && *index == from
+        {
+            *index = to;
+        }
+        if let Some(bucket) = self.indexes.by_route.get_mut(&hash) {
+            rename(bucket);
+        }
+        if let Some(parent) = parent
+            && let Some(map) = self.parent_list(&route)
+            && let Some(children) = map.get_mut(&parent)
+        {
+            rename(children);
+        }
+        if let Some(slot) = slot
+            && let Some(entry) = self.indexes.direct_body_paragraphs.get_mut(slot)
+            && *entry == Some(from)
+        {
+            *entry = Some(to);
+        }
+        for map in [
+            &mut self.indexes.paragraphs_by_parent,
+            &mut self.indexes.tables_by_parent,
+            &mut self.indexes.cells_by_parent,
+            &mut self.indexes.runs_by_parent,
+        ] {
+            if let Some(children) = map.remove(&from) {
+                for child in &children {
+                    self.owners[*child].parent = Some(to);
+                }
+                map.insert(to, children);
+            }
+        }
     }
 
     /// Under debug assertions, prove that an append keeps exactly the owners
