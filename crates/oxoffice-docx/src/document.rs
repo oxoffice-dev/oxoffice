@@ -348,9 +348,12 @@ mod main_source;
 mod open_save;
 mod owner_snapshots;
 pub use owner_snapshots::resolved_xml_events;
+mod edit_in_place;
 mod relationships;
 mod staged_output;
 mod staging;
+use edit_in_place::InPlaceState;
+pub use edit_in_place::{EditReport, EditUndo, EditUnit};
 mod story_edits;
 mod story_items;
 mod story_pictures;
@@ -973,6 +976,8 @@ pub struct Document {
     deterministic_layout_cache: Mutex<Option<Arc<oxoffice_docx_layout::WordLayoutResult>>>,
     /// Reusable bundled-font engine with caller faces at highest priority.
     bundled_fallback_layout_engine: Mutex<Option<oxoffice_docx_layout::engine::Engine>>,
+    /// The in-place edit open on this document, and the undo a caller holds.
+    in_place: InPlaceState,
 }
 
 /// The actual source authority of a consumed staged document. No model copy.
@@ -1682,6 +1687,7 @@ impl Document {
             normal_layout_engine: Mutex::new(None),
             deterministic_layout_cache: Mutex::new(None),
             bundled_fallback_layout_engine: Mutex::new(None),
+            in_place: InPlaceState::default(),
             parsed: None,
             main_body_scans: Arc::new(Mutex::new(MainBodyScans::default())),
             main_part_blocks: None,

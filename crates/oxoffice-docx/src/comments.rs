@@ -1673,6 +1673,19 @@ impl Document {
         Ok(id)
     }
 
+    /// The number of paragraphs of comment `id`, `None` when there is no
+    /// such comment. The binding asks it before an edit that adds a
+    /// paragraph to an empty comment.
+    #[doc(hidden)]
+    pub fn comment_paragraph_count(&self, id: i32) -> Option<usize> {
+        self.comments
+            .as_ref()?
+            .comments
+            .iter()
+            .find(|comment| comment.id == id)
+            .map(|comment| comment.paragraphs.len())
+    }
+
     /// Return comments in their package part order.
     pub fn comments(&self) -> Vec<CommentRef<'_>> {
         let Some(comments) = self.comments.as_ref() else {
@@ -2484,6 +2497,26 @@ impl Document {
 
     /// Set or clear the resolved state for a comment.
     pub fn resolve_comment(&mut self, id: i32, resolved: bool) -> Result<bool> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(&[crate::EditUnit::Comments], |document| {
+            let updated = document.resolve_comment_staged(id, resolved)?;
+            if updated {
+                document.flush_dirty_related_story_models()?;
+            }
+            Ok(updated)
+        });
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            staged.resolve_comment_on_a_copy(id, resolved)
+        });
+        result
+    }
+
+    /// The staged route of [`Self::resolve_comment`], the debug oracle of
+    /// its in-place edit.
+    #[cfg(debug_assertions)]
+    fn resolve_comment_on_a_copy(&mut self, id: i32, resolved: bool) -> Result<bool> {
         let mut candidate = self.clone_for_staging();
         let updated = candidate.resolve_comment_staged(id, resolved)?;
         if updated {

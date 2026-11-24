@@ -825,7 +825,7 @@ GROWING = {
     "Document.remove_mail_merge_package", "Document.remove_section", "Document.remove_style",
     "Document.repeat_content_control", "Document.replace_bibliography_source", "Document.replace_image",
     "Document.replace_image_for_story",
-    "Document.replace_text_at", "Document.reply_to", "Document.resolve_comment", "Document.restart_numbering",
+    "Document.replace_text_at", "Document.reply_to", "Document.restart_numbering",
     "Document.set_chart_legend", "Document.set_content_control_alias",
     "Document.set_content_control_appearance", "Document.set_content_control_binding",
     "Document.set_content_control_lock", "Document.set_content_control_placeholder",
