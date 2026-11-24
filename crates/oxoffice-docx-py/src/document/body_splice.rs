@@ -804,6 +804,49 @@ impl PyDocument {
                 "owner index of {name} by parent"
             );
         }
+        // Each parent's list of children in story order, as the walk lists
+        // them: reads take a cell's paragraphs by their place in it.
+        let family = |location: &WordOwnerLocation| match location {
+            WordOwnerLocation::Paragraph(_) => Some(0),
+            WordOwnerLocation::Table(_) => Some(1),
+            WordOwnerLocation::Cell { .. } => Some(2),
+            WordOwnerLocation::Run(..) => Some(3),
+            _ => None,
+        };
+        let route = |location: &WordOwnerLocation| format!("{location:?}");
+        let mut walk_order: [BTreeMap<String, Vec<String>>; 4] = Default::default();
+        for owner in &expected {
+            if let (Some(family), Some(parent)) = (family(&owner.location), owner.parent) {
+                walk_order[family]
+                    .entry(route(&expected[parent].location))
+                    .or_default()
+                    .push(route(&owner.location));
+            }
+        }
+        let mut index_order: [BTreeMap<String, Vec<String>>; 4] = Default::default();
+        for (family, map) in [
+            &self.indexes.paragraphs_by_parent,
+            &self.indexes.tables_by_parent,
+            &self.indexes.cells_by_parent,
+            &self.indexes.runs_by_parent,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for (parent, children) in map.iter().filter(|(_, list)| !list.is_empty()) {
+                index_order[family].insert(
+                    route(&actual[*parent].location),
+                    children
+                        .iter()
+                        .map(|child| route(&actual[*child].location))
+                        .collect(),
+                );
+            }
+        }
+        assert_eq!(
+            index_order, walk_order,
+            "owner index lists of children in story order"
+        );
     }
 }
 
