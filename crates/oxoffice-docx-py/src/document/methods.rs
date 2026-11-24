@@ -1055,15 +1055,14 @@ impl PyDocument {
         item_xml: &[u8],
         schema_uris: Vec<String>,
     ) -> PyResult<String> {
-        let mut candidate = self.inner.clone_for_staging();
-        let item_id = py
-            .detach(|| {
-                let uris = schema_uris.iter().map(String::as_str).collect::<Vec<_>>();
-                candidate.add_custom_xml_store(item_xml, &uris)
-            })
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        self.publish_api_candidate(py, candidate, "Document.add_custom_xml_store")?;
-        Ok(item_id)
+        // The store is added in place: no body content changes, so every
+        // handle stays bound.
+        let inner = &mut self.inner;
+        py.detach(|| {
+            let uris = schema_uris.iter().map(String::as_str).collect::<Vec<_>>();
+            inner.add_custom_xml_store(item_xml, &uris)
+        })
+        .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (location, store_item_id, xpath, prefix_mappings=None))]
@@ -2932,13 +2931,12 @@ impl PyDocument {
                 "numbering restart requires a direct body paragraph",
             ));
         };
-        let mut document = slf.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        let id = candidate
+        // The restart edits the numbering part and the `w:numPr` of body
+        // paragraphs in place, so every handle stays bound.
+        slf.borrow_mut(py)
+            .inner
             .restart_numbering(index, start)
-            .map_err(|e| docx_to_pyerr(py, e))?;
-        document.publish_api_candidate(py, candidate, "Document.restart_numbering")?;
-        Ok(id)
+            .map_err(|e| docx_to_pyerr(py, e))
     }
 
     fn remove_footnote(&mut self, py: Python<'_>, id: &Bound<'_, PyAny>) -> PyResult<()> {
