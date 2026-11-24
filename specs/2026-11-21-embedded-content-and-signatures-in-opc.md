@@ -175,7 +175,7 @@ Taken at the step 3 gate, before step 2 was built; it replaces Word's full-packa
     character, a climb above the root or a scheme, or an empty one, names no part and is refused. A target with `\`, `?` or `#` is read
     every way (as written, `\` as `/`, without its query or fragment); every reading must resolve.
   - Every comparison of part names in the shared checks uses it: unrelated relationships to the origin or a signature,
-    reachability, the shared VBA target, delete-if-unreachable.
+    reachability, the shared VBA target, the owners of one ActiveX control, delete-if-unreachable.
   - The relationships that define a protected part (origin, signature, OLE, ActiveX control and binary, VBA project
     and signature, the invalidation markers) still need normalised pack URI targets.
   - Any other target is refused only when it names no part, or names a protected part without being a normalised pack
@@ -187,6 +187,10 @@ Taken at the step 3 gate, before step 2 was built; it replaces Word's full-packa
   - A signed save refuses an unrelated relationship naming the origin under another case.
   - Reachability ignores case and escapes: a part still named under another case is kept, and a VBA project whose
     target another relationship names under another case is refused as shared.
+  - Two controls naming one ActiveX part under another case are one control: listed once, and removed with both owners
+    (Word refused that removal before).
+  - A removal (signed or not) and a signed save refuse a target that was a normalised pack URI but names no part
+    once decoded: an escape to invalid UTF-8 (`media/caf%E9.png`) or to a control character (`%C2%85`).
 - **Step 3 shrinks.** PowerPoint gains the same rule: its refusal list loses "any internal relationship with a
   non-normalised target" and keeps the normalised targets of the protected relationships. The user approved this
   breaking change on 2026-11-24.

@@ -18,6 +18,11 @@
 //!
 //! Compiled in every build: unlike the `signature` module, nothing here
 //! verifies or creates a signature.
+//!
+//! The documented API is the four embedded-content types, [`EmbeddedError`],
+//! [`EmbeddedHost`] with its owner references, and the five entry points
+//! generic over it. The other public functions are helpers for the facades
+//! only, hidden from the documentation.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
@@ -309,7 +314,9 @@ fn owned_embedded_content<H: EmbeddedHost>(
     let package_signature_invalidated =
         host.package_signature_invalidated() || package_signature_invalidation_marked(package)?;
     let mut found = BTreeMap::<(String, String), OwnedEmbeddedContent>::new();
-    let mut controls = BTreeMap::<String, Vec<(String, String)>>::new();
+    // Keyed by the control part's identity: two owners naming one part under
+    // another case or escape own one control, listed under the first spelling.
+    let mut controls = BTreeMap::<String, (String, Vec<(String, String)>)>::new();
     let mut source_parts = BTreeSet::<String>::new();
 
     for (source_part, relationships) in &package.part_rels {
@@ -384,13 +391,14 @@ fn owned_embedded_content<H: EmbeddedHost>(
             let control_part = safe_internal_target(&source_part, relationship)?;
             required_part(package, &control_part)?;
             controls
-                .entry(control_part)
-                .or_default()
+                .entry(stored_part_identity(&control_part))
+                .or_insert_with(|| (control_part, Vec::new()))
+                .1
                 .push((source_part.clone(), reference.relationship_id));
         }
     }
 
-    for (control_part, owners) in controls {
+    for (control_part, owners) in controls.into_values() {
         require_exact_content_type(
             package,
             &control_part,
@@ -617,6 +625,7 @@ fn remove_embedded_content_in_place<H: EmbeddedHost>(
 /// Whether the package carries an invalidation marker, or a signature whose
 /// manifest names a part or relationship the package lacks, found without
 /// verifying any signature.
+#[doc(hidden)]
 pub fn package_signature_known_invalid_without_verifying(package: &OpcPackage) -> bool {
     let marked = package_signature_invalidation_marked(package).unwrap_or(false);
     let missing = signature_manifest_has_missing_reference(package);
@@ -627,6 +636,7 @@ pub fn package_signature_known_invalid_without_verifying(package: &OpcPackage) -
 /// invalid: marked so by an earlier save, failing verification or incomplete
 /// in its coverage, or with an unsupported part transform chain.
 #[cfg(feature = "digital-signatures")]
+#[doc(hidden)]
 pub fn known_invalid_package_signature_on_open(package: &OpcPackage) -> bool {
     if package_signature_invalidation_marked(package).unwrap_or(false) {
         return true;
@@ -656,6 +666,7 @@ fn invalid(operation: &'static str, message: String) -> EmbeddedError {
 
 /// Adds the invalidation marker to a signed package an edit invalidated,
 /// once.
+#[doc(hidden)]
 pub fn persist_invalidated_package_signature(
     package: &mut OpcPackage,
     invalidated: bool,
@@ -866,6 +877,7 @@ fn safe_internal_target(source_part: &str, relationship: &Relationship) -> Resul
 /// Whether a relationship target is a normalised pack URI: ASCII, no empty,
 /// `.` or trailing-dot segment, no `\`, `?` or `#`, and only the escapes a
 /// normaliser keeps, in uppercase.
+#[doc(hidden)]
 pub fn relationship_target_is_normalized_pack_uri(target: &str) -> bool {
     if target.is_empty()
         || target.ends_with('/')
@@ -967,6 +979,7 @@ fn target_escapes_package_root(source_part: &str, target: &str) -> bool {
 }
 
 /// The bytes of a part a relationship names, or [`EmbeddedError::MissingPart`].
+#[doc(hidden)]
 pub fn required_part<'a>(package: &'a OpcPackage, part_name: &str) -> Result<&'a [u8]> {
     package
         .get_part(part_name)
@@ -996,6 +1009,7 @@ fn validate_identity_source(source_part: &str) -> Result<()> {
 }
 
 /// Refuses an XML declaration that names an encoding other than UTF-8.
+#[doc(hidden)]
 pub fn validate_utf8_xml_declaration(
     declaration: &BytesDecl<'_>,
     operation: &'static str,
@@ -1015,6 +1029,7 @@ pub fn validate_utf8_xml_declaration(
 
 /// The strict XML 1.0 check of a part that owns or holds embedded content,
 /// with its messages.
+#[doc(hidden)]
 pub fn validate_embedded_lexical(xml: &[u8], operation: &'static str) -> Result<()> {
     validate_strict_xml_1_0(xml).map_err(|error| embedded_lexical_error(xml, operation, error))
 }
@@ -1138,9 +1153,16 @@ fn relationship_target_is_reachable_except(
     excluded: Option<(&str, &str)>,
 ) -> Result<bool> {
     let candidate = stored_part_identity(candidate);
+    let excluded = excluded
+        .map(|(source_part, relationship_id)| (stored_part_identity(source_part), relationship_id));
     Ok(internal_targets(package)?.iter().any(|target| {
-        excluded != Some((target.source_part, target.relationship.id.as_str()))
-            && target.identities.contains(&candidate)
+        let is_excluded = excluded
+            .as_ref()
+            .is_some_and(|(source_part, relationship_id)| {
+                target.relationship.id == *relationship_id
+                    && stored_part_identity(target.source_part) == *source_part
+            });
+        !is_excluded && target.identities.contains(&candidate)
     }))
 }
 
@@ -1377,6 +1399,7 @@ fn active_x_binary_relationship_id(xml: &[u8]) -> Result<Option<String>> {
 /// The `r:id` attribute of an owner element, in the transitional or strict
 /// relationships namespace; `None` when absent or empty, and refused when
 /// given twice.
+#[doc(hidden)]
 pub fn relationship_id_attribute(
     reader: &NsReader<&[u8]>,
     element: &BytesStart<'_>,
@@ -1417,6 +1440,7 @@ fn local_name(name: &[u8]) -> &[u8] {
 }
 
 /// The XML without the owner ranges a removal takes out, which must not overlap.
+#[doc(hidden)]
 pub fn remove_owner_ranges(xml: &[u8], mut ranges: Vec<Range<usize>>) -> Result<Vec<u8>> {
     ranges.sort_by_key(|range| range.start);
     ranges.dedup();
@@ -1778,6 +1802,7 @@ fn reject_unrelated_signature_incoming(
 
 /// Whether the package carries a package signature, after the checks of its
 /// signature graph.
+#[doc(hidden)]
 pub fn has_package_signature(package: &OpcPackage) -> Result<bool> {
     package_signature_graph(package).map(|graph| graph.is_some())
 }
@@ -2055,6 +2080,7 @@ fn hex_digit(byte: u8) -> Option<u8> {
 
 /// Whether two packages hold the same parts, content types and
 /// relationships: a save between them keeps a signature valid.
+#[doc(hidden)]
 pub fn packages_are_semantically_equal(left: &OpcPackage, right: &OpcPackage) -> bool {
     left.parts == right.parts
         && left.content_types.defaults == right.content_types.defaults
@@ -2071,6 +2097,7 @@ pub fn packages_are_semantically_equal(left: &OpcPackage, right: &OpcPackage) ->
 
 /// Whether a mutation from `original` to `candidate`, both signed,
 /// invalidates the package signature.
+#[doc(hidden)]
 pub fn synchronized_package_mutation_invalidates_signature(
     original: &OpcPackage,
     candidate: &OpcPackage,

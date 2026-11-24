@@ -653,8 +653,8 @@ const UNSIGNED_CASES: [(&str, Edit, Act); 11] = [
         Act::RemoveVba,
     ),
     (
-        // PowerPoint's reachability already ignores case: once it refuses a
-        // shared VBA target, it refuses this one too.
+        // PowerPoint's reachability already ignores case, as Word's does:
+        // once it refuses a shared VBA target, it refuses this one too.
         "remove a VBA project another relationship names under another case",
         |package| {
             package.get_or_create_part_rels(PRESENTATION).add_with_id(

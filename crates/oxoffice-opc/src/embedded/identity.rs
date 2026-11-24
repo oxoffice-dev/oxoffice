@@ -44,8 +44,11 @@ impl fmt::Display for UnresolvableTarget {
 /// The identity of an absolute part name as stored in a package.
 ///
 /// A stored name that cannot be decoded keeps the identity opc's lookup
-/// gives it (dot segments collapsed, ASCII case folded): no decoded target
-/// can then name it by accident.
+/// gives it (dot segments collapsed, ASCII case folded). A decoded target
+/// can still name it: `a%25ZZ.png` decodes to `a%ZZ.png`, the identity of
+/// a stored `a%ZZ.png`. That errs on the safe side only: such a part counts
+/// as reachable and is kept, and two stored names that meet this way are
+/// refused as ambiguous.
 pub(crate) fn stored_part_identity(part_name: &str) -> String {
     resolve("/", part_name).unwrap_or_else(|_| crate::package::part_identity(part_name))
 }
