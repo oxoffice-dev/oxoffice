@@ -1,0 +1,189 @@
+---
+date: 2026-11-24
+status: draft
+scope: perf, docx, python
+---
+
+# Edit cost: staged edits run in place
+
+Lots 3a to 3d of [edit cost at the root](2026-11-21-edit-cost-at-the-root.md)
+(decisions 1, 3, 4 and 5), on the reservation journal of #600 and the ids
+allocated at insert of lot 3a-0a (#423). It generalizes two shapes main
+already has: `Document::edit_properties` (#600) and
+`Document::edit_body_paragraph_in_place`
+([one body paragraph edited in place](2026-11-24-one-body-paragraph-edited-in-place.md)).
+
+## Context
+
+About 90 of the 125 calls of `GROWING` (main 8f05bfd8) pay a staged commit in
+the facade. Their routes, read from a debug build with backtrace traces at
+each staging entry point (`handoff/perfrun/routes.md`):
+
+| Route | Calls |
+| --- | --- |
+| facade clone, edit the clone, `prepare_and_reopen_staged` (save, reread), commit | 85 |
+| of which the binding also proves the edit by a staged save comparison (`saves_as`) | 33 |
+| facade clone, edit, `commit_staged_mutation` without reopen | 22 |
+| binding routes only (block edits, inventory, `saves_as`) | 18 |
+
+The notes and comments of S1 below, `scaling` wheel of main 8f05bfd8 on
+Linux, the body of `test_docx_scaling.py`, fastest of the steady calls
+(ms):
+
+| Call | 25 ¶ | 100 ¶ | 400 ¶ |
+| --- | --- | --- | --- |
+| `Document.add_footnote` | 37.7 | 83.8 | 276.8 |
+| `Document.remove_footnote` | 36.2 | 76.9 | 242.8 |
+| `FootnoteEndnote.add_paragraph` | 22.4 | 50.1 | 164.4 |
+| `FootnoteEndnote.delete` | 27.2 | 60.7 | 210.0 |
+| `Document.add_comment` | 5.5 | 8.5 | 22.9 |
+| `Document.reply_to` | 94.9 | 245.1 | 859.9 |
+| `Document.remove_comment` | 46.9 | 131.6 | 478.4 |
+| `Document.move_comment` | 473.9 | 1239.5 | 4289.6 |
+
+Every one of these calls, and every staged call but six, then rebuilds the binding's whole handle
+inventory and matches it with the old one (`prepare_word_revision`), on a
+second whole clone the binding made first.
+
+The staging answers three questions at edit time (root spec, cause 1): did
+the edit change anything, can the document still be saved, and do the reads
+see what a reopened save shows. Since 3a-0a, the third holds without a
+reopen for an edit that reserves at insert every id it writes, and the save
+keeps them. Since #600, a reservation in the registry and the package graph
+is journaled and undone without a copy. What is left is the model: the
+staged routes edit a copy because nothing else puts the model back on a
+refusal, and nothing tells the binding what changed.
+
+Two costs that are not the stage also grow with the body of the scaling
+document, whose media parts grow with it (a picture every 10th paragraph):
+`observe_package_graph`, which every part reservation runs, scans every part
+and relationship (#600's stated residual), and some routes rebuild every
+related story cache after an edit (`refresh_related_story_caches`).
+
+## Decision
+
+An edit names the units it may change, runs on the live model, and keeps a
+copy of those units only, which puts them back on any exit that is not a
+success.
+
+1. **Units.** `Document::edit_in_place(units, edit)` (hidden) takes the
+   list of units `edit` may change, each snapshotted before it runs, at the
+   cost of the unit:
+   - `BodyBlocks { slot, count }`: the `count` direct body blocks from
+     `slot` (0 for an insertion), cloned; the undo puts them back in place of
+     whatever the edit left between `slot` and the block that followed them
+     (found by the body length delta). `edit_body_paragraph_in_place` is the
+     case `count = 1` and keeps its signature.
+   - `Note { kind, id }`, `Comment { id }`: the entry and its index in its
+     model (none for a new one), with the model's dirty flag and part name;
+     the extended comment records of that comment.
+   - `Part(name)`: a story part held as package bytes (header, footer,
+     chart, media, custom XML): its bytes or its absence, its relationships
+     and its content type override. It is what undoes a removal, which the
+     reservation journal cannot (`removed_from_package`).
+   - `Model(kind)`: one document-level model the edit rewrites (styles,
+     settings, numbering, font table, the section properties of one section),
+     cloned whole. These models do not grow with the body.
+   The scalar state every edit touches (dirty flags, the layout caches, the
+   carried block records and main body scans of the changed slots) is saved
+   with the units. A unit's no-op answer compares the unit before and after,
+   so it costs the unit too.
+2. **One journal per call, one guard.** `edit_in_place` opens the #600
+   reservation journal, runs `edit` under `catch_unwind`, and on an error or
+   a panic restores the units backwards and undoes the reservations, then
+   returns the error or resumes the panic. A facade call made inside an open
+   call (the `add_style` of a missing note reference or hyperlink style, a
+   staged helper a route reuses) joins it: its units are added to the open
+   call's, and the outer call undoes or keeps everything at once. On success
+   the call keeps an `EditUndo` (the units, the journal) until the caller
+   commits it. A Rust or CLI caller commits at once (the public facade
+   methods do); the binding takes it (`take_edit_undo`, hidden) and holds it
+   in its own drop guard until its publication commits, as #627's guard holds
+   the old paragraph: a refused publication or a panic in the binding restores
+   the document. That guard and #627's are one: a binding call holds one
+   `EditUndo`, which a body paragraph edit fills with one `BodyBlocks` unit.
+3. **No stage, no reopen.** A converted route reserves at insert every id it
+   writes (decision 3 of the root spec: relationship, drawing, bookmark,
+   comment, note and numbering ids, part names), and copied XML takes fresh
+   ids through `fresh_drawing_id_edits` and its bookmark and `w:sdt/w:id`
+   siblings. It refreshes the caches of its units only. Saveability: the four
+   up-front refusals stay (`refuse_unsavable_body_edit`); every other route
+   leaves the rest to the save, as `Paragraph.text` does (decision 2 of the
+   root spec). A reservation observes the parts it adds, not the whole
+   package graph: `observe_package_graph` becomes a check of the parts and
+   relationships the journal added, and the whole scan runs at open and in
+   the debug coverage oracle (`assert_covers`).
+4. **The edit says what it touched.** `EditUndo` gives the binding an
+   `EditReport`: each unit and whether it changed, and for `BodyBlocks` the
+   blocks removed and inserted at the slot. The binding publishes from it,
+   without a clone of its own and without the inventory diff:
+   - body units: the block replacement and body splices of the BLK lane
+     (`ParagraphEdit`, `BodySplice`, a table as one block);
+   - note, comment and part units: a story publication that retires the
+     owners of that story and reads the owners of that story alone (one
+     note, one comment thread, one header or footer part), every other owner
+     kept; `HeaderFooterAppend` is today's narrow case of it;
+   - `Model` units: the property publications that exist (styles, settings);
+   - nothing changed: no publication, every handle kept.
+5. **Oracles (decision 5).** Debug builds keep each staged route as it is
+   today, renamed `*_staged`, and run it on a `clone_for_staging` copy taken
+   before the edit:
+   - same `Ok` value or same error text;
+   - after a success: the live document writes the bytes the staged and
+     reopened copy writes (`to_bytes`), and the registry covers the live
+     package (`assert_covers`);
+   - **an edit that writes outside its units panics**: the debug build
+     applies the `EditUndo` to a copy of the live document after the edit
+     and asserts that the copy equals the document before (package graph,
+     registry, models, body), so a write outside the declared units, or a
+     reservation the journal missed, fails at the edit that made it;
+   - after a refusal: the live document equals the copy taken before;
+   - the binding: `assert_word_inventory_rebuilds` and
+     `assert_kept_owners_name_their_elements` after each story publication,
+     as after each splice.
+
+What stays guaranteed: an edit that fails, or panics, leaves the document
+and every handle unchanged; a no-op keeps every handle; a handle either
+finds its element or raises, never another element; a save writes what the
+reads showed.
+
+What changes for a user: the changes of decisions 2 and 3 of the root spec,
+for the calls converted: a body that cannot be saved after a typed edit is
+refused by the save instead of by the edit (the four up-front refusals
+stay), and handles outside the story an edit touched keep working where all
+of them were retired.
+
+### What we do not do
+
+- No change to which handles of the touched story retire.
+- No incremental story inventory inside a story: a story publication reads
+  its whole story (one note, one header), which does not grow with the body.
+  The notes and comments parts do grow with their own entries; that is the
+  cost of their part, not of the body.
+- No Rust signature change: `edit_in_place`, `take_edit_undo` and
+  `EditReport` are hidden.
+
+## Plan
+
+Each pull request: the calls it converts leave `GROWING` (the strict xfail's
+XPASS), the scaling run of its calls and the QUICK set on the `scaling`
+profile, the debug oracle over the Python debug suite and
+`cargo test -p oxoffice-docx`, the steady table at 25/100/400 paragraphs
+(main -> branch), Python behaviour tests per call (handles kept or retired,
+no-op, refusal leaves the document unchanged), a mutation check per guard.
+
+| PR | Calls | Leave `GROWING` |
+| --- | --- | --- |
+| S1 | `edit_in_place`, `EditUndo`, `EditReport`, story publication, incremental `observe_package_graph`; notes and comments: `add_footnote`, `add_endnote`, `remove_footnote`, `remove_endnote`, `FootnoteEndnote.add_paragraph` / `add_table` / `delete`, `add_comment`, `reply_to`, `resolve_comment`, `remove_comment`, `move_comment` | 12 |
+| S2 | body: `insert_content`, `clone_content`, `move_content`, `import_fragment`, `insert_document`, `insert_html`, `insert_bibliography`, `insert_citation`, `add_bibliography_source`, `replace_bibliography_source`, `accept_revision_id`, `reject_revision_id`, `insert_section`, `remove_section`, `isolate_span`; the facade of the table edits and of the scoped replacements (published by the BLK lane) | 15 + shared |
+| S3 | pictures, charts, hyperlinks, page colour, headers, footers, watermarks, section stories | 28 |
+| S4 | content controls, legacy forms, permissions, mail merge, `set_story_text`, `move_content_control`; form operations check the controls they change (#7) | 20 |
+
+S3 and S4 touch disjoint files and can run in parallel once S1 is merged.
+
+## Links
+
+- Issues: #466 (edit cost), #6, #7.
+- [Edit cost at the root](2026-11-21-edit-cost-at-the-root.md),
+  [one body paragraph edited in place](2026-11-24-one-body-paragraph-edited-in-place.md),
+  [a body splice updates the owner index in place](2026-11-24-word-owner-index-updated-in-place.md).
