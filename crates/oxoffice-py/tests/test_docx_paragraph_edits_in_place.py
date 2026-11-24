@@ -129,13 +129,19 @@ def test_an_edit_in_place_that_changes_nothing_keeps_every_handle(body, call):
     assert other.text == doc.paragraphs[EDITED + 1].runs[2].text
 
 
-REFUSED = {
+# Refusals that happen inside the edit of the paragraph's copy, after the in-place route took the call.
+REFUSED_IN_THE_EDIT = {
     "Paragraph.text": lambda doc, para: setattr(para, "text", "a\x01b"),
+    "Run.add_field": lambda doc, para: para.runs[0].add_field("PAGE\x01", ""),
+    "Document.split_run past the text": lambda doc, para: doc.split_run(para, 0, 10_000),
+    "Document.split_run past the runs": lambda doc, para: doc.split_run(para, 99, 1),
+}
+# Refusals of the arguments, before any route runs: they leave the document as it was too.
+REFUSED_BEFORE_THE_EDIT = {
     "Paragraph.add_run": lambda doc, para: para.add_run("a\x01"),
     "Paragraph.add_equation": lambda doc, para: para.add_equation("\\frac{", format="latex"),
-    "Run.add_field": lambda doc, para: para.runs[0].add_field("PAGE\x01", ""),
-    "Document.split_run": lambda doc, para: doc.split_run(para, 0, 10_000),
 }
+REFUSED = REFUSED_IN_THE_EDIT | REFUSED_BEFORE_THE_EDIT
 
 
 def check_unchanged(doc, before, handles):
