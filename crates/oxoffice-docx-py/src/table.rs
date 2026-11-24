@@ -644,6 +644,10 @@ impl PyTable {
                 .edit_table_properties_in_place(index, &edit)
                 .map_err(|error| docx_to_pyerr(py, error))?
         {
+            if let Some(slot) = document.inner.content_index_of_table(index) {
+                document
+                    .follow_table_property_edit(slot, crate::document::TablePropertyScope::Table);
+            }
             #[cfg(debug_assertions)]
             document.assert_word_inventory_rebuilds(false);
             return Ok(result);
@@ -1737,15 +1741,16 @@ impl PyRow {
         if current_related.is_none()
             && document
                 .inner
-                .edit_table_properties_in_place(table, |table| {
-                    let mut row = table.row(row).ok_or_else(|| {
-                        oxoffice_docx::Error::Other("row index out of range".to_owned())
-                    })?;
-                    edit(&mut row)
-                })
+                .edit_table_row_properties_in_place(table, row, &edit)
                 .map_err(|error| docx_to_pyerr(py, error))?
                 .is_some()
         {
+            if let Some(slot) = document.inner.content_index_of_table(table) {
+                document.follow_table_property_edit(
+                    slot,
+                    crate::document::TablePropertyScope::Row(row),
+                );
+            }
             #[cfg(debug_assertions)]
             document.assert_word_inventory_rebuilds(false);
             return Ok(());
@@ -2191,12 +2196,7 @@ impl PyCell {
         if current_related.is_none()
             && document
                 .inner
-                .edit_table_properties_in_place(table, |table| {
-                    let mut cell = table.cell(row, cell).ok_or_else(|| {
-                        oxoffice_docx::Error::Other("cell index out of range".to_owned())
-                    })?;
-                    edit(&mut cell)
-                })
+                .edit_table_cell_properties_in_place(table, row, cell, &edit)
                 .map_err(|error| docx_to_pyerr(py, error))?
                 .is_some()
         {
