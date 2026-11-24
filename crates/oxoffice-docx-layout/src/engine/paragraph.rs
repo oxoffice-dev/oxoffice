@@ -2074,14 +2074,14 @@ fn layout_paragraph_with_source_and_table(
     // An anchor takes no height beside other items, so the line is the one
     // the static export draws; a paragraph of empty controls only stands,
     // as an empty paragraph's caret does, on its mark's metrics.
-    let only_anchors = !inline_items.is_empty()
-        && inline_items.iter().all(|item| {
-            matches!(item, InlineItem::Text(segment)
-                if segment.form_mark.is_some()
-                    && segment.text.is_empty()
-                    && segment.field_kind.is_none()
-                    && segment.field_source.is_none())
-        });
+    let is_anchor = |item: &InlineItem| {
+        matches!(item, InlineItem::Text(segment)
+            if segment.form_mark.is_some()
+                && segment.text.is_empty()
+                && segment.field_kind.is_none()
+                && segment.field_source.is_none())
+    };
+    let only_anchors = !inline_items.is_empty() && inline_items.iter().all(is_anchor);
     if only_anchors {
         let (mark, _) = paragraph_mark_segment(
             para_style_id,
@@ -2101,13 +2101,20 @@ fn layout_paragraph_with_source_and_table(
             }
         }
     }
+    // Empty annotated spans stand on the caret's metrics, an empty
+    // control's anchor among them or not: it draws nothing and takes no
+    // height, so the line is the one the static export draws.
     let attributed_empty_paragraph = inline_items.is_empty()
-        || inline_items.iter().enumerate().all(|(index, _)| {
-            multilingual_styles
-                .get(&index)
-                .and_then(|style| style.annotation.as_ref())
-                .is_some_and(|annotation| annotation.kind == WordAnnotationRootKind::EmptySpan)
-        });
+        || !only_anchors
+            && inline_items.iter().enumerate().all(|(index, item)| {
+                is_anchor(item)
+                    || multilingual_styles
+                        .get(&index)
+                        .and_then(|style| style.annotation.as_ref())
+                        .is_some_and(|annotation| {
+                            annotation.kind == WordAnnotationRootKind::EmptySpan
+                        })
+            });
     if attributed_empty_paragraph {
         // A block form field holding only empty paragraphs has their caret
         // to stand on.
@@ -2155,6 +2162,9 @@ fn layout_paragraph_with_source_and_table(
                 (word.ascent + word.line_gap, word.descent)
             };
             for item in &mut inline_items {
+                if is_anchor(item) {
+                    continue;
+                }
                 let InlineItem::Group {
                     height,
                     baseline,

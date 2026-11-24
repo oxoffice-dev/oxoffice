@@ -2060,13 +2060,153 @@ fn an_empty_control_draws_the_page_the_static_export_draws() {
         text_origins(&plain.layout.pages, "Next")
     );
     let rects = fragment_rects(&fillable.layout.pages);
-    // A control with no run stands before the date the field after it draws.
+    // A control with no run stands before the date the field after it
+    // draws, at the place of the emptied one: they share its box.
     let (year_x, _) = text_origins(&fillable.layout.pages, "2026")[0];
-    assert!(rects[1].x <= year_x + 0.01, "{rects:?} {year_x}");
-    // The late one keeps to its line's end.
+    let boxes = boxes_and_anchors(&fillable.layout.pages);
+    assert!(boxes[1].2 <= year_x + 0.01, "{boxes:?} {year_x}");
+    assert!((boxes[0].2 - boxes[1].2).abs() < 0.01, "{boxes:?}");
+    assert!(
+        (boxes[0].1.x + boxes[0].1.width - boxes[1].1.x).abs() < 0.01,
+        "{boxes:?}"
+    );
+    // The late one keeps to its line's end: its 6 em move back into the
+    // line, over the words before it, which it says.
     let page_width = 612.0;
     assert!(
-        rects[2].x + rects[2].width <= page_width - 72.0 + 0.01,
+        (rects[2].x + rects[2].width - (page_width - 72.0)).abs() < 0.01,
         "{rects:?}"
+    );
+    assert!((rects[2].width - 66.0).abs() < 0.01, "{rects:?}");
+    assert!(
+        said_about(&fillable.layout)
+            .contains(&"form control \"late\": other text on its lines sits under its box"),
+        "{:?}",
+        said_about(&fillable.layout)
+    );
+}
+
+/// Each field's box with where its anchor stands, in field order.
+fn boxes_and_anchors(
+    pages: &[std::sync::Arc<oxoffice_layout::PageFrame>],
+) -> Vec<(u32, oxoffice_layout::Rect, f64)> {
+    fn anchor(elements: &[PositionedElement]) -> Option<f64> {
+        elements.iter().find_map(|element| match element {
+            PositionedElement::Text(run) if run.glyph_ids.is_empty() => Some(run.origin.x),
+            PositionedElement::MarkedContent { children, .. } => anchor(children),
+            _ => None,
+        })
+    }
+    fn visit(elements: &[PositionedElement], out: &mut Vec<(u32, oxoffice_layout::Rect, f64)>) {
+        for element in elements {
+            match element {
+                PositionedElement::FormField(fragment) => out.push((
+                    fragment.field.0,
+                    fragment.rect,
+                    anchor(&fragment.children).expect("an empty control's anchor"),
+                )),
+                PositionedElement::MarkedContent { children, .. } => visit(children, out),
+                PositionedElement::Group(group) => visit(&group.children, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for page in pages {
+        visit(&page.elements, &mut out);
+    }
+    out.sort_by_key(|(field, _, _)| *field);
+    out
+}
+
+#[test]
+fn empty_controls_side_by_side_share_their_box_in_document_order() {
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r>{}{}</w:p>"#,
+        empty_control("first"),
+        empty_control("second"),
+    ));
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    assert_eq!(field_names(layout), ["first", "second"]);
+    let boxes = boxes_and_anchors(&layout.pages);
+    let [(_, first, anchor), (_, second, _)] = boxes.as_slice() else {
+        panic!("{boxes:?}");
+    };
+    // 6 em of 11 pt, halved, from the anchor towards the line's end.
+    assert!((first.x - anchor).abs() < 0.01, "{boxes:?}");
+    assert!((first.width - 33.0).abs() < 0.01, "{boxes:?}");
+    assert!((second.x - (first.x + 33.0)).abs() < 0.01, "{boxes:?}");
+    assert!((second.width - 33.0).abs() < 0.01, "{boxes:?}");
+    let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    let rects: Vec<Vec<f32>> = exported
+        .iter()
+        .map(|(_, field)| {
+            field
+                .get(b"Rect")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_float().unwrap())
+                .collect()
+        })
+        .collect();
+    assert_ne!(rects[0], rects[1], "two distinct widgets");
+}
+
+#[test]
+fn in_a_right_to_left_paragraph_an_empty_control_box_grows_to_the_left() {
+    let rtl = |controls: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve">שם: </w:t></w:r>{controls}<w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve"> ועוד טקסט</w:t></w:r></w:p>"#
+        )
+    };
+    let doc = doc_with_body(&format!(
+        "{}{}",
+        rtl(&empty_control("alone")),
+        rtl(&format!(
+            "{}{}",
+            empty_control("first"),
+            empty_control("second")
+        ))
+    ));
+    let result = doc.layout_with_options(fillable()).unwrap();
+    let layout = &result.layout;
+    assert_eq!(field_names(layout), ["alone", "first", "second"]);
+    let boxes = boxes_and_anchors(&layout.pages);
+    let [(_, alone, alone_anchor), (_, first, anchor), (_, second, _)] = boxes.as_slice() else {
+        panic!("{boxes:?}");
+    };
+    // The box ends at the anchor and reaches towards the line's left end.
+    assert!(
+        (alone.x + alone.width - alone_anchor).abs() < 0.01,
+        "{boxes:?}"
+    );
+    assert!((alone.width - 66.0).abs() < 0.01, "{boxes:?}");
+    // Side by side, the first stands nearest its anchor, on the right.
+    assert!((first.x + first.width - anchor).abs() < 0.01, "{boxes:?}");
+    assert!((first.width - 33.0).abs() < 0.01, "{boxes:?}");
+    assert!(
+        (second.x + second.width - first.x).abs() < 0.01,
+        "{boxes:?}"
+    );
+}
+
+#[test]
+fn an_empty_control_beside_an_empty_field_result_keeps_the_static_line() {
+    // An empty field result with an emphasis mark is an empty annotated
+    // span; beside a large paragraph mark, it stands on the mark's caret.
+    let empty_result = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> QUOTE "" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:em w:val="dot"/></w:rPr><w:t></w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+    let doc = doc_with_body(&format!(
+        r#"<w:p><w:pPr><w:rPr><w:sz w:val="48"/></w:rPr></w:pPr>{empty_result}{}</w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p>"#,
+        empty_control("blank"),
+    ));
+    let fillable = doc.layout_with_options(fillable()).unwrap();
+    let plain = doc.layout_with_options(RenderOptions::default()).unwrap();
+    assert_eq!(field_names(&fillable.layout), ["blank"]);
+    assert_eq!(
+        text_origins(&fillable.layout.pages, "Next"),
+        text_origins(&plain.layout.pages, "Next")
     );
 }
