@@ -3710,11 +3710,46 @@ impl CT_P {
                 .all(|(position, raw)| Self::raw_is_root_attributes(*position, raw))
     }
 
-    /// Remove the tracked insertions, deletions and moves among the
-    /// paragraph's children and inside its hyperlinks, with everything they
-    /// hold, and a hyperlink left with nothing in it. The other children stay
-    /// where they are, and the paragraph mark's own tracked state with its
-    /// properties. Returns how many went.
+    /// Remove the preserved children at these indices of
+    /// [`Self::extra_xml`], with the revision written in place of one, and
+    /// move every projection that counts the children before them. Returns
+    /// how many went.
+    #[doc(hidden)]
+    pub fn remove_raw_children(&mut self, positions: &[usize]) -> usize {
+        let mut positions = positions.to_vec();
+        positions.sort_unstable();
+        positions.dedup();
+        let mut removed = 0;
+        for position in positions.into_iter().rev() {
+            let Some((boundary, _)) = self.extra_xml.get(position) else {
+                continue;
+            };
+            let boundary = *boundary;
+            let slot = self.extra_xml[..position]
+                .iter()
+                .filter(|(at, _)| *at == boundary)
+                .count();
+            match self.revisions.iter().position(|(at, other, _)| {
+                *at == boundary && *other == slot && hyperlink_revision_index(*other).is_none()
+            }) {
+                Some(index) => self.remove_revision(index),
+                None => self.remove_boundary_raw(boundary, slot),
+            }
+            removed += 1;
+        }
+        if removed > 0 {
+            // A bookmark the removed children held goes from the projection.
+            let _ = self.refresh_bookmark_projection();
+        }
+        removed
+    }
+
+    /// Remove the tracked insertions, deletions and moves inside the
+    /// paragraph's hyperlinks, with everything they hold, and a hyperlink left
+    /// with nothing in it, then the paragraph mark's own insertion, deletion
+    /// or move: the mark stays, untracked. Those among the paragraph's own
+    /// children go with [`Self::remove_raw_children`]. The changes of
+    /// properties stay. Returns how many went.
     #[doc(hidden)]
     pub fn remove_content_revisions(&mut self) -> usize {
         let mut removed = 0;
@@ -3724,8 +3759,26 @@ impl CT_P {
                 removed += 1;
             }
         }
+        if let Some(mark) = self
+            .properties
+            .as_mut()
+            .and_then(|properties| properties.rpr.as_mut())
+        {
+            let before = mark.revision_markers.len();
+            mark.revision_markers
+                .retain(|marker| !marker.kind().changes_content());
+            removed += before - mark.revision_markers.len();
+            for index in (0..mark.revision_xml.len()).rev() {
+                if crate::revision::raw_changes_content(&mark.revision_xml[index]) {
+                    if mark.revision_xml_positions.len() == mark.revision_xml.len() {
+                        mark.revision_xml_positions.remove(index);
+                    }
+                    mark.revision_xml.remove(index);
+                    removed += 1;
+                }
+            }
+        }
         if removed > 0 {
-            // A bookmark the removed content held goes from the projection.
             let _ = self.refresh_bookmark_projection();
         }
         removed

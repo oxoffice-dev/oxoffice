@@ -2,6 +2,8 @@
 
 use super::*;
 
+use oxoffice_docx_oxml::revision::raw_changes_content;
+
 pub(super) fn collect_sdt_text(sdt: &CT_Sdt, output: &mut String) {
     let mut lines = Vec::new();
     collect_sdt_lines(sdt, &mut lines);
@@ -290,31 +292,80 @@ fn replace_display_text(
 /// Drop the tracked insertions, deletions and moves of the content a value
 /// replaces, with everything they hold: those among the control's own
 /// children and those of its paragraphs, in its tables, rows and cells too,
-/// as `replace_sdt_display` walks them. A value is an untracked edit: the
-/// control then holds it and no pending change. The changes of a nested
-/// control, of a paragraph mark and of properties, the control's own
-/// included, stay. Returns how many went; when one is refused (see
-/// [`refuse_dropped_change`]), none goes.
+/// as `replace_sdt_display` walks them, with the insertion, deletion or move
+/// of a paragraph's mark. A value is an untracked edit: the control then
+/// holds it and no pending change. A proofing mark paired with one in a
+/// dropped change goes too. The changes of a nested control and of
+/// properties, the control's own included, stay. Returns how many went;
+/// when one is refused (see [`check_dropped_change`]), the call fails.
 pub(super) fn drop_content_changes(control: &mut CT_Sdt) -> Result<usize> {
-    for (_, revision) in control.revisions() {
-        if revision.kind().changes_content() {
-            refuse_dropped_change(revision.retained_xml())?;
+    let mut marks = Vec::new();
+    let mut gone = Vec::new();
+    for (index, child) in control.content.iter().enumerate() {
+        if let SdtContent::RawXml(raw) = child {
+            sort_raw_child(raw, index, &mut marks, &mut gone)?;
         }
     }
+    gone.extend(orphaned_partners(&marks)?);
+    let mut dropped = 0;
     let mut paragraphs = Vec::new();
     content_paragraphs(&mut control.content, &mut paragraphs);
-    for paragraph in &paragraphs {
-        for (_, _, revision) in &paragraph.revisions {
-            if revision.kind().changes_content() {
-                refuse_dropped_change(revision.retained_xml())?;
-            }
+    for paragraph in paragraphs {
+        dropped += drop_paragraph_changes(paragraph)?;
+    }
+    Ok(dropped + control.remove_raw_children(&gone))
+}
+
+/// Drop the tracked insertions, deletions and moves of one paragraph a value
+/// rewrites, with the proofing marks paired with theirs, then those inside
+/// its hyperlinks and those of its mark, as [`drop_content_changes`] does.
+fn drop_paragraph_changes(paragraph: &mut CT_P) -> Result<usize> {
+    // The preserved children in document order: by run boundary, then as read.
+    let mut order = (0..paragraph.extra_xml.len()).collect::<Vec<_>>();
+    order.sort_by_key(|index| paragraph.extra_xml[*index].0);
+    let mut marks = Vec::new();
+    let mut gone = Vec::new();
+    for index in order {
+        sort_raw_child(&paragraph.extra_xml[index].1, index, &mut marks, &mut gone)?;
+    }
+    gone.extend(orphaned_partners(&marks)?);
+    let dropped = paragraph.remove_raw_children(&gone);
+    // Those left are inside hyperlinks: their proofing marks pair among
+    // themselves.
+    for (_, _, revision) in &paragraph.revisions {
+        if revision.kind().changes_content() {
+            let marks = check_dropped_change(revision.retained_xml())?;
+            orphaned_partners(
+                &marks
+                    .into_iter()
+                    .map(|mark| (mark, None))
+                    .collect::<Vec<_>>(),
+            )?;
         }
     }
-    let mut dropped = 0;
-    for paragraph in paragraphs {
-        dropped += paragraph.remove_content_revisions();
+    Ok(dropped + paragraph.remove_content_revisions())
+}
+
+/// Sort the preserved child `raw` at `index`: a change goes, after its check,
+/// with the proofing marks in it; a proofing mark stays, unless its partner
+/// is in a change.
+fn sort_raw_child(
+    raw: &[u8],
+    index: usize,
+    marks: &mut Vec<(ProofingMark, Option<usize>)>,
+    gone: &mut Vec<usize>,
+) -> Result<()> {
+    if raw_changes_content(raw) {
+        marks.extend(
+            check_dropped_change(raw)?
+                .into_iter()
+                .map(|mark| (mark, None)),
+        );
+        gone.push(index);
+    } else if let Some(mark) = proofing_mark(raw) {
+        marks.push((mark, Some(index)));
     }
-    Ok(dropped + control.remove_content_revisions())
+    Ok(())
 }
 
 /// The paragraphs among `content` whose runs a value rewrites, at any depth
@@ -353,48 +404,137 @@ fn cell_paragraphs<'a>(cell: &'a mut CT_Tc, paragraphs: &mut Vec<&'a mut CT_P>) 
     }
 }
 
-/// Refuse to drop, with the content a value replaces, the tracked change
-/// `raw` when it holds something a partner outside it needs: a comment or
-/// note mark, whose comment or note would be left without it; a content
-/// control; one end of a bookmark, a permission or a tracked range whose
-/// other end is outside it; part of a complex field whose other parts are.
-/// The value is then refused and the document left as it was, as
-/// `Paragraph::set_text` refuses part of a range.
-pub(super) fn refuse_dropped_change(raw: &[u8]) -> Result<()> {
-    let refused = |what: String| {
-        Err(Error::Other(format!(
-            "the content control holds a tracked change with {what}, which a value would drop; \
-             accept or reject it first"
-        )))
+/// A `w:proofErr`, the mark Word writes at each end of the text its
+/// spelling or grammar check flagged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ProofingMark {
+    grammar: bool,
+    start: bool,
+}
+
+/// The proofing mark `raw` is, by its root element.
+pub(super) fn proofing_mark(raw: &[u8]) -> Option<ProofingMark> {
+    let mut reader = Reader::from_reader(raw);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element)) => {
+                return (element.local_name().as_ref() == b"proofErr")
+                    .then(|| proofing_type(&element))
+                    .flatten();
+            }
+            Ok(Event::Eof) | Err(_) => return None,
+            Ok(_) => {}
+        }
+    }
+}
+
+fn proofing_type(element: &BytesStart<'_>) -> Option<ProofingMark> {
+    let kind = local_attribute(element, b"type");
+    let (grammar, start) = match kind.as_slice() {
+        b"spellStart" => (false, true),
+        b"spellEnd" => (false, false),
+        b"gramStart" => (true, true),
+        b"gramEnd" => (true, false),
+        _ => return None,
     };
+    Some(ProofingMark { grammar, start })
+}
+
+/// The value of the attribute named `local` under any prefix, or nothing,
+/// as a preserved subtree does not always declare its prefixes.
+fn local_attribute(element: &BytesStart<'_>, local: &[u8]) -> Vec<u8> {
+    element
+        .attributes()
+        .flatten()
+        .find(|attribute| attribute.key.local_name().as_ref() == local)
+        .map(|attribute| attribute.value.into_owned())
+        .unwrap_or_default()
+}
+
+/// Pair the proofing marks of one parent's children in document order, each
+/// with the index of the child that holds it when it stays, or none when it
+/// is in a dropped change, and return the indices of those that stay paired
+/// with one that goes: a proofing mark means nothing once its text is
+/// replaced. One in a dropped change whose partner is not among them
+/// refuses the value.
+pub(super) fn orphaned_partners(marks: &[(ProofingMark, Option<usize>)]) -> Result<Vec<usize>> {
+    let mut open: [Vec<Option<usize>>; 2] = Default::default();
+    let mut partners = Vec::new();
+    for (mark, kept) in marks {
+        let starts = &mut open[usize::from(mark.grammar)];
+        if mark.start {
+            starts.push(*kept);
+            continue;
+        }
+        match (starts.pop(), kept) {
+            (Some(Some(start)), None) => partners.push(start),
+            (Some(None), Some(end)) => partners.push(*end),
+            (None, None) => return refused_proofing(*mark),
+            _ => {}
+        }
+    }
+    for (grammar, starts) in open.iter().enumerate() {
+        if starts.contains(&None) {
+            return refused_proofing(ProofingMark {
+                grammar: grammar == 1,
+                start: true,
+            });
+        }
+    }
+    Ok(partners)
+}
+
+fn refused_proofing<T>(mark: ProofingMark) -> Result<T> {
+    let kind = if mark.grammar { "grammar" } else { "spelling" };
+    refused(format!("one end of a {kind} mark"))
+}
+
+/// A refused value: the dropped change held `what`.
+fn refused<T>(what: String) -> Result<T> {
+    Err(Error::Other(format!(
+        "the content control holds a tracked change with {what}, which a value would drop; \
+         accept or reject it first"
+    )))
+}
+
+/// Check the tracked change `raw` that a value drops with the content it
+/// replaces, and return the proofing marks Word reads in it, those of its
+/// deleted and moved-away text left out. It is refused when it holds
+/// something a partner outside it needs: a comment or note mark, whose
+/// comment or note would be left without it; a content control; one end of
+/// a bookmark, a permission or a tracked range whose other end is outside
+/// it; part of a complex field whose other parts are. The value is then
+/// refused and the document left as it was, as `Paragraph::set_text`
+/// refuses part of a range.
+pub(super) fn check_dropped_change(raw: &[u8]) -> Result<Vec<ProofingMark>> {
     let mut reader = Reader::from_reader(raw);
     let mut buffer = Vec::new();
-    // Open complex fields, and the range markers by family, start or end, id.
+    // Open complex fields, open deleted or moved-away text, the range
+    // markers by family, start or end and id, and the proofing marks.
     let mut fields = 0usize;
+    let mut hidden = 0usize;
     let mut ranges: Vec<(String, bool, Vec<u8>)> = Vec::new();
+    let mut proofing = Vec::new();
     loop {
         let event = reader
             .read_event_into(&mut buffer)
             .map_err(|error| Error::Other(format!("tracked change XML is invalid: {error}")))?;
         let element = match &event {
             Event::Start(element) | Event::Empty(element) => element,
+            Event::End(element) => {
+                if matches!(element.local_name().as_ref(), b"del" | b"moveFrom") {
+                    hidden = hidden.saturating_sub(1);
+                }
+                buffer.clear();
+                continue;
+            }
             Event::Eof => break,
             _ => {
                 buffer.clear();
                 continue;
             }
         };
-        // Local names, as a preserved subtree does not always declare its
-        // prefixes.
-        let attribute = |local: &[u8]| {
-            element
-                .attributes()
-                .flatten()
-                .find(|attribute| attribute.key.local_name().as_ref() == local)
-                .map(|attribute| attribute.value.into_owned())
-                .unwrap_or_default()
-        };
-        let id = || String::from_utf8_lossy(&attribute(b"id")).into_owned();
+        let id = || String::from_utf8_lossy(&local_attribute(element, b"id")).into_owned();
         let local = String::from_utf8_lossy(element.local_name().as_ref()).into_owned();
         match local.as_str() {
             "commentRangeStart" | "commentRangeEnd" | "commentReference" => {
@@ -405,7 +545,9 @@ pub(super) fn refuse_dropped_change(raw: &[u8]) -> Result<()> {
                 return refused(format!("the mark of {kind} {}", id()));
             }
             "sdt" => return refused("a content control".to_owned()),
-            "fldChar" => match attribute(b"fldCharType").as_slice() {
+            "del" | "moveFrom" if matches!(event, Event::Start(_)) => hidden += 1,
+            "proofErr" if hidden == 0 => proofing.extend(proofing_type(element)),
+            "fldChar" => match local_attribute(element, b"fldCharType").as_slice() {
                 b"begin" => fields += 1,
                 b"separate" if fields == 0 => {
                     return refused("part of a complex field".to_owned());
@@ -423,7 +565,7 @@ pub(super) fn refuse_dropped_change(raw: &[u8]) -> Result<()> {
             }
             _ => {
                 if let Some((family, start)) = range_marker(&local) {
-                    ranges.push((family.to_owned(), start, attribute(b"id")));
+                    ranges.push((family.to_owned(), start, local_attribute(element, b"id")));
                 }
             }
         }
@@ -441,7 +583,7 @@ pub(super) fn refuse_dropped_change(raw: &[u8]) -> Result<()> {
             return refused(format!("one end of {family} {id}"));
         }
     }
-    Ok(())
+    Ok(proofing)
 }
 
 /// The family of a range marker element and whether it starts the range:

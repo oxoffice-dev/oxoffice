@@ -207,47 +207,96 @@ fn rewrite_display(
 }
 
 /// Remove the tracked insertions, deletions and moves of the control's
-/// display content, with everything they hold, as `drop_content_changes`
-/// does in the typed model: not those of a nested control, a text box, a
-/// paragraph mark or properties. One that `refuse_dropped_change` refuses
-/// refuses the value, before anything is removed. A hyperlink that holds
-/// nothing but changes goes with them, as the typed model removes one left
-/// empty.
+/// display content, with everything they hold, and the insertion, deletion
+/// or move of its paragraphs' marks, as `drop_content_changes` does in the
+/// typed model: not those of a nested control, a text box or properties. A
+/// proofing mark paired with one in a removed change goes too: the marks of
+/// a change among the children of the control's content or of a paragraph
+/// pair with those beside it, those of a change elsewhere among themselves.
+/// One that `check_dropped_change` refuses refuses the value, before
+/// anything is removed. A hyperlink that holds nothing but changes goes with
+/// them, as the typed model removes one left empty.
 fn drop_display_changes(xml: &mut Vec<u8>, sdt_start: usize) -> Result<()> {
-    let mut changes = {
+    let mut gone = {
         let elems = index_elements(xml)?;
         let sdt = find_sdt(&elems, sdt_start)?;
         let selected = elems
             .iter()
             .filter(|elem| accepted_display_change(&elems, sdt, elem))
             .collect::<Vec<_>>();
-        let is_selected = |elem: &XmlElem| selected.iter().any(|change| change.id == elem.id);
-        selected
+        // A change inside another goes with it.
+        let outermost = selected
             .iter()
-            .map(|change| match change.parent.map(|id| &elems[id]) {
-                Some(parent)
-                    if parent.word
-                        && parent.local == b"hyperlink"
-                        && direct_children(&elems, parent.id).all(is_selected) =>
-                {
-                    parent.range.clone()
-                }
-                _ => change.range.clone(),
+            .copied()
+            .filter(|change| {
+                !selected.iter().any(|other| {
+                    other.id != change.id
+                        && other.range.start <= change.range.start
+                        && change.range.end <= other.range.end
+                })
             })
-            .collect::<Vec<_>>()
-    };
-    changes.sort_by_key(|range| range.start);
-    // A change inside another goes with it.
-    let mut outermost: Vec<Range<usize>> = Vec::new();
-    for range in changes {
-        if outermost.last().is_none_or(|last| range.start >= last.end) {
-            outermost.push(range);
+            .collect::<Vec<_>>();
+        let is_change = |elem: &XmlElem| outermost.iter().any(|change| change.id == elem.id);
+        let mut gone = Vec::new();
+        let mut paired = Vec::new();
+        for change in &outermost {
+            let parent = change.parent.map(|id| &elems[id]);
+            match parent {
+                Some(parent)
+                    if parent.word && matches!(parent.local.as_slice(), b"sdtContent" | b"p") =>
+                {
+                    if paired.contains(&parent.id) {
+                        continue;
+                    }
+                    paired.push(parent.id);
+                    let mut marks = Vec::new();
+                    for child in direct_children(&elems, parent.id) {
+                        let raw = &xml[child.range.clone()];
+                        if is_change(child) {
+                            let dropped = check_dropped_change(raw)?;
+                            marks.extend(dropped.into_iter().map(|mark| (mark, None)));
+                            gone.push(child.range.clone());
+                        } else if child.word
+                            && let Some(mark) = proofing_mark(raw)
+                        {
+                            marks.push((mark, Some(child.id)));
+                        }
+                    }
+                    for id in orphaned_partners(&marks)? {
+                        gone.push(elems[id].range.clone());
+                    }
+                }
+                _ => {
+                    let marks = check_dropped_change(&xml[change.range.clone()])?;
+                    let marks = marks
+                        .into_iter()
+                        .map(|mark| (mark, None))
+                        .collect::<Vec<_>>();
+                    orphaned_partners(&marks)?;
+                    gone.push(match parent {
+                        Some(parent)
+                            if parent.word
+                                && parent.local == b"hyperlink"
+                                && direct_children(&elems, parent.id).all(is_change) =>
+                        {
+                            parent.range.clone()
+                        }
+                        _ => change.range.clone(),
+                    });
+                }
+            }
         }
-    }
-    for range in &outermost {
-        refuse_dropped_change(&xml[range.clone()])?;
-    }
-    for range in outermost.into_iter().rev() {
+        gone.extend(
+            elems
+                .iter()
+                .filter(|elem| accepted_display_mark_change(&elems, sdt, elem))
+                .map(|elem| elem.range.clone()),
+        );
+        gone
+    };
+    gone.sort_by_key(|range| range.start);
+    gone.dedup();
+    for range in gone.into_iter().rev() {
         xml.splice(range, Vec::new());
     }
     Ok(())

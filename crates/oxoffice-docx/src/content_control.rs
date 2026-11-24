@@ -51,8 +51,8 @@ use data_binding::{
     resolve_binding_edit, select_xml_element,
 };
 use display::{
-    collect_sdt_text, drop_content_changes, refuse_dropped_change, replace_document_controls,
-    value_content,
+    check_dropped_change, collect_sdt_text, drop_content_changes, orphaned_partners, proofing_mark,
+    replace_document_controls, value_content,
 };
 use element_index::{
     ancestor_local, direct_child, direct_children, element_at, element_qname, expand_empty,
@@ -65,8 +65,9 @@ use form_plan::{
 };
 use form_rules::{check_value, locate_binding, select_rules};
 use form_state::{
-    ControlKind, Owner, accepted_display_change, accepted_display_paragraph, accepted_display_text,
-    element_text, flushed_form_document, publish_form_document, read_form_state,
+    ControlKind, Owner, accepted_display_change, accepted_display_mark_change,
+    accepted_display_paragraph, accepted_display_text, element_text, flushed_form_document,
+    publish_form_document, read_form_state,
 };
 use namespaces::{
     AttrNs, in_scope_declarations, in_scope_xmlns, insert_into_start_tag, qualified_attributes,
@@ -237,12 +238,13 @@ impl Document {
     ///
     /// The value replaces the control's content as an edit made with track
     /// changes off: the tracked insertions, deletions and moves in it go with
-    /// it, and the control holds the value and no pending change. The
-    /// changes of its properties, of a paragraph mark and of a nested
-    /// control stay. A change holding a comment or note mark or a content
-    /// control, one end of a bookmark or of a tracked range, or part of a
-    /// complex field, whose rest is outside it, is refused: accept or reject
-    /// it first.
+    /// it, its paragraph marks' included, and the control holds the value and
+    /// no pending change. A proofing mark paired with one in such a change
+    /// goes too. The changes of properties, the control's own included, and
+    /// of a nested control stay. A change holding a comment or note mark or a
+    /// content control, one end of a bookmark, of a tracked range or of a
+    /// proofing mark, or part of a complex field, whose rest is outside it, is
+    /// refused: accept or reject it first.
     pub fn set_content_control_value_by_tag(&mut self, tag: &str, value: &str) -> Result<usize> {
         self.apply_content_control_values(|control| {
             (control.tag() == Some(tag)).then(|| value.to_owned())

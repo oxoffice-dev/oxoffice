@@ -431,8 +431,12 @@ not become successful updates.
 character after the first `=`. Duplicate tags, a missing tag, invalid text or
 an unsupported bound owner refuse the complete batch. Each matching control,
 in the body, a header, a footer, a note, a comment or a text box, and its
-supported custom XML binding changes together. Counts follow the supplied tag
-order.
+supported custom XML binding changes together. A value replaces the control's
+content as an edit made with track changes off: the tracked insertions,
+deletions and moves in it, its paragraph marks' included, go with it, and a
+change holding a comment or note mark, a content control, one end of a
+bookmark or tracked range, or part of a field is refused (accept or reject it
+first). Counts follow the supplied tag order.
 
 `meta set` changes supplied core fields and preserves unspecified metadata.
 An empty core string removes that value. Custom syntax is `NAME=TYPE:VALUE`:

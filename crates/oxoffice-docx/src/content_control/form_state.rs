@@ -439,6 +439,29 @@ pub(super) fn accepted_display_change(elems: &[XmlElem], sdt: &XmlElem, change: 
         && accepted_owning_content(elems, sdt, change.parent, false)
 }
 
+/// Whether `change` is the tracked insertion, deletion or move of the mark
+/// of one of the control's display paragraphs.
+pub(super) fn accepted_display_mark_change(
+    elems: &[XmlElem],
+    sdt: &XmlElem,
+    change: &XmlElem,
+) -> bool {
+    let parent = |elem: &XmlElem, local: &[u8]| {
+        elem.parent
+            .map(|id| &elems[id])
+            .filter(|parent| parent.word && parent.local == local)
+    };
+    change.word
+        && matches!(
+            change.local.as_slice(),
+            b"ins" | b"del" | b"moveFrom" | b"moveTo"
+        )
+        && parent(change, b"rPr")
+            .and_then(|properties| parent(properties, b"pPr"))
+            .and_then(|properties| parent(properties, b"p"))
+            .is_some_and(|paragraph| accepted_display_paragraph(elems, sdt, paragraph))
+}
+
 pub(super) fn accepted_display_paragraph(
     elems: &[XmlElem],
     sdt: &XmlElem,

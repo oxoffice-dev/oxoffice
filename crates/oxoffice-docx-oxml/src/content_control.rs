@@ -2089,22 +2089,21 @@ impl CT_Sdt {
         &mut self.revisions
     }
 
-    /// Remove the tracked insertions, deletions and moves among the direct
-    /// children of `w:sdtContent`, with everything they hold. The other
-    /// children stay where they are. Returns how many went.
+    /// Remove the raw children of `w:sdtContent` at these content indices,
+    /// with the revision written in place of one. Children that are not raw
+    /// XML stay. The other children keep their place. Returns how many went.
     #[doc(hidden)]
-    pub fn remove_content_revisions(&mut self) -> usize {
+    pub fn remove_raw_children(&mut self, indices: &[usize]) -> usize {
+        let mut indices = indices.to_vec();
+        indices.sort_unstable();
+        indices.dedup();
         let mut removed = 0;
-        for index in (0..self.revisions.len()).rev() {
-            if !self.revisions[index].1.kind().changes_content() {
+        for index in indices.into_iter().rev() {
+            if !matches!(self.content.get(index), Some(SdtContent::RawXml(_))) {
                 continue;
             }
-            // The revision is written in place of the raw child at its
-            // boundary, which goes with it.
-            let (boundary, _) = self.revisions.remove(index);
-            if matches!(self.content.get(boundary), Some(SdtContent::RawXml(_))) {
-                self.remove_content(boundary);
-            }
+            self.revisions.retain(|(boundary, _)| *boundary != index);
+            self.remove_content(index);
             removed += 1;
         }
         removed
