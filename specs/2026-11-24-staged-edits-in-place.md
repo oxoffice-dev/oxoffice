@@ -157,6 +157,50 @@ refused by the save instead of by the edit (the four up-front refusals
 stay), and handles outside the story an edit touched keep working where all
 of them were retired.
 
+### S1 in two parts, as built (amended 2026-11-24)
+
+S1 lands in parts. **S1a** builds the mechanism and converts
+`resolve_comment`, the one call that changes a comments story and no
+element a handle names. **S1b** converts the calls that add blocks to a
+note story (`FootnoteEndnote.add_paragraph`, `FootnoteEndnote.add_table`)
+with the story publication of decision 4: today they go through
+`insert_content`, which serializes the whole document and rewrites the
+note part, and the typed note model holds paragraphs only, so a table in
+a note needs a block of the note model first. **S1c** converts the calls
+that also edit a body paragraph (a note reference, the range marks of a
+comment): `add_footnote`, `add_endnote`, `remove_footnote`,
+`remove_endnote`, `FootnoteEndnote.delete`, `add_comment`, `reply_to`,
+`remove_comment`, `move_comment`.
+
+What S1a builds differs from decision 1 in how the units are kept:
+
+- **Parts go through a part journal, not a `Part(name)` copy.** The
+  package records, at the first write of each part in a call
+  (`set_part`, `remove_part`), its old bytes or its absence
+  (`PartJournal`, `oxoffice-opc`). The undo writes them back. It costs
+  the parts the call writes, and it undoes a removal.
+- **The registry and the package graph are never copied.** They grow
+  with the body. The #600 reservation journal undoes what the call
+  reserved; it also records the comment and bookmark ids a call releases
+  (`forget_removal`), so the undo holds them again.
+- **The notes, comments and styles models are copied whole**
+  (`EditUnit::{Footnotes, Comments, Styles}`). They grow with their own
+  entries, not with the body: the scaling document carries three
+  comments whatever its length. `resolve_comment` costs 3.2, 6.1 and
+  20.4 ms at 25, 100 and 400 paragraphs on `main`, 0.33, 0.33 and
+  0.47 ms in place.
+- **An edit that changes no element a handle names publishes nothing**
+  (the rule of PR 2 of the root spec). `resolve_comment` writes the
+  `done` flag of the comments extension part and the paragraph id kept
+  beside a comment paragraph: no owner changes, every handle stays. A
+  comment without a paragraph gains one; it keeps the staged route.
+- `observe_package_graph` still scans the whole package graph in S1a; it
+  is part of the 0.47 ms above. It becomes incremental (decision 3) with
+  the first call whose cost it dominates.
+- The debug oracle of each converted facade call runs the staged route on
+  a copy (`assert_in_place_matches_staged`) and applies the undo to a
+  copy of the edited document (`assert_undo_restores`).
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.
