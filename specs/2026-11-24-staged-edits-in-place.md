@@ -1,6 +1,6 @@
 ---
 date: 2026-11-24
-status: draft
+status: accepted
 scope: perf, docx, python
 ---
 
@@ -82,16 +82,20 @@ success.
      and its content type override. It is what undoes a removal, which the
      reservation journal cannot (`removed_from_package`).
    - `Model(kind)`: one document-level model the edit rewrites (styles,
-     settings, numbering, font table, the section properties of one section),
-     cloned whole. These models do not grow with the body.
+     settings, font table, the section properties of one section), cloned
+     whole. These models do not grow with the body.
+   - `Numbering { abstract_ids, instance_ids }`: the numbering definitions
+     and instances the edit changes or adds, by id, not the whole model,
+     whose instances can grow with the lists of the body.
    The scalar state every edit touches (dirty flags, the layout caches, the
    carried block records and main body scans of the changed slots) is saved
    with the units. A unit's no-op answer compares the unit before and after,
    so it costs the unit too.
 2. **One journal per call, one guard.** `edit_in_place` opens the #600
-   reservation journal, runs `edit` under `catch_unwind`, and on an error or
-   a panic restores the units backwards and undoes the reservations, then
-   returns the error or resumes the panic. A facade call made inside an open
+   reservation journal and holds the units and the journal in an `EditUndo`
+   drop guard while `edit` runs: an error drops it, and so does the unwind of
+   a panic, which restores the units backwards and undoes the reservations
+   (no `catch_unwind`, as #627's guard). Only a commit disarms it. A facade call made inside an open
    call (the `add_style` of a missing note reference or hyperlink style, a
    staged helper a route reuses) joins it: its units are added to the open
    call's, and the outer call undoes or keeps everything at once. On success
