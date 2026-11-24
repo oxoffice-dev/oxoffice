@@ -118,7 +118,28 @@ def test_a_refused_font_table_edit_leaves_the_document_as_it_was(saved, error):
         doc.embed_font("Twice", FONT, license=LICENSE)
     assert doc.to_bytes() == before
     assert paragraph.text == doc.paragraphs[3].text
-    # The reservations were undone: the next edit takes the names the refused one had reserved.
+    # The document still takes edits; that the refused embed's reservations were undone is checked on the registry
+    # by the Rust unit test `a_font_embed_the_settings_refuse_leaves_no_reservation`.
     if error == "ambiguous font setting":
         doc.set_font(oxdocx.FontDefinition("After"))
         assert "After" in [font.name for font in doc.fonts]
+
+
+def test_removing_a_font_whose_faces_share_one_part_removes_that_part(saved):
+    doc = oxdocx.Document.open(saved)
+    embedded(doc, "Shared")
+    data = doc.to_bytes()
+    table = zipfile.ZipFile(io.BytesIO(data)).read("word/fontTable.xml").decode()
+    regular = re.search(r'<w:font w:name="Shared">.*?(<w:embedRegular [^>]*/>)', table, re.S).group(1)
+    table = table.replace(regular, regular + regular.replace("embedRegular", "embedBold"), 1)
+    doc = oxdocx.Document.from_bytes(with_part(io.BytesIO(data), "word/fontTable.xml", table.encode()))
+    font = next(font for font in doc.fonts if font.name == "Shared")
+    assert sorted(face.kind for face in font.embedded_fonts) == ["bold", "regular"]
+    rel_id = re.search(r'r:id="([^"]+)"', regular).group(1)
+
+    doc.remove_font("Shared")
+
+    saved_again = zipfile.ZipFile(io.BytesIO(doc.to_bytes()))
+    assert not [part for part in saved_again.namelist() if re.match(r"word/fonts/font\d+\.odttf", part)]
+    rels = "word/_rels/fontTable.xml.rels"
+    assert rels not in saved_again.namelist() or f'Id="{rel_id}"' not in saved_again.read(rels).decode()

@@ -1923,4 +1923,44 @@ mod tests {
             "an unreadable block counts as holding one"
         );
     }
+
+    #[test]
+    fn a_font_embed_the_settings_refuse_leaves_no_reservation() {
+        // Two `w:embedTrueTypeFonts`: the embed reserves the face's part name
+        // and relationship id, then the settings refuse it.
+        let bytes = Document::new().to_bytes().expect("a new document saves");
+        let mut package =
+            OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("the package opens");
+        package.set_part(
+            "/word/settings.xml",
+            format!(
+                "<w:settings xmlns:w=\"{}\"><w:embedTrueTypeFonts/><w:embedTrueTypeFonts/>\
+                 </w:settings>",
+                WORD_NAMESPACE
+            )
+            .into_bytes(),
+        );
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).expect("the package writes");
+        let bytes = out.into_inner();
+        let fresh = Document::from_bytes(&bytes).expect("the document opens");
+        let mut doc = Document::from_bytes(&bytes).expect("the document opens");
+        let face = EmbeddedFont::new(
+            EmbeddedFontKind::Regular,
+            include_bytes!("../../oxoffice-layout/fonts/NotoSansSymbols2-bullets-subset.ttf")
+                .to_vec(),
+            "{00112233-4455-6677-8899-AABBCCDDEEFF}",
+            FontEmbeddingLicense::new(true, "SIL Open Font License 1.1"),
+        );
+        let error = doc.embed_font("Probe", face).unwrap_err();
+        assert!(
+            error.to_string().contains("ambiguous font setting"),
+            "{error}"
+        );
+        assert_eq!(
+            doc.identifiers, fresh.identifiers,
+            "the reservations are undone"
+        );
+        assert!(doc.package.same_package_as(&fresh.package));
+    }
 }

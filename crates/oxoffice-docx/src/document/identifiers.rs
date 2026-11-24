@@ -59,6 +59,12 @@ enum Reservation {
 
 impl ReservationJournal {
     /// Whether the edit changed the package graph.
+    /// Whether the edit removed or wrote package bytes, which undoing the
+    /// journal cannot put back.
+    pub(crate) fn changed_package_bytes(&self) -> bool {
+        self.removed_from_package || self.written_to_package
+    }
+
     pub(crate) fn changed_package(&self) -> bool {
         self.removed_from_package
             || self.written_to_package

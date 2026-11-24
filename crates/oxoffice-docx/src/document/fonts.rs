@@ -596,8 +596,12 @@ impl Document {
                     &target,
                 );
             }
-            document.package.set_part(&part_name, obfuscated.clone());
-            document.identifiers.record_written_to_package();
+            // Writing the bytes the part already holds changes nothing a
+            // signature covers, as the staged comparison found.
+            if document.package.get_part(&part_name) != Some(obfuscated.as_slice()) {
+                document.package.set_part(&part_name, obfuscated.clone());
+                document.identifiers.record_written_to_package();
+            }
             document.add_override_journaled(&part_name, EMBEDDED_FONT_CONTENT_TYPE);
             document
                 .identifiers
@@ -736,9 +740,11 @@ impl Document {
     /// font-table part, the settings part, part names and relationship ids,
     /// on a copy of the font-table model; then it installs the model and
     /// writes the package, which cannot fail. The registry journals what the
-    /// reservations add to it and to the package graph, and a refusal or a
-    /// panic removes it again, so a refused edit leaves the document as it
-    /// was. A success leaves what [`Self::commit_staged_mutation`] leaves for
+    /// reservations add to it and to the package graph, and a refusal, or a
+    /// panic before the install, removes it again, so a refused edit leaves
+    /// the document as it was. A panic after the package bytes changed
+    /// (only through an `expect` that holds) cannot be undone and is
+    /// resumed as it is. A success leaves what [`Self::commit_staged_mutation`] leaves for
     /// a staged clone: the derived layout is dropped and a signed package
     /// records a package mutation. Debug builds run the edit on a clone too,
     /// compare, and check that a refusal changed nothing. `edit` is `Fn` for
@@ -764,7 +770,9 @@ impl Document {
         };
         let result = match result {
             Err(panic) => {
-                refused(self, journal);
+                if !journal.changed_package_bytes() {
+                    refused(self, journal);
+                }
                 std::panic::resume_unwind(panic)
             }
             Ok(Err(error)) => {
@@ -775,6 +783,15 @@ impl Document {
                 let signed = self.package.package_rels.items.iter().any(|relationship| {
                     relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN
                 });
+                #[cfg(debug_assertions)]
+                assert_eq!(
+                    signed && journal.changed_package(),
+                    crate::embedded::synchronized_package_mutation_invalidates_signature(
+                        &before.package,
+                        &self.package,
+                    ),
+                    "the font-table journal tells another package change"
+                );
                 self.package_signatures_invalidated |= signed && journal.changed_package();
                 self.invalidate_layout();
                 Ok(())
