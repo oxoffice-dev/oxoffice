@@ -75,7 +75,6 @@ impl PyDocument {
                 },
             )?,
             snapshot_scope: None,
-            removal_scope: None,
             pieces: None,
             pending_pieces: None,
         })

@@ -434,7 +434,7 @@ impl PyFont {
                 Some(owner) => ParagraphLocation::Related(document.current_run_owner(owner)?.0),
                 None => ParagraphLocation::Related(location.clone()),
             },
-            None => paragraph_location(&self.path)?,
+            None => paragraph_location(&followed_path(&document, &self.path, self.owner.as_ref()))?,
         };
         let index = location
             .read(&document.inner, |paragraph| {
@@ -455,6 +455,18 @@ impl PyFont {
         let (location, _) = self.validate(py)?;
         apply_run_update(py, &self.document, location, &self.run_path, update)
     }
+}
+
+/// `path` of a body handle bound to `owner`, its body block followed to
+/// where it sits now ([`PyDocument::followed_segments`]).
+fn followed_path(
+    document: &PyDocument,
+    path: &ContentPath,
+    owner: Option<&oxoffice_py_support::RevisionState>,
+) -> ContentPath {
+    let mut followed = path.clone();
+    followed.segs = document.followed_segments(owner, &path.segs);
+    followed
 }
 
 /// Read the run properties at a run location the caller has validated.
@@ -1265,7 +1277,7 @@ impl PyParagraphFormat {
                     .map(ParagraphLocation::Related),
                 None => Ok(ParagraphLocation::Related(location.clone())),
             },
-            None => paragraph_location(&self.path),
+            None => paragraph_location(&followed_path(&document, &self.path, self.owner.as_ref())),
         }
     }
 

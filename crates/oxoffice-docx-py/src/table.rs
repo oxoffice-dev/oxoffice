@@ -161,6 +161,22 @@ fn prepared_table_location(
     }
 }
 
+/// `path` of a body handle bound to `owner`, its body block followed to
+/// where it sits now ([`PyDocument::followed_segments`]). A handle into a
+/// rich story (`related`) re-reads its route from its owner instead.
+fn followed_path(
+    document: &PyDocument,
+    path: &ContentPath,
+    owner: Option<&oxoffice_py_support::RevisionState>,
+    related: &Option<oxoffice_docx::ContentLocation>,
+) -> ContentPath {
+    let mut followed = path.clone();
+    if related.is_none() {
+        followed.segs = document.followed_segments(owner, &path.segs);
+    }
+    followed
+}
+
 fn table_index(path: &ContentPath) -> PyResult<usize> {
     path_index(
         path,
@@ -619,7 +635,12 @@ impl PyTable {
                 "Re-fetch it with doc.tables[i].",
             )
             .map_err(|error| stale_to_pyerr(py, error))?;
-        table_index(&self.path)
+        table_index(&followed_path(
+            &document,
+            &self.path,
+            self.owner.as_ref(),
+            &self.related,
+        ))
     }
 
     pub(crate) fn belongs_to(&self, py: Python<'_>, document: &Py<PyDocument>) -> bool {
@@ -742,7 +763,7 @@ impl PyTable {
                 let document = self.document.borrow(py);
                 document.capture_current_view(
                     owner,
-                    self.path.segs.clone(),
+                    followed_path(&document, &self.path, Some(owner), &self.related).segs,
                     crate::document::WordView::Grid,
                     self.furniture_scope.as_ref(),
                 )?
@@ -763,7 +784,7 @@ impl PyTable {
 
     fn cell(&self, py: Python<'_>, row: isize, col: isize) -> PyResult<Py<PyCell>> {
         let (row, col) = self.cell_coordinates(py, row, col)?;
-        let table_index = table_index(&self.path)?;
+        let table_index = self.validate(py)?;
         let path = self.document.borrow(py).revisions.capture(smallvec![
             PathSeg::Body(table_index),
             PathSeg::Row(row),
@@ -1254,7 +1275,8 @@ impl PyTable {
         );
         let prepared =
             document.prepare_word_revision(py, &candidate, "Table.add_row", publication)?;
-        let mut segments = self.path.segs.clone();
+        let mut segments =
+            followed_path(&document, &self.path, self.owner.as_ref(), &self.related).segs;
         segments.push(PathSeg::Row(inserted));
         let path = document
             .revisions
@@ -1362,7 +1384,8 @@ impl PyTable {
                 "Table.clone_row",
                 crate::document::WordPublication::Conservative,
             )?;
-            let mut segments = self.path.segs.clone();
+            let mut segments =
+                followed_path(&document, &self.path, self.owner.as_ref(), &self.related).segs;
             segments.push(PathSeg::Row(inserted));
             let path = document
                 .revisions
@@ -1492,7 +1515,12 @@ impl PyRowCollection {
                 "Re-fetch it with table.rows.",
             )
             .map_err(|error| stale_to_pyerr(py, error))?;
-        table_index(&self.table_path)
+        table_index(&followed_path(
+            &document,
+            &self.table_path,
+            self.table_owner.as_ref(),
+            &self.related,
+        ))
     }
     fn len(&self, py: Python<'_>) -> PyResult<usize> {
         let index = self.validate(py)?;
@@ -1507,7 +1535,13 @@ impl PyRowCollection {
     }
     fn item(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyRow>> {
         self.validate(py)?;
-        let mut segments = self.table_path.segs.clone();
+        let mut segments = followed_path(
+            &self.document.borrow(py),
+            &self.table_path,
+            self.table_owner.as_ref(),
+            &self.related,
+        )
+        .segs;
         segments.push(PathSeg::Row(index));
         let mut path = self.table_path.clone();
         path.segs = segments;
@@ -1708,7 +1742,13 @@ impl PyRow {
                 "Re-fetch it with table.rows[i].",
             )
             .map_err(|error| stale_to_pyerr(py, error))?;
-        Ok((table_index(&self.path)?, row_index(&self.path)?))
+        let path = followed_path(
+            &document,
+            &self.path,
+            self.table_owner.as_ref(),
+            &self.related,
+        );
+        Ok((table_index(&path)?, row_index(&path)?))
     }
 
     fn read<T>(
@@ -1910,7 +1950,13 @@ impl PyCellCollection {
                 "Re-fetch it with row.cells.",
             )
             .map_err(|error| stale_to_pyerr(py, error))?;
-        Ok((table_index(&self.row_path)?, row_index(&self.row_path)?))
+        let path = followed_path(
+            &document,
+            &self.row_path,
+            self.table_owner.as_ref(),
+            &self.related,
+        );
+        Ok((table_index(&path)?, row_index(&path)?))
     }
     fn len(&self, py: Python<'_>) -> PyResult<usize> {
         let (table, row) = self.validate(py)?;
@@ -1931,7 +1977,13 @@ impl PyCellCollection {
     }
     fn item(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyCell>> {
         self.validate(py)?;
-        let mut segments = self.row_path.segs.clone();
+        let mut segments = followed_path(
+            &self.document.borrow(py),
+            &self.row_path,
+            self.table_owner.as_ref(),
+            &self.related,
+        )
+        .segs;
         segments.push(PathSeg::Cell(index));
         let mut path = self.row_path.clone();
         path.segs = segments;
@@ -2141,11 +2193,8 @@ impl PyCell {
                 "Re-fetch it with row.cells[i].",
             )
             .map_err(|error| stale_to_pyerr(py, error))?;
-        Ok((
-            table_index(&self.path)?,
-            row_index(&self.path)?,
-            cell_index(&self.path)?,
-        ))
+        let path = followed_path(&document, &self.path, self.owner.as_ref(), &self.related);
+        Ok((table_index(&path)?, row_index(&path)?, cell_index(&path)?))
     }
 
     fn read<T>(
@@ -2716,7 +2765,7 @@ impl PyCell {
                 let document = self.document.borrow(py);
                 document.capture_current_view(
                     owner,
-                    self.path.segs.clone(),
+                    followed_path(&document, &self.path, Some(owner), &self.related).segs,
                     crate::document::WordView::Content,
                     self.furniture_scope.as_ref(),
                 )?
@@ -2972,11 +3021,13 @@ impl PyCellParagraphCollection {
                 "Re-fetch it with cell.paragraphs.",
             )
             .map_err(|error| stale_to_pyerr(py, error))?;
-        Ok((
-            table_index(&self.cell_path)?,
-            row_index(&self.cell_path)?,
-            cell_index(&self.cell_path)?,
-        ))
+        let path = followed_path(
+            &document,
+            &self.cell_path,
+            self.cell_owner.as_ref(),
+            &self.related,
+        );
+        Ok((table_index(&path)?, row_index(&path)?, cell_index(&path)?))
     }
     fn len(&self, py: Python<'_>) -> PyResult<usize> {
         let (table, row, cell) = self.validate(py)?;
@@ -2994,7 +3045,13 @@ impl PyCellParagraphCollection {
     }
     fn item(&self, py: Python<'_>, index: usize) -> PyResult<Py<PyParagraph>> {
         self.validate(py)?;
-        let mut segments = self.cell_path.segs.clone();
+        let mut segments = followed_path(
+            &self.document.borrow(py),
+            &self.cell_path,
+            self.cell_owner.as_ref(),
+            &self.related,
+        )
+        .segs;
         segments.push(PathSeg::Para(index));
         let path = self.document.borrow(py).revisions.capture(segments);
         let cached = self

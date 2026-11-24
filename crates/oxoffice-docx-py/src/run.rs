@@ -117,12 +117,23 @@ impl PyRun {
         Ok(self)
     }
 
+    /// This handle's path, its body block followed to where it sits now
+    /// ([`PyDocument::followed_segments`]).
+    pub(crate) fn current_path(&self, document: &PyDocument) -> ContentPath {
+        let mut path = self.path.clone();
+        if self.related.is_none() {
+            path.segs = document.followed_segments(self.owner.as_ref(), &self.path.segs);
+        }
+        path
+    }
+
     pub(crate) fn validate(&self, py: Python<'_>) -> PyResult<(ParagraphLocation, usize)> {
         let document = self.document.borrow(py);
+        let current = self.current_path(&document);
         let recovery_hint = if self.related.is_some() {
             "Re-fetch it from the current rich story paragraph's runs.".to_owned()
         } else {
-            match paragraph_location(&self.path)? {
+            match paragraph_location(&current)? {
                 ParagraphLocation::Body(paragraph) => {
                     format!("Re-fetch it with doc.paragraphs[{paragraph}].runs[i].")
                 }
@@ -147,7 +158,7 @@ impl PyRun {
                 Some(owner) => ParagraphLocation::Related(document.current_run_owner(owner)?.0),
                 None => ParagraphLocation::Related(location.clone()),
             },
-            None => paragraph_location(&self.path)?,
+            None => paragraph_location(&current)?,
         };
         let index = location
             .read(&document.inner, |paragraph| {
@@ -525,7 +536,7 @@ impl PyRun {
                 let document = self.document.borrow(py);
                 document.capture_current_view(
                     owner,
-                    self.path.segs.clone(),
+                    self.current_path(&document).segs,
                     crate::document::WordView::Content,
                     self.furniture_scope.as_ref(),
                 )?
@@ -589,6 +600,17 @@ impl PyRunCollection {
         }
     }
 
+    /// The paragraph's path, its body block followed to where it sits now
+    /// ([`PyDocument::followed_segments`]).
+    fn current_path(&self, document: &PyDocument) -> ContentPath {
+        let mut path = self.paragraph_path.clone();
+        if self.related.is_none() {
+            path.segs = document
+                .followed_segments(self.paragraph_owner.as_ref(), &self.paragraph_path.segs);
+        }
+        path
+    }
+
     fn validate(&self, py: Python<'_>) -> PyResult<ParagraphLocation> {
         let document = self.document.borrow(py);
         self.paragraph_path
@@ -605,7 +627,7 @@ impl PyRunCollection {
                     .map(ParagraphLocation::Related),
                 None => Ok(ParagraphLocation::Related(location.clone())),
             },
-            None => paragraph_location(&self.paragraph_path),
+            None => paragraph_location(&self.current_path(&document)),
         }
     }
 
@@ -621,7 +643,7 @@ impl PyRunCollection {
         let location = self.validate(py)?;
         let (path, run_path) = {
             let document = self.document.borrow(py);
-            let mut segments = self.paragraph_path.segs.clone();
+            let mut segments = self.current_path(&document).segs;
             segments.push(PathSeg::Run(index));
             let run_path = location
                 .read(&document.inner, |paragraph| paragraph.run_path(index))

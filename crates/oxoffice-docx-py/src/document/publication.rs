@@ -11,6 +11,10 @@ pub(crate) enum WordPublication {
     ModernFormValues,
     Signing,
     AppendBody,
+    /// A body splice that inserts or removes blocks before others: the
+    /// removed owners retire, the inserted ones are born, and every other
+    /// owner keeps its states at its moved route, which its handles follow.
+    BodySplice,
     HeaderFooterAppend(usize),
     ParagraphText(oxoffice_docx::ContentLocation),
     ParagraphAppend(oxoffice_docx::ContentLocation),

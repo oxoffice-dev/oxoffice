@@ -4710,15 +4710,32 @@ impl PyDocument {
     }
 
     fn remove_content(&mut self, py: Python<'_>, index: usize) -> PyResult<bool> {
+        // A paragraph that ends a section is not removable in place: its
+        // removal merges two sections, which the kept section owners would
+        // not follow.
         if self.inner.plain_direct_paragraph(index)
+            && self.inner.plain_removable_paragraph(index)
             && self.inner.block_insertion_index(index) == index
             && let Some((range, revision)) = self.prepare_tail_body_removal(index)?
         {
+            #[cfg(debug_assertions)]
+            let before = (self.inner.clone_for_staging(), self.owners.clone());
             let removed = py
                 .detach(|| self.inner.try_remove_content(index))
                 .map_err(|error| docx_to_pyerr(py, error))?;
             if removed {
                 self.commit_tail_body_removal(index, range, revision)?;
+                // A run born locally sits after the owners of later blocks,
+                // so the inventory is compared in any order.
+                #[cfg(debug_assertions)]
+                {
+                    self.assert_word_inventory_rebuilds(false);
+                    assert_kept_owners_name_their_elements(
+                        (&before.0, &before.1),
+                        (&self.inner, &self.owners),
+                        None,
+                    );
+                }
             }
             return Ok(removed);
         }
@@ -4730,7 +4747,7 @@ impl PyDocument {
                 inserted: None,
             },
         )? {
-            let publication = crate::document::WordPublication::Conservative;
+            let publication = crate::document::WordPublication::BodySplice;
             let prepared =
                 self.prepare_body_splice(plan, "Document.remove_content", &publication)?;
             let removed = py
@@ -4782,7 +4799,7 @@ impl PyDocument {
                 inserted: None,
             },
         )? {
-            let publication = crate::document::WordPublication::Conservative;
+            let publication = crate::document::WordPublication::BodySplice;
             let prepared =
                 self.prepare_body_splice(plan, "Document.remove_content_range", &publication)?;
             let removed = py
@@ -4873,7 +4890,7 @@ impl PyDocument {
                 )?
             {
                 // Every fallible step precedes the in-place native insertion.
-                let publication = crate::document::WordPublication::Conservative;
+                let publication = crate::document::WordPublication::BodySplice;
                 let prepared = document.prepare_body_splice(
                     plan,
                     "Document.insert_paragraph",
@@ -4962,7 +4979,7 @@ impl PyDocument {
                 )?
             {
                 // Every fallible step precedes the in-place native insertion.
-                let publication = crate::document::WordPublication::Conservative;
+                let publication = crate::document::WordPublication::BodySplice;
                 let prepared =
                     document.prepare_body_splice(plan, "Document.insert_table", &publication)?;
                 let path = document

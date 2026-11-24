@@ -99,3 +99,4 @@ dependency bumps and documentation.
 | 2026-11-23 | [RTF keeps paragraph styles and section layout](2026-11-23-rtf-styles-and-sections.md) | shipped |
 | 2026-11-23 | [A tracked insertion holds its simple fields as runs](2026-11-23-simple-fields-read-in-tracked-insertions.md) | shipped |
 | 2026-11-23 | [Bibliography: every source type in every style, from the CLI and Python](2026-11-23-bibliography-styles-and-bindings.md) | shipped |
+| 2026-11-24 | [Word binding: body handles follow their element across insertions and removals](2026-11-24-body-handles-follow-their-element.md) | accepted |

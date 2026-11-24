@@ -720,7 +720,6 @@ pub struct PyDocument {
     pub(crate) revisions: RevisionCounter,
     owners: Vec<WordOwner>,
     indexes: WordOwnerIndexes,
-    removal_scope: Option<RevisionState>,
     snapshot_scope: Option<RevisionState>,
     pieces: Option<WordPieces>,
     /// Installed by the next `install_inner` after a successful publication.

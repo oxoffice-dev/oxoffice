@@ -486,10 +486,21 @@ impl PyParagraph {
         Ok(self)
     }
 
+    /// This handle's path, its body block followed to where it sits now
+    /// ([`PyDocument::followed_segments`]).
+    pub(crate) fn current_path(&self, document: &PyDocument) -> ContentPath {
+        let mut path = self.path.clone();
+        if self.related.is_none() {
+            path.segs = document.followed_segments(self.owner.as_ref(), &self.path.segs);
+        }
+        path
+    }
+
     pub(crate) fn validate(&self, py: Python<'_>) -> PyResult<ParagraphLocation> {
+        let document = self.document.borrow(py);
         let location = match &self.related {
             Some(location) => ParagraphLocation::Related(location.clone()),
-            None => paragraph_location(&self.path)?,
+            None => paragraph_location(&self.current_path(&document))?,
         };
         let recovery_hint = match &location {
             ParagraphLocation::Related(_) => {
@@ -505,7 +516,6 @@ impl PyParagraph {
                 "Re-fetch it with doc.tables[{table}].rows[{row}].cells[{cell}].paragraphs[{paragraph}]."
             ),
         };
-        let document = self.document.borrow(py);
         self.path
             .validate_scopes(&document.revisions, "paragraph", &recovery_hint)
             .map_err(|error| stale_to_pyerr(py, error))?;
@@ -552,7 +562,7 @@ impl PyParagraph {
             "Paragraph.add_internal_hyperlink",
             publication,
         )?;
-        let mut segments = self.path.segs.clone();
+        let mut segments = self.current_path(&document).segs;
         segments.push(PathSeg::Run(position.run_index));
         let path = document
             .revisions
@@ -652,7 +662,7 @@ impl PyParagraph {
             };
             let prepared =
                 document.prepare_word_revision(py, &candidate, operation, publication)?;
-            let mut segments = self.path.segs.clone();
+            let mut segments = self.current_path(&document).segs;
             segments.push(PathSeg::Run(run_index));
             let path = document
                 .revisions
@@ -1058,7 +1068,7 @@ impl PyParagraph {
                 let document = self.document.borrow(py);
                 document.capture_current_view(
                     owner,
-                    self.path.segs.clone(),
+                    self.current_path(&document).segs,
                     crate::document::WordView::Content,
                     self.furniture_scope.as_ref(),
                 )?
@@ -1167,7 +1177,7 @@ impl PyParagraph {
                         &crate::document::WordOwnerLocation::Paragraph(
                             document.current_paragraph_owner(owner)?,
                         ),
-                        self.path.segs.clone(),
+                        self.current_path(&document).segs,
                         crate::document::WordView::Properties,
                         self.furniture_scope.as_ref(),
                     )?
