@@ -300,17 +300,16 @@ impl WordOwnerIndexes {
 pub(super) fn word_owner_capture(
     counter: &RevisionCounter,
     owners: &[WordOwner],
-    document_scopes: (RevisionState, &RevisionState),
+    document_scope: RevisionState,
     index: usize,
     segments: smallvec::SmallVec<[PathSeg; 5]>,
     view: WordView,
     furniture_scope: Option<&RevisionState>,
 ) -> PyResult<(ContentPath, RevisionState)> {
-    let (document_scope, removal_scope) = document_scopes;
     let target = &owners[index];
     // Every structural publisher retires unproved current-owner states. Actual
     // Run handles retain the conservative document epoch and its first cause.
-    let mut states = vec![removal_scope.clone(), target.owner.clone()];
+    let mut states = vec![target.owner.clone()];
     if matches!(&target.location, WordOwnerLocation::Run(..)) {
         states.push(document_scope);
     }

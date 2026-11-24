@@ -164,6 +164,10 @@ pub(crate) struct PreparedBodySplice {
     // The index in `states` of the first inserted owner's scopes.
     inserted_state: usize,
     snapshot_scope: RevisionState,
+    // The document and the inventory before the native edit, for the
+    // identity oracle of the kept owners.
+    #[cfg(debug_assertions)]
+    before: Box<(oxoffice_docx::Document, Vec<WordOwner>)>,
 }
 
 /// The body story item index of an owner's content route.
@@ -614,22 +618,26 @@ impl PyDocument {
         (dense && referenced_known && ordered).then_some(before)
     }
 
-    /// Prepare a conservative or append publication of `plan`, with the
-    /// retirements and births, in inventory order, that the rebuild would
-    /// give, before the native edit.
+    /// Prepare a conservative, append or keeping publication of `plan`, with
+    /// the retirements and births, in inventory order, before the native
+    /// edit.
     pub(crate) fn prepare_body_splice(
         &mut self,
         plan: BodySplicePlan,
         operation: &'static str,
         publication: &WordPublication,
     ) -> PyResult<PreparedBodySplice> {
-        // An append keeps every owner. A conservative publication retires
-        // every owner and gives the next inventory new scopes.
+        // An append and a keeping splice retire the removed owners alone:
+        // every other owner keeps its states, and its handles follow it to
+        // its moved route. A conservative publication retires every owner
+        // and gives the next inventory new scopes.
         let keep = match publication {
-            WordPublication::AppendBody => true,
+            WordPublication::AppendBody | WordPublication::BodySplice => true,
             WordPublication::Conservative => false,
             _ => return Err(PyValueError::new_err("body splice publication")),
         };
+        #[cfg(debug_assertions)]
+        let before = Box::new((self.inner.clone_for_staging(), self.owners.clone()));
         let fail =
             |_| pyo3::exceptions::PyMemoryError::new_err("Word owner splice allocation failed");
         let current = self.owners.len();
@@ -648,14 +656,23 @@ impl PyDocument {
         births
             .try_reserve(inserted_scopes + if keep { 0 } else { kept_scopes } + 1)
             .map_err(fail)?;
+        let retiring = if keep {
+            &self.owners[plan.removed_owners.clone()]
+        } else {
+            &self.owners[..]
+        };
         let mut retired = Vec::new();
         retired
-            .try_reserve(if keep { 1 } else { kept_scopes + 1 })
+            .try_reserve(
+                retiring
+                    .iter()
+                    .map(|owner| owner.location.scopes().len())
+                    .sum::<usize>()
+                    + 1,
+            )
             .map_err(fail)?;
-        if !keep {
-            for owner in &self.owners {
-                retired.extend(owner.scope_states().cloned());
-            }
+        for owner in retiring {
+            retired.extend(owner.scope_states().cloned());
         }
         for next in plan.next_owners(current) {
             match next {
@@ -741,6 +758,8 @@ impl PyDocument {
             inserted,
             inserted_state: inserted_state.unwrap_or(0),
             snapshot_scope,
+            #[cfg(debug_assertions)]
+            before,
         })
     }
 
@@ -781,10 +800,7 @@ impl PyDocument {
         let (mut path, owner) = word_owner_capture(
             &self.revisions,
             &owners,
-            (
-                prepared.revision.document_scope(),
-                self.removal_scope.as_ref().expect("active Word authority"),
-            ),
+            prepared.revision.document_scope(),
             0,
             segments,
             WordView::Owner,
@@ -813,6 +829,8 @@ impl PyDocument {
             states,
             inserted,
             snapshot_scope,
+            #[cfg(debug_assertions)]
+            before,
             ..
         } = prepared;
         self.revisions
@@ -959,7 +977,17 @@ impl PyDocument {
             inserted,
         );
         #[cfg(debug_assertions)]
-        self.assert_word_inventory_rebuilds(true);
+        {
+            self.assert_word_inventory_rebuilds(true);
+            if !matches!(publication, WordPublication::Conservative) {
+                let (document, owners) = &*before;
+                assert_kept_owners_name_their_elements(
+                    (document, owners),
+                    (&self.inner, &self.owners),
+                    None,
+                );
+            }
+        }
         Ok(())
     }
 

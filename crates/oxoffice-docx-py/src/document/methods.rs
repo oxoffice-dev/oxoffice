@@ -4730,7 +4730,7 @@ impl PyDocument {
                 inserted: None,
             },
         )? {
-            let publication = crate::document::WordPublication::Conservative;
+            let publication = crate::document::WordPublication::BodySplice;
             let prepared =
                 self.prepare_body_splice(plan, "Document.remove_content", &publication)?;
             let removed = py
@@ -4782,7 +4782,7 @@ impl PyDocument {
                 inserted: None,
             },
         )? {
-            let publication = crate::document::WordPublication::Conservative;
+            let publication = crate::document::WordPublication::BodySplice;
             let prepared =
                 self.prepare_body_splice(plan, "Document.remove_content_range", &publication)?;
             let removed = py
@@ -4873,7 +4873,7 @@ impl PyDocument {
                 )?
             {
                 // Every fallible step precedes the in-place native insertion.
-                let publication = crate::document::WordPublication::Conservative;
+                let publication = crate::document::WordPublication::BodySplice;
                 let prepared = document.prepare_body_splice(
                     plan,
                     "Document.insert_paragraph",
@@ -4962,7 +4962,7 @@ impl PyDocument {
                 )?
             {
                 // Every fallible step precedes the in-place native insertion.
-                let publication = crate::document::WordPublication::Conservative;
+                let publication = crate::document::WordPublication::BodySplice;
                 let prepared =
                     document.prepare_body_splice(plan, "Document.insert_table", &publication)?;
                 let path = document

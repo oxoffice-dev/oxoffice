@@ -489,17 +489,19 @@ impl PyDocument {
 
 /// Under debug assertions, prove that every owner of `new` that keeps the
 /// owner state of an owner of `old` names the same element after the edit
-/// that made `after` from `before`: at the old route moved by the edit's
-/// shift, with the same bytes. The element the edit rewrote keeps its
-/// route, and so does every owner whose element holds it (the cells and
-/// tables around it, the paragraph and run that hold its text box), whose
-/// bytes differ by that element alone.
+/// that made `after` from `before`, with the same bytes. For a block edit
+/// (`edit`, its shift and the edited owner), the owner sits at its old route
+/// moved by the shift; the element the edit rewrote keeps its route, and so
+/// does every owner whose element holds it (the cells and tables around it,
+/// the paragraph and run that hold its text box), whose bytes differ by that
+/// element alone. A body splice edits no kept element: each one keeps its
+/// bytes at the route the splice moved it to, which the rebuild of the
+/// inventory checks.
 #[cfg(debug_assertions)]
 pub(super) fn assert_kept_owners_name_their_elements(
     (before, old): (&oxoffice_docx::Document, &[WordOwner]),
     (after, new): (&oxoffice_docx::Document, &[WordOwner]),
-    shift: &BlockShift,
-    selected: &RevisionState,
+    edit: Option<(&BlockShift, &RevisionState)>,
 ) {
     type Key = (oxoffice_docx::StoryKind, String, usize, Vec<usize>);
     let key = |location: &oxoffice_docx::ContentLocation| -> Key {
@@ -540,12 +542,17 @@ pub(super) fn assert_kept_owners_name_their_elements(
     let events = |xml: &[u8]| {
         oxoffice_docx::resolved_xml_events(xml).expect("an owner element is well formed XML")
     };
-    let (edited_before, edited_after) = (events(&shift.xml.0), events(&shift.xml.1));
+    let (edited_before, edited_after) = edit.map_or_else(Default::default, |(shift, _)| {
+        (events(&shift.xml.0), events(&shift.xml.1))
+    });
     // Equal, or equal but for the edited element, at one place in both.
     let holds_edit = |old: &[u8], new: &[u8]| {
         let (old, new) = (events(old), events(new));
         if old == new {
             return true;
+        }
+        if edit.is_none() {
+            return false;
         }
         let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
         let suffix = old
@@ -593,18 +600,20 @@ pub(super) fn assert_kept_owners_name_their_elements(
             continue;
         };
         let previous = &old[index];
-        let expected = if owner.owner.same_state(selected) {
-            Some(previous.location.clone())
-        } else {
-            shift.moved_owner(&previous.location)
-        };
-        assert_eq!(
-            expected.as_ref().map(unfingerprinted_owner_location),
-            Some(unfingerprinted_owner_location(&owner.location)),
-            "kept owner route after a block edit"
-        );
-        if owner.owner.same_state(selected) {
-            continue;
+        if let Some((shift, selected)) = edit {
+            let expected = if owner.owner.same_state(selected) {
+                Some(previous.location.clone())
+            } else {
+                shift.moved_owner(&previous.location)
+            };
+            assert_eq!(
+                expected.as_ref().map(unfingerprinted_owner_location),
+                Some(unfingerprinted_owner_location(&owner.location)),
+                "kept owner route after a block edit"
+            );
+            if owner.owner.same_state(selected) {
+                continue;
+            }
         }
         match (&previous.location, &owner.location) {
             (WordOwnerLocation::Paragraph(a), WordOwnerLocation::Paragraph(b)) => same(

@@ -68,6 +68,71 @@ impl PyDocument {
         owner.owner.same_state(state).then_some((index, owner))
     }
 
+    /// The segments of a handle bound to `owner`, with the index of their
+    /// body block read from that owner. A body splice moves the blocks after
+    /// it and keeps their owners (`WordPublication::BodySplice`), so a handle
+    /// follows its own block: the top body ancestor of its owner, a body
+    /// paragraph or a body table, is found in the facade projection (facade
+    /// index to route), and its index there replaces the paragraph index of
+    /// a body paragraph path (`[Body(0), Para(k), ..]`) or the table index of
+    /// a path into a body table (`[Body(t), ..]`). What follows is relative
+    /// to that block, which a splice of other blocks does not change.
+    /// Without a current owner, for an owner outside the body or outside the
+    /// projection, the segments are returned unchanged: such a handle is
+    /// bound to a scope every splice retires, or to a block no splice moves.
+    pub(crate) fn followed_segments(
+        &self,
+        owner: Option<&RevisionState>,
+        segments: &smallvec::SmallVec<[PathSeg; 5]>,
+    ) -> smallvec::SmallVec<[PathSeg; 5]> {
+        let mut followed = segments.clone();
+        let Some((mut index, _)) = owner.and_then(|owner| self.indexed_owner(owner)) else {
+            return followed;
+        };
+        while let Some(parent) = self.owners[index].parent {
+            index = parent;
+        }
+        let top = &self.owners[index];
+        let body = |location: &oxoffice_docx::ContentLocation| {
+            location.story().kind() == oxoffice_docx::StoryKind::Body
+        };
+        match (&top.location, followed.as_mut_slice()) {
+            (
+                WordOwnerLocation::Paragraph(location),
+                [PathSeg::Body(_), PathSeg::Para(paragraph), ..],
+            ) if body(location) => {
+                if let Some(projection) = &self.indexes.body_paragraphs {
+                    let current =
+                        projected_index(projection, location, *paragraph, top.projection_ordinal);
+                    debug_assert!(
+                        current.is_some(),
+                        "a body paragraph owner is in the facade projection"
+                    );
+                    if let Some(current) = current {
+                        *paragraph = current;
+                    }
+                }
+            }
+            (WordOwnerLocation::Table(location), [PathSeg::Body(table), ..]) if body(location) => {
+                let current = projected_index(
+                    &self.indexes.body_tables,
+                    location,
+                    *table,
+                    top.projection_ordinal,
+                );
+                debug_assert!(
+                    current.is_some(),
+                    "a body table owner is in the facade projection"
+                );
+                if let Some(current) = current {
+                    *table = current;
+                }
+            }
+            _ => {}
+        }
+        followed
+    }
+
     /// The route of the physical owner of a paragraph handle's location,
     /// from the inventory of `prepared` when given, or the current one.
     pub(crate) fn indexed_paragraph_location(
@@ -274,10 +339,7 @@ impl PyDocument {
         word_owner_capture(
             &self.revisions,
             &self.owners,
-            (
-                self.revisions.current_document_scope(),
-                self.removal_scope.as_ref().expect("active Word authority"),
-            ),
+            self.revisions.current_document_scope(),
             index,
             segments,
             view,
@@ -442,4 +504,27 @@ impl PyDocument {
                 .collect(),
         )
     }
+}
+
+/// The facade index of `location` in `projection` (facade index to route):
+/// `captured`, the index a handle holds, while it still names that route,
+/// then the projection ordinal of its owner, which equals the facade index
+/// unless an unowned block comes before (a table in a block content
+/// control), then the first entry that names it.
+fn projected_index(
+    projection: &[Option<oxoffice_docx::ContentLocation>],
+    location: &oxoffice_docx::ContentLocation,
+    captured: usize,
+    ordinal: Option<usize>,
+) -> Option<usize> {
+    let names = |entry: &Option<oxoffice_docx::ContentLocation>| {
+        entry
+            .as_ref()
+            .is_some_and(|entry| same_content_owner(entry, location))
+    };
+    [Some(captured), ordinal]
+        .into_iter()
+        .flatten()
+        .find(|index| projection.get(*index).is_some_and(names))
+        .or_else(|| projection.iter().position(names))
 }

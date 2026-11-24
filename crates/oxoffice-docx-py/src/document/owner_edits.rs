@@ -47,10 +47,7 @@ impl PyDocument {
         word_owner_capture(
             &self.revisions,
             &self.owners,
-            (
-                self.revisions.current_document_scope(),
-                self.removal_scope.as_ref().expect("active Word authority"),
-            ),
+            self.revisions.current_document_scope(),
             self.indexes.find(&self.owners, location).ok_or_else(|| {
                 PyValueError::new_err("element has no current checked physical owner")
             })?,
@@ -75,10 +72,7 @@ impl PyDocument {
         let (mut path, owner) = word_owner_capture(
             &self.revisions,
             &prepared.owners,
-            (
-                prepared.revision.document_scope(),
-                self.removal_scope.as_ref().expect("active Word authority"),
-            ),
+            prepared.revision.document_scope(),
             prepared
                 .indexes
                 .find(&prepared.owners, location)
@@ -165,22 +159,22 @@ impl PyDocument {
                 return Ok(None);
             }
         }
+        // The removed paragraph and its runs retire; every other owner keeps
+        // its states, as a splice inside the body keeps them.
+        let mut retired = self.owners[selected..end]
+            .iter()
+            .flat_map(WordOwner::scope_states)
+            .cloned()
+            .collect::<Vec<_>>();
+        retired.push(
+            self.snapshot_scope
+                .as_ref()
+                .expect("active Word authority")
+                .clone(),
+        );
         let revision = self
             .revisions
-            .prepare_scopes(
-                "Document.remove_content",
-                &[
-                    self.removal_scope
-                        .as_ref()
-                        .expect("active Word authority")
-                        .clone(),
-                    self.snapshot_scope
-                        .as_ref()
-                        .expect("active Word authority")
-                        .clone(),
-                ],
-                &[RevisionScope::Document, RevisionScope::Text],
-            )
+            .prepare_scopes("Document.remove_content", &retired, &[RevisionScope::Text])
             .map_err(revision_to_pyerr)?;
         Ok(Some((selected..end, revision)))
     }
@@ -191,8 +185,7 @@ impl PyDocument {
         range: std::ops::Range<usize>,
         revision: PreparedRevision,
     ) -> PyResult<()> {
-        let removal_scope = revision.born(0).expect("removal epoch birth");
-        let snapshot_scope = revision.born(1).expect("removal snapshot birth");
+        let snapshot_scope = revision.born(0).expect("removal snapshot birth");
         self.revisions
             .commit_scopes(revision)
             .map_err(revision_to_pyerr)?;
@@ -245,7 +238,6 @@ impl PyDocument {
             }
         }
         self.indexes.direct_body_paragraphs.remove(&slot);
-        self.removal_scope = Some(removal_scope);
         self.snapshot_scope = Some(snapshot_scope);
         self.pieces
             .as_mut()
@@ -877,8 +869,7 @@ impl PyDocument {
             assert_kept_owners_name_their_elements(
                 (&self.inner, &self.owners),
                 (candidate, &owners),
-                shift,
-                &self.owners[selected].owner,
+                Some((shift, &self.owners[selected].owner)),
             );
         }
         let projections = projections.unwrap_or_else(|| WordIndexProjections::of(candidate));
@@ -1696,8 +1687,7 @@ impl PyDocument {
             assert_kept_owners_name_their_elements(
                 (&document, &owners),
                 (&self.inner, &self.owners),
-                &shift,
-                &selected,
+                Some((&shift, &selected)),
             );
         }
         Ok(true)
@@ -2231,7 +2221,7 @@ impl PyDocument {
                     .iter()
                     .map(|address| address.location.scopes().len())
                     .sum::<usize>()
-                    + 2,
+                    + 1,
             )
             .map_err(|_| {
                 pyo3::exceptions::PyMemoryError::new_err("Word scope allocation failed")
@@ -2240,7 +2230,6 @@ impl PyDocument {
             scopes.extend_from_slice(address.location.scopes());
         }
         scopes.push(RevisionScope::Text);
-        scopes.push(RevisionScope::Document);
         let mut owners = Vec::new();
         owners.try_reserve(locations.len()).map_err(|_| {
             pyo3::exceptions::PyMemoryError::new_err("Word owner allocation failed")
@@ -2251,9 +2240,8 @@ impl PyDocument {
             .revisions
             .initialize_scopes(&scopes)
             .map_err(revision_to_pyerr)?;
-        let removal_scope = states.last().expect("removal epoch allocated").clone();
-        let snapshot_scope = states[states.len() - 2].clone();
-        append_word_owners_with_states(&mut owners, locations, &states[..states.len() - 2]);
+        let snapshot_scope = states.last().expect("snapshot scope allocated").clone();
+        append_word_owners_with_states(&mut owners, locations, &states[..states.len() - 1]);
         for (index, owner) in owners.iter().enumerate() {
             indexes
                 .by_generation
@@ -2262,7 +2250,6 @@ impl PyDocument {
         self.owners = owners;
         self.indexes = indexes;
         self.snapshot_scope = Some(snapshot_scope);
-        self.removal_scope = Some(removal_scope);
         self.pieces = Some(pieces);
         Ok(())
     }
