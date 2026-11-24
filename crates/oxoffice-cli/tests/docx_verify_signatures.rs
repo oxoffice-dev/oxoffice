@@ -118,6 +118,37 @@ fn a_signed_word_file_is_valid_as_opened() {
 }
 
 #[test]
+fn a_signed_word_file_the_library_would_rewrite_is_valid_as_opened() {
+    let dir = scratch("rewritten");
+    let mut doc = Document::new();
+    doc.add_paragraph("signed");
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().expect("a document")))
+        .expect("a package");
+    // An `AppVersion` outside Word's `XX.YYYY` form, as rdocx 0.14.0 wrote
+    // it: opening repairs it, so writing the file back changes this signed
+    // part. The signature still covers the bytes on disk.
+    let app = String::from_utf8(
+        package
+            .get_part("/docProps/app.xml")
+            .expect("an app properties part")
+            .to_vec(),
+    )
+    .expect("UTF-8");
+    let start = app.find("<AppVersion>").expect("an AppVersion") + "<AppVersion>".len();
+    let end = app.find("</AppVersion>").expect("its end");
+    let app = format!("{}0.14.0{}", &app[..start], &app[end..]);
+    package.set_part("/docProps/app.xml", app.into_bytes());
+    package
+        .sign(
+            TEST_SIGNING_KEY.as_bytes(),
+            TEST_SIGNING_CERTIFICATE.as_bytes(),
+        )
+        .expect("signed");
+    assert_eq!(verify(&dir, &package), (true, "valid".to_owned()));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn a_word_file_changed_after_signing_is_invalid() {
     let dir = scratch("changed");
     let mut package = signed_package();
