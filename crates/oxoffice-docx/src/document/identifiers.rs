@@ -11,6 +11,272 @@ pub(super) enum IdentifierDefinition {
     NumberingInstance(u32),
 }
 
+/// What an in-place edit added to the identifier registry and the package
+/// graph, in order, so that a refusal removes it again instead of putting
+/// back copies of both. It records the reservations of the part bundles,
+/// relationship ids, part names, content types and numbering ids that
+/// [`Document::edit_properties`] and the numbering edits make.
+#[derive(Debug, Default)]
+pub(crate) struct ReservationJournal {
+    entries: Vec<Reservation>,
+    /// Whether the edit removed a part, its relationships or its content
+    /// type from the package, which undoing it cannot put back: such an
+    /// edit cannot refuse after the removal.
+    removed_from_package: bool,
+}
+
+#[derive(Debug)]
+enum Reservation {
+    PartName(String),
+    PreservedPartName(String),
+    ContentTypeDefault(String),
+    ContentTypeOverride(String),
+    RelationshipOwner(String),
+    RelationshipId {
+        owner: String,
+        id: String,
+    },
+    AbstractNumberingId(u32),
+    NumberingInstanceId(u32),
+    /// The override stored under `stored`, and the case variants it
+    /// replaced with their content types.
+    PackageOverride {
+        stored: String,
+        replaced: Vec<(String, String)>,
+    },
+    PackageRelationships(String),
+    /// A relationship of `owner`'s part, or of the package when `None`,
+    /// added when the relationships' counter was `next_id`.
+    PackageRelationship {
+        owner: Option<String>,
+        id: String,
+        next_id: u32,
+    },
+}
+
+impl ReservationJournal {
+    /// Whether the edit changed the package graph.
+    pub(crate) fn changed_package(&self) -> bool {
+        self.removed_from_package
+            || self.entries.iter().any(|entry| {
+                matches!(
+                    entry,
+                    Reservation::PackageOverride { .. }
+                        | Reservation::PackageRelationships(_)
+                        | Reservation::PackageRelationship { .. }
+                )
+            })
+    }
+}
+
+/// The journal open on a registry, if any. A copy of the registry starts
+/// without one, and two registries compare equal whatever their journals:
+/// the journal is not something the registry holds.
+#[derive(Debug, Default)]
+pub(crate) struct JournalSlot(Option<ReservationJournal>);
+
+impl Clone for JournalSlot {
+    fn clone(&self) -> Self {
+        Self(None)
+    }
+}
+
+impl PartialEq for JournalSlot {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for JournalSlot {}
+
+impl DocumentIdentifiers {
+    /// Start recording what the registry and the package graph gain.
+    pub(crate) fn open_journal(&mut self) {
+        debug_assert!(self.journal.0.is_none(), "a reservation journal is open");
+        self.journal.0 = Some(ReservationJournal::default());
+    }
+
+    /// Stop recording and return what was recorded.
+    pub(crate) fn close_journal(&mut self) -> ReservationJournal {
+        let journal = self.journal.0.take();
+        debug_assert!(journal.is_some(), "no reservation journal is open");
+        journal.unwrap_or_default()
+    }
+
+    fn record(&mut self, entry: impl FnOnce() -> Reservation) {
+        if let Some(journal) = &mut self.journal.0 {
+            journal.entries.push(entry());
+        }
+    }
+
+    pub(crate) fn record_removed_from_package(&mut self) {
+        if let Some(journal) = &mut self.journal.0 {
+            journal.removed_from_package = true;
+        }
+    }
+
+    fn hold_part_name(&mut self, identity: String) -> bool {
+        if self.part_names.contains(&identity) {
+            return false;
+        }
+        self.record(|| Reservation::PartName(identity.clone()));
+        self.part_names.insert(identity)
+    }
+
+    fn hold_relationship_id(&mut self, owner_identity: &str, id: &str) -> bool {
+        if !self.relationship_ids.contains_key(owner_identity) {
+            self.relationship_ids
+                .insert(owner_identity.to_owned(), HashSet::new());
+            self.record(|| Reservation::RelationshipOwner(owner_identity.to_owned()));
+        }
+        let added = self
+            .relationship_ids
+            .get_mut(owner_identity)
+            .expect("the owner was just held")
+            .insert(id.to_owned());
+        if added {
+            self.record(|| Reservation::RelationshipId {
+                owner: owner_identity.to_owned(),
+                id: id.to_owned(),
+            });
+        }
+        added
+    }
+
+    pub(super) fn hold_abstract_numbering_id(&mut self, id: u32) {
+        if self.abstract_numbering_ids.insert(id) {
+            self.record(|| Reservation::AbstractNumberingId(id));
+        }
+    }
+
+    pub(super) fn hold_numbering_instance_id(&mut self, id: u32) {
+        if self.numbering_instance_ids.insert(id) {
+            self.record(|| Reservation::NumberingInstanceId(id));
+        }
+    }
+}
+
+impl Document {
+    /// [`ContentTypes::add_override`], recorded in the open journal.
+    ///
+    /// [`ContentTypes::add_override`]: oxoffice_opc::ContentTypes::add_override
+    pub(crate) fn add_override_journaled(&mut self, part_name: &str, content_type: &str) {
+        let overrides = &mut self.package.content_types.overrides;
+        let replaced = overrides
+            .iter()
+            .filter(|(candidate, _)| candidate.eq_ignore_ascii_case(part_name))
+            .map(|(candidate, value)| (candidate.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        self.package
+            .content_types
+            .add_override(part_name, content_type);
+        let unchanged = matches!(replaced.as_slice(), [(_, value)] if value == content_type);
+        if !unchanged {
+            let stored = self
+                .package
+                .content_types
+                .overrides
+                .keys()
+                .find(|candidate| candidate.eq_ignore_ascii_case(part_name))
+                .expect("the override was just added")
+                .clone();
+            self.identifiers
+                .record(|| Reservation::PackageOverride { stored, replaced });
+        }
+    }
+
+    /// Add relationship `id` to `owner`'s part, or to the package when
+    /// `owner` is `None`, recorded in the open journal.
+    pub(crate) fn add_relationship_journaled(
+        &mut self,
+        owner: Option<&str>,
+        id: &str,
+        rel_type: &str,
+        target: &str,
+    ) {
+        let relationships = match owner {
+            None => &mut self.package.package_rels,
+            Some(owner) => {
+                if self.package.get_part_rels(owner).is_none() {
+                    self.identifiers
+                        .record(|| Reservation::PackageRelationships(owner.to_owned()));
+                }
+                self.package.get_or_create_part_rels(owner)
+            }
+        };
+        debug_assert!(
+            relationships.items.iter().all(|item| item.id != id),
+            "a reserved relationship id is already in the package"
+        );
+        let next_id = relationships.next_id();
+        relationships.add_with_id(id, rel_type, target);
+        self.identifiers
+            .record(|| Reservation::PackageRelationship {
+                owner: owner.map(str::to_owned),
+                id: id.to_owned(),
+                next_id,
+            });
+    }
+
+    /// Remove, latest first, what `journal` recorded, leaving the registry
+    /// and the package graph as they were when it was opened. Valid only
+    /// before another edit reserves anything.
+    pub(crate) fn undo_reservations(&mut self, journal: ReservationJournal) {
+        debug_assert!(
+            !journal.removed_from_package,
+            "a journaled edit refused after removing a package part"
+        );
+        let identifiers = &mut self.identifiers;
+        for entry in journal.entries.into_iter().rev() {
+            match entry {
+                Reservation::PartName(identity) => {
+                    identifiers.part_names.remove(&identity);
+                }
+                Reservation::PreservedPartName(identity) => {
+                    identifiers.preserved_part_names.remove(&identity);
+                }
+                Reservation::ContentTypeDefault(extension) => {
+                    identifiers.content_type_defaults.remove(&extension);
+                }
+                Reservation::ContentTypeOverride(part_name) => {
+                    identifiers.content_type_overrides.remove(&part_name);
+                }
+                Reservation::RelationshipOwner(owner) => {
+                    identifiers.relationship_ids.remove(&owner);
+                }
+                Reservation::RelationshipId { owner, id } => {
+                    if let Some(occupied) = identifiers.relationship_ids.get_mut(&owner) {
+                        occupied.remove(&id);
+                    }
+                }
+                Reservation::AbstractNumberingId(id) => {
+                    identifiers.abstract_numbering_ids.remove(&id);
+                }
+                Reservation::NumberingInstanceId(id) => {
+                    identifiers.numbering_instance_ids.remove(&id);
+                }
+                Reservation::PackageOverride { stored, replaced } => {
+                    let overrides = &mut self.package.content_types.overrides;
+                    overrides.remove(&stored);
+                    overrides.extend(replaced);
+                }
+                Reservation::PackageRelationships(owner) => {
+                    self.package.remove_part_rels(&owner);
+                }
+                Reservation::PackageRelationship { owner, id, next_id } => {
+                    let relationships = match &owner {
+                        None => Some(&mut self.package.package_rels),
+                        Some(owner) => self.package.get_part_rels_mut(owner),
+                    };
+                    if let Some(relationships) = relationships {
+                        relationships.undo_add_with_id(&id, next_id);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl DocumentIdentifiers {
     pub(super) fn scan(package: &OpcPackage) -> Result<Self> {
         Self::scan_reusing(package, None, None)
@@ -61,6 +327,7 @@ impl DocumentIdentifiers {
             authored_story_relationship_ids: HashMap::new(),
             authored_nested_story_relationship_ids: HashMap::new(),
             scanned_parts: Arc::default(),
+            journal: JournalSlot::default(),
         };
         identifiers.part_names.extend(
             package
@@ -534,19 +801,25 @@ impl DocumentIdentifiers {
     }
 
     pub(super) fn reserve_abstract_numbering_id(&mut self) -> Result<u32> {
-        reserve_u32(&mut self.abstract_numbering_ids, 0, "abstract numbering")
+        let id = reserve_u32(&mut self.abstract_numbering_ids, 0, "abstract numbering")?;
+        self.record(|| Reservation::AbstractNumberingId(id));
+        Ok(id)
     }
 
     pub(super) fn reserve_numbering_instance_id(&mut self) -> Result<u32> {
-        reserve_u32(&mut self.numbering_instance_ids, 1, "numbering instance")
+        let id = reserve_u32(&mut self.numbering_instance_ids, 1, "numbering instance")?;
+        self.record(|| Reservation::NumberingInstanceId(id));
+        Ok(id)
     }
 
     pub(crate) fn reserve_relationship_id_checked(&mut self, owner: &str) -> Result<String> {
         self.ensure_relationship_capacity(owner, 1)?;
         let owner = relationship_owner_identity(owner);
-        let occupied = self.relationship_ids.entry(owner).or_default();
-        let maximum = occupied
-            .iter()
+        let maximum = self
+            .relationship_ids
+            .get(&owner)
+            .into_iter()
+            .flatten()
             .filter_map(|id| id.strip_prefix("rId")?.parse::<u32>().ok())
             .max();
         let mut candidate = maximum.map_or(Ok(0), |value| {
@@ -556,7 +829,7 @@ impl DocumentIdentifiers {
         })?;
         loop {
             let id = format!("rId{candidate}");
-            if occupied.insert(id.clone()) {
+            if self.hold_relationship_id(&owner, &id) {
                 return Ok(id);
             }
             candidate = candidate
@@ -576,10 +849,7 @@ impl DocumentIdentifiers {
             .get(&owner)
             .is_some_and(|occupied| occupied.contains(requested));
         if is_available {
-            self.relationship_ids
-                .entry(owner.clone())
-                .or_default()
-                .insert(requested.to_owned());
+            self.hold_relationship_id(&owner, requested);
             Ok(requested.to_owned())
         } else {
             self.reserve_relationship_id_checked(&owner)
@@ -615,7 +885,7 @@ impl DocumentIdentifiers {
         );
         loop {
             let part_name = namer.next_part_name(extension);
-            if self.part_names.insert(part_name_identity(&part_name)) {
+            if self.hold_part_name(part_name_identity(&part_name)) {
                 return Ok(part_name);
             }
         }
@@ -653,7 +923,7 @@ impl DocumentIdentifiers {
                 "preferred part name {preferred} has no family stem"
             )));
         }
-        if self.part_names.insert(part_name_identity(preferred)) {
+        if self.hold_part_name(part_name_identity(preferred)) {
             return Ok(preferred.to_owned());
         }
         self.reserve_part_name(directory, stem, extension)
@@ -666,8 +936,11 @@ impl DocumentIdentifiers {
     }
 
     pub(crate) fn register_content_type_override(&mut self, part_name: &str) {
-        self.content_type_overrides
-            .insert(part_name.to_ascii_lowercase());
+        let part_name = part_name.to_ascii_lowercase();
+        if !self.content_type_overrides.contains(&part_name) {
+            self.record(|| Reservation::ContentTypeOverride(part_name.clone()));
+            self.content_type_overrides.insert(part_name);
+        }
     }
 
     pub(super) fn register_nested_story_relationship(
@@ -750,7 +1023,7 @@ impl DocumentIdentifiers {
     }
 
     pub(crate) fn reserve_fragment_part_name(&mut self, preferred: &str) -> Result<String> {
-        if self.part_names.insert(part_name_identity(preferred)) {
+        if self.hold_part_name(part_name_identity(preferred)) {
             return Ok(preferred.to_owned());
         }
         let (stem, extension) = preferred
@@ -763,7 +1036,7 @@ impl DocumentIdentifiers {
             } else {
                 format!("{stem}-merge-{ordinal}.{extension}")
             };
-            if self.part_names.insert(part_name_identity(&candidate)) {
+            if self.hold_part_name(part_name_identity(&candidate)) {
                 return Ok(candidate);
             }
             ordinal = ordinal.checked_add(1).ok_or_else(|| {
@@ -777,6 +1050,18 @@ impl DocumentIdentifiers {
             .insert(part_name_identity(part_name));
     }
 
+    /// Hold a part name the package graph names, as preserved when it is new.
+    fn observe_part_name(&mut self, identity: String) {
+        if self.part_names.contains(&identity) {
+            return;
+        }
+        self.hold_part_name(identity.clone());
+        if !self.preserved_part_names.contains(&identity) {
+            self.record(|| Reservation::PreservedPartName(identity.clone()));
+            self.preserved_part_names.insert(identity);
+        }
+    }
+
     pub(crate) fn observe_package_graph(&mut self, package: &OpcPackage) -> Result<()> {
         for part_name in package
             .parts
@@ -784,25 +1069,18 @@ impl DocumentIdentifiers {
             .chain(package.part_rels.keys())
             .chain(package.content_types.overrides.keys())
         {
-            let identity = part_name_identity(part_name);
-            if self.part_names.insert(identity.clone()) {
-                self.preserved_part_names.insert(identity);
+            self.observe_part_name(part_name_identity(part_name));
+        }
+        for extension in package.content_types.defaults.keys() {
+            let extension = extension.to_ascii_lowercase();
+            if !self.content_type_defaults.contains(&extension) {
+                self.record(|| Reservation::ContentTypeDefault(extension.clone()));
+                self.content_type_defaults.insert(extension);
             }
         }
-        self.content_type_defaults.extend(
-            package
-                .content_types
-                .defaults
-                .keys()
-                .map(|extension| extension.to_ascii_lowercase()),
-        );
-        self.content_type_overrides.extend(
-            package
-                .content_types
-                .overrides
-                .keys()
-                .map(|part_name| part_name.to_ascii_lowercase()),
-        );
+        for part_name in package.content_types.overrides.keys() {
+            self.register_content_type_override(part_name);
+        }
 
         let mut owners = std::iter::once(("/", &package.package_rels))
             .chain(
@@ -823,19 +1101,12 @@ impl DocumentIdentifiers {
                         relationship.id
                     )));
                 }
-                let occupied = self
-                    .relationship_ids
-                    .entry(owner_identity.clone())
-                    .or_default();
-                occupied.insert(relationship.id.clone());
+                self.hold_relationship_id(&owner_identity, &relationship.id);
                 if relationship_is_internal(relationship) {
-                    let part_name = part_name_identity(&OpcPackage::resolve_rel_target(
+                    self.observe_part_name(part_name_identity(&OpcPackage::resolve_rel_target(
                         owner,
                         &relationship.target,
-                    ));
-                    if self.part_names.insert(part_name.clone()) {
-                        self.preserved_part_names.insert(part_name);
-                    }
+                    )));
                 }
             }
         }

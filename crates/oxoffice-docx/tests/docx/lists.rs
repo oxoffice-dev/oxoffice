@@ -7,8 +7,8 @@
 use std::io::Cursor;
 
 use oxoffice_docx::{
-    Alignment, Document, ListLevel, ListLevelRestart, ListLevelSuffix, ListNumberFormat,
-    NumberingLevelOverride, StyleBuilder, Twips,
+    Alignment, Document, ListItemKind, ListLevel, ListLevelRestart, ListLevelSuffix,
+    ListNumberFormat, NumberingLevelOverride, StyleBuilder, Twips,
 };
 use oxoffice_opc::OpcPackage;
 
@@ -907,6 +907,69 @@ fn a_new_list_skips_an_identifier_named_inside_raw_content() {
         .map(|bytes| String::from_utf8(bytes.to_vec()).unwrap())
         .unwrap();
     assert_eq!(xml.matches(r#"<w:numId w:val="1"/>"#).count(), 1, "{xml}");
+}
+
+#[test]
+fn an_undone_list_item_numbering_leaves_the_document_and_its_next_ids_as_they_were() {
+    // The numbering half of a list item reserves the numbering part, its
+    // relationship and content type and the list's identifiers; undoing it
+    // takes them all back, so the next list item takes the same ones.
+    let mut doc = doc_with(&["first"]);
+    let before = doc.to_bytes().unwrap();
+    let (num_id, journal) = doc
+        .begin_list_item(ListItemKind::Numbered, "item", 0)
+        .unwrap();
+    doc.undo_numbering_edit(journal);
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert!(doc.numbering_instances().is_empty());
+
+    let (again, _kept) = doc
+        .begin_list_item(ListItemKind::Numbered, "item", 0)
+        .unwrap();
+    assert_eq!(again, num_id);
+    doc.append_body_paragraph(Document::list_item_paragraph("item", again, 0));
+    let package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    assert!(package.get_part("/word/numbering.xml").is_some());
+    let relationships = package.get_part_rels("/word/document.xml").unwrap();
+    let numbering = relationships
+        .items
+        .iter()
+        .filter(|relationship| relationship.target == "numbering.xml")
+        .collect::<Vec<_>>();
+    assert_eq!(numbering.len(), 1, "{:?}", relationships.items);
+}
+
+#[test]
+fn a_list_item_with_no_relationship_id_left_for_its_numbering_part_is_refused_without_a_change() {
+    // The main part's relationships hold the last numeric id, so the
+    // numbering part, reserved first, can get no relationship.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc_with(&["first"]).to_bytes().unwrap())).unwrap();
+    package
+        .get_or_create_part_rels("/word/document.xml")
+        .add_with_id(
+            "rId4294967295",
+            "http://example.com/relationships/probe",
+            "document.xml",
+        );
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let before = doc.to_bytes().unwrap();
+
+    for _ in 0..2 {
+        let error = doc
+            .try_add_bullet_list_item("item", 0)
+            .map(|_| ())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("numbering relationship allocation failed"),
+            "{error}"
+        );
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert!(doc.numbering_instances().is_empty());
 }
 
 #[test]
