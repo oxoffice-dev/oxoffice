@@ -606,9 +606,27 @@ fn remove_embedded_content_in_place<H: EmbeddedHost>(
             if relationship_target_is_reachable(package, &info.source_part)? {
                 return Ok(());
             }
+            // The properties part's other targets (a picture property, say)
+            // go with it when nothing else reaches them.
+            let owned_candidates = package
+                .get_part_rels(&info.source_part)
+                .map(|relationships| {
+                    relationships
+                        .items
+                        .iter()
+                        .filter(|relationship| relationship_is_internal(relationship))
+                        .map(|relationship| {
+                            OpcPackage::resolve_rel_target(&info.source_part, &relationship.target)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             remove_relationship(package, &info.source_part, &info.relationship_id)?;
             delete_if_unreachable(package, &info.target_part)?;
             delete_if_unreachable(package, &info.source_part)?;
+            for candidate in owned_candidates {
+                delete_if_unreachable(package, &candidate)?;
+            }
         }
         EmbeddedContentKind::VbaProject => {
             let package = host.embedded_package_mut();
