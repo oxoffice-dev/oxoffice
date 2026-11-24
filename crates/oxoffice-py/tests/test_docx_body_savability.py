@@ -60,3 +60,30 @@ def test_typed_inserts_follow_one_another_on_a_savable_body(saved):
     texts = [p.text for p in reopened.paragraphs]
     assert {"added", "heading", "inserted", "before"} <= set(texts)
     assert len(reopened.tables) == len(oxdocx.Document.open(saved).tables) + 2
+
+
+SECTION_EDITS = {
+    "SectionHandle.set_page_border": lambda doc: doc.section(0).set_page_border("top"),
+    "SectionHandle.set_note_policy": lambda doc: doc.section(0).set_note_policy("footnote", start=3),
+}
+
+
+@pytest.mark.parametrize("name", sorted(SECTION_EDITS))
+def test_a_section_edit_on_a_body_it_cannot_leave_savable_is_refused_by_the_save(namespaced, name):
+    """A section edit is not one of the refused inserts: it is made in place, and the save reports the body."""
+    doc = oxdocx.Document.open(namespaced)
+    paragraph = doc.paragraphs[0]
+    SECTION_EDITS[name](doc)
+    assert paragraph.text == doc.paragraphs[0].text
+    with pytest.raises(oxdocx.DocxError, match="shadowed `x` namespace"):
+        doc.to_bytes()
+
+
+def test_a_settings_edit_leaves_a_body_it_cannot_leave_savable_savable(namespaced):
+    """A settings edit does not touch the body, which saves as it was read."""
+    doc = oxdocx.Document.open(namespaced)
+    doc.set_note_policy("footnote", start=3)
+    doc.settings.odd_and_even_pages_header_footer = True
+    doc.set_document_protection(oxdocx.DocumentProtection(mode="readOnly", enforcement=True))
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert again.settings.odd_and_even_pages_header_footer

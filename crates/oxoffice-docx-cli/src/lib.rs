@@ -219,6 +219,9 @@ enum Command {
         /// `signature:<name>` becomes an empty signature field.
         #[arg(long)]
         fillable_forms: bool,
+        /// Output the files written as schema-1 JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Compare the paragraph text of every story of two DOCX files
     ///
@@ -304,6 +307,9 @@ enum Command {
     Validate {
         /// Path to the DOCX file
         file: PathBuf,
+        /// Output the verdict, the errors and the warnings as schema-1 JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Render pages to image files
     Render {
@@ -352,6 +358,9 @@ enum Command {
         /// Preserve unpainted PNG pixels as transparent
         #[arg(long)]
         transparent: bool,
+        /// Output the files written as schema-1 JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Inspect and mutate Word comment threads
     Comment {
@@ -834,8 +843,8 @@ pub fn run(cli: Cli) {
 
     // `validate` always carries a verdict in its exit status, so it is
     // dispatched separately from the commands that only report errors.
-    if let Command::Validate { file } = &cli.command {
-        match commands::validate(file) {
+    if let Command::Validate { file, json } = &cli.command {
+        match commands::validate(file, *json) {
             Ok(true) => return,
             Ok(false) => process::exit(1),
             Err(e) => {
@@ -955,6 +964,7 @@ pub fn run(cli: Cli) {
             quality,
             transparent,
             fillable_forms,
+            json,
         } => commands::convert_input(
             &file,
             to.as_deref(),
@@ -982,6 +992,7 @@ pub fn run(cli: Cli) {
                 transparent,
             },
             fillable_forms,
+            json,
         ),
         Command::Diff {
             file_a,
@@ -1028,6 +1039,7 @@ pub fn run(cli: Cli) {
             revision_style,
             quality,
             transparent,
+            json,
         } => commands::render(
             &file,
             output_dir.as_deref(),
@@ -1044,6 +1056,7 @@ pub fn run(cli: Cli) {
                 quality,
                 transparent,
             },
+            json,
         ),
         Command::Comment { command } => match command {
             CommentCommand::List { file, json } => commands::comment_list(&file, json),

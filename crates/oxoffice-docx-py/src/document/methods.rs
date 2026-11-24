@@ -493,18 +493,10 @@ impl PyDocument {
         py: Python<'_>,
         value: &PyDocumentProtection,
     ) -> PyResult<()> {
-        let value = value.inner.clone();
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
-            .set_document_protection(value)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        self.publish_form_candidate(
-            py,
-            candidate,
-            "Document.set_document_protection",
-            WordPublication::ModernFormValues,
-        )?;
-        Ok(())
+        // Settings only: no handle reads them, so the edit publishes nothing.
+        self.inner
+            .set_document_protection(value.inner.clone())
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn remove_document_protection(
@@ -519,19 +511,9 @@ impl PyDocument {
             .cloned()
             .map(|inner| Py::new(py, PyDocumentProtection { inner }))
             .transpose()?;
-        let mut candidate = self.inner.clone_for_staging();
-        let removed = candidate
+        self.inner
             .remove_document_protection()
             .map_err(|error| docx_to_pyerr(py, error))?;
-        if removed.is_none() {
-            return Ok(None);
-        }
-        self.publish_form_candidate(
-            py,
-            candidate,
-            "Document.remove_document_protection",
-            WordPublication::ModernFormValues,
-        )?;
         Ok(snapshot)
     }
 
@@ -2272,19 +2254,10 @@ impl PyDocument {
         placement: Option<&str>,
     ) -> PyResult<()> {
         let (family, policy) = checked_note_policy(family, format, start, restart, placement)?;
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        // Settings only: no handle reads them, so the edit publishes nothing.
+        self.inner
             .set_note_policy(family, policy)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.set_note_policy",
-            crate::document::WordPublication::Conservative,
-        )?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
-        Ok(())
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     fn set_page_color(&mut self, py: Python<'_>, color: &str) -> PyResult<()> {
@@ -5316,11 +5289,9 @@ impl PyDocument {
     }
     #[setter]
     fn set_embed_true_type_fonts(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        self.inner
             .set_embed_true_type_fonts(value)
-            .map_err(|e| docx_to_pyerr(py, e))?;
-        self.publish_api_candidate(py, candidate, "Document.set_embed_true_type_fonts")
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     #[getter]
     fn embed_system_fonts(&self, py: Python<'_>) -> PyResult<Option<bool>> {
@@ -5330,11 +5301,9 @@ impl PyDocument {
     }
     #[setter]
     fn set_embed_system_fonts(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        self.inner
             .set_embed_system_fonts(value)
-            .map_err(|e| docx_to_pyerr(py, e))?;
-        self.publish_api_candidate(py, candidate, "Document.set_embed_system_fonts")
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     #[getter]
     fn save_subset_fonts(&self, py: Python<'_>) -> PyResult<Option<bool>> {
@@ -5344,11 +5313,9 @@ impl PyDocument {
     }
     #[setter]
     fn set_save_subset_fonts(&mut self, py: Python<'_>, value: Option<bool>) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        self.inner
             .set_save_subset_fonts(value)
-            .map_err(|e| docx_to_pyerr(py, e))?;
-        self.publish_api_candidate(py, candidate, "Document.set_save_subset_fonts")
+            .map_err(|e| docx_to_pyerr(py, e))
     }
 
     fn set_mail_merge_package(

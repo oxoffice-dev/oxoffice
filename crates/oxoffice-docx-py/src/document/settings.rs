@@ -30,18 +30,11 @@ impl PySettings {
         if document.inner.even_and_odd_headers() == value {
             return Ok(());
         }
-        let mut candidate = document.inner.clone_for_staging();
-        candidate
+        // The flag selects which header a page shows; the header stories and
+        // their handles stay, so the edit publishes nothing.
+        document
+            .inner
             .set_even_and_odd_headers(value)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "Settings.odd_and_even_pages_header_footer",
-            crate::document::WordPublication::Conservative,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        Ok(())
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 }
