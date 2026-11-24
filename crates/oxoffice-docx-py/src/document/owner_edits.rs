@@ -1712,7 +1712,8 @@ impl PyDocument {
     /// piece aligned before the edit stays aligned: the next cell edit of the
     /// table keeps the local route, as after a publication. An edit that
     /// changed a cell leaves the piece behind, and the next cell edit reads
-    /// the table again. Tables with row or cell controls are left behind too.
+    /// the table again. Tables with row or cell controls, and pieces without
+    /// owner facts, are left behind too.
     pub(crate) fn follow_table_property_edit(
         &mut self,
         body_slot: usize,
@@ -1738,6 +1739,11 @@ impl PyDocument {
         else {
             return;
         };
+        // Properties the checked reader refuses (out of order, repeated) can
+        // leave a table without owner facts; a rewrite may order them.
+        if piece.owners.is_none() {
+            return;
+        }
         let oxoffice_docx_oxml::BodyContent::Table(held) = piece.block.as_ref() else {
             return;
         };

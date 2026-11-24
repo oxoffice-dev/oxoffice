@@ -1087,6 +1087,43 @@ fn an_in_place_row_or_cell_edit_applies_properties_and_declines_content() {
 }
 
 #[test]
+fn an_in_place_row_or_cell_edit_of_a_table_with_controls_is_declined() {
+    let cell = r#"<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>"#;
+    let grid = r#"<w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#;
+    // A table with a row control declines both; a row whose cells sit in a cell control keeps the row's own
+    // properties in place, as the whole-table route did, finding the control unchanged.
+    for (table, row_edit) in [
+        (
+            format!(
+                "<w:tbl>{grid}<w:sdt><w:sdtPr/><w:sdtContent><w:tr>{cell}</w:tr></w:sdtContent></w:sdt></w:tbl><w:p/>"
+            ),
+            None,
+        ),
+        (
+            format!(
+                "<w:tbl>{grid}<w:tr><w:sdt><w:sdtPr/><w:sdtContent>{cell}</w:sdtContent></w:sdt></w:tr></w:tbl><w:p/>"
+            ),
+            Some(()),
+        ),
+    ] {
+        let mut doc = doc_with_body(&table);
+        let row = doc
+            .edit_table_row_properties_in_place(0, 0, |row| {
+                row.set_height(Length::pt(20.0));
+                Ok(())
+            })
+            .expect("the edit runs");
+        let cell = doc
+            .edit_table_cell_properties_in_place(0, 0, 0, |cell| {
+                cell.set_vertical_alignment(VerticalAlignment::Center);
+                Ok(())
+            })
+            .expect("the edit runs");
+        assert_eq!((row, cell), (row_edit, None), "{table}");
+    }
+}
+
+#[test]
 fn a_template_tag_in_a_cell_with_empty_properties_renders() {
     let mut doc = doc_with_body(&one_cell_table(
         "<w:tcPr/>",

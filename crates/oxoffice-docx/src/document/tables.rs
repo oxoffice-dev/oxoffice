@@ -69,6 +69,11 @@ impl Document {
     ) -> Result<Option<T>> {
         let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
+        // As the whole-table route compares row controls whole, a table that
+        // holds some goes to the route that publishes content changes.
+        if !table.content_controls.is_empty() {
+            return Ok(None);
+        }
         let current = crate::table::table_row_mut(table, row)
             .ok_or_else(|| Error::Other("row index out of range".to_owned()))?;
         let mut edited = current.clone();
@@ -94,6 +99,10 @@ impl Document {
     ) -> Result<Option<T>> {
         let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
+        // Likewise for row and cell controls.
+        if crate::table::table_holds_controls(table) {
+            return Ok(None);
+        }
         let current = crate::table::table_cell_mut(table, row, cell)
             .ok_or_else(|| Error::Other("cell index out of range".to_owned()))?;
         let mut edited = current.clone();
