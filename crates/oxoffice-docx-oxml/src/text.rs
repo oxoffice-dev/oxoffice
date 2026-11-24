@@ -2583,10 +2583,11 @@ impl CT_P {
                         return Err(unfaithful(String::new()));
                     }
                 }
-                // The writer places no marker inside a tracked insertion or
-                // move, but an edge read there is already exact: the accepted
-                // view holds the inserted text. The other edge is still
-                // checked on its own.
+                // An edge the writer cannot place inside a tracked insertion
+                // or move (one inside a control, or a wrapper it cannot write
+                // back) is already exact when read: the accepted view holds
+                // the inserted text. The other edge is still checked on its
+                // own.
                 Err(RangeAnchorError::InsideRevision { .. }) => {
                     // Each edge alone, as a collapsed range in this paragraph.
                     for (edge, is_start) in [(selected.start, true), (selected.end, false)] {
@@ -4730,9 +4731,11 @@ impl CT_P {
     /// between two runs of an inline content control, and around the whole
     /// control when the range covers it. A missing side means the range
     /// continues into another paragraph, so that side must not fall inside a
-    /// control. A comment reference run follows the comment end marker. A
-    /// range that cannot be written exactly is refused and the paragraph is
-    /// unchanged.
+    /// control. An edge between two runs of a tracked insertion or move
+    /// destination goes inside its wrapper. A comment reference run follows
+    /// the comment end marker, or the wrapper when only the end is inside
+    /// one. A range that cannot be written exactly is refused and the
+    /// paragraph is unchanged.
     #[doc(hidden)]
     pub fn anchor_accepted_range(
         &mut self,
@@ -4824,6 +4827,15 @@ impl CT_P {
                     return Err(RangeAnchorError::Reversed { start, end });
                 }
                 let mut paragraph = self.clone();
+                // The edge outside the insertion is placed alone, as if the
+                // range continued into another paragraph; within this one, a
+                // control it falls in is crossed by the range.
+                let crossing = |error| match (error, start, end) {
+                    (RangeAnchorError::InsideControl { .. }, Some(start), Some(end)) => {
+                        RangeAnchorError::CrossesControl { start, end }
+                    }
+                    (error, _, _) => error,
+                };
                 match (start, end, start_inside, end_inside) {
                     (Some(start), Some(end), Some((revision, first)), Some((other, _)))
                         if revision == other =>
@@ -4843,39 +4855,43 @@ impl CT_P {
                         if let Some(end) = end {
                             match end_inside {
                                 Some((revision, first)) => {
+                                    // Just after the wrapper, which the paths of
+                                    // this unchanged paragraph give. A wrapper in
+                                    // a hyperlink with runs of its own may have
+                                    // no such place: the mark then stays inside.
+                                    let after = match anchor {
+                                        RangeAnchor::Comment(id) if reference => {
+                                            match self.marker_site(&paths, &[], end, false) {
+                                                Ok(MarkerSite::Paragraph {
+                                                    boundary,
+                                                    position,
+                                                }) => Some((id, boundary, position)),
+                                                _ => None,
+                                            }
+                                        }
+                                        _ => None,
+                                    };
                                     paragraph.anchor_in_revision(
                                         revision,
                                         first,
                                         None,
                                         Some(end - first),
                                         anchor,
-                                        false,
+                                        reference && after.is_none(),
                                     )?;
-                                    if let RangeAnchor::Comment(id) = anchor
-                                        && reference
-                                    {
-                                        // Just after the wrapper, which the paths
-                                        // of this unchanged paragraph still give.
-                                        let MarkerSite::Paragraph { boundary, position } =
-                                            self.marker_site(&paths, &[], end, false)?
-                                        else {
-                                            return Err(RangeAnchorError::Write);
-                                        };
-                                        if !paragraph.insert_run_after_boundary_items(
+                                    if let Some((id, boundary, position)) = after
+                                        && !paragraph.insert_run_after_boundary_items(
                                             boundary,
                                             position,
                                             comment_reference_run(id),
-                                        ) {
-                                            return Err(RangeAnchorError::Write);
-                                        }
+                                        )
+                                    {
+                                        return Err(RangeAnchorError::Write);
                                     }
                                 }
-                                None => paragraph.anchor_range_with_reference(
-                                    None,
-                                    Some(end),
-                                    anchor,
-                                    reference,
-                                )?,
+                                None => paragraph
+                                    .anchor_range_with_reference(None, Some(end), anchor, reference)
+                                    .map_err(crossing)?,
                             }
                         }
                         if let Some(start) = start {
@@ -4888,12 +4904,14 @@ impl CT_P {
                                     anchor,
                                     reference,
                                 )?,
-                                None => paragraph.anchor_range_with_reference(
-                                    Some(start),
-                                    None,
-                                    anchor,
-                                    reference,
-                                )?,
+                                None => paragraph
+                                    .anchor_range_with_reference(
+                                        Some(start),
+                                        None,
+                                        anchor,
+                                        reference,
+                                    )
+                                    .map_err(crossing)?,
                             }
                         }
                     }
@@ -4922,13 +4940,17 @@ impl CT_P {
             .revisions
             .get_mut(revision)
             .ok_or(RangeAnchorError::Write)?;
+        // A wrapper whose content cannot be written back keeps the refusal.
+        let refused = RangeAnchorError::InsideRevision {
+            boundary: start.or(end).unwrap_or_default() + first,
+        };
         let mut anchored = Ok(());
         let edited = wrapper
             .edit_accepted_paragraph(|paragraph| {
                 anchored = paragraph.anchor_range_with_reference(start, end, anchor, reference);
                 Ok(anchored.is_ok())
             })
-            .map_err(|_| RangeAnchorError::Write)?;
+            .map_err(|_| refused)?;
         // Report the boundaries of this paragraph, not of the revision.
         anchored.map_err(|error| match error {
             RangeAnchorError::OutOfRange {
@@ -4959,11 +4981,8 @@ impl CT_P {
             }
             RangeAnchorError::Write => RangeAnchorError::Write,
         })?;
-        // A wrapper whose content cannot be written back keeps the refusal.
         if !edited {
-            return Err(RangeAnchorError::InsideRevision {
-                boundary: start.or(end).unwrap_or_default() + first,
-            });
+            return Err(refused);
         }
         Ok(())
     }
@@ -4982,8 +5001,8 @@ impl CT_P {
                 styled = paragraph.style_comment_reference_run(id, style_id);
                 Ok(styled)
             });
-            if styled && edited.is_ok_and(|edited| edited) {
-                return true;
+            if styled {
+                return edited.is_ok_and(|edited| edited);
             }
         }
         for path in self.accepted_run_paths() {

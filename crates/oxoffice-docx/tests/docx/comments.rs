@@ -1243,3 +1243,131 @@ fn a_bookmark_on_part_of_a_tracked_insertion_stays_inside_it() {
     assert!(inserted.contains("w:bookmarkStart"), "{body}");
     assert!(inserted.contains("w:bookmarkEnd"), "{body}");
 }
+
+/// Comment `text` in a body of raw paragraphs, then the text it covers once
+/// saved and reopened, the revision texts, and the saved body.
+fn comment_on(body: &str, text: &str) -> (String, Vec<String>, String) {
+    let mut doc = doc_with_body(body);
+    doc.add_comment_on_text(
+        text,
+        REVIEWER,
+        "Check",
+        TextCommentOptions {
+            date: CommentDate::Undated,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let mut doc = reopen(&mut doc);
+    let anchor = doc.comments()[0].anchor_text().unwrap().unwrap_or_default();
+    let revisions = doc
+        .story_revisions()
+        .unwrap()
+        .iter()
+        .map(|revision| revision.text().to_owned())
+        .collect();
+    (anchor, revisions, main_body(&mut doc))
+}
+
+#[test]
+fn a_comment_into_a_tracked_insertion_inside_a_link_keeps_its_mark_inside() {
+    // No paragraph-level place follows an insertion that ends a link with
+    // runs of its own, so the comment mark stays inside the insertion.
+    let (anchor, revisions, body) = comment_on(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:hyperlink w:anchor="target"><w:r><w:t xml:space="preserve">link </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words</w:t></w:r></w:ins></w:hyperlink></w:p>"#,
+        "Kept link new",
+    );
+    assert_eq!(anchor, "Kept link new");
+    assert_eq!(revisions, ["new words"]);
+    assert!(body.contains("w:commentReference"), "{body}");
+}
+
+#[test]
+fn a_comment_on_part_of_a_tracked_move_destination_stays_inside_it() {
+    let (anchor, _, body) = comment_on(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:moveTo w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>moved words here</w:t></w:r></w:moveTo></w:p>"#,
+        "words",
+    );
+    assert_eq!(anchor, "words");
+    let moved = &body[body.find("<w:moveTo ").unwrap()..body.find("</w:moveTo>").unwrap()];
+    assert!(moved.contains("<w:commentRangeStart"), "{body}");
+    assert!(moved.contains("<w:commentRangeEnd"), "{body}");
+}
+
+#[test]
+fn a_comment_across_paragraphs_with_both_edges_inside_tracked_insertions() {
+    let ins = |id: u32, first: &str, second: &str| {
+        format!(
+            r#"<w:ins w:id="{id}" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">{first}</w:t></w:r><w:r><w:t xml:space="preserve">{second}</w:t></w:r></w:ins>"#
+        )
+    };
+    let mut doc = doc_with_body(&format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">One </w:t></w:r>{}</w:p><w:p>{}<w:r><w:t xml:space=\"preserve\"> two</w:t></w:r></w:p>",
+        ins(1, "first ", "added"),
+        ins(2, "second", " added"),
+    ));
+    // From the second run of the first insertion to the end of the first
+    // run of the second.
+    let id = doc
+        .add_comment_with_date(
+            run_range(0, 2, 1, 1),
+            REVIEWER,
+            None,
+            "Check",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    let anchor = comment(&doc, id).anchor_text().unwrap().unwrap();
+    assert!(
+        anchor.starts_with("added") && anchor.ends_with("second"),
+        "{anchor:?}"
+    );
+    let texts = doc
+        .story_revisions()
+        .unwrap()
+        .iter()
+        .map(|revision| revision.text().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(texts, ["first added", "second added"]);
+    let body = main_body(&mut doc);
+    for marker in ["<w:commentRangeStart", "<w:commentRangeEnd"] {
+        let at = body.find(marker).unwrap();
+        let opened = body[..at].rfind("<w:ins ").unwrap();
+        assert!(
+            body[opened..at].find("</w:ins>").is_none(),
+            "{marker} inside: {body}"
+        );
+    }
+}
+
+#[test]
+fn a_comment_from_one_tracked_insertion_into_another_keeps_both() {
+    let (anchor, revisions, _) = comment_on(
+        r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">first added</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> kept </w:t></w:r><w:ins w:id="2" w:author="B" w:date="2026-01-01T00:00:00Z"><w:r><w:t>second added</w:t></w:r></w:ins></w:p>"#,
+        "added kept second",
+    );
+    assert_eq!(anchor, "added kept second");
+    assert_eq!(revisions, ["first added", "second added"]);
+}
+
+#[test]
+fn a_comment_from_a_tracked_insertion_into_a_control_is_refused_as_crossing_it() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">new </w:t></w:r><w:r><w:t>words</w:t></w:r></w:ins><w:sdt><w:sdtPr><w:tag w:val="box"/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">in </w:t></w:r><w:r><w:t>box</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let error = doc
+        .add_comment_with_date(
+            run_range(0, 1, 0, 3),
+            REVIEWER,
+            None,
+            "Check",
+            CommentDate::Undated,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("crosses the edge of an inline content control"),
+        "{error}"
+    );
+}
