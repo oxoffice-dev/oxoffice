@@ -4725,9 +4725,11 @@ impl PyDocument {
                 .map_err(|error| docx_to_pyerr(py, error))?;
             if removed {
                 self.commit_tail_body_removal(index, range, revision)?;
+                // A run born locally sits after the owners of later blocks,
+                // so the inventory is compared in any order.
                 #[cfg(debug_assertions)]
                 {
-                    self.assert_word_inventory_rebuilds(true);
+                    self.assert_word_inventory_rebuilds(false);
                     assert_kept_owners_name_their_elements(
                         (&before.0, &before.1),
                         (&self.inner, &self.owners),

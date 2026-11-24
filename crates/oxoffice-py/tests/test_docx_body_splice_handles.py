@@ -167,12 +167,16 @@ def test_a_table_after_a_table_in_a_block_content_control_follows_its_own_index(
 
 @IDS
 def test_a_paragraph_in_nested_block_content_controls_reads_its_own_text_or_raises_after_an_insertion(ids):
-    doc = document(p("before") + control(p("outer", " two"), control(p("inner", " two"))) + p("after"), ids=ids)
+    centered = '<w:pPr><w:jc w:val="center"/></w:pPr>'
+    doc = document(p("before") + control(p("outer", " two"), control(p(centered, "inner", " two"))) + p("after"),
+                   ids=ids)
     taken = {paragraph.text: paragraph for paragraph in doc.paragraphs}
+    alignment = {text: paragraph.paragraph_format.alignment for text, paragraph in taken.items()}
+    assert alignment["inner two"] == oxdocx.WD_ALIGN_PARAGRAPH.CENTER
     doc.insert_paragraph(0, "new")
     for text, paragraph in taken.items():
         assert outcome(lambda: runs_text(paragraph)) in (text, STALE), text
-        assert outcome(lambda: paragraph.paragraph_format.alignment) in (None, STALE), text
+        assert outcome(lambda: paragraph.paragraph_format.alignment) in (alignment[text], STALE), text
     assert runs_text(taken["after"]) == "after"
 
 
@@ -187,3 +191,19 @@ def test_removing_the_paragraph_that_ends_a_section_retires_the_section_handles(
     assert doc.remove_content(len(doc.paragraphs) + len(doc.tables) - 1)
     assert len(doc.sections) == 1
     assert outcome(lambda: first.margin_top) == STALE
+
+
+def test_removing_the_last_paragraph_after_a_run_was_added_to_an_earlier_one_keeps_the_other_handles():
+    # The run the XML replacement adds is born after the owners of later paragraphs.
+    doc = oxdocx.Document()
+    first = doc.add_paragraph("")
+    second = doc.add_paragraph("b")
+    doc.add_paragraph("last")
+    run = "<w:r><w:t>x</w:t></w:r>"
+    xml = first.xml
+    first.replace_xml(xml[:-2] + f">{run}</w:p>" if xml.endswith("/>") else xml.replace("</w:p>", f"{run}</w:p>"))
+    assert runs_text(first) == "x"
+    assert doc.remove_content(2)
+    assert runs_text(first) == "x"
+    assert runs_text(second) == "b"
+    assert texts(doc) == ["x", "b"]

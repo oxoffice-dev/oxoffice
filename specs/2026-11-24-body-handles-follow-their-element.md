@@ -160,7 +160,7 @@ limit on macOS, against 1.6 ms before (and 0.4 ms over on Windows).
 `OXOFFICE_SCALING=full` on `test_docx_scaling.py`: 415 passed, 125 xfailed,
 no XPASS; `GROWING` does not change (the removals the scaling body times
 are paragraphs Word saved, which keep the whole route). Python suite on a
-debug build, every splice under the identity and rebuild oracles: 2200
+debug build, every splice under the identity and rebuild oracles: 2201
 passed. Without decision 1 (handles reading their captured index), 20 of
 the 24 new tests fail; without the section guard of the last-paragraph
 removal, its test fails.
