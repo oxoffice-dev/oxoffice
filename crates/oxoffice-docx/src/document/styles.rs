@@ -415,7 +415,7 @@ fn control_references_style(control: &CT_Sdt, style_id: &str) -> bool {
     })
 }
 
-fn xml_references_style(xml: &[u8], style_id: &str) -> Result<bool> {
+pub(super) fn xml_references_style(xml: &[u8], style_id: &str) -> Result<bool> {
     let mut reader = NsReader::from_reader(xml);
     let mut buffer = Vec::new();
     loop {
@@ -786,6 +786,43 @@ impl Document {
         if self.styles.get_by_id(style_id).is_none() {
             return Ok(false);
         }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let styles = Arc::clone(&self.styles);
+        let styles_part_name = self.styles_part_name.clone();
+        // The numbering journal undoes a released level and the
+        // reservations; a refusal also puts the styles back.
+        let restore = |document: &mut Self| {
+            document.styles = Arc::clone(&styles);
+            document.styles_part_name = styles_part_name.clone();
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.edit_numbering(|document| {
+                let result = document.remove_style_in_place(style_id);
+                if result.is_err() {
+                    restore(document);
+                }
+                result
+            })
+        }));
+        let result = match result {
+            Ok(result) => result,
+            Err(panic) => {
+                restore(self);
+                std::panic::resume_unwind(panic)
+            }
+        };
+        if result.is_ok() {
+            self.invalidate_layout();
+        }
+        #[cfg(debug_assertions)]
+        self.assert_style_removal_matches_staged(before, style_id, &result);
+        result.map(|()| true)
+    }
+
+    /// The styles [`Self::remove_style`] removes: `style_id` and the style
+    /// linked to it that links back.
+    fn styles_removed_with(&self, style_id: &str) -> Vec<String> {
         let links = |from: &str, to: &str| {
             self.styles
                 .styles
@@ -802,27 +839,84 @@ impl Document {
                 removed.push(style.style_id.clone());
             }
         }
+        removed
+    }
 
-        let mut candidate = self.clone_for_staging();
-        let released = candidate.release_numbering_levels_naming(&removed);
+    /// [`Self::remove_style`] on this document. A refusal leaves the styles
+    /// and the numbering to the caller, which puts them back. Releasing a
+    /// level's `w:pStyle` is checked with the numbering graph as the
+    /// staged route did; the save writes the numbering model.
+    fn remove_style_in_place(&mut self, style_id: &str) -> Result<()> {
+        let removed = self.styles_removed_with(style_id);
+        let released = self.release_numbering_levels_naming(&removed);
         if released {
-            candidate.reserve_numbering_bundle()?;
+            self.reserve_numbering_bundle()?;
         }
         for id in &removed {
-            candidate.check_style_unreferenced(id, &removed)?;
+            self.check_style_unreferenced(id, &removed)?;
         }
-        candidate.reserve_styles_bundle()?;
-        Arc::make_mut(&mut candidate.styles)
+        self.reserve_styles_bundle()?;
+        let previous = Arc::clone(&self.styles);
+        Arc::make_mut(&mut self.styles)
             .styles
             .retain(|style| !removed.contains(&style.style_id));
-        style::validate_style_graph_change(&self.styles, &candidate.styles)?;
+        style::validate_style_graph_change(&previous, &self.styles)?;
         if released {
-            candidate.validate_numbering_graph()?;
-            candidate.flush_to_package()?;
+            self.validate_numbering_graph()?;
         }
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
-        Ok(true)
+        Ok(())
+    }
+
+    /// Debug proof that [`Self::remove_style`] in place leaves the styles
+    /// and the numbering the staged route leaves, or refuses with its error
+    /// and leaves them as they were.
+    #[cfg(debug_assertions)]
+    fn assert_style_removal_matches_staged(
+        &self,
+        before: Self,
+        style_id: &str,
+        outcome: &Result<()>,
+    ) {
+        let mut staged = before.clone_for_staging();
+        let removed = staged.styles_removed_with(style_id);
+        let staged_outcome = (|| -> Result<()> {
+            let released = staged.release_numbering_levels_naming(&removed);
+            if released {
+                staged.reserve_numbering_bundle()?;
+            }
+            for id in &removed {
+                staged.check_style_unreferenced(id, &removed)?;
+            }
+            staged.reserve_styles_bundle()?;
+            Arc::make_mut(&mut staged.styles)
+                .styles
+                .retain(|style| !removed.contains(&style.style_id));
+            style::validate_style_graph_change(&before.styles, &staged.styles)?;
+            if released {
+                staged.validate_numbering_graph()?;
+            }
+            Ok(())
+        })();
+        let expected = match (outcome, staged_outcome) {
+            (Ok(()), Ok(())) => &staged,
+            (Err(direct), Err(staged_error)) => {
+                assert_eq!(
+                    direct.to_string(),
+                    staged_error.to_string(),
+                    "in-place style removal refused otherwise"
+                );
+                &before
+            }
+            (Ok(()), Err(error)) => panic!("in-place style removal hid the staged error {error}"),
+            (Err(error), Ok(())) => panic!("in-place style removal refused with {error}"),
+        };
+        assert_eq!(
+            expected.styles, self.styles,
+            "in-place style removal left other styles"
+        );
+        assert_eq!(expected.styles_part_name, self.styles_part_name);
+        assert_eq!(expected.numbering, self.numbering);
+        assert_eq!(expected.numbering_part_name, self.numbering_part_name);
     }
 
     /// Clear the `w:pStyle` of each numbering level that one of `styles`
@@ -1114,8 +1208,7 @@ impl Document {
     }
 
     fn document_references_style(&self, style_id: &str) -> Result<bool> {
-        if body_references_style(&self.document.body.content, style_id)
-            || xml_references_style(&self.document.to_xml()?, style_id)?
+        if self.main_part_references_style(style_id)
             || self
                 .footnotes
                 .footnotes

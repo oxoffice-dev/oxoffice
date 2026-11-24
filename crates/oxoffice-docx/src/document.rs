@@ -250,6 +250,9 @@ mod story_xml;
 mod template_programs;
 mod text_boxes;
 mod walkers;
+mod written_references;
+#[doc(hidden)]
+pub use written_references::SlotHit;
 
 use edited_paragraph::{admit_edited_paragraph, edited_paragraph_ancestor_context};
 use fragment_checks::{

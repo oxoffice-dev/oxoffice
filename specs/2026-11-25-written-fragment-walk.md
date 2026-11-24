@@ -73,8 +73,13 @@ impl CT_Document { pub fn visit_written_outside_body(&self, visitor: &mut dyn Wr
   content controls kept beside paragraphs, tables and rows.
 - The caller iterates `body.content` itself: the index of the block is the
   slot S1c-2 swaps under `EditUnit::BodyBlocks`.
-- It allocates nothing but the equations' bytes. Its cost is a walk of the
-  model, linear in the body, with no serialization.
+- Two owners are written from bytes the model does not store: an equation
+  (re-serialized alone, it is small) and a paragraph or an inline content
+  control holding a field the writer rewrites (a changed field, a field
+  detached from the run it shared with text): the walk serializes that
+  owner alone and hands its bytes to `raw`. An unchanged field hands its
+  stored source. Otherwise the walk allocates nothing; its cost is a walk
+  of the model, linear in the body, with no serialization of the part.
 
 ### 2. Prefix-agnostic searches in raw fragments
 

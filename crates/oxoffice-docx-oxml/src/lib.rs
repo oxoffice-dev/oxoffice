@@ -51,5 +51,7 @@ pub use shared::{
 };
 pub use styles::{CT_DocDefaults, CT_Style, CT_Styles};
 pub use table::{CT_Row, CT_Tbl, CT_TblGrid, CT_TblPr, CT_Tc, CT_TcPr};
+#[doc(hidden)]
+pub use text::WrittenVisitor;
 pub use text::{CT_P, CT_R, CT_Text};
 pub use units::{Emu, HalfPoint, Twips};

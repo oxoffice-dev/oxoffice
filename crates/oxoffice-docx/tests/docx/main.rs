@@ -38,3 +38,4 @@ mod story_paragraphs;
 mod support;
 mod tables;
 mod text_and_runs;
+mod written_references;

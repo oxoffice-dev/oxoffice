@@ -1231,6 +1231,7 @@ dependencies = [
  "regex",
  "serde_json",
  "thiserror",
+ "zip",
 ]
 
 [[package]]

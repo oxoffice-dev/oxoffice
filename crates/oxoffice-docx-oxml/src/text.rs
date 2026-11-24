@@ -88,6 +88,10 @@ mod field_legacy_form;
 mod field_rewrite;
 mod field_simple;
 mod field_write;
+mod written;
+
+#[doc(hidden)]
+pub use written::WrittenVisitor;
 
 pub use field::FieldInstruction;
 use field::{FIELD_CACHE_VALIDATION_SCOPE, cached_run_display};

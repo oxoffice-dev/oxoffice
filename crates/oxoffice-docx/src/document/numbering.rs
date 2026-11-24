@@ -394,7 +394,7 @@ impl Document {
     }
 
     /// [`Self::edit_numbering_journaled`], keeping the edit.
-    fn edit_numbering<T: Clone + PartialEq + std::fmt::Debug>(
+    pub(super) fn edit_numbering<T: Clone + PartialEq + std::fmt::Debug>(
         &mut self,
         edit: impl Fn(&mut Self) -> Result<T>,
     ) -> Result<T> {

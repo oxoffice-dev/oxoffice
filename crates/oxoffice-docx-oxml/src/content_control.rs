@@ -1541,6 +1541,76 @@ pub(crate) struct InlineFieldProjection {
     content_spans: Vec<Range<usize>>,
 }
 
+/// One root child of `w:sdt` in the order the writer writes it.
+pub(crate) enum WrittenSdtPart<'a> {
+    Properties(&'a CT_SdtPr),
+    Content,
+    Raw(&'a [u8]),
+}
+
+impl CT_SdtPr {
+    /// The retained property children the writer writes from their bytes
+    /// (`w:rPr`, `w:placeholder` and every other unmodelled child).
+    pub(crate) fn written_raw_slots(&self) -> impl Iterator<Item = &[u8]> {
+        self.slots.iter().filter_map(|slot| match slot {
+            PropertySlot::Raw(raw) => Some(raw.as_slice()),
+            _ => None,
+        })
+    }
+}
+
+impl CT_Sdt {
+    /// The root children the writer writes, in its order: the properties and
+    /// the content once each, and the retained root children (`w:sdtEndPr`
+    /// among them) from their bytes.
+    pub(crate) fn for_each_written_part<'a>(&'a self, mut part: impl FnMut(WrittenSdtPart<'a>)) {
+        let mut properties_written = false;
+        let mut content_written = false;
+        for slot in &self.slots {
+            match slot {
+                RootSlot::Properties if !properties_written => {
+                    if let Some(properties) = &self.properties {
+                        part(WrittenSdtPart::Properties(properties));
+                    }
+                    properties_written = true;
+                }
+                RootSlot::Content if !content_written => {
+                    part(WrittenSdtPart::Content);
+                    content_written = true;
+                }
+                RootSlot::Raw(raw) => part(WrittenSdtPart::Raw(raw)),
+                _ => {}
+            }
+        }
+        if !properties_written && let Some(properties) = &self.properties {
+            part(WrittenSdtPart::Properties(properties));
+        }
+        if !content_written
+            && (!self.content.is_empty()
+                || self
+                    .slots
+                    .iter()
+                    .any(|slot| matches!(slot, RootSlot::Content)))
+        {
+            part(WrittenSdtPart::Content);
+        }
+    }
+
+    /// The stored bytes the writer writes for the direct run at
+    /// `content_index`, for a run that holds no field (a field run's match
+    /// needs the field's writer).
+    pub(crate) fn written_inline_run_source(
+        &self,
+        content_index: usize,
+        run: &CT_R,
+    ) -> Option<&[u8]> {
+        self.inline_run_sources
+            .iter()
+            .find(|source| source.content_index == content_index && source.original == *run)
+            .map(|source| source.raw_xml.as_slice())
+    }
+}
+
 impl CT_Sdt {
     /// Borrow every actual stored run capture once, retaining absolute indices.
     #[doc(hidden)]
