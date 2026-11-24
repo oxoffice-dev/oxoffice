@@ -651,7 +651,8 @@ impl Document {
             ));
         }
         let run_count = paragraph.accepted_run_paths().len();
-        let (ranges, across) = self.story_range_inventory()?;
+        let (paired, name_counts) = self.story_range_metadata()?;
+        let (ranges, across) = paired?;
         let existing = ranges.iter().find_map(|entry| {
             let crate::StoryRangeKind::Bookmark { name, .. } = entry.kind() else {
                 return None;
@@ -676,11 +677,15 @@ impl Document {
                         crate::StoryRangeKind::Bookmark { name, .. } => Some(name.as_str()),
                         _ => None,
                     })
+                    .chain(name_counts.keys().map(String::as_str))
                     .collect::<HashSet<_>>();
                 let mut suffix = 1u32;
                 let name = loop {
                     let name = format!("Heading_{suffix}");
-                    if !names.contains(name.as_str()) {
+                    // Two names in different cases are one name to Word.
+                    if !names.iter().any(|existing| {
+                        oxoffice_docx_oxml::text::same_bookmark_name(existing, &name)
+                    }) {
                         break name;
                     }
                     suffix = suffix

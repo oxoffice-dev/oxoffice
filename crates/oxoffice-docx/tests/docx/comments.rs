@@ -1417,6 +1417,52 @@ fn overlapping_bookmarks_are_each_listed_with_their_own_edges() {
 }
 
 #[test]
+fn a_bookmark_start_without_an_end_is_left_out_and_keeps_its_name_and_identifier() {
+    // LibreOffice writes, beside a copied form field, a start with no end
+    // next to a whole bookmark of the same name.
+    let mut doc = doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="Field"/><w:bookmarkStart w:id="1" w:name="Field"/><w:r><w:t>one</w:t></w:r><w:bookmarkEnd w:id="1"/><w:bookmarkStart w:id="2" w:name="lonely"/><w:r><w:t>two</w:t></w:r></w:p>"#,
+    );
+    assert_eq!(listed_ranges(&doc), [("Field".to_owned(), 0, 1)]);
+    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
+    let error = doc
+        .add_story_bookmark("Lonely", story_range(&paragraph, 1, 2))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("already exists"), "{error}");
+    let id = doc
+        .add_story_bookmark("fresh", story_range(&paragraph, 1, 2))
+        .unwrap();
+    assert_eq!(id, 3);
+    let doc = reopen(&mut doc);
+    let mut ranges = listed_ranges(&doc);
+    ranges.sort();
+    assert_eq!(
+        ranges,
+        [("Field".to_owned(), 0, 1), ("fresh".to_owned(), 1, 2)]
+    );
+}
+
+#[test]
+fn a_heading_bookmark_takes_a_name_no_bookmark_start_holds_in_any_case() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="heading_1"/><w:r><w:t>see</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>"#,
+    );
+    let source = doc.paragraph_story_location(0).unwrap().unwrap();
+    let heading = doc.paragraph_story_location(1).unwrap().unwrap();
+    doc.add_heading_hyperlink_at(&source, &heading, "link", None)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert!(
+        listed_ranges(&doc)
+            .iter()
+            .any(|(name, _, _)| name == "Heading_2"),
+        "{:?}",
+        listed_ranges(&doc)
+    );
+}
+
+#[test]
 fn overlapping_comments_leave_every_range_listed_and_editable() {
     let mut doc = doc_with_body(
         r#"<w:p><w:r><w:t>one </w:t></w:r><w:r><w:t>two </w:t></w:r><w:r><w:t>three</w:t></w:r></w:p>"#,
@@ -1473,7 +1519,8 @@ fn overlapping_comments_leave_every_range_listed_and_editable() {
 #[test]
 fn every_corpus_document_lists_its_story_ranges() {
     // Word, Google Docs and LibreOffice all write overlapping comments or
-    // bookmarks with crossing markers in some of these files.
+    // bookmarks with crossing markers in some of these files, and
+    // LibreOffice bookmark starts with no end.
     let files = crate::support::corpus_files("docx");
     let outcomes = crate::support::map_in_parallel(&files, |file| {
         Document::from_bytes(&file.bytes())
@@ -1484,17 +1531,6 @@ fn every_corpus_document_lists_its_story_ranges() {
         .iter()
         .zip(outcomes)
         .filter_map(|(file, outcome)| match outcome {
-            // Known failure #595: LibreOffice's form has bookmark starts with
-            // no end. Once it lists its ranges, drop this arm.
-            Some(Err(error))
-                if file.path == "libreoffice/form.docx" && error.contains("unmatched start") =>
-            {
-                None
-            }
-            Some(Ok(())) if file.path == "libreoffice/form.docx" => Some(format!(
-                "{}: lists its ranges now, drop its known failure (#595)",
-                file.path
-            )),
             Some(Ok(())) => None,
             Some(Err(error)) => Some(format!("{}: {error}", file.path)),
             None => Some(format!("{}: panicked", file.path)),

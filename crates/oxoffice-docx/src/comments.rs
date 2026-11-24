@@ -636,6 +636,18 @@ fn pair_located_story_markers(
             }
             current_source = Some(next_source);
         }
+        // A bookmark start whose identifier has no end anywhere, as
+        // LibreOffice writes beside a copied form field, is no bookmark to
+        // Word: it is left out. Its identifier stays taken (the identifier
+        // scan reserves every start), and its name too (`add_story_bookmark`).
+        if is_start
+            && let Some(identity @ (0, _)) = marker_identity_key(&located[index].3.kind)
+            && identity_counts
+                .get(&identity)
+                .is_some_and(|(_, ends)| *ends == 0)
+        {
+            continue;
+        }
         let key = pairing_key(&located[index].3.kind);
         if is_start {
             open.entry(key).or_default().push(index);
@@ -832,10 +844,16 @@ impl Document {
     /// Add a bookmark across one checked story owner.
     pub fn add_story_bookmark(&mut self, name: &str, range: StoryRunRange) -> Result<i32> {
         validate_bookmark_name(name)?;
-        let (ranges, across) = self.story_range_inventory()?;
+        let (paired, name_counts) = self.story_range_metadata()?;
+        let (ranges, across) = paired?;
+        // Every bookmark start names a bookmark, those left out of the
+        // ranges included.
         if ranges.iter().map(StoryRangeRef::kind).chain(&across).any(|kind| {
             matches!(kind, StoryRangeKind::Bookmark { name: existing, .. } if oxoffice_docx_oxml::text::same_bookmark_name(existing, name))
-        }) {
+        }) || name_counts
+            .keys()
+            .any(|existing| oxoffice_docx_oxml::text::same_bookmark_name(existing, name))
+        {
             return Err(Error::Other(format!("bookmark name {name} already exists")));
         }
         let mut candidate = self.clone_for_staging();
@@ -1243,7 +1261,9 @@ impl Document {
     ///
     /// Each end closes the start of its own identifier, so overlapping
     /// ranges, whose markers cross as Word and Google write them, are listed
-    /// each with its own start and end. Unmatched, reversed, duplicate and
+    /// each with its own start and end. A bookmark start whose identifier
+    /// has no end is left out, as Word ignores it; its name and identifier
+    /// still count as taken. Other unmatched, reversed, duplicate and
     /// cross-part markers are rejected. A unique bookmark, comment or
     /// permission pair with one start and one end in two owners of one part
     /// is omitted when its physical order is valid. Its name and identifier
