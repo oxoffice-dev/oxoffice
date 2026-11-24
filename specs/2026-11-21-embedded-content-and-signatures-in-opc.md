@@ -161,6 +161,38 @@ Each step is reviewed on the local branch before its one push.
 None of these steps edits a file that wave 3 splits. Steps 2 and 3 wait until item 15 is done with pptx `embedded.rs` and opc
 `lib.rs`.
 
+## Amendment 2026-11-24
+
+Taken at the step 3 gate, before step 2 was built; it replaces Word's full-package target check in step 2.
+
+- **Why.** The checks compared part names with raw `==`. Word refused every non-normalised internal target of a signed
+  package (and on remove) only to keep `==` honest: `../%5Fxmlsignatures/origin.sigs` names the origin to a decoder but
+  not to `==`. It still missed case: `../_XMLSIGNATURES/ORIGIN.SIGS` passes the normalised test, opc's lookup finds the
+  origin, `==` does not. The check was neither necessary nor sufficient.
+- **The rule, in opc.**
+  - One canonical part identity, compiled in every build: resolve the target against its source part, percent-decode,
+    collapse dot and empty segments, fold ASCII case. A target holding invalid UTF-8, an encoded `/` or `\`, a control
+    character, a climb above the root or a scheme, or an empty one, names no part and is refused. A target with `\`, `?` or `#` is read
+    every way (as written, `\` as `/`, without its query or fragment); every reading must resolve.
+  - Every comparison of part names in the shared checks uses it: unrelated relationships to the origin or a signature,
+    reachability, the shared VBA target, delete-if-unreachable.
+  - The relationships that define a protected part (origin, signature, OLE, ActiveX control and binary, VBA project
+    and signature, the invalidation markers) still need normalised pack URI targets.
+  - Any other target is refused only when it names no part, or names a protected part without being a normalised pack
+    URI. An image whose target holds a raw space is accepted.
+  - Two stored parts with one identity once decoded are refused as ambiguous by a signed save and an embedded mutation.
+    Opening a package refuses nothing new.
+- **What it changes for Word.**
+  - A signed save and a removal (signed or not) accept an unrelated non-normalised target to an ordinary part.
+  - A signed save refuses an unrelated relationship naming the origin under another case.
+  - Reachability ignores case and escapes: a part still named under another case is kept, and a VBA project whose
+    target another relationship names under another case is refused as shared.
+- **Step 3 shrinks.** PowerPoint gains the same rule: its refusal list loses "any internal relationship with a
+  non-normalised target" and keeps the normalised targets of the protected relationships. The user approved this
+  breaking change on 2026-11-24.
+- **Corpus.** 70 Office files, 3,214 internal relationships: none with `%`, none non-normalised, no case-only alias.
+  Neither rule refuses a file we hold.
+
 ## Links
 
 - [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md), items 15, 22 and 24.

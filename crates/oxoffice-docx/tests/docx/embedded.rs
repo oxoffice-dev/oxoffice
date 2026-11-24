@@ -425,10 +425,9 @@ fn removing_a_signed_vba_project_keeps_or_drops_its_signature_part_by_policy() {
     }
 }
 
-/// Word's reachability compares part names with case today, as PowerPoint
-/// does not.
+/// Reachability compares canonical part identities: case does not count.
 #[test]
-fn removing_ole_content_deletes_a_part_another_relationship_names_under_another_case() {
+fn removing_ole_content_keeps_a_part_another_relationship_names_under_another_case() {
     let mut package = fixture_package();
     package.get_or_create_part_rels(MAIN).add_with_id(
         "rIdOther",
@@ -443,26 +442,22 @@ fn removing_ole_content_deletes_a_part_another_relationship_names_under_another_
     )
     .expect("OLE object removes");
     let saved = saved_package(&mut doc);
-    // Flips in step 2: reachability ignores case.
-    assert!(!saved.contains_part(OLE_PART));
+    assert!(saved.contains_part(OLE_PART));
 }
 
 #[test]
-fn removing_a_vba_project_another_relationship_names_under_another_case_is_not_refused() {
+fn removing_a_vba_project_another_relationship_names_under_another_case_is_refused_as_shared() {
     let mut package = fixture_package();
     package.get_or_create_part_rels(MAIN).add_with_id(
         "rIdOther",
         "http://example.com/relationships/other",
         "VBAPROJECT.BIN",
     );
-    let mut doc = open(&package);
-    // Flips in step 2: reachability ignores case.
-    doc.remove_embedded_content(
-        MAIN,
-        VBA_REL,
-        EmbeddedMutationPolicy::RemoveInvalidatedSignatures,
-    )
-    .expect("the VBA project removes");
+    let error = refusal(act(&package, Act::RemoveVba));
+    assert!(
+        error.contains("is shared by another relationship"),
+        "{error}"
+    );
 }
 
 /// Each refusal PowerPoint gains in step 3, as Word answers it today.
@@ -517,15 +512,7 @@ fn add_image_with_a_space(package: &mut OpcPackage) {
 type Edit = fn(&mut OpcPackage);
 
 /// Cases that need no signature: (name, edit, act, Word's refusal).
-const UNSIGNED_REFUSALS: [(&str, Edit, Act, &str); 10] = [
-    (
-        // Step 2 refuses only targets reaching a protected part: check then
-        // whether this removal is still refused.
-        "remove with an unrelated image target holding a space",
-        add_image_with_a_space,
-        Act::RemoveOle,
-        "has an unsafe internal target media/image 1.png",
-    ),
+const UNSIGNED_REFUSALS: [(&str, Edit, Act, &str); 9] = [
     (
         "OLE relationship with a dot segment",
         |package| {
@@ -629,6 +616,72 @@ fn word_refuses_what_powerpoint_gains_in_step_3_without_a_signature() {
         let error = refusal(act(&package, operation));
         assert!(error.contains(message), "{name}: {error}");
     }
+}
+
+/// Only a target that reaches a protected part, or names no part, is
+/// refused: an odd target to an ordinary part is not.
+#[test]
+fn removing_content_with_an_unrelated_image_target_holding_a_space_is_accepted() {
+    for operation in [Act::RemoveOle, Act::RemoveVba] {
+        let mut package = fixture_package();
+        add_image_with_a_space(&mut package);
+        act(&package, operation).unwrap_or_else(|error| panic!("{operation:?}: {error}"));
+    }
+}
+
+/// Cases where a relationship unrelated to embedded content is refused:
+/// (name, source part, target).
+const UNRELATED_TARGET_REFUSALS: [(&str, &str, &str); 4] = [
+    (
+        "an escaped alias of the VBA project",
+        MAIN,
+        "vbaProject%2Ebin",
+    ),
+    (
+        "a backslash reading of the VBA project",
+        MAIN,
+        "..\\word\\vbaProject.bin",
+    ),
+    ("an escaped separator", MAIN, "media%2Fimage.png"),
+    (
+        "a climb above the package root",
+        MAIN,
+        "../../media/image.png",
+    ),
+];
+
+#[test]
+fn removing_content_refuses_a_target_that_names_no_part_or_a_protected_part_oddly() {
+    for (name, source, target) in UNRELATED_TARGET_REFUSALS {
+        let mut package = fixture_package();
+        package.get_or_create_part_rels(source).add_with_id(
+            "rIdOdd",
+            "http://example.com/relationships/other",
+            target,
+        );
+        let error = refusal(act(&package, Act::RemoveOle));
+        assert!(
+            error.contains("relationship rIdOdd has an unsafe internal target"),
+            "{name}: {error}"
+        );
+    }
+}
+
+/// Two stored parts that name one part once percent-decoded open as they
+/// did, but an embedded mutation refuses them as ambiguous.
+#[test]
+fn removing_content_refuses_two_parts_that_name_one_part_once_decoded() {
+    let mut package = fixture_package();
+    add_part(&mut package, "/word/media/a b.png", "image/png", b"one");
+    add_part(&mut package, "/word/media/a%20b.png", "image/png", b"two");
+    let mut doc = open(&package);
+    doc.embedded_content().expect("an unsigned inventory");
+    let error = refusal(doc.remove_embedded_content(
+        MAIN,
+        OLE_REL,
+        EmbeddedMutationPolicy::RemoveInvalidatedSignatures,
+    ));
+    assert!(error.contains("ambiguous part names"), "{error}");
 }
 
 #[test]
@@ -821,35 +874,87 @@ mod signed {
         }
     }
 
+    /// The image target reaches an ordinary part: the edited document saves,
+    /// its signature marked invalidated, whether the image came before or
+    /// after the signature.
     #[test]
-    fn a_signed_document_does_not_save_with_an_image_target_holding_a_space() {
-        let mut package = fixture_package();
-        add_image_with_a_space(&mut package);
-        sign(&mut package);
-        // Flips in step 2: only targets reaching a protected part are refused.
-        let error = refusal(act(&package, Act::SaveAfterEdit));
-        assert!(
-            error.contains("has an unsafe internal target media/image 1.png"),
-            "{error}"
-        );
+    fn a_signed_document_saves_with_an_image_target_holding_a_space() {
+        for image_before_signing in [true, false] {
+            let mut package = fixture_package();
+            if image_before_signing {
+                add_image_with_a_space(&mut package);
+                sign(&mut package);
+            } else {
+                sign(&mut package);
+                add_image_with_a_space(&mut package);
+            }
+            let mut doc = open(&package);
+            doc.add_paragraph("edited");
+            let saved = saved_package(&mut doc);
+            assert!(
+                marks_package_signature_invalidated(&saved),
+                "image before signing: {image_before_signing}"
+            );
+            assert!(saved.contains_part(IMAGE_PART));
+        }
     }
 
     #[test]
-    fn a_signed_document_saves_with_an_unrelated_relationship_naming_the_origin_under_another_case()
-    {
+    fn removing_content_from_a_signed_document_with_an_image_target_holding_a_space_is_accepted() {
+        let mut package = fixture_package();
+        add_image_with_a_space(&mut package);
+        sign(&mut package);
+        act(&package, Act::RemoveOle).expect("the OLE object removes");
+    }
+
+    /// Aliases of the origin through an escape or another reading, besides
+    /// case: (name, target).
+    const ORIGIN_ALIASES: [(&str, &str); 3] = [
+        ("an escaped underscore", "../%5Fxmlsignatures/origin.sigs"),
+        ("a backslash", "..\\_xmlsignatures\\origin.sigs"),
+        ("a query", "../_xmlsignatures/origin.sigs?x=1"),
+    ];
+
+    #[test]
+    fn a_signed_document_does_not_save_with_an_unrelated_relationship_naming_the_origin_by_an_alias()
+     {
+        for (name, target) in ORIGIN_ALIASES {
+            let mut package = signed_fixture_package();
+            package.get_or_create_part_rels(MAIN).add_with_id(
+                "rIdOrigin",
+                rel_types::IMAGE,
+                target,
+            );
+            let error = refusal(act(&package, Act::SaveAfterEdit));
+            assert!(
+                error.contains("relationship rIdOrigin targets package signature part")
+                    || error.contains("relationship rIdOrigin has an unsafe internal target"),
+                "{name}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_signed_document_does_not_save_with_an_unrelated_relationship_naming_the_origin_under_another_case()
+     {
         let mut package = signed_fixture_package();
         package.get_or_create_part_rels(MAIN).add_with_id(
             "rIdOrigin",
             rel_types::IMAGE,
             "../_XMLSIGNATURES/ORIGIN.SIGS",
         );
-        // Flips in step 2: canonical identity catches the case alias.
-        act(&package, Act::SaveAfterEdit).expect("the edited document saves");
+        let error = refusal(act(&package, Act::SaveAfterEdit));
+        assert!(
+            error.contains(
+                "unrelated relationship rIdOrigin targets package signature part /_XMLSIGNATURES/ORIGIN.SIGS"
+            ),
+            "{error}"
+        );
     }
 
     /// Cases on a signed package, edited after signing: (name, edit, act,
     /// Word's refusal).
-    const SIGNED_REFUSALS: [(&str, Edit, Act, &str); 7] = [
+    const SIGNED_REFUSALS: [(&str, Edit, Act, &str); 6] = [
         (
             "origin part with another content type",
             |package| {
@@ -918,13 +1023,6 @@ mod signed {
             },
             Act::SaveAfterEdit,
             "has an unsafe internal target ./sig1.xml",
-        ),
-        (
-            // Flips in step 2: only targets reaching a protected part are refused.
-            "an unrelated image target holding a space, added after signing",
-            add_image_with_a_space,
-            Act::SaveAfterEdit,
-            "has an unsafe internal target media/image 1.png",
         ),
     ];
 

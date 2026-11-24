@@ -8,10 +8,18 @@
 //! format: which parts can own embedded content, the owner references in
 //! one of them, removing one, and staging and committing a candidate.
 //!
+//! Part names are compared by their canonical identity (see `identity`):
+//! resolved, percent-decoded, dot segments collapsed, ASCII case folded.
+//! The relationships that define a protected part (the signature origin
+//! and signatures, embedded objects, ActiveX parts, the VBA project and its
+//! signature) need normalised pack URI targets; any other target is refused
+//! only when it names no part, or names a protected part without being a
+//! normalised pack URI.
+//!
 //! Compiled in every build: unlike the `signature` module, nothing here
 //! verifies or creates a signature.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 
 use oxoffice_core::xml::{XmlLexicalError, validate_strict_xml_1_0};
@@ -23,6 +31,10 @@ use sha2::{Digest, Sha256};
 
 use crate::OpcPackage;
 use crate::relationship::{Relationship, rel_types};
+
+use identity::{stored_part_identity, target_identities};
+
+mod identity;
 
 const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const STRICT_R_NS: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships";
@@ -263,6 +275,7 @@ pub fn replace_embedded_content<H: EmbeddedHost>(
 ) -> std::result::Result<EmbeddedContentInfo, H::Error> {
     validate_identity_source(source_part)?;
     let mut staged = host.stage_candidate()?;
+    reject_part_identity_collisions(staged.embedded_package())?;
     let selected = find_embedded_content(&staged, source_part, relationship_id)?;
     staged
         .embedded_package_mut()
@@ -281,6 +294,7 @@ pub fn remove_embedded_content<H: EmbeddedHost>(
 ) -> std::result::Result<(), H::Error> {
     validate_identity_source(source_part)?;
     let mut staged = host.stage_candidate()?;
+    reject_part_identity_collisions(staged.embedded_package())?;
     let selected = find_embedded_content(&staged, source_part, relationship_id)?;
     remove_embedded_content_in_place(&mut staged, &selected, policy)?;
     host.commit_candidate(staged)
@@ -1123,29 +1137,136 @@ fn relationship_target_is_reachable_except(
     candidate: &str,
     excluded: Option<(&str, &str)>,
 ) -> Result<bool> {
-    for relationship in &package.package_rels.items {
-        if excluded == Some(("/", relationship.id.as_str())) {
+    let candidate = stored_part_identity(candidate);
+    Ok(internal_targets(package)?.iter().any(|target| {
+        excluded != Some((target.source_part, target.relationship.id.as_str()))
+            && target.identities.contains(&candidate)
+    }))
+}
+
+/// One internal relationship of the package and every part identity its
+/// target can name.
+struct InternalTarget<'a> {
+    /// `/` for a package relationship.
+    source_part: &'a str,
+    from_package: bool,
+    relationship: &'a Relationship,
+    identities: Vec<String>,
+}
+
+/// Whether a relationship of this type defines a part the checks protect:
+/// the signature origin and signatures, embedded objects, ActiveX controls
+/// and binaries, the VBA project and its signature, and the invalidation
+/// markers that name them. Its target must be a normalised pack URI.
+fn defines_protected_part(relationship: &Relationship) -> bool {
+    matches!(
+        relationship.rel_type.as_str(),
+        rel_types::DIGITAL_SIGNATURE_ORIGIN
+            | rel_types::DIGITAL_SIGNATURE
+            | INVALIDATED_PACKAGE_SIGNATURE
+            | rel_types::OLE_OBJECT
+            | rel_types::STRICT_OLE_OBJECT
+            | rel_types::CONTROL
+            | rel_types::STRICT_CONTROL
+            | rel_types::ACTIVEX_CONTROL_BINARY
+            | rel_types::VBA_PROJECT
+            | rel_types::VBA_PROJECT_SIGNATURE
+            | rel_types::VBA_PROJECT_SIGNATURE_AGILE
+            | INVALIDATED_VBA_SIGNATURE
+    )
+}
+
+/// Every internal relationship of the package with the identities its
+/// target names.
+///
+/// A relationship that defines a protected part needs a normalised pack URI
+/// target. Any other target is refused only when it cannot be resolved, or
+/// when it is not a normalised pack URI and one of its readings names a
+/// protected part. An ordinary part reached through an odd target, such as
+/// an image whose target holds a raw space, is accepted.
+fn internal_targets(package: &OpcPackage) -> Result<Vec<InternalTarget<'_>>> {
+    let package_relationships = package
+        .package_rels
+        .items
+        .iter()
+        .map(|relationship| ("/", true, relationship));
+    let part_relationships = package
+        .part_rels
+        .iter()
+        .flat_map(|(source_part, relationships)| {
+            relationships
+                .items
+                .iter()
+                .map(move |relationship| (source_part.as_str(), false, relationship))
+        });
+    let mut targets = Vec::new();
+    let mut protected = HashSet::new();
+    for (source_part, from_package, relationship) in package_relationships.chain(part_relationships)
+    {
+        if !relationship_is_internal(relationship) {
             continue;
         }
-        if relationship_is_internal(relationship)
-            && safe_internal_target("/", relationship)? == candidate
-        {
-            return Ok(true);
+        if defines_protected_part(relationship) {
+            safe_internal_target(source_part, relationship)?;
+        }
+        let identities = target_identities(source_part, &relationship.target)
+            .map_err(|reason| unsafe_internal_target(source_part, relationship, reason))?;
+        if defines_protected_part(relationship) {
+            protected.extend(identities.iter().cloned());
+        }
+        targets.push(InternalTarget {
+            source_part,
+            from_package,
+            relationship,
+            identities,
+        });
+    }
+    if let Some(target) = targets.iter().find(|target| {
+        !defines_protected_part(target.relationship)
+            && !relationship_target_is_normalized_pack_uri(&target.relationship.target)
+            && target
+                .identities
+                .iter()
+                .any(|identity| protected.contains(identity))
+    }) {
+        return Err(unsafe_internal_target(
+            target.source_part,
+            target.relationship,
+            "it is not a normalised pack URI and names a protected part",
+        ));
+    }
+    Ok(targets)
+}
+
+fn unsafe_internal_target(
+    source_part: &str,
+    relationship: &Relationship,
+    reason: impl std::fmt::Display,
+) -> EmbeddedError {
+    invalid(
+        "resolve embedded content",
+        format!(
+            "{source_part}: relationship {} has an unsafe internal target {}: {reason}",
+            relationship.id, relationship.target
+        ),
+    )
+}
+
+/// Refuses two stored parts that name the same part once percent-decoded:
+/// a target naming one names the other too.
+fn reject_part_identity_collisions(package: &OpcPackage) -> Result<()> {
+    let mut names = package.parts.keys().collect::<Vec<_>>();
+    names.sort_unstable();
+    let mut seen = HashMap::with_capacity(names.len());
+    for name in names {
+        if let Some(other) = seen.insert(stored_part_identity(name), name) {
+            return Err(invalid(
+                "inventory embedded content",
+                format!("parts {other} and {name} name the same part: ambiguous part names"),
+            ));
         }
     }
-    for (source_part, relationships) in &package.part_rels {
-        for relationship in &relationships.items {
-            if excluded == Some((source_part.as_str(), relationship.id.as_str())) {
-                continue;
-            }
-            if relationship_is_internal(relationship)
-                && safe_internal_target(source_part, relationship)? == candidate
-            {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
+    Ok(())
 }
 
 fn active_x_binary_relationship_id(xml: &[u8]) -> Result<Option<String>> {
@@ -1374,7 +1495,7 @@ fn attached_vba_signature_state(package: &OpcPackage, project_part: &str) -> Res
     require_exact_content_type(package, &target, expected_content_type, "VBA signature")?;
     if let Some(marker) = markers.first() {
         let marker_target = safe_internal_target(project_part, marker)?;
-        if marker_target != target {
+        if stored_part_identity(&marker_target) != stored_part_identity(&target) {
             return Err(invalid(
                 "inventory embedded content",
                 format!(
@@ -1485,9 +1606,11 @@ fn package_signature_graph(package: &OpcPackage) -> Result<Option<PackageSignatu
         }
         return Ok(None);
     };
+    reject_part_identity_collisions(package)?;
     let origin_part = safe_internal_target("/", origin)?;
+    let origin_identity = stored_part_identity(&origin_part);
     if let Some(marker) = markers.first()
-        && safe_internal_target("/", marker)? != origin_part
+        && stored_part_identity(&safe_internal_target("/", marker)?) != origin_identity
     {
         return Err(invalid(
             "inventory embedded content",
@@ -1513,7 +1636,7 @@ fn package_signature_graph(package: &OpcPackage) -> Result<Option<PackageSignatu
                 format!("{source_part}: misplaced digital-signature origin relationship"),
             ));
         }
-        if !source_part.eq_ignore_ascii_case(&origin_part)
+        if stored_part_identity(source_part) != origin_identity
             && relationships
                 .items
                 .iter()
@@ -1570,7 +1693,7 @@ fn package_signature_graph(package: &OpcPackage) -> Result<Option<PackageSignatu
     };
     for signature in signatures {
         let signature_part = safe_internal_target(&origin_part, signature)?;
-        if !signature_parts.insert(signature_part.clone()) {
+        if !signature_parts.insert(stored_part_identity(&signature_part)) {
             return Err(invalid(
                 "inventory embedded content",
                 format!("duplicate digital-signature target {signature_part}"),
@@ -1612,53 +1735,42 @@ fn reject_unrelated_signature_incoming(
     package: &OpcPackage,
     graph: &PackageSignatureGraph,
 ) -> Result<()> {
-    let origin_part = &graph.origins[0].1;
+    let origin_part = stored_part_identity(&graph.origins[0].1);
     let signature_parts = graph
         .signatures
         .iter()
-        .map(|(_, part)| part.as_str())
+        .map(|(_, part)| stored_part_identity(part))
         .collect::<HashSet<_>>();
-    for relationship in &package.package_rels.items {
-        if !relationship_is_internal(relationship) {
-            continue;
-        }
-        let target = safe_internal_target("/", relationship)?;
-        let allowed_origin = target == *origin_part
-            && matches!(
-                relationship.rel_type.as_str(),
-                rel_types::DIGITAL_SIGNATURE_ORIGIN | INVALIDATED_PACKAGE_SIGNATURE
-            );
-        if (target == *origin_part && !allowed_origin) || signature_parts.contains(target.as_str())
-        {
+    for target in internal_targets(package)? {
+        let relationship = target.relationship;
+        let reaches_origin = target.identities.contains(&origin_part);
+        let reaches_signature = target
+            .identities
+            .iter()
+            .any(|identity| signature_parts.contains(identity));
+        let refused = if target.from_package {
+            let allowed_origin = reaches_origin
+                && matches!(
+                    relationship.rel_type.as_str(),
+                    rel_types::DIGITAL_SIGNATURE_ORIGIN | INVALIDATED_PACKAGE_SIGNATURE
+                );
+            (reaches_origin && !allowed_origin) || reaches_signature
+        } else {
+            let allowed_signature = stored_part_identity(target.source_part) == origin_part
+                && relationship.rel_type == rel_types::DIGITAL_SIGNATURE
+                && reaches_signature;
+            reaches_origin || (reaches_signature && !allowed_signature)
+        };
+        if refused {
             return Err(invalid(
                 "inventory embedded content",
                 format!(
-                    "/: unrelated relationship {} targets package signature part {target}",
-                    relationship.id
+                    "{}: unrelated relationship {} targets package signature part {}",
+                    target.source_part,
+                    relationship.id,
+                    OpcPackage::resolve_rel_target(target.source_part, &relationship.target)
                 ),
             ));
-        }
-    }
-    for (source_part, relationships) in &package.part_rels {
-        for relationship in &relationships.items {
-            if !relationship_is_internal(relationship) {
-                continue;
-            }
-            let target = safe_internal_target(source_part, relationship)?;
-            let allowed_signature = source_part == origin_part
-                && relationship.rel_type == rel_types::DIGITAL_SIGNATURE
-                && signature_parts.contains(target.as_str());
-            if target == *origin_part
-                || (signature_parts.contains(target.as_str()) && !allowed_signature)
-            {
-                return Err(invalid(
-                    "inventory embedded content",
-                    format!(
-                        "{source_part}: unrelated relationship {} targets package signature part {target}",
-                        relationship.id
-                    ),
-                ));
-            }
         }
     }
     Ok(())
@@ -1974,4 +2086,156 @@ pub fn synchronized_package_mutation_invalidates_signature(
         .iter()
         .any(|relationship| relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN);
     original_signed && candidate_signed && !packages_are_semantically_equal(original, candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ORIGIN: &str = "/_xmlsignatures/origin.sigs";
+    const SIGNATURE: &str = "/_xmlsignatures/sig1.xml";
+    const MAIN: &str = "/word/document.xml";
+
+    /// A package whose signature graph passes its checks: an origin, one
+    /// signature, and a main part with a VBA project.
+    fn signed_package() -> OpcPackage {
+        let mut package = OpcPackage::new();
+        for (part, content_type) in [
+            (ORIGIN, PACKAGE_SIGNATURE_ORIGIN_CONTENT_TYPE),
+            (SIGNATURE, PACKAGE_SIGNATURE_XML_CONTENT_TYPE),
+            (MAIN, "application/xml"),
+            (
+                "/word/vbaProject.bin",
+                "application/vnd.ms-office.vbaProject",
+            ),
+            ("/word/media/image 1.png", "image/png"),
+        ] {
+            package.set_part(part, b"part".to_vec());
+            package.content_types.add_override(part, content_type);
+        }
+        package.package_rels.add_with_id(
+            "rIdOrigin",
+            rel_types::DIGITAL_SIGNATURE_ORIGIN,
+            "_xmlsignatures/origin.sigs",
+        );
+        package.get_or_create_part_rels(ORIGIN).add_with_id(
+            "rId1",
+            rel_types::DIGITAL_SIGNATURE,
+            "sig1.xml",
+        );
+        package.get_or_create_part_rels(MAIN).add_with_id(
+            "rIdVba",
+            rel_types::VBA_PROJECT,
+            "vbaProject.bin",
+        );
+        package
+    }
+
+    fn add_relationship(package: &mut OpcPackage, target: &str) {
+        package.get_or_create_part_rels(MAIN).add_with_id(
+            "rIdOther",
+            "http://example.com/relationships/other",
+            target,
+        );
+    }
+
+    fn refusal<T: std::fmt::Debug>(result: Result<T>) -> String {
+        result.expect_err("refused").to_string()
+    }
+
+    #[test]
+    fn a_signed_package_passes_its_graph_checks() {
+        assert_eq!(has_package_signature(&signed_package()), Ok(true));
+    }
+
+    #[test]
+    fn an_odd_target_to_an_ordinary_part_is_accepted() {
+        let mut package = signed_package();
+        add_relationship(&mut package, "media/image 1.png");
+        assert_eq!(has_package_signature(&package), Ok(true));
+        assert_eq!(
+            relationship_target_is_reachable(&package, "/word/media/image%201.png"),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn a_target_that_names_no_part_is_refused() {
+        for target in ["media%2Fimage.png", "../../image.png", "media/a%FF.png"] {
+            let mut package = signed_package();
+            add_relationship(&mut package, target);
+            let error = refusal(has_package_signature(&package));
+            assert!(
+                error.contains("rIdOther has an unsafe internal target"),
+                "{target}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_odd_target_to_a_protected_part_is_refused() {
+        for target in [
+            "vbaProject%2Ebin",
+            "..\\word\\vbaProject.bin",
+            "vbaProject.bin#x",
+        ] {
+            let mut package = signed_package();
+            add_relationship(&mut package, target);
+            let error = refusal(relationship_target_is_reachable(
+                &package,
+                "/word/other.xml",
+            ));
+            assert!(
+                error.contains("rIdOther has an unsafe internal target"),
+                "{target}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrelated_relationship_naming_the_origin_by_any_alias_is_refused() {
+        for target in [
+            "../_xmlsignatures/origin.sigs",
+            "../_XMLSIGNATURES/ORIGIN.SIGS",
+            "/_XmlSignatures/Origin.Sigs",
+        ] {
+            let mut package = signed_package();
+            add_relationship(&mut package, target);
+            let error = refusal(has_package_signature(&package));
+            assert!(
+                error.contains("unrelated relationship rIdOther targets package signature part"),
+                "{target}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn reachability_ignores_case_and_escapes() {
+        let mut package = signed_package();
+        add_relationship(&mut package, "MEDIA/IMAGE%201.PNG");
+        assert_eq!(
+            relationship_target_is_reachable(&package, "/word/media/image 1.png"),
+            Ok(true)
+        );
+        assert_eq!(
+            relationship_target_is_reachable(&package, "/word/media/image2.png"),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn two_parts_that_name_one_part_once_decoded_are_refused_on_a_signed_package_only() {
+        let mut package = signed_package();
+        package.set_part("/word/media/image%201.png", b"other".to_vec());
+        let error = refusal(has_package_signature(&package));
+        assert!(error.contains("ambiguous part names"), "{error}");
+        assert!(error.contains("/word/media/image 1.png"), "{error}");
+        assert!(error.contains("/word/media/image%201.png"), "{error}");
+
+        let mut unsigned = OpcPackage::new();
+        unsigned.set_part("/word/media/image 1.png", b"one".to_vec());
+        unsigned.set_part("/word/media/image%201.png", b"two".to_vec());
+        assert_eq!(has_package_signature(&unsigned), Ok(false));
+        assert!(refusal(reject_part_identity_collisions(&unsigned)).contains("ambiguous"));
+    }
 }

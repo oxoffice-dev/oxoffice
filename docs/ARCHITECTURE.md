@@ -13,7 +13,8 @@ crates/
   # Format-neutral infrastructure
   oxoffice-core          units, XML helpers, lexical validation, raw XML
                          capture, core / app / custom document properties
-  oxoffice-opc           ZIP and OPC package, relationships, content types
+  oxoffice-opc           ZIP and OPC package, relationships, content types,
+                         embedded-content and package-signature checks
   oxoffice-media         image and media sniffing, dimensions, DPI, MIME
   oxoffice-drawing       DrawingML: colour, transforms, geometry, fills,
                          lines, effects, theme, text body
