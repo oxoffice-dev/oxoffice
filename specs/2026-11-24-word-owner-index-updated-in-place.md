@@ -202,9 +202,10 @@ before, 4.04 and 3.98 ms after, at 25 and 400 paragraphs).
   passes on this change.
 - What it costs elsewhere: the whole-inventory publications now derive the
   records from the walk and store the body owners relative to them.
-  `Paragraph.text`, which takes that route, costs about 5 % more at 25
-  paragraphs and 8 % more at 400 (3.9 -> 4.3 ms, 26.7 -> 28.9 ms, the
-  binding being unoptimised in the `scaling` profile); `Run.text`,
+  `Paragraph.text`, which takes that route, costs about 10 % more at 25
+  paragraphs and 9 % more at 400 (3.85 -> 4.26 ms, 26.9 -> 29.3 ms, the
+  fastest of two alternating measures of each wheel, the binding being
+  unoptimised in the `scaling` profile); `Run.text`,
   `Cell.text` and `Table.add_row` move by 2 % or less. Those routes are the
   later lots of #466.
 - Python suite on a debug build, every splice under the oracles: 2214
