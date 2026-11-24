@@ -31,7 +31,8 @@ def limitations(format: str | None = None) -> list[dict[str, object]]:
     ``"all"``), ``area``, ``title``, ``symptom``, ``workaround`` and ``issue``,
     the number of the GitHub issue that tracks it. Give ``format`` to keep only
     the limitations of one format. The command line equivalent is
-    ``oxoffice limitations [docx|pptx] --json``.
+    ``oxoffice limitations [docx|pptx] --json``, which gives the list under
+    ``limitations``.
     """
     entries = _json.loads(_oxoffice.limitations_json())
     return [entry for entry in entries if format is None or entry["format"] in (format, "all")]

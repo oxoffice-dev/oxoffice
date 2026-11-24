@@ -753,6 +753,7 @@ pub fn convert_input(
     revision_style: RevisionStyle,
     image: ImageOptions<'_>,
     fillable_forms: bool,
+    json_output: bool,
 ) -> Result<()> {
     let extension = file
         .extension()
@@ -775,6 +776,7 @@ pub fn convert_input(
             revision_style,
             image,
             fillable_forms,
+            json_output,
         );
     }
     if to.unwrap_or("docx") != "docx" {
@@ -815,7 +817,36 @@ pub fn convert_input(
         );
     }
     let bytes = imported.document.to_bytes()?;
-    stage_and_publish(&[(destination, bytes)], force)
+    let written = written_json(&destination, None, bytes.len());
+    stage_and_publish(&[(destination, bytes)], force)?;
+    if json_output {
+        print_json(converted_json(file, "docx", None, vec![written]))?;
+    }
+    Ok(())
+}
+
+/// One file `convert` or `render` wrote, for their `--json` records: its
+/// path, the one-based pages it holds when it holds pages, and its size.
+fn written_json(path: &Path, pages: Option<&[usize]>, bytes: usize) -> Value {
+    let mut record = json!({"path": path.display().to_string(), "bytes": bytes});
+    if let Some(pages) = pages {
+        record["pages"] = json!(pages);
+    }
+    record
+}
+
+/// The `--json` record of `convert` and `render`: the input, the output
+/// format, the resolution of a raster output, and the files written.
+fn converted_json(file: &Path, format: &str, dpi: Option<f64>, outputs: Vec<Value>) -> Value {
+    let mut record = json!({
+        "file": file.display().to_string(),
+        "format": format,
+        "outputs": outputs,
+    });
+    if let Some(dpi) = dpi {
+        record["dpi"] = json!(dpi);
+    }
+    record
 }
 
 /// Convert a DOCX file to another format.
@@ -832,6 +863,7 @@ pub fn convert(
     revision_style: RevisionStyle,
     image: ImageOptions<'_>,
     fillable_forms: bool,
+    json_output: bool,
 ) -> Result<()> {
     check_revision_style(revision_view, revision_style)?;
     if fillable_forms && to != "pdf" {
@@ -885,11 +917,19 @@ pub fn convert(
         ensure_output_paths_allowed(std::slice::from_ref(&output_path), file, force)?;
     }
 
+    // The format the record names, one spelling for each.
+    let format_name = match default_ext {
+        "jpg" => "jpeg",
+        other => other,
+    };
+    let mut written = Vec::new();
     let mut stdout = io::stdout().lock();
     match to {
         "pdf" => {
             let layout = render_layout(&doc, &font_refs, render_options)?;
             let bytes = oxoffice_pdf::render_to_pdf_checked(&layout.layout)?;
+            let pages = (1..=layout.layout.pages.len()).collect::<Vec<_>>();
+            written.push(written_json(&output_path, Some(&pages), bytes.len()));
             stage_and_publish(&[(output_path.clone(), bytes)], force)?;
             for diagnostic in &layout.layout.diagnostics {
                 eprintln!("{}", diagnostic.message);
@@ -900,6 +940,7 @@ pub fn convert(
             if let Some(stories) = readable_stories(&doc) {
                 push_html_stories(&mut html, &stories);
             }
+            written.push(written_json(&output_path, None, html.len()));
             stage_and_publish(&[(output_path.clone(), html.into_bytes())], force)?;
             for diagnostic in diagnostics {
                 eprintln!("{diagnostic}");
@@ -910,6 +951,7 @@ pub fn convert(
             if let Some(stories) = readable_stories(&doc) {
                 push_markdown_stories(&mut md, &stories);
             }
+            written.push(written_json(&output_path, None, md.len()));
             stage_and_publish(&[(output_path.clone(), md.into_bytes())], force)?;
             for diagnostic in diagnostics {
                 eprintln!("{diagnostic}");
@@ -932,8 +974,12 @@ pub fn convert(
                     let RasterOutput::MultiPageTiff(tiff) = output else {
                         return Err("TIFF render did not produce one stream".into());
                     };
+                    let pages = selected.iter().map(|page| page + 1).collect::<Vec<_>>();
+                    written.push(written_json(&output_path, Some(&pages), tiff.len()));
                     stage_and_publish(&[(output_path.clone(), tiff)], force)?;
-                    writeln!(stdout, "Written to {}", output_path.display())?;
+                    if !json_output {
+                        writeln!(stdout, "Written to {}", output_path.display())?;
+                    }
                 }
                 RasterFormat::Png { .. } | RasterFormat::Jpeg { .. } => {
                     let output_paths =
@@ -950,9 +996,12 @@ pub fn convert(
                             },
                         )?;
                         staged.stage_bytes(path, &image)?;
+                        written.push(written_json(path, Some(&[page_index + 1]), image.len()));
                     }
                     staged.publish()?;
-                    if output_paths.len() == 1 {
+                    if json_output {
+                        // The record names every file.
+                    } else if output_paths.len() == 1 {
                         writeln!(stdout, "Written to {}", output_path.display())?;
                     } else {
                         let stem = output_path
@@ -972,11 +1021,24 @@ pub fn convert(
             for diagnostic in &layout.layout.diagnostics {
                 eprintln!("{}", diagnostic.message);
             }
+            if json_output {
+                drop(stdout);
+                print_json(converted_json(
+                    file,
+                    format_name,
+                    Some(f64::from(dpi)),
+                    written,
+                ))?;
+            }
             return Ok(());
         }
         _ => unreachable!(),
     }
 
+    if json_output {
+        drop(stdout);
+        return print_json(converted_json(file, format_name, None, written));
+    }
     writeln!(stdout, "Written to {}", output_path.display())?;
     Ok(())
 }
@@ -2483,6 +2545,7 @@ pub fn render(
     force: bool,
     dpi: f64,
     options: RenderOptions<'_>,
+    json_output: bool,
 ) -> Result<()> {
     validate_dpi(dpi)?;
     check_revision_style(options.revision_view, options.revision_style)?;
@@ -2509,6 +2572,11 @@ pub fn render(
     let stem = file.file_stem().unwrap_or_default().to_string_lossy();
     let legacy_single_page = options.page.is_some();
 
+    let format_name = match extension {
+        "jpg" => "jpeg",
+        other => other,
+    };
+    let mut written = Vec::new();
     let mut stdout = io::stdout().lock();
     // Writing into a directory the user named but has not created should not
     // fail with a bare "No such file or directory". Do it after validation and
@@ -2528,17 +2596,21 @@ pub fn render(
             std::fs::create_dir_all(out_dir)?;
             let tiff_len = tiff.len();
             stage_and_publish(&[(out_path.clone(), tiff)], force)?;
-            writeln!(
-                stdout,
-                "Pages {} -> {} ({} bytes)",
-                selected
-                    .iter()
-                    .map(|page| (page + 1).to_string())
-                    .collect::<Vec<_>>()
-                    .join(","),
-                out_path.display(),
-                tiff_len
-            )?;
+            let pages = selected.iter().map(|page| page + 1).collect::<Vec<_>>();
+            written.push(written_json(&out_path, Some(&pages), tiff_len));
+            if !json_output {
+                writeln!(
+                    stdout,
+                    "Pages {} -> {} ({} bytes)",
+                    pages
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    out_path.display(),
+                    tiff_len
+                )?;
+            }
         }
         RasterFormat::Png { .. } | RasterFormat::Jpeg { .. } => {
             let output_paths = selected
@@ -2564,13 +2636,16 @@ pub fn render(
             }
             staged.publish()?;
             for (one_based, out_path, len) in rendered {
-                writeln!(
-                    stdout,
-                    "Page {one_based} -> {} ({len} bytes)",
-                    out_path.display()
-                )?;
+                written.push(written_json(&out_path, Some(&[one_based]), len));
+                if !json_output {
+                    writeln!(
+                        stdout,
+                        "Page {one_based} -> {} ({len} bytes)",
+                        out_path.display()
+                    )?;
+                }
             }
-            if !legacy_single_page {
+            if !legacy_single_page && !json_output {
                 writeln!(stdout, "Rendered {} page(s) at {dpi} DPI", selected.len())?;
             }
         }
@@ -2578,6 +2653,10 @@ pub fn render(
 
     for diagnostic in &layout.layout.diagnostics {
         eprintln!("{}", diagnostic.message);
+    }
+    if json_output {
+        drop(stdout);
+        print_json(converted_json(file, format_name, Some(dpi), written))?;
     }
 
     Ok(())
@@ -2702,7 +2781,7 @@ fn validate_dpi(dpi: f64) -> Result<()> {
 /// table style id that no style defines are structural errors too.
 /// Advisory findings (empty paragraphs, missing metadata) are reported but do
 /// not affect the exit status.
-pub fn validate(file: &Path) -> Result<bool> {
+pub fn validate(file: &Path, json_output: bool) -> Result<bool> {
     let report = oxoffice_docx::validate_document_file(file)?;
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
@@ -2712,14 +2791,39 @@ pub fn validate(file: &Path) -> Result<bool> {
             oxoffice_docx::ValidationSeverity::Warning => warnings.push(finding.message),
         }
     }
-    report_validation(file, &errors, &warnings)
+    report_validation(file, &errors, &warnings, json_output)
 }
 
-fn report_validation(file: &Path, errors: &[String], warnings: &[String]) -> Result<bool> {
-    match print_validation_report(file, errors, warnings) {
+fn report_validation(
+    file: &Path,
+    errors: &[String],
+    warnings: &[String],
+    json_output: bool,
+) -> Result<bool> {
+    let printed = if json_output {
+        validation_json(file, errors, warnings).and_then(|record| {
+            let text = serde_json::to_string_pretty(&record).map_err(io::Error::other)?;
+            writeln!(io::stdout(), "{text}")
+        })
+    } else {
+        print_validation_report(file, errors, warnings)
+    };
+    match printed {
         Err(error) if error.kind() != io::ErrorKind::BrokenPipe => Err(error.into()),
         _ => Ok(errors.is_empty()),
     }
+}
+
+/// The `validate --json` record: the verdict, then the errors and the
+/// warnings as the plain report lists them.
+fn validation_json(file: &Path, errors: &[String], warnings: &[String]) -> io::Result<Value> {
+    json_envelope(json!({
+        "file": file.display().to_string(),
+        "valid": errors.is_empty(),
+        "errors": errors,
+        "warnings": warnings,
+    }))
+    .map_err(io::Error::other)
 }
 
 fn print_validation_report(file: &Path, errors: &[String], warnings: &[String]) -> io::Result<()> {

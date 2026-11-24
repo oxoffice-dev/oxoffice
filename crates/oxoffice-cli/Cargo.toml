@@ -28,6 +28,7 @@ doc = false
 [dependencies]
 clap.workspace = true
 serde_json.workspace = true
+oxoffice-cli-support.workspace = true
 oxoffice-docx-cli = { workspace = true, default-features = false }
 oxoffice-pptx-cli = { workspace = true, default-features = false }
 
