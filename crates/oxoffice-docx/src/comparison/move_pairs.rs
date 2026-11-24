@@ -39,6 +39,53 @@ pub(super) fn pair_moves(
     Ok(pairs)
 }
 
+/// Give the moved paragraphs that end a run of owners one side alone holds
+/// at the end of the body (`run`, see [`trailing_paragraphs`]) one move id,
+/// and return whether that block is the whole run. `side` gives the run's
+/// index on that side, and `edited` names the side.
+///
+/// The run's last paragraph keeps its mark as the story terminator, so its
+/// move goes on the mark before it, and a mark holds one move marker of a
+/// kind. Consecutive moved paragraphs there move as one block, as Word moves
+/// a selection of paragraphs, and the mark before the block carries it.
+pub(super) fn share_trailing_move(
+    aligned: &[(Option<usize>, Option<usize>)],
+    run: Option<(usize, usize)>,
+    side: impl Fn((Option<usize>, Option<usize>)) -> Option<usize>,
+    content: &[BodyContent],
+    moves: &mut MovePairs,
+    edited: bool,
+) -> bool {
+    let Some((first, last)) = run else {
+        return false;
+    };
+    let (own, other) = if edited {
+        (&mut moves.edited, &mut moves.original)
+    } else {
+        (&mut moves.original, &mut moves.edited)
+    };
+    let block = (first..=last)
+        .rev()
+        .map_while(|position| {
+            side(aligned[position]).filter(|index| {
+                matches!(content[*index], BodyContent::Paragraph(_)) && own[*index].is_some()
+            })
+        })
+        .collect::<Vec<_>>();
+    if let Some(shared) = block.last().and_then(|index| own[*index]) {
+        for index in &block {
+            let Some(old) = own[*index].filter(|old| *old != shared) else {
+                continue;
+            };
+            own[*index] = Some(shared);
+            for id in other.iter_mut().filter(|id| **id == Some(old)) {
+                *id = Some(shared);
+            }
+        }
+    }
+    block.len() == last - first + 1
+}
+
 /// Enforce the same whole-owner law on the authored reply-copy producer.
 fn refuse_changed_reply_held_owners(
     original: &Document,

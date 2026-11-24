@@ -85,7 +85,7 @@ use guard::{
     guard_mask_coordinates, guard_source_body_at, guard_story_owners, guard_story_part,
     normalized_story_part,
 };
-use move_pairs::{crossing_reply_additions, pair_moves};
+use move_pairs::{crossing_reply_additions, pair_moves, share_trailing_move};
 use namespaces::{
     actual_root_bindings, declared_prefixes, drawing_signature, element_inner_range_any_prefix,
     foreign_word_binding, required_external_bindings, root_prefix,
@@ -1606,6 +1606,12 @@ struct LeafPublication {
 
 /// A paragraph of the run of owners one side alone holds that ends the
 /// body.
+/// What [`trailing_paragraph`] carries from one paragraph of the run that
+/// ends the body to the next: the properties [`final_paragraph`] merges,
+/// whether a kept table precedes the run, and the moved block the emitted
+/// run paragraphs end with (its move id and the range of the output it fills).
+type TrailingState<'a> = (PropertySide<'a>, bool, Option<(i32, Range<usize>)>);
+
 struct TrailingRun<'a, 'l> {
     content: &'a BodyContent,
     paragraph: &'a CT_P,
