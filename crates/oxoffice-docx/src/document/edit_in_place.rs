@@ -850,4 +850,56 @@ mod tests {
         assert_eq!(document.identifiers, identifiers);
         assert!(!document.in_place.open);
     }
+
+    /// The run "!" appended to the first body paragraph: typed on `live`,
+    /// by the staged byte splice (which repeats the root's namespace
+    /// declarations on the paragraph) with `staged_text` on the oracle's copy.
+    fn check_appended_run(staged_text: &'static str) {
+        let mut document = Document::new();
+        document.add_paragraph("Alpha");
+        let before = document.clone_for_staging();
+        let location = before
+            .direct_body_item_location(0)
+            .unwrap()
+            .expect("the paragraph has a location");
+        let BodyContent::Paragraph(paragraph) = &mut document.document.body.content[0] else {
+            panic!("the first block is the paragraph");
+        };
+        paragraph
+            .insert_accepted_run(1, CT_R::new("!"))
+            .expect("the paragraph takes a run at its end");
+        document.assert_in_place_matches_staged(before, &Ok(()), |staged| {
+            let mut candidate = staged.clone_for_staging();
+            candidate.insert_story_run_staged(
+                &crate::StoryRunPosition {
+                    location,
+                    run_index: 1,
+                },
+                CT_R::new(staged_text),
+            )?;
+            let reopened = candidate.prepare_and_reopen_staged()?;
+            staged.commit_staged_mutation(reopened);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn the_oracle_takes_a_respliced_paragraph_for_the_same_paragraph() {
+        check_appended_run("!");
+    }
+
+    #[test]
+    #[should_panic(expected = "in-place edit saves other bytes than the staged edit")]
+    fn the_oracle_sees_a_difference_inside_a_respliced_paragraph() {
+        check_appended_run("?");
+    }
+
+    #[test]
+    fn only_a_declaration_the_root_makes_is_dropped() {
+        let xml = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:p xmlns:w="urn:w" xmlns:r="urn:other" xmlns:x="urn:x" w:rsidR="1"/></w:document>"#;
+        assert_eq!(
+            String::from_utf8(without_repeated_namespaces(xml)).unwrap(),
+            r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:p xmlns:r="urn:other" xmlns:x="urn:x" w:rsidR="1"/></w:document>"#
+        );
+    }
 }
