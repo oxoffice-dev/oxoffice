@@ -464,6 +464,36 @@ fn removing_a_signed_vba_project_keeps_or_drops_its_signature_part_by_policy() {
 
 /// Reachability compares part names without case, as OPC requires.
 #[test]
+fn removing_an_activex_control_removes_the_other_parts_its_properties_held() {
+    // A picture property: the properties part's second relationship.
+    let mut package = fixture_package();
+    add_part(
+        &mut package,
+        "/ppt/media/image5.emf",
+        "image/x-emf",
+        b"not really an EMF",
+    );
+    package.get_or_create_part_rels(CONTROL_PART).add_with_id(
+        "rId2",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+        "../media/image5.emf",
+    );
+    let mut prs = open(&package);
+    prs.remove_embedded_content(
+        CONTROL_PART,
+        "rId1",
+        EmbeddedMutationPolicy::RemoveInvalidatedSignatures,
+    )
+    .expect("the ActiveX control removes");
+    let saved = saved_package(&prs);
+    assert!(!saved.contains_part(CONTROL_PART));
+    assert!(
+        !saved.contains_part("/ppt/media/image5.emf"),
+        "the picture goes with it"
+    );
+}
+
+#[test]
 fn removing_ole_content_keeps_a_part_another_relationship_names_under_another_case() {
     let mut package = fixture_package();
     package.get_or_create_part_rels(SLIDE).add_with_id(
@@ -667,12 +697,28 @@ const UNSIGNED_CASES: [(&str, Edit, Act); 11] = [
     ),
 ];
 
+/// What each of [`UNSIGNED_CASES`] is refused for, in its order.
+const UNSIGNED_REASONS: [&str; 11] = [
+    "unsafe internal target ./../embeddings/oleObject1.bin",
+    "unsafe internal target ./vbaProject.bin",
+    "has an external target",
+    "VBA signature has content type",
+    "ActiveX properties has content type",
+    "XML declaration version must be 1.0",
+    "XML declaration attributes are invalid",
+    "found 2 ActiveX binary relationships",
+    "found 2 VBA project relationships",
+    "is shared by another relationship",
+    "is shared by another relationship",
+];
+
 #[test]
 fn powerpoint_refuses_what_word_refuses_without_a_signature() {
-    for (name, edit, operation) in UNSIGNED_CASES {
+    for ((name, edit, operation), reason) in UNSIGNED_CASES.into_iter().zip(UNSIGNED_REASONS) {
         let mut package = fixture_package();
         edit(&mut package);
-        act(&package, operation).expect_err(name);
+        let error = act(&package, operation).expect_err(name).to_string();
+        assert!(error.contains(reason), "{name}: {error}");
     }
 }
 
@@ -889,12 +935,26 @@ mod signed {
         ),
     ];
 
+    /// What each of [`SIGNED_CASES`] is refused for, in its order.
+    const SIGNED_REASONS: [&str; 7] = [
+        "package signature origin has content type",
+        "package XML signature has content type",
+        "targets package signature part /_xmlsignatures/origin.sigs",
+        "targets package signature part /_xmlsignatures/sig1.xml",
+        "unsafe internal target ./_xmlsignatures/origin.sigs",
+        "unsafe internal target ./sig1.xml",
+        "targets package signature part /_XMLSIGNATURES/ORIGIN.SIGS",
+    ];
+
     #[test]
     fn powerpoint_refuses_what_word_refuses_on_a_signed_package() {
-        for (name, edit) in SIGNED_CASES {
+        for ((name, edit), reason) in SIGNED_CASES.into_iter().zip(SIGNED_REASONS) {
             let mut package = signed_fixture_package();
             edit(&mut package);
-            act(&package, Act::SaveAfterEdit).expect_err(name);
+            let error = act(&package, Act::SaveAfterEdit)
+                .expect_err(name)
+                .to_string();
+            assert!(error.contains(reason), "{name}: {error}");
         }
     }
 

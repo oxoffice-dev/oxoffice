@@ -427,6 +427,36 @@ fn removing_a_signed_vba_project_keeps_or_drops_its_signature_part_by_policy() {
 
 /// Reachability compares canonical part identities: case does not count.
 #[test]
+fn removing_an_activex_control_removes_the_other_parts_its_properties_held() {
+    // A picture property: the properties part's second relationship.
+    let mut package = fixture_package();
+    add_part(
+        &mut package,
+        "/word/media/image5.emf",
+        "image/x-emf",
+        b"not really an EMF",
+    );
+    package.get_or_create_part_rels(CONTROL_PART).add_with_id(
+        "rId2",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+        "../media/image5.emf",
+    );
+    let mut doc = open(&package);
+    doc.remove_embedded_content(
+        CONTROL_PART,
+        "rId1",
+        EmbeddedMutationPolicy::RemoveInvalidatedSignatures,
+    )
+    .expect("the ActiveX control removes");
+    let saved = saved_package(&mut doc);
+    assert!(!saved.contains_part(CONTROL_PART));
+    assert!(
+        !saved.contains_part("/word/media/image5.emf"),
+        "the picture goes with it"
+    );
+}
+
+#[test]
 fn removing_ole_content_keeps_a_part_another_relationship_names_under_another_case() {
     let mut package = fixture_package();
     package.get_or_create_part_rels(MAIN).add_with_id(
@@ -516,7 +546,7 @@ fn removing_a_vba_project_held_by_a_main_part_relationship_set_under_another_cas
     act(&reopened, Act::RemoveVba).expect("the VBA project removes");
 }
 
-/// Each refusal PowerPoint gains in step 3, as Word answers it today.
+/// Each refusal both facades make, as Word answers it.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(not(feature = "digital-signatures"), allow(dead_code))]
 enum Act {
@@ -665,7 +695,7 @@ const UNSIGNED_REFUSALS: [(&str, Edit, Act, &str); 9] = [
 ];
 
 #[test]
-fn word_refuses_what_powerpoint_gains_in_step_3_without_a_signature() {
+fn word_refuses_what_powerpoint_refuses_without_a_signature() {
     for (name, edit, operation, message) in UNSIGNED_REFUSALS {
         let mut package = fixture_package();
         edit(&mut package);
@@ -1154,7 +1184,7 @@ mod signed {
     ];
 
     #[test]
-    fn word_refuses_what_powerpoint_gains_in_step_3_on_a_signed_package() {
+    fn word_refuses_what_powerpoint_refuses_on_a_signed_package() {
         for (name, edit, operation, message) in SIGNED_REFUSALS {
             let mut package = signed_fixture_package();
             edit(&mut package);
