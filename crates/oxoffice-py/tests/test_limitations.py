@@ -15,7 +15,9 @@ def cli_limitations(*args):
         # The command line writes UTF-8, whatever the platform's locale.
         encoding="utf-8",
     ).stdout
-    return json.loads(out)
+    record = json.loads(out)
+    assert record["schema"] == 1
+    return record["limitations"]
 
 
 def test_limitations_match_the_command_line():

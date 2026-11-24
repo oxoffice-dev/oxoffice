@@ -44,7 +44,7 @@ struct LimitationsArgs {
     /// Only the limitations of this format
     #[arg(value_parser = ["docx", "pptx", "xlsx"])]
     format: Option<String>,
-    /// Output the limitations as a JSON array
+    /// Output the limitations as schema-1 JSON, under `limitations`
     #[arg(long)]
     json: bool,
 }
@@ -91,7 +91,11 @@ fn limitations(args: &LimitationsArgs) {
         .collect();
     let mut out = std::io::stdout().lock();
     if args.json {
-        let json = serde_json::to_string_pretty(&selected).expect("entries serialise");
+        let record = oxoffice_cli_support::json_envelope(serde_json::json!({
+            "limitations": selected,
+        }))
+        .expect("the record is an object without a schema key");
+        let json = serde_json::to_string_pretty(&record).expect("entries serialise");
         let _ = writeln!(out, "{json}");
         return;
     }

@@ -16,7 +16,13 @@ fn limitations(args: &[&str]) -> Vec<serde_json::Value> {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_slice(&output.stdout).expect("the output is a JSON array")
+    let record: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("the output is a JSON object");
+    assert_eq!(record["schema"], 1, "the record carries the CLI schema");
+    record["limitations"]
+        .as_array()
+        .expect("the limitations are an array")
+        .clone()
 }
 
 #[test]

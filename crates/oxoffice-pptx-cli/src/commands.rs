@@ -362,6 +362,39 @@ fn print_json(payload: Value) -> Result<()> {
     Ok(())
 }
 
+/// One file `convert`, `render` or `thumbnail` wrote, for their `--json`
+/// records: its path, the one-based slides it holds when it holds slides, and
+/// its size.
+fn written_json(path: &Path, slides: Option<&[usize]>, bytes: usize) -> Value {
+    let mut record = json!({"path": path.display().to_string(), "bytes": bytes});
+    if let Some(slides) = slides {
+        record["slides"] = json!(slides);
+    }
+    record
+}
+
+/// The `--json` record of `convert`, `render` and `thumbnail`: the input, the
+/// output format, the resolution of a raster output, and the files written.
+fn converted_json(file: &Path, format: &str, dpi: Option<f64>, outputs: Vec<Value>) -> Value {
+    let mut record = json!({
+        "file": file.display().to_string(),
+        "format": format,
+        "outputs": outputs,
+    });
+    if let Some(dpi) = dpi {
+        record["dpi"] = json!(dpi);
+    }
+    record
+}
+
+/// The name a record gives an image format, one spelling for each.
+fn format_name(extension: &str) -> &str {
+    match extension {
+        "jpg" => "jpeg",
+        other => other,
+    }
+}
+
 fn write_render_diagnostics(diagnostics: &[oxoffice_layout::Diagnostic]) -> Result<()> {
     let mut stderr = io::stderr().lock();
     for diagnostic in diagnostics {
@@ -383,6 +416,7 @@ pub fn convert_semantic(
     output: Option<&Path>,
     force: bool,
     options: oxoffice_pptx::PresentationTextExportOptions,
+    as_json: bool,
 ) -> Result<()> {
     let presentation = Presentation::open(file)?;
     let result = match format {
@@ -408,9 +442,20 @@ pub fn convert_semantic(
         .map(|(path, _)| path.clone())
         .collect::<Vec<_>>();
     ensure_output_paths_allowed(&paths, file, force)?;
+    // The document is the last output, after the images it refers to.
+    let mut written = outputs
+        .iter()
+        .map(|(path, bytes)| written_json(path, None, bytes.len()))
+        .collect::<Vec<_>>();
+    let document = written.pop().expect("the document is an output");
     stage_and_publish(&outputs, force)?;
     for diagnostic in result.diagnostics {
         eprintln!("Semantic export: {diagnostic}");
+    }
+    if as_json {
+        let mut record = converted_json(file, format, None, vec![document]);
+        record["assets"] = json!(written);
+        return print_json(record);
     }
     println!("Written to {}", output.display());
     Ok(())
@@ -423,6 +468,7 @@ pub fn convert(
     force: bool,
     dpi: f64,
     image: ImageOptions<'_>,
+    as_json: bool,
 ) -> Result<()> {
     validate_dpi(dpi)?;
     let presentation = Presentation::open(file)?;
@@ -454,13 +500,20 @@ pub fn convert(
     if !matches!(format, "png" | "jpg" | "jpeg") {
         ensure_output_paths_allowed(std::slice::from_ref(&output), file, force)?;
     }
+    let mut written = Vec::new();
     let mut stdout = io::stdout().lock();
     match format {
         "pdf" => {
             let (bytes, diagnostics) =
                 presentation.to_pdf_with_diagnostics(&font_refs, render_options(&image))?;
+            let slides = (1..=presentation.len()).collect::<Vec<_>>();
+            written.push(written_json(&output, Some(&slides), bytes.len()));
             stage_and_publish(&[(output.clone(), bytes)], force)?;
             write_render_diagnostics(&diagnostics)?;
+            if as_json {
+                drop(stdout);
+                return print_json(converted_json(file, "pdf", None, written));
+            }
             writeln!(stdout, "Written to {}", output.display())?;
         }
         "png" | "jpg" | "jpeg" | "tif" | "tiff" => {
@@ -493,8 +546,12 @@ pub fn convert(
                     let RasterOutput::MultiPageTiff(tiff) = output_bytes else {
                         return Err("TIFF render did not produce one stream".into());
                     };
+                    let slides = selected.iter().map(|index| index + 1).collect::<Vec<_>>();
+                    written.push(written_json(&output, Some(&slides), tiff.len()));
                     stage_and_publish(&[(output.clone(), tiff)], force)?;
-                    writeln!(stdout, "Written to {}", output.display())?;
+                    if !as_json {
+                        writeln!(stdout, "Written to {}", output.display())?;
+                    }
                 }
                 RasterFormat::Png { .. } | RasterFormat::Jpeg { .. } => {
                     let output_paths =
@@ -508,22 +565,38 @@ pub fn convert(
                         let image =
                             render_one_raster_page(&layout, *index, RasterOptions { dpi, format })?;
                         staged.stage_bytes(path, &image)?;
+                        written.push(written_json(path, Some(&[index + 1]), image.len()));
                         rendered.push((one_based + 1, path.clone()));
                     }
                     staged.publish()?;
-                    for (one_based, path) in rendered {
-                        writeln!(stdout, "Slide {one_based} -> {}", path.display())?;
+                    if !as_json {
+                        for (one_based, path) in rendered {
+                            writeln!(stdout, "Slide {one_based} -> {}", path.display())?;
+                        }
                     }
                 }
             }
             write_render_diagnostics(&layout.diagnostics)?;
+            if as_json {
+                drop(stdout);
+                return print_json(converted_json(
+                    file,
+                    format_name(extension),
+                    Some(dpi),
+                    written,
+                ));
+            }
         }
         _ => unreachable!(),
     }
     Ok(())
 }
 
-pub fn diff(file_a: &Path, file_b: &Path) -> Result<()> {
+/// Compare the text of each slide of two presentations. Between two slides
+/// the longest common subsequence matches, the slides of the first file are
+/// removed and those of the second added; `--json` pairs them in order as
+/// changed slides, as `docx diff --json` pairs paragraphs.
+pub fn diff(file_a: &Path, file_b: &Path, as_json: bool) -> Result<()> {
     let presentation_a = Presentation::open(file_a)?;
     let presentation_b = Presentation::open(file_b)?;
     let text_a = presentation_a
@@ -535,28 +608,85 @@ pub fn diff(file_a: &Path, file_b: &Path) -> Result<()> {
         .map(|slide| slide.text())
         .collect::<Vec<_>>();
     let common = longest_common_subsequence(&text_a, &text_b)?;
+    // Each gap between two matched slides: the zero-based slides of the
+    // first file it removes, then those of the second it adds.
+    let mut gaps: Vec<(Vec<usize>, Vec<usize>)> = Vec::new();
     let mut a = 0;
     let mut b = 0;
-    let mut stdout = io::stdout().lock();
-    for value in common {
-        while text_a.get(a) != Some(&value) {
-            writeln!(stdout, "- [{}] {}", a + 1, text_a[a])?;
+    for value in &common {
+        let mut gap = (Vec::new(), Vec::new());
+        while text_a.get(a) != Some(value) {
+            gap.0.push(a);
             a += 1;
         }
-        while text_b.get(b) != Some(&value) {
-            writeln!(stdout, "+ [{}] {}", b + 1, text_b[b])?;
+        while text_b.get(b) != Some(value) {
+            gap.1.push(b);
             b += 1;
         }
+        gaps.push(gap);
         a += 1;
         b += 1;
     }
-    while a < text_a.len() {
-        writeln!(stdout, "- [{}] {}", a + 1, text_a[a])?;
-        a += 1;
+    gaps.push(((a..text_a.len()).collect(), (b..text_b.len()).collect()));
+
+    if as_json {
+        let side = |slide: Option<&usize>, text: &[String]| {
+            slide.map_or((Value::Null, Value::Null), |slide| {
+                (json!((slide + 1).to_string()), json!(text[*slide]))
+            })
+        };
+        let (mut changed, mut added, mut removed) = (0, 0, 0);
+        let mut differences = Vec::new();
+        for (gone, new) in &gaps {
+            for index in 0..gone.len().max(new.len()) {
+                let (old, new) = (gone.get(index), new.get(index));
+                let change = match (old, new) {
+                    (Some(_), Some(_)) => {
+                        changed += 1;
+                        "changed"
+                    }
+                    (None, Some(_)) => {
+                        added += 1;
+                        "added"
+                    }
+                    (Some(_), None) => {
+                        removed += 1;
+                        "removed"
+                    }
+                    (None, None) => unreachable!("a change has at least one side"),
+                };
+                let (location_a, text_a) = side(old, &text_a);
+                let (location_b, text_b) = side(new, &text_b);
+                differences.push(json!({
+                    "change": change,
+                    "story": "slide",
+                    "location_a": location_a,
+                    "text_a": text_a,
+                    "location_b": location_b,
+                    "text_b": text_b,
+                }));
+            }
+        }
+        return print_json(json!({
+            "file_a": file_a.display().to_string(),
+            "file_b": file_b.display().to_string(),
+            "scope": "slide-text",
+            "changed": changed,
+            "added": added,
+            "removed": removed,
+            "differences": differences,
+            "not_compared": Vec::<String>::new(),
+        }));
     }
-    while b < text_b.len() {
-        writeln!(stdout, "+ [{}] {}", b + 1, text_b[b])?;
-        b += 1;
+
+    let mut stdout = io::stdout().lock();
+    for (gone, new) in &gaps {
+        for slide in gone {
+            writeln!(stdout, "- [{}] {}", slide + 1, text_a[*slide])?;
+        }
+        for slide in new {
+            writeln!(stdout, "+ [{}] {}", slide + 1, text_b[*slide])?;
+        }
     }
     Ok(())
 }
@@ -674,8 +804,25 @@ pub fn replace(
     Ok(())
 }
 
-pub fn validate(file: &Path) -> Result<bool> {
+pub fn validate(file: &Path, as_json: bool) -> Result<bool> {
     let issues = oxoffice_pptx::validate_presentation_file(file)?;
+    if as_json {
+        // Every issue fails the validation: they are the errors, and a
+        // presentation has no warnings, as `docx validate --json` words it.
+        let errors = issues.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let record = json_envelope(json!({
+            "file": file.display().to_string(),
+            "valid": issues.is_empty(),
+            "errors": errors,
+            "warnings": Vec::<String>::new(),
+        }))?;
+        if let Err(error) = writeln!(io::stdout(), "{}", serde_json::to_string_pretty(&record)?)
+            && error.kind() != io::ErrorKind::BrokenPipe
+        {
+            return Err(error.into());
+        }
+        return Ok(issues.is_empty());
+    }
     for issue in &issues {
         eprintln!("{issue}");
     }
@@ -700,6 +847,7 @@ pub fn render(
     dpi: f64,
     format: &str,
     image: ImageOptions<'_>,
+    as_json: bool,
 ) -> Result<()> {
     validate_dpi(dpi)?;
     let presentation = Presentation::open(file)?;
@@ -724,6 +872,7 @@ pub fn render(
             .ok_or_else(|| format!("slide {} has no rendered page", index + 1))?;
         validate_raster_dimensions(page.width, page.height, dpi)?;
     }
+    let mut written = Vec::new();
     let mut stdout = io::stdout().lock();
     match format {
         RasterFormat::Tiff => {
@@ -735,8 +884,12 @@ pub fn render(
                 return Err("TIFF render did not produce one stream".into());
             };
             std::fs::create_dir_all(output)?;
+            let slides = selected.iter().map(|index| index + 1).collect::<Vec<_>>();
+            written.push(written_json(&path, Some(&slides), tiff.len()));
             stage_and_publish(&[(path.clone(), tiff)], force)?;
-            writeln!(stdout, "Written to {}", path.display())?;
+            if !as_json {
+                writeln!(stdout, "Written to {}", path.display())?;
+            }
         }
         RasterFormat::Png { .. } | RasterFormat::Jpeg { .. } => {
             let output_paths = selected
@@ -754,15 +907,27 @@ pub fn render(
                 let one_based = index + 1;
                 let image = render_one_raster_page(&layout, *index, RasterOptions { dpi, format })?;
                 staged.stage_bytes(path, &image)?;
+                written.push(written_json(path, Some(&[one_based]), image.len()));
                 rendered.push((one_based, path.clone()));
             }
             staged.publish()?;
-            for (one_based, path) in rendered {
-                writeln!(stdout, "Slide {one_based} -> {}", path.display())?;
+            if !as_json {
+                for (one_based, path) in rendered {
+                    writeln!(stdout, "Slide {one_based} -> {}", path.display())?;
+                }
             }
         }
     }
     write_render_diagnostics(&layout.diagnostics)?;
+    if as_json {
+        drop(stdout);
+        return print_json(converted_json(
+            file,
+            format_name(extension),
+            Some(dpi),
+            written,
+        ));
+    }
 
     Ok(())
 }
@@ -773,6 +938,7 @@ pub fn thumbnail(
     force: bool,
     font_dir: Option<&Path>,
     bundled_fonts_only: bool,
+    as_json: bool,
 ) -> Result<()> {
     let fonts = font_dir
         .map(oxoffice_layout::FontFile::from_dir)
@@ -805,8 +971,12 @@ pub fn thumbnail(
     validate_raster_dimensions(page.width, page.height, dpi)?;
     let png = oxoffice_pdf::render_page_to_png(&layout, 0, dpi)
         .ok_or("slide one did not rasterize for thumbnail")?;
+    let written = written_json(&output, Some(&[1]), png.len());
     stage_and_publish(&[(output.clone(), png)], force)?;
     write_render_diagnostics(&layout.diagnostics)?;
+    if as_json {
+        return print_json(converted_json(file, "png", None, vec![written]));
+    }
     writeln!(io::stdout(), "Written to {}", output.display())?;
     Ok(())
 }
