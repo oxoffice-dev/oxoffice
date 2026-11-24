@@ -106,6 +106,9 @@ impl EditUndo {
 #[derive(Default)]
 pub(super) struct InPlaceState {
     open: bool,
+    /// The units of the open call, which a nested call must stay within.
+    #[cfg(debug_assertions)]
+    open_units: Vec<EditUnit>,
     hold: bool,
     held: Option<EditUndo>,
 }
@@ -251,6 +254,18 @@ impl Document {
         edit: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
         if self.in_place.open {
+            // A nested call (a staged helper the route reuses) joins the open
+            // one, whose copies and journals already cover it: its units must
+            // be among the open call's, and the open call's undo oracle proves
+            // that it wrote nothing else.
+            #[cfg(debug_assertions)]
+            assert!(
+                units
+                    .iter()
+                    .all(|unit| self.in_place.open_units.contains(unit)),
+                "a nested in-place edit names units {units:?} outside the open call's {:?}",
+                self.in_place.open_units
+            );
             return edit(self);
         }
         struct Guard<'a> {
@@ -273,6 +288,10 @@ impl Document {
         self.package.open_part_journal();
         self.identifiers.open_journal();
         self.in_place.open = true;
+        #[cfg(debug_assertions)]
+        {
+            self.in_place.open_units = units.to_vec();
+        }
         let mut guard = Guard {
             document: self,
             undo: Some(undo),

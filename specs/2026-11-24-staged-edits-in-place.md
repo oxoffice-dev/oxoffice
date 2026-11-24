@@ -157,7 +157,7 @@ refused by the save instead of by the edit (the four up-front refusals
 stay), and handles outside the story an edit touched keep working where all
 of them were retired.
 
-### S1 in two parts, as built (amended 2026-11-24)
+### S1 in three parts, as built (amended 2026-11-24)
 
 S1 lands in parts. **S1a** builds the mechanism and converts
 `resolve_comment`, the one call that changes a comments story and no
@@ -197,6 +197,12 @@ What S1a builds differs from decision 1 in how the units are kept:
 - `observe_package_graph` still scans the whole package graph in S1a; it
   is part of the 0.47 ms above. It becomes incremental (decision 3) with
   the first call whose cost it dominates.
+- **A nested call stays within the open call's units.** It joins the
+  open call, whose copies and journals already cover it, and adds no unit
+  of its own: a route names, at its outer call, every unit its helpers
+  change (the styles of a nested `add_style`). Debug builds assert that
+  the nested call's units are among the open call's, and the open call's
+  undo oracle proves nothing else was written.
 - The debug oracle of each converted facade call runs the staged route on
   a copy (`assert_in_place_matches_staged`) and applies the undo to a
   copy of the edited document (`assert_undo_restores`).
