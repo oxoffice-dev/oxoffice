@@ -1972,6 +1972,76 @@ fn covered_fields(
     }
 }
 
+/// Empty controls side by side stand at one place, so their boxes would
+/// stack: they share that box instead, in document order from where they
+/// stand (from the right in a right-to-left line, whose box grows to the
+/// left of its anchor). One drawing space at a time, as a group's fragments
+/// are in its own coordinates.
+fn share_empty_boxes(elements: &mut [oxoffice_layout::PositionedElement]) {
+    use oxoffice_layout::{FormFieldFragment, PositionedElement as E};
+    fn scope<'e>(
+        elements: &'e mut [E],
+        empty: &mut Vec<(&'e mut FormFieldFragment, f64)>,
+        groups: &mut Vec<&'e mut [E]>,
+    ) {
+        for element in elements {
+            match element {
+                E::FormField(fragment) => {
+                    let inked = text_runs(&fragment.children)
+                        .iter()
+                        .any(|run| !run.glyph_ids.is_empty());
+                    if let Some(anchor) = anchor_run(&fragment.children).map(|run| run.origin.x)
+                        && !inked
+                    {
+                        empty.push((fragment, anchor));
+                    }
+                }
+                E::MarkedContent { children, .. } => scope(children, empty, groups),
+                E::Group(group) => groups.push(&mut group.children),
+                _ => {}
+            }
+        }
+    }
+    let mut empty = Vec::new();
+    let mut groups = Vec::new();
+    scope(elements, &mut empty, &mut groups);
+    let same = |a: oxoffice_layout::Rect, b: oxoffice_layout::Rect| {
+        (a.x - b.x).abs() < 0.01
+            && (a.y - b.y).abs() < 0.01
+            && (a.width - b.width).abs() < 0.01
+            && (a.height - b.height).abs() < 0.01
+    };
+    empty.sort_by_key(|(fragment, _)| fragment.field.0);
+    let mut done = vec![false; empty.len()];
+    for first in 0..empty.len() {
+        if done[first] {
+            continue;
+        }
+        let shared = empty[first].0.rect;
+        let members: Vec<usize> = (first..empty.len())
+            .filter(|index| !done[*index] && same(empty[*index].0.rect, shared))
+            .collect();
+        let count = members.len() as f64;
+        // The anchor stands at the box's right edge in a right-to-left line.
+        let leftwards =
+            (empty[first].1 - (shared.x + shared.width)).abs() < (empty[first].1 - shared.x).abs();
+        let piece = shared.width / count;
+        for (rank, index) in members.into_iter().enumerate() {
+            done[index] = true;
+            let rect = &mut empty[index].0.rect;
+            rect.width = piece;
+            rect.x = if leftwards {
+                shared.x + shared.width - (rank as f64 + 1.0) * piece
+            } else {
+                shared.x + rank as f64 * piece
+            };
+        }
+    }
+    for group in groups {
+        share_empty_boxes(group);
+    }
+}
+
 /// The pages a field draws on, in order, each once.
 fn pages_of(places: &[(usize, oxoffice_layout::Rect)]) -> Vec<usize> {
     let mut pages: Vec<usize> = places.iter().map(|(page, _)| *page).collect();
@@ -2108,6 +2178,10 @@ pub(crate) fn number_form_fields(
                 .into_iter()
                 .map(|(field, tracks)| ((field, page_index), tracks)),
         );
+    }
+
+    for page in &mut result.pages {
+        share_empty_boxes(&mut std::sync::Arc::make_mut(page).elements);
     }
 
     // Where each field draws, in drawing order: (page, fragment box), and

@@ -816,24 +816,28 @@ pub(super) fn render_paragraph_lines(
                     match seg.form_mark.filter(|_| is_form_anchor(seg)) {
                         // An empty control's anchor gathers only itself; its
                         // widget takes 6 em of the paragraph mark's font from
-                        // where it stands, unless it has its line's band.
-                        Some(mark) => elements.push(form_marker(
-                            mark,
-                            marked,
-                            line_band.or(Some(Rect {
-                                // Kept to the line's end.
-                                width: (6.0 * seg.font_size)
-                                    .min(
-                                        geometry.margin_left
-                                            + line.indent_left
-                                            + line.available_width
-                                            - x,
-                                    )
-                                    .max(0.0),
-                                ..marked
-                            })),
-                            geometry.margin_left,
-                        )),
+                        // where it stands towards its line's end, the left
+                        // one in a right-to-left paragraph, unless it has
+                        // its line's band.
+                        Some(mark) => {
+                            let start = geometry.margin_left + line.indent_left;
+                            let room = if para.right_to_left {
+                                x - start
+                            } else {
+                                start + line.available_width - x
+                            };
+                            let width = (6.0 * seg.font_size).min(room).max(0.0);
+                            elements.push(form_marker(
+                                mark,
+                                marked,
+                                line_band.or(Some(Rect {
+                                    x: if para.right_to_left { x - width } else { x },
+                                    width,
+                                    ..marked
+                                })),
+                                geometry.margin_left,
+                            ));
+                        }
                         None => mark_item(&mut elements, seg.form_mark, marked),
                     }
 

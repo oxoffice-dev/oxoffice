@@ -174,8 +174,10 @@ the static output of Word-saved legacy checkboxes on purpose, switch or not.
   still gets a zero-width anchor on its line, the way field targets keep a
   position, and an empty fragment. Alone in its paragraph, it takes the full
   width as above. Inline among text, it takes a minimum width of 6 em of its
-  paragraph's font from the anchor, which can overlap the text after it
-  (diagnostic).
+  paragraph's font from the anchor towards the line's end (the left one in
+  a right-to-left paragraph), which can overlap the text after it
+  (diagnostic). Empty controls side by side share that box, in document
+  order from the anchor (#594).
 - **Splits.** A control the layout splits across pages or columns stays
   static, with a diagnostic. An inline control that wraps onto several lines
   becomes a multiline field over the union of its lines. Text before it on
@@ -536,7 +538,12 @@ Rust first, then the CLI and Python. Each pull request has its own check.
        band when the control is alone on its line, else 6 em of the mark's
        font, and says so when other text starts under it. A block field
        over empty paragraphs stands on their carets. The default
-       appearance takes the mark's font size.
+       appearance takes the mark's font size. Since #594: the 6 em box
+       grows to the left of its anchor in a right-to-left paragraph;
+       empty controls at one place split their box evenly, first nearest
+       the anchor; and empty annotated spans (an empty field result with
+       an emphasis mark) beside an anchor still stand on the caret, as in
+       the static export.
      - **Containers and wrappers.** A block field may hold block-level
        markers (bookmarks) and unmapped wrappers. Block controls nested in
        a cell-level control are walked as table layout walks them.
