@@ -162,3 +162,32 @@ fn an_edit_in_place_drops_the_layout_of_before_the_edit() {
     let after = document.layout_deterministic().expect("lays out");
     assert!(!std::sync::Arc::ptr_eq(&before, &after));
 }
+
+#[test]
+fn a_swapped_block_saves_the_bytes_of_before_the_edit() {
+    let mut document = word_report();
+    let index = direct_paragraph(&document);
+    let slot = document
+        .content_index_of_paragraph(index)
+        .expect("a direct body paragraph");
+    let before = document.to_bytes().expect("saves");
+    let (_, old) = document
+        .edit_body_paragraph_in_place(index, |paragraph| paragraph.set_text("undone"))
+        .expect("edits")
+        .expect("a direct body paragraph");
+    document
+        .swap_body_block(
+            slot,
+            oxoffice_docx_oxml::BodyContent::Paragraph(Box::new(old)),
+        )
+        .expect("swaps");
+    assert_eq!(document.to_bytes().expect("saves"), before);
+    assert!(
+        document
+            .swap_body_block(
+                document.content_count(),
+                oxoffice_docx_oxml::BodyContent::RawXml(Box::default())
+            )
+            .is_err()
+    );
+}

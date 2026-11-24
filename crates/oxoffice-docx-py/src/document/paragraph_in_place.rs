@@ -1,53 +1,74 @@
-//! One direct body paragraph edited in place: the facade edits a copy of
-//! the paragraph alone, and a block replacement splice publishes its owners,
-//! touching the paragraph's owners and the records of the body items after
-//! it, never the rest of the inventory.
+//! Direct body blocks replaced in place: the facade changes the live
+//! document, and a block replacement splice publishes the owners of the new
+//! blocks, touching the owners of the replaced ones and the records of the
+//! body items after them, never the rest of the inventory.
 
 use super::*;
 
-/// The old paragraph of a swap the facade made, held until the publication
-/// commits: any other exit (a refusal, an error, a panic) puts it back.
-struct SwappedParagraph<'a> {
-    document: &'a mut PyDocument,
-    index: usize,
-    old: Option<oxoffice_docx_oxml::CT_P>,
+/// Which owners of a replaced block keep their states.
+#[derive(Clone, Copy)]
+pub(crate) enum BlockRetention {
+    /// One paragraph edited where it stands: its owner keeps its owner and
+    /// properties states, and what it holds is born again (decision 1 of
+    /// the one-block publication spec).
+    EditedParagraphKeepsItsOwner,
 }
 
-impl SwappedParagraph<'_> {
-    /// The publication committed: the edited paragraph stays.
-    fn keep(&mut self) -> oxoffice_docx_oxml::CT_P {
-        self.old.take().expect("a swapped paragraph is kept once")
+/// What [`PyDocument::publish_body_blocks_replaced`] did.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum BlocksPublication {
+    /// The new blocks are the old ones: nothing published, every handle stays.
+    Unchanged,
+    /// The owners of the new blocks are published.
+    Published,
+    /// A shape this splice does not take: nothing changed in the inventory,
+    /// and the caller puts the old blocks back and takes the whole route.
+    WholeRoute,
+}
+
+/// The old block of a swap the facade made, held until the publication
+/// commits: any other exit (a refusal, an error, a panic) puts it back.
+struct SwappedBlock<'a> {
+    document: &'a mut PyDocument,
+    slot: usize,
+    old: Option<oxoffice_docx_oxml::BodyContent>,
+}
+
+impl SwappedBlock<'_> {
+    /// The publication committed: the edited block stays.
+    fn keep(&mut self) {
+        self.old = None;
     }
 }
 
-impl Drop for SwappedParagraph<'_> {
+impl Drop for SwappedBlock<'_> {
     fn drop(&mut self) {
         if let Some(old) = self.old.take() {
             self.document
                 .inner
-                .restore_body_paragraph(self.index, old)
-                .expect("the swapped paragraph's index still names it");
+                .swap_body_block(self.slot, old)
+                .expect("the swapped slot is still in the body");
         }
     }
 }
 
-/// What the block replacement needs of the edited paragraph before the
-/// edit runs, read from the inventory and the pieces.
-struct ParagraphSlot {
+/// What the block replacement needs of the replaced block, read from the
+/// inventory and the pieces.
+struct ReplacedBlock {
     slot: usize,
-    /// The paragraph's owner and its body story item.
+    /// The block's root owner and its body story item.
     selected: usize,
     location: oxoffice_docx::ContentLocation,
-    /// The owners of its runs, and the body story items it holds.
+    /// The owners the root owner holds, and the body story items of the block.
     runs: Vec<usize>,
     items: usize,
 }
 
 impl PyDocument {
     /// Apply `edit` to the direct body paragraph at facade index `index` in
-    /// place and publish its owners alone (decision 2 of the in-place spec):
-    /// the paragraph keeps its owner and properties states, its runs retire
-    /// and the new ones are born, and every other owner keeps its states.
+    /// place and publish it with [`Self::publish_body_blocks_replaced`]: the
+    /// paragraph keeps its owner and properties states, its runs retire and
+    /// the new ones are born, and every other owner keeps its states.
     /// `Ok(None)` before or after the edit leaves the document and every
     /// handle as they were: the caller then takes its own route. An edit
     /// that fails leaves them as they were too, and its error is returned.
@@ -59,11 +80,17 @@ impl PyDocument {
         edit: impl FnOnce(&mut oxoffice_docx::Paragraph<'_>) -> oxoffice_docx::Result<T>,
     ) -> PyResult<Option<T>> {
         self.ensure_word_authority(py)?;
-        let Some(target) = self.paragraph_slot(index) else {
+        // A paragraph the splice would not take keeps its route before the
+        // edit runs, so that the edit runs once.
+        let Some(slot) = self.inner.content_index_of_paragraph(index) else {
             return Ok(None);
         };
-        #[cfg(debug_assertions)]
-        let before = (self.inner.clone_for_staging(), self.owners.clone());
+        if self
+            .replaced_block(slot, &self.inner.body_children()[slot])
+            .is_none()
+        {
+            return Ok(None);
+        }
         let Some((value, old)) = self
             .inner
             .edit_body_paragraph_in_place(index, edit)
@@ -71,44 +98,104 @@ impl PyDocument {
         else {
             return Ok(None);
         };
-        let mut swapped = SwappedParagraph {
+        let mut swapped = SwappedBlock {
             document: self,
-            index,
-            old: Some(old),
+            slot,
+            old: Some(oxoffice_docx_oxml::BodyContent::Paragraph(Box::new(old))),
         };
-        let published = swapped.document.replace_paragraph_owners(
-            &target,
-            swapped.old.as_ref().expect("held old paragraph"),
+        let SwappedBlock { document, old, .. } = &mut swapped;
+        let published = document.publish_body_blocks_replaced(
+            py,
+            slot,
+            std::slice::from_ref(old.as_ref().expect("held old block")),
+            1,
             operation,
+            BlockRetention::EditedParagraphKeepsItsOwner,
         )?;
-        if published.is_none() {
+        if published == BlocksPublication::WholeRoute {
             // Dropping the guard puts the old paragraph back.
             return Ok(None);
         }
         swapped.keep();
-        drop(swapped);
-        #[cfg(debug_assertions)]
-        if published == Some(true) {
-            self.assert_paragraph_replacement(&before, &target);
-        }
         Ok(Some(value))
     }
 
-    /// The inventory facts of the direct body paragraph at facade index
-    /// `index`, when a block replacement can publish an edit of it: its
-    /// body item and owners are anchored and indexed, its piece is aligned,
-    /// and it holds no text box, table, cell story or hyperlink.
-    fn paragraph_slot(&self, index: usize) -> Option<ParagraphSlot> {
+    /// Publish the direct body blocks at `slot..slot + inserted`, which the
+    /// facade already put in place of `previous` in the live document, with
+    /// the owners of the new blocks alone: read from those blocks
+    /// (`word_block_owners`), the owners of the old ones found from their
+    /// root owner through the parent maps, and the records of the later body
+    /// items moved by the change in body story items. `retention` says which
+    /// owners keep their states.
+    ///
+    /// Shapes taken: one block replaced by one (`previous.len() == 1`,
+    /// `inserted == 1`), both direct body paragraphs holding no table, cell
+    /// story, text box or hyperlink, with
+    /// [`BlockRetention::EditedParagraphKeepsItsOwner`]. Any other shape, an
+    /// inventory whose body records are not anchored, pieces not aligned with
+    /// `previous`, or a change in body story items when a later item holds
+    /// a hyperlink answers [`BlocksPublication::WholeRoute`] with nothing
+    /// changed: the caller puts `previous` back and takes the whole route.
+    /// An error leaves the inventory unchanged too.
+    pub(crate) fn publish_body_blocks_replaced(
+        &mut self,
+        py: Python<'_>,
+        slot: usize,
+        previous: &[oxoffice_docx_oxml::BodyContent],
+        inserted: usize,
+        operation: &'static str,
+        retention: BlockRetention,
+    ) -> PyResult<BlocksPublication> {
+        let BlockRetention::EditedParagraphKeepsItsOwner = retention;
+        let ([old], 1) = (previous, inserted) else {
+            return Ok(BlocksPublication::WholeRoute);
+        };
+        let Some(new) = self.inner.body_children().get(slot) else {
+            return Ok(BlocksPublication::WholeRoute);
+        };
+        if new == old {
+            return Ok(BlocksPublication::Unchanged);
+        }
+        self.ensure_word_authority(py)?;
+        let Some(target) = self.replaced_block(slot, old) else {
+            return Ok(BlocksPublication::WholeRoute);
+        };
+        #[cfg(debug_assertions)]
+        let before = {
+            let mut document = self.inner.clone_for_staging();
+            document
+                .swap_body_block(slot, old.clone())
+                .expect("the replaced slot is in the body");
+            (document, self.owners.clone())
+        };
+        let published = self.replace_paragraph_owners(&target, operation)?;
+        #[cfg(debug_assertions)]
+        if published == BlocksPublication::Published {
+            self.assert_paragraph_replacement(&before, &target);
+        }
+        Ok(published)
+    }
+
+    /// The inventory facts of the direct body block at `slot`, whose block
+    /// is (or was, before an edit in place) `block`, when a block replacement
+    /// can publish it: a paragraph whose body item and owners are anchored
+    /// and indexed, whose piece is aligned with `block`, and which holds no
+    /// text box, table, cell story or hyperlink.
+    fn replaced_block(
+        &self,
+        slot: usize,
+        block: &oxoffice_docx_oxml::BodyContent,
+    ) -> Option<ReplacedBlock> {
         let indexes = &self.indexes;
         let pieces = self.pieces.as_ref()?;
         let blocks = self.inner.body_children();
         if !indexes.items.ready()
             || pieces.context.as_ref() != Some(&self.inner.body_item_context())
             || pieces.blocks.len() != blocks.len()
+            || !matches!(block, oxoffice_docx_oxml::BodyContent::Paragraph(_))
         {
             return None;
         }
-        let slot = self.inner.content_index_of_paragraph(index)?;
         let selected = indexes.direct_body_paragraph(slot)?;
         let owner = &self.owners[selected];
         let WordOwnerLocation::Paragraph(location) = &*owner.location() else {
@@ -122,7 +209,7 @@ impl PyDocument {
         }
         let item = indexes.items.at(first)?;
         let piece = pieces.blocks.get(slot)?;
-        if !aligned_block(piece, &blocks[slot]) {
+        if !aligned_block(piece, block) {
             return None;
         }
         let facts = piece.owners.as_ref()?;
@@ -157,7 +244,7 @@ impl PyDocument {
         }
         #[cfg(not(debug_assertions))]
         let _ = item;
-        Some(ParagraphSlot {
+        Some(ReplacedBlock {
             slot,
             selected,
             location: location.clone(),
@@ -166,28 +253,22 @@ impl PyDocument {
         })
     }
 
-    /// Publish the paragraph now at `target`'s slot, which replaced `old`:
-    /// `Some(false)` when it is what it was (nothing is published, every
-    /// handle stays), `Some(true)` when its owners were replaced, `None`
-    /// when this edit needs the whole route; then nothing changed here.
+    /// Publish the paragraph now at `target`'s slot, which replaced the
+    /// block `target` read, keeping the paragraph's owner.
     fn replace_paragraph_owners(
         &mut self,
-        target: &ParagraphSlot,
-        old: &oxoffice_docx_oxml::CT_P,
+        target: &ReplacedBlock,
         operation: &'static str,
-    ) -> PyResult<Option<bool>> {
+    ) -> PyResult<BlocksPublication> {
         let block = &self.inner.body_children()[target.slot];
-        let oxoffice_docx_oxml::BodyContent::Paragraph(new) = block else {
-            return Ok(None);
-        };
-        if new.as_ref() == old {
-            return Ok(Some(false));
+        if !matches!(block, oxoffice_docx_oxml::BodyContent::Paragraph(_)) {
+            return Ok(BlocksPublication::WholeRoute);
         }
         let Some(owners) = word_block_owners(&self.inner, block).ok().flatten() else {
-            return Ok(None);
+            return Ok(BlocksPublication::WholeRoute);
         };
         if !plain_block(&owners) {
-            return Ok(None);
+            return Ok(BlocksPublication::WholeRoute);
         }
         let (text, runs) = {
             let (_, text, runs) = &owners.facts.paragraphs[0];
@@ -199,12 +280,12 @@ impl PyDocument {
             .zip(isize::try_from(target.items).ok())
             .map(|(after, before)| after - before)
         else {
-            return Ok(None);
+            return Ok(BlocksPublication::WholeRoute);
         };
         // Decision 1 retires the hyperlinks of later items when the item
         // count changes: the whole route publishes that.
         if items != 0 && self.indexes.items.links_after(first) {
-            return Ok(None);
+            return Ok(BlocksPublication::WholeRoute);
         }
         // The paragraph's content retires; its runs retire, the new ones are
         // born, and the snapshot scope is born again.
@@ -297,7 +378,7 @@ impl PyDocument {
         self.indexes.items.shift_after(first, items);
         self.snapshot_scope = Some(snapshot_scope);
         self.pieces.as_mut().expect("active pieces").blocks[target.slot] = piece;
-        Ok(Some(true))
+        Ok(BlocksPublication::Published)
     }
 
     /// Under debug assertions, after a block replacement: the inventory
@@ -308,7 +389,7 @@ impl PyDocument {
     fn assert_paragraph_replacement(
         &self,
         (document, owners): &(oxoffice_docx::Document, Vec<WordOwner>),
-        target: &ParagraphSlot,
+        target: &ReplacedBlock,
     ) {
         self.assert_word_inventory_rebuilds(false);
         let story = target.location.story();

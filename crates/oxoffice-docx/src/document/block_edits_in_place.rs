@@ -57,4 +57,21 @@ impl Document {
         self.invalidate_layout();
         Ok(edited)
     }
+
+    /// Put `block` in direct body slot `slot` in place of the block there,
+    /// which is returned: the undo of an edit in place that the caller's
+    /// publication refused, or a copy of the document as it was before one.
+    /// A slot out of range is an error and changes nothing.
+    #[doc(hidden)]
+    pub fn swap_body_block(&mut self, slot: usize, block: BodyContent) -> Result<BodyContent> {
+        let current = self
+            .document
+            .body
+            .content
+            .get_mut(slot)
+            .ok_or_else(|| Error::Other("body slot out of range".to_owned()))?;
+        let old = std::mem::replace(current, block);
+        self.invalidate_layout();
+        Ok(old)
+    }
 }
