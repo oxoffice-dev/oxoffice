@@ -46,8 +46,10 @@ pub(super) fn pair_moves(
 ///
 /// The run's last paragraph keeps its mark as the story terminator, so its
 /// move goes on the mark before it, and a mark holds one move marker of a
-/// kind. Consecutive moved paragraphs there move as one block, as Word moves
-/// a selection of paragraphs, and the mark before the block carries it.
+/// kind. Consecutive moved paragraphs there that also follow each other in
+/// order on the other side move as one block, as Word moves a selection of
+/// paragraphs, and the mark before the block carries it. Paragraphs moved
+/// from separate places keep their own moves.
 pub(super) fn share_trailing_move(
     aligned: &[(Option<usize>, Option<usize>)],
     run: Option<(usize, usize)>,
@@ -64,14 +66,23 @@ pub(super) fn share_trailing_move(
     } else {
         (&mut moves.original, &mut moves.edited)
     };
-    let block = (first..=last)
-        .rev()
-        .map_while(|position| {
-            side(aligned[position]).filter(|index| {
-                matches!(content[*index], BodyContent::Paragraph(_)) && own[*index].is_some()
-            })
-        })
-        .collect::<Vec<_>>();
+    let source = |own: &[Option<i32>], index: usize| {
+        own[index].and_then(|id| other.iter().position(|other| *other == Some(id)))
+    };
+    let mut block = Vec::<usize>::new();
+    for position in (first..=last).rev() {
+        let Some(index) = side(aligned[position]).filter(|index| {
+            matches!(content[*index], BodyContent::Paragraph(_)) && own[*index].is_some()
+        }) else {
+            break;
+        };
+        if let Some(&after) = block.last()
+            && source(own, index).map(|source| source + 1) != source(own, after)
+        {
+            break;
+        }
+        block.push(index);
+    }
     if let Some(shared) = block.last().and_then(|index| own[*index]) {
         for index in &block {
             let Some(old) = own[*index].filter(|old| *old != shared) else {

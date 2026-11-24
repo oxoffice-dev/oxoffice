@@ -143,7 +143,7 @@ fn compare_body_impl(
     // formatting. Caller ignore policies still govern ordinary comparison.
     let protected_equality_options = ComparisonOptions::default();
     let mut output: Vec<(EmittedOwner, String)> = Vec::new();
-    let mut trailing = (PropertySide::default(), false, None);
+    let mut trailing = TrailingState::default();
     let mut owner_leaves = Vec::new();
     for (position, (original_index, edited_index)) in aligned.iter().copied().enumerate() {
         let item_leaf_mark = metadata.leaf_publications.len();

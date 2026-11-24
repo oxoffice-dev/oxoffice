@@ -1604,14 +1604,23 @@ struct LeafPublication {
     actions: Vec<([Option<Range<usize>>; 2], GranularAction)>,
 }
 
+/// What [`trailing_paragraph`] carries from one paragraph of the run that
+/// ends the body to the next.
+#[derive(Default)]
+struct TrailingState<'a> {
+    /// The properties [`final_paragraph`] merges.
+    merged: PropertySide<'a>,
+    /// Whether a kept table precedes the run.
+    after_table: bool,
+    /// Whether the run is one change that marks the paragraph before it.
+    single: bool,
+    /// The moved paragraphs the emitted run paragraphs end with: their move
+    /// id and the range of the output they fill.
+    block: Option<(i32, Range<usize>)>,
+}
+
 /// A paragraph of the run of owners one side alone holds that ends the
 /// body.
-/// What [`trailing_paragraph`] carries from one paragraph of the run that
-/// ends the body to the next: the properties [`final_paragraph`] merges,
-/// whether a kept table precedes the run, and the moved block the emitted
-/// run paragraphs end with (its move id and the range of the output it fills).
-type TrailingState<'a> = (PropertySide<'a>, bool, Option<(i32, Range<usize>)>);
-
 struct TrailingRun<'a, 'l> {
     content: &'a BodyContent,
     paragraph: &'a CT_P,
