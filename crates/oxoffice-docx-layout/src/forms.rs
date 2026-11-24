@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use oxoffice_docx_oxml::content_control::{SdtContent, SdtFormPayload};
 use oxoffice_docx_oxml::document::BodyContent;
+use oxoffice_docx_oxml::header_footer::HdrFtrType;
 use oxoffice_docx_oxml::table::{CT_Tbl, CellContent};
 use oxoffice_docx_oxml::text::{
     CT_P, CT_R, Field, LegacyFormFieldValue, RunContent, SpecialCharacter,
@@ -629,24 +630,29 @@ pub(crate) fn unique_names(names: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Why a control in a vertical section stays static.
-const VERTICAL_SECTION: &str = "its section's text is vertical";
+/// Why a control in a section of stacked upright text stays static: a
+/// widget turns its text, it cannot stack its glyphs.
+const STACKED_SECTION: &str = "its section's text is stacked upright";
 
-/// Why a control in a rotated cell stays static.
-const ROTATED_CELL: &str = "its cell's text is rotated";
+/// Why a block field over sections of different text directions stays
+/// static: one widget cannot hold text turned two ways.
+const MIXED_SECTIONS: &str = "it spans sections of different text directions";
+
+/// Why a control in a cell of stacked upright text stays static.
+const STACKED_CELL: &str = "its cell's text is stacked upright";
 
 /// Why a control in a text box stays static.
-const TURNED_TEXT_BOX: &str = "its text box is turned";
+const TURNED_TEXT_BOX: &str = "its text box is turned by other than a right angle";
 const VERTICAL_TEXT_BOX: &str = "its text box's text is vertical";
 const NESTED_TEXT_BOX: &str = "its text box sits in another text box";
 const TABLE_IN_TEXT_BOX: &str = "it sits in a table inside a text box";
 
-/// Whether each body layout item lies in a section of vertical text, each
-/// item in its own section as layout reads it.
-fn vertical_sections(
+/// The text direction of each body layout item's section, each item in its
+/// own section as layout reads it.
+fn item_directions(
     body: &CT_Body,
     items: &[crate::engine::MainStoryLayoutItem<'_>],
-) -> Vec<bool> {
+) -> Vec<String> {
     let letter;
     let last = match body.sect_pr.as_ref() {
         Some(section) => section,
@@ -660,8 +666,45 @@ fn vertical_sections(
         .map(|section| {
             section
                 .text_direction
-                .as_deref()
-                .is_some_and(|direction| direction != "lrTb")
+                .clone()
+                .unwrap_or_else(|| "lrTb".to_owned())
+        })
+        .collect()
+}
+
+/// Whether a part is a header or a footer.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum HeaderFooterKind {
+    Header,
+    Footer,
+}
+
+/// The sections of the main story in order, as layout ends them, each with
+/// whether its pages take even headers and footers.
+fn drawn_sections(
+    input: &crate::input::LayoutInput,
+) -> Vec<(&oxoffice_docx_oxml::CT_SectPr, bool)> {
+    let body = &input.document.body;
+    let mut sections: Vec<&oxoffice_docx_oxml::CT_SectPr> = crate::engine::body_layout_items(body)
+        .into_iter()
+        .filter_map(|item| match item {
+            crate::engine::MainStoryLayoutItem::Paragraph(paragraph, _) => paragraph
+                .properties
+                .as_ref()
+                .and_then(|properties| properties.sect_pr.as_ref()),
+            crate::engine::MainStoryLayoutItem::Table(..) => None,
+        })
+        .collect();
+    sections.extend(body.sect_pr.as_ref());
+    sections
+        .into_iter()
+        .map(|section| {
+            // As the paginator picks a page's variant.
+            let even = section
+                .header_refs
+                .iter()
+                .any(|reference| reference.hdr_ftr_type == HdrFtrType::Even);
+            (section, even)
         })
         .collect()
 }
@@ -677,6 +720,9 @@ enum Source<'a> {
 struct Entry<'a> {
     source: Source<'a>,
     field: FormField,
+    /// A header or footer field: drawn on every page of its part, one
+    /// widget per page.
+    repeats: bool,
 }
 
 impl Entry<'_> {
@@ -769,21 +815,26 @@ impl<'a> Inventory<'a> {
         };
         let body = &input.document.body;
         let items = crate::engine::body_layout_items(body);
-        let vertical = vertical_sections(body, &items);
-        // A block field with any paragraph in a vertical section stays
-        // static as a whole: one widget cannot hold half rotated text.
-        let vertical_blocks: std::collections::HashSet<*const CT_Sdt> = items
+        let directions = item_directions(body, &items);
+        let stacked: Vec<bool> = directions
             .iter()
-            .zip(&vertical)
-            .filter(|(_, vertical)| **vertical)
-            .filter_map(|(item, _)| match item {
-                crate::engine::MainStoryLayoutItem::Paragraph(_, path) => {
-                    enclosing_block_field(body, path, &mut inventory.block_fields)
-                        .map(std::ptr::from_ref)
-                }
-                crate::engine::MainStoryLayoutItem::Table(..) => None,
-            })
+            .map(|direction| crate::table::text_direction_stacks_upright(direction))
             .collect();
+        // A block field over sections of different text directions stays
+        // static as a whole: one widget cannot hold text turned two ways.
+        let mut block_directions: HashMap<*const CT_Sdt, &str> = HashMap::new();
+        let mut mixed_blocks: std::collections::HashSet<*const CT_Sdt> =
+            std::collections::HashSet::new();
+        for (item, direction) in items.iter().zip(&directions) {
+            if let crate::engine::MainStoryLayoutItem::Paragraph(_, path) = item
+                && let Some(block) = enclosing_block_field(body, path, &mut inventory.block_fields)
+            {
+                let block = std::ptr::from_ref(block);
+                if *block_directions.entry(block).or_insert(direction) != direction.as_str() {
+                    mixed_blocks.insert(block);
+                }
+            }
+        }
         for (index, item) in items.into_iter().enumerate() {
             match item {
                 crate::engine::MainStoryLayoutItem::Paragraph(paragraph, path) => {
@@ -794,13 +845,15 @@ impl<'a> Inventory<'a> {
                     };
                     let block = enclosing_block_field(body, &path, &mut inventory.block_fields);
                     inventory.note_block_faults(body, &path);
-                    let in_vertical_block = block
-                        .is_some_and(|block| vertical_blocks.contains(&std::ptr::from_ref(block)));
-                    let reason = (vertical[index] || in_vertical_block).then_some(VERTICAL_SECTION);
+                    let mixed = block
+                        .is_some_and(|block| mixed_blocks.contains(&std::ptr::from_ref(block)));
+                    let reason = mixed
+                        .then_some(MIXED_SECTIONS)
+                        .or(stacked[index].then_some(STACKED_SECTION));
                     inventory.paragraph(input, sources, paragraph, node, block, reason);
                 }
                 crate::engine::MainStoryLayoutItem::Table(table, path) => {
-                    let reason = vertical[index].then_some(VERTICAL_SECTION);
+                    let reason = stacked[index].then_some(STACKED_SECTION);
                     inventory.table(
                         input,
                         sources,
@@ -812,9 +865,35 @@ impl<'a> Inventory<'a> {
                 }
             }
         }
-        // The notes come after the main story: footnotes, then endnotes,
-        // each in the order of its first reference.
         let notes = inventory.notes.take().unwrap_or_default();
+        // Headers and footers come next: section by section, header before
+        // footer, default, first page, even page. A part several sections
+        // share is walked once, so its controls are one field each.
+        let mut walked = std::collections::HashSet::new();
+        for (section, even) in drawn_sections(input) {
+            for (kind, references) in [
+                (HeaderFooterKind::Header, &section.header_refs),
+                (HeaderFooterKind::Footer, &section.footer_refs),
+            ] {
+                for variant in [HdrFtrType::Default, HdrFtrType::First, HdrFtrType::Even] {
+                    let drawn = match variant {
+                        HdrFtrType::Default => true,
+                        HdrFtrType::First => section.title_pg.unwrap_or(false),
+                        HdrFtrType::Even => even,
+                    };
+                    for reference in references
+                        .iter()
+                        .filter(|reference| drawn && reference.hdr_ftr_type == variant)
+                    {
+                        if walked.insert((kind, reference.rel_id.as_str())) {
+                            inventory.header_footer(input, sources, kind, &reference.rel_id);
+                        }
+                    }
+                }
+            }
+        }
+        // The notes come last: footnotes, then endnotes, each in the order
+        // of its first reference.
         for stream in [
             oxoffice_layout::NoteStream::Footnote,
             oxoffice_layout::NoteStream::Endnote,
@@ -873,6 +952,58 @@ impl<'a> Inventory<'a> {
         }
     }
 
+    /// A header or footer part's paragraphs and tables, as header layout
+    /// walks them. Its fields repeat on every page that draws the part.
+    fn header_footer(
+        &mut self,
+        input: &'a crate::input::LayoutInput,
+        sources: &crate::engine::SourceRegistry,
+        kind: HeaderFooterKind,
+        relationship_id: &str,
+    ) {
+        let (story, part) = match kind {
+            HeaderFooterKind::Header => (
+                crate::WordStory::Header {
+                    relationship_id: relationship_id.to_owned(),
+                },
+                input.headers.get(relationship_id),
+            ),
+            HeaderFooterKind::Footer => (
+                crate::WordStory::Footer {
+                    relationship_id: relationship_id.to_owned(),
+                },
+                input.footers.get(relationship_id),
+            ),
+        };
+        let Some(part) = part else {
+            return;
+        };
+        let first = self.entries.len();
+        if let Some(body) = input.story_bodies.get(&story) {
+            for item in crate::engine::body_layout_items(body) {
+                match item {
+                    crate::engine::MainStoryLayoutItem::Paragraph(paragraph, path) => {
+                        let node = sources.id(&story, &path);
+                        let block = enclosing_block_field(body, &path, &mut self.block_fields);
+                        self.note_block_faults(body, &path);
+                        self.paragraph(input, sources, paragraph, node, block, None);
+                    }
+                    crate::engine::MainStoryLayoutItem::Table(table, path) => {
+                        self.table(input, sources, &story, table, &path, None);
+                    }
+                }
+            }
+        } else {
+            for (index, paragraph) in part.paragraphs.iter().enumerate() {
+                let node = sources.id(&story, &[index]);
+                self.paragraph(input, sources, paragraph, node, None, None);
+            }
+        }
+        for entry in &mut self.entries[first..] {
+            entry.repeats = true;
+        }
+    }
+
     fn table(
         &mut self,
         input: &'a crate::input::LayoutInput,
@@ -884,15 +1015,14 @@ impl<'a> Inventory<'a> {
     ) {
         for (row, row_path) in crate::table::layout_table_rows(table, path) {
             for (cell, cell_path) in crate::table::layout_row_cells(row, &row_path) {
-                let rotated = cell
+                // A rotated cell's widget turns with its text; stacked
+                // upright glyphs no widget can draw.
+                let stacked = cell
                     .properties
                     .as_ref()
                     .and_then(|properties| properties.text_direction.as_deref())
-                    .is_some_and(|direction| {
-                        crate::table::text_direction_rotation(direction).is_some()
-                            || crate::table::text_direction_stacks_upright(direction)
-                    });
-                let reason = reason.or(rotated.then_some(ROTATED_CELL));
+                    .is_some_and(crate::table::text_direction_stacks_upright);
+                let reason = reason.or(stacked.then_some(STACKED_CELL));
                 for (index, content) in cell.content.iter().enumerate() {
                     let mut content_path = cell_path.clone();
                     content_path.push(index);
@@ -1140,6 +1270,7 @@ impl<'a> Inventory<'a> {
                         self.entries.push(Entry {
                             source: Source::Legacy,
                             field: built,
+                            repeats: false,
                         });
                         self.entries.len() - 1
                     }),
@@ -1204,9 +1335,11 @@ impl<'a> Inventory<'a> {
         story: &crate::WordStory,
         reason: Option<&'static str>,
     ) {
-        let turned = anchor
-            .shape_rotation_degrees()
-            .is_some_and(|degrees| degrees.rem_euclid(360.0).abs() > 0.01);
+        // A widget turns by a right angle (`/MK /R`), not by any other.
+        let turned = anchor.shape_rotation_degrees().is_some_and(|degrees| {
+            let off = degrees.rem_euclid(90.0);
+            off > 0.01 && off < 90.0 - 0.01
+        });
         let reason = reason
             .or(self.in_text_box.then_some(NESTED_TEXT_BOX))
             .or(turned.then_some(TURNED_TEXT_BOX))
@@ -1285,6 +1418,7 @@ impl<'a> Inventory<'a> {
         self.entries.push(Entry {
             source: Source::Control(control),
             field,
+            repeats: false,
         });
         let index = self.entries.len() - 1;
         self.by_control.insert(std::ptr::from_ref(control), index);
@@ -1359,9 +1493,10 @@ pub(crate) fn text_box_form_paragraph(
     })
 }
 
-/// The form identity of a note or table cell paragraph: only for the
-/// stories the inventory walks (the main story and the notes) and the
-/// registry it used, since table layout serves headers and text boxes too.
+/// The form identity of a note, header, footer or table cell paragraph:
+/// only for the stories the inventory walks (the main story, the notes, the
+/// headers and footers) and the registry it used, since table layout serves
+/// text boxes too.
 pub(crate) fn story_form_paragraph(
     input: &crate::input::LayoutInput,
     sources: Option<&crate::engine::SourceRegistry>,
@@ -1375,6 +1510,8 @@ pub(crate) fn story_form_paragraph(
             crate::WordStory::Document
                 | crate::WordStory::Footnote { .. }
                 | crate::WordStory::Endnote { .. }
+                | crate::WordStory::Header { .. }
+                | crate::WordStory::Footer { .. }
         )
         || sources.map(|sources| std::ptr::from_ref(sources).addr()) != Some(paragraphs.registry)
     {
@@ -1783,6 +1920,65 @@ fn gather(
     }
 }
 
+/// The fields of these elements under whose widget other text lies, one
+/// drawing space at a time: a group's children, a rotated cell's or a text
+/// box's, are measured in the group's own coordinates, as its fragments are.
+/// Several boxes make one widget over their union: wrapped lines, or pieces
+/// that bidi reordering set apart on one line. An empty control's box
+/// reaches past its anchor, over what follows it.
+fn covered_fields(
+    elements: &[oxoffice_layout::PositionedElement],
+    inked: &std::collections::HashSet<u32>,
+    split: &HashMap<u32, &str>,
+    covering: &mut std::collections::BTreeSet<u32>,
+) {
+    use oxoffice_layout::PositionedElement as E;
+    fn scope<'e>(
+        elements: &'e [E],
+        boxes: &mut std::collections::BTreeMap<u32, Vec<oxoffice_layout::Rect>>,
+        groups: &mut Vec<&'e [E]>,
+    ) {
+        for element in elements {
+            match element {
+                E::FormField(fragment) => boxes
+                    .entry(fragment.field.0)
+                    .or_default()
+                    .push(fragment.rect),
+                E::MarkedContent { children, .. } => scope(children, boxes, groups),
+                E::Group(group) => groups.push(&group.children),
+                _ => {}
+            }
+        }
+    }
+    let mut boxes = std::collections::BTreeMap::new();
+    let mut groups = Vec::new();
+    scope(elements, &mut boxes, &mut groups);
+    let mut extents = None;
+    for (field, boxes) in boxes {
+        if split.contains_key(&field) || (boxes.len() < 2 && inked.contains(&field)) {
+            continue;
+        }
+        let union = union_rect(&boxes);
+        if extents
+            .get_or_insert_with(|| page_text_extents(elements))
+            .iter()
+            .any(|extent| starts_inside(union, *extent))
+        {
+            covering.insert(field);
+        }
+    }
+    for group in groups {
+        covered_fields(group, inked, split, covering);
+    }
+}
+
+/// The pages a field draws on, in order, each once.
+fn pages_of(places: &[(usize, oxoffice_layout::Rect)]) -> Vec<usize> {
+    let mut pages: Vec<usize> = places.iter().map(|(page, _)| *page).collect();
+    pages.dedup();
+    pages
+}
+
 /// The empty run an empty control's anchor draws, wrappers looked through.
 fn anchor_run(
     elements: &[oxoffice_layout::PositionedElement],
@@ -1900,10 +2096,18 @@ pub(crate) fn number_form_fields(
         .map(|node| node.id)
         .collect();
     let figure = |id: oxoffice_layout::StructureId| figures.contains(&id);
-    let mut tracks: HashMap<u32, Vec<f64>> = HashMap::new();
-    for page in &mut result.pages {
+    // The column tracks each field's markers sit in, page by page: a header
+    // field draws on every page, maybe in sections of other columns.
+    let mut tracks: HashMap<(u32, usize), Vec<f64>> = HashMap::new();
+    for (page_index, page) in result.pages.iter_mut().enumerate() {
         let page = std::sync::Arc::make_mut(page);
-        gather(&mut page.elements, &resolve, &figure, &mut tracks);
+        let mut page_tracks = HashMap::new();
+        gather(&mut page.elements, &resolve, &figure, &mut page_tracks);
+        tracks.extend(
+            page_tracks
+                .into_iter()
+                .map(|(field, tracks)| ((field, page_index), tracks)),
+        );
     }
 
     // Where each field draws, in drawing order: (page, fragment box), and
@@ -1933,27 +2137,33 @@ pub(crate) fn number_form_fields(
     // A field drawn on more than one page, or in more than one column of
     // its page, stays static: one widget over both would cover what lies
     // between. In drawing order, a box above the one before it starts a new
-    // column.
+    // column. A header or footer field draws whole on each page of its part,
+    // with one widget per page: each page is checked on its own.
     // A field that gathered nothing would be a widget over what it left on
     // the page. A signature field is the exception: it is empty by design,
     // over a picture that stays on the page or over nothing.
     let split: HashMap<u32, &str> = placed
         .iter()
         .filter_map(|(field, places)| {
-            let columns = tracks
-                .get(field)
-                .is_some_and(|tracks| tracks.iter().any(|track| (track - tracks[0]).abs() > 0.01));
-            let signature = inventory
-                .entries
-                .get(*field as usize)
-                .is_some_and(|entry| matches!(entry.field.kind, FormFieldKind::Signature));
-            if places.iter().any(|(page, _)| *page != places[0].0) {
-                Some((*field, "it is split across pages"))
-            } else if columns
-                || places
+            let entry = inventory.entries.get(*field as usize);
+            let repeats = entry.is_some_and(|entry| entry.repeats);
+            let signature =
+                entry.is_some_and(|entry| matches!(entry.field.kind, FormFieldKind::Signature));
+            let columns = pages_of(places).into_iter().any(|page| {
+                let page_places: Vec<_> = places.iter().filter(|(at, _)| *at == page).collect();
+                tracks.get(&(*field, page)).is_some_and(|tracks| {
+                    tracks.iter().any(|track| (track - tracks[0]).abs() > 0.01)
+                }) || page_places
                     .windows(2)
                     .any(|pair| pair[1].1.y + pair[1].1.height <= pair[0].1.y + 0.01)
-            {
+            });
+            let pages = pages_of(places).len();
+            if !repeats && pages > 1 {
+                Some((*field, "it is split across pages"))
+            } else if signature && pages > 1 {
+                // One signature signs one place: signers expect one widget.
+                Some((*field, "a signature cannot repeat on every page"))
+            } else if columns {
                 Some((*field, "it is split across columns"))
             } else if !gathered.contains(field) && !signature {
                 Some((*field, "what it draws could not be gathered"))
@@ -1968,39 +2178,38 @@ pub(crate) fn number_form_fields(
             flatten_fields(&mut std::sync::Arc::make_mut(page).elements, &split);
         }
     }
-    // How many lines each field's widget spans, and the fields under whose
-    // widget other text of the page lies: text before a wrapped inline
-    // control on its first line, after it on its last, or between pieces.
+    // How many lines each field's widget spans, the most any page draws: a
+    // header shared by sections of other widths may wrap otherwise there.
     let mut lines_of: HashMap<u32, usize> = HashMap::new();
-    let mut covering: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
     for (field, places) in &placed {
         if split.contains_key(field) {
             continue;
         }
-        let mut boxes: Vec<oxoffice_layout::Rect> = places.iter().map(|(_, rect)| *rect).collect();
-        boxes.sort_by(|a, b| a.y.total_cmp(&b.y));
-        let mut lines = 0;
-        let mut bottom = f64::NEG_INFINITY;
-        for rect in &boxes {
-            if rect.y >= bottom - 0.01 {
-                lines += 1;
-            }
-            bottom = bottom.max(rect.y + rect.height);
-        }
-        lines_of.insert(*field, lines);
-        // Several boxes make one widget over their union: wrapped lines, or
-        // pieces that bidi reordering set apart on one line. An empty
-        // control's box reaches past its anchor, over what follows it.
-        if boxes.len() > 1 || !inked.contains(field) {
-            let union = union_rect(&boxes);
-            let page = &result.pages[places[0].0];
-            if page_text_extents(&page.elements)
+        for page in pages_of(places) {
+            let mut boxes: Vec<oxoffice_layout::Rect> = places
                 .iter()
-                .any(|extent| starts_inside(union, *extent))
-            {
-                covering.insert(*field);
+                .filter(|(at, _)| *at == page)
+                .map(|(_, rect)| *rect)
+                .collect();
+            boxes.sort_by(|a, b| a.y.total_cmp(&b.y));
+            let mut lines = 0;
+            let mut bottom = f64::NEG_INFINITY;
+            for rect in &boxes {
+                if rect.y >= bottom - 0.01 {
+                    lines += 1;
+                }
+                bottom = bottom.max(rect.y + rect.height);
             }
+            let most = lines_of.entry(*field).or_default();
+            *most = (*most).max(lines);
         }
+    }
+    // The fields under whose widget other text lies, on any page: text
+    // before a wrapped inline control on its first line, after it on its
+    // last, or between pieces.
+    let mut covering: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    for page in &result.pages {
+        covered_fields(&page.elements, &inked, &split, &mut covering);
     }
 
     let mut fields: Vec<FormField> = inventory
@@ -2054,7 +2263,10 @@ pub(crate) fn number_form_fields(
         });
     }
     for (index, entry) in inventory.entries.iter().enumerate() {
-        if drawn.contains(&index) {
+        // A header or footer part no page draws, as the default header of a
+        // one-page document with a first page header, has nothing to say:
+        // its story is not drawn.
+        if drawn.contains(&index) || (entry.repeats && !placed.contains_key(&(index as u32))) {
             continue;
         }
         let reason = split

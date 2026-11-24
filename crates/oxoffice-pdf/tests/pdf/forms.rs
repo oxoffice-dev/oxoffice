@@ -400,24 +400,43 @@ fn the_typing_font_is_embedded_whole_as_a_unicode_font() {
 }
 
 #[test]
-fn fragments_of_a_field_union_on_its_first_page_and_later_ones_stay_on_the_page() {
+fn a_field_drawn_on_several_pages_has_one_widget_on_each_under_one_parent() {
     let first = vec![
         fragment(0, line(300.0, 100.0, 200.0), "first line"),
         fragment(0, line(72.0, 114.0, 150.0), "second line"),
     ];
-    let later = vec![fragment(0, line(72.0, 72.0, 100.0), "third line")];
+    let later = vec![fragment(0, line(72.0, 72.0, 100.0), "first line")];
     let layout = with_fields(
-        layout(vec![first, later.clone()]),
-        vec![field(
-            "notes",
-            text_kind("first line second line third line"),
-        )],
+        layout(vec![first, later]),
+        vec![field("stamp", text_kind("first line second line"))],
     );
     let read = pdf(&layout);
-    assert_eq!(read.page_widgets(0).len(), 1);
-    assert!(read.page_widgets(1).is_empty());
+    // The parent holds the value; its widgets hold no name and no value.
+    let parent = read.field("stamp");
+    assert!(parent.get(b"Rect").is_err());
+    assert_eq!(text(parent.get(b"V").unwrap()), "first line second line");
+    let kids: Vec<lopdf::ObjectId> = parent
+        .get(b"Kids")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|kid| kid.as_reference().unwrap())
+        .collect();
+    assert_eq!(read.page_widgets(0), [kids[0]]);
+    assert_eq!(read.page_widgets(1), [kids[1]]);
+    let widget = |index: usize| read.doc.get_object(kids[index]).unwrap().as_dict().unwrap();
+    for index in 0..2 {
+        assert!(widget(index).get(b"T").is_err());
+        assert!(widget(index).get(b"V").is_err());
+        assert_eq!(
+            widget(index).get(b"P").unwrap().as_reference().unwrap(),
+            read.page_ids()[index]
+        );
+    }
+    // Each widget covers its page's fragments and draws them.
     assert_eq!(
-        rect(read.field("notes").get(b"Rect").unwrap()),
+        rect(widget(0).get(b"Rect").unwrap()),
         [
             72.0,
             (PAGE_HEIGHT - 128.0) as f32,
@@ -425,15 +444,18 @@ fn fragments_of_a_field_union_on_its_first_page_and_later_ones_stay_on_the_page(
             (PAGE_HEIGHT - 100.0) as f32
         ]
     );
-    assert_eq!(read.drawn_text(&read.page_content(1)), "third line");
     assert_eq!(
-        read.drawn_text(&read.page_content(0)),
-        "",
-        "page 1 keeps nothing"
+        read.drawn_text(&read.appearance(widget(0), None)),
+        "first linesecond line"
     );
-    let appearance = read.appearance(read.field("notes"), None);
-    assert_eq!(read.drawn_text(&appearance), "first linesecond line");
-    assert_operators_apart(&appearance);
+    assert_eq!(
+        read.drawn_text(&read.appearance(widget(1), None)),
+        "first line"
+    );
+    assert_operators_apart(&read.appearance(widget(0), None));
+    for page in 0..2 {
+        assert_eq!(read.drawn_text(&read.page_content(page)), "", "page {page}");
+    }
 }
 
 #[test]
@@ -639,13 +661,14 @@ fn a_check_box_draws_only_the_text_of_its_other_state() {
 }
 
 #[test]
-fn a_tagged_fragment_drawn_on_the_page_is_an_artifact() {
+fn a_tagged_fragment_of_no_field_drawn_on_the_page_is_an_artifact() {
+    // The later fragment names no field, so it has no widget.
     let mut layout = with_fields(
         layout(vec![
             vec![fragment(0, line(72.0, 100.0, 200.0), "first")],
             vec![PositionedElement::MarkedContent {
                 structure: Some(StructureId::new(2).unwrap()),
-                children: vec![fragment(0, line(72.0, 100.0, 200.0), "later")],
+                children: vec![fragment(1, line(72.0, 100.0, 200.0), "later")],
             }],
         ]),
         vec![field("notes", text_kind("first later"))],
@@ -687,13 +710,13 @@ fn position(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 #[test]
-fn a_fragment_drawn_inside_a_tagged_paragraph_is_that_paragraph_content() {
+fn a_fragment_of_no_field_drawn_inside_a_tagged_paragraph_is_that_paragraph_content() {
     let layout = tagged(with_fields(
         layout(vec![
             vec![fragment(0, line(72.0, 100.0, 200.0), "first")],
             vec![paragraph(vec![
                 run("Notes:", Point { x: 72.0, y: 112.0 }, 11.0),
-                fragment(0, line(120.0, 100.0, 200.0), "later"),
+                fragment(1, line(120.0, 100.0, 200.0), "later"),
             ])],
         ]),
         vec![field("notes", text_kind("first later"))],

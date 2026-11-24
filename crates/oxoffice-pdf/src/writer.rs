@@ -1403,7 +1403,7 @@ fn build_page_content<'a>(
     page_idx: usize,
     page: &'a oxoffice_layout::PageFrame,
     resources: PageContentResources<'a>,
-    field_drawings: &'a mut BTreeMap<FormFieldId, forms::FieldDrawing>,
+    field_drawings: &'a mut BTreeMap<(FormFieldId, usize), forms::FieldDrawing>,
 ) -> Vec<u8> {
     let mut content = Content::new();
     let page_height = page.height as f32;
@@ -1495,7 +1495,7 @@ struct EmitState<'a> {
     next_mcid: i32,
     forms: Option<&'a forms::FormPlan<'a>>,
     /// What the page draws for each placed form field, kept out of the page.
-    field_drawings: &'a mut BTreeMap<FormFieldId, forms::FieldDrawing>,
+    field_drawings: &'a mut BTreeMap<(FormFieldId, usize), forms::FieldDrawing>,
     /// The groups around the element being drawn, outermost first.
     groups: Vec<&'a GroupElement>,
     /// Marked content sequences open around the element being drawn.
@@ -1848,7 +1848,10 @@ fn emit_form_field<'a>(
             } else {
                 Vec::new()
             };
-            let drawing = state.field_drawings.entry(fragment.field).or_default();
+            let drawing = state
+                .field_drawings
+                .entry((fragment.field, state.page_idx))
+                .or_default();
             append_drawing(&mut drawing.current, &current);
             append_drawing(&mut drawing.other, &other);
         }
