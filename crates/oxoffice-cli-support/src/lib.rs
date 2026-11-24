@@ -434,6 +434,57 @@ pub fn json_envelope(mut payload: Value) -> Result<Value, Error> {
     Ok(payload)
 }
 
+/// Print the outcome of `verify-signatures` for a package as opened, as JSON
+/// or as text, and return whether it is signed and every signature is valid
+/// and covers the whole package. Certificate trust is not evaluated.
+#[cfg(feature = "digital-signatures")]
+pub fn print_signature_verification(
+    reports: &[oxoffice_opc::SignatureReport],
+    as_json: bool,
+    out: &mut impl Write,
+) -> io::Result<bool> {
+    let valid = !reports.is_empty()
+        && reports
+            .iter()
+            .all(|report| report.cryptographically_valid && report.coverage_complete);
+    let status = if reports.is_empty() {
+        "unsigned"
+    } else if reports.iter().any(|report| !report.cryptographically_valid) {
+        "invalid"
+    } else if reports.iter().any(|report| !report.coverage_complete) {
+        "partial"
+    } else {
+        "valid"
+    };
+    if as_json {
+        let records = reports
+            .iter()
+            .map(signature_report_json)
+            .collect::<Vec<_>>();
+        let payload = json_envelope(serde_json::json!({"status": status, "signatures": records}))
+            .map_err(io::Error::other)?;
+        writeln!(
+            out,
+            "{}",
+            serde_json::to_string_pretty(&payload).map_err(io::Error::other)?
+        )?;
+    } else {
+        writeln!(
+            out,
+            "Signatures: {status} (certificate trust not evaluated)"
+        )?;
+        for report in reports {
+            writeln!(
+                out,
+                "{}: valid={}, complete={}",
+                report.signature_part, report.cryptographically_valid, report.coverage_complete
+            )?;
+            writeln!(out, "{}", signature_report_json(report))?;
+        }
+    }
+    Ok(valid)
+}
+
 /// Convert an authenticated native report to an owned JSON value. No chain trust is implied.
 #[cfg(feature = "digital-signatures")]
 pub fn signature_report_json(report: &oxoffice_opc::SignatureReport) -> serde_json::Value {

@@ -2235,46 +2235,11 @@ pub fn sign(file: &Path, key: &Path, cert: &Path, output: &Path, as_json: bool) 
 
 /// Return true only for at least one signature, all valid with complete coverage.
 pub fn verify_signatures(file: &Path, as_json: bool) -> Result<bool> {
-    let current = oxoffice_pptx::Presentation::open(file)?;
-    let reports = current.verify_signatures()?;
-    let valid = !reports.is_empty()
-        && reports
-            .iter()
-            .all(|report| report.cryptographically_valid && report.coverage_complete);
-    let status = if reports.is_empty() {
-        "unsigned"
-    } else if reports.iter().any(|report| !report.cryptographically_valid) {
-        "invalid"
-    } else if reports.iter().any(|report| !report.coverage_complete) {
-        "partial"
-    } else {
-        "valid"
-    };
-    if as_json {
-        let records = reports
-            .iter()
-            .map(oxoffice_cli_support::signature_report_json)
-            .collect::<Vec<_>>();
-        print_json(serde_json::json!({"status": status, "signatures": records}))?;
-    } else {
-        writeln!(
-            io::stdout(),
-            "Signatures: {status} (certificate trust not evaluated)"
-        )?;
-        for report in &reports {
-            writeln!(
-                io::stdout(),
-                "{}: valid={}, complete={}",
-                report.signature_part,
-                report.cryptographically_valid,
-                report.coverage_complete
-            )?;
-            writeln!(
-                io::stdout(),
-                "{}",
-                oxoffice_cli_support::signature_report_json(report)
-            )?;
-        }
-    }
-    Ok(valid)
+    // The signatures cover the bytes on disk: verify the package as opened.
+    let reports = oxoffice_pptx::Presentation::open(file)?.verify_signatures()?;
+    Ok(oxoffice_cli_support::print_signature_verification(
+        &reports,
+        as_json,
+        &mut io::stdout(),
+    )?)
 }
