@@ -1,7 +1,8 @@
 //! The commands that report something give, with `--json`, one schema-1
 //! record on standard output and nothing else: `docx validate`, `convert`
 //! and `render`, `pptx diff`, `validate`, `convert`, `render` and
-//! `thumbnail`.
+//! `thumbnail`. A plain `pptx convert` of a slide range names the slides it
+//! wrote.
 
 use std::fs;
 use std::io::Cursor;
@@ -262,6 +263,30 @@ fn pptx_convert_json_lists_the_files_written_with_their_slides() {
     assert_eq!(record["format"], "html");
     assert_eq!(record["outputs"][0]["path"], html.display().to_string());
     assert!(record["assets"].is_array(), "{record}");
+}
+
+#[test]
+fn pptx_convert_names_the_slide_each_image_of_a_range_holds() {
+    let dir = scratch("pptx-convert-plain");
+    let deck = corpus("powerpoint/deck.pptx");
+    let png = dir.join("deck.png");
+    let output = oxoffice(
+        &["pptx", "convert", "--to", "png", "--slides", "2-3", "-o"],
+        &[&png, &deck],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The files are numbered in the order of the selection, as `docx
+    // convert` numbers pages.
+    let expected = format!(
+        "Slide 2 -> {}\nSlide 3 -> {}\n",
+        dir.join("deck_001.png").display(),
+        dir.join("deck_002.png").display()
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
 }
 
 #[test]

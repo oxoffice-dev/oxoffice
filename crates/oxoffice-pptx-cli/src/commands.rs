@@ -558,20 +558,21 @@ pub fn convert(
                         convert_separate_output_paths(&output, extension, selected.len());
                     ensure_output_paths_allowed(&output_paths, file, force)?;
                     let mut staged = StagedOutputSet::with_replace_existing(force);
+                    // The files are numbered in the order of the selection,
+                    // as `docx convert` numbers pages; each line names the
+                    // slide its file holds.
                     let mut rendered = Vec::with_capacity(selected.len());
-                    for (one_based, (index, path)) in
-                        selected.iter().zip(output_paths.iter()).enumerate()
-                    {
+                    for (index, path) in selected.iter().zip(output_paths.iter()) {
                         let image =
                             render_one_raster_page(&layout, *index, RasterOptions { dpi, format })?;
                         staged.stage_bytes(path, &image)?;
                         written.push(written_json(path, Some(&[index + 1]), image.len()));
-                        rendered.push((one_based + 1, path.clone()));
+                        rendered.push((index + 1, path.clone()));
                     }
                     staged.publish()?;
                     if !as_json {
-                        for (one_based, path) in rendered {
-                            writeln!(stdout, "Slide {one_based} -> {}", path.display())?;
+                        for (slide, path) in rendered {
+                            writeln!(stdout, "Slide {slide} -> {}", path.display())?;
                         }
                     }
                 }
