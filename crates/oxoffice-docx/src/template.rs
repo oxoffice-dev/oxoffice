@@ -946,10 +946,15 @@ pub(crate) struct TemplateEvaluation<'data, 'formatter> {
     pub(crate) sources: crate::document::TemplateMainSources,
     versioned: bool,
     occurrence: usize,
-    // The roots of the last canonical staging of the candidate, while nothing
-    // has changed it since. Each staging rescans every story, so the stories
-    // stage once per change instead of up to three times each.
+    // The roots of the last canonical staging of the candidate, less those of
+    // the parts a publication changed since. Each staging rescans every
+    // story, so the stories stage once per change of identifier occupancy
+    // instead of once per published story.
     staged: Option<Vec<TemplateProgram>>,
+    // Whether a publication changed a part since the last staging: debug
+    // builds then check every kept root against a fresh staging.
+    #[cfg(debug_assertions)]
+    published_since_staging: bool,
     // The callback lifetime stays on this field. A type alias would force 'static.
     #[allow(clippy::type_complexity)]
     formatter: Option<
@@ -2310,9 +2315,37 @@ fn canonical_root_base(
     evaluation: &mut TemplateEvaluation<'_, '_>,
 ) -> Result<TemplateProgram> {
     // Dependency allocation changes identifier occupancy. Stage before reading
-    // the owner that publication will check again. A candidate that nothing
-    // changed since the last staging keeps its staged roots.
-    if evaluation.staged.is_none() {
+    // the owner that publication will check again. A candidate that no
+    // allocation changed since the last staging keeps its staged roots, but
+    // for the parts published since: publishing a part changes no other part
+    // and allocates nothing, and publication checks its own owner again.
+    let same_owner = |program: &&TemplateProgram| {
+        program.part == current.part
+            && program.story.kind() == current.story.kind()
+            && program.story.owner_index() == current.story.owner_index()
+    };
+    let cached = evaluation
+        .staged
+        .iter()
+        .flatten()
+        .any(|program| same_owner(&program));
+    // Debug builds stage again after every publication and check that each
+    // root kept across it is the one a fresh staging reads.
+    #[cfg(debug_assertions)]
+    let check = evaluation.published_since_staging;
+    #[cfg(not(debug_assertions))]
+    let check = false;
+    if !cached || check {
+        #[cfg(debug_assertions)]
+        let kept = if evaluation.published_since_staging {
+            evaluation.staged.take()
+        } else {
+            None
+        };
+        #[cfg(debug_assertions)]
+        {
+            evaluation.published_since_staging = false;
+        }
         candidate.prepare_staged_template_package(
             &mut evaluation.operation,
             &mut evaluation.lineage,
@@ -2326,20 +2359,56 @@ fn canonical_root_base(
             &evaluation.lineage,
             &mut evaluation.sources,
         )?);
+        #[cfg(debug_assertions)]
+        for root in kept.iter().flatten() {
+            let fresh = evaluation
+                .staged
+                .iter()
+                .flatten()
+                .find(|program| program.part == root.part && program.story == root.story);
+            assert!(
+                fresh.is_some_and(|fresh| same_staged_root(root, fresh)),
+                "a template publication left the staged root of {} stale",
+                root.part
+            );
+        }
     }
     let mut fresh = evaluation
         .staged
         .iter()
         .flatten()
-        .find(|program| {
-            program.part == current.part
-                && program.story.kind() == current.story.kind()
-                && program.story.owner_index() == current.story.owner_index()
-        })
+        .find(same_owner)
         .cloned()
         .ok_or_else(|| template_error("template physical owner disappeared during staging"))?;
     retain_original_template_locations(current, &mut fresh)?;
     Ok(fresh)
+}
+
+/// Whether two stagings read the same root: its bytes, places and items.
+#[cfg(debug_assertions)]
+fn same_staged_root(left: &TemplateProgram, right: &TemplateProgram) -> bool {
+    left.part == right.part
+        && left.story == right.story
+        && left.ranges == right.ranges
+        && left.raw == right.raw
+        && left.scope == right.scope
+        && left.required_paragraph == right.required_paragraph
+        && left.table_rows == right.table_rows
+        && left.items.len() == right.items.len()
+        && left.items.iter().zip(&right.items).all(|(left, right)| {
+            left.range == right.range
+                && left.kind == right.kind
+                && left.field_owned == right.field_owned
+                && left.marker_unsafe == right.marker_unsafe
+                && left.raw == right.raw
+                && left.scope == right.scope
+                && left.children.len() == right.children.len()
+                && left
+                    .children
+                    .iter()
+                    .zip(&right.children)
+                    .all(|(left, right)| same_staged_root(left, right))
+        })
 }
 
 fn retain_original_template_locations(
@@ -2675,6 +2744,8 @@ pub(crate) fn render_grammar(
         versioned,
         occurrence: 0,
         staged: None,
+        #[cfg(debug_assertions)]
+        published_since_staging: false,
         formatter: None,
     };
     let mut executions = Vec::new();
@@ -2812,9 +2883,15 @@ pub(crate) fn render_grammar(
         changed |= rendered.raw != source.raw;
         if let Some(produced) = rendered.source {
             // Publishing the owner's own bytes back leaves the candidate as
-            // staged.
-            if produced.as_bytes() != source.raw.as_slice() {
-                evaluation.staged = None;
+            // staged; publishing others leaves the other parts' roots.
+            if produced.as_bytes() != source.raw.as_slice()
+                && let Some(staged) = &mut evaluation.staged
+            {
+                staged.retain(|program| program.part != source.part);
+                #[cfg(debug_assertions)]
+                {
+                    evaluation.published_since_staging = true;
+                }
             }
             candidate.template_publish_program_source(
                 &source,
