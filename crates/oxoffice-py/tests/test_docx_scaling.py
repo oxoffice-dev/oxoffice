@@ -862,7 +862,7 @@ QUICK = {
     "Cell.text", "Document.add_paragraph", "Document.add_heading", "Document.add_table", "Document.remove_content",
     "Document.insert_paragraph", "Document.insert_table",
     "Document.add_footnote", "Document.add_comment", "Document.add_picture", "SectionHandle.page_width",
-    "CoreProperties.title",
+    "CoreProperties.title", "Settings.track_revisions",
 }
 
 
