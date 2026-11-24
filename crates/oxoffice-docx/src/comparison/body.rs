@@ -93,7 +93,7 @@ fn compare_body_impl(
         metadata.options,
         &metadata.shared_bookmarks,
     )?;
-    let moves = pair_moves(
+    let mut moves = pair_moves(
         &aligned,
         &original_signatures,
         &edited_signatures,
@@ -109,6 +109,22 @@ fn compare_body_impl(
         left.filter(|_| right.is_none())
             .and_then(|index| original.body.content.get(index))
     });
+    let inserted_one_move = share_trailing_move(
+        &aligned,
+        trailing_inserted,
+        |(_, right)| right,
+        &edited.body.content,
+        &mut moves,
+        true,
+    );
+    let deleted_one_move = share_trailing_move(
+        &aligned,
+        trailing_deleted,
+        |(left, _)| left,
+        &original.body.content,
+        &mut moves,
+        false,
+    );
     // A final paragraph change marks the paragraph mark of an owner already
     // emitted, which must not be one that holds an existing revision.
     let refuse_held_mark = |position: Option<usize>| -> Result<()> {
@@ -127,7 +143,7 @@ fn compare_body_impl(
     // formatting. Caller ignore policies still govern ordinary comparison.
     let protected_equality_options = ComparisonOptions::default();
     let mut output: Vec<(EmittedOwner, String)> = Vec::new();
-    let mut trailing = (PropertySide::default(), false, false);
+    let mut trailing = TrailingState::default();
     let mut owner_leaves = Vec::new();
     for (position, (original_index, edited_index)) in aligned.iter().copied().enumerate() {
         let item_leaf_mark = metadata.leaf_publications.len();
@@ -333,7 +349,7 @@ fn compare_body_impl(
                             move_id,
                             carried: whole,
                             first: position == first,
-                            single: first == last,
+                            single: first == last || deleted_one_move,
                             next_takes_mark,
                             location,
                         },
@@ -407,7 +423,7 @@ fn compare_body_impl(
                             move_id,
                             carried: whole,
                             first: position == first,
-                            single: first == last,
+                            single: first == last || inserted_one_move,
                             next_takes_mark,
                             location,
                         },
