@@ -982,23 +982,6 @@ pub(crate) struct SourceBlockMarker {
     pub(crate) leading: bool,
 }
 
-/// The bookmark markers of a story source that sit between blocks, each
-/// with the paragraph it is read as.
-///
-/// A flow is the element whose blocks one story reads: the body, a header
-/// or footer, a note, a comment or a text box's content. A marker or a
-/// paragraph belongs to a flow when only tables, rows, cells and block
-/// content controls stand between them, as Word and Google Docs write
-/// block-level bookmarks. A marker under anything else, a paragraph, an
-/// `mc:AlternateContent` branch or a `w:customXml` element, is not read
-/// here: either a paragraph scan reads it, or no story does.
-///
-/// Within its flow, a marker is read as the paragraph it wraps, as
-/// `BlockBookmarks` reads it: a start leads the next paragraph, an end
-/// closes the previous one, an end whose start waits since the last
-/// paragraph leads the next one with it; the other side when there is no
-/// such paragraph. A table cell's paragraphs are a story of their own, so
-/// the paragraph, not the flow, tells which story reads a marker.
 /// The identifiers of every Word bookmark end of a story source, wherever it
 /// sits: inside a deletion, a smart tag or markup no story reads included.
 pub(crate) fn source_bookmark_end_ids(xml: &[u8]) -> Result<HashSet<i32>> {
@@ -1043,6 +1026,23 @@ pub(crate) fn source_bookmark_end_ids(xml: &[u8]) -> Result<HashSet<i32>> {
     Ok(ids)
 }
 
+/// The bookmark markers of a story source that sit between blocks, each
+/// with the paragraph it is read as.
+///
+/// A flow is the element whose blocks one story reads: the body, a header
+/// or footer, a note, a comment or a text box's content. A marker or a
+/// paragraph belongs to a flow when only tables, rows, cells and block
+/// content controls stand between them, as Word and Google Docs write
+/// block-level bookmarks. A marker under anything else, a paragraph, an
+/// `mc:AlternateContent` branch or a `w:customXml` element, is not read
+/// here: either a paragraph scan reads it, or no story does.
+///
+/// Within its flow, a marker is read as the paragraph it wraps, as
+/// `BlockBookmarks` reads it: a start leads the next paragraph, an end
+/// closes the previous one, an end whose start waits since the last
+/// paragraph leads the next one with it; the other side when there is no
+/// such paragraph. A table cell's paragraphs are a story of their own, so
+/// the paragraph, not the flow, tells which story reads a marker.
 pub(crate) fn source_block_bookmarks(xml: &[u8]) -> Result<Vec<SourceBlockMarker>> {
     if !xml
         .windows(b"bookmark".len())
