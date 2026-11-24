@@ -976,7 +976,7 @@ pub fn thumbnail(
     stage_and_publish(&[(output.clone(), png)], force)?;
     write_render_diagnostics(&layout.diagnostics)?;
     if as_json {
-        return print_json(converted_json(file, "png", None, vec![written]));
+        return print_json(converted_json(file, "png", Some(dpi), vec![written]));
     }
     writeln!(io::stdout(), "Written to {}", output.display())?;
     Ok(())

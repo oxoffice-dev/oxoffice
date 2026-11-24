@@ -153,9 +153,11 @@ each file only once it is complete, so a failed run leaves no truncated output.
 With `--json`, `convert`, `render`, and `thumbnail` write a schema-1 record of
 the files written instead of their `Written to` and `Slide N` lines: `file`,
 `format`, `dpi` for a raster output, and `outputs`, each with its `path`, its
-size in `bytes`, and the one-based `slides` it holds (every selected slide for
-a PDF or a TIFF, none for HTML or Markdown). HTML or Markdown lists the images
-written beside it under `assets`. Standard output holds only the record;
+size in `bytes`, and the one-based `slides` it holds (every slide for a PDF,
+the selected slides for a TIFF, none for HTML or Markdown). The `dpi` of a
+thumbnail is the resolution that draws slide one 320 pixels wide. HTML or
+Markdown lists the images written beside it, with `--embed-images=false`,
+under `assets`. Standard output holds only the record;
 rendering diagnostics stay on standard error.
 
 The output extension of `replace` and of every comment mutation selects the

@@ -185,30 +185,79 @@ fn docx_render_json_lists_each_page_image() {
 
 #[test]
 fn pptx_diff_json_gives_the_counts_and_differences_docx_diff_gives() {
+    // The deck's slides are a title, highlights, key figures and a chart.
+    // The edited copy drops the highlights, retitles the chart and ends with
+    // a copy of the title slide.
     let a = corpus("powerpoint/deck.pptx");
-    let b = corpus("powerpoint/pitch.pptx");
+    let b = scratch("pptx-diff").join("edited.pptx");
+    let mut edited = oxoffice_pptx::Presentation::open(&a).unwrap();
+    edited.remove_slide(1).unwrap();
+    let retitled = edited
+        .try_replace_text("Revenue by quarter", "Turnover by quarter")
+        .unwrap();
+    assert_eq!(retitled, 1);
+    edited.duplicate_slide(0).unwrap();
+    let last = edited.len() - 1;
+    edited.move_slide(1, last).unwrap();
+    edited.save(&b).unwrap();
+
     let record = json_record(&oxoffice(&["pptx", "diff", "--json"], &[&a, &b]));
     assert_eq!(record["file_a"], a.display().to_string());
     assert_eq!(record["file_b"], b.display().to_string());
     assert_eq!(record["scope"], "slide-text");
     assert_eq!(record["not_compared"], serde_json::json!([]));
     let differences = record["differences"].as_array().expect("differences");
-    assert!(!differences.is_empty(), "{record}");
-    for change in ["changed", "added", "removed"] {
-        let counted = differences
-            .iter()
-            .filter(|difference| difference["change"] == change)
-            .count();
-        assert_eq!(record[change], counted as u64, "{change} in {record}");
-    }
-    for difference in differences {
-        assert_eq!(difference["story"], "slide");
-        let change = difference["change"].as_str().unwrap();
-        assert_eq!(difference["location_a"].is_string(), change != "added");
-        assert_eq!(difference["text_a"].is_string(), change != "added");
-        assert_eq!(difference["location_b"].is_string(), change != "removed");
-        assert_eq!(difference["text_b"].is_string(), change != "removed");
-    }
+    let found = differences
+        .iter()
+        .map(|difference| {
+            assert_eq!(difference["story"], "slide");
+            (
+                difference["change"].as_str().unwrap(),
+                difference["location_a"].as_str(),
+                difference["location_b"].as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    // Title and key figures match; the highlights (slide 2) go, the chart
+    // (slide 4, now 3) changes, and the copy of the title comes as slide 4.
+    assert_eq!(
+        found,
+        [
+            ("removed", Some("2"), None),
+            ("changed", Some("4"), Some("3")),
+            ("added", None, Some("4")),
+        ],
+        "{record}"
+    );
+    assert!(
+        differences[0]["text_a"]
+            .as_str()
+            .unwrap()
+            .starts_with("Highlights")
+    );
+    assert!(differences[0]["text_b"].is_null());
+    assert!(
+        differences[1]["text_a"]
+            .as_str()
+            .unwrap()
+            .starts_with("Revenue by quarter")
+    );
+    assert!(
+        differences[1]["text_b"]
+            .as_str()
+            .unwrap()
+            .starts_with("Turnover by quarter")
+    );
+    assert!(
+        differences[2]["text_b"]
+            .as_str()
+            .unwrap()
+            .starts_with("Quarterly Operations Review")
+    );
+    assert_eq!(
+        (&record["changed"], &record["added"], &record["removed"]),
+        (&Value::from(1), &Value::from(1), &Value::from(1))
+    );
 
     let same = json_record(&oxoffice(&["pptx", "diff", "--json"], &[&a, &a]));
     assert_eq!(same["differences"], serde_json::json!([]));
@@ -255,14 +304,51 @@ fn pptx_convert_json_lists_the_files_written_with_their_slides() {
     assert_eq!(record["dpi"], 150.0);
     assert_outputs(&record, "slides", &[&[2], &[3]]);
 
+    // One TIFF holds the slides of the range.
+    let tiff = dir.join("deck.tiff");
+    let record = json_record(&oxoffice(
+        &[
+            "pptx", "convert", "--to", "tiff", "--slides", "2-3", "--json", "-o",
+        ],
+        &[&tiff, &deck],
+    ));
+    assert_eq!(record["format"], "tiff");
+    assert_eq!(record["outputs"][0]["path"], tiff.display().to_string());
+    assert_outputs(&record, "slides", &[&[2, 3]]);
+
+    // The document is the one output, the images beside it its assets.
     let html = dir.join("deck.html");
     let record = json_record(&oxoffice(
-        &["pptx", "convert", "--to", "html", "--json", "-o"],
+        &[
+            "pptx",
+            "convert",
+            "--to",
+            "html",
+            "--embed-images=false",
+            "--json",
+            "-o",
+        ],
         &[&html, &deck],
     ));
     assert_eq!(record["format"], "html");
-    assert_eq!(record["outputs"][0]["path"], html.display().to_string());
-    assert!(record["assets"].is_array(), "{record}");
+    let outputs = record["outputs"].as_array().expect("outputs");
+    assert_eq!(outputs.len(), 1, "{record}");
+    assert_eq!(outputs[0]["path"], html.display().to_string());
+    assert_eq!(
+        outputs[0]["bytes"],
+        fs::metadata(&html).unwrap().len(),
+        "{record}"
+    );
+    let assets = record["assets"].as_array().expect("assets");
+    assert!(!assets.is_empty(), "{record}");
+    let document = fs::read_to_string(&html).unwrap();
+    for asset in assets {
+        let path = Path::new(asset["path"].as_str().expect("path"));
+        assert_ne!(path, html, "{record}");
+        assert_eq!(asset["bytes"], fs::metadata(path).unwrap().len(), "{asset}");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert!(document.contains(name), "the document refers to {name}");
+    }
 }
 
 #[test]
@@ -315,4 +401,14 @@ fn pptx_thumbnail_json_names_the_image_of_slide_one() {
     assert_eq!(record["format"], "png");
     assert_eq!(record["outputs"][0]["path"], png.display().to_string());
     assert_outputs(&record, "slides", &[&[1]]);
+    // The resolution draws slide one 320 pixels wide.
+    let width_points = oxoffice_pptx::Presentation::open(&deck)
+        .unwrap()
+        .slide_size()
+        .expect("a slide size")
+        .0
+        .0 as f64
+        / 12_700.0;
+    let dpi = record["dpi"].as_f64().expect("dpi");
+    assert_eq!((dpi * width_points / 72.0).round(), 320.0, "{record}");
 }
