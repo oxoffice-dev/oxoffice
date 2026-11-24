@@ -360,6 +360,8 @@ impl Document {
     /// place instead of once per accessor. `apply` runs on a copy of the
     /// settings model, which the edit then installs in place
     /// ([`Self::edit_settings_part`]): the rest of the document is not copied.
+    /// The value is checked before the part is reserved, so when both would
+    /// fail, the value's error is the one returned.
     pub(super) fn stage_settings_mutation(
         &mut self,
         apply: impl FnOnce(&mut CT_Settings) -> std::result::Result<(), oxoffice_docx_oxml::OxmlError>,
@@ -1104,8 +1106,10 @@ impl Document {
     /// package graph, and a refusal or a panic removes it again and puts the
     /// part's name back, so a refused edit leaves the document as it was. A
     /// success leaves what [`Self::commit_staged_mutation`] leaves for a
-    /// staged clone: the derived layout is dropped (by the reservation) and
-    /// a signed package records a package mutation. Debug builds run the
+    /// staged clone, except the derived layout of a web settings edit, which
+    /// stays (no layout reads web settings): a settings edit drops the layout
+    /// (its reservation does) and a signed package records a package
+    /// mutation. Debug builds run the
     /// staged edit on a clone and compare. `install` is `Fn` for that run.
     fn edit_settings_part(
         &mut self,
