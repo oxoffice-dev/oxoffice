@@ -1,6 +1,6 @@
 ---
 date: 2026-11-23
-status: accepted
+status: shipped
 scope: docx
 ---
 
@@ -65,6 +65,12 @@ the accepted-view part of `text.rs`). Tests: `tests/docx/reader_view.rs` covers 
 unchanged; an inline control's insertion in text and HTML; an anchor after a two-run inserted field in an inline
 control in both exports; an equation in an inline control and in an insertion inside one, in both exports. The CLI
 test checks `text --json` runs, and `test_reader_view.py` checks Python `Paragraph.runs`. Each test fails on main.
+
+## Outcome
+
+Shipped in #575 (closes #150). `Paragraph::runs()`, the text, HTML and Markdown anchors now agree on a tracked
+insertion holding a simple field, and the per-read re-parse is gone. A content control's own text now reads its
+tracked insertions too (#577).
 
 ## Links
 
