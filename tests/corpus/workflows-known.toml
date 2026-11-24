@@ -4,3 +4,9 @@
 # once the copy passes the workflow, the test fails until the entry goes.
 # `message` is text the failure must hold, so that a failure with another
 # cause still fails the test.
+
+[[known]]
+file = "libreoffice/record.docx"
+workflow = "resolve-all"
+issue = 599
+message = "cannot remove part of comment 0"
