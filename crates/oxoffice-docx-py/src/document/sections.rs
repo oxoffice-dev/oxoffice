@@ -348,34 +348,15 @@ impl PySectionHandle {
     ) -> PyResult<()> {
         self.validate(py)?;
         let (family, policy) = checked_note_policy(family, format, start, restart, placement)?;
-        let mut document = self.document.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        candidate
+        // A section property edit, as the geometry setters make: it changes
+        // no element a handle names, so it publishes nothing.
+        self.document
+            .borrow_mut(py)
+            .inner
             .section_mut(self.index)
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_note_policy(family, policy)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        candidate
-            .to_bytes()
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "SectionHandle.set_note_policy",
-            crate::document::WordPublication::Conservative,
-        )?;
-        let (next, next_owner) = document.capture_prepared_owner(
-            &prepared,
-            &WordOwnerLocation::Section(self.index),
-            smallvec![],
-            WordView::Owner,
-            None,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        self.path = next;
-        self.owner = next_owner;
-        Ok(())
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[pyo3(signature = (edge, *, style="single", width=8, space=0, color="000000"))]
@@ -389,34 +370,15 @@ impl PySectionHandle {
         color: &str,
     ) -> PyResult<()> {
         self.validate(py)?;
-        let mut document = self.document.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        candidate
+        // A section property edit, as the geometry setters make: it changes
+        // no element a handle names, so it publishes nothing.
+        self.document
+            .borrow_mut(py)
+            .inner
             .section_mut(self.index)
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_page_border(edge, style, width, space, color)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        candidate
-            .saves_as(&candidate)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "SectionHandle.set_page_border",
-            crate::document::WordPublication::Conservative,
-        )?;
-        let (next, next_owner) = document.capture_prepared_owner(
-            &prepared,
-            &WordOwnerLocation::Section(self.index),
-            smallvec![],
-            WordView::Owner,
-            None,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        self.path = next;
-        self.owner = next_owner;
-        Ok(())
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     /// Author actual DrawingML text, with styled real text in both representations.

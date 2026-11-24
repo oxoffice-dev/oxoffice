@@ -55,13 +55,7 @@ impl Document {
 
     /// Enable or disable distinct even-page header and footer story selection.
     pub fn set_even_and_odd_headers(&mut self, enabled: bool) -> Result<()> {
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_even_and_odd_headers(enabled)?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.stage_settings_mutation(|settings| settings.set_even_and_odd_headers(enabled))
     }
 
     /// Return whether the settings part asks Word to update fields when it
@@ -134,14 +128,12 @@ impl Document {
         if value.is_none() && self.settings.is_none() {
             return Ok(());
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_update_fields(value)?;
-        candidate.prune_empty_owned_settings();
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        let mut settings = self.settings.clone().unwrap_or_default();
+        settings.set_update_fields(value)?;
+        self.edit_settings_part(SettingsPart::Settings, |document| {
+            document.settings = Some(settings.clone());
+            document.prune_empty_owned_settings();
+        })
     }
 
     /// Return document-wide OfficeMath defaults from the settings part.
@@ -189,13 +181,9 @@ impl Document {
 
     /// Set a document variable in the relationship-resolved settings part.
     pub fn set_document_variable(&mut self, name: &str, value: &str) -> Result<()> {
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_document_variable(name.to_owned(), value.to_owned())?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.stage_settings_mutation(|settings| {
+            settings.set_document_variable(name.to_owned(), value.to_owned())
+        })
     }
 
     /// Remove one document variable by name.
@@ -206,16 +194,9 @@ impl Document {
         if settings.document_variable(name).is_none() {
             return Ok(None);
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        let removed = candidate
-            .settings
-            .as_mut()
-            .expect("settings candidate retains its model")
-            .remove_document_variable(name)?
-            .map(|variable| variable.value);
-        candidate.prune_empty_owned_settings();
-        self.commit_staged_mutation(candidate);
-        Ok(removed)
+        Ok(self
+            .stage_settings_removal(|settings| settings.remove_document_variable(name))?
+            .map(|variable| variable.value))
     }
 
     /// Return typed compatibility settings in package order.
@@ -228,17 +209,13 @@ impl Document {
 
     /// Add or replace one compatibility setting selected by name and URI.
     pub fn set_compatibility_setting(&mut self, name: &str, uri: &str, value: &str) -> Result<()> {
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_compatibility_setting(CompatibilitySetting {
+        self.stage_settings_mutation(|settings| {
+            settings.set_compatibility_setting(CompatibilitySetting {
                 name: name.to_owned(),
                 uri: uri.to_owned(),
                 value: value.to_owned(),
-            })?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+            })
+        })
     }
 
     /// Remove one compatibility setting selected by name and URI.
@@ -257,15 +234,7 @@ impl Document {
         {
             return Ok(None);
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        let removed = candidate
-            .settings
-            .as_mut()
-            .expect("settings candidate retains its model")
-            .remove_compatibility_setting(name, uri)?;
-        candidate.prune_empty_owned_settings();
-        self.commit_staged_mutation(candidate);
-        Ok(removed)
+        self.stage_settings_removal(|settings| settings.remove_compatibility_setting(name, uri))
     }
 
     pub fn default_tab_stop(&self) -> Option<oxoffice_core::Twips> {
@@ -273,28 +242,14 @@ impl Document {
     }
 
     pub fn set_default_tab_stop(&mut self, value: oxoffice_core::Twips) -> Result<()> {
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_default_tab_stop(value)?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.stage_settings_mutation(|settings| settings.set_default_tab_stop(value))
     }
 
     pub fn remove_default_tab_stop(&mut self) -> Result<Option<oxoffice_core::Twips>> {
         if self.default_tab_stop().is_none() {
             return Ok(None);
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        let removed = candidate
-            .settings
-            .as_mut()
-            .expect("settings candidate retains its model")
-            .remove_default_tab_stop()?;
-        candidate.prune_empty_owned_settings();
-        self.commit_staged_mutation(candidate);
-        Ok(removed)
+        self.stage_settings_removal(|settings| settings.remove_default_tab_stop())
     }
 
     pub fn character_spacing_control(&self) -> Option<CharacterSpacingControl> {
@@ -302,28 +257,14 @@ impl Document {
     }
 
     pub fn set_character_spacing_control(&mut self, value: CharacterSpacingControl) -> Result<()> {
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_character_spacing_control(value)?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.stage_settings_mutation(|settings| settings.set_character_spacing_control(value))
     }
 
     pub fn remove_character_spacing_control(&mut self) -> Result<Option<CharacterSpacingControl>> {
         if self.character_spacing_control().is_none() {
             return Ok(None);
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        let removed = candidate
-            .settings
-            .as_mut()
-            .expect("settings candidate retains its model")
-            .remove_character_spacing_control()?;
-        candidate.prune_empty_owned_settings();
-        self.commit_staged_mutation(candidate);
-        Ok(removed)
+        self.stage_settings_removal(|settings| settings.remove_character_spacing_control())
     }
 
     pub fn theme_font_language(&self) -> Option<&ThemeFontLanguage> {
@@ -342,15 +283,7 @@ impl Document {
         if self.theme_font_language().is_none() {
             return Ok(None);
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        let removed = candidate
-            .settings
-            .as_mut()
-            .expect("settings candidate retains its model")
-            .remove_theme_font_language()?;
-        candidate.prune_empty_owned_settings();
-        self.commit_staged_mutation(candidate);
-        Ok(removed)
+        self.stage_settings_removal(|settings| settings.remove_theme_font_language())
     }
 
     /// Apply one settings mutation and commit it atomically.
@@ -1026,13 +959,7 @@ impl Document {
 
     /// Set the document-wide Latin, East Asian, and bidirectional languages.
     pub fn set_language_defaults(&mut self, value: ThemeFontLanguage) -> Result<()> {
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_theme_font_language(value)?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.stage_settings_mutation(|settings| settings.set_theme_font_language(value))
     }
 }
 
