@@ -14,7 +14,7 @@ impl PySectionHandle {
             .map_err(|error| crate::stale_to_pyerr(py, error))?;
         if !document.owners.iter().any(|owner| {
             owner.owner.same_state(&self.owner)
-                && matches!(owner.location,WordOwnerLocation::Section(index) if index==self.index)
+                && matches!(*owner.location(),WordOwnerLocation::Section(index) if index==self.index)
         }) {
             return Err(PyValueError::new_err(
                 "section physical owner is no longer current",

@@ -7,7 +7,7 @@ impl PyDocument {
         self.owners
             .iter()
             .find(
-                |owner| matches!(owner.location,WordOwnerLocation::Section(value) if value==index),
+                |owner| matches!(*owner.location(),WordOwnerLocation::Section(value) if value==index),
             )
             .and_then(|owner| owner.content.clone())
             .ok_or_else(|| PyValueError::new_err("section furniture owner is absent"))
@@ -25,7 +25,7 @@ impl PyDocument {
             .owners
             .iter()
             .find(
-                |owner| matches!(owner.location,WordOwnerLocation::Section(value) if value==index),
+                |owner| matches!(*owner.location(),WordOwnerLocation::Section(value) if value==index),
             )
             .and_then(|owner| owner.content.clone())
             .ok_or_else(|| PyValueError::new_err("prepared section furniture owner is absent"))
@@ -45,14 +45,14 @@ impl PyDocument {
         let index = self
             .owners
             .iter()
-            .find_map(|owner| match owner.location {
+            .find_map(|owner| match owner.route_shape() {
                 WordOwnerLocation::Section(index)
                     if owner
                         .content
                         .as_ref()
                         .is_some_and(|content| content.same_state(scope)) =>
                 {
-                    Some(index)
+                    Some(*index)
                 }
                 _ => None,
             })
@@ -96,14 +96,14 @@ impl PyDocument {
         let body = |location: &oxoffice_docx::ContentLocation| {
             location.story().kind() == oxoffice_docx::StoryKind::Body
         };
-        match (&top.location, followed.as_mut_slice()) {
+        match (&*top.location(), followed.as_mut_slice()) {
             (
                 WordOwnerLocation::Paragraph(location),
                 [PathSeg::Body(_), PathSeg::Para(paragraph), ..],
             ) if body(location) => {
                 if let Some(projection) = &self.indexes.body_paragraphs {
                     let current =
-                        projected_index(projection, location, *paragraph, top.projection_ordinal);
+                        projected_index(projection, location, *paragraph, top.projection_ordinal());
                     debug_assert!(
                         current.is_some(),
                         "a body paragraph owner is in the facade projection"
@@ -118,7 +118,7 @@ impl PyDocument {
                     &self.indexes.body_tables,
                     location,
                     *table,
-                    top.projection_ordinal,
+                    top.projection_ordinal(),
                 );
                 debug_assert!(
                     current.is_some(),
@@ -144,9 +144,12 @@ impl PyDocument {
             (&prepared.owners, &prepared.indexes)
         });
         let native = match location {
-            ParagraphLocation::Body(index) => {
-                indexes.body_paragraphs.as_ref()?.get(*index)?.as_ref()?
-            }
+            ParagraphLocation::Body(index) => indexes
+                .body_paragraphs
+                .as_ref()?
+                .get(*index)?
+                .as_ref()?
+                .location(),
             ParagraphLocation::Cell {
                 table,
                 row,
@@ -154,15 +157,17 @@ impl PyDocument {
                 paragraph,
             } => indexes
                 .cell_paragraphs
-                .get(&(*table, *row, *cell))?
-                .get(*paragraph)?,
-            ParagraphLocation::Related(location) => location,
+                .get(*table)?
+                .get(&(*row, *cell))?
+                .get(*paragraph)?
+                .location(),
+            ParagraphLocation::Related(location) => location.clone(),
         };
-        let index = indexes.find(owners, &WordOwnerLocation::Paragraph(native.clone()))?;
-        let WordOwnerLocation::Paragraph(location) = &owners[index].location else {
-            return None;
-        };
-        Some(location.clone())
+        let index = indexes.find(owners, &WordOwnerLocation::Paragraph(native))?;
+        match owners[index].location().into_owned() {
+            WordOwnerLocation::Paragraph(location) => Some(location),
+            _ => None,
+        }
     }
 
     /// The route of the physical owner of a paragraph handle's location in
@@ -221,7 +226,7 @@ impl PyDocument {
         oxoffice_docx_oxml::text::AcceptedRunPath,
     )> {
         if let Some((_, owner)) = self.indexed_owner(state)
-            && let WordOwnerLocation::Run(location, path) = &owner.location
+            && let WordOwnerLocation::Run(location, path) = &*owner.location()
         {
             // The story walk of a recorded route only reads its story again,
             // so the check is that the paragraph there holds this run path.
@@ -256,14 +261,14 @@ impl PyDocument {
         }
         let (_, run) = self.indexed_owner(state)?;
         let paragraph = self.owners.get(run.parent?)?;
-        let WordOwnerLocation::Paragraph(route) = &paragraph.location else {
+        let WordOwnerLocation::Paragraph(route) = &*paragraph.location() else {
             return None;
         };
         let indexed = self.indexed_paragraph_location(location, None)?;
         (route.story().kind() == oxoffice_docx::StoryKind::Body
             && route.index_path().len() == 1
             && same_content_owner(route, &indexed))
-        .then_some(paragraph.body_slot?)
+        .then_some(paragraph.body_slot()?)
     }
 
     pub(crate) fn indexed_table_location(
@@ -276,14 +281,14 @@ impl PyDocument {
             (&prepared.owners, &prepared.indexes)
         });
         let native = match related {
-            Some(location) => location,
-            None => indexes.body_tables.get(index)?.as_ref()?,
+            Some(location) => location.clone(),
+            None => indexes.body_tables.get(index)?.as_ref()?.location(),
         };
-        let index = indexes.find(owners, &WordOwnerLocation::Table(native.clone()))?;
-        let WordOwnerLocation::Table(location) = &owners[index].location else {
-            return None;
-        };
-        Some(location.clone())
+        let index = indexes.find(owners, &WordOwnerLocation::Table(native))?;
+        match owners[index].location().into_owned() {
+            WordOwnerLocation::Table(location) => Some(location),
+            _ => None,
+        }
     }
 
     pub(crate) fn indexed_table_owner_location(
@@ -291,7 +296,7 @@ impl PyDocument {
         state: &RevisionState,
     ) -> Option<oxoffice_docx::ContentLocation> {
         let (_, owner) = self.indexed_owner(state)?;
-        let WordOwnerLocation::Table(location) = &owner.location else {
+        let WordOwnerLocation::Table(location) = &*owner.location() else {
             return None;
         };
         Some(location.clone())
@@ -302,7 +307,7 @@ impl PyDocument {
         state: &RevisionState,
     ) -> Option<oxoffice_docx::ContentLocation> {
         let (_, owner) = self.indexed_owner(state)?;
-        let WordOwnerLocation::Cell { table, .. } = &owner.location else {
+        let WordOwnerLocation::Cell { table, .. } = &*owner.location() else {
             return None;
         };
         Some(table.clone())
@@ -323,7 +328,7 @@ impl PyDocument {
             story: oxoffice_docx::StoryId::body(),
         };
         let index = self.indexes.find(&self.owners, &key)?;
-        Some(self.owners[index].location.clone())
+        Some(self.owners[index].location().into_owned())
     }
 
     pub(crate) fn capture_current_view(
@@ -351,12 +356,12 @@ impl PyDocument {
     /// The direct body slot of a current paragraph owner, from the inventory.
     pub(crate) fn direct_body_paragraph_slot(&self, state: &RevisionState) -> Option<usize> {
         let (_, owner) = self.indexed_owner(state)?;
-        match &owner.location {
+        match &*owner.location() {
             WordOwnerLocation::Paragraph(location)
                 if location.story().kind() == oxoffice_docx::StoryKind::Body
                     && location.index_path().len() == 1 =>
             {
-                owner.body_slot
+                owner.body_slot()
             }
             _ => None,
         }
@@ -369,17 +374,17 @@ impl PyDocument {
         state: &RevisionState,
     ) -> Option<(usize, oxoffice_docx_oxml::text::AcceptedRunPath)> {
         let (_, owner) = self.indexed_owner(state)?;
-        let WordOwnerLocation::Run(location, path) = &owner.location else {
+        let WordOwnerLocation::Run(location, path) = &*owner.location() else {
             return None;
         };
         let paragraph = self.owners.get(owner.parent?)?;
-        match &paragraph.location {
+        match &*paragraph.location() {
             WordOwnerLocation::Paragraph(parent)
                 if parent.story().kind() == oxoffice_docx::StoryKind::Body
                     && parent.index_path().len() == 1
                     && parent.index_path() == location.index_path() =>
             {
-                Some((paragraph.body_slot?, path.clone()))
+                Some((paragraph.body_slot()?, path.clone()))
             }
             _ => None,
         }
@@ -394,18 +399,18 @@ impl PyDocument {
         let (_, owner) = self.indexed_owner(state)?;
         let WordOwnerLocation::Cell {
             table, row, cell, ..
-        } = &owner.location
+        } = &*owner.location()
         else {
             return None;
         };
         let parent = self.owners.get(owner.parent?)?;
-        match &parent.location {
+        match &*parent.location() {
             WordOwnerLocation::Table(location)
                 if location.story().kind() == oxoffice_docx::StoryKind::Body
                     && location.index_path().len() == 1
                     && location.index_path() == table.index_path() =>
             {
-                Some((parent.body_slot?, *row, *cell))
+                Some((parent.body_slot()?, *row, *cell))
             }
             _ => None,
         }
@@ -414,12 +419,12 @@ impl PyDocument {
     /// The direct body slot of a current table owner, from the inventory.
     pub(crate) fn direct_body_table_slot(&self, state: &RevisionState) -> Option<usize> {
         let (_, owner) = self.indexed_owner(state)?;
-        match &owner.location {
+        match &*owner.location() {
             WordOwnerLocation::Table(location)
                 if location.story().kind() == oxoffice_docx::StoryKind::Body
                     && location.index_path().len() == 1 =>
             {
-                owner.body_slot
+                owner.body_slot()
             }
             _ => None,
         }
@@ -453,7 +458,7 @@ impl PyDocument {
 
     pub(crate) fn cached_cell_paragraph_count(&self, state: &RevisionState) -> Option<usize> {
         let (_, owner) = self.indexed_owner(state)?;
-        let WordOwnerLocation::Cell { row, cell, .. } = &owner.location else {
+        let WordOwnerLocation::Cell { row, cell, .. } = &*owner.location() else {
             return None;
         };
         let parent = self.owners.get(owner.parent?)?;
@@ -474,7 +479,8 @@ impl PyDocument {
         if items.len() != self.cached_cell_paragraph_count(state)? {
             return None;
         }
-        let WordOwnerLocation::Paragraph(location) = &self.owners[*items.get(paragraph)?].location
+        let WordOwnerLocation::Paragraph(location) =
+            &*self.owners[*items.get(paragraph)?].location()
         else {
             return None;
         };
@@ -486,7 +492,7 @@ impl PyDocument {
         state: &RevisionState,
     ) -> Option<Vec<oxoffice_docx::ContentLocation>> {
         let (index, owner) = self.indexed_owner(state)?;
-        if !matches!(owner.location, WordOwnerLocation::Cell { .. }) {
+        if !matches!(owner.route_shape(), WordOwnerLocation::Cell { .. }) {
             return None;
         }
         Some(
@@ -496,7 +502,8 @@ impl PyDocument {
                 .into_iter()
                 .flatten()
                 .map(|index| {
-                    let WordOwnerLocation::Table(location) = &self.owners[*index].location else {
+                    let WordOwnerLocation::Table(location) = &*self.owners[*index].location()
+                    else {
                         unreachable!("table index contains tables");
                     };
                     location.clone()
@@ -512,16 +519,13 @@ impl PyDocument {
 /// unless an unowned block comes before (a table in a block content
 /// control), then the first entry that names it.
 fn projected_index(
-    projection: &[Option<oxoffice_docx::ContentLocation>],
+    projection: &[Option<AnchoredRoute>],
     location: &oxoffice_docx::ContentLocation,
     captured: usize,
     ordinal: Option<usize>,
 ) -> Option<usize> {
-    let names = |entry: &Option<oxoffice_docx::ContentLocation>| {
-        entry
-            .as_ref()
-            .is_some_and(|entry| same_content_owner(entry, location))
-    };
+    let names =
+        |entry: &Option<AnchoredRoute>| entry.as_ref().is_some_and(|entry| entry.names(location));
     [Some(captured), ordinal]
         .into_iter()
         .flatten()

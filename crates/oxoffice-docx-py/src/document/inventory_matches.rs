@@ -3,7 +3,7 @@
 use super::*;
 
 fn same_inventory_route(
-    old: &[WordOwner],
+    old: &[WordOwnerAddress],
     mut before: usize,
     new: &[WordOwnerAddress],
     mut after: usize,
@@ -323,50 +323,47 @@ pub(super) fn property_owner_key(addresses: &[WordOwnerAddress], index: usize) -
 pub(super) fn relocated_property_owners(
     old: &[WordOwner],
     new_addresses: &[WordOwnerAddress],
+    items: &WordBodyItems,
 ) -> Option<Vec<WordOwner>> {
     if old.len() != new_addresses.len() {
         return None;
     }
-    let old_addresses = old
-        .iter()
-        .map(|owner| WordOwnerAddress {
-            location: owner.location.clone(),
-            parent: owner.parent,
-            body_slot: owner.body_slot,
-            projection_ordinal: owner.projection_ordinal,
-            read_facts: owner.read_facts.clone(),
-        })
-        .collect::<Vec<_>>();
-    let mut buckets: HashMap<PropertyOwnerKey, Vec<usize>> = HashMap::new();
+    let old_addresses = old.iter().map(WordOwner::address).collect::<Vec<_>>();
+    // Old owners by key and parent. A key names an owner in its cell, not
+    // which cell or table holds it, and the inventory is not in walk order
+    // once a splice or a local edit appended owners: an owner with a parent
+    // takes an old owner of the parent it matched, so that owners keyed alike
+    // in two cells never swap. Owners without a parent keep their order.
+    let mut buckets: HashMap<(PropertyOwnerKey, Option<usize>), Vec<usize>> = HashMap::new();
     for index in 0..old_addresses.len() {
         buckets
-            .entry(property_owner_key(&old_addresses, index))
+            .entry((
+                property_owner_key(&old_addresses, index),
+                old_addresses[index].parent,
+            ))
             .or_default()
             .push(index);
     }
-    let mut cursors: HashMap<PropertyOwnerKey, usize> = HashMap::new();
+    let mut cursors: HashMap<(PropertyOwnerKey, Option<usize>), usize> = HashMap::new();
+    let mut matched = Vec::with_capacity(new_addresses.len());
     let mut owners = Vec::with_capacity(new_addresses.len());
     for index in 0..new_addresses.len() {
-        let key = property_owner_key(new_addresses, index);
+        // A parent comes before its children in a walk.
+        let parent = match new_addresses[index].parent {
+            Some(parent) => Some(*matched.get(parent)?),
+            None => None,
+        };
+        let key = (property_owner_key(new_addresses, index), parent);
         let bucket = buckets.get(&key)?;
         let cursor = cursors.entry(key).or_insert(0);
-        if *cursor >= bucket.len() {
-            return None;
-        }
-        let previous = &old[bucket[*cursor]];
+        let previous = *bucket.get(*cursor)?;
         *cursor += 1;
-        let address = &new_addresses[index];
-        owners.push(WordOwner {
-            location: address.location.clone(),
-            parent: address.parent,
-            body_slot: address.body_slot,
-            projection_ordinal: address.projection_ordinal,
-            read_facts: address.read_facts.clone(),
-            owner: previous.owner.clone(),
-            content: previous.content.clone(),
-            properties: previous.properties.clone(),
-            grid: previous.grid.clone(),
-        });
+        matched.push(previous);
+        owners.push(WordOwner::with_states_of(
+            new_addresses[index].clone(),
+            &old[previous],
+            items,
+        ));
     }
     if cursors.len() != buckets.len()
         || cursors
@@ -385,21 +382,17 @@ pub(super) fn indexed_inventory_matches(
 ) -> Vec<Option<usize>> {
     let mut index = HashMap::<(Option<usize>, usize, WordRouteKey), Vec<usize>>::new();
     let mut links = HashMap::<WordRouteKey, Vec<usize>>::new();
-    for (before, owner) in old.iter().enumerate() {
-        let address = WordOwnerAddress {
-            location: owner.location.clone(),
-            parent: owner.parent,
-            body_slot: owner.body_slot,
-            projection_ordinal: owner.projection_ordinal,
-            read_facts: owner.read_facts.clone(),
-        };
-        let parent_cell = owner
+    // Each old owner resolved once, for its keys and the route comparisons.
+    let old = old.iter().map(WordOwner::address).collect::<Vec<_>>();
+    let old = old.as_slice();
+    for (before, address) in old.iter().enumerate() {
+        let parent_cell = address
             .parent
             .is_some_and(|parent| matches!(old[parent].location, WordOwnerLocation::Cell { .. }));
-        let body_slot = match &owner.location {
+        let body_slot = match &address.location {
             WordOwnerLocation::Paragraph(location) | WordOwnerLocation::Table(location) => {
                 location.story().kind() == oxoffice_docx::StoryKind::Body
-                    && owner.body_slot.is_some()
+                    && address.body_slot.is_some()
             }
             _ => false,
         };
@@ -408,7 +401,7 @@ pub(super) fn indexed_inventory_matches(
         // branch's old key in its own namespace, without merging parent routes.
         let mut keys = Vec::new();
         for candidate_class in 0..4 {
-            if let Some(key) = word_route_key(&address, candidate_class, candidate_class & 2 != 0)
+            if let Some(key) = word_route_key(address, candidate_class, candidate_class & 2 != 0)
                 && !keys.contains(&key)
             {
                 keys.push(key);
@@ -416,10 +409,10 @@ pub(super) fn indexed_inventory_matches(
         }
         for key in keys {
             index
-                .entry((owner.parent, class, key.clone()))
+                .entry((address.parent, class, key.clone()))
                 .or_default()
                 .push(before);
-            if matches!(owner.location, WordOwnerLocation::Hyperlink(..)) {
+            if matches!(address.location, WordOwnerLocation::Hyperlink(..)) {
                 links.entry(key).or_default().push(before);
             }
         }
@@ -530,12 +523,15 @@ impl WordOwner {
     }
 }
 
+/// The owners of `locations` with their scope states, in order, stored
+/// relative to the body items of `items`.
 pub(super) fn word_owners_with_states(
     locations: Vec<WordOwnerAddress>,
     states: &[RevisionState],
+    items: &WordBodyItems,
 ) -> Vec<WordOwner> {
     let mut result = Vec::with_capacity(locations.len());
-    append_word_owners_with_states(&mut result, locations, states);
+    append_word_owners_with_states(&mut result, locations, states, items);
     result
 }
 
@@ -543,36 +539,12 @@ pub(super) fn append_word_owners_with_states(
     result: &mut Vec<WordOwner>,
     locations: Vec<WordOwnerAddress>,
     states: &[RevisionState],
+    items: &WordBodyItems,
 ) {
     let mut offset = 0;
     result.extend(locations.into_iter().map(|address| {
-        let WordOwnerAddress {
-            location,
-            parent,
-            body_slot,
-            projection_ordinal,
-            read_facts,
-        } = address;
-        let scopes = &states[offset..offset + location.scopes().len()];
+        let scopes = &states[offset..offset + address.location.scopes().len()];
         offset += scopes.len();
-        let (content, properties, grid) = match &location {
-            WordOwnerLocation::Paragraph(_) => {
-                (Some(scopes[1].clone()), Some(scopes[2].clone()), None)
-            }
-            WordOwnerLocation::Table(_) => (None, None, Some(scopes[1].clone())),
-            WordOwnerLocation::Hyperlink(..) => (None, None, None),
-            _ => (Some(scopes[1].clone()), None, None),
-        };
-        WordOwner {
-            location,
-            parent,
-            body_slot,
-            projection_ordinal,
-            read_facts,
-            owner: scopes[0].clone(),
-            content,
-            properties,
-            grid,
-        }
+        WordOwner::new(address, scopes, items)
     }));
 }

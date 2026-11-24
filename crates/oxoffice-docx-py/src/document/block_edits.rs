@@ -292,7 +292,8 @@ pub(super) fn block_retention(
         false
     };
     // An owner without a parent is matched by its story's ordinal.
-    let renumbered = |owner: &WordOwner| match &owner.location {
+    // A body route's story is that of its stored form: only its head moves.
+    let renumbered = |owner: &WordOwner| match &*owner.story_route() {
         WordOwnerLocation::Paragraph(location)
         | WordOwnerLocation::Table(location)
         | WordOwnerLocation::Run(location, _) => {
@@ -329,7 +330,7 @@ pub(super) fn block_retention(
             let slots = new[index].location.scopes().len();
             keep[index] = Some(match matches[index] {
                 Some(before) if parent_kept && before == selected => {
-                    match &old[before].location {
+                    match &*old[before].location() {
                         // A text-box paragraph is rewritten through its
                         // story: all its states are born again.
                         WordOwnerLocation::Paragraph(location)
@@ -383,7 +384,7 @@ impl PyDocument {
             WordPublication::CellInsert(table, row, cell) => {
                 let Some((index, story)) =
                     self.owners.iter().enumerate().find_map(|(index, owner)| {
-                        match &owner.location {
+                        match &*owner.location() {
                             WordOwnerLocation::Cell {
                                 table: owned,
                                 row: r,
@@ -454,7 +455,7 @@ impl PyDocument {
         while let Some(parent) = self.owners[root].parent {
             root = parent;
         }
-        let slot = self.owners[root].body_slot?;
+        let slot = self.owners[root].body_slot()?;
         let mut bases = (0, 0, 0);
         for piece in pieces.blocks.get(..slot)? {
             let owners = piece.owners.as_ref()?;
@@ -602,20 +603,20 @@ pub(super) fn assert_kept_owners_name_their_elements(
         let previous = &old[index];
         if let Some((shift, selected)) = edit {
             let expected = if owner.owner.same_state(selected) {
-                Some(previous.location.clone())
+                Some(previous.location().into_owned())
             } else {
-                shift.moved_owner(&previous.location)
+                shift.moved_owner(&previous.location())
             };
             assert_eq!(
                 expected.as_ref().map(unfingerprinted_owner_location),
-                Some(unfingerprinted_owner_location(&owner.location)),
+                Some(unfingerprinted_owner_location(&owner.location())),
                 "kept owner route after a block edit"
             );
             if owner.owner.same_state(selected) {
                 continue;
             }
         }
-        match (&previous.location, &owner.location) {
+        match (&*previous.location(), &*owner.location()) {
             (WordOwnerLocation::Paragraph(a), WordOwnerLocation::Paragraph(b)) => same(
                 old_read.elements.paragraphs.get(&key(a)),
                 new_read.elements.paragraphs.get(&key(b)),

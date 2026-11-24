@@ -68,6 +68,7 @@ impl PyDocument {
             owners: Vec::new(),
             indexes: WordOwnerIndexes::prepare(
                 &[],
+                WordBodyItems::default(),
                 WordIndexProjections {
                     body_paragraphs: None,
                     cell_paragraphs: HashMap::new(),

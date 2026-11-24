@@ -44,7 +44,7 @@ pub(super) fn form_owner_certificates(
     let mut old_routes = HashMap::<FormOwnerRoute, Vec<usize>>::new();
     let mut new_routes = HashMap::<FormOwnerRoute, Vec<usize>>::new();
     for (index, owner) in old.iter().enumerate() {
-        if let Some(route) = form_owner_route(&owner.location) {
+        if let Some(route) = form_owner_route(&owner.location()) {
             old_routes.entry(route).or_default().push(index);
         }
     }
@@ -157,7 +157,7 @@ pub(super) fn signing_owner_certificates(
         let Some(previous) = matched[next] else {
             continue;
         };
-        let survives = match (&old[previous].location, &address.location) {
+        let survives = match (&*old[previous].location(), &address.location) {
             (WordOwnerLocation::Run(a, left), WordOwnerLocation::Run(b, right)) => {
                 left == right
                     && form_source_key(a) == form_source_key(b)
@@ -194,7 +194,7 @@ pub(super) fn modern_form_owner_certificates(
         let Some(previous) = matched[next] else {
             continue;
         };
-        let survives = match (&old[previous].location, &address.location) {
+        let survives = match (&*old[previous].location(), &address.location) {
             (WordOwnerLocation::Run(a, left), WordOwnerLocation::Run(b, right)) => {
                 left == right
                     && form_source_key(a) == form_source_key(b)
@@ -250,7 +250,7 @@ pub(super) fn unchanged_related_owner_parts(
     let mut requested = Vec::new();
     for part in old_owners
         .iter()
-        .filter_map(|owner| related_owner_part(&owner.location))
+        .filter_map(|owner| related_owner_part(&owner.location()))
         .chain(
             new_addresses
                 .iter()

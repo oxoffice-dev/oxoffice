@@ -58,7 +58,7 @@ impl PyDocument {
                 .ok_or_else(|| {
                     PyValueError::new_err("hyperlink physical owner is no longer current")
                 })?;
-            let WordOwnerLocation::Hyperlink(location, _) = &owner.location else {
+            let WordOwnerLocation::Hyperlink(location, _) = &*owner.location() else {
                 return Err(PyValueError::new_err(
                     "hyperlink physical owner has the wrong kind",
                 ));
@@ -73,7 +73,7 @@ impl PyDocument {
                     PyValueError::new_err("hyperlink story owner is no longer current")
                 })?;
             let index = owner
-                .projection_ordinal
+                .projection_ordinal()
                 .ok_or_else(|| PyValueError::new_err("hyperlink source position is absent"))?;
             return Ok((story, index));
         }
