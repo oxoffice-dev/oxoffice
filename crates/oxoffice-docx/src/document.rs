@@ -546,16 +546,28 @@ fn same_table_content(
     a.extra_xml == b.extra_xml
         && a.content_controls == b.content_controls
         && a.rows.len() == b.rows.len()
-        && a.rows.iter().zip(&b.rows).all(|(a, b)| {
-            a.extra_xml == b.extra_xml
-                && a.content_controls == b.content_controls
-                && a.cells.len() == b.cells.len()
-                && a.cells.iter().zip(&b.cells).all(|(a, b)| {
-                    a.content == b.content
-                        && a.extra_xml == b.extra_xml
-                        && writes_cell_properties(a) == writes_cell_properties(b)
-                })
-        })
+        && a.rows
+            .iter()
+            .zip(&b.rows)
+            .all(|(a, b)| same_row_content(a, b))
+}
+
+/// The part of [`same_table_content`] one row holds.
+fn same_row_content(a: &CT_Row, b: &CT_Row) -> bool {
+    a.extra_xml == b.extra_xml
+        && a.content_controls == b.content_controls
+        && a.cells.len() == b.cells.len()
+        && a.cells
+            .iter()
+            .zip(&b.cells)
+            .all(|(a, b)| same_cell_content(a, b))
+}
+
+/// The part of [`same_table_content`] one cell holds.
+fn same_cell_content(a: &CT_Tc, b: &CT_Tc) -> bool {
+    a.content == b.content
+        && a.extra_xml == b.extra_xml
+        && writes_cell_properties(a) == writes_cell_properties(b)
 }
 
 fn writes_cell_properties(cell: &oxoffice_docx_oxml::table::CT_Tc) -> bool {

@@ -57,6 +57,55 @@ impl Document {
         Ok(Some(value))
     }
 
+    /// [`Self::edit_table_properties_in_place`] for row `row` of that table,
+    /// counted as [`Table::row`](crate::Table::row) counts it: `edit` runs on a copy of the row
+    /// alone, so its cost does not grow with the table.
+    #[doc(hidden)]
+    pub fn edit_table_row_properties_in_place<T>(
+        &mut self,
+        index: usize,
+        row: usize,
+        edit: impl FnOnce(&mut crate::table::Row<'_>) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
+            .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
+        let current = crate::table::table_row_mut(table, row)
+            .ok_or_else(|| Error::Other("row index out of range".to_owned()))?;
+        let mut edited = current.clone();
+        let value = edit(&mut crate::table::Row { inner: &mut edited })?;
+        if !same_row_content(current, &edited) {
+            return Ok(None);
+        }
+        *current = edited;
+        self.invalidate_layout();
+        Ok(Some(value))
+    }
+
+    /// [`Self::edit_table_properties_in_place`] for cell `cell` of row `row`
+    /// of that table, counted as [`Table::cell`](crate::Table::cell) counts it: `edit` runs on a
+    /// copy of the cell alone, so its cost does not grow with the table.
+    #[doc(hidden)]
+    pub fn edit_table_cell_properties_in_place<T>(
+        &mut self,
+        index: usize,
+        row: usize,
+        cell: usize,
+        edit: impl FnOnce(&mut crate::table::Cell<'_>) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
+            .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
+        let current = crate::table::table_cell_mut(table, row, cell)
+            .ok_or_else(|| Error::Other("cell index out of range".to_owned()))?;
+        let mut edited = current.clone();
+        let value = edit(&mut crate::table::Cell { inner: &mut edited })?;
+        if !same_cell_content(current, &edited) {
+            return Ok(None);
+        }
+        *current = edited;
+        self.invalidate_layout();
+        Ok(Some(value))
+    }
+
     /// Append a formatted empty row through one checked package transaction.
     pub fn add_empty_table_row(&mut self, table_index: usize) -> Result<usize> {
         let mut candidate = self.clone_for_staging();

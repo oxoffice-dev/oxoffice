@@ -671,7 +671,7 @@ fn table_row(table: &CT_Tbl, index: usize) -> Option<&CT_Row> {
 }
 
 /// Row `index` of [`table_rows_mut`].
-fn table_row_mut(table: &mut CT_Tbl, index: usize) -> Option<&mut CT_Row> {
+pub(crate) fn table_row_mut(table: &mut CT_Tbl, index: usize) -> Option<&mut CT_Row> {
     if table.content_controls.is_empty() {
         table.rows.get_mut(index)
     } else {

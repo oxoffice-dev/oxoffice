@@ -1703,17 +1703,111 @@ impl PyDocument {
         Ok(true)
     }
 
-    /// Debug proof that a local cell publication leaves what a full read of
-    /// the table gives: the piece facts the inventory reads, body story
-    /// fingerprints aside, and the inventory records and cell paragraph
-    /// routes of its owners.
-    #[cfg(debug_assertions)]
-    fn assert_local_cell_publication(
-        &self,
+    /// After an in-place property edit of `scope` of the direct body table
+    /// at `body_slot`, copy the table and row properties of that scope into
+    /// the table's piece when the piece holds everything else of that scope
+    /// as the live table does. The piece's owner facts read the rows, cells
+    /// and content of the table (a cell story's fingerprint is its bytes),
+    /// never these properties, so they stay the facts of the piece, and a
+    /// piece aligned before the edit stays aligned: the next cell edit of the
+    /// table keeps the local route, as after a publication. An edit that
+    /// changed a cell leaves the piece behind, and the next cell edit reads
+    /// the table again. Tables with row or cell controls are left behind too.
+    pub(crate) fn follow_table_property_edit(
+        &mut self,
         body_slot: usize,
-        table_index: usize,
-        table_ordinal: usize,
+        scope: TablePropertyScope,
     ) {
+        let Some(pieces) = &mut self.pieces else {
+            return;
+        };
+        if pieces.context.as_ref() != Some(&self.inner.body_item_context())
+            || pieces.blocks.len() != self.inner.body_children().len()
+        {
+            return;
+        }
+        let Some(oxoffice_docx_oxml::BodyContent::Table(live)) =
+            self.inner.body_children().get(body_slot)
+        else {
+            return;
+        };
+        let Some(piece) = pieces
+            .blocks
+            .get_mut(body_slot)
+            .and_then(std::sync::Arc::get_mut)
+        else {
+            return;
+        };
+        let oxoffice_docx_oxml::BodyContent::Table(held) = piece.block.as_ref() else {
+            return;
+        };
+        let same_row = |held: &oxoffice_docx_oxml::CT_Row, live: &oxoffice_docx_oxml::CT_Row| {
+            held.cells == live.cells
+                && held.extra_xml == live.extra_xml
+                && held.content_controls.is_empty()
+                && live.content_controls.is_empty()
+        };
+        if !held.content_controls.is_empty()
+            || !live.content_controls.is_empty()
+            || held.rows.len() != live.rows.len()
+        {
+            return;
+        }
+        let rows = match scope {
+            TablePropertyScope::Table => {
+                if held.extra_xml != live.extra_xml
+                    || held
+                        .rows
+                        .iter()
+                        .zip(&live.rows)
+                        .any(|(held, live)| !same_row(held, live))
+                {
+                    return;
+                }
+                0..live.rows.len()
+            }
+            TablePropertyScope::Row(row) => {
+                if !held
+                    .rows
+                    .get(row)
+                    .is_some_and(|held| same_row(held, &live.rows[row]))
+                {
+                    return;
+                }
+                row..row + 1
+            }
+        };
+        let oxoffice_docx_oxml::BodyContent::Table(held) =
+            std::sync::Arc::make_mut(&mut piece.block)
+        else {
+            unreachable!("checked a table above")
+        };
+        if matches!(scope, TablePropertyScope::Table) {
+            held.properties.clone_from(&live.properties);
+            held.grid.clone_from(&live.grid);
+        }
+        for row in rows {
+            held.rows[row]
+                .table_property_exception
+                .clone_from(&live.rows[row].table_property_exception);
+            held.rows[row]
+                .properties
+                .clone_from(&live.rows[row].properties);
+        }
+        #[cfg(debug_assertions)]
+        if aligned_block(
+            &pieces.blocks[body_slot],
+            &self.inner.body_children()[body_slot],
+        ) {
+            self.assert_table_piece_reads_fresh(body_slot);
+        }
+    }
+
+    /// Debug proof that the piece of the body table at `body_slot` holds the
+    /// facts a full read of the table gives, body story fingerprints aside.
+    /// Returns that full read.
+    #[cfg(debug_assertions)]
+    fn assert_table_piece_reads_fresh(&self, body_slot: usize) -> WordBlockOwners {
         let fresh = word_block_owners(&self.inner, &self.inner.body_children()[body_slot])
             .expect("a published table reads")
             .expect("a published table has owner facts");
@@ -1751,7 +1845,7 @@ impl PyDocument {
         assert_eq!(
             facts(&piece.facts),
             facts(&fresh.facts),
-            "local cell piece facts"
+            "table piece facts"
         );
         assert_eq!(
             (
@@ -1774,9 +1868,24 @@ impl PyDocument {
                 fresh.local_table_membership,
                 &fresh.cell_paragraphs,
             ),
-            "local cell piece counts"
+            "table piece counts"
         );
         assert!(piece.holds_field || !fresh.holds_field);
+        fresh
+    }
+
+    /// Debug proof that a local cell publication leaves what a full read of
+    /// the table gives: the piece facts the inventory reads, body story
+    /// fingerprints aside, and the inventory records and cell paragraph
+    /// routes of its owners.
+    #[cfg(debug_assertions)]
+    fn assert_local_cell_publication(
+        &self,
+        body_slot: usize,
+        table_index: usize,
+        table_ordinal: usize,
+    ) {
+        let fresh = self.assert_table_piece_reads_fresh(body_slot);
         let WordOwnerLocation::Table(location) = &self.owners[table_index].location else {
             panic!("a local cell table owner")
         };

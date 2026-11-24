@@ -899,6 +899,69 @@ def test_whole_document_read_grows_no_faster_than_the_document(large_documents, 
         f"{name}: {large:.1f} ms at {40 * N} paragraphs, {small:.1f} ms at {10 * N}")
 
 
+# Row and cell setters edit their row or cell, so their cost does not grow with the table; nor does a cell text edit
+# right after a row setter of the same table, which keeps the local cell route. Timed with OXOFFICE_SCALING only, on a
+# body table of TABLE_ROWS rows and one of LARGE_TABLE times as many: the setters cost well under FLOOR_MS, so the floor
+# here is TABLE_FLOOR_MS, and the fastest of TABLE_CALLS calls counts.
+TABLE_ROWS, LARGE_TABLE, TABLE_CALLS, TABLE_FLOOR_MS = 4, 64, 10, 0.3
+
+
+def text_after_row_height(table, k):
+    table.rows[2].height = Pt(20 + k)
+    return lambda: setattr(table.cell(2, 1), "text", f"value {k}")
+
+
+TABLE_SETTERS = {
+    "Row.height": lambda table, k: lambda: setattr(table.rows[1], "height", Pt(20 + k)),
+    "Cell.shading": lambda table, k: lambda: setattr(table.cell(1, 1), "shading", RGBColor(k, 0, 0)),
+    "Cell.text after Row.height": text_after_row_height,
+}
+
+
+@pytest.fixture(scope="module")
+def table_documents(tmp_path_factory):
+    folder = tmp_path_factory.mktemp("table-scaling")
+    paths = []
+    for rows in (TABLE_ROWS, LARGE_TABLE * TABLE_ROWS):
+        d = docx.Document()
+        for i in range(20):
+            d.add_paragraph(f"paragraph {i}")
+        table = d.add_table(rows=rows, cols=4)
+        for r, cells in enumerate(table.rows):
+            for c, cell in enumerate(cells.cells):
+                cell.text = f"cell {c} of row {r}"
+        d.add_paragraph("after")
+        paths.append(folder / f"{rows}.docx")
+        d.save(paths[-1])
+    return paths
+
+
+def table_costs_ms(paths, call):
+    tables = [oxdocx.Document.open(path).tables[0] for path in paths]
+    best = [float("inf")] * len(paths)
+    for k in range(TABLE_CALLS):
+        for i, table in enumerate(tables):
+            action = call(table, k)
+            start = time.perf_counter()
+            action()
+            best[i] = min(best[i], time.perf_counter() - start)
+    return [b * 1000 for b in best]
+
+
+@pytest.mark.parametrize("name", sorted(TABLE_SETTERS))
+def test_row_and_cell_setters_cost_does_not_grow_with_the_table(table_documents, name):
+    if not os.environ.get("OXOFFICE_SCALING"):
+        pytest.skip("timed with OXOFFICE_SCALING only")
+    small, large = table_costs_ms(table_documents, TABLE_SETTERS[name])
+    for _ in range(REMEASURE):
+        if large < RATIO * small + TABLE_FLOOR_MS:
+            break
+        again = table_costs_ms(table_documents, TABLE_SETTERS[name])
+        small, large = min(small, again[0]), min(large, again[1])
+    assert large < RATIO * small + TABLE_FLOOR_MS, (
+        f"{name}: {large:.2f} ms at {LARGE_TABLE * TABLE_ROWS} rows, {small:.2f} ms at {TABLE_ROWS}")
+
+
 def test_every_mutating_call_is_timed():
     assert sorted(GROWING - set(TIMED) - set(READS_TIMED)) == []
     assert sorted(QUICK - set(TIMED)) == []

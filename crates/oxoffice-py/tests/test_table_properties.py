@@ -157,16 +157,19 @@ def built_table(producer):
 
 @pytest.mark.parametrize("producer", ["new", *PRODUCERS])
 def test_row_and_cell_edits_made_in_turn_keep_every_handle(producer):
-    """A table filled row by row, a property edit then cell text, as a generator writes one."""
+    """A table filled row by row, a table or row property edit then cell text, as a generator writes one."""
     doc, table = built_table(producer)
     cells = [table.cell(index, 1) for index in range(1, 4)]
     for index, cell in enumerate(cells, start=1):
+        table.indent = Pt(index)
+        cell.text = f"value {index}"
         table.rows[index].height = Pt(20 + index)
         cell.text = f"value {index}"
         table.cell(index, 2).shading = "EEEEEE"
         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     saved = oxdocx.Document.from_bytes(doc.to_bytes())
     for current in (table, saved.tables[0]):
+        assert current.indent == Pt(3)
         for index in range(1, 4):
             assert current.rows[index].height == Pt(20 + index)
             assert current.cell(index, 1).text == f"value {index}"

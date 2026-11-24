@@ -1024,6 +1024,69 @@ fn an_in_place_table_edit_that_moves_content_is_undone_and_declined() {
 }
 
 #[test]
+fn an_in_place_row_or_cell_edit_applies_properties_and_declines_content() {
+    let mut doc = doc_with_body(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>bare</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+    );
+    let before = doc.to_bytes().expect("the document saves");
+    let declined = doc
+        .edit_table_row_properties_in_place(0, 0, |row| {
+            row.set_height(Length::pt(20.0));
+            row.cell(0).expect("the cell").set_text("changed");
+            Ok(())
+        })
+        .expect("the edit runs");
+    assert_eq!(declined, None, "cell text is content, not a row property");
+    let declined = doc
+        .edit_table_cell_properties_in_place(0, 0, 1, |cell| {
+            cell.set_vertical_alignment(VerticalAlignment::Center);
+            Ok(())
+        })
+        .expect("the edit runs");
+    assert_eq!(declined, None, "a first w:tcPr moves the cell's content");
+    let refused = doc.edit_table_cell_properties_in_place(0, 0, 0, |cell| {
+        cell.set_vertical_alignment(VerticalAlignment::Center);
+        Err::<(), _>(oxoffice_docx::Error::Other("refused".to_owned()))
+    });
+    assert!(refused.is_err());
+    assert!(
+        doc.edit_table_row_properties_in_place(0, 1, |_| Ok(()))
+            .is_err()
+    );
+    assert!(
+        doc.edit_table_cell_properties_in_place(0, 0, 2, |_| Ok(()))
+            .is_err()
+    );
+    assert_eq!(doc.to_bytes().expect("the document saves"), before);
+
+    let applied = doc
+        .edit_table_row_properties_in_place(0, 0, |row| {
+            row.set_height(Length::pt(20.0));
+            Ok(())
+        })
+        .expect("the edit runs");
+    assert_eq!(applied, Some(()));
+    let applied = doc
+        .edit_table_cell_properties_in_place(0, 0, 0, |cell| {
+            cell.set_vertical_alignment(VerticalAlignment::Center);
+            Ok(())
+        })
+        .expect("the edit runs");
+    assert_eq!(applied, Some(()));
+    let doc = reopen(&mut doc);
+    let table = doc.table(0).expect("the table");
+    assert!(table.row(0).expect("the row").height().is_some());
+    assert_eq!(
+        table.cell(0, 0).expect("the cell").vertical_alignment(),
+        Some(VerticalAlignment::Center)
+    );
+    assert_eq!(
+        table.cell(0, 1).expect("the cell").vertical_alignment(),
+        None
+    );
+}
+
+#[test]
 fn a_template_tag_in_a_cell_with_empty_properties_renders() {
     let mut doc = doc_with_body(&one_cell_table(
         "<w:tcPr/>",

@@ -603,6 +603,14 @@ struct WordBlockOwners {
     holds_field: bool,
 }
 
+/// The part of a body table an in-place property edit changes: the table's
+/// properties, its rows' and its cells', or one row's.
+#[derive(Clone, Copy)]
+pub(crate) enum TablePropertyScope {
+    Table,
+    Row(usize),
+}
+
 struct WordBlockPiece {
     block: std::sync::Arc<oxoffice_docx_oxml::BodyContent>,
     owners: Option<WordBlockOwners>,
