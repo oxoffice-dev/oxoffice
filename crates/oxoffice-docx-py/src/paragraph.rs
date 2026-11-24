@@ -603,6 +603,37 @@ impl PyParagraph {
         if let Some(url) = url {
             crate::refuse_non_xml_characters(py, "hyperlink address", url)?;
         }
+        if url.is_none()
+            && let ParagraphLocation::Body(index) = location
+        {
+            let appended = {
+                let mut document = self.document.borrow_mut(py);
+                document
+                    .edit_body_paragraph_in_place(py, index, "Paragraph.add_run", |paragraph| {
+                        let run_index = paragraph.run_count();
+                        paragraph.add_run(text);
+                        let run_path = paragraph
+                            .run_path(run_index)
+                            .expect("the appended run has an accepted source path");
+                        Ok((run_index, run_path))
+                    })?
+                    .map(|appended| {
+                        let mut segments = self.current_path(&document).segs;
+                        segments.push(PathSeg::Run(appended.0));
+                        document
+                            .capture_snapshot(segments)
+                            .map(|path| (path, appended.1))
+                    })
+                    .transpose()?
+            };
+            if let Some((path, run_path)) = appended {
+                return Py::new(
+                    py,
+                    PyRun::new(self.document.clone_ref(py), path, run_path, None)
+                        .bind_current(py, self.furniture_scope.clone())?,
+                );
+            }
+        }
         let result = {
             let mut document = self.document.borrow_mut(py);
             let mut candidate = document.inner.clone_for_staging();
@@ -948,6 +979,15 @@ impl PyParagraph {
         )?;
         let location = self.validate(py)?;
         let mut document = self.document.borrow_mut(py);
+        if let ParagraphLocation::Body(index) = location
+            && document
+                .edit_body_paragraph_in_place(py, index, "Paragraph.add_equation", |p| {
+                    p.add_equation(equation.clone())
+                })?
+                .is_some()
+        {
+            return Ok(result);
+        }
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |p| p.add_equation(equation))
@@ -1046,6 +1086,15 @@ impl PyParagraph {
         let native = document.paragraph_route(&location, None).ok();
         if let Some(native) = &native
             && document.try_local_cell_paragraph_text(py, native, text)?
+        {
+            return Ok(());
+        }
+        if let ParagraphLocation::Body(index) = location
+            && document
+                .edit_body_paragraph_in_place(py, index, "Paragraph.text", |paragraph| {
+                    paragraph.set_text(text)
+                })?
+                .is_some()
         {
             return Ok(());
         }

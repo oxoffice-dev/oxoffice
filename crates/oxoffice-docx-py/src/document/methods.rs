@@ -1457,9 +1457,12 @@ impl PyDocument {
                     error
                 }
             })?;
-            return slf
-                .borrow_mut(py)
-                .split_body_run(py, body_index, run_index, character_offset);
+            return slf.borrow_mut(py).split_run_in_place_or_staged(
+                py,
+                body_index,
+                run_index,
+                character_offset,
+            );
         };
         let paragraph = paragraph.borrow();
         if !paragraph.belongs_to(py, &slf) {
@@ -1476,7 +1479,12 @@ impl PyDocument {
         };
         let mut document = slf.borrow_mut(py);
         if let Some(body_index) = document.inner.content_index_of_paragraph(paragraph_index) {
-            return document.split_body_run(py, body_index, run_index, character_offset);
+            return document.split_run_in_place_or_staged(
+                py,
+                body_index,
+                run_index,
+                character_offset,
+            );
         }
         // A paragraph inside a block content control has no direct body index.
         let run_count = |document: &oxoffice_docx::Document| {
