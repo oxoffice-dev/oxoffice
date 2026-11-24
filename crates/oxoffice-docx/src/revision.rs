@@ -2701,7 +2701,10 @@ impl<'a> XmlTree<'a> {
                 return Ok(Vec::new());
             }
 
-            return self.render_with_namespaces(prior, state, false, destination);
+            return match prior {
+                Some(prior) => self.render_with_namespaces(prior, state, false, destination),
+                None => Ok(self.empty_prior_xml(self.elements[index].parent.unwrap_or(index))),
+            };
         }
 
         if self.is_contextual_marker(index) {
@@ -2916,6 +2919,9 @@ impl<'a> XmlTree<'a> {
                 // the chain (see `control_last_paragraph_takes_merge`).
                 let mut merged_control = None;
                 let mut crossed_ends = Vec::new();
+                // The range markers crossed after each paragraph of the
+                // chain, which the merged paragraph keeps at that join.
+                let mut joins = HashMap::<usize, Vec<usize>>::new();
                 loop {
                     // The end of the body after a table that stays: as before
                     // a table, the paragraphs go, and the body ends with that
@@ -2932,7 +2938,9 @@ impl<'a> XmlTree<'a> {
                             && self.body_end_goes(
                                 element,
                                 child_index,
-                                siblings.len() > paragraphs.len(),
+                                siblings.iter().any(|sibling| {
+                                    matches!(self.elements[*sibling].local.as_str(), "tbl" | "sdt")
+                                }),
                                 state,
                             )
                         {
@@ -2988,6 +2996,18 @@ impl<'a> XmlTree<'a> {
                         before_table = true;
                         break;
                     }
+                    // A range marker between the paragraphs, as Google Docs
+                    // writes a heading's bookmark, is crossed: the merged
+                    // paragraph keeps it where the two join, as Word does.
+                    if next_element.word && range_marker(&next_element.local) {
+                        siblings.push(next);
+                        joins
+                            .entry(*paragraphs.last().expect("paragraph chain exists"))
+                            .or_default()
+                            .push(next);
+                        next_index += 1;
+                        continue;
+                    }
                     if !self.semantic_element(next)
                         || !next_element.word
                         || next_element.local != "p"
@@ -3035,13 +3055,18 @@ impl<'a> XmlTree<'a> {
                         crossed_ends.extend_from_slice(&ends);
                     } else if self.elements[pair[1]].local == "tbl" {
                         self.render(pair[1], state, false)?;
+                    } else if before_table && range_marker(&self.elements[pair[1]].local) {
+                        // The paragraphs go and nothing merges: the marker
+                        // stays in place.
+                        output.extend_from_slice(&self.render(pair[1], state, false)?);
                     }
                 }
                 if before_table {
                     self.validate_removed_paragraphs(&paragraphs, state)?;
                 } else {
                     let leaf_mark = state.leaf_updates.len();
-                    let merged = self.render_merged_paragraphs(&paragraphs, state, destination)?;
+                    let merged =
+                        self.render_merged_paragraphs(&paragraphs, &joins, state, destination)?;
                     state.shift_leaves(leaf_mark, output.len());
                     output.extend_from_slice(&merged);
                 }
@@ -3066,7 +3091,7 @@ impl<'a> XmlTree<'a> {
         &self,
         index: usize,
         state: &RenderState<'_>,
-    ) -> Result<Vec<(usize, usize)>> {
+    ) -> Result<Vec<(usize, Option<usize>)>> {
         let element = &self.elements[index];
         let expected = match element.local.as_str() {
             "rPr" => RevisionKind::RunPropertyChange,
@@ -3092,15 +3117,19 @@ impl<'a> XmlTree<'a> {
     fn render_rejected_property_owner(
         &self,
         owner: usize,
-        prior: usize,
-        selected: &[(usize, usize)],
+        prior: Option<usize>,
+        selected: &[(usize, Option<usize>)],
         state: &mut RenderState<'_>,
         destination: &[(String, String)],
     ) -> Result<Vec<u8>> {
-        let mut prior_xml = self.render_with_namespaces(prior, state, false, destination)?;
+        let mut prior_xml = match prior {
+            Some(prior) => self.render_with_namespaces(prior, state, false, destination)?,
+            None => self.empty_prior_xml(owner),
+        };
         let prior_scope = rendered_namespace_scope(&prior_xml, destination, None)?;
-        if let Some(markers) =
-            self.legacy_mark_markers(owner, prior, state, &prior_xml, destination)?
+        if let Some(prior) = prior
+            && let Some(markers) =
+                self.legacy_mark_markers(owner, prior, state, &prior_xml, destination)?
             && !markers.is_empty()
         {
             prior_xml = insert_first_children(&prior_xml, "rPr", &markers, destination)?;
@@ -3109,22 +3138,31 @@ impl<'a> XmlTree<'a> {
             .iter()
             .map(|(change, _)| *change)
             .collect::<HashSet<_>>();
+        let prior_children = prior.map_or(&[][..], |prior| &self.elements[prior].children);
         let retained = self.render_retained_owner_children(
             owner,
-            Some(prior),
+            Some(prior_children),
             &selected,
             state,
             &prior_scope,
         )?;
-        let prior_element = &self.elements[prior];
+        // A prior value has the owner's name, so the owner speaks for an
+        // empty one.
+        let prior_element = &self.elements[prior.unwrap_or(owner)];
+        let bare_prior = match prior {
+            Some(prior) => {
+                !self.element_has_attributes(prior)?
+                    && (prior_element.empty
+                        || self.source[prior_element.open_end..prior_element.close_start]
+                            .iter()
+                            .all(u8::is_ascii_whitespace))
+            }
+            None => true,
+        };
         if prior_element.word
             && matches!(prior_element.local.as_str(), "pPr" | "tblPr")
             && retained.is_empty()
-            && !self.element_has_attributes(prior)?
-            && (prior_element.empty
-                || self.source[prior_element.open_end..prior_element.close_start]
-                    .iter()
-                    .all(u8::is_ascii_whitespace))
+            && bare_prior
         {
             return Ok(Vec::new());
         }
@@ -3255,11 +3293,12 @@ impl<'a> XmlTree<'a> {
     /// paragraph mark `w:rPr` and the `w:sectPr` stay and resolve their own
     /// revisions. Older rdocx redlines put the prior mark formatting in the
     /// prior properties, and that `w:rPr` replaces the current one, see
-    /// [`Self::legacy_mark_markers`].
+    /// [`Self::legacy_mark_markers`]. `prior` holds the children of the prior
+    /// value, empty for a change that holds none.
     fn render_retained_owner_children(
         &self,
         owner: usize,
-        prior: Option<usize>,
+        prior: Option<&[usize]>,
         selected: &HashSet<usize>,
         state: &mut RenderState<'_>,
         destination: &[(String, String)],
@@ -3285,7 +3324,7 @@ impl<'a> XmlTree<'a> {
                 && matches!(child_element.local.as_str(), "rPr" | "sectPr")
             {
                 let replaced = child_element.local == "rPr"
-                    && self.elements[prior].children.iter().any(|replacement| {
+                    && prior.iter().any(|replacement| {
                         self.elements[*replacement].word
                             && self.elements[*replacement].local == "rPr"
                     });
@@ -3670,7 +3709,7 @@ impl<'a> XmlTree<'a> {
         }
     }
 
-    fn prior_property(&self, change: usize, kind: RevisionKind) -> Result<usize> {
+    fn prior_property(&self, change: usize, kind: RevisionKind) -> Result<Option<usize>> {
         let expected = match kind {
             RevisionKind::RunPropertyChange => "rPr",
             RevisionKind::ParagraphPropertyChange => "pPr",
@@ -3682,7 +3721,18 @@ impl<'a> XmlTree<'a> {
                 ));
             }
         };
-        let children = &self.elements[change].children;
+        let element = &self.elements[change];
+        // LibreOffice writes a change with no prior value where Word writes
+        // an empty one; both mean the owner had no properties before.
+        if element.children.is_empty()
+            && (element.empty
+                || self.source[element.open_end..element.close_start]
+                    .iter()
+                    .all(u8::is_ascii_whitespace))
+        {
+            return Ok(None);
+        }
+        let children = &element.children;
         if children.len() != 1 {
             return Err(Error::Other(format!(
                 "selected property revision requires exactly one prior w:{expected} value"
@@ -3692,11 +3742,18 @@ impl<'a> XmlTree<'a> {
             .first()
             .copied()
             .filter(|prior| self.elements[*prior].word && self.elements[*prior].local == expected)
+            .map(Some)
             .ok_or_else(|| {
                 Error::Other(format!(
                     "selected property revision requires a prior w:{expected} value"
                 ))
             })
+    }
+
+    /// The empty prior value of a property owner whose change holds none,
+    /// as Word writes it: the owner's name with no attribute or child.
+    fn empty_prior_xml(&self, owner: usize) -> Vec<u8> {
+        format!("<{}/>", self.elements[owner].name).into_bytes()
     }
 
     fn selected_owner_markers(&self, index: usize, state: &RenderState<'_>) -> Vec<usize> {
@@ -3891,6 +3948,7 @@ impl<'a> XmlTree<'a> {
     fn render_merged_paragraphs(
         &self,
         paragraphs: &[usize],
+        joins: &HashMap<usize, Vec<usize>>,
         state: &mut RenderState<'_>,
         destination: &[(String, String)],
     ) -> Result<Vec<u8>> {
@@ -3934,6 +3992,14 @@ impl<'a> XmlTree<'a> {
                     state.shift_leaves(leaf_mark, output.len());
                     output.extend_from_slice(&rendered);
                 }
+            }
+            for marker in joins.get(paragraph).into_iter().flatten() {
+                output.extend_from_slice(&self.render_with_namespaces(
+                    *marker,
+                    state,
+                    false,
+                    &current_scope,
+                )?);
             }
         }
         output.extend_from_slice(&self.source[current_element.close_start..current_element.end]);

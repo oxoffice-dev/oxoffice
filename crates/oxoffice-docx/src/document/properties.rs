@@ -269,12 +269,20 @@ impl Document {
             }
             !remove
         });
+        let removed_part = self.package.remove_part(part_name).is_some();
+        let removed_rels = self.package.remove_part_rels(part_name).is_some();
+        let removed_override = self
+            .package
+            .content_types
+            .remove_override(part_name)
+            .is_some();
+        let removed = !removed_ids.is_empty() || removed_part || removed_rels || removed_override;
         self.identifiers
             .retire_authored_story_relationships("/", removed_ids);
-        self.package.remove_part(part_name);
-        self.package.remove_part_rels(part_name);
-        self.package.content_types.remove_override(part_name);
         self.identifiers.retire_authored_part(part_name);
+        if removed {
+            self.identifiers.record_removed_from_package();
+        }
     }
 
     /// Get the document title.
