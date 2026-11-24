@@ -3,6 +3,7 @@
 import io
 import zipfile
 
+import docx
 import pytest
 
 import oxoffice.docx as oxdocx
@@ -74,6 +75,13 @@ def test_a_store_and_a_link_read_back_after_a_save(saved):
     names = zipfile.ZipFile(io.BytesIO(data)).namelist()
     assert {"customXml/item1.xml", "customXml/item2.xml", "customXml/itemProps1.xml",
             "customXml/itemProps2.xml"} <= set(names)
+    # The link is written by the save: the style holds the instance and the level names the style.
+    package = zipfile.ZipFile(io.BytesIO(data))
+    styles_xml = package.read("word/styles.xml").decode()
+    style_xml = styles_xml[styles_xml.index(f'w:styleId="{style}"'):]
+    style_xml = style_xml[:style_xml.index("</w:style>")]
+    assert f'<w:numId w:val="{instance}"/>' in style_xml
+    assert f'<w:pStyle w:val="{style}"/>' in package.read("word/numbering.xml").decode()
     again = oxdocx.Document.from_bytes(data)
     paragraph = again.add_paragraph("styled", style=style)
     assert paragraph.style == style
@@ -142,3 +150,48 @@ def test_a_restart_and_a_link_read_only_their_own_list_not_other_content():
     again = oxdocx.Document.from_bytes(doc.to_bytes())
     assert again.paragraphs[-1].numbering == (77, 0)
     assert [p.numbering for p in again.paragraphs[-4:-1]] == [items[0].numbering, (new, 0), (new, 0)]
+
+
+def missing_level(doc):
+    """A list whose last item names a level its definition lacks; the second item is returned."""
+    definition = doc.add_numbering_definition([oxdocx.ListLevel(format="decimal", text="%1.")])
+    instance = doc.add_numbering_instance(definition)
+    items = [doc.add_paragraph(f"item {k}") for k in range(3)]
+    for item, level in zip(items, [0, 0, 3]):
+        item.numbering = (instance, level)
+    return items[1]
+
+
+def test_a_restart_that_would_carry_an_unresolved_item_is_refused():
+    doc = oxdocx.Document()
+    item = missing_level(doc)
+    before = doc.to_bytes()
+    with pytest.raises(Exception, match="level 3"):
+        doc.restart_numbering(item, start=4)
+    assert doc.to_bytes() == before
+
+
+def test_a_restart_in_a_body_a_typed_edit_cannot_save_is_refused(tmp_path):
+    # A w:body that declares a namespace of its own saves as it was opened; a typed edit of it cannot be saved.
+    path = tmp_path / "list.docx"
+    source = docx.Document()
+    source.add_paragraph("first")
+    for k in range(3):
+        source.add_paragraph(f"item {k}", style="List Number")
+    source.save(path)
+    with zipfile.ZipFile(path) as z:
+        parts = {name: z.read(name) for name in z.namelist()}
+    parts["word/document.xml"] = parts["word/document.xml"].replace(
+        b"<w:body>", b'<w:body xmlns:x="urn:example:x">', 1)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+    doc = oxdocx.Document.open(path)
+    before = doc.to_bytes()
+    with pytest.raises(Exception):
+        doc.restart_numbering(doc.paragraphs[2], start=4)
+    assert doc.to_bytes() == before
+    # The store and the link do not touch the body and still save.
+    doc.add_custom_xml_store(b"<d/>")
+    doc.link_style_to_numbering(*linked(doc), 0)
+    doc.to_bytes()

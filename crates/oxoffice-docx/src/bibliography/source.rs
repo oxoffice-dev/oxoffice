@@ -942,6 +942,8 @@ pub(crate) fn add_custom_xml_store_in_place(
         CUSTOM_XML_REL,
         &crate::document::relative_target(&owner, &part),
     );
+    // Recorded before the first write: a panic after it is not undone.
+    document.identifiers.record_written_to_package();
     document
         .package
         .set_part(&properties, datastore_properties(&identity, schema_uris));
@@ -953,7 +955,6 @@ pub(crate) fn add_custom_xml_store_in_place(
         &crate::document::relative_target(&part, &properties),
     );
     document.package.set_part(&part, item_xml.to_vec());
-    document.identifiers.record_written_to_package();
     Ok(identity)
 }
 

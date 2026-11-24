@@ -509,7 +509,8 @@ impl Document {
     /// Checked numbered authoring with persisted explicit restart continuation.
     ///
     /// A restart gives the item an instance of its own through
-    /// [`Self::restart_numbering`], which checks every numbering reference of
+    /// [`Self::restart_numbering`], which checks the numbering graph and the
+    /// list it restarts; this call then checks every numbering reference of
     /// the content.
     pub fn try_add_numbered_list_item_with_restart(
         &mut self,
@@ -807,33 +808,52 @@ impl Document {
                 .level_overrides
                 .push(NumberingLevelOverride::new(level).start(start));
         }
-        let new_id =
-            self.add_numbering_instance(instance.definition_id, &instance.level_overrides)?;
-        self.invalidate_layout();
+        // A typed edit of the body must leave it savable, as the list item
+        // insertions require.
+        self.refuse_unsavable_body_edit()?;
         let target: *const CT_P = self
             .paragraph(paragraph)
             .expect("the paragraph was found above")
             .inner;
-        let styles = &self.styles;
         // The rest of the list at the restarted level: a later item of the
         // instance above that level ends it, so that the copied overrides of
-        // the levels above never apply to items that did not have them.
-        let (mut started, mut ended) = (false, false);
-        walkers::visit_body_paragraphs_mut(&mut self.document.body.content, &mut |item| {
-            let first = std::ptr::eq(item, target);
-            started |= first;
-            if !started || ended {
-                return;
-            }
-            if let Some((item_id, item_level)) = shown_numbering(styles, item)
-                && item_id == id
-            {
-                if item_level < level && !first {
-                    ended = true;
+        // the levels above never apply to items that did not have them. The
+        // first pass only reads, so that an item whose level does not
+        // resolve refuses the restart before anything changes; the second
+        // walks the same paragraphs and gives them the new instance.
+        let list_items = |document: &mut Self, visit: &mut dyn FnMut(&mut CT_P, u32)| {
+            let styles = &document.styles;
+            let (mut started, mut ended) = (false, false);
+            walkers::visit_body_paragraphs_mut(&mut document.document.body.content, &mut |item| {
+                let first = std::ptr::eq(item, target);
+                started |= first;
+                if !started || ended {
                     return;
                 }
-                Paragraph { inner: item }.set_numbering(new_id, item_level);
-            }
+                if let Some((item_id, item_level)) = shown_numbering(styles, item)
+                    && item_id == id
+                {
+                    if item_level < level && !first {
+                        ended = true;
+                        return;
+                    }
+                    visit(item, item_level);
+                }
+            });
+        };
+        let mut levels = Vec::new();
+        list_items(self, &mut |_, item_level| levels.push(item_level));
+        if let Some(error) = levels
+            .into_iter()
+            .find_map(|item_level| self.numbering_reference_error(id, item_level))
+        {
+            return Err(error);
+        }
+        let new_id =
+            self.add_numbering_instance(instance.definition_id, &instance.level_overrides)?;
+        self.invalidate_layout();
+        list_items(self, &mut |item, item_level| {
+            Paragraph { inner: item }.set_numbering(new_id, item_level);
         });
         Ok(new_id)
     }
@@ -1745,15 +1765,29 @@ impl Document {
         let styles_part_name = self.styles_part_name.clone();
         // The numbering journal undoes the numbering and the reservations;
         // a refusal also puts the styles back.
-        let result = self.edit_numbering(|document| {
-            let result =
-                document.link_style_to_numbering_in_place(&styles, style_id, num_id, level);
-            if result.is_err() {
-                document.styles = Arc::clone(&styles);
-                document.styles_part_name = styles_part_name.clone();
+        let restore = |document: &mut Self| {
+            document.styles = Arc::clone(&styles);
+            document.styles_part_name = styles_part_name.clone();
+        };
+        // `edit_numbering` undoes the numbering of a panic and resumes it;
+        // the styles are put back here.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.edit_numbering(|document| {
+                let result =
+                    document.link_style_to_numbering_in_place(&styles, style_id, num_id, level);
+                if result.is_err() {
+                    restore(document);
+                }
+                result
+            })
+        }));
+        let result = match result {
+            Ok(result) => result,
+            Err(panic) => {
+                restore(self);
+                std::panic::resume_unwind(panic)
             }
-            result
-        });
+        };
         match &result {
             Ok(()) => self.invalidate_layout(),
             #[cfg(debug_assertions)]
