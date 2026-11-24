@@ -818,20 +818,18 @@ pub(super) fn render_paragraph_lines(
                         // widget takes 6 em of the paragraph mark's font from
                         // where it stands towards its line's end, the left
                         // one in a right-to-left paragraph, unless it has
-                        // its line's band.
+                        // its line's band. Near that end, the box keeps its
+                        // width and moves back into the line, over text the
+                        // diagnostic then names.
                         Some(mark) => {
                             let start = geometry.margin_left + line.indent_left;
-                            let room = if para.right_to_left {
-                                x - start
-                            } else {
-                                start + line.available_width - x
-                            };
-                            let width = (6.0 * seg.font_size).min(room).max(0.0);
+                            let width = (6.0 * seg.font_size).min(line.available_width).max(0.0);
+                            let from = if para.right_to_left { x - width } else { x };
                             elements.push(form_marker(
                                 mark,
                                 marked,
                                 line_band.or(Some(Rect {
-                                    x: if para.right_to_left { x - width } else { x },
+                                    x: from.min(start + line.available_width - width).max(start),
                                     width,
                                     ..marked
                                 })),

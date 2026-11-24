@@ -2070,11 +2070,19 @@ fn an_empty_control_draws_the_page_the_static_export_draws() {
         (boxes[0].1.x + boxes[0].1.width - boxes[1].1.x).abs() < 0.01,
         "{boxes:?}"
     );
-    // The late one keeps to its line's end.
+    // The late one keeps to its line's end: its 6 em move back into the
+    // line, over the words before it, which it says.
     let page_width = 612.0;
     assert!(
-        rects[2].x + rects[2].width <= page_width - 72.0 + 0.01,
+        (rects[2].x + rects[2].width - (page_width - 72.0)).abs() < 0.01,
         "{rects:?}"
+    );
+    assert!((rects[2].width - 66.0).abs() < 0.01, "{rects:?}");
+    assert!(
+        said_about(&fillable.layout)
+            .contains(&"form control \"late\": other text on its lines sits under its box"),
+        "{:?}",
+        said_about(&fillable.layout)
     );
 }
 
