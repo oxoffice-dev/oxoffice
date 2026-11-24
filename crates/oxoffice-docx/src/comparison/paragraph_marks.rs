@@ -220,6 +220,14 @@ pub(super) fn after_kept_table(
         )
 }
 
+/// Whether a final `kind` change would mark a paragraph across a table or
+/// block control the same resolution removes, which its own revisions hold.
+fn crosses_marked_table(output: &[(EmittedOwner<'_>, String)], kind: &str) -> bool {
+    output[previous_mark_position(output, kind).map_or(0, |position| position + 1)..]
+        .iter()
+        .any(|(owner, _)| matches!(owner, EmittedOwner::MarkedTable(_)))
+}
+
 /// Mark the paragraph before a final inserted or deleted paragraph, and
 /// return its properties on the side that removes that mark, which
 /// [`final_paragraph`] gives the paragraph the two merge into.
@@ -353,42 +361,49 @@ pub(super) fn marked_paragraph_properties_xml(
 
 /// Emit a paragraph of the run that ends the body, with `trailing` the
 /// properties [`final_paragraph`] merges, whether a kept table precedes the
-/// run, and whether the run paragraph emitted last is moved.
+/// run, and the moved block the emitted run paragraphs end with: its move
+/// id, and the range of `output` it fills.
 ///
 /// The first paragraph marks the paragraph before the run, unless a kept
-/// table precedes it: with its own change when it is the only one, else
-/// with a mark of the run's resolution under a fresh id, so that resolving
-/// one move of the run alone merges nothing else. Each paragraph but the
-/// last carries its own change. The last keeps its mark as the story
-/// terminator; when it is moved, its move also goes on the mark of the
-/// paragraph before it in the run, which resolving that move alone merges
-/// into it, unless that paragraph is moved too: a mark holds one move
-/// marker of a kind, and resolving the last move alone then leaves its
-/// paragraph empty.
+/// table precedes it: with its own change when the run is one change (one
+/// paragraph, or one move, see [`share_trailing_move`]), else with a mark of
+/// the run's resolution under a fresh id, so that resolving one move of the
+/// run alone merges nothing else. A move is not one change across a marked
+/// table: resolved alone, it leaves that table, which the merge cannot
+/// cross. Each paragraph but the last carries its own change. The last keeps
+/// its mark as the story terminator; when it is moved, its move also goes on
+/// the mark of the paragraph before its moved block, which resolving that
+/// move alone merges into it. A table before the block, or a paragraph moved
+/// from elsewhere, keeps that move off any other mark (a mark holds one move
+/// marker of a kind): resolving it alone then leaves the last paragraph
+/// empty, as Word leaves a paragraph after a table that ends the body.
 pub(super) fn trailing_paragraph<'a>(
     output: &mut Vec<(EmittedOwner<'a>, String)>,
     run: TrailingRun<'a, '_>,
-    trailing: &mut (PropertySide<'a>, bool, bool),
+    trailing: &mut TrailingState<'a>,
     refuse_held_mark: &dyn Fn(Option<usize>) -> Result<()>,
     bindings: &[(String, String)],
     metadata: &mut Metadata<'_>,
 ) -> Result<()> {
-    let (merged, after_table, previous_moved) = (&mut trailing.0, &mut trailing.1, &mut trailing.2);
     if run.first {
-        let (kind, move_id) = if run.single {
+        trailing.single =
+            run.single && !(run.move_id.is_some() && crosses_marked_table(output, run.kind));
+        let (kind, move_id) = if trailing.single {
             (run.kind, run.move_id)
         } else if accept_removes(run.kind) {
             ("del", None)
         } else {
             ("ins", None)
         };
-        *after_table = after_kept_table(output, kind, run.location);
-        if !*after_table {
+        trailing.after_table = after_kept_table(output, kind, run.location);
+        if !trailing.after_table {
             refuse_held_mark(previous_mark_position(output, kind))?;
-            *merged = mark_before_final_paragraph(output, kind, move_id, bindings, metadata)?;
+            trailing.merged =
+                mark_before_final_paragraph(output, kind, move_id, bindings, metadata)?;
         }
     }
-    if run.next_takes_mark || *after_table {
+    if run.next_takes_mark || trailing.after_table {
+        let start = output.len();
         output.push(unmatched_body_owner(
             run.content,
             run.kind,
@@ -396,21 +411,48 @@ pub(super) fn trailing_paragraph<'a>(
             run.carried,
             metadata,
         )?);
-        *previous_moved = run.move_id.is_some();
+        trailing.block = run.move_id.map(|id| match trailing.block.take() {
+            Some((block_id, range)) if block_id == id && range.end == start => {
+                (id, range.start..output.len())
+            }
+            _ => (id, start..output.len()),
+        });
         return Ok(());
     }
     if let Some(id) = run.move_id
-        && !run.single
-        && !*previous_moved
+        && !trailing.single
     {
-        mark_previous_paragraph_with_id(output, run.kind, id, bindings, metadata)?;
+        let (start, previous_moved) = match &trailing.block {
+            Some((block_id, range)) if range.end == output.len() => {
+                if *block_id == id {
+                    (range.start, false)
+                } else {
+                    (output.len(), true)
+                }
+            }
+            _ => (output.len(), false),
+        };
+        if !previous_moved
+            && matches!(
+                output[..start].last(),
+                Some((EmittedOwner::Paragraph { .. }, _))
+            )
+        {
+            mark_previous_paragraph_with_id(
+                &mut output[..start],
+                run.kind,
+                id,
+                bindings,
+                metadata,
+            )?;
+        }
     }
     output.push(final_paragraph(
         run.paragraph,
         run.kind,
         run.move_id,
         run.carried,
-        merged.clone(),
+        trailing.merged.clone(),
         metadata,
     )?);
     Ok(())

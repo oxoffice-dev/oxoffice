@@ -39,6 +39,64 @@ pub(super) fn pair_moves(
     Ok(pairs)
 }
 
+/// Give the moved paragraphs that end a run of owners one side alone holds
+/// at the end of the body (`run`, see [`trailing_paragraphs`]) one move id,
+/// and return whether that block is the whole run. `side` gives the run's
+/// index on that side, and `edited` names the side.
+///
+/// The run's last paragraph keeps its mark as the story terminator, so its
+/// move goes on the mark before it, and a mark holds one move marker of a
+/// kind. Consecutive moved paragraphs there that also follow each other in
+/// order on the other side move as one block, as Word moves a selection of
+/// paragraphs, and the mark before the block carries it. Paragraphs moved
+/// from separate places keep their own moves.
+pub(super) fn share_trailing_move(
+    aligned: &[(Option<usize>, Option<usize>)],
+    run: Option<(usize, usize)>,
+    side: impl Fn((Option<usize>, Option<usize>)) -> Option<usize>,
+    content: &[BodyContent],
+    moves: &mut MovePairs,
+    edited: bool,
+) -> bool {
+    let Some((first, last)) = run else {
+        return false;
+    };
+    let (own, other) = if edited {
+        (&mut moves.edited, &mut moves.original)
+    } else {
+        (&mut moves.original, &mut moves.edited)
+    };
+    let source = |own: &[Option<i32>], index: usize| {
+        own[index].and_then(|id| other.iter().position(|other| *other == Some(id)))
+    };
+    let mut block = Vec::<usize>::new();
+    for position in (first..=last).rev() {
+        let Some(index) = side(aligned[position]).filter(|index| {
+            matches!(content[*index], BodyContent::Paragraph(_)) && own[*index].is_some()
+        }) else {
+            break;
+        };
+        if let Some(&after) = block.last()
+            && source(own, index).map(|source| source + 1) != source(own, after)
+        {
+            break;
+        }
+        block.push(index);
+    }
+    if let Some(shared) = block.last().and_then(|index| own[*index]) {
+        for index in &block {
+            let Some(old) = own[*index].filter(|old| *old != shared) else {
+                continue;
+            };
+            own[*index] = Some(shared);
+            for id in other.iter_mut().filter(|id| **id == Some(old)) {
+                *id = Some(shared);
+            }
+        }
+    }
+    block.len() == last - first + 1
+}
+
 /// Enforce the same whole-owner law on the authored reply-copy producer.
 fn refuse_changed_reply_held_owners(
     original: &Document,

@@ -1030,6 +1030,273 @@ fn a_paragraph_moved_to_the_end_after_a_moved_table_is_compared() {
     assert_eq!(owners(&rejected(&mut doc)), original);
 }
 
+/// The distinct revision ids of `doc`, in order.
+fn distinct_ids(doc: &Document) -> Vec<i32> {
+    let mut seen = Vec::new();
+    for id in ids(doc) {
+        if !seen.contains(&id) {
+            seen.push(id);
+        }
+    }
+    seen
+}
+
+/// The body owners after resolving revision `id` alone, accepting it or
+/// rejecting it, as the text shows them: the other revisions stay tracked.
+fn resolved_alone(doc: &mut Document, id: i32, accept: bool) -> Vec<String> {
+    let mut copy = reopen(doc);
+    let resolved = if accept {
+        copy.accept_revision_id(id)
+    } else {
+        copy.reject_revision_id(id)
+    };
+    assert!(resolved.unwrap() > 0, "revision {id} resolves");
+    let copy = reopen(&mut copy);
+    assert!(
+        copy.revisions().iter().all(|revision| revision.id() != id),
+        "revision {id} is resolved whole"
+    );
+    owners(&copy)
+}
+
+#[test]
+fn paragraphs_moved_together_to_the_end_move_as_one_change() {
+    let original = [
+        "Alpha paragraph.",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Delta paragraph.",
+    ];
+    let edited = [
+        "Gamma paragraph.",
+        "Delta paragraph.",
+        "Alpha paragraph.",
+        "Beta paragraph.",
+    ];
+    let mut doc = redline(doc_with(&original), &doc_with(&edited));
+    let moves = distinct_ids(&doc);
+    assert_eq!(moves.len(), 1, "{:?}", kinds(&doc));
+    assert_eq!(resolved_alone(&mut doc, moves[0], true), edited);
+    assert_eq!(resolved_alone(&mut doc, moves[0], false), original);
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_block_moved_to_the_end_after_an_added_paragraph_resolves_alone_to_either_version() {
+    let original = [
+        "Alpha paragraph.",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Delta paragraph.",
+    ];
+    let edited = [
+        "Gamma paragraph.",
+        "Delta paragraph.",
+        "Added paragraph.",
+        "Alpha paragraph.",
+        "Beta paragraph.",
+    ];
+    let mut doc = redline(doc_with(&original), &doc_with(&edited));
+    let moved = doc
+        .revisions()
+        .iter()
+        .filter(|revision| revision.kind() == RevisionKind::MoveTo)
+        .map(|revision| revision.id())
+        .collect::<Vec<_>>();
+    assert_eq!(moved.len(), 2, "both paragraphs are moved");
+    assert_eq!(moved[0], moved[1], "they move as one block");
+    let id = moved[0];
+    assert_eq!(resolved_alone(&mut doc, id, true), edited);
+    // The added paragraph stays, still tracked.
+    assert_eq!(
+        resolved_alone(&mut doc, id, false),
+        [
+            "Alpha paragraph.",
+            "Beta paragraph.",
+            "Gamma paragraph.",
+            "Delta paragraph.",
+            "Added paragraph."
+        ]
+    );
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_paragraph_moved_to_the_end_after_an_added_table_resolves_alone() {
+    let original = ["Alpha paragraph.", "Gamma paragraph.", "Delta paragraph."];
+    let edited = [
+        "Gamma paragraph.",
+        "Delta paragraph.",
+        "Added paragraph.",
+        "[cell]",
+        "Alpha paragraph.",
+    ];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    let id = doc
+        .revisions()
+        .iter()
+        .find(|revision| revision.kind() == RevisionKind::MoveTo)
+        .map(|revision| revision.id())
+        .expect("the paragraph is moved");
+    assert_eq!(resolved_alone(&mut doc, id, true), edited);
+    // Undone alone, the move leaves the body's last paragraph empty after
+    // the added table, as Word ends a body with a paragraph after a table.
+    assert_eq!(
+        resolved_alone(&mut doc, id, false),
+        [
+            "Alpha paragraph.",
+            "Gamma paragraph.",
+            "Delta paragraph.",
+            "Added paragraph.",
+            "[cell]",
+            ""
+        ]
+    );
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_paragraph_moved_to_the_end_right_after_an_added_table_resolves_alone() {
+    let original = ["Alpha paragraph.", "Gamma paragraph.", "Delta paragraph."];
+    let edited = [
+        "Gamma paragraph.",
+        "Delta paragraph.",
+        "[cell]",
+        "Alpha paragraph.",
+    ];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    let id = doc
+        .revisions()
+        .iter()
+        .find(|revision| revision.kind() == RevisionKind::MoveTo)
+        .map(|revision| revision.id())
+        .expect("the paragraph is moved");
+    assert_eq!(resolved_alone(&mut doc, id, true), edited);
+    // Undone alone, the move leaves the last paragraph empty after the
+    // added table, still tracked.
+    assert_eq!(
+        resolved_alone(&mut doc, id, false),
+        [
+            "Alpha paragraph.",
+            "Gamma paragraph.",
+            "Delta paragraph.",
+            "[cell]",
+            ""
+        ]
+    );
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn paragraphs_moved_together_from_the_end_move_as_one_change() {
+    let original = [
+        "Gamma paragraph.",
+        "Delta paragraph.",
+        "Alpha paragraph.",
+        "Beta paragraph.",
+    ];
+    let edited = [
+        "Alpha paragraph.",
+        "Beta paragraph.",
+        "Gamma paragraph.",
+        "Delta paragraph.",
+    ];
+    let mut doc = redline(doc_with(&original), &doc_with(&edited));
+    let moves = distinct_ids(&doc);
+    assert_eq!(moves.len(), 1, "{:?}", kinds(&doc));
+    assert_eq!(resolved_alone(&mut doc, moves[0], true), edited);
+    assert_eq!(resolved_alone(&mut doc, moves[0], false), original);
+}
+
+#[test]
+fn a_paragraph_moved_away_from_the_end_right_after_a_removed_table_resolves_alone() {
+    let original = [
+        "Gamma paragraph.",
+        "Delta paragraph.",
+        "[cell]",
+        "Alpha paragraph.",
+    ];
+    let edited = ["Alpha paragraph.", "Gamma paragraph.", "Delta paragraph."];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    let id = doc
+        .revisions()
+        .iter()
+        .find(|revision| revision.kind() == RevisionKind::MoveFrom)
+        .map(|revision| revision.id())
+        .expect("the paragraph is moved");
+    // Done alone, the move leaves the last paragraph empty after the
+    // removed table, still tracked.
+    assert_eq!(
+        resolved_alone(&mut doc, id, true),
+        [
+            "Alpha paragraph.",
+            "Gamma paragraph.",
+            "Delta paragraph.",
+            "[]",
+            ""
+        ]
+    );
+    // Undone alone, the move leaves the removed table tracked: the text
+    // shown hides its cell.
+    assert_eq!(
+        resolved_alone(&mut doc, id, false),
+        [
+            "Gamma paragraph.",
+            "Delta paragraph.",
+            "[]",
+            "Alpha paragraph."
+        ]
+    );
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn paragraphs_moved_to_the_end_from_separate_places_keep_their_own_moves() {
+    let original = [
+        "Alpha paragraph.",
+        "Xray paragraph.",
+        "Beta paragraph.",
+        "Yankee paragraph.",
+    ];
+    let edited = [
+        "Xray paragraph.",
+        "Yankee paragraph.",
+        "Alpha paragraph.",
+        "Beta paragraph.",
+    ];
+    let mut doc = redline(doc_with(&original), &doc_with(&edited));
+    let moved = doc
+        .revisions()
+        .iter()
+        .filter(|revision| revision.kind() == RevisionKind::MoveTo)
+        .map(|revision| revision.id())
+        .collect::<Vec<_>>();
+    assert_eq!(moved.len(), 2, "{:?}", kinds(&doc));
+    assert_ne!(moved[0], moved[1], "each paragraph keeps its own move");
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
+#[test]
+fn a_table_added_at_the_end_keeps_its_change_off_the_last_paragraph_mark() {
+    let original = ["kept"];
+    let edited = ["kept", "[cell]", ""];
+    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
+    let xml = main_part_xml(&mut doc);
+    let last = &xml[xml.rfind("<w:p>").or_else(|| xml.rfind("<w:p ")).unwrap()..];
+    assert!(
+        !last.contains("<w:ins "),
+        "the last mark is not tracked: {last}"
+    );
+    assert_eq!(owners(&accepted(&mut doc)), edited);
+    assert_eq!(owners(&rejected(&mut doc)), original);
+}
+
 #[test]
 fn a_paragraph_deleted_before_a_final_table_deleted_by_an_earlier_redline_is_compared() {
     let mut redlined = earlier_redline(&["intro", "[cell]"], &["intro"]);
