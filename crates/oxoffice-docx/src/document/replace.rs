@@ -462,31 +462,65 @@ impl Document {
                 index,
                 len: canonical_items.len(),
             })?;
-            if !selected.direct_owner_child {
-                return Err(Error::Other(
-                    "scoped replacement requires a block owner item".into(),
-                ));
-            }
+            let block_owner_item =
+                || Error::Other("scoped replacement requires a block owner item".into());
+            // A paragraph of a nested block control names that control's own
+            // item: it is found through its direct ancestor control.
+            let (direct_index, nested) = if selected.direct_owner_child {
+                (index, 0)
+            } else if location.index_path.len() == 2 {
+                let (direct_index, _) = canonical_items[..index]
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, item)| item.direct_owner_child && selected.full.end <= item.full.end)
+                    .ok_or_else(block_owner_item)?;
+                let nested = control_items(&canonical_items, direct_index)
+                    .iter()
+                    .position(|listed| *listed == index)
+                    .ok_or_else(block_owner_item)?;
+                (direct_index, nested)
+            } else {
+                return Err(block_owner_item());
+            };
+            let direct_selected = &canonical_items[direct_index];
             let canonical_direct =
                 direct_story_content_items_in(&canonical.xml, &canonical_owner, &canonical_items)?;
-            let actual_direct = direct_story_content_items(&source.xml, &owner)?;
+            let actual_items = scan_story_items(&source.xml, &owner, None)?;
+            let actual_direct = direct_story_content_items_in(&source.xml, &owner, &actual_items)?;
             let slot = canonical_direct
                 .iter()
-                .position(|item| item.full == selected.full)
+                .position(|item| item.full == direct_selected.full)
                 .ok_or_else(|| {
                     Error::Other("scoped replacement has no direct physical slot".into())
                 })?;
-            let item = actual_direct.get(slot).ok_or(StoryError::OutOfBounds {
+            let direct_item = actual_direct.get(slot).ok_or(StoryError::OutOfBounds {
                 index: slot,
                 len: actual_direct.len(),
             })?;
-            if item.kind != selected.kind {
+            if direct_item.kind != direct_selected.kind {
                 return Err(StoryError::KindMismatch {
-                    expected: selected.kind,
-                    actual: item.kind,
+                    expected: direct_selected.kind,
+                    actual: direct_item.kind,
                 }
                 .into());
             }
+            let item = if nested == 0 {
+                direct_item
+            } else {
+                let actual_index = actual_items
+                    .iter()
+                    .position(|item| item.full == direct_item.full)
+                    .ok_or_else(block_owner_item)?;
+                let canonical_controls = control_items(&canonical_items, direct_index);
+                let actual_controls = control_items(&actual_items, actual_index);
+                if canonical_controls.len() != actual_controls.len() {
+                    return Err(Error::Other(
+                        "scoped replacement nested controls changed".into(),
+                    ));
+                }
+                &actual_items[actual_controls[nested]]
+            };
             if let [_, ordinal] = location.index_path.as_slice() {
                 let canonical_paragraphs = scan_story_control_paragraphs(&canonical.xml, selected)?;
                 let paragraphs = scan_story_control_paragraphs(&source.xml, item)?;

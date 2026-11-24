@@ -2593,3 +2593,168 @@ fn a_value_is_refused_over_a_tracked_change_holding_what_a_partner_outside_it_ne
         assert_eq!(value(&doc, "t"), "X", "{}", way(by_form));
     }
 }
+
+/// A block content control holding this content.
+fn block_control(tag: &str, content: &str) -> String {
+    format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#
+    )
+}
+
+/// A paragraph holding this text.
+fn text_paragraph(text: &str) -> String {
+    format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
+}
+
+/// A one-cell table whose cell holds this text.
+fn one_cell_table(text: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>"#,
+        text_paragraph(text)
+    )
+}
+
+/// The body story route of each body paragraph text, as story paragraphs
+/// lists them.
+fn story_paragraph_routes(doc: &Document) -> HashMap<String, ContentLocation> {
+    doc.story_paragraphs()
+        .expect("story paragraphs are listed")
+        .into_iter()
+        .filter(|paragraph| paragraph.location.story().kind() == StoryKind::Body)
+        .map(|paragraph| (paragraph.text, paragraph.location))
+        .collect()
+}
+
+#[test]
+fn a_paragraph_two_and_three_controls_deep_has_the_story_paragraph_route() {
+    let inner = block_control(
+        "inner",
+        &(text_paragraph("inner a") + &text_paragraph("inner b")),
+    );
+    let middle = block_control(
+        "middle",
+        &(text_paragraph("middle a") + &inner + &text_paragraph("middle b")),
+    );
+    let outer = block_control(
+        "outer",
+        &(text_paragraph("outer a") + &middle + &text_paragraph("outer b")),
+    );
+    let doc = doc_with_body(&(text_paragraph("before") + &outer + &text_paragraph("after")));
+    let routes = story_paragraph_routes(&doc);
+    let texts = texts(&doc);
+    assert_eq!(
+        texts,
+        [
+            "before", "outer a", "middle a", "inner a", "inner b", "middle b", "outer b", "after"
+        ]
+    );
+    for (index, text) in texts.iter().enumerate() {
+        let location = doc
+            .paragraph_story_location(index)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{text} has a route"));
+        assert_eq!(location, routes[text], "{text}");
+    }
+    // The innermost control's story item, then the ordinal among its own
+    // paragraphs.
+    let inner_b = doc.paragraph_story_location(4).unwrap().unwrap();
+    assert_eq!(inner_b.index_path(), [3, 1]);
+    assert_eq!(
+        doc.read_story_paragraph(&inner_b, |paragraph| paragraph.text())
+            .unwrap(),
+        "inner b"
+    );
+}
+
+#[test]
+fn every_body_paragraph_route_is_the_same_one_by_one_and_all_at_once() {
+    let inline = |lead: &str| {
+        format!(
+            r#"<w:p><w:r><w:t>{lead} </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="who"/></w:sdtPr><w:sdtContent><w:r><w:t>inline</w:t></w:r></w:sdtContent></w:sdt></w:p>"#
+        )
+    };
+    let deep = block_control(
+        "deep",
+        &(text_paragraph("deep a") + &one_cell_table("deep cell") + &text_paragraph("deep b")),
+    );
+    let nested = block_control(
+        "nested",
+        &(text_paragraph("nested a")
+            + &inline("nested")
+            + &deep
+            + &one_cell_table("nested cell")
+            + &text_paragraph("nested b")),
+    );
+    let sibling = block_control("sibling", &text_paragraph("sibling a"));
+    // A block control in a cell belongs to the cell story.
+    let control_in_cell = format!(
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>"#,
+        block_control("in cell", &text_paragraph("control in cell"))
+    );
+    let empty = r#"<w:sdt><w:sdtPr><w:tag w:val="empty"/></w:sdtPr><w:sdtContent/></w:sdt>"#;
+    let custom = format!(
+        r#"<w:customXml w:element="item">{}{}</w:customXml>"#,
+        text_paragraph("custom xml"),
+        block_control("in custom", &text_paragraph("custom control"))
+    );
+    let after = block_control(
+        "after",
+        &(empty.to_owned() + &custom + &text_paragraph("after a")),
+    );
+    let outer = block_control(
+        "outer",
+        &(one_cell_table("outer cell")
+            + &text_paragraph("outer a")
+            + &nested
+            + &control_in_cell
+            + &sibling
+            + &after
+            + &text_paragraph("outer b")),
+    );
+    let body = text_paragraph("first")
+        + &inline("body")
+        + &one_cell_table("body cell")
+        + &outer
+        + &block_control("flat", &text_paragraph("flat a"))
+        + &text_paragraph("last");
+    let doc = doc_with_body(&body);
+    let routes = story_paragraph_routes(&doc);
+    let all = doc.paragraph_story_locations().unwrap();
+    let texts = texts(&doc);
+    assert_eq!(all.len(), texts.len());
+    for (index, text) in texts.iter().enumerate() {
+        let single = doc.paragraph_story_location(index).unwrap();
+        assert_eq!(single, all[index], "{text}");
+        if text.ends_with("cell") {
+            // A table cell is a story of its own.
+            assert_eq!(single, None, "{text}");
+        } else {
+            assert_eq!(single.as_ref(), Some(&routes[text]), "{text}");
+        }
+    }
+}
+
+#[test]
+fn a_literal_replacement_at_a_paragraph_of_a_nested_control_changes_that_paragraph_only() {
+    let inner = block_control(
+        "inner",
+        &(text_paragraph("same") + &text_paragraph("inner")),
+    );
+    let middle = block_control("middle", &(text_paragraph("same") + &inner));
+    let outer = block_control("outer", &(text_paragraph("same") + &middle));
+    let body = text_paragraph("same") + &outer + &text_paragraph("same");
+    for (index, expected) in [
+        (1, ["same", "new", "same", "same", "inner", "same"]),
+        (2, ["same", "same", "new", "same", "inner", "same"]),
+        (3, ["same", "same", "same", "new", "inner", "same"]),
+    ] {
+        let mut doc = doc_with_body(&body);
+        let location = doc.paragraph_story_location(index).unwrap().unwrap();
+        assert_eq!(
+            doc.try_replace_text_at(&location, "same", "new", Some(1))
+                .unwrap(),
+            Ok(1)
+        );
+        assert_eq!(texts(&reopen(&mut doc)), expected, "paragraph {index}");
+    }
+}

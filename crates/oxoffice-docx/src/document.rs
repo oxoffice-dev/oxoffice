@@ -152,6 +152,8 @@ mod headers_footers;
 mod media;
 mod notes;
 mod numbering;
+mod paragraph_routes;
+use paragraph_routes::{body_paragraph_routes, control_items};
 mod replace;
 mod sections;
 mod styles;
@@ -329,12 +331,11 @@ pub(crate) use walkers::{
     visit_body_table_paragraphs_mut, visit_paragraph,
 };
 use walkers::{
-    block_paragraphs, body_paragraph_routes, cell_paragraph_routes,
-    close_typed_story_drawing_namespaces, collect_relationship_ids, insert_html_content_into_cell,
-    modeled_main_cell_route, modeled_main_cell_routes, nth_cell_in_control, nth_cell_in_table,
-    nth_paragraph_in_body, nth_table_in_body, nth_table_in_body_ref, physical_table_cells,
-    push_control_text, push_paragraph_line, push_table_text, visit_authored_drawings_mut,
-    visit_cell,
+    block_paragraphs, cell_paragraph_routes, close_typed_story_drawing_namespaces,
+    collect_relationship_ids, insert_html_content_into_cell, modeled_main_cell_route,
+    modeled_main_cell_routes, nth_cell_in_control, nth_cell_in_table, nth_paragraph_in_body,
+    nth_table_in_body, nth_table_in_body_ref, physical_table_cells, push_control_text,
+    push_paragraph_line, push_table_text, visit_authored_drawings_mut, visit_cell,
 };
 
 mod canonicalize;
