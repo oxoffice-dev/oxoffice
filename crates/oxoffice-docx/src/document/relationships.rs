@@ -31,16 +31,12 @@ impl Document {
                     .reserve_relationship_id_checked(&doc_part_name)?,
             )
         };
-        self.package
-            .content_types
-            .add_override(part_name, content_type);
+        self.add_override_journaled(part_name, content_type);
         self.identifiers.register_content_type_override(part_name);
         if let Some(id) = pending_id {
             // Relationship targets are relative to the source part's directory.
             let target = relative_target(&doc_part_name, part_name);
-            self.package
-                .get_or_create_part_rels(&doc_part_name)
-                .add_with_id(&id, rel_type, &target);
+            self.add_relationship_journaled(Some(&doc_part_name), &id, rel_type, &target);
         }
         Ok(())
     }
@@ -73,15 +69,11 @@ impl Document {
         } else {
             Some(self.identifiers.reserve_relationship_id_checked(&owner)?)
         };
-        self.package
-            .content_types
-            .add_override(&part_name, content_type);
+        self.add_override_journaled(&part_name, content_type);
         self.identifiers.register_content_type_override(&part_name);
         if let Some(id) = pending_id {
             let target = relative_target(&owner, &part_name);
-            self.package
-                .get_or_create_part_rels(&owner)
-                .add_with_id(&id, rel_type, &target);
+            self.add_relationship_journaled(Some(&owner), &id, rel_type, &target);
         }
         Ok(part_name)
     }
@@ -144,13 +136,11 @@ impl Document {
         } else {
             Some(self.identifiers.reserve_relationship_id_checked("/")?)
         };
-        self.package
-            .content_types
-            .add_override(&part_name, content_type);
+        self.add_override_journaled(&part_name, content_type);
         self.identifiers.register_content_type_override(&part_name);
         if let Some(id) = pending_id {
-            let target = part_name.strip_prefix('/').unwrap_or(&part_name);
-            self.package.package_rels.add_with_id(&id, rel_type, target);
+            let target = part_name.strip_prefix('/').unwrap_or(&part_name).to_owned();
+            self.add_relationship_journaled(None, &id, rel_type, &target);
         }
         Ok(part_name)
     }

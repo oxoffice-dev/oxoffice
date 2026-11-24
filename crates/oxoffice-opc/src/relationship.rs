@@ -680,6 +680,20 @@ impl Relationships {
         }
     }
 
+    /// The number the next allocated id starts from, which
+    /// [`Self::add_with_id`] may raise.
+    pub fn next_id(&self) -> u32 {
+        self.next_id
+    }
+
+    /// Undo [`Self::add_with_id`] of an id the relationships did not hold,
+    /// made when [`Self::next_id`] was `next_id`: remove it and put the
+    /// counter back.
+    pub fn undo_add_with_id(&mut self, id: &str, next_id: u32) {
+        self.items.retain(|r| r.id != id);
+        self.next_id = next_id;
+    }
+
     fn allocate_id(&mut self) -> String {
         let mut candidate = self.next_id;
         let numeric_space = usize::try_from(u32::MAX).unwrap_or(usize::MAX);

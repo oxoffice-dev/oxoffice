@@ -1,9 +1,10 @@
 //! AcroForm fields from the layout's form field fragments.
 //!
-//! A field's widget goes on the first page that holds one of its fragments,
-//! over the union of its fragments on that page. Its normal appearance is
-//! what the layout drew for those fragments, which then leaves the page
-//! content. Fragments on later pages are drawn as page content.
+//! A field gets a widget on each page that holds its fragments, over the
+//! union of its fragments on that page; a field with several widgets (a
+//! header or footer field) is their parent, with one value. A widget's normal
+//! appearance is what the layout drew for its fragments, which then leave
+//! the page content.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,8 +14,8 @@ use oxoffice_layout::{
     Rect, Transform,
 };
 use pdf_writer::types::{
-    AnnotationFlags, CheckBoxState, CidFontType, FieldFlags, FieldType, FontFlags, SystemInfo,
-    UnicodeCmap,
+    AnnotationFlags, AnnotationType, CheckBoxState, CidFontType, FieldFlags, FieldType, FontFlags,
+    SystemInfo, UnicodeCmap,
 };
 use pdf_writer::{Filter, Finish, Name, Pdf, Ref, Str, TextStr};
 
@@ -48,14 +49,15 @@ pub(crate) fn visit_fragments<'a>(
     visit(elements, Transform::IDENTITY, f);
 }
 
-/// One field with a widget, and the objects that write it.
-pub(crate) struct PlacedField<'a> {
-    pub(crate) field: &'a FormField,
-    pub(crate) name: String,
+/// One widget of a placed field: its page, rectangle and appearances.
+pub(crate) struct Widget {
     pub(crate) page_index: usize,
-    /// Union of the field's fragments on its page, in page coordinates from
+    /// Union of the field's fragments on this page, in page coordinates from
     /// the top-left corner.
     pub(crate) rect: Rect,
+    /// How far the field's text turns counter-clockwise on the page, a
+    /// multiple of 90 degrees (`/MK /R`): a viewer types along it.
+    pub(crate) rotation: i32,
     pub(crate) widget: Ref,
     /// The normal appearance, the `/Yes` state of a check box.
     pub(crate) appearance: Ref,
@@ -63,6 +65,16 @@ pub(crate) struct PlacedField<'a> {
     pub(crate) off_appearance: Option<Ref>,
     /// In tagged output, the widget's `/Form` element and parent tree key.
     pub(crate) tag: Option<(Ref, i32)>,
+}
+
+/// One field with its widgets, and the objects that write it.
+pub(crate) struct PlacedField<'a> {
+    pub(crate) field: &'a FormField,
+    pub(crate) name: String,
+    /// The field dictionary: the widget itself when the field has one, else
+    /// a parent field whose `/Kids` are its widgets, one per page.
+    pub(crate) object: Ref,
+    pub(crate) widgets: Vec<Widget>,
 }
 
 impl PlacedField<'_> {
@@ -77,7 +89,7 @@ impl PlacedField<'_> {
     }
 }
 
-/// What the page emission collects for one placed field.
+/// What the page emission collects for one widget.
 #[derive(Default)]
 pub(crate) struct FieldDrawing {
     /// The fragments' children, in page coordinates.
@@ -86,7 +98,7 @@ pub(crate) struct FieldDrawing {
     pub(crate) other: Vec<u8>,
 }
 
-/// Every field with a widget, in field order, and the typing font.
+/// Every field with its widgets, in field order, and the typing font.
 pub(crate) struct FormPlan<'a> {
     pub(crate) fields: Vec<PlacedField<'a>>,
     by_id: BTreeMap<FormFieldId, usize>,
@@ -97,16 +109,31 @@ pub(crate) struct FormPlan<'a> {
     font_file: Ref,
 }
 
+/// The counter-clockwise turn of a transform's x axis on the page, rounded
+/// to a right angle, or 0 when it is not one. Layout's y axis points down.
+fn right_angle(transform: Transform) -> i32 {
+    let degrees = (-transform.b).atan2(transform.a).to_degrees();
+    let quarter = (degrees / 90.0).round();
+    if (degrees - quarter * 90.0).abs() > 0.5 {
+        return 0;
+    }
+    (quarter as i32 * 90).rem_euclid(360)
+}
+
 impl<'a> FormPlan<'a> {
     /// Place the fields, or `None` when no fragment names a field. References
     /// are allocated only then, so output without fields keeps its objects.
+    ///
+    /// A field gets one widget on each page that holds its fragments, over
+    /// their union there: the layout leaves several pages only to a header or
+    /// footer field, drawn whole on each page.
     pub(crate) fn new(
         pages: &[std::sync::Arc<oxoffice_layout::PageFrame>],
         fields: &'a [FormField],
         tagged: bool,
         alloc: &mut impl FnMut() -> Ref,
     ) -> Option<Self> {
-        let mut placements: BTreeMap<FormFieldId, (usize, Rect)> = BTreeMap::new();
+        let mut placements: BTreeMap<FormFieldId, BTreeMap<usize, (Rect, i32)>> = BTreeMap::new();
         for (page_index, page) in pages.iter().enumerate() {
             visit_fragments(&page.elements, &mut |fragment, transform| {
                 if fragment.field.0 as usize >= fields.len() || !rect_is_finite(fragment.rect) {
@@ -115,12 +142,10 @@ impl<'a> FormPlan<'a> {
                 let rect = transform.transform_rect_bbox(fragment.rect);
                 placements
                     .entry(fragment.field)
-                    .and_modify(|(placed_page, union)| {
-                        if *placed_page == page_index {
-                            *union = union_rect(*union, rect);
-                        }
-                    })
-                    .or_insert((page_index, rect));
+                    .or_default()
+                    .entry(page_index)
+                    .and_modify(|(union, _)| *union = union_rect(*union, rect))
+                    .or_insert((rect, right_angle(transform)));
             });
         }
         if placements.is_empty() {
@@ -134,28 +159,43 @@ impl<'a> FormPlan<'a> {
         let font_descriptor = alloc();
         let font_file = alloc();
         let mut by_id = BTreeMap::new();
+        // Parent tree keys after the pages' own, one per widget.
+        let mut key = pages.len() as i32;
         let placed = placements
             .into_iter()
             .zip(names)
             .enumerate()
-            .map(|(index, ((id, (page_index, rect)), name))| {
+            .map(|(index, ((id, pages), name))| {
                 by_id.insert(id, index);
                 let field = &fields[id.0 as usize];
-                let widget = alloc();
-                let appearance = alloc();
-                let off_appearance =
-                    matches!(field.kind, FormFieldKind::CheckBox { .. }).then(&mut *alloc);
-                // Parent tree keys after the pages' own.
-                let tag = tagged.then(|| (alloc(), (pages.len() + index) as i32));
+                let parent = (pages.len() > 1).then(&mut *alloc);
+                let widgets: Vec<Widget> = pages
+                    .into_iter()
+                    .map(|(page_index, (rect, rotation))| {
+                        let widget = alloc();
+                        let appearance = alloc();
+                        let off_appearance =
+                            matches!(field.kind, FormFieldKind::CheckBox { .. }).then(&mut *alloc);
+                        let tag = tagged.then(|| {
+                            key += 1;
+                            (alloc(), key - 1)
+                        });
+                        Widget {
+                            page_index,
+                            rect,
+                            rotation,
+                            widget,
+                            appearance,
+                            off_appearance,
+                            tag,
+                        }
+                    })
+                    .collect();
                 PlacedField {
                     field,
                     name,
-                    page_index,
-                    rect,
-                    widget,
-                    appearance,
-                    off_appearance,
-                    tag,
+                    object: parent.unwrap_or(widgets[0].widget),
+                    widgets,
                 }
             })
             .collect();
@@ -170,37 +210,44 @@ impl<'a> FormPlan<'a> {
         })
     }
 
-    /// The field placed on this page, if the fragment's field is.
+    /// The field with a widget on this page, if the fragment's field has one.
     pub(crate) fn placed_on(&self, id: FormFieldId, page_index: usize) -> Option<&PlacedField<'a>> {
         self.by_id
             .get(&id)
             .map(|index| &self.fields[*index])
-            .filter(|placed| placed.page_index == page_index)
+            .filter(|placed| {
+                placed
+                    .widgets
+                    .iter()
+                    .any(|widget| widget.page_index == page_index)
+            })
     }
 
     /// Widget references of one page, in field order.
     pub(crate) fn widgets_on(&self, page_index: usize) -> impl Iterator<Item = Ref> + '_ {
         self.fields
             .iter()
-            .filter(move |placed| placed.page_index == page_index)
-            .map(|placed| placed.widget)
+            .flat_map(|placed| &placed.widgets)
+            .filter(move |widget| widget.page_index == page_index)
+            .map(|widget| widget.widget)
     }
 
     /// The widgets the structure tree tags, in field order.
     pub(crate) fn tagged_widgets(&self) -> Vec<crate::structure::TaggedWidget> {
         self.by_id
             .iter()
-            .filter_map(|(id, index)| {
-                let placed = &self.fields[*index];
-                placed
-                    .tag
-                    .map(|(element, key)| crate::structure::TaggedWidget {
-                        field: *id,
-                        page_index: placed.page_index,
-                        widget: placed.widget,
-                        element,
-                        key,
-                    })
+            .flat_map(|(id, index)| {
+                self.fields[*index].widgets.iter().filter_map(|widget| {
+                    widget
+                        .tag
+                        .map(|(element, key)| crate::structure::TaggedWidget {
+                            field: *id,
+                            page_index: widget.page_index,
+                            widget: widget.widget,
+                            element,
+                            key,
+                        })
+                })
             })
             .collect()
     }
@@ -208,150 +255,68 @@ impl<'a> FormPlan<'a> {
     /// Write `/AcroForm` into the catalog.
     pub(crate) fn write_catalog_entry(&self, catalog: &mut pdf_writer::writers::Catalog<'_>) {
         let mut form = catalog.form();
-        form.fields(self.fields.iter().map(|placed| placed.widget));
+        form.fields(self.fields.iter().map(|placed| placed.object));
         form.default_resources()
             .fonts()
             .pair(Name(FORM_FONT.as_bytes()), self.font);
         form.default_appearance(Str(format!("/{FORM_FONT} 0 Tf 0 g").as_bytes()));
     }
 
-    /// Write every field with its widget and appearances, and the typing font.
+    /// Write every field with its widgets and appearances, and the typing
+    /// font.
     ///
-    /// `drawings` holds what the page emission collected per field;
+    /// `drawings` holds what the page emission collected per field and page;
     /// `resources` writes a page's resource dictionary for an appearance.
     pub(crate) fn write(
         &self,
         pdf: &mut Pdf,
         page_ids: &[Ref],
         page_heights: &[f64],
-        drawings: &BTreeMap<FormFieldId, FieldDrawing>,
+        drawings: &BTreeMap<(FormFieldId, usize), FieldDrawing>,
         resources: &mut dyn FnMut(usize, &mut pdf_writer::writers::Resources<'_>),
     ) {
         let empty = FieldDrawing::default();
         for (id, index) in &self.by_id {
             let placed = &self.fields[*index];
-            let drawing = drawings.get(id).unwrap_or(&empty);
-            let page_height = page_heights[placed.page_index];
-            let bbox = pdf_rect(placed.rect, page_height);
-
-            let (on, off) = match placed.field.kind {
-                FormFieldKind::CheckBox { checked: true } => (&drawing.current, &drawing.other),
-                FormFieldKind::CheckBox { checked: false } => (&drawing.other, &drawing.current),
-                _ if placed.shows_drawing() => (&drawing.current, &empty.other),
-                _ => (&empty.current, &empty.other),
-            };
-            write_appearance(
-                pdf,
-                placed.appearance,
-                on,
-                bbox,
-                placed.page_index,
-                resources,
-            );
-            if let Some(off_ref) = placed.off_appearance {
-                write_appearance(pdf, off_ref, off, bbox, placed.page_index, resources);
+            for widget in &placed.widgets {
+                let drawing = drawings.get(&(*id, widget.page_index)).unwrap_or(&empty);
+                let bbox = pdf_rect(widget.rect, page_heights[widget.page_index]);
+                let (on, off) = match placed.field.kind {
+                    FormFieldKind::CheckBox { checked: true } => (&drawing.current, &drawing.other),
+                    FormFieldKind::CheckBox { checked: false } => {
+                        (&drawing.other, &drawing.current)
+                    }
+                    _ if placed.shows_drawing() => (&drawing.current, &empty.other),
+                    _ => (&empty.current, &empty.other),
+                };
+                write_appearance(
+                    pdf,
+                    widget.appearance,
+                    on,
+                    bbox,
+                    widget.page_index,
+                    resources,
+                );
+                if let Some(off_ref) = widget.off_appearance {
+                    write_appearance(pdf, off_ref, off, bbox, widget.page_index, resources);
+                }
             }
 
-            let mut field = pdf.form_field(placed.widget);
-            field.partial_name(TextStr(&placed.name));
-            // Tagged output needs a description on every field, and the
-            // name is the last one left.
-            match (&placed.field.tooltip, placed.tag) {
-                (Some(tooltip), _) => {
-                    field.alternate_name(TextStr(tooltip));
-                }
-                (None, Some(_)) => {
-                    field.alternate_name(TextStr(&placed.name));
-                }
-                (None, None) => {}
-            }
-            let mut flags = FieldFlags::empty();
-            if placed.field.read_only {
-                flags |= FieldFlags::READ_ONLY;
-            }
-            let appearance = default_appearance(placed.field);
-            match &placed.field.kind {
-                FormFieldKind::Text {
-                    value,
-                    multiline,
-                    max_len,
-                } => {
-                    field.field_type(FieldType::Text);
-                    if *multiline {
-                        flags |= FieldFlags::MULTILINE;
-                    }
-                    if !value.is_empty() && !placed.field.placeholder {
-                        field.text_value(TextStr(value));
-                    }
-                    if let Some(max_len) = max_len {
-                        field.text_max_len(i32::try_from(*max_len).unwrap_or(i32::MAX));
-                    }
-                    field.vartext_default_appearance(Str(appearance.as_bytes()));
-                    field.vartext_quadding(quadding(placed.field.alignment));
-                }
-                FormFieldKind::CheckBox { checked } => {
-                    field.field_type(FieldType::Button);
-                    field.checkbox_value(if *checked {
-                        CheckBoxState::Yes
-                    } else {
-                        CheckBoxState::Off
-                    });
-                }
-                FormFieldKind::Choice {
-                    options,
-                    value,
-                    editable,
-                } => {
-                    field.field_type(FieldType::Choice);
-                    flags |= FieldFlags::COMBO;
-                    if *editable {
-                        flags |= FieldFlags::EDIT;
-                    }
-                    {
-                        let mut list = field.choice_options();
-                        for option in options {
-                            if option.value == option.display {
-                                list.option(TextStr(&option.display));
-                            } else {
-                                list.export(TextStr(&option.display), TextStr(&option.value));
-                            }
-                        }
-                    }
-                    if let Some(value) = value.as_deref().filter(|_| !placed.field.placeholder) {
-                        field.choice_value(Some(TextStr(value)));
-                    }
-                    field.vartext_default_appearance(Str(appearance.as_bytes()));
-                    field.vartext_quadding(quadding(placed.field.alignment));
-                }
-                FormFieldKind::Signature => {
-                    field.field_type(FieldType::Signature);
-                }
-            }
-            if !flags.is_empty() {
-                field.field_flags(flags);
-            }
-
-            let mut widget = field.into_annotation();
-            widget.rect(bbox);
-            widget.flags(AnnotationFlags::PRINT);
-            widget.page(page_ids[placed.page_index]);
-            if let Some((_, key)) = placed.tag {
-                widget.struct_parent(key);
-            }
-            if let Some(off_ref) = placed.off_appearance {
-                let checked =
-                    matches!(placed.field.kind, FormFieldKind::CheckBox { checked: true });
-                {
-                    let mut appearance = widget.appearance();
-                    let mut states = appearance.normal().streams();
-                    states.pair(Name(b"Off"), off_ref);
-                    states.pair(Name(b"Yes"), placed.appearance);
-                }
-                widget.appearance_state(Name(if checked { b"Yes" } else { b"Off" }));
+            let mut field = pdf.form_field(placed.object);
+            write_field(&mut field, placed);
+            if let [widget] = placed.widgets.as_slice() {
+                let annotation = field.into_annotation();
+                write_widget(annotation, placed, widget, page_ids, page_heights);
             } else {
-                widget.appearance().normal().stream(placed.appearance);
+                field.children(placed.widgets.iter().map(|widget| widget.widget));
+                field.finish();
+                for widget in &placed.widgets {
+                    let mut annotation = pdf.annotation(widget.widget);
+                    annotation.subtype(AnnotationType::Widget);
+                    annotation.parent(placed.object);
+                    write_widget(annotation, placed, widget, page_ids, page_heights);
+                }
             }
-            widget.finish();
         }
         self.write_font(pdf);
     }
@@ -567,6 +532,122 @@ fn sample_of(characters: &BTreeSet<char>) -> String {
     parts.join(", ")
 }
 
+/// A field's own entries: name, description, type, value and flags.
+fn write_field(field: &mut pdf_writer::writers::Field<'_>, placed: &PlacedField<'_>) {
+    field.partial_name(TextStr(&placed.name));
+    // Tagged output needs a description on every field, and the name is the
+    // last one left.
+    let tagged = placed.widgets.iter().any(|widget| widget.tag.is_some());
+    match (&placed.field.tooltip, tagged) {
+        (Some(tooltip), _) => {
+            field.alternate_name(TextStr(tooltip));
+        }
+        (None, true) => {
+            field.alternate_name(TextStr(&placed.name));
+        }
+        (None, false) => {}
+    }
+    let mut flags = FieldFlags::empty();
+    if placed.field.read_only {
+        flags |= FieldFlags::READ_ONLY;
+    }
+    let appearance = default_appearance(placed.field);
+    match &placed.field.kind {
+        FormFieldKind::Text {
+            value,
+            multiline,
+            max_len,
+        } => {
+            field.field_type(FieldType::Text);
+            if *multiline {
+                flags |= FieldFlags::MULTILINE;
+            }
+            if !value.is_empty() && !placed.field.placeholder {
+                field.text_value(TextStr(value));
+            }
+            if let Some(max_len) = max_len {
+                field.text_max_len(i32::try_from(*max_len).unwrap_or(i32::MAX));
+            }
+            field.vartext_default_appearance(Str(appearance.as_bytes()));
+            field.vartext_quadding(quadding(placed.field.alignment));
+        }
+        FormFieldKind::CheckBox { checked } => {
+            field.field_type(FieldType::Button);
+            field.checkbox_value(if *checked {
+                CheckBoxState::Yes
+            } else {
+                CheckBoxState::Off
+            });
+        }
+        FormFieldKind::Choice {
+            options,
+            value,
+            editable,
+        } => {
+            field.field_type(FieldType::Choice);
+            flags |= FieldFlags::COMBO;
+            if *editable {
+                flags |= FieldFlags::EDIT;
+            }
+            {
+                let mut list = field.choice_options();
+                for option in options {
+                    if option.value == option.display {
+                        list.option(TextStr(&option.display));
+                    } else {
+                        list.export(TextStr(&option.display), TextStr(&option.value));
+                    }
+                }
+            }
+            if let Some(value) = value.as_deref().filter(|_| !placed.field.placeholder) {
+                field.choice_value(Some(TextStr(value)));
+            }
+            field.vartext_default_appearance(Str(appearance.as_bytes()));
+            field.vartext_quadding(quadding(placed.field.alignment));
+        }
+        FormFieldKind::Signature => {
+            field.field_type(FieldType::Signature);
+        }
+    }
+    if !flags.is_empty() {
+        field.field_flags(flags);
+    }
+}
+
+/// A widget's own entries: rectangle, page, rotation, appearances.
+fn write_widget(
+    mut annotation: pdf_writer::writers::Annotation<'_>,
+    placed: &PlacedField<'_>,
+    widget: &Widget,
+    page_ids: &[Ref],
+    page_heights: &[f64],
+) {
+    annotation.rect(pdf_rect(widget.rect, page_heights[widget.page_index]));
+    annotation.flags(AnnotationFlags::PRINT);
+    annotation.page(page_ids[widget.page_index]);
+    if let Some((_, key)) = widget.tag {
+        annotation.struct_parent(key);
+    }
+    if widget.rotation != 0 {
+        annotation
+            .appearance_characteristics()
+            .rotate(widget.rotation);
+    }
+    if let Some(off_ref) = widget.off_appearance {
+        let checked = matches!(placed.field.kind, FormFieldKind::CheckBox { checked: true });
+        {
+            let mut appearance = annotation.appearance();
+            let mut states = appearance.normal().streams();
+            states.pair(Name(b"Off"), off_ref);
+            states.pair(Name(b"Yes"), widget.appearance);
+        }
+        annotation.appearance_state(Name(if checked { b"Yes" } else { b"Off" }));
+    } else {
+        annotation.appearance().normal().stream(widget.appearance);
+    }
+    annotation.finish();
+}
+
 fn write_appearance(
     pdf: &mut Pdf,
     id: Ref,
@@ -693,6 +774,18 @@ mod tests {
     fn names(input: &[&str]) -> Vec<String> {
         let owned: Vec<String> = input.iter().map(|name| (*name).to_owned()).collect();
         unique_names(owned.iter())
+    }
+
+    #[test]
+    fn a_widget_turns_counter_clockwise_by_right_angles_only() {
+        // Layout's y axis points down: a positive angle turns clockwise.
+        let turn = |degrees: f64| right_angle(Transform::rotate_about(degrees, 10.0, 20.0));
+        assert_eq!(turn(0.0), 0);
+        assert_eq!(turn(90.0), 270);
+        assert_eq!(turn(-90.0), 90);
+        assert_eq!(turn(180.0), 180);
+        assert_eq!(turn(30.0), 0);
+        assert_eq!(right_angle(Transform::IDENTITY), 0);
     }
 
     #[test]

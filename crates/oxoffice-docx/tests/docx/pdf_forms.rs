@@ -56,36 +56,377 @@ fn text(object: &Object) -> String {
     String::from_utf8_lossy(object.as_str().unwrap()).into_owned()
 }
 
-#[test]
-fn a_control_in_a_header_stays_page_content() {
-    let mut doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="body"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>In the body</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
-    );
+const W_NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+/// A three-page document with a control in its body, a check box in its
+/// header and a text control in its footer.
+fn doc_with_header_and_footer_controls() -> Document {
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let mut doc = doc_with_body(&format!(
+        "<w:p>{}</w:p>{page_break}{page_break}<w:p><w:r><w:t>Last</w:t></w:r></w:p>",
+        text_control("body", "In the body")
+    ));
+    set_header_and_footer_controls(&mut doc);
+    doc
+}
+
+fn set_header_and_footer_controls(doc: &mut Document) {
     doc.set_raw_header_with_images(
         format!(
-            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" {W14}><w:p><w:sdt><w:sdtPr><w:tag w:val="approved"/><w14:checkbox><w14:checked w14:val="1"/><w14:checkedState w14:val="2612" w14:font="MS Gothic"/><w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>&#x2612;</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> Approved</w:t></w:r></w:p></w:hdr>"#
+            r#"<w:hdr {W_NS} {W14}><w:p><w:sdt><w:sdtPr><w:tag w:val="approved"/><w14:checkbox><w14:checked w14:val="1"/><w14:checkedState w14:val="2612" w14:font="MS Gothic"/><w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>&#x2612;</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> Approved</w:t></w:r></w:p></w:hdr>"#
         )
         .into_bytes(),
         &[],
         oxoffice_docx::HdrFtrType::Default,
     );
+    doc.set_raw_footer_with_images(
+        format!(
+            r#"<w:ftr {W_NS}><w:p><w:r><w:t xml:space="preserve">Reference: </w:t></w:r>{}</w:p></w:ftr>"#,
+            text_control("reference", "REF-1")
+        )
+        .into_bytes(),
+        &[],
+        oxoffice_docx::HdrFtrType::Default,
+    );
+}
+
+/// A field's widgets: its kids, or the field itself when it is its widget.
+fn widgets(pdf: &Pdf, field: &Dictionary) -> Vec<Dictionary> {
+    match field.get(b"Kids") {
+        Ok(kids) => kids
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|kid| pdf.dereference(kid).unwrap().1.as_dict().unwrap().clone())
+            .collect(),
+        Err(_) => vec![field.clone()],
+    }
+}
+
+#[test]
+fn controls_in_headers_and_footers_become_one_field_with_a_widget_on_each_page() {
+    let doc = doc_with_header_and_footer_controls();
     let with_fields = doc.layout_with_options(fillable()).unwrap();
-    let names: Vec<&str> = with_fields
+    let layout = &with_fields.layout;
+    assert_eq!(layout.pages.len(), 3);
+    assert_eq!(field_names(layout), ["body", "approved", "reference"]);
+    assert!(
+        layout
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("stays static")),
+        "{:?}",
+        layout.diagnostics
+    );
+    // Each page's header and footer are fragments, and nothing else moves.
+    let without = doc.layout_with_options(RenderOptions::default()).unwrap();
+    assert_eq!(drawing(&layout.pages), drawing(&without.layout.pages));
+    assert!(!page_text(&layout.pages).contains("REF-1"));
+    assert!(page_text(&layout.pages).contains("Reference:"));
+
+    for bytes in [
+        doc.to_pdf_with_options(fillable()).unwrap(),
+        doc.to_pdfa_deterministic_with_options(oxoffice_docx::PdfConformance::PdfA2b, fillable())
+            .unwrap(),
+    ] {
+        let (pdf, exported) = fields(&bytes);
+        let names: Vec<&str> = exported.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["body", "approved", "reference"]);
+        let pages: Vec<lopdf::ObjectId> = pdf.get_pages().into_values().collect();
+        assert_eq!(widgets(&pdf, &exported[0].1).len(), 1);
+        for (name, field) in &exported[1..] {
+            // One value on the parent, one widget per page under it.
+            assert!(field.get(b"Rect").is_err(), "{name}");
+            let kids = widgets(&pdf, field);
+            let on: Vec<lopdf::ObjectId> = kids
+                .iter()
+                .map(|kid| kid.get(b"P").unwrap().as_reference().unwrap())
+                .collect();
+            assert_eq!(on, pages, "{name}");
+            for kid in &kids {
+                assert_eq!(kid.get(b"Subtype").unwrap().as_name().unwrap(), b"Widget");
+                assert!(kid.get(b"T").is_err(), "{name}: a widget has no name");
+                assert!(kid.get(b"Parent").is_ok());
+                assert!(kid.get(b"AP").is_ok());
+            }
+            // Every page lists its widget.
+            for (page, kid) in pages
+                .iter()
+                .zip(field.get(b"Kids").unwrap().as_array().unwrap())
+            {
+                let annotations = pdf.get_page_annotations(*page).unwrap();
+                let kid = kid.as_reference().unwrap();
+                assert!(
+                    annotations.iter().any(|annotation| pdf
+                        .get_object(kid)
+                        .unwrap()
+                        .as_dict()
+                        .unwrap()
+                        == *annotation),
+                    "{name}"
+                );
+            }
+        }
+        // Tagged output: each widget its own parent tree key.
+        let keys: std::collections::BTreeSet<i64> = exported[1..]
+            .iter()
+            .flat_map(|(_, field)| widgets(&pdf, field))
+            .filter_map(|kid| {
+                kid.get(b"StructParent")
+                    .ok()
+                    .map(|key| key.as_i64().unwrap())
+            })
+            .collect();
+        if pdf.catalog().unwrap().get(b"StructTreeRoot").is_ok() {
+            assert_eq!(keys.len(), 2 * pages.len(), "one key per widget");
+            assert!(
+                exported[1].1.get(b"StructParent").is_err(),
+                "the parent is no widget"
+            );
+        }
+        assert_eq!(text(exported[2].1.get(b"V").unwrap()), "REF-1");
+        assert_eq!(exported[1].1.get(b"V").unwrap().as_name().unwrap(), b"Yes");
+    }
+}
+
+#[test]
+fn a_control_in_a_text_box_of_a_header_is_a_field_on_each_page() {
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let mut doc = doc_with_body(&format!(
+        "<w:p><w:r><w:t>First</w:t></w:r></w:p>{page_break}<w:p><w:r><w:t>Second</w:t></w:r></w:p>"
+    ));
+    let boxed = floating_text_box(
+        76,
+        &format!("<w:p>{}</w:p>", text_control("stamp", "Draft")),
+        "",
+        "",
+    );
+    doc.set_raw_header_with_images(
+        format!(r#"<w:hdr {W_NS}><w:p>{boxed}<w:r><w:t>Header</w:t></w:r></w:p></w:hdr>"#)
+            .into_bytes(),
+        &[],
+        oxoffice_docx::HdrFtrType::Default,
+    );
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert_eq!(field_names(&layout.layout), ["stamp"]);
+    assert!(!page_text(&layout.layout.pages).contains("Draft"));
+    let (pdf, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    assert_eq!(widgets(&pdf, &exported[0].1).len(), 2);
+}
+
+/// A document of `pages` pages with a default, a first page and an even
+/// header, each holding a control tagged `ref`.
+fn doc_with_header_variants(pages: usize) -> Document {
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let mut doc =
+        doc_with_body(&vec!["<w:p><w:r><w:t>Page</w:t></w:r></w:p>"; pages].join(page_break));
+    doc.set_different_first_page(true);
+    doc.set_even_and_odd_headers(true).unwrap();
+    for (variant, value) in [
+        (oxoffice_docx::HdrFtrType::Default, "Odd"),
+        (oxoffice_docx::HdrFtrType::First, "First"),
+        (oxoffice_docx::HdrFtrType::Even, "Even"),
+    ] {
+        doc.set_raw_header_with_images(
+            format!(
+                r#"<w:hdr {W_NS}><w:p>{}</w:p></w:hdr>"#,
+                text_control("ref", value)
+            )
+            .into_bytes(),
+            &[],
+            variant,
+        );
+    }
+    doc
+}
+
+#[test]
+fn header_variants_are_named_in_order_and_one_no_page_draws_says_nothing() {
+    // Names come from the document: default, first page, even page.
+    let expected = [
+        ("ref".to_owned(), "Odd".to_owned()),
+        ("ref_2".to_owned(), "First".to_owned()),
+        ("ref_3".to_owned(), "Even".to_owned()),
+    ];
+    for (pages, exported) in [
+        (1, vec!["ref_2"]),
+        (2, vec!["ref_2", "ref_3"]),
+        (3, vec!["ref", "ref_2", "ref_3"]),
+    ] {
+        let doc = doc_with_header_variants(pages);
+        assert_eq!(named_values(&doc), expected, "{pages} pages");
+        let layout = doc.layout_with_options(fillable()).unwrap();
+        assert_eq!(layout.layout.pages.len(), pages);
+        assert!(
+            layout
+                .layout
+                .diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.message.contains("ref")),
+            "{pages} pages: {:?}",
+            layout.layout.diagnostics
+        );
+        let (pdf, fields) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+        let names: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, exported, "{pages} pages");
+        for (name, field) in &fields {
+            assert_eq!(widgets(&pdf, field).len(), 1, "{pages} pages: {name}");
+        }
+    }
+}
+
+#[test]
+fn a_signature_in_a_header_stays_static_when_it_repeats() {
+    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
+    let mut doc = doc_with_body(&format!(
+        "<w:p><w:r><w:t>First</w:t></w:r></w:p>{page_break}<w:p><w:r><w:t>Second</w:t></w:r></w:p>"
+    ));
+    doc.set_raw_header_with_images(
+        format!(
+            r#"<w:hdr {W_NS}><w:p>{}</w:p></w:hdr>"#,
+            text_control("signature:approver", "Sign here")
+        )
+        .into_bytes(),
+        &[],
+        oxoffice_docx::HdrFtrType::Default,
+    );
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(fragment_texts(&layout.layout.pages).is_empty());
+    let said = diagnostics_about(&layout.layout, "signature:approver");
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].contains("a signature cannot repeat on every page"),
+        "{said:?}"
+    );
+}
+
+/// A rotated cell's widget is measured in the cell's own coordinates: text
+/// beside a wrapped control there sits under its box, and says so.
+#[test]
+fn an_inline_control_that_wraps_beside_text_in_a_rotated_cell_says_so() {
+    let words = "wrapping words ".repeat(6);
+    let doc = doc_with_body(&cell_with_direction(
+        "btLr",
+        &format!(
+            r#"<w:r><w:t xml:space="preserve">Label: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="beside"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">{words}</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> after</w:t></w:r>"#
+        ),
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert!(matches!(
+        layout.layout.form_fields[0].kind,
+        FormFieldKind::Text {
+            multiline: true,
+            ..
+        }
+    ));
+    let said = diagnostics_about(&layout.layout, "beside");
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("sits under its box"), "{said:?}");
+}
+
+#[test]
+fn a_shared_header_field_wrapping_only_in_a_narrower_later_section_is_multiline() {
+    let mut doc = doc_with_body(
+        "<w:p><w:r><w:t>Wide</w:t></w:r></w:p><w:p><w:r><w:t>Narrow</w:t></w:r></w:p>",
+    );
+    doc.set_raw_header_with_images(
+        format!(
+            r#"<w:hdr {W_NS}><w:p>{}</w:p></w:hdr>"#,
+            text_control(
+                "title",
+                "A header value that wraps in a narrow section only"
+            )
+        )
+        .into_bytes(),
+        &[],
+        oxoffice_docx::HdrFtrType::Default,
+    );
+    // The first section keeps the page's margins; the last one, sharing
+    // its header, has wide margins.
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let start = xml.rfind("<w:sectPr").unwrap();
+    let end = xml.rfind("</w:sectPr>").unwrap() + "</w:sectPr>".len();
+    let section = xml[start..end].to_owned();
+    let margins = regex::Regex::new(r#"w:(left|right)="\d+""#).unwrap();
+    let narrow = margins.replace_all(&section, r#"w:$1="4000""#).into_owned();
+    assert_ne!(narrow, section);
+    let second = xml.find("<w:p><w:r><w:t>Narrow</w:t>").unwrap();
+    let xml = format!(
+        "{}<w:p><w:pPr>{section}</w:pPr></w:p>{}{narrow}{}",
+        &xml[..second],
+        &xml[second..start],
+        &xml[end..]
+    );
+    package.set_part(&part, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert_eq!(field_names(&layout.layout), ["title"]);
+    assert!(layout.layout.pages.len() >= 2);
+    assert!(matches!(
+        layout.layout.form_fields[0].kind,
+        FormFieldKind::Text {
+            multiline: true,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_header_shared_by_two_sections_is_one_field() {
+    let mut doc = doc_with_header_and_footer_controls();
+    // A section break before the last paragraph, taking the same parts.
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let start = xml.rfind("<w:sectPr").unwrap();
+    let end = xml.rfind("</w:sectPr>").unwrap() + "</w:sectPr>".len();
+    let section = &xml[start..end];
+    assert!(section.contains("headerReference"), "{section}");
+    let last = xml.find("<w:p><w:r><w:t>Last</w:t>").unwrap();
+    let xml = format!(
+        "{}<w:p><w:pPr>{section}</w:pPr></w:p>{}",
+        &xml[..last],
+        &xml[last..]
+    );
+    package.set_part(&part, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let doc = Document::from_bytes(&out.into_inner()).unwrap();
+
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert_eq!(
+        field_names(&layout.layout),
+        ["body", "approved", "reference"]
+    );
+    let (pdf, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    assert_eq!(
+        widgets(&pdf, &exported[1].1).len(),
+        layout.layout.pages.len()
+    );
+}
+
+#[test]
+fn header_and_footer_fields_come_after_the_body_and_before_the_notes() {
+    let mut doc = doc_with_note_controls();
+    set_header_and_footer_controls(&mut doc);
+    let names: Vec<String> = doc
+        .layout_with_options(fillable())
+        .unwrap()
         .layout
         .form_fields
         .iter()
-        .map(|field| field.name.as_str())
+        .map(|field| field.name.clone())
         .collect();
-    assert_eq!(names, ["body"], "the header control is no field");
-    let without = doc.layout_with_options(RenderOptions::default()).unwrap();
-    let drawn = drawing(&with_fields.layout.pages);
-    assert_eq!(drawn, drawing(&without.layout.pages));
-    assert!(
-        drawn
-            .iter()
-            .any(|element| element.starts_with("text \"\u{2612}\"")),
-        "the header still draws its box"
-    );
+    assert_eq!(names, ["name", "approved", "reference", "name_2", "name_3"]);
 }
 
 /// The text runs of elements, wrappers looked through, joined.
@@ -309,36 +650,44 @@ fn field_names(layout: &oxoffice_layout::LayoutResult) -> Vec<&str> {
         .collect()
 }
 
+fn inline_control(tag: &str, text: &str) -> String {
+    format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{text}</w:t></w:r></w:sdtContent></w:sdt>"#
+    )
+}
+
+/// A one-cell table whose cell's text runs in `direction`, holding `content`.
+fn cell_with_direction(direction: &str, content: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="3000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="1500"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/><w:textDirection w:val="{direction}"/></w:tcPr><w:p>{content}</w:p></w:tc></w:tr></w:tbl><w:p/>"#
+    )
+}
+
+/// A paragraph ending a section whose text runs in `direction`.
+fn section_with_direction(direction: &str, content: &str) -> String {
+    format!(
+        r#"<w:p>{content}</w:p><w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:textDirection w:val="{direction}"/></w:sectPr></w:pPr></w:p>"#
+    )
+}
+
 /// One control of each place the spec keeps static, beside a control that
 /// becomes a field, and what each one says.
 #[test]
-fn controls_in_rotated_cells_vertical_sections_or_around_floating_pictures_stay_static_and_say_so()
-{
-    let inline = |tag: &str, text: &str| {
-        format!(
-            r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{text}</w:t></w:r></w:sdtContent></w:sdt>"#
-        )
-    };
-    let rotated = format!(
-        r#"<w:tbl><w:tblPr><w:tblW w:w="3000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/></w:tblGrid><w:tr><w:trPr><w:trHeight w:val="1500"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/><w:textDirection w:val="btLr"/></w:tcPr><w:p>{}</w:p></w:tc></w:tr></w:tbl><w:p/>"#,
-        inline("rotated", "Up")
-    );
+fn controls_in_stacked_text_or_around_floating_pictures_stay_static_and_say_so() {
     let floating = r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="floating"/><w:richText/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">Beside </w:t></w:r><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><mc:Choice Requires="wps"><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>2743200</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="914400" cy="457200"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="70" name="Text Box 70"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent><w:p><w:r><w:t>Floating</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice></mc:AlternateContent></w:r></w:sdtContent></w:sdt></w:p>"#;
-    let vertical = format!(
-        r#"<w:p>{}</w:p><w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:textDirection w:val="tbRl"/></w:sectPr></w:pPr></w:p>"#,
-        inline("vertical", "Down")
-    );
-    // The section break ends a vertical section holding what comes before
+    // The section break ends a stacked section holding what comes before
     // it; the rest is in the document's last, horizontal, section.
     let doc = doc_with_body(&format!(
-        r#"{vertical}<w:p>{}</w:p>{rotated}{floating}"#,
-        inline("plain", "Value")
+        r#"{}<w:p>{}</w:p>{}{floating}"#,
+        section_with_direction("tbRlV", &inline_control("stacked section", "Down")),
+        inline_control("plain", "Value"),
+        cell_with_direction("tbRlV", &inline_control("stacked cell", "Up")),
     ));
     let layout = doc.layout_with_options(fillable()).unwrap();
     assert_eq!(field_names(&layout.layout), ["plain"]);
     for (name, reason) in [
-        ("vertical", "its section's text is vertical"),
-        ("rotated", "its cell's text is rotated"),
+        ("stacked section", "its section's text is stacked upright"),
+        ("stacked cell", "its cell's text is stacked upright"),
         ("floating", "it holds a floating picture"),
     ] {
         let said = diagnostics_about(&layout.layout, name);
@@ -349,6 +698,70 @@ fn controls_in_rotated_cells_vertical_sections_or_around_floating_pictures_stay_
     assert_eq!(
         drawing(&layout.layout.pages),
         drawing(&without.layout.pages)
+    );
+}
+
+/// A widget's `/MK /R`, 0 when it has none.
+fn widget_rotation(field: &Dictionary) -> i64 {
+    field
+        .get(b"MK")
+        .ok()
+        .and_then(|mk| mk.as_dict().ok())
+        .and_then(|mk| mk.get(b"R").ok())
+        .map_or(0, |rotation| rotation.as_i64().unwrap())
+}
+
+#[test]
+fn controls_in_rotated_cells_vertical_sections_and_right_angled_text_boxes_turn_their_widgets() {
+    let turned = floating_text_box(
+        75,
+        &format!("<w:p>{}</w:p>", inline_control("box", "Boxed")),
+        r#" rot="5400000""#,
+        "",
+    );
+    let doc = doc_with_body(&format!(
+        r#"{}<w:p>{}</w:p>{}{}<w:p>{turned}</w:p>"#,
+        section_with_direction("tbRl", &inline_control("section", "Down the page")),
+        inline_control("plain", "Value"),
+        cell_with_direction("btLr", &inline_control("up", "Up")),
+        cell_with_direction("tbRl", &inline_control("down", "Down")),
+    ));
+    let layout = doc.layout_with_options(fillable()).unwrap();
+    assert_eq!(
+        field_names(&layout.layout),
+        ["section", "plain", "up", "down", "box"]
+    );
+    assert!(
+        layout
+            .layout
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("stays static")),
+        "{:?}",
+        layout.layout.diagnostics
+    );
+    let without = doc.layout_with_options(RenderOptions::default()).unwrap();
+    assert_eq!(
+        drawing(&layout.layout.pages),
+        drawing(&without.layout.pages)
+    );
+    let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
+    let rotations: Vec<(&str, i64)> = exported
+        .iter()
+        .map(|(name, field)| (name.as_str(), widget_rotation(field)))
+        .collect();
+    // Counter-clockwise: text read bottom to top turns 90 degrees, top to
+    // bottom 270, in a cell or a section; a text box turned a quarter
+    // clockwise 270.
+    assert_eq!(
+        rotations,
+        [
+            ("section", 270),
+            ("plain", 0),
+            ("up", 90),
+            ("down", 270),
+            ("box", 270)
+        ]
     );
 }
 
@@ -573,7 +986,7 @@ fn a_leader_before_a_control_keeps_the_widget_to_the_control() {
 }
 
 #[test]
-fn a_block_field_straddling_a_vertical_section_stays_static_as_a_whole() {
+fn a_block_field_straddling_sections_of_two_directions_stays_static_as_a_whole() {
     // The first paragraph ends a vertical section, the second is in the
     // document's last, horizontal, section.
     let doc = doc_with_body(
@@ -584,7 +997,7 @@ fn a_block_field_straddling_a_vertical_section_stays_static_as_a_whole() {
     let said = diagnostics_about(&layout.layout, "straddle");
     assert_eq!(said.len(), 1, "{said:?}");
     assert!(
-        said[0].contains("its section's text is vertical"),
+        said[0].contains("it spans sections of different text directions"),
         "{said:?}"
     );
 }
@@ -1436,7 +1849,7 @@ fn controls_in_a_text_box_become_fields_where_the_box_is_anchored() {
 }
 
 #[test]
-fn controls_in_turned_vertical_or_nested_text_boxes_stay_static_and_say_so() {
+fn controls_in_obliquely_turned_vertical_or_nested_text_boxes_stay_static_and_say_so() {
     let control = |tag: &str| format!("<w:p>{}</w:p>", text_control(tag, "Value"));
     let turned = floating_text_box(71, &control("turned"), r#" rot="1800000""#, "");
     let vertical = floating_text_box(72, &control("vertical"), "", r#" vert="vert""#);
@@ -1458,7 +1871,7 @@ fn controls_in_turned_vertical_or_nested_text_boxes_stay_static_and_say_so() {
     assert_eq!(
         said,
         [
-            "form control \"turned\" stays static: its text box is turned",
+            "form control \"turned\" stays static: its text box is turned by other than a right angle",
             "form control \"vertical\" stays static: its text box's text is vertical",
             "form control \"nested\" stays static: its text box sits in another text box",
         ]

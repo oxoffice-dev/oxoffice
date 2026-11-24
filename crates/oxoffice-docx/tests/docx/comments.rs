@@ -7,7 +7,7 @@ use std::io::Cursor;
 use oxoffice_docx::paragraph::ParagraphItemRef;
 use oxoffice_docx::{
     CommentDate, CommentRef, ContentLocation, Document, HalfPoint, RunItemRef, RunPosition,
-    RunRange, StoryKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
+    RunRange, StoryKind, StoryRangeKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
     TextCommentOptions, Twips,
 };
 use oxoffice_opc::OpcPackage;
@@ -1123,10 +1123,7 @@ fn threads_and_resolved_state_are_written_on_the_last_paragraph_of_a_comment() {
     );
 }
 
-// Known failure #443: a comment's edge inside a tracked insertion is refused.
-// When it passes, drop the `should_panic`.
 #[test]
-#[should_panic(expected = "falls inside a tracked insertion or move")]
 fn a_comment_on_part_of_a_tracked_insertion_stays_inside_it() {
     let mut doc = doc_with_body(
         r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words here</w:t></w:r></w:ins></w:p>"#,
@@ -1149,4 +1146,359 @@ fn a_comment_on_part_of_a_tracked_insertion_stays_inside_it() {
     let revisions = doc.story_revisions().unwrap();
     assert_eq!(revisions.len(), 1);
     assert_eq!(revisions[0].text(), "new words here");
+    // The markers and the styled comment mark are inside the insertion.
+    let mut doc = doc;
+    let body = main_body(&mut doc);
+    let inserted = &body[body.find("<w:ins ").unwrap()..body.find("</w:ins>").unwrap()];
+    for part in [
+        "<w:commentRangeStart w:id=\"0\"/>",
+        "<w:commentRangeEnd w:id=\"0\"/>",
+        "<w:rStyle w:val=\"CommentReference\"/>",
+    ] {
+        assert!(inserted.contains(part), "{part} in {body}");
+    }
+    // Accepting keeps the comment; rejecting removes it with its text.
+    let mut accepted = reopen(&mut doc);
+    accepted.accept_all().unwrap();
+    assert_eq!(
+        accepted.comments()[0].anchor_text().unwrap().as_deref(),
+        Some("words")
+    );
+    let mut rejected = reopen(&mut doc);
+    rejected.reject_all().unwrap();
+    assert!(rejected.comments().is_empty());
+}
+
+/// The body of the saved main document part, without its section properties.
+fn main_body(doc: &mut Document) -> String {
+    let parts = crate::support::package_parts(&doc.to_bytes().unwrap());
+    let xml = String::from_utf8(parts["word/document.xml"].clone()).unwrap();
+    let start = xml.find("<w:body>").unwrap();
+    let end = xml.find("<w:sectPr").unwrap_or(xml.len());
+    xml[start..end].to_owned()
+}
+
+/// Comment `text` in a paragraph whose middle is a tracked insertion, then
+/// what the comment covers as written, once the insertion is accepted and
+/// once it is rejected.
+fn comment_across_an_insertion_edge(text: &str) -> (String, String, String) {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words here</w:t></w:r></w:ins><w:r><w:t> tail</w:t></w:r></w:p>"#,
+    );
+    doc.add_comment_on_text(
+        text,
+        REVIEWER,
+        "Check",
+        TextCommentOptions {
+            date: CommentDate::Undated,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let mut doc = reopen(&mut doc);
+    assert_eq!(doc.story_revisions().unwrap()[0].text(), "new words here");
+    let anchor = |doc: &Document| doc.comments()[0].anchor_text().unwrap().unwrap_or_default();
+    let written = anchor(&doc);
+    let mut accepted = reopen(&mut doc);
+    accepted.accept_all().unwrap();
+    let mut rejected = reopen(&mut doc);
+    rejected.reject_all().unwrap();
+    (written, anchor(&accepted), anchor(&rejected))
+}
+
+#[test]
+fn a_comment_from_text_into_a_tracked_insertion_survives_accept_and_reject() {
+    // The comment mark follows the insertion, so rejecting it keeps the
+    // comment on the text that stays.
+    assert_eq!(
+        comment_across_an_insertion_edge("Kept new"),
+        ("Kept new".into(), "Kept new".into(), "Kept ".into())
+    );
+}
+
+#[test]
+fn a_comment_from_a_tracked_insertion_into_text_survives_accept_and_reject() {
+    assert_eq!(
+        comment_across_an_insertion_edge("here t"),
+        ("here t".into(), "here t".into(), " t".into())
+    );
+}
+
+#[test]
+fn a_bookmark_on_part_of_a_tracked_insertion_stays_inside_it() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">new </w:t></w:r><w:r><w:t>words</w:t></w:r><w:r><w:t xml:space="preserve"> here</w:t></w:r></w:ins></w:p>"#,
+    );
+    doc.add_bookmark("phrase", run_range(0, 2, 0, 3)).unwrap();
+    let mut doc = reopen(&mut doc);
+    let bookmark = doc
+        .bookmarks()
+        .into_iter()
+        .find(|bookmark| bookmark.name() == Some("phrase"))
+        .unwrap();
+    assert_eq!(bookmark.text(), "words");
+    assert_eq!(doc.story_revisions().unwrap().len(), 1);
+    let body = main_body(&mut doc);
+    let inserted = &body[body.find("<w:ins ").unwrap()..body.find("</w:ins>").unwrap()];
+    assert!(inserted.contains("w:bookmarkStart"), "{body}");
+    assert!(inserted.contains("w:bookmarkEnd"), "{body}");
+}
+
+/// Comment `text` in a body of raw paragraphs, then the text it covers once
+/// saved and reopened, the revision texts, and the saved body.
+fn comment_on(body: &str, text: &str) -> (String, Vec<String>, String) {
+    let mut doc = doc_with_body(body);
+    doc.add_comment_on_text(
+        text,
+        REVIEWER,
+        "Check",
+        TextCommentOptions {
+            date: CommentDate::Undated,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let mut doc = reopen(&mut doc);
+    let anchor = doc.comments()[0].anchor_text().unwrap().unwrap_or_default();
+    let revisions = doc
+        .story_revisions()
+        .unwrap()
+        .iter()
+        .map(|revision| revision.text().to_owned())
+        .collect();
+    (anchor, revisions, main_body(&mut doc))
+}
+
+#[test]
+fn a_comment_into_a_tracked_insertion_inside_a_link_keeps_its_mark_inside() {
+    // No paragraph-level place follows an insertion that ends a link with
+    // runs of its own, so the comment mark stays inside the insertion.
+    let (anchor, revisions, body) = comment_on(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:hyperlink w:anchor="target"><w:r><w:t xml:space="preserve">link </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words</w:t></w:r></w:ins></w:hyperlink></w:p>"#,
+        "Kept link new",
+    );
+    assert_eq!(anchor, "Kept link new");
+    assert_eq!(revisions, ["new words"]);
+    assert!(body.contains("w:commentReference"), "{body}");
+}
+
+#[test]
+fn a_comment_on_part_of_a_tracked_move_destination_stays_inside_it() {
+    let (anchor, _, body) = comment_on(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:moveTo w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>moved words here</w:t></w:r></w:moveTo></w:p>"#,
+        "words",
+    );
+    assert_eq!(anchor, "words");
+    let moved = &body[body.find("<w:moveTo ").unwrap()..body.find("</w:moveTo>").unwrap()];
+    assert!(moved.contains("<w:commentRangeStart"), "{body}");
+    assert!(moved.contains("<w:commentRangeEnd"), "{body}");
+}
+
+#[test]
+fn a_comment_across_paragraphs_with_both_edges_inside_tracked_insertions() {
+    let ins = |id: u32, first: &str, second: &str| {
+        format!(
+            r#"<w:ins w:id="{id}" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">{first}</w:t></w:r><w:r><w:t xml:space="preserve">{second}</w:t></w:r></w:ins>"#
+        )
+    };
+    let mut doc = doc_with_body(&format!(
+        "<w:p><w:r><w:t xml:space=\"preserve\">One </w:t></w:r>{}</w:p><w:p>{}<w:r><w:t xml:space=\"preserve\"> two</w:t></w:r></w:p>",
+        ins(1, "first ", "added"),
+        ins(2, "second", " added"),
+    ));
+    // From the second run of the first insertion to the end of the first
+    // run of the second.
+    let id = doc
+        .add_comment_with_date(
+            run_range(0, 2, 1, 1),
+            REVIEWER,
+            None,
+            "Check",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    let anchor = comment(&doc, id).anchor_text().unwrap().unwrap();
+    assert!(
+        anchor.starts_with("added") && anchor.ends_with("second"),
+        "{anchor:?}"
+    );
+    let texts = doc
+        .story_revisions()
+        .unwrap()
+        .iter()
+        .map(|revision| revision.text().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(texts, ["first added", "second added"]);
+    let body = main_body(&mut doc);
+    for marker in ["<w:commentRangeStart", "<w:commentRangeEnd"] {
+        let at = body.find(marker).unwrap();
+        let opened = body[..at].rfind("<w:ins ").unwrap();
+        assert!(
+            body[opened..at].find("</w:ins>").is_none(),
+            "{marker} inside: {body}"
+        );
+    }
+}
+
+#[test]
+fn a_comment_from_one_tracked_insertion_into_another_keeps_both() {
+    let (anchor, revisions, _) = comment_on(
+        r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">first added</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> kept </w:t></w:r><w:ins w:id="2" w:author="B" w:date="2026-01-01T00:00:00Z"><w:r><w:t>second added</w:t></w:r></w:ins></w:p>"#,
+        "added kept second",
+    );
+    assert_eq!(anchor, "added kept second");
+    assert_eq!(revisions, ["first added", "second added"]);
+}
+
+#[test]
+fn a_comment_from_a_tracked_insertion_into_a_control_is_refused_as_crossing_it() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">new </w:t></w:r><w:r><w:t>words</w:t></w:r></w:ins><w:sdt><w:sdtPr><w:tag w:val="box"/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">in </w:t></w:r><w:r><w:t>box</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
+    );
+    let error = doc
+        .add_comment_with_date(
+            run_range(0, 1, 0, 3),
+            REVIEWER,
+            None,
+            "Check",
+            CommentDate::Undated,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("crosses the edge of an inline content control"),
+        "{error}"
+    );
+}
+
+/// The name or comment id of each story range, with its run boundaries.
+fn listed_ranges(doc: &Document) -> Vec<(String, usize, usize)> {
+    doc.story_ranges()
+        .unwrap()
+        .iter()
+        .map(|range| {
+            let label = match range.kind() {
+                StoryRangeKind::Bookmark { name, .. } => name.clone(),
+                StoryRangeKind::Comment { id } => format!("comment {id}"),
+                other => format!("{other:?}"),
+            };
+            (
+                label,
+                range.range().start.run_index,
+                range.range().end.run_index,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn overlapping_bookmarks_are_each_listed_with_their_own_edges() {
+    // Word writes two overlapping bookmarks with crossing markers.
+    let mut doc = doc_with_body(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="first"/><w:r><w:t>one </w:t></w:r><w:bookmarkStart w:id="2" w:name="second"/><w:r><w:t>two </w:t></w:r><w:bookmarkEnd w:id="1"/><w:r><w:t>three</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
+    );
+    let mut ranges = listed_ranges(&doc);
+    ranges.sort();
+    assert_eq!(
+        ranges,
+        [("first".to_owned(), 0, 2), ("second".to_owned(), 1, 3)]
+    );
+    // Removing one leaves the other on its own runs.
+    let first = doc
+        .story_ranges()
+        .unwrap()
+        .into_iter()
+        .find(|range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "first"))
+        .unwrap();
+    assert!(doc.remove_story_range(&first).unwrap());
+    let doc = reopen(&mut doc);
+    assert_eq!(listed_ranges(&doc), [("second".to_owned(), 1, 3)]);
+}
+
+#[test]
+fn overlapping_comments_leave_every_range_listed_and_editable() {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t>one </w:t></w:r><w:r><w:t>two </w:t></w:r><w:r><w:t>three</w:t></w:r></w:p>"#,
+    );
+    // The later range first, so that its reference run, at the end, moves
+    // no boundary of the earlier one.
+    let second = doc
+        .add_comment_with_date(
+            run_range(0, 1, 0, 3),
+            REVIEWER,
+            None,
+            "B",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let first = doc
+        .add_comment_with_date(
+            run_range(0, 0, 0, 2),
+            REVIEWER,
+            None,
+            "A",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        comment(&doc, first).anchor_text().unwrap().as_deref(),
+        Some("one two ")
+    );
+    assert_eq!(
+        comment(&doc, second).anchor_text().unwrap().as_deref(),
+        Some("two three")
+    );
+    // Both ranges are listed, whatever the order of their markers.
+    let labels = listed_ranges(&doc)
+        .into_iter()
+        .map(|(label, _, _)| label)
+        .collect::<Vec<_>>();
+    assert_eq!(labels.len(), 2, "{labels:?}");
+    for id in [first, second] {
+        assert!(labels.contains(&format!("comment {id}")), "{labels:?}");
+    }
+    // An edit that checks the ranges first still works on the document.
+    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
+    doc.add_story_bookmark("after", story_range(&paragraph, 0, 1))
+        .unwrap();
+    assert!(
+        listed_ranges(&doc)
+            .iter()
+            .any(|(label, _, _)| label == "after")
+    );
+}
+
+#[test]
+fn every_corpus_document_lists_its_story_ranges() {
+    // Word, Google Docs and LibreOffice all write overlapping comments or
+    // bookmarks with crossing markers in some of these files.
+    let files = crate::support::corpus_files("docx");
+    let outcomes = crate::support::map_in_parallel(&files, |file| {
+        Document::from_bytes(&file.bytes())
+            .and_then(|doc| doc.story_ranges().map(|_| ()))
+            .map_err(|error| error.to_string())
+    });
+    let failures = files
+        .iter()
+        .zip(outcomes)
+        .filter_map(|(file, outcome)| match outcome {
+            // Known failure #595: LibreOffice's form has bookmark starts with
+            // no end. Once it lists its ranges, drop this arm.
+            Some(Err(error))
+                if file.path == "libreoffice/form.docx" && error.contains("unmatched start") =>
+            {
+                None
+            }
+            Some(Ok(())) if file.path == "libreoffice/form.docx" => Some(format!(
+                "{}: lists its ranges now, drop its known failure (#595)",
+                file.path
+            )),
+            Some(Ok(())) => None,
+            Some(Err(error)) => Some(format!("{}: {error}", file.path)),
+            None => Some(format!("{}: panicked", file.path)),
+        })
+        .collect::<Vec<_>>();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

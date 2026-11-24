@@ -380,7 +380,11 @@ fn layout_header_footer_variant_uncached(
                     source,
                     sources.and_then(|registry| registry.id(&story, &path)),
                     None,
-                    None,
+                    // A cached layout draws no form marks: its source is the
+                    // sentinel, and a part holding a control is never cached.
+                    (!cache_source)
+                        .then(|| crate::forms::story_form_paragraph(input, sources, &story, source))
+                        .flatten(),
                 )?;
                 if !cache_source && let Some(registry) = sources {
                     registry.bind_text_boxes(&mut block, &mut paint, source)?;
