@@ -23,6 +23,9 @@ pub(crate) struct ReservationJournal {
     /// type from the package, which undoing it cannot put back: such an
     /// edit cannot refuse after the removal.
     removed_from_package: bool,
+    /// Whether the edit wrote the bytes of a package part, which undoing it
+    /// cannot put back either: such an edit cannot refuse after the write.
+    written_to_package: bool,
 }
 
 #[derive(Debug)]
@@ -56,8 +59,15 @@ enum Reservation {
 
 impl ReservationJournal {
     /// Whether the edit changed the package graph.
+    /// Whether the edit removed or wrote package bytes, which undoing the
+    /// journal cannot put back.
+    pub(crate) fn changed_package_bytes(&self) -> bool {
+        self.removed_from_package || self.written_to_package
+    }
+
     pub(crate) fn changed_package(&self) -> bool {
         self.removed_from_package
+            || self.written_to_package
             || self.entries.iter().any(|entry| {
                 matches!(
                     entry,
@@ -112,6 +122,12 @@ impl DocumentIdentifiers {
     pub(crate) fn record_removed_from_package(&mut self) {
         if let Some(journal) = &mut self.journal.0 {
             journal.removed_from_package = true;
+        }
+    }
+
+    pub(crate) fn record_written_to_package(&mut self) {
+        if let Some(journal) = &mut self.journal.0 {
+            journal.written_to_package = true;
         }
     }
 
@@ -225,6 +241,10 @@ impl Document {
         debug_assert!(
             !journal.removed_from_package,
             "a journaled edit refused after removing a package part"
+        );
+        debug_assert!(
+            !journal.written_to_package,
+            "a journaled edit refused after writing a package part"
         );
         let identifiers = &mut self.identifiers;
         for entry in journal.entries.into_iter().rev() {
