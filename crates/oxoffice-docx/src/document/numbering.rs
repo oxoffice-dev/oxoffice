@@ -746,13 +746,28 @@ impl Document {
     /// keeps its level and gets a direct `w:numPr`, so an item numbered
     /// through its style keeps its style. Earlier items, and the items of
     /// other stories, keep the old instance. Returns the new instance's id.
+    ///
+    /// It checks the numbering graph, not the numbering references of other
+    /// content: the new instance copies the old one's definition and
+    /// overrides, so every item it takes resolves as it did. The edit runs
+    /// in place: the instance is added through the numbering journal, then
+    /// the items get their `w:numPr`, which cannot fail.
     pub fn restart_numbering(&mut self, paragraph: usize, start: u32) -> Result<u32> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.restart_numbering_in_place(paragraph, start);
+        #[cfg(debug_assertions)]
+        self.assert_restart_numbering_kept_references(before, &result);
+        result
+    }
+
+    fn restart_numbering_in_place(&mut self, paragraph: usize, start: u32) -> Result<u32> {
         if self.content_index_of_paragraph(paragraph).is_none() {
             return Err(Error::Other(
                 "numbering restart requires a direct body paragraph".into(),
             ));
         }
-        self.validate_numbering_graph()?;
+        self.validate_numbering_model()?;
         let target = self
             .paragraph(paragraph)
             .expect("a direct body paragraph was found above")
@@ -792,20 +807,19 @@ impl Document {
                 .level_overrides
                 .push(NumberingLevelOverride::new(level).start(start));
         }
-        let mut candidate = self.clone_for_staging();
         let new_id =
-            candidate.add_numbering_instance(instance.definition_id, &instance.level_overrides)?;
-        candidate.invalidate_layout();
-        let target: *const CT_P = candidate
+            self.add_numbering_instance(instance.definition_id, &instance.level_overrides)?;
+        self.invalidate_layout();
+        let target: *const CT_P = self
             .paragraph(paragraph)
-            .expect("the staged copy holds the paragraph")
+            .expect("the paragraph was found above")
             .inner;
-        let styles = &candidate.styles;
+        let styles = &self.styles;
         // The rest of the list at the restarted level: a later item of the
         // instance above that level ends it, so that the copied overrides of
         // the levels above never apply to items that did not have them.
         let (mut started, mut ended) = (false, false);
-        walkers::visit_body_paragraphs_mut(&mut candidate.document.body.content, &mut |item| {
+        walkers::visit_body_paragraphs_mut(&mut self.document.body.content, &mut |item| {
             let first = std::ptr::eq(item, target);
             started |= first;
             if !started || ended {
@@ -821,9 +835,61 @@ impl Document {
                 Paragraph { inner: item }.set_numbering(new_id, item_level);
             }
         });
-        candidate.validate_numbering_graph()?;
-        self.commit_staged_mutation(candidate);
         Ok(new_id)
+    }
+
+    /// Debug proof of an edit that no longer reads the content's numbering
+    /// references: every reference `after` leaves unresolved already was.
+    #[cfg(debug_assertions)]
+    fn assert_no_new_dangling_numbering_references(&self, after: &Self) {
+        if let (Ok(was), Ok(is)) = (
+            self.dangling_numbering_references(),
+            after.dangling_numbering_references(),
+        ) {
+            assert!(
+                is.is_subset(&was),
+                "a numbering edit left content references unresolved: {:?}",
+                is.difference(&was).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Debug proof of [`Self::restart_numbering`]: a refusal left the
+    /// document as it was, and a restart left the numbering graph valid and
+    /// the content's unresolved numbering references as they were.
+    #[cfg(debug_assertions)]
+    fn assert_restart_numbering_kept_references(&self, before: Self, outcome: &Result<u32>) {
+        if outcome.is_err() {
+            assert_eq!(before.document.body, self.document.body);
+            assert_eq!(before.numbering, self.numbering);
+            assert_eq!(before.numbering_part_name, self.numbering_part_name);
+            assert_eq!(
+                before.identifiers, self.identifiers,
+                "a refused numbering restart left another identifier registry"
+            );
+            assert!(
+                before.package.same_package_as(&self.package),
+                "a refused numbering restart left another package graph"
+            );
+            return;
+        }
+        self.validate_numbering_model()
+            .expect("a numbering restart left the numbering graph valid");
+        match (
+            before.dangling_numbering_references(),
+            self.dangling_numbering_references(),
+        ) {
+            (Ok(was), Ok(is)) => assert_eq!(
+                was, is,
+                "a numbering restart changed which references of the content resolve"
+            ),
+            (Err(_), Err(_)) => {}
+            (was, is) => panic!(
+                "numbering references readable before {} and after {}",
+                was.is_ok(),
+                is.is_ok()
+            ),
+        }
     }
 
     /// Create a list definition with explicit per-level formats and return
@@ -1664,15 +1730,61 @@ impl Document {
     /// document. A style `w:numPr` holding a `w:ilvl` and no `w:numId` is not
     /// a link, and the new link replaces its level. A repeated style ID
     /// resolves to its first definition, and the style graph is validated as
-    /// in [`Document::add_style`].
+    /// in [`Document::add_style`]. The numbering graph is checked, not the
+    /// numbering references of the content: the link names a level that
+    /// exists, so the content that takes it through the style resolves.
     pub fn link_style_to_numbering(
         &mut self,
         style_id: &str,
         num_id: u32,
         level: u32,
     ) -> Result<()> {
-        let mut candidate = self.clone_for_staging();
-        candidate.validate_numbering_graph()?;
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let styles = Arc::clone(&self.styles);
+        let styles_part_name = self.styles_part_name.clone();
+        // The numbering journal undoes the numbering and the reservations;
+        // a refusal also puts the styles back.
+        let result = self.edit_numbering(|document| {
+            let result =
+                document.link_style_to_numbering_in_place(&styles, style_id, num_id, level);
+            if result.is_err() {
+                document.styles = Arc::clone(&styles);
+                document.styles_part_name = styles_part_name.clone();
+            }
+            result
+        });
+        match &result {
+            Ok(()) => self.invalidate_layout(),
+            #[cfg(debug_assertions)]
+            Err(_) => {
+                assert_eq!(
+                    before.styles, self.styles,
+                    "a refused link left other styles"
+                );
+                assert_eq!(before.styles_part_name, self.styles_part_name);
+            }
+            #[cfg(not(debug_assertions))]
+            Err(_) => {}
+        }
+        #[cfg(debug_assertions)]
+        before.assert_no_new_dangling_numbering_references(self);
+        result
+    }
+
+    /// [`Self::link_style_to_numbering`] on this document, `previous` being
+    /// the styles before the edit. Every check that reads the models runs
+    /// before the first change; the graph checks after it refuse through the
+    /// caller, which puts the styles back.
+    fn link_style_to_numbering_in_place(
+        &mut self,
+        previous: &CT_Styles,
+        style_id: &str,
+        num_id: u32,
+        level: u32,
+    ) -> Result<()> {
+        let candidate = self;
+        candidate.validate_numbering_model()?;
         candidate.reserve_styles_bundle()?;
         candidate.reserve_numbering_bundle()?;
 
@@ -1792,12 +1904,8 @@ impl Document {
                 Some(style_id.to_owned());
         }
 
-        style::validate_style_graph_change(&self.styles, &candidate.styles)?;
-        candidate.validate_numbering_graph()?;
-        candidate.flush_to_package()?;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        style::validate_style_graph_change(previous, &candidate.styles)?;
+        candidate.validate_numbering_model()
     }
 
     /// Atomically remove one exact paragraph-style numbering association.

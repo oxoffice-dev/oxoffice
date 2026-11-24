@@ -855,6 +855,8 @@ pub(super) fn replace_source_xml(
 
 pub(crate) struct StagedCustomXmlStore {
     pub(crate) part_name: String,
+    /// Read by the debug proof of the in-place store addition.
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub(crate) item_id: String,
 }
 
@@ -884,27 +886,7 @@ pub(crate) fn stage_custom_xml_store(
     let properties = candidate
         .identifiers
         .reserve_preferred_part_name("/customXml/itemProps1.xml")?;
-    let mut occupied = HashSet::new();
-    for (name, relationships) in &candidate.package.part_rels {
-        for relationship in relationships
-            .items
-            .iter()
-            .filter(|edge| edge.rel_type == CUSTOM_XML_PROPS_REL)
-        {
-            let target = internal_target(&candidate.package, name, relationship)?;
-            let xml = candidate
-                .package
-                .get_part(&target)
-                .ok_or_else(|| bibliography_error("missing custom XML properties"))?;
-            if let Some(identity) = crate::content_control::parse_store_item_id(xml)? {
-                occupied.insert(crate::content_control::normalize_store_item_id(&identity));
-            }
-        }
-    }
-    let identity = (0u64..=0xffffffffffff)
-        .map(|index| format!("{{00000000-0000-4000-8000-{index:012X}}}"))
-        .find(|value| !occupied.contains(&crate::content_control::normalize_store_item_id(value)))
-        .ok_or_else(|| bibliography_error("custom XML store identity space exhausted"))?;
+    let identity = free_store_identity(&candidate.package)?;
     candidate
         .package
         .set_part(&properties, datastore_properties(&identity, schema_uris));
@@ -922,6 +904,83 @@ pub(crate) fn stage_custom_xml_store(
         part_name: part,
         item_id: identity,
     })
+}
+
+/// Add one custom XML item and its properties part to `document` in place,
+/// with the part names, relationship ids and identity
+/// [`stage_custom_xml_store`] gives a staged copy. Every check and
+/// reservation runs first; the writes after them cannot fail. The caller
+/// holds the identifiers journal open, which undoes the reservations of a
+/// refusal.
+pub(crate) fn add_custom_xml_store_in_place(
+    document: &mut Document,
+    item_xml: &[u8],
+    schema_uris: &[&str],
+) -> Result<String> {
+    document
+        .identifiers
+        .observe_package_graph(&document.package)?;
+    let part = document
+        .identifiers
+        .reserve_preferred_part_name("/customXml/item1.xml")?;
+    let owner = document.doc_part_name.clone();
+    let item_relationship = document
+        .identifiers
+        .reserve_relationship_id_checked(&owner)?;
+    let properties = document
+        .identifiers
+        .reserve_preferred_part_name("/customXml/itemProps1.xml")?;
+    let identity = free_store_identity(&document.package)?;
+    let properties_relationship = document
+        .identifiers
+        .reserve_relationship_id_checked(&part)?;
+
+    document.add_override_journaled(&part, "application/xml");
+    document.add_relationship_journaled(
+        Some(&owner),
+        &item_relationship,
+        CUSTOM_XML_REL,
+        &crate::document::relative_target(&owner, &part),
+    );
+    document
+        .package
+        .set_part(&properties, datastore_properties(&identity, schema_uris));
+    document.add_override_journaled(&properties, CUSTOM_XML_PROPS_TYPE);
+    document.add_relationship_journaled(
+        Some(&part),
+        &properties_relationship,
+        CUSTOM_XML_PROPS_REL,
+        &crate::document::relative_target(&part, &properties),
+    );
+    document.package.set_part(&part, item_xml.to_vec());
+    document.identifiers.record_written_to_package();
+    Ok(identity)
+}
+
+/// The first store identity of the generated series that no custom XML
+/// properties part of the package holds. It reads the properties parts the
+/// package relates, not the body.
+fn free_store_identity(package: &OpcPackage) -> Result<String> {
+    let mut occupied = HashSet::new();
+    for (name, relationships) in &package.part_rels {
+        for relationship in relationships
+            .items
+            .iter()
+            .filter(|edge| edge.rel_type == CUSTOM_XML_PROPS_REL)
+        {
+            let target = internal_target(package, name, relationship)?;
+            let xml = package
+                .get_part(&target)
+                .ok_or_else(|| bibliography_error("missing custom XML properties"))?;
+            if let Some(identity) = crate::content_control::parse_store_item_id(xml)? {
+                occupied.insert(crate::content_control::normalize_store_item_id(&identity));
+            }
+        }
+    }
+    (0u64..=0xffffffffffff)
+        .map(|index| format!("{{00000000-0000-4000-8000-{index:012X}}}"))
+        .find(|value| !occupied.contains(&crate::content_control::normalize_store_item_id(value)))
+        .ok_or_else(|| bibliography_error("custom XML store identity space exhausted"))
 }
 
 fn datastore_properties(identity: &str, schema_uris: &[&str]) -> Vec<u8> {

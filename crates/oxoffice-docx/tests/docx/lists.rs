@@ -724,6 +724,29 @@ fn linking_a_style_refuses_conflicts_and_styles_that_cannot_hold_a_list() {
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
 
+#[test]
+fn a_link_refused_in_a_document_without_styles_leaves_it_as_it_was() {
+    // The link reserves a styles part before it finds the style missing.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(Document::new().to_bytes().unwrap())).unwrap();
+    package.remove_part("/word/styles.xml");
+    package.content_types.remove_override("/word/styles.xml");
+    package
+        .get_or_create_part_rels("/word/document.xml")
+        .items
+        .retain(|relationship| !relationship.rel_type.ends_with("/styles"));
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
+    let before = doc.to_bytes().unwrap();
+    let error = doc
+        .link_style_to_numbering("Heading1", 1, 0)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("does not exist"), "{error}");
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
 /// `doc` saved with `edit` applied to its styles part, opened again.
 fn with_styles_xml(doc: &mut Document, edit: impl FnOnce(String) -> String) -> Document {
     let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
