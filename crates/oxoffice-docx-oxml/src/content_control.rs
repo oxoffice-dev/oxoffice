@@ -2089,6 +2089,26 @@ impl CT_Sdt {
         &mut self.revisions
     }
 
+    /// Remove the raw children of `w:sdtContent` at these content indices,
+    /// with the revision written in place of one. Children that are not raw
+    /// XML stay. The other children keep their place. Returns how many went.
+    #[doc(hidden)]
+    pub fn remove_raw_children(&mut self, indices: &[usize]) -> usize {
+        let mut indices = indices.to_vec();
+        indices.sort_unstable();
+        indices.dedup();
+        let mut removed = 0;
+        for index in indices.into_iter().rev() {
+            if !matches!(self.content.get(index), Some(SdtContent::RawXml(_))) {
+                continue;
+            }
+            self.revisions.retain(|(boundary, _)| *boundary != index);
+            self.remove_content(index);
+            removed += 1;
+        }
+        removed
+    }
+
     pub(crate) fn append_accepted_run_paths(
         &self,
         prefix: &mut Vec<AcceptedRunPathSegment>,

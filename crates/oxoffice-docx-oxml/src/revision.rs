@@ -215,6 +215,17 @@ pub enum RevisionKind {
     SectionPropertyChange,
 }
 
+impl RevisionKind {
+    /// Whether the change adds or removes content: an insertion, a deletion
+    /// or either end of a move, not a change of properties.
+    pub fn changes_content(self) -> bool {
+        matches!(
+            self,
+            Self::Insertion | Self::Deletion | Self::MoveFrom | Self::MoveTo
+        )
+    }
+}
+
 /// Existing substantive body-reader modes. Deletions need the real source
 /// ownership probe, never a header-only guess.
 #[derive(Clone, Copy, Debug)]
@@ -2010,6 +2021,25 @@ pub(crate) fn revision_kind(name: &[u8], prefixes: &[String]) -> Option<Revision
     is_word_element(name, local, prefixes)
         .then(|| revision_kind_for_local(local))
         .flatten()
+}
+
+/// Whether preserved XML is a tracked insertion, deletion or move, by the
+/// local name of its root element: a preserved child does not always declare
+/// the prefix it was read with, and one the reader could not type (without
+/// an author, say) counts too.
+#[doc(hidden)]
+pub fn raw_changes_content(raw: &[u8]) -> bool {
+    let mut reader = Reader::from_reader(raw);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element)) => {
+                return revision_kind_for_local(element.local_name().as_ref())
+                    .is_some_and(RevisionKind::changes_content);
+            }
+            Ok(Event::Eof) | Err(_) => return false,
+            Ok(_) => {}
+        }
+    }
 }
 
 pub(crate) fn revision_kind_for_local(local: &[u8]) -> Option<RevisionKind> {
