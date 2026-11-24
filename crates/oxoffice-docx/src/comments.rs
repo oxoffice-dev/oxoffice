@@ -420,6 +420,15 @@ fn bookmark_start_name_counts(
     name_counts
 }
 
+/// The identifiers of every bookmark end of the story sources.
+fn sources_bookmark_end_ids(sources: &[&[u8]]) -> Result<HashSet<i32>> {
+    let mut ids = HashSet::new();
+    for source in sources {
+        ids.extend(crate::document::source_bookmark_end_ids(source)?);
+    }
+    Ok(ids)
+}
+
 /// The bookmark markers between blocks of each story source.
 fn sources_block_bookmarks(
     sources: &[&[u8]],
@@ -575,9 +584,12 @@ fn located_story_markers(
     Ok((located, identity_counts))
 }
 
+/// `bookmark_end_ids` holds the identifier of every bookmark end of the
+/// sources, those the marker scan hides included.
 fn pair_located_story_markers(
     located: &[(usize, usize, usize, StoryMarker)],
     identity_counts: &HashMap<(u8, i32), (usize, usize)>,
+    bookmark_end_ids: &HashSet<i32>,
 ) -> Result<(Vec<StoryRangeRef>, Vec<StoryRangeKind>)> {
     let mut order: Vec<usize> = (0..located.len()).collect();
     order.sort_by_key(|&index| {
@@ -635,6 +647,18 @@ fn pair_located_story_markers(
                 ));
             }
             current_source = Some(next_source);
+        }
+        // A bookmark start whose identifier has no end anywhere in the
+        // sources, as LibreOffice writes beside a copied form field, is no
+        // bookmark to Word: it is left out. Its identifier stays taken (the
+        // identifier scan reserves every start), and its name too
+        // (`add_story_bookmark`). One whose end the scan hides is still
+        // refused below.
+        if is_start
+            && let StoryRangeKind::Bookmark { id, .. } = &located[index].3.kind
+            && !bookmark_end_ids.contains(id)
+        {
+            continue;
         }
         let key = pairing_key(&located[index].3.kind);
         if is_start {
@@ -832,10 +856,16 @@ impl Document {
     /// Add a bookmark across one checked story owner.
     pub fn add_story_bookmark(&mut self, name: &str, range: StoryRunRange) -> Result<i32> {
         validate_bookmark_name(name)?;
-        let (ranges, across) = self.story_range_inventory()?;
+        let (paired, name_counts) = self.story_range_metadata()?;
+        let (ranges, across) = paired?;
+        // Every bookmark start names a bookmark, those left out of the
+        // ranges included.
         if ranges.iter().map(StoryRangeRef::kind).chain(&across).any(|kind| {
             matches!(kind, StoryRangeKind::Bookmark { name: existing, .. } if oxoffice_docx_oxml::text::same_bookmark_name(existing, name))
-        }) {
+        }) || name_counts
+            .keys()
+            .any(|existing| oxoffice_docx_oxml::text::same_bookmark_name(existing, name))
+        {
             return Err(Error::Other(format!("bookmark name {name} already exists")));
         }
         let mut candidate = self.clone_for_staging();
@@ -1123,7 +1153,9 @@ impl Document {
         located.retain(|(_, _, _, marker)| {
             matches!(marker.kind, StoryRangeKind::Comment { id: found } if found == id)
         });
-        let (ranges, across) = pair_located_story_markers(&located, &identity_counts)?;
+        // Only comment markers are left: no bookmark start to leave out.
+        let (ranges, across) =
+            pair_located_story_markers(&located, &identity_counts, &HashSet::new())?;
         if !across.is_empty() {
             return Err(Error::Other(format!(
                 "comment {id} range runs across story owners and cannot be moved"
@@ -1243,7 +1275,9 @@ impl Document {
     ///
     /// Each end closes the start of its own identifier, so overlapping
     /// ranges, whose markers cross as Word and Google write them, are listed
-    /// each with its own start and end. Unmatched, reversed, duplicate and
+    /// each with its own start and end. A bookmark start whose identifier
+    /// has no end is left out, as Word ignores it; its name and identifier
+    /// still count as taken. Other unmatched, reversed, duplicate and
     /// cross-part markers are rejected. A unique bookmark, comment or
     /// permission pair with one start and one end in two owners of one part
     /// is omitted when its physical order is valid. Its name and identifier
@@ -1285,10 +1319,10 @@ impl Document {
         for name in block_bookmark_start_names(&paragraphs, &blocks) {
             *name_counts.entry(name).or_default() += 1;
         }
-        let paired =
-            located_story_markers(&paragraphs, &blocks).and_then(|(located, identity_counts)| {
-                pair_located_story_markers(&located, &identity_counts)
-            });
+        let paired = sources_bookmark_end_ids(&sources).and_then(|bookmark_end_ids| {
+            let (located, identity_counts) = located_story_markers(&paragraphs, &blocks)?;
+            pair_located_story_markers(&located, &identity_counts, &bookmark_end_ids)
+        });
         Ok((paired, name_counts))
     }
 
