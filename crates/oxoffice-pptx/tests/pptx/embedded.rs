@@ -464,7 +464,7 @@ fn removing_a_signed_vba_project_keeps_or_drops_its_signature_part_by_policy() {
 }
 
 /// PowerPoint's reachability compares part names without case, as OPC
-/// requires and as Word will in step 2.
+/// requires and as Word does.
 #[test]
 fn removing_ole_content_keeps_a_part_another_relationship_names_under_another_case() {
     let mut package = fixture_package();
@@ -553,12 +553,12 @@ fn add_image_with_a_space(package: &mut OpcPackage) {
 
 type Edit = fn(&mut OpcPackage);
 
-/// Cases that need no signature, each of which Word refuses: (name, edit,
-/// act). PowerPoint accepts every one today.
+/// Cases that need no signature: (name, edit, act). PowerPoint accepts
+/// every one today; Word refuses every one but the image with a space.
 const UNSIGNED_CASES: [(&str, Edit, Act); 12] = [
     (
-        // Word refuses this until step 2, which refuses only targets reaching
-        // a protected part: check then whether it still flips here.
+        // Word accepts this too: the target reaches an ordinary part. It does
+        // not flip in step 3 and leaves this table then.
         "remove with an unrelated image target holding a space",
         add_image_with_a_space,
         Act::RemoveOle,
@@ -662,8 +662,8 @@ const UNSIGNED_CASES: [(&str, Edit, Act); 12] = [
         Act::RemoveVba,
     ),
     (
-        // PowerPoint's reachability already ignores case: once it refuses a
-        // shared VBA target, it refuses this one too.
+        // PowerPoint's reachability already ignores case, as Word's does:
+        // once it refuses a shared VBA target, it refuses this one too.
         "remove a VBA project another relationship names under another case",
         |package| {
             package.get_or_create_part_rels(PRESENTATION).add_with_id(
@@ -681,7 +681,7 @@ fn powerpoint_accepts_what_word_refuses_without_a_signature() {
     for (name, edit, operation) in UNSIGNED_CASES {
         let mut package = fixture_package();
         edit(&mut package);
-        // Flips in step 3: PowerPoint gains Word's check.
+        // Flips in step 3, but for the image row: PowerPoint gains Word's check.
         act(&package, operation).unwrap_or_else(|error| panic!("{name}: {error}"));
     }
 }
@@ -836,15 +836,14 @@ mod signed {
         let mut package = fixture_package();
         add_image_with_a_space(&mut package);
         sign(&mut package);
-        // Flips in step 3: PowerPoint gains Word's check.
-        // Word refuses this until step 2, which refuses only targets reaching
-        // a protected part: check then whether it still flips here.
+        // Word saves this too: the target reaches an ordinary part. It does
+        // not flip in step 3.
         act(&package, Act::SaveAfterEdit).expect("the edited deck saves");
     }
 
-    /// Cases on a signed package, edited after signing, each of which Word
-    /// refuses on save (but the case alias, which no one refuses today):
-    /// (name, edit). PowerPoint saves every one today.
+    /// Cases on a signed package, edited after signing: (name, edit).
+    /// PowerPoint saves every one today; Word refuses every one on save but
+    /// the image with a space.
     const SIGNED_CASES: [(&str, Edit); 8] = [
         ("origin part with another content type", |package| {
             package
@@ -886,14 +885,14 @@ mod signed {
             package.get_part_rels_mut(ORIGIN_PART).unwrap().items[0].target = "./sig1.xml".into();
         }),
         (
-            // Word refuses this until step 2, which refuses only targets
-            // reaching a protected part: check then whether it still flips.
+            // Word saves this too: the target reaches an ordinary part. It
+            // does not flip in step 3 and leaves this table then.
             "an unrelated image target holding a space, added after signing",
             add_image_with_a_space,
         ),
         (
-            // Word accepts this too today, and refuses it from step 2: its
-            // canonical identity catches the case alias.
+            // Word refuses this: its canonical identity catches the case
+            // alias.
             "an unrelated picture naming the origin under another case",
             |package| add_picture(package, "rIdOrigin", "../../_XMLSIGNATURES/ORIGIN.SIGS"),
         ),
@@ -904,7 +903,8 @@ mod signed {
         for (name, edit) in SIGNED_CASES {
             let mut package = signed_fixture_package();
             edit(&mut package);
-            // Flips in step 3: PowerPoint gains Word's check.
+            // Flips in step 3, but for the image row: PowerPoint gains Word's
+            // check.
             act(&package, Act::SaveAfterEdit).unwrap_or_else(|error| panic!("{name}: {error}"));
         }
     }

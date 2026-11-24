@@ -460,6 +460,62 @@ fn removing_a_vba_project_another_relationship_names_under_another_case_is_refus
     );
 }
 
+/// Two controls naming one ActiveX part under another case own one control:
+/// it is listed once, and removing it takes both owners and its parts.
+#[test]
+fn two_controls_naming_one_activex_part_under_another_case_are_one_control() {
+    let mut package = fixture_package();
+    let xml = String::from_utf8(package.get_part(MAIN).unwrap().to_vec()).unwrap();
+    let second = format!(
+        r#"<w:p><w:r><w:object xmlns:r="{R_NS}"><w:control r:id="rIdCtl2" w:name="CheckBox2" w:shapeid="_x0000_i1027"/></w:object></w:r></w:p><w:sectPr"#
+    );
+    package.set_part(MAIN, xml.replacen("<w:sectPr", &second, 1).into_bytes());
+    package.get_or_create_part_rels(MAIN).add_with_id(
+        "rIdCtl2",
+        rel_types::CONTROL,
+        "activeX/ACTIVEX1.XML",
+    );
+    let mut doc = open(&package);
+    let controls = doc
+        .embedded_content()
+        .expect("inventory")
+        .into_iter()
+        .filter(|info| info.kind == EmbeddedContentKind::ActiveXControl)
+        .map(|info| info.source_part)
+        .collect::<Vec<_>>();
+    assert_eq!(controls, [CONTROL_PART]);
+    doc.remove_embedded_content(
+        CONTROL_PART,
+        "rId1",
+        EmbeddedMutationPolicy::RemoveInvalidatedSignatures,
+    )
+    .expect("the control removes");
+    assert!(
+        states(&doc)
+            .iter()
+            .all(|(kind, _)| *kind != EmbeddedContentKind::ActiveXControl),
+        "{:?}",
+        states(&doc)
+    );
+    let saved = saved_package(&mut doc);
+    assert!(!saved.contains_part(CONTROL_PART));
+    assert!(!saved.contains_part(BINARY_PART));
+    let main = String::from_utf8(saved.get_part(MAIN).unwrap().to_vec()).unwrap();
+    assert!(!main.contains("w:control"), "{main}");
+}
+
+/// The VBA project's own relationship is recognised whatever the case of
+/// the relationship part that holds it.
+#[test]
+fn removing_a_vba_project_held_by_a_main_part_relationship_set_under_another_case() {
+    let mut package = fixture_package();
+    let relationships = package.remove_part_rels(MAIN).unwrap();
+    package.set_part_rels("/word/DOCUMENT.xml", relationships);
+    let reopened = package_of(&bytes_of(&package));
+    assert!(reopened.part_rels.contains_key("/word/DOCUMENT.xml"));
+    act(&reopened, Act::RemoveVba).expect("the VBA project removes");
+}
+
 /// Each refusal PowerPoint gains in step 3, as Word answers it today.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(not(feature = "digital-signatures"), allow(dead_code))]
@@ -630,8 +686,10 @@ fn removing_content_with_an_unrelated_image_target_holding_a_space_is_accepted()
 }
 
 /// Cases where a relationship unrelated to embedded content is refused:
-/// (name, source part, target).
-const UNRELATED_TARGET_REFUSALS: [(&str, &str, &str); 4] = [
+/// (name, source part, target). The last two were accepted before the
+/// amendment of 2026-11-24 as normalised pack URIs; once decoded they name
+/// no part.
+const UNRELATED_TARGET_REFUSALS: [(&str, &str, &str); 6] = [
     (
         "an escaped alias of the VBA project",
         MAIN,
@@ -647,6 +705,16 @@ const UNRELATED_TARGET_REFUSALS: [(&str, &str, &str); 4] = [
         "a climb above the package root",
         MAIN,
         "../../media/image.png",
+    ),
+    (
+        "an escape decoding to invalid UTF-8",
+        MAIN,
+        "media/caf%E9.png",
+    ),
+    (
+        "an escape decoding to a control character",
+        MAIN,
+        "media/image%C2%85.png",
     ),
 ];
 
@@ -950,6 +1018,65 @@ mod signed {
             ),
             "{error}"
         );
+    }
+
+    /// Two stored parts that name one part once percent-decoded: a target
+    /// naming one names the other, so a signed save refuses them; an
+    /// unsigned one saves.
+    #[test]
+    fn a_signed_document_does_not_save_with_two_parts_that_name_one_part_once_decoded() {
+        for signed in [false, true] {
+            let mut package = fixture_package();
+            if signed {
+                sign(&mut package);
+            }
+            add_part(&mut package, "/word/media/a b.png", "image/png", b"one");
+            add_part(&mut package, "/word/media/a%20b.png", "image/png", b"two");
+            let result = act(&package, Act::SaveAfterEdit);
+            if signed {
+                let error = refusal(result);
+                assert!(error.contains("ambiguous part names"), "{error}");
+            } else {
+                result.expect("an unsigned document saves");
+            }
+        }
+    }
+
+    /// An unrelated relationship whose target names no part, among them the
+    /// escapes the amendment of 2026-11-24 refuses: (name, target, reason).
+    const SIGNED_TARGETS_NAMING_NO_PART: [(&str, &str, &str); 3] = [
+        (
+            "an escaped separator",
+            "media%2Fimage.png",
+            "it encodes a path separator",
+        ),
+        (
+            "an escape decoding to invalid UTF-8",
+            "media/caf%E9.png",
+            "it decodes to invalid UTF-8",
+        ),
+        (
+            "an escape decoding to a control character",
+            "media/image%C2%85.png",
+            "it holds a control character",
+        ),
+    ];
+
+    #[test]
+    fn a_signed_document_does_not_save_with_an_unrelated_target_that_names_no_part() {
+        for (name, target, reason) in SIGNED_TARGETS_NAMING_NO_PART {
+            let mut package = signed_fixture_package();
+            package
+                .get_or_create_part_rels(MAIN)
+                .add_with_id("rIdOdd", rel_types::IMAGE, target);
+            let error = refusal(act(&package, Act::SaveAfterEdit));
+            assert!(
+                error.contains(&format!(
+                    "relationship rIdOdd has an unsafe internal target {target}: {reason}"
+                )),
+                "{name}: {error}"
+            );
+        }
     }
 
     /// Cases on a signed package, edited after signing: (name, edit, act,
