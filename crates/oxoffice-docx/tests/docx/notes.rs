@@ -1170,3 +1170,35 @@ fn a_raw_carriage_return_in_deleted_note_text_reads_as_a_line_feed_in_the_revisi
         .collect();
     assert_eq!(texts, ["x\ny"]);
 }
+
+#[test]
+fn a_table_added_to_a_footnote_reports_the_footnotes_changed() {
+    let mut doc = doc_with(&["body"]);
+    let id = create_note(&mut doc, Footnote, 0, "note");
+    let story = doc.footnote_story(id).unwrap().expect("footnote story");
+    let table = oxoffice_docx_oxml::table::CT_Tbl::from_xml_fragment_checked(
+        br#"<w:tbl xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p/></w:tc></w:tr></w:tbl>"#,
+    )
+    .unwrap();
+    doc.hold_edit_undo();
+    doc.insert_content(
+        &ContentLocation::end(story),
+        oxoffice_docx::ContentFragment::table(table).unwrap(),
+    )
+    .unwrap();
+    let undo = doc.take_edit_undo().expect("the note edit runs in place");
+    // The typed footnotes model holds paragraphs alone: the part tells.
+    assert!(undo.report().changed());
+    let reopened = reopen(&mut doc);
+    let story = reopened
+        .footnote_story(id)
+        .unwrap()
+        .expect("footnote story");
+    let kinds = reopened
+        .story_items(&story)
+        .unwrap()
+        .iter()
+        .map(|item| item.kind())
+        .collect::<Vec<_>>();
+    assert_eq!(kinds, [StoryItemKind::Paragraph, StoryItemKind::Table]);
+}

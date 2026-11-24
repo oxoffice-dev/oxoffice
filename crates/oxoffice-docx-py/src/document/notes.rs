@@ -98,106 +98,115 @@ impl PyNote {
     }
     #[pyo3(signature=(text=""))]
     fn add_paragraph(&mut self, py: Python<'_>, text: &str) -> PyResult<Py<PyParagraph>> {
-        let story = self.story(py)?;
         let mut paragraph = oxoffice_docx_oxml::text::CT_P::new();
         if !text.is_empty() {
             paragraph.add_run(text);
         }
-        let mut document = self.document.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        let index = candidate
-            .story_items(&story)
-            .map_err(|error| docx_to_pyerr(py, error))?
-            .len();
-        candidate
-            .insert_content(
-                &oxoffice_docx::ContentLocation::end(story),
-                oxoffice_docx::ContentFragment::paragraph(paragraph)
-                    .map_err(|error| docx_to_pyerr(py, error))?,
-            )
+        let fragment = oxoffice_docx::ContentFragment::paragraph(paragraph)
             .map_err(|error| docx_to_pyerr(py, error))?;
-        let story = if self.endnote {
-            candidate.endnote_story(self.id)
-        } else {
-            candidate.footnote_story(self.id)
-        }
-        .map_err(|error| docx_to_pyerr(py, error))?
-        .ok_or_else(|| PyValueError::new_err("note disappeared during insertion"))?;
-        let location = oxoffice_docx::ContentLocation::new(
-            story,
-            oxoffice_docx::StoryItemKind::Paragraph,
-            vec![index],
-        );
-        let prepared = document.prepare_word_revision(
+        let (path, location) = self.append_block(
             py,
-            &candidate,
+            fragment,
+            oxoffice_docx::StoryItemKind::Paragraph,
             "Note.add_paragraph",
-            crate::document::WordPublication::Conservative,
         )?;
-        let path = document
-            .revisions
-            .capture_prepared(&prepared.revision, smallvec![PathSeg::Para(index)])
-            .map_err(revision_to_pyerr)?;
-        let next = document
-            .revisions
-            .capture_prepared(&prepared.revision, smallvec![])
-            .map_err(revision_to_pyerr)?;
-        let result = Py::new(
+        Py::new(
             py,
             PyParagraph::for_story(self.document.clone_ref(py), path, location)
-                .bind_prepared(py, &document, &prepared, &candidate, None)?,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        self.path = next;
-        Ok(result)
+                .bind_current(py, None)?,
+        )
     }
     fn add_table(&mut self, py: Python<'_>, rows: usize, cols: usize) -> PyResult<Py<PyTable>> {
-        let story = self.story(py)?;
         let fragment = related_table_fragment(rows, cols)?;
+        let (path, location) = self.append_block(
+            py,
+            fragment,
+            oxoffice_docx::StoryItemKind::Table,
+            "Note.add_table",
+        )?;
+        Py::new(
+            py,
+            PyTable::for_story(self.document.clone_ref(py), path, location)
+                .bind_current(py, None)?,
+        )
+    }
+}
+
+impl PyNote {
+    /// Append `fragment` at the end of this note on the live document and
+    /// publish the note's story alone: the other owners keep their handles.
+    /// A refused edit or publication leaves the document as it was. The
+    /// answer is the new block's path and location, to bind as it is now.
+    fn append_block(
+        &mut self,
+        py: Python<'_>,
+        fragment: oxoffice_docx::ContentFragment,
+        kind: oxoffice_docx::StoryItemKind,
+        operation: &'static str,
+    ) -> PyResult<(
+        oxoffice_py_support::ContentPath,
+        oxoffice_docx::ContentLocation,
+    )> {
+        let story = self.story(py)?;
         let mut document = self.document.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        let index = candidate
+        document.ensure_word_authority(py)?;
+        let index = document
+            .inner
             .story_items(&story)
             .map_err(|error| docx_to_pyerr(py, error))?
             .len();
-        candidate
-            .insert_content(&oxoffice_docx::ContentLocation::end(story), fragment)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let story = if self.endnote {
-            candidate.endnote_story(self.id)
-        } else {
-            candidate.footnote_story(self.id)
-        }
-        .map_err(|error| docx_to_pyerr(py, error))?
-        .ok_or_else(|| PyValueError::new_err("note disappeared during insertion"))?;
-        let location = oxoffice_docx::ContentLocation::new(
-            story,
-            oxoffice_docx::StoryItemKind::Table,
-            vec![index],
-        );
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "Note.add_table",
-            crate::document::WordPublication::Conservative,
-        )?;
-        let path = document
-            .revisions
-            .capture_prepared(&prepared.revision, smallvec![PathSeg::Body(index)])
-            .map_err(revision_to_pyerr)?;
-        let next = document
-            .revisions
-            .capture_prepared(&prepared.revision, smallvec![])
-            .map_err(revision_to_pyerr)?;
-        let result = Py::new(
-            py,
-            PyTable::for_story(self.document.clone_ref(py), path, location)
-                .bind_prepared(py, &document, &prepared, &candidate, None)?,
-        )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
-        self.path = next;
-        Ok(result)
+        #[cfg(debug_assertions)]
+        let before = document.inner.clone_for_staging();
+        document.inner.hold_edit_undo();
+        let inserted = document
+            .inner
+            .insert_content(&oxoffice_docx::ContentLocation::end(story), fragment);
+        let undo = document.inner.take_edit_undo();
+        inserted.map_err(|error| docx_to_pyerr(py, error))?;
+        let undo = undo.expect("a note insertion edits in place");
+        let published = (|| {
+            let story = if self.endnote {
+                document.inner.endnote_story(self.id)
+            } else {
+                document.inner.footnote_story(self.id)
+            }
+            .map_err(|error| docx_to_pyerr(py, error))?
+            .ok_or_else(|| PyValueError::new_err("note disappeared during insertion"))?;
+            let spliced = document.splice_story_owners(
+                py,
+                operation,
+                &story,
+                #[cfg(debug_assertions)]
+                &before,
+            )?;
+            if !spliced {
+                let prepared = document.prepare_story_revision(
+                    py,
+                    operation,
+                    &story,
+                    #[cfg(debug_assertions)]
+                    &before,
+                )?;
+                document.commit_story_revision(prepared)?;
+            }
+            Ok(story)
+        })();
+        let story = match published {
+            Ok(story) => story,
+            Err(error) => {
+                document.inner.undo_edit(undo);
+                return Err(error);
+            }
+        };
+        let segment = match kind {
+            oxoffice_docx::StoryItemKind::Table => PathSeg::Body(index),
+            _ => PathSeg::Para(index),
+        };
+        let path = document.revisions.capture(smallvec![segment]);
+        self.path = document.revisions.capture(smallvec![]);
+        Ok((
+            path,
+            oxoffice_docx::ContentLocation::new(story, kind, vec![index]),
+        ))
     }
 }

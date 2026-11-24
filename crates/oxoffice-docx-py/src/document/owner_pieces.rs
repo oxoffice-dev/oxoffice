@@ -363,6 +363,61 @@ impl WordPieces {
         (pieces, inventory)
     }
 
+    /// The position of the related part `part_name` among the pieces, and
+    /// the owner addresses its piece holds, as the inventory reads them for
+    /// that part alone (parents relative to the result).
+    pub(super) fn part_owner_addresses(
+        &self,
+        part_name: &str,
+    ) -> Option<(usize, Vec<WordOwnerAddress>)> {
+        let index = self
+            .parts
+            .iter()
+            .position(|piece| piece.part_name == part_name)?;
+        let (facts, _) = self.parts[index].owners.as_ref()?;
+        Some((index, word_piece_owner_addresses(facts.clone(), 0)))
+    }
+
+    /// Read the related part `part_name` of `document` as [`Self::assemble`]
+    /// does, for that part alone: its piece and owner addresses, or `None`
+    /// when its owners cannot be read or a link names no valid relationship.
+    pub(super) fn read_part(
+        document: &oxoffice_docx::Document,
+        kind: oxoffice_docx::StoryKind,
+        part_name: &str,
+        xml: &[u8],
+    ) -> Option<(std::sync::Arc<WordPartPiece>, Vec<WordOwnerAddress>)> {
+        let snapshots = document
+            .story_part_owner_snapshots(kind, part_name, xml)
+            .ok()?;
+        let relationships = link_relationships(&snapshots.3);
+        let facts = word_owner_facts(snapshots, |snapshot| word_table_facts(snapshot.xml()))
+            .ok()
+            .flatten()?;
+        if !relationships.is_empty() {
+            let valid = document.story_hyperlink_relationships(part_name);
+            if !relationships
+                .iter()
+                .all(|relationship| valid.contains(relationship.as_str()))
+            {
+                return None;
+            }
+        }
+        let addresses = word_piece_owner_addresses(facts.clone(), 0);
+        let piece = std::sync::Arc::new(WordPartPiece {
+            kind,
+            part_name: part_name.to_owned(),
+            xml: xml.to_vec(),
+            owners: Some((facts, relationships)),
+        });
+        Some((piece, addresses))
+    }
+
+    /// Put `piece` in place of the related part piece at `index`.
+    pub(super) fn replace_part(&mut self, index: usize, piece: std::sync::Arc<WordPartPiece>) {
+        self.parts[index] = piece;
+    }
+
     /// Keep body pieces aligned with an in-place splice of `document`.
     ///
     /// `removed` pieces at `slot` go. `inserted` is the block now at `slot`.

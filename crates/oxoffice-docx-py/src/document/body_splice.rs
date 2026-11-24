@@ -501,7 +501,7 @@ impl PyDocument {
 
     /// Remove the owners at `removed` (keys), and give the others the keys of
     /// their order: the inventory is indexed again, linear in its owners.
-    fn remove_owners(&mut self, removed: &[usize]) {
+    pub(super) fn remove_owners(&mut self, removed: &[usize]) {
         let mut gone = vec![false; self.owners.len()];
         for key in removed {
             gone[*key] = true;
