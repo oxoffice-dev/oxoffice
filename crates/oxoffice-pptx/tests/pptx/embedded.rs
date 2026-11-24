@@ -1,13 +1,12 @@
 //! Embedded content (OLE objects, ActiveX controls, VBA projects) and the
-//! package signature around it, as the facade handles them today.
+//! package signature around it.
 //!
 //! The fixtures are built in code: a new deck whose slide holds an OLE
 //! object and an ActiveX control, with a VBA project carrying its own
 //! signature. The docx binary's `embedded` module asks the same questions of
-//! a Word document. PowerPoint checks less than Word today: the asserts that
-//! change when it gains Word's checks are marked, and the specification of
-//! embedded content in opc
-//! (`specs/2026-11-21-embedded-content-and-signatures-in-opc.md`) lists them.
+//! a Word document: both facades run the same checks, from
+//! `oxoffice_opc::embedded`
+//! (`specs/2026-11-21-embedded-content-and-signatures-in-opc.md`).
 
 use std::io::Cursor;
 
@@ -463,8 +462,7 @@ fn removing_a_signed_vba_project_keeps_or_drops_its_signature_part_by_policy() {
     }
 }
 
-/// PowerPoint's reachability compares part names without case, as OPC
-/// requires and as Word will in step 2.
+/// Reachability compares part names without case, as OPC requires.
 #[test]
 fn removing_ole_content_keeps_a_part_another_relationship_names_under_another_case() {
     let mut package = fixture_package();
@@ -483,7 +481,7 @@ fn removing_ole_content_keeps_a_part_another_relationship_names_under_another_ca
     assert!(saved_package(&prs).contains_part(OLE_PART));
 }
 
-/// Each refusal PowerPoint gains in step 3, as PowerPoint answers it today.
+/// The operations the refusal cases run.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(not(feature = "digital-signatures"), allow(dead_code))]
 enum Act {
@@ -553,16 +551,9 @@ fn add_image_with_a_space(package: &mut OpcPackage) {
 
 type Edit = fn(&mut OpcPackage);
 
-/// Cases that need no signature, each of which Word refuses: (name, edit,
-/// act). PowerPoint accepts every one today.
-const UNSIGNED_CASES: [(&str, Edit, Act); 12] = [
-    (
-        // Word refuses this until step 2, which refuses only targets reaching
-        // a protected part: check then whether it still flips here.
-        "remove with an unrelated image target holding a space",
-        add_image_with_a_space,
-        Act::RemoveOle,
-    ),
+/// Cases that need no signature, each of which Word refuses too: (name,
+/// edit, act).
+const UNSIGNED_CASES: [(&str, Edit, Act); 11] = [
     (
         "OLE relationship with a dot segment",
         |package| {
@@ -677,13 +668,21 @@ const UNSIGNED_CASES: [(&str, Edit, Act); 12] = [
 ];
 
 #[test]
-fn powerpoint_accepts_what_word_refuses_without_a_signature() {
+fn powerpoint_refuses_what_word_refuses_without_a_signature() {
     for (name, edit, operation) in UNSIGNED_CASES {
         let mut package = fixture_package();
         edit(&mut package);
-        // Flips in step 3: PowerPoint gains Word's check.
-        act(&package, operation).unwrap_or_else(|error| panic!("{name}: {error}"));
+        act(&package, operation).expect_err(name);
     }
+}
+
+#[test]
+fn an_unrelated_image_target_holding_a_space_does_not_stop_a_removal() {
+    // Not a normalised pack URI, but it names an ordinary part: only a
+    // target reaching a protected part is refused.
+    let mut package = fixture_package();
+    add_image_with_a_space(&mut package);
+    act(&package, Act::RemoveOle).expect("the OLE object removes");
 }
 
 #[cfg(feature = "digital-signatures")]
@@ -836,16 +835,14 @@ mod signed {
         let mut package = fixture_package();
         add_image_with_a_space(&mut package);
         sign(&mut package);
-        // Flips in step 3: PowerPoint gains Word's check.
-        // Word refuses this until step 2, which refuses only targets reaching
-        // a protected part: check then whether it still flips here.
+        // Not a normalised pack URI, but it names an ordinary part: only a
+        // target reaching a protected part is refused.
         act(&package, Act::SaveAfterEdit).expect("the edited deck saves");
     }
 
     /// Cases on a signed package, edited after signing, each of which Word
-    /// refuses on save (but the case alias, which no one refuses today):
-    /// (name, edit). PowerPoint saves every one today.
-    const SIGNED_CASES: [(&str, Edit); 8] = [
+    /// refuses on save too: (name, edit).
+    const SIGNED_CASES: [(&str, Edit); 7] = [
         ("origin part with another content type", |package| {
             package
                 .content_types
@@ -886,26 +883,76 @@ mod signed {
             package.get_part_rels_mut(ORIGIN_PART).unwrap().items[0].target = "./sig1.xml".into();
         }),
         (
-            // Word refuses this until step 2, which refuses only targets
-            // reaching a protected part: check then whether it still flips.
-            "an unrelated image target holding a space, added after signing",
-            add_image_with_a_space,
-        ),
-        (
-            // Word accepts this too today, and refuses it from step 2: its
-            // canonical identity catches the case alias.
+            // The canonical identity catches the case alias.
             "an unrelated picture naming the origin under another case",
             |package| add_picture(package, "rIdOrigin", "../../_XMLSIGNATURES/ORIGIN.SIGS"),
         ),
     ];
 
     #[test]
-    fn powerpoint_saves_what_word_refuses_on_a_signed_package() {
+    fn powerpoint_refuses_what_word_refuses_on_a_signed_package() {
         for (name, edit) in SIGNED_CASES {
             let mut package = signed_fixture_package();
             edit(&mut package);
-            // Flips in step 3: PowerPoint gains Word's check.
-            act(&package, Act::SaveAfterEdit).unwrap_or_else(|error| panic!("{name}: {error}"));
+            act(&package, Act::SaveAfterEdit).expect_err(name);
         }
+    }
+
+    #[test]
+    fn a_signed_deck_saves_with_an_unrelated_image_target_holding_a_space_added_after_signing() {
+        let mut package = signed_fixture_package();
+        add_image_with_a_space(&mut package);
+        act(&package, Act::SaveAfterEdit).expect("the edited deck saves");
+    }
+
+    /// The signed-corpus run of the specification's Risks section: every
+    /// deck of the corpus, signed with the test key, gets one text box and
+    /// is saved, and the count of saves and refusals by producer is
+    /// printed. Slow: run it by hand, with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "a run over the whole corpus, by hand"]
+    fn every_corpus_deck_signed_saves_after_one_edit() {
+        use std::collections::BTreeMap;
+
+        use oxoffice_pptx::Emu;
+
+        let mut counts = BTreeMap::<String, (usize, usize, usize)>::new();
+        let mut refused = Vec::new();
+        let mut unsigned = Vec::new();
+        for file in crate::support::corpus_files("pptx") {
+            let producer = file.path.split('/').next().unwrap_or_default().to_owned();
+            let mut package =
+                OpcPackage::from_reader(Cursor::new(file.bytes())).expect("the deck opens");
+            let entry = counts.entry(producer).or_default();
+            if let Err(error) = package.sign(KEY, CERTIFICATE) {
+                entry.2 += 1;
+                unsigned.push(format!("{}: {error}", file.path));
+                continue;
+            }
+            let saved = Presentation::from_bytes(&bytes_of(&package)).and_then(|mut prs| {
+                if prs.slides().len() == 0 {
+                    prs.add_slide(0)?;
+                }
+                prs.slide_mut(0).expect("a slide").add_textbox(
+                    Emu(0),
+                    Emu(0),
+                    Emu(914_400),
+                    Emu(914_400),
+                )?;
+                prs.to_bytes()
+            });
+            match saved {
+                Ok(_) => entry.0 += 1,
+                Err(error) => {
+                    entry.1 += 1;
+                    refused.push(format!("{}: {error}", file.path));
+                }
+            }
+        }
+        for (producer, (saves, refusals, not_signed)) in &counts {
+            println!("{producer}: {saves} saved, {refusals} refused, {not_signed} not signed");
+        }
+        println!("not signed: {unsigned:#?}");
+        assert!(refused.is_empty(), "refused: {refused:#?}");
     }
 }

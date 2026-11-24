@@ -1035,4 +1035,45 @@ mod signed {
             assert!(error.contains(message), "{name}: {error}");
         }
     }
+
+    /// The signed-corpus run of the specification's Risks section: every
+    /// document of the corpus, signed with the test key, gets one paragraph
+    /// and is saved, and the count of saves and refusals by producer is
+    /// printed. Slow: run it by hand, with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "a run over the whole corpus, by hand"]
+    fn every_corpus_document_signed_saves_after_one_edit() {
+        use std::collections::BTreeMap;
+
+        let mut counts = BTreeMap::<String, (usize, usize, usize)>::new();
+        let mut refused = Vec::new();
+        let mut unsigned = Vec::new();
+        for file in crate::support::corpus_files("docx") {
+            let producer = file.path.split('/').next().unwrap_or_default().to_owned();
+            let mut package =
+                OpcPackage::from_reader(Cursor::new(file.bytes())).expect("the document opens");
+            let entry = counts.entry(producer).or_default();
+            if let Err(error) = package.sign(KEY, CERTIFICATE) {
+                entry.2 += 1;
+                unsigned.push(format!("{}: {error}", file.path));
+                continue;
+            }
+            let saved = Document::from_bytes(&bytes_of(&package)).and_then(|mut doc| {
+                doc.add_paragraph("edited after signing");
+                doc.to_bytes()
+            });
+            match saved {
+                Ok(_) => entry.0 += 1,
+                Err(error) => {
+                    entry.1 += 1;
+                    refused.push(format!("{}: {error}", file.path));
+                }
+            }
+        }
+        for (producer, (saves, refusals, not_signed)) in &counts {
+            println!("{producer}: {saves} saved, {refusals} refused, {not_signed} not signed");
+        }
+        println!("not signed: {unsigned:#?}");
+        assert!(refused.is_empty(), "refused: {refused:#?}");
+    }
 }
