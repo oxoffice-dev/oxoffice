@@ -307,7 +307,7 @@ use story_text::{
     story_hyperlink_tags, story_item_text, unwrap_story_hyperlink,
 };
 pub(crate) use story_xml::comment_namespace_source_boundaries;
-pub(crate) use story_xml::{SourceBlockMarker, source_block_bookmarks};
+pub(crate) use story_xml::{SourceBlockMarker, source_block_bookmarks, source_bookmark_end_ids};
 use story_xml::{
     StoryNamespace, StorySdtContext, changed_story_namespace_scope, comment_move_source_edits,
     comment_reference_run_span, field_instruction_has_name, modeled_story_child,

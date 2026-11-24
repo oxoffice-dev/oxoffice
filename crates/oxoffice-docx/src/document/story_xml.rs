@@ -999,6 +999,50 @@ pub(crate) struct SourceBlockMarker {
 /// paragraph leads the next one with it; the other side when there is no
 /// such paragraph. A table cell's paragraphs are a story of their own, so
 /// the paragraph, not the flow, tells which story reads a marker.
+/// The identifiers of every Word bookmark end of a story source, wherever it
+/// sits: inside a deletion, a smart tag or markup no story reads included.
+pub(crate) fn source_bookmark_end_ids(xml: &[u8]) -> Result<HashSet<i32>> {
+    let mut ids = HashSet::new();
+    if !xml
+        .windows(b"bookmarkEnd".len())
+        .any(|window| window == b"bookmarkEnd")
+    {
+        return Ok(ids);
+    }
+    let mut reader = NsReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("bookmark end scan failed: {error}")))?;
+        let word = word_element(&namespace);
+        drop(namespace);
+        match &event {
+            Event::Start(element) | Event::Empty(element)
+                if word && element.local_name().as_ref() == b"bookmarkEnd" =>
+            {
+                for attribute in element.attributes() {
+                    let attribute = attribute.map_err(|error| Error::Other(error.to_string()))?;
+                    let (attribute_namespace, attribute_local) =
+                        reader.resolver().resolve_attribute(attribute.key);
+                    if word_element(&attribute_namespace) && attribute_local.as_ref() == b"id" {
+                        let value = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|error| Error::Other(error.to_string()))?;
+                        if let Ok(id) = value.trim().parse() {
+                            ids.insert(id);
+                        }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(ids)
+}
+
 pub(crate) fn source_block_bookmarks(xml: &[u8]) -> Result<Vec<SourceBlockMarker>> {
     if !xml
         .windows(b"bookmark".len())

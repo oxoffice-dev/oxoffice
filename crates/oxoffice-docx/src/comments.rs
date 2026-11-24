@@ -420,6 +420,15 @@ fn bookmark_start_name_counts(
     name_counts
 }
 
+/// The identifiers of every bookmark end of the story sources.
+fn sources_bookmark_end_ids(sources: &[&[u8]]) -> Result<HashSet<i32>> {
+    let mut ids = HashSet::new();
+    for source in sources {
+        ids.extend(crate::document::source_bookmark_end_ids(source)?);
+    }
+    Ok(ids)
+}
+
 /// The bookmark markers between blocks of each story source.
 fn sources_block_bookmarks(
     sources: &[&[u8]],
@@ -575,9 +584,12 @@ fn located_story_markers(
     Ok((located, identity_counts))
 }
 
+/// `bookmark_end_ids` holds the identifier of every bookmark end of the
+/// sources, those the marker scan hides included.
 fn pair_located_story_markers(
     located: &[(usize, usize, usize, StoryMarker)],
     identity_counts: &HashMap<(u8, i32), (usize, usize)>,
+    bookmark_end_ids: &HashSet<i32>,
 ) -> Result<(Vec<StoryRangeRef>, Vec<StoryRangeKind>)> {
     let mut order: Vec<usize> = (0..located.len()).collect();
     order.sort_by_key(|&index| {
@@ -636,15 +648,15 @@ fn pair_located_story_markers(
             }
             current_source = Some(next_source);
         }
-        // A bookmark start whose identifier has no end anywhere, as
-        // LibreOffice writes beside a copied form field, is no bookmark to
-        // Word: it is left out. Its identifier stays taken (the identifier
-        // scan reserves every start), and its name too (`add_story_bookmark`).
+        // A bookmark start whose identifier has no end anywhere in the
+        // sources, as LibreOffice writes beside a copied form field, is no
+        // bookmark to Word: it is left out. Its identifier stays taken (the
+        // identifier scan reserves every start), and its name too
+        // (`add_story_bookmark`). One whose end the scan hides is still
+        // refused below.
         if is_start
-            && let Some(identity @ (0, _)) = marker_identity_key(&located[index].3.kind)
-            && identity_counts
-                .get(&identity)
-                .is_some_and(|(_, ends)| *ends == 0)
+            && let StoryRangeKind::Bookmark { id, .. } = &located[index].3.kind
+            && !bookmark_end_ids.contains(id)
         {
             continue;
         }
@@ -1141,7 +1153,9 @@ impl Document {
         located.retain(|(_, _, _, marker)| {
             matches!(marker.kind, StoryRangeKind::Comment { id: found } if found == id)
         });
-        let (ranges, across) = pair_located_story_markers(&located, &identity_counts)?;
+        // Only comment markers are left: no bookmark start to leave out.
+        let (ranges, across) =
+            pair_located_story_markers(&located, &identity_counts, &HashSet::new())?;
         if !across.is_empty() {
             return Err(Error::Other(format!(
                 "comment {id} range runs across story owners and cannot be moved"
@@ -1305,10 +1319,10 @@ impl Document {
         for name in block_bookmark_start_names(&paragraphs, &blocks) {
             *name_counts.entry(name).or_default() += 1;
         }
-        let paired =
-            located_story_markers(&paragraphs, &blocks).and_then(|(located, identity_counts)| {
-                pair_located_story_markers(&located, &identity_counts)
-            });
+        let paired = sources_bookmark_end_ids(&sources).and_then(|bookmark_end_ids| {
+            let (located, identity_counts) = located_story_markers(&paragraphs, &blocks)?;
+            pair_located_story_markers(&located, &identity_counts, &bookmark_end_ids)
+        });
         Ok((paired, name_counts))
     }
 

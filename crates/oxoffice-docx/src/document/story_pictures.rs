@@ -669,6 +669,7 @@ impl Document {
         let name = match existing {
             Some(name) => name,
             None => {
+                // Two names in different cases are one name to Word.
                 let names = ranges
                     .iter()
                     .map(crate::StoryRangeRef::kind)
@@ -678,14 +679,12 @@ impl Document {
                         _ => None,
                     })
                     .chain(name_counts.keys().map(String::as_str))
+                    .map(oxoffice_docx_oxml::text::bookmark_name_key)
                     .collect::<HashSet<_>>();
                 let mut suffix = 1u32;
                 let name = loop {
                     let name = format!("Heading_{suffix}");
-                    // Two names in different cases are one name to Word.
-                    if !names.iter().any(|existing| {
-                        oxoffice_docx_oxml::text::same_bookmark_name(existing, &name)
-                    }) {
+                    if !names.contains(&oxoffice_docx_oxml::text::bookmark_name_key(&name)) {
                         break name;
                     }
                     suffix = suffix

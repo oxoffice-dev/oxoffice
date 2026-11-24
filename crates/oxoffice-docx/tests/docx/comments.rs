@@ -1444,6 +1444,23 @@ fn a_bookmark_start_without_an_end_is_left_out_and_keeps_its_name_and_identifier
 }
 
 #[test]
+fn a_bookmark_whose_end_the_ranges_do_not_read_is_not_left_out() {
+    // The end sits where the range scan does not look: the bookmark is
+    // still Word's, so the inventory refuses it rather than drop it.
+    for end in [
+        r#"<w:smartTag w:uri="urn:example" w:element="place"><w:r><w:t>Paris</w:t></w:r><w:bookmarkEnd w:id="0"/></w:smartTag>"#,
+        r#"<w:del w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>Paris</w:delText></w:r><w:bookmarkEnd w:id="0"/></w:del>"#,
+    ] {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:p><w:bookmarkStart w:id="0" w:name="place"/><w:r><w:t>in </w:t></w:r>{end}</w:p>"#
+        ));
+        let error = doc.story_ranges().unwrap_err().to_string();
+        assert!(error.contains("unmatched start"), "{end}: {error}");
+        assert!(doc.remove_story_bookmark(0).is_err(), "{end}");
+    }
+}
+
+#[test]
 fn a_heading_bookmark_takes_a_name_no_bookmark_start_holds_in_any_case() {
     let mut doc = doc_with_body(
         r#"<w:p><w:bookmarkStart w:id="0" w:name="heading_1"/><w:r><w:t>see</w:t></w:r></w:p><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>"#,
