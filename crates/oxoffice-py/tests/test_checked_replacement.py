@@ -108,6 +108,21 @@ def test_reachable_pairs_replace_as_before(producer):
 
 
 @pytest.mark.parametrize("producer", PRODUCERS)
+def test_handles_read_after_a_replacement_made_before_any_read_as_after_one_made_after(producer):
+    """A replacement made before any read builds no owner facts of the result: the first read after it does, and its
+    handles read and edit as those of a document read before its replacement."""
+    fresh, read = report(producer, ""), read_once(report(producer, ""))
+    for doc in (fresh, read):
+        assert doc.replace_all([("Northwind", "Southwind", 1), ("Revenue", "Turnover")]) == (1, 2)
+        assert doc.try_replace_text("Highlights", "Key points") == 1
+        doc.paragraphs[1].add_run(" (edited)")
+        doc.tables[0].cell(0, 0).text = "edited cell"
+    assert [p.text for p in fresh.paragraphs] == [p.text for p in read.paragraphs]
+    assert fresh.paragraphs[1].text.startswith("Summary. Turnover grew")
+    assert fresh.to_bytes() == read.to_bytes()
+
+
+@pytest.mark.parametrize("producer", PRODUCERS)
 def test_try_replace_text_does_not_check_the_reach(producer):
     doc = report(producer)
     assert doc.try_replace_text("ACME", "Globex") == 1

@@ -23,8 +23,22 @@ impl PyDocument {
                 .map_err(|error| docx_to_pyerr(py, error))?
                 .map_err(|refusal| crate::replacement_refusal_to_pyerr(py, refusal, batch))?,
         };
-        if let Some((candidate, _)) = &changed {
-            drop(validate_word_facts(candidate, py)?);
+        // No owner facts are built here: a dormant document builds them at its
+        // first read, as an opened one does. They fail to build only when a
+        // story does not list, a paragraph's XML does not parse or a section's
+        // properties do not read, and a replacement writes text into the runs
+        // it found, which leaves all three as they were. Building the whole
+        // inventory of the candidate only to drop it cost more than the
+        // replacement itself on a body Word saved, at every call. Debug builds
+        // check the claim.
+        #[cfg(debug_assertions)]
+        if let Some((candidate, _)) = &changed
+            && validate_word_facts(&self.inner, py).is_ok()
+        {
+            assert!(
+                validate_word_facts(candidate, py).is_ok(),
+                "a replacement left owner facts that do not build"
+            );
         }
         Ok(changed)
     }
