@@ -525,36 +525,12 @@ impl Document {
         font_name: &str,
         embedded: EmbeddedFont,
     ) -> Result<()> {
-        if !embedded.license.authorized {
-            return Err(Error::Other(
-                "font embedding requires explicit caller authorization".to_owned(),
-            ));
-        }
-        if embedded.license.identity.trim().is_empty() {
-            return Err(Error::Other(
-                "font embedding requires an exact license identity".to_owned(),
-            ));
-        }
-        if embedded.license.identity.len() > 4096 {
-            return Err(Error::Other(
-                "font embedding license identity exceeds 4096 bytes".to_owned(),
-            ));
-        }
-        if embedded
-            .license
-            .identity
-            .chars()
-            .any(|ch| ch < ' ' || ch == '\u{fffe}' || ch == '\u{ffff}')
-        {
-            return Err(Error::Other(
-                "font embedding license identity contains unsupported XML characters".to_owned(),
-            ));
-        }
-        if !valid_authored_sfnt(&embedded.data) {
-            return Err(Error::Other(
-                "embedded font bytes are not a supported sfnt font".to_owned(),
-            ));
-        }
+        oxoffice_layout::font_embedding::check_embedding_license(
+            embedded.license.authorized,
+            &embedded.license.identity,
+        )
+        .map_err(Error::Other)?;
+        oxoffice_layout::font_embedding::SfntTables::parse(&embedded.data).map_err(Error::Other)?;
         let guid = font_key_bytes(&embedded.font_key).ok_or_else(|| {
             Error::Other("embedded font key must be a 16-byte OOXML GUID".to_owned())
         })?;
@@ -988,27 +964,7 @@ fn deobfuscate_odttf_with_key(data: &[u8], font_key: &str) -> Option<Vec<u8>> {
 
 /// Bound and check every authored single-face sfnt table before obfuscation.
 pub(super) fn valid_authored_sfnt(data: &[u8]) -> bool {
-    if data.len() > 64 * 1024 * 1024 || !looks_like_sfnt(data) || data.starts_with(b"ttcf") {
-        return false;
-    }
-    let count = u16::from_be_bytes([data[4], data[5]]) as usize;
-    let Some(directory) = data.get(12..12 + count * 16) else {
-        return false;
-    };
-    let mut tags = std::collections::HashSet::new();
-    for record in directory.chunks_exact(16) {
-        let offset = u32::from_be_bytes(record[8..12].try_into().unwrap()) as usize;
-        let length = u32::from_be_bytes(record[12..16].try_into().unwrap()) as usize;
-        if !tags.insert(&record[..4])
-            || offset
-                .checked_add(length)
-                .is_none_or(|end| end > data.len())
-            || (length > 0 && offset < 12 + count * 16)
-        {
-            return false;
-        }
-    }
-    tags.contains(b"name".as_slice())
+    oxoffice_layout::font_embedding::SfntTables::parse(data).is_ok()
 }
 
 /// The two candidate XOR keys for ODTTF deobfuscation, most likely first.
