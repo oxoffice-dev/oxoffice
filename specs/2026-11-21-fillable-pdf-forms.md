@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: accepted
+status: shipped
 scope: pdf, docx, cli, python
 ---
 
@@ -711,6 +711,15 @@ orchestration of run FBCF decided, per place, what becomes a field:
   it; a viewer uses `/R` when it draws a typed value (pdf.js does). A block
   field over sections of different text directions stays static, and a
   text box with vertical text too: layout draws its text upright today.
+
+## Outcome
+
+Shipped in full by 2026-11-24. The run of 2026-11-23 closed the limits left after step 5b: controls in notes
+(#574), floating text boxes (#586), empty controls and floating paint (#593, #607), headers and footers with one
+widget per page and rotated places with `/MK /R` (#597), the typing font written as a Unicode Type0 font (#588)
+with a diagnostic for what it cannot encode (#571), and the legacy-field leftovers (#570). What stays static is
+stated in the limitation `docx-pdf-forms-outside-body`; typed CJK and complex scripts depend on the viewer
+(`docx-pdf-forms-typing-scripts`).
 
 ## Links
 

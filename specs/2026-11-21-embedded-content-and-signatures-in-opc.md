@@ -1,6 +1,6 @@
 ---
 date: 2026-11-21
-status: accepted
+status: shipped
 scope: opc, docx, pptx
 ---
 
@@ -196,6 +196,12 @@ Taken at the step 3 gate, before step 2 was built; it replaces Word's full-packa
   breaking change on 2026-11-24.
 - **Corpus.** 70 Office files, 3,214 internal relationships: none with `%`, none non-normalised, no case-only alias.
   Neither rule refuses a file we hold.
+
+## Outcome
+
+Shipped on 2026-11-24 in two pull requests: #609 (the shared module, Word delegating, canonical part identities
+per the amendment) and #611 (PowerPoint delegating, a breaking change). A signed corpus run saved 16 decks and
+36 documents with none refused.
 
 ## Links
 

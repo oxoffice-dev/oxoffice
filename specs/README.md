@@ -60,7 +60,7 @@ dependency bumps and documentation.
 | 2026-11-21 | [Code inspection and refactoring](2026-11-21-code-inspection-and-refactoring.md) | accepted |
 | 2026-11-21 | [Edit cost at the root](2026-11-21-edit-cost-at-the-root.md) | accepted |
 | 2026-11-21 | [Edit cost: publishing the one block an edit touched](2026-11-21-edit-cost-one-block-publication.md) | accepted |
-| 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | accepted |
+| 2026-11-21 | [Fillable PDF forms](2026-11-21-fillable-pdf-forms.md) | shipped |
 | 2026-11-21 | [Text list style levels live on the heap](2026-11-21-text-list-style-levels-on-the-heap.md) | shipped |
 | 2026-11-21 | [Comparison: bookmark ids and generated TOC names are no change](2026-11-21-comparison-bookmark-identities.md) | shipped |
 | 2026-11-21 | [Comparison: a footnote whose reference moved](2026-11-21-comparison-moved-footnotes.md) | shipped |
@@ -69,7 +69,7 @@ dependency bumps and documentation.
 | 2026-11-21 | [Render fidelity: a baseline on every pull request, Word, PowerPoint and LibreOffice every night](2026-11-21-render-fidelity.md) | accepted |
 | 2026-11-21 | [The limitations page is built at release](2026-11-21-limitations-page-built-at-release.md) | accepted |
 | 2026-11-21 | [Python core property dates and shared helpers](2026-11-21-python-core-property-dates-and-shared-helpers.md) | accepted |
-| 2026-11-21 | [Embedded content and signatures in oxoffice-opc](2026-11-21-embedded-content-and-signatures-in-opc.md) | accepted |
+| 2026-11-21 | [Embedded content and signatures in oxoffice-opc](2026-11-21-embedded-content-and-signatures-in-opc.md) | shipped |
 | 2026-11-21 | [Consumer workflows: the suite checks what a first user does](2026-11-21-consumer-workflows.md) | accepted |
 | 2026-11-21 | [One rule for every Python length argument](2026-11-21-one-rule-for-python-length-arguments.md) | accepted |
 | 2026-11-21 | [The release pushes main and the tag after every build is green](2026-11-21-release-pushes-after-the-builds.md) | shipped |
@@ -97,3 +97,5 @@ dependency bumps and documentation.
 | 2026-11-23 | [Equations in the RTF and ODT exports](2026-11-23-equations-in-rtf-and-odt.md) | shipped |
 | 2026-11-23 | [A link in a paragraph added or removed whole is tracked as a HYPERLINK field](2026-11-23-whole-paragraph-hyperlink-as-field.md) | shipped |
 | 2026-11-23 | [RTF keeps paragraph styles and section layout](2026-11-23-rtf-styles-and-sections.md) | shipped |
+| 2026-11-23 | [A tracked insertion holds its simple fields as runs](2026-11-23-simple-fields-read-in-tracked-insertions.md) | shipped |
+| 2026-11-23 | [Bibliography: every source type in every style, from the CLI and Python](2026-11-23-bibliography-styles-and-bindings.md) | shipped |
