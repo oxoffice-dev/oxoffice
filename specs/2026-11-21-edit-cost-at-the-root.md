@@ -299,6 +299,35 @@ Order with the other work of ROADMAP items 1b and 2:
   makes is checked. The debug work counters item 2 deletes are not brought
   back: the scaling run is the gate, the oracle checks agreement.
 
+### PR 2 in two parts (amended 2026-11-24)
+
+On `main` at `e473ce26` none of the calls of PR 2 changes what a handle
+names (`WordOwnerLocation`: paragraphs, runs, tables, cells, sections,
+hyperlinks) except the two section edits. They change the settings part,
+the font table and its font parts, the styles, the numbering definitions or
+the custom XML parts. Yet the binding copies the whole document, then either
+compares the two saves or publishes a `Conservative` inventory, which
+retires every handle. So for these calls decisions 1, 2 and 4 come down to
+this rule:
+
+- **An edit that changes no element a handle names publishes nothing.** The
+  binding makes the facade edit in place, as `Settings.track_revisions`
+  does since #623, and keeps its inventory and every handle. The facade
+  edit is the journaled one: `edit_settings_part` for the settings part, a
+  route of the same shape for the font table and the other parts (reserve
+  with the registry journal, undo on refusal or panic, debug builds compare
+  with the staged edit). A no-op needs no answer: nothing is published
+  either way.
+- **A section property edit keeps every handle.** It writes the section's
+  `w:sectPr`, which a paragraph property setter would write in place
+  already. The four up-front refusals of decision 2 stay; the save
+  comparison that proved the document still saves goes to the save.
+
+PR 2 lands as two pull requests: the settings and section calls, then the
+font table, custom XML stores, styles and numbering.
+`move_content_control` moves blocks and goes to lot 3d with the other
+content control edits.
+
 ## Links
 
 - Issues: #5 (Python replace slower than the CLI), #6 (edits cost the whole

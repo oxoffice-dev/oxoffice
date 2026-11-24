@@ -263,13 +263,7 @@ impl Document {
         if self.embed_true_type_fonts()? == value {
             return Ok(());
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_embed_true_type_fonts(value)?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.stage_settings_mutation(|settings| settings.set_embed_true_type_fonts(value))
     }
 
     /// Return the presence-sensitive embedded system font setting.
@@ -290,13 +284,7 @@ impl Document {
         if self.embed_system_fonts()? == value {
             return Ok(());
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_embed_system_fonts(value)?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.stage_settings_mutation(|settings| settings.set_embed_system_fonts(value))
     }
 
     /// Return the presence-sensitive font subsetting setting.
@@ -317,13 +305,7 @@ impl Document {
         if self.save_subset_fonts()? == value {
             return Ok(());
         }
-        let mut candidate = self.settings_mutation_candidate()?;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_save_subset_fonts(value)?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.stage_settings_mutation(|settings| settings.set_save_subset_fonts(value))
     }
 
     /// Add or replace one descriptive font-table record, found by its name.
