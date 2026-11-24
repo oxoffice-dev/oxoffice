@@ -69,25 +69,35 @@ inventory against a rebuild (`assert_word_inventory_rebuilds`).
    that block; a handle to a removed block raises. Removing the last body
    paragraph (`commit_tail_body_removal`) retires its own owners too, not
    the removal epoch that every owner handle held, so the epoch goes: no
-   publication retires it any more.
-   These calls keep handles where they take the body splice. Every
-   insertion does, on any body. A removal does on bodies whose paragraphs
-   the splice accepts as plain; a paragraph Word saved is not one today
-   (its document blocks plain local edits), so removing it still takes the
-   whole route and retires every handle, as before.
-3. **A debug oracle proves it.** After every such splice, debug builds
-   match the moved inventory against a fresh walk of the document and
-   require each kept owner to pair with the owner at its moved index, as
-   they already do for appends, and rebuild the inventory and its indexes
-   to compare. Python tests take handles before, after and on the slot,
-   insert and remove blocks, and check what each handle reads, edits and
-   raises.
+   publication retires it any more. That route takes only a paragraph the
+   splice could remove (`plain_removable_paragraph`): a paragraph that ends
+   a section is not one, since removing it merges two sections, which the
+   kept section owners would not follow.
+   These calls keep handles where they take the body splice, which
+   `plan_body_splice` decides: it takes a plain paragraph or a table with
+   no nested table, text box or link inserted, and plain paragraphs
+   removed, and refuses, among others, a table inserted in a body that
+   holds a text box or a table in a block content control, and the removal
+   of a paragraph Word saved (its document blocks plain local edits).
+   Where it refuses, the call takes the whole route and retires every
+   handle, as before.
+3. **A debug oracle proves it.** After every such splice, and after the
+   removal of the last paragraph, debug builds rebuild the inventory and
+   its indexes from the document and compare
+   (`assert_word_inventory_rebuilds`), and check each kept owner against
+   the document before the edit: the element at its moved route has the
+   bytes it had (`assert_kept_owners_name_their_elements`, which the block
+   edits already run). The pairing check of the matcher
+   (`assert_body_append_matches`) stays for appends alone. Python tests
+   take handles before, after and on the slot, insert and remove blocks,
+   and check what each handle reads, edits and raises, reading paragraphs
+   through their runs, not the text cache keyed by owner.
 
 What stays guaranteed: a handle either finds its element or raises, never
 another element; a failed edit leaves every handle as it was.
 
-What changes for a user: after these five calls on the splice route (every
-insertion; the removals above), handles to paragraphs and tables outside
+What changes for a user: after these five calls, where they take the
+splice (the cases above), handles to paragraphs and tables outside
 the edited range keep working, where all of them raised a stale-handle
 error. `Run` handles still go stale, as after an append.
 
@@ -131,7 +141,10 @@ comes first (`doc.tables` lists a table in a block content control, which
 has no owner). A handle therefore finds its block in the facade projection
 (`body_paragraphs`, `body_tables`): at the index it holds while that entry
 still names its owner's route, else at the projection ordinal, else by a
-scan. `test_docx_body_splice_handles.py` pins that case.
+scan. `test_docx_body_splice_handles.py` pins that case. The independent
+review found that dropping the removal epoch let a section handle read the
+other section after the paragraph ending its section was removed last; that
+route now refuses such a paragraph and runs the debug checks.
 
 Same machine and body as the table above, `scaling` wheel, fastest of 7
 calls:
@@ -147,9 +160,10 @@ limit on macOS, against 1.6 ms before (and 0.4 ms over on Windows).
 `OXOFFICE_SCALING=full` on `test_docx_scaling.py`: 415 passed, 125 xfailed,
 no XPASS; `GROWING` does not change (the removals the scaling body times
 are paragraphs Word saved, which keep the whole route). Python suite on a
-debug build, every splice under the identity and rebuild oracles: 2197
-passed. Without decision 1 (handles reading their captured index), 18 of
-the 21 new tests fail.
+debug build, every splice under the identity and rebuild oracles: 2200
+passed. Without decision 1 (handles reading their captured index), 20 of
+the 24 new tests fail; without the section guard of the last-paragraph
+removal, its test fails.
 
 ## Links
 

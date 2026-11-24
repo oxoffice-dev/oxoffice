@@ -31,13 +31,19 @@ def table2(name):
     return f"<w:tbl>{grid}<w:tr>{cell('a')}{cell('b')}</w:tr><w:tr>{cell('c')}{cell('d')}</w:tr></w:tbl>"
 
 
+def runs_text(paragraph):
+    """A paragraph's text read through its runs, where the handle's place is used: `Paragraph.text` may come from a
+    cache keyed by the paragraph's owner, which reads the right text even from a handle that lost its place."""
+    return "".join(run.text for run in paragraph.runs)
+
+
 def handles(doc):
     """A handle of every kind on blocks before and after the slots the tests edit, with what each one reads."""
     t0, t1 = doc.tables[0], doc.tables[1]
     taken = {
-        "p0": (doc.paragraphs[0], lambda h: h.text),
-        "p2": (doc.paragraphs[2], lambda h: h.text),
-        "p4": (doc.paragraphs[4], lambda h: h.text),
+        "p0": (doc.paragraphs[0], runs_text),
+        "p2": (doc.paragraphs[2], runs_text),
+        "p4": (doc.paragraphs[4], runs_text),
         "p4 runs": (doc.paragraphs[4].runs, lambda h: [run.text for run in h]),
         "p4 format": (doc.paragraphs[4].paragraph_format, lambda h: h.alignment),
         "t0": (t0, lambda h: h.cell(1, 1).text),
@@ -46,9 +52,9 @@ def handles(doc):
         "t0 cells": (t0.rows[1].cells, lambda h: h[0].text),
         "t0 cell": (t0.cell(0, 1), lambda h: h.text),
         "t0 cell paragraphs": (t0.cell(0, 1).paragraphs, lambda h: h[0].text),
-        "t0 cell paragraph": (t0.cell(0, 1).paragraphs[0], lambda h: h.text),
+        "t0 cell paragraph": (t0.cell(0, 1).paragraphs[0], runs_text),
         "t1": (t1, lambda h: h.cell(0, 0).text),
-        "t1 cell paragraph": (t1.cell(0, 0).paragraphs[0], lambda h: h.text),
+        "t1 cell paragraph": (t1.cell(0, 0).paragraphs[0], runs_text),
     }
     return {name: (handle, read, read(handle)) for name, (handle, read) in taken.items()}
 
@@ -153,7 +159,7 @@ def test_a_table_after_a_table_in_a_block_content_control_follows_its_own_index(
     paragraph = later.cell(0, 0).paragraphs[0]
     doc.insert_paragraph(0, "new")
     assert later.cell(0, 0).text == "d"
-    assert paragraph.text == "d"
+    assert runs_text(paragraph) == "d"
     paragraph.text = "d edited"
     assert doc.tables[-1].cell(0, 0).text == "d edited"
     assert doc.tables[1].cell(0, 0).text == "b"
@@ -165,5 +171,19 @@ def test_a_paragraph_in_nested_block_content_controls_reads_its_own_text_or_rais
     taken = {paragraph.text: paragraph for paragraph in doc.paragraphs}
     doc.insert_paragraph(0, "new")
     for text, paragraph in taken.items():
-        assert outcome(lambda: paragraph.text) in (text, STALE), text
-    assert taken["after"].text == "after"
+        assert outcome(lambda: runs_text(paragraph)) in (text, STALE), text
+        assert outcome(lambda: paragraph.paragraph_format.alignment) in (None, STALE), text
+    assert runs_text(taken["after"]) == "after"
+
+
+def test_removing_the_paragraph_that_ends_a_section_retires_the_section_handles():
+    # Removing it merges two sections: a kept section handle would read and edit the section that took its place.
+    doc = oxdocx.Document()
+    doc.add_paragraph("a")
+    doc.insert_section(len(doc.sections))
+    assert len(doc.sections) == 2
+    first = doc.section(0)
+    doc.section(1).margin_top = oxdocx.Inches(2)
+    assert doc.remove_content(len(doc.paragraphs) + len(doc.tables) - 1)
+    assert len(doc.sections) == 1
+    assert outcome(lambda: first.margin_top) == STALE
