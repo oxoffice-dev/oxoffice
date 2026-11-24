@@ -182,9 +182,9 @@ pdf = Document("form.docx").to_pdf(fillable_forms=True)
   convert, render, find and replace, fill a template, compare, accept or
   reject changes.
 - **The CLI is made for agents and scripts first, people second.** Its
-  commands give a `--json` record with a versioned `schema`, take their
-  lists as JSON where they have one (`replace --map`), and name the cause
-  when they refuse. The plain text output stays readable for a person
+  `docx` and `pptx` commands give a `--json` record with a versioned
+  `schema`, take their lists as JSON where they have one (`replace --map`),
+  and name the cause when they refuse. The plain text output stays readable for a person
   checking by hand. When a choice has to be made, the agent's needs decide.
 - **Python covers the whole Rust API**, so that when the CLI is not enough
   you switch to Python and keep going, without changing tools.
