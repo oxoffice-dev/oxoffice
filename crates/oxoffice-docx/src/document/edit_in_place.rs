@@ -19,6 +19,27 @@ pub enum EditUnit {
     Comments,
     /// The styles model.
     Styles,
+    /// The settings model and its part name.
+    Settings,
+    /// Package parts the edit writes outside the models of its other units
+    /// (custom XML items, recipient data): their bytes, the relationships
+    /// and content type overrides the edit records, by the part journal
+    /// alone.
+    Parts,
+    /// The `count` direct body blocks from `slot` (0 for an insertion at
+    /// `slot`): the edit may replace them with any number of blocks, and
+    /// change no other block. They are copied, at the cost of these blocks.
+    BodyBlocks { slot: usize, count: usize },
+}
+
+/// What an edit did to the direct body blocks of its `BodyBlocks` unit: the
+/// `removed` blocks from `slot` gave way to `inserted` blocks.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyBlocksChange {
+    pub slot: usize,
+    pub removed: usize,
+    pub inserted: usize,
 }
 
 /// What an in-place edit changed, for the caller that publishes it.
@@ -27,6 +48,8 @@ pub enum EditUnit {
 pub struct EditReport {
     /// Each unit the edit named, and whether it changed.
     pub units: Vec<(EditUnit, bool)>,
+    /// The blocks of the `BodyBlocks` unit, when it changed.
+    pub body: Option<BodyBlocksChange>,
 }
 
 impl EditReport {
@@ -63,6 +86,30 @@ struct CommentsCopy {
     extended_owned: bool,
 }
 
+#[derive(Clone, Debug)]
+struct BodyBlocksCopy {
+    slot: usize,
+    blocks: Vec<oxoffice_docx_oxml::document::BodyContent>,
+    length: usize,
+    unsavable: Option<Option<String>>,
+}
+
+impl BodyBlocksCopy {
+    /// The range of the body that holds what the edit left in place of the
+    /// copied blocks, found from the change of the body's length.
+    fn current_range(&self, length: usize) -> std::ops::Range<usize> {
+        let end = (self.slot + self.blocks.len() + length).saturating_sub(self.length);
+        self.slot..end.max(self.slot)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SettingsCopy {
+    settings: Option<CT_Settings>,
+    part_name: Option<String>,
+    owned: bool,
+}
+
 #[derive(Clone)]
 struct StylesCopy {
     styles: Arc<CT_Styles>,
@@ -88,6 +135,8 @@ pub struct EditUndo {
     footnotes: Option<FootnotesCopy>,
     comments: Option<CommentsCopy>,
     styles: Option<StylesCopy>,
+    settings: Option<SettingsCopy>,
+    body: Option<BodyBlocksCopy>,
     scalars: ScalarCopy,
     parts: oxoffice_opc::PartJournal,
     reservations: ReservationJournal,
@@ -111,6 +160,8 @@ pub(super) struct InPlaceState {
     open_units: Vec<EditUnit>,
     hold: bool,
     held: Option<EditUndo>,
+    /// Whether the last outermost in-place edit changed its units.
+    last_changed: bool,
 }
 
 impl Clone for InPlaceState {
@@ -126,6 +177,8 @@ impl Document {
             footnotes: None,
             comments: None,
             styles: None,
+            settings: None,
+            body: None,
             scalars: ScalarCopy {
                 embedded_invalidated_signatures: self.embedded_invalidated_signatures.clone(),
                 freed_relationships: self.freed_relationships.clone(),
@@ -165,6 +218,24 @@ impl Document {
                         part_name: self.styles_part_name.clone(),
                     });
                 }
+                EditUnit::Settings => {
+                    undo.settings = Some(SettingsCopy {
+                        settings: self.settings.clone(),
+                        part_name: self.settings_part_name.clone(),
+                        owned: self.settings_owned,
+                    });
+                }
+                EditUnit::Parts => {}
+                EditUnit::BodyBlocks { slot, count } => {
+                    let content = &self.document.body.content;
+                    let end = (*slot + *count).min(content.len());
+                    undo.body = Some(BodyBlocksCopy {
+                        slot: *slot,
+                        blocks: content[(*slot).min(end)..end].to_vec(),
+                        length: content.len(),
+                        unsavable: self.unsavable_body_edit_cache.get().cloned(),
+                    });
+                }
             }
         }
         undo
@@ -177,6 +248,8 @@ impl Document {
             footnotes,
             comments,
             styles,
+            settings,
+            body,
             scalars,
             parts,
             reservations,
@@ -204,10 +277,27 @@ impl Document {
             self.styles_part_cache = copy.part_cache;
             self.styles_part_name = copy.part_name;
         }
+        if let Some(copy) = settings {
+            self.settings = copy.settings;
+            self.settings_part_name = copy.part_name;
+            self.settings_owned = copy.owned;
+        }
         self.embedded_invalidated_signatures = scalars.embedded_invalidated_signatures;
         self.freed_relationships = scalars.freed_relationships;
         self.package_signatures_invalidated = scalars.package_signatures_invalidated;
+        // Only a body unit changes what a save of the body answers.
+        let unsavable = match &body {
+            Some(copy) => copy.unsavable.clone(),
+            None => self.unsavable_body_edit_cache.get().cloned(),
+        };
+        if let Some(copy) = body {
+            let range = copy.current_range(self.document.body.content.len());
+            self.document.body.content.splice(range, copy.blocks);
+        }
         self.invalidate_layout();
+        if let Some(unsavable) = unsavable {
+            self.unsavable_body_edit_cache = std::sync::OnceLock::from(unsavable);
+        }
     }
 
     /// Whether the units of `undo` differ from what the document holds now.
@@ -232,10 +322,28 @@ impl Document {
                             .styles
                             .as_ref()
                             .is_some_and(|copy| *copy.styles != *self.styles),
+                        EditUnit::Settings => undo.settings.as_ref().is_some_and(|copy| {
+                            copy.settings != self.settings
+                                || copy.part_name != self.settings_part_name
+                        }),
+                        EditUnit::Parts => self.package.part_journal_changed(&undo.parts),
+                        EditUnit::BodyBlocks { .. } => undo.body.as_ref().is_some_and(|copy| {
+                            let content = &self.document.body.content;
+                            content.get(copy.current_range(content.len())) != Some(&copy.blocks[..])
+                        }),
                     };
                     (unit.clone(), changed)
                 })
                 .collect(),
+            body: undo.body.as_ref().and_then(|copy| {
+                let content = &self.document.body.content;
+                let range = copy.current_range(content.len());
+                (content.get(range.clone()) != Some(&copy.blocks[..])).then_some(BodyBlocksChange {
+                    slot: copy.slot,
+                    removed: copy.blocks.len(),
+                    inserted: range.len(),
+                })
+            }),
         }
     }
 
@@ -313,6 +421,7 @@ impl Document {
         {
             document.package_signatures_invalidated = true;
         }
+        document.in_place.last_changed = undo.report.changed();
         if undo.report.changed() {
             document.invalidate_layout();
         }
@@ -325,6 +434,18 @@ impl Document {
             }
         }
         Ok(value)
+    }
+
+    /// Whether the last outermost in-place edit changed what it named: the
+    /// no-op answer of a call that returns one.
+    pub(crate) fn take_last_edit_changed(&mut self) -> bool {
+        std::mem::take(&mut self.in_place.last_changed)
+    }
+
+    /// Whether an in-place edit is open: an edit that keeps its own journal
+    /// joins it instead, and the open edit undoes it.
+    pub(super) fn in_place_is_open(&self) -> bool {
+        self.in_place.open
     }
 
     /// Keep the undo of the next in-place edits for [`Self::take_edit_undo`]
@@ -352,6 +473,8 @@ impl EditUndo {
             footnotes,
             comments,
             styles,
+            settings,
+            body,
             parts,
             reservations,
             report,
@@ -365,6 +488,13 @@ impl EditUndo {
         self.footnotes = self.footnotes.take().or(footnotes);
         self.comments = self.comments.take().or(comments);
         self.styles = self.styles.take().or(styles);
+        self.settings = self.settings.take().or(settings);
+        debug_assert!(
+            self.body.is_none() || body.is_none(),
+            "two held edits name body blocks"
+        );
+        self.body = self.body.take().or(body);
+        self.report.body = self.report.body.or(report.body);
         self.parts.extend(parts);
         self.reservations.extend(reservations);
         for (unit, changed) in report.units {
@@ -405,7 +535,10 @@ impl Document {
                 && restored.comments == before.comments
                 && restored.comments_extended == before.comments_extended
                 && restored.comments_part_name == before.comments_part_name
-                && *restored.styles == *before.styles,
+                && *restored.styles == *before.styles
+                && restored.settings == before.settings
+                && restored.settings_part_name == before.settings_part_name
+                && restored.settings_owned == before.settings_owned,
             "an in-place edit changed a model outside its units ({:?})",
             undo.units
         );

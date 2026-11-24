@@ -148,6 +148,8 @@ pub use render::ContentMeasurement;
 
 mod body;
 mod content;
+#[cfg(debug_assertions)]
+pub(crate) use content::BodyBlockItem;
 mod headers_footers;
 mod media;
 mod notes;
@@ -353,7 +355,7 @@ mod relationships;
 mod staged_output;
 mod staging;
 use edit_in_place::InPlaceState;
-pub use edit_in_place::{EditReport, EditUndo, EditUnit};
+pub use edit_in_place::{BodyBlocksChange, EditReport, EditUndo, EditUnit};
 mod story_edits;
 mod story_items;
 mod story_pictures;

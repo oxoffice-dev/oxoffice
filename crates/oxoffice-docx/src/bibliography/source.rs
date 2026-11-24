@@ -875,10 +875,7 @@ pub(crate) fn stage_custom_xml_store(
     let part = candidate
         .identifiers
         .reserve_preferred_part_name("/customXml/item1.xml")?;
-    candidate
-        .package
-        .content_types
-        .add_override(&part, "application/xml");
+    candidate.add_override_journaled(&part, "application/xml");
     let owner = candidate.doc_part_name.clone();
     candidate.add_relative_internal_relationship_checked(&owner, CUSTOM_XML_REL, &part)?;
     let properties = candidate
@@ -908,10 +905,7 @@ pub(crate) fn stage_custom_xml_store(
     candidate
         .package
         .set_part(&properties, datastore_properties(&identity, schema_uris));
-    candidate
-        .package
-        .content_types
-        .add_override(&properties, CUSTOM_XML_PROPS_TYPE);
+    candidate.add_override_journaled(&properties, CUSTOM_XML_PROPS_TYPE);
     candidate.add_relative_internal_relationship_checked(
         &part,
         CUSTOM_XML_PROPS_REL,

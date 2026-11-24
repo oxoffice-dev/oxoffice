@@ -467,17 +467,11 @@ impl PyDocument {
     ) -> PyResult<()> {
         let rules = copied_rules(py, rules)?;
         let protection = protection.inner.clone();
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        // It validates, then writes the settings in place, as
+        // set_document_protection: no handle reads them.
+        self.inner
             .protect_form(&rules, protection)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        self.publish_form_candidate(
-            py,
-            candidate,
-            "Document.protect_form",
-            WordPublication::ModernFormValues,
-        )?;
-        Ok(())
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     #[getter]
@@ -889,11 +883,11 @@ impl PyDocument {
         location: PyRef<'_, PyContentLocation>,
         tag: Option<String>,
     ) -> PyResult<()> {
-        self.edit_content_control(
+        self.edit_content_control_property(
             py,
             &location,
             "Document.set_content_control_tag",
-            |document, location| document.set_content_control_tag(location, tag.as_deref()),
+            oxoffice_docx::ContentControlEdit::Tag(tag),
         )
     }
 
@@ -904,11 +898,11 @@ impl PyDocument {
         location: PyRef<'_, PyContentLocation>,
         alias: Option<String>,
     ) -> PyResult<()> {
-        self.edit_content_control(
+        self.edit_content_control_property(
             py,
             &location,
             "Document.set_content_control_alias",
-            |document, location| document.set_content_control_alias(location, alias.as_deref()),
+            oxoffice_docx::ContentControlEdit::Alias(alias),
         )
     }
 
@@ -923,11 +917,11 @@ impl PyDocument {
             .as_deref()
             .map(content_control_lock_from_name)
             .transpose()?;
-        self.edit_content_control(
+        self.edit_content_control_property(
             py,
             &location,
             "Document.set_content_control_lock",
-            |document, location| document.set_content_control_lock(location, lock),
+            oxoffice_docx::ContentControlEdit::Lock(lock),
         )
     }
 
@@ -942,11 +936,11 @@ impl PyDocument {
             .as_deref()
             .map(content_control_appearance_from_name)
             .transpose()?;
-        self.edit_content_control(
+        self.edit_content_control_property(
             py,
             &location,
             "Document.set_content_control_appearance",
-            |document, location| document.set_content_control_appearance(location, appearance),
+            oxoffice_docx::ContentControlEdit::Appearance(appearance),
         )
     }
 
@@ -958,11 +952,11 @@ impl PyDocument {
         placeholder: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let placeholder = optional_python_bool(placeholder, "placeholder")?;
-        self.edit_content_control(
+        self.edit_content_control_property(
             py,
             &location,
             "Document.set_content_control_placeholder",
-            |document, location| document.set_content_control_placeholder(location, placeholder),
+            oxoffice_docx::ContentControlEdit::Placeholder(placeholder),
         )
     }
 
@@ -1027,11 +1021,11 @@ impl PyDocument {
         payload: PyRef<'_, PyContentControlTypePayload>,
     ) -> PyResult<()> {
         let payload = payload.inner.clone();
-        self.edit_content_control(
+        self.edit_content_control_property(
             py,
             &location,
             "Document.set_content_control_type",
-            move |document, location| document.set_content_control_type(location, payload),
+            oxoffice_docx::ContentControlEdit::Type(payload),
         )
     }
 
@@ -1075,17 +1069,14 @@ impl PyDocument {
         xpath: String,
         prefix_mappings: Option<String>,
     ) -> PyResult<()> {
-        self.edit_content_control(
+        self.edit_content_control_property(
             py,
             &location,
             "Document.set_content_control_binding",
-            move |document, location| {
-                document.set_content_control_binding(
-                    location,
-                    &store_item_id,
-                    &xpath,
-                    prefix_mappings.as_deref(),
-                )
+            oxoffice_docx::ContentControlEdit::Binding {
+                store_item_id,
+                xpath,
+                prefix_mappings,
             },
         )
     }
@@ -5323,11 +5314,16 @@ impl PyDocument {
         py: Python<'_>,
         options: &Bound<'_, PyMailMergePackageOptions>,
     ) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        // Settings and the merge parts only: no handle reads them, so the
+        // in-place edit publishes nothing and every handle stays.
+        self.inner
             .set_mail_merge_package(options.borrow().inner.clone())
             .map_err(|error| docx_to_pyerr(py, error))?;
-        self.publish_api_candidate(py, candidate, "Document.set_mail_merge_package")
+        #[cfg(debug_assertions)]
+        if self.snapshot_scope.is_some() {
+            self.assert_word_inventory_rebuilds(false);
+        }
+        Ok(())
     }
 
     fn mail_merge_package(&self, py: Python<'_>) -> PyResult<Option<PyMailMergePackageOptions>> {
@@ -5339,11 +5335,15 @@ impl PyDocument {
     }
 
     fn remove_mail_merge_package(&mut self, py: Python<'_>) -> PyResult<bool> {
-        let mut candidate = self.inner.clone_for_staging();
-        let removed = candidate
+        // As set_mail_merge_package: settings and merge parts only.
+        let removed = self
+            .inner
             .remove_mail_merge_package()
             .map_err(|error| docx_to_pyerr(py, error))?;
-        self.publish_api_candidate(py, candidate, "Document.remove_mail_merge_package")?;
+        #[cfg(debug_assertions)]
+        if self.snapshot_scope.is_some() {
+            self.assert_word_inventory_rebuilds(false);
+        }
         Ok(removed)
     }
 

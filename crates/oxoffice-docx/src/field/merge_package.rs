@@ -634,10 +634,7 @@ pub(super) fn install_recipient_part(
             let part = candidate
                 .identifiers
                 .reserve_preferred_part_name("/word/recipientData.xml")?;
-            candidate
-                .package
-                .content_types
-                .add_override(&part, MERGE_RECIPIENT_STANDARD);
+            candidate.add_override_journaled(&part, MERGE_RECIPIENT_STANDARD);
             candidate.identifiers.register_content_type_override(&part);
             candidate
                 .package
@@ -701,6 +698,7 @@ fn drop_relationship_id(document: &mut Document, part: &str, relationship_id: &s
         return Ok(());
     };
     let mut removed = Vec::new();
+    document.package.record_part_rels(&settings);
     if let Some(relationships) = document.package.get_part_rels_mut(&settings) {
         relationships.items.retain(|item| {
             let matched = item.id == relationship_id
@@ -786,6 +784,21 @@ fn drop_edges_of_type(document: &mut Document, part_name: &str, rel_type: &str) 
             continue;
         }
         let mut removed = Vec::new();
+        let matches = |item: &oxoffice_opc::Relationship| {
+            item.rel_type == rel_type
+                && item.target_mode.as_deref() != Some("External")
+                && OpcPackage::resolve_rel_target(&owner, &item.target)
+                    .eq_ignore_ascii_case(part_name)
+        };
+        if document
+            .package
+            .get_part_rels(&owner)
+            .is_some_and(|relationships| relationships.items.iter().any(matches))
+        {
+            // Only an owner that loses an edge is journaled, at the cost of
+            // its relationships.
+            document.package.record_part_rels(&owner);
+        }
         if let Some(relationships) = document.package.get_part_rels_mut(&owner) {
             relationships.items.retain(|item| {
                 let matched = item.rel_type == rel_type
@@ -806,10 +819,17 @@ fn drop_edges_of_type(document: &mut Document, part_name: &str, rel_type: &str) 
     }
 }
 
+/// Add the custom XML store of a merge table to `document` in place, inside
+/// the open edit of the mail-merge call.
+pub(super) fn add_merge_store(document: &mut Document, xml: &[u8]) -> Result<String> {
+    crate::content_control::validate_store_item(xml)?;
+    Ok(crate::bibliography::stage_custom_xml_store(document, xml, &[MERGE_DATA_NS])?.item_id)
+}
+
 fn retire_owned_part(document: &mut Document, part_name: &str) {
     document.package.remove_part(part_name);
     document.package.remove_part_rels(part_name);
-    document.package.content_types.remove_override(part_name);
+    document.package.remove_content_type_override(part_name);
     document.identifiers.retire_authored_part(part_name);
 }
 
@@ -852,6 +872,7 @@ pub(super) fn clear_mail_merge_markup(candidate: &mut Document) -> Result<()> {
             .map(|item| item.id.clone())
             .collect();
         if !remove.is_empty() {
+            candidate.package.record_part_rels(&part_name);
             candidate
                 .package
                 .get_or_create_part_rels(&part_name)
@@ -1030,6 +1051,7 @@ pub(super) fn install_merge_source_graph(
             .map(|item| item.id.clone())
             .collect();
         if !remove.is_empty() {
+            candidate.package.record_part_rels(&part_name);
             candidate
                 .package
                 .get_or_create_part_rels(&part_name)
@@ -2191,11 +2213,14 @@ pub(super) fn merge_store_has_other_owner(
 }
 
 fn document_or_parts_bind_store(document: &Document, expected: &str) -> Result<bool> {
-    let fresh = document.document.to_xml()?;
-    if xml_binds_store(&fresh, expected)? {
+    if body_binds_store(document, expected)? {
         return Ok(true);
     }
     for (name, xml) in &document.package.parts {
+        if name.eq_ignore_ascii_case(&document.doc_part_name) {
+            // The body model is the main part; its stored bytes may be older.
+            continue;
+        }
         let Some(content_type) = document.package.content_types.content_type_for(name) else {
             continue;
         };
@@ -2207,6 +2232,34 @@ fn document_or_parts_bind_store(document: &Document, expected: &str) -> Result<b
         }
     }
     Ok(false)
+}
+
+/// Whether a control of the body binds the store `expected`, read from the
+/// typed controls rather than from the serialized body. A body that holds a
+/// block kept as raw XML is serialized and scanned as before.
+fn body_binds_store(document: &Document, expected: &str) -> Result<bool> {
+    let body = &document.document.body;
+    if body
+        .content
+        .iter()
+        .any(|block| matches!(block, oxoffice_docx_oxml::document::BodyContent::RawXml(_)))
+    {
+        return xml_binds_store(&document.document.to_xml()?, expected);
+    }
+    let bound = body.content_controls().into_iter().any(|control| {
+        control
+            .properties
+            .as_ref()
+            .and_then(|properties| properties.data_binding.as_ref())
+            .and_then(|binding| binding.store_item_id.as_deref())
+            .is_some_and(|id| crate::content_control::normalize_store_item_id(id) == expected)
+    });
+    debug_assert_eq!(
+        bound,
+        xml_binds_store(&document.document.to_xml()?, expected)?,
+        "the typed controls tell another store binding than the serialized body"
+    );
+    Ok(bound)
 }
 
 fn content_type_is_xml(content_type: &str) -> bool {

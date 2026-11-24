@@ -1043,6 +1043,16 @@ impl Document {
         part: SettingsPart,
         install: impl Fn(&mut Self),
     ) -> Result<()> {
+        if self.in_place_is_open() {
+            // The open edit journals the reservation and holds a copy of the
+            // settings, and undoes both on any exit that is not a success.
+            match part {
+                SettingsPart::Settings => self.reserve_settings_part()?,
+                SettingsPart::WebSettings => self.reserve_web_settings_part()?,
+            }
+            install(self);
+            return Ok(());
+        }
         #[cfg(debug_assertions)]
         let before = self.clone_for_staging();
         let names = (
@@ -1202,6 +1212,7 @@ impl Document {
         };
         let owner = self.doc_part_name.clone();
         let mut removed_ids = Vec::new();
+        self.package.record_part_rels(&owner);
         if let Some(relationships) = self.package.get_part_rels_mut(&owner) {
             relationships.items.retain(|relationship| {
                 let remove = relationship.rel_type == rel_types::SETTINGS
@@ -1217,7 +1228,7 @@ impl Document {
             .retire_authored_story_relationships(&owner, removed_ids);
         self.package.remove_part(&part_name);
         self.package.remove_part_rels(&part_name);
-        self.package.content_types.remove_override(&part_name);
+        self.package.remove_content_type_override(&part_name);
         self.identifiers.retire_authored_part(&part_name);
         self.settings = None;
         self.settings_owned = false;

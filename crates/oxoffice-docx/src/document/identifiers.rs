@@ -48,6 +48,24 @@ enum Reservation {
         replaced: Vec<(String, String)>,
     },
     PackageRelationships(String),
+    /// A relationship id authored in a story part's relationships.
+    AuthoredStoryRelationship {
+        owner: String,
+        id: String,
+    },
+    /// A part name and content type override an edit retired, when it
+    /// removed their part: the undo holds them again.
+    RetiredPart {
+        identity: Option<String>,
+        content_type_override: Option<String>,
+    },
+    /// The relationship ids of `owner` an edit retired, per set.
+    RetiredRelationships {
+        owner: String,
+        occupied: Vec<String>,
+        authored: Vec<String>,
+        nested: Vec<String>,
+    },
     /// A relationship of `owner`'s part, or of the package when `None`,
     /// added when the relationships' counter was `next_id`.
     PackageRelationship {
@@ -288,6 +306,44 @@ impl Document {
                 }
                 Reservation::PackageRelationships(owner) => {
                     self.package.remove_part_rels(&owner);
+                }
+                Reservation::AuthoredStoryRelationship { owner, id } => {
+                    if let Some(authored) =
+                        identifiers.authored_story_relationship_ids.get_mut(&owner)
+                    {
+                        authored.remove(&id);
+                        if authored.is_empty() {
+                            identifiers.authored_story_relationship_ids.remove(&owner);
+                        }
+                    }
+                }
+                Reservation::RetiredPart {
+                    identity,
+                    content_type_override,
+                } => {
+                    identifiers.part_names.extend(identity);
+                    identifiers
+                        .content_type_overrides
+                        .extend(content_type_override);
+                }
+                Reservation::RetiredRelationships {
+                    owner,
+                    occupied,
+                    authored,
+                    nested,
+                } => {
+                    for (sets, ids) in [
+                        (&mut identifiers.relationship_ids, occupied),
+                        (&mut identifiers.authored_story_relationship_ids, authored),
+                        (
+                            &mut identifiers.authored_nested_story_relationship_ids,
+                            nested,
+                        ),
+                    ] {
+                        if !ids.is_empty() {
+                            sets.entry(owner.clone()).or_default().extend(ids);
+                        }
+                    }
                 }
                 Reservation::PackageRelationship { owner, id, next_id } => {
                     let relationships = match &owner {
@@ -961,6 +1017,22 @@ impl DocumentIdentifiers {
         self.authored_content_type_defaults.insert(extension);
     }
 
+    /// Record `id` as authored in `owner`'s story relationships.
+    pub(crate) fn author_story_relationship(&mut self, owner: &str, id: &str) {
+        let owner = relationship_owner_identity(owner);
+        if self
+            .authored_story_relationship_ids
+            .entry(owner.clone())
+            .or_default()
+            .insert(id.to_owned())
+        {
+            self.record(|| Reservation::AuthoredStoryRelationship {
+                owner,
+                id: id.to_owned(),
+            });
+        }
+    }
+
     pub(crate) fn register_content_type_override(&mut self, part_name: &str) {
         let part_name = part_name.to_ascii_lowercase();
         if !self.content_type_overrides.contains(&part_name) {
@@ -995,6 +1067,23 @@ impl DocumentIdentifiers {
             .into_iter()
             .filter(|id| !preserved.contains(id))
             .collect::<HashSet<_>>();
+        if self.journal.0.is_some() {
+            let held = |sets: &HashMap<String, HashSet<String>>| {
+                sets.get(&owner).map_or_else(Vec::new, |set| {
+                    set.iter()
+                        .filter(|id| removed.contains(*id))
+                        .cloned()
+                        .collect()
+                })
+            };
+            let entry = Reservation::RetiredRelationships {
+                owner: owner.clone(),
+                occupied: held(&self.relationship_ids),
+                authored: held(&self.authored_story_relationship_ids),
+                nested: held(&self.authored_nested_story_relationship_ids),
+            };
+            self.record(|| entry);
+        }
         if let Some(occupied) = self.relationship_ids.get_mut(&owner) {
             occupied.retain(|id| !removed.contains(id));
             if occupied.is_empty() {
@@ -1018,11 +1107,20 @@ impl DocumentIdentifiers {
 
     pub(crate) fn retire_authored_part(&mut self, part_name: &str) {
         let identity = part_name_identity(part_name);
-        if !self.preserved_part_names.contains(&identity) {
-            self.part_names.remove(&identity);
+        let identity = (!self.preserved_part_names.contains(&identity)
+            && self.part_names.remove(&identity))
+        .then_some(identity);
+        let lowered = part_name.to_ascii_lowercase();
+        let content_type_override = self
+            .content_type_overrides
+            .remove(&lowered)
+            .then_some(lowered);
+        if identity.is_some() || content_type_override.is_some() {
+            self.record(|| Reservation::RetiredPart {
+                identity,
+                content_type_override,
+            });
         }
-        self.content_type_overrides
-            .remove(&part_name.to_ascii_lowercase());
     }
 
     pub(crate) fn retire_authored_comment_ids(

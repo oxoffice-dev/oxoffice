@@ -91,6 +91,12 @@ pub struct OpcPackage {
 pub struct PartJournal {
     written: std::collections::HashSet<String>,
     before: Vec<(String, Option<Arc<Vec<u8>>>)>,
+    /// The relationships of each owner recorded before the edit changed
+    /// them, at the first record of that owner.
+    relationships_written: std::collections::HashSet<String>,
+    relationships_before: Vec<(String, Option<Relationships>)>,
+    /// The content type overrides removed, with their stored names.
+    overrides_removed: Vec<(String, String)>,
 }
 
 impl PartJournal {
@@ -112,6 +118,12 @@ impl PartJournal {
                 self.before.push((name, bytes));
             }
         }
+        for (owner, relationships) in later.relationships_before {
+            if self.relationships_written.insert(owner.clone()) {
+                self.relationships_before.push((owner, relationships));
+            }
+        }
+        self.overrides_removed.extend(later.overrides_removed);
     }
 }
 
@@ -153,6 +165,16 @@ impl OpcPackage {
                 (None, None) => false,
                 _ => true,
             })
+            || journal.relationships_before.iter().any(|(owner, before)| {
+                self.part_rels.get(owner).map(|now| &now.items)
+                    != before.as_ref().map(|before| &before.items)
+            })
+            || journal
+                .overrides_removed
+                .iter()
+                .any(|(name, content_type)| {
+                    self.content_types.overrides.get(name) != Some(content_type)
+                })
     }
 
     /// Put back, latest first, the bytes `journal` recorded.
@@ -167,6 +189,59 @@ impl OpcPackage {
                 }
             }
         }
+        for (owner, relationships) in journal.relationships_before.into_iter().rev() {
+            match relationships {
+                Some(relationships) => {
+                    self.part_rels.insert(owner, relationships);
+                }
+                None => {
+                    self.part_rels.remove(&owner);
+                }
+            }
+        }
+        for (name, content_type) in journal.overrides_removed.into_iter().rev() {
+            self.content_types.overrides.insert(name, content_type);
+        }
+    }
+
+    /// Record the relationships of `part_name` before an edit changes them
+    /// in place ([`Self::get_part_rels_mut`] records nothing), so that the
+    /// open journal puts them back. It costs that owner's relationships.
+    pub fn record_part_rels(&mut self, part_name: &str) {
+        let key = deterministic_part_key(&self.part_rels, part_name)
+            .cloned()
+            .unwrap_or_else(|| part_name.to_owned());
+        if let Some(journal) = &mut self.part_journal.0
+            && journal.relationships_written.insert(key.clone())
+        {
+            journal
+                .relationships_before
+                .push((key.clone(), self.part_rels.get(&key).cloned()));
+        }
+    }
+
+    /// Remove the content type overrides of `part_name` (every case
+    /// variant), recording them in the open journal. Returns the first one,
+    /// as [`ContentTypes::remove_override`] does.
+    pub fn remove_content_type_override(&mut self, part_name: &str) -> Option<String> {
+        let mut removed = self
+            .content_types
+            .overrides
+            .keys()
+            .filter(|candidate| candidate.eq_ignore_ascii_case(part_name))
+            .cloned()
+            .collect::<Vec<_>>();
+        removed.sort_unstable();
+        let mut first = None;
+        for name in removed {
+            if let Some(content_type) = self.content_types.overrides.remove(&name) {
+                first.get_or_insert_with(|| content_type.clone());
+                if let Some(journal) = &mut self.part_journal.0 {
+                    journal.overrides_removed.push((name, content_type));
+                }
+            }
+        }
+        first
     }
 
     fn record_part_write(&mut self, key: &str) {
@@ -751,6 +826,7 @@ impl OpcPackage {
     /// Remove and return relationships for a case-equivalent normalized owner.
     pub fn remove_part_rels(&mut self, part_name: &str) -> Option<Relationships> {
         let key = deterministic_part_key(&self.part_rels, part_name)?.clone();
+        self.record_part_rels(&key);
         self.part_rels.remove(&key)
     }
 
