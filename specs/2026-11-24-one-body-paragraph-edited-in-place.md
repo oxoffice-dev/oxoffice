@@ -1,6 +1,6 @@
 ---
 date: 2026-11-24
-status: proposed
+status: accepted
 scope: perf, docx, python
 ---
 
@@ -52,7 +52,12 @@ pays. The rule of which handles are kept and which retire does not change
    on a copy of paragraph `index` (counted as `paragraph_mut` counts) when it
    is a direct body child, and puts the copy in its place when `edit`
    succeeds; it returns the paragraph it replaced, so that the caller can
-   put it back (`restore_body_paragraph`) when the publication refuses. An
+   put it back (`restore_body_paragraph`). The binding holds the old
+   paragraph in a guard from the swap until its publication commits: any
+   exit that is not a success (a returned refusal, an error, a panic) drops
+   the guard, which puts the old paragraph back, as the drop guard of the
+   root spec's decision 1 replays a journal. Nothing of the inventory
+   changes before the commit, which cannot fail. An
    edit that fails or panics leaves the document untouched. A paragraph that
    is not a direct body child (inside a block content control, a cell, a
    header) returns `Ok(None)` before `edit` runs: the caller keeps its
@@ -87,7 +92,22 @@ pays. The rule of which handles are kept and which retire does not change
    owner (its children's parent, `by_generation`, its `by_route` bucket, the
    `*_by_parent` maps, `direct_body_paragraphs`, the projections): work in
    the removed owners and the direct children of the moved ones, never in
-   the inventory. Every splice that removes owners uses it, so
+   the inventory.
+   Order: since #617 the owner vector is not in walk order after a splice
+   (a splice appends the owners it inserts), and no read takes document
+   order from it. The paragraph and table lists, ordinals and walks read
+   the story order from the projections (`body_paragraphs`, `body_tables`,
+   `cell_paragraphs`, `direct_body_paragraphs`) and the `*_by_parent` lists,
+   which hold keys in story order; the pieces are per body block. The swap
+   rewrites a moved key in place in each of those lists and in its
+   `by_route` bucket, so every list keeps its order; no index is ordered by
+   key. The whole-inventory routes, which pair owners by route, and the
+   unordered oracle are unchanged; the oracle stays ordered wherever an
+   order is meant to hold (the projections, the parent lists). B2 checks
+   that no read iterates the owner vector for an order, and tests reads in
+   document order after a removal that swapped: `Document.paragraphs`,
+   `Document.tables`, a cell's paragraphs, the runs of a paragraph,
+   `iter_inner_content`, texts and order equal to a reopened copy. Every splice that removes owners uses it, so
    `Document.remove_content`, `remove_content_range` and `pop_content` can
    become local in a later pull request, which lets the removal splice take
    paragraphs Word saved.
@@ -133,8 +153,10 @@ writes.
 Each PR proves itself as the one-block spec's plan says: the full scaling
 set on the `scaling` profile, the debug oracles over the Python suite and
 `cargo test -p oxoffice-docx`, the steady cost at 25, 100 and 400
-paragraphs, Python tests of kept and retired handles, refusals that leave
-the document unchanged, and a mutation check of each guard.
+paragraphs, Python tests of kept and retired handles, refusals and failures after the
+swap that leave the document bytes and every handle unchanged (on a body
+Word saved), reads in document order after a removal that swapped, and a
+mutation check of each guard.
 
 ## Links
 
