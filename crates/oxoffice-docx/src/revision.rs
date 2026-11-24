@@ -2721,39 +2721,117 @@ impl<'a> XmlTree<'a> {
             )
         } else {
             self.validate_selected_descendants(index, state)?;
-            // Comments whose reference goes with the removed text go whole.
-            let mut removed_references = HashSet::new();
+            // A comment goes whole when this resolution removes its
+            // reference and all of its range, whichever wrappers hold them.
+            let mut ids = HashSet::new();
             let mut pending = self.elements[index].children.clone();
             while let Some(descendant) = pending.pop() {
                 let node = &self.elements[descendant];
-                if node.word && node.local == "commentReference" {
-                    removed_references.extend(self.element_id(descendant));
+                if node.word && is_comment_marker(&node.local) {
+                    ids.extend(self.element_id(descendant));
                 }
                 pending.extend(node.children.iter().copied());
             }
+            ids.retain(|id| self.comment_goes_whole(id, state));
             let mut kept = Vec::new();
             for &child in &self.elements[index].children {
                 let node = &self.elements[child];
-                // A comment range marker the removed text holds stays at the
-                // place the text collapses to, as Word keeps a comment on a
-                // tracked change it accepts or rejects, unless its reference
-                // goes too.
-                let range_marker = node.word
-                    && matches!(node.local.as_str(), "commentRangeStart" | "commentRangeEnd")
-                    && self
-                        .element_id(child)
-                        .is_none_or(|id| !removed_references.contains(&id));
-                if range_marker
-                    || state
-                        .custody_pairs
-                        .iter()
-                        .any(|pair| pair.start <= node.start && node.end <= pair.end)
+                if state
+                    .custody_pairs
+                    .iter()
+                    .any(|pair| pair.start <= node.start && node.end <= pair.end)
                 {
                     kept.extend(self.render_with_namespaces(child, state, false, destination)?);
+                } else {
+                    self.keep_surviving_comment_marks(child, &ids, state, destination, &mut kept)?;
                 }
             }
             Ok(kept)
         }
+    }
+
+    /// Keep, from content the resolution removes, the comment range markers
+    /// and reference runs of the comments that do not go whole: they stay at
+    /// the place the text collapses to, as Word keeps a comment on a tracked
+    /// change it accepts or rejects, and as LibreOffice writes the end and
+    /// mark of a comment inside a deletion. Wrappers in the removed content
+    /// are searched too.
+    fn keep_surviving_comment_marks(
+        &self,
+        index: usize,
+        whole: &HashSet<String>,
+        state: &mut RenderState<'_>,
+        destination: &[(String, String)],
+        kept: &mut Vec<u8>,
+    ) -> Result<()> {
+        let node = &self.elements[index];
+        if !node.word {
+            return Ok(());
+        }
+        let survives = |id: Option<String>| id.is_none_or(|id| !whole.contains(&id));
+        let marker = matches!(node.local.as_str(), "commentRangeStart" | "commentRangeEnd")
+            && survives(self.element_id(index));
+        // A run holding nothing but run properties and comment references.
+        let references = node.local == "r"
+            && node.children.iter().any(|&child| {
+                self.elements[child].word && self.elements[child].local == "commentReference"
+            })
+            && node.children.iter().all(|&child| {
+                let child = &self.elements[child];
+                child.word && matches!(child.local.as_str(), "rPr" | "commentReference")
+            });
+        if marker
+            || references
+                && node.children.iter().all(|&child| {
+                    self.elements[child].local != "commentReference"
+                        || survives(self.element_id(child))
+                })
+        {
+            kept.extend(self.render_with_namespaces(index, state, false, destination)?);
+        } else if matches!(
+            node.local.as_str(),
+            "del" | "ins" | "moveFrom" | "moveTo" | "smartTag" | "customXml" | "sdt" | "sdtContent"
+        ) {
+            for &child in &node.children {
+                self.keep_surviving_comment_marks(child, whole, state, destination, kept)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether this resolution removes the reference and every range marker
+    /// of comment `id`.
+    fn comment_goes_whole(&self, id: &str, state: &RenderState<'_>) -> bool {
+        let mut referenced = false;
+        for (index, node) in self.elements.iter().enumerate() {
+            if !(node.word && is_comment_marker(&node.local))
+                || self.element_id(index).as_deref() != Some(id)
+            {
+                continue;
+            }
+            if !self.removed_by_resolution(index, state) {
+                return false;
+            }
+            referenced |= node.local == "commentReference";
+        }
+        referenced
+    }
+
+    /// Whether the element at `index` lies in a revision wrapper whose content
+    /// this resolution removes.
+    fn removed_by_resolution(&self, index: usize, state: &RenderState<'_>) -> bool {
+        let mut current = self.elements[index].parent;
+        while let Some(ancestor) = current {
+            if let Some(metadata) = &self.elements[ancestor].revision
+                && self.semantic_element(ancestor)
+                && state.scope.matches(metadata)
+                && !keeps_content(state.resolution, metadata.kind)
+            {
+                return true;
+            }
+            current = self.elements[ancestor].parent;
+        }
+        false
     }
 
     /// The `id` attribute of an element's start tag.
@@ -4461,6 +4539,14 @@ fn is_property_change(kind: RevisionKind) -> bool {
 
 fn keeps_content(resolution: Resolution, kind: RevisionKind) -> bool {
     !removes_content(resolution, kind)
+}
+
+/// A comment range marker or comment reference.
+fn is_comment_marker(local: &str) -> bool {
+    matches!(
+        local,
+        "commentRangeStart" | "commentRangeEnd" | "commentReference"
+    )
 }
 
 /// A bookmark, comment or permission range marker, which may stand at block

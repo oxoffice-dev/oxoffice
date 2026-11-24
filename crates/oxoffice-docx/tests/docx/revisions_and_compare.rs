@@ -4765,3 +4765,199 @@ fn a_whole_paragraph_link_no_field_can_carry_is_refused() {
         assert_eq!(texts(&reopen(&mut doc)), texts(&doc_with_body(&original)));
     }
 }
+
+/// `Kept four tail` with a comment on `Kept four`, whose end and comment
+/// mark are then wrapped in a tracked `wrapper` (`del` or `ins`), as
+/// LibreOffice writes a comment that ends on changed text, with `four` in a
+/// second wrapper of the same kind.
+fn comment_ending_inside_a_revision(wrapper: &str) -> Document {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:r><w:t>four</w:t></w:r><w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>"#,
+    );
+    let range = oxoffice_docx::RunRange {
+        start: oxoffice_docx::RunPosition {
+            body_index: 0,
+            run_index: 0,
+        },
+        end: oxoffice_docx::RunPosition {
+            body_index: 0,
+            run_index: 2,
+        },
+    };
+    doc.add_comment_with_date(
+        range,
+        "Reviewer",
+        None,
+        "Check",
+        oxoffice_docx::CommentDate::Undated,
+    )
+    .unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let open = |id: u32| {
+        format!(r#"<w:{wrapper} w:id="{id}" w:author="A" w:date="2026-01-01T00:00:00Z">"#)
+    };
+    let text = if wrapper == "del" { "delText" } else { "t" };
+    let mark_start = xml.find("<w:commentRangeEnd").unwrap();
+    let mark_end = xml[mark_start..].find("</w:r>").unwrap() + mark_start + "</w:r>".len();
+    let four = xml.find("<w:r><w:t>four</w:t></w:r>").unwrap();
+    let xml = format!(
+        "{}{}<w:r><w:{text}>four</w:{text}></w:r></w:{wrapper}>{}{}</w:{wrapper}>{}",
+        &xml[..four],
+        open(90),
+        open(91),
+        &xml[mark_start..mark_end],
+        &xml[mark_end..],
+    );
+    package.set_part(&part, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// The text the only comment of `doc` covers, after `resolve`.
+fn comment_after(
+    doc: &mut Document,
+    resolve: fn(&mut Document) -> oxoffice_docx::Result<usize>,
+) -> String {
+    let mut doc = reopen(doc);
+    resolve(&mut doc).unwrap_or_else(|e| panic!("{e}"));
+    let doc = reopen(&mut doc);
+    let comments = doc.comments();
+    assert_eq!(comments.len(), 1);
+    comments[0].anchor_text().unwrap().unwrap_or_default()
+}
+
+#[test]
+fn a_comment_ending_inside_an_accepted_deletion_stays_on_the_text_left() {
+    let mut doc = comment_ending_inside_a_revision("del");
+    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept ");
+    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept four");
+}
+
+#[test]
+fn a_comment_ending_inside_a_rejected_insertion_stays_on_the_text_left() {
+    let mut doc = comment_ending_inside_a_revision("ins");
+    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept four");
+    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept ");
+}
+
+#[test]
+fn every_revision_of_libreoffices_record_is_accepted_with_its_comments_kept() {
+    // LibreOffice writes the end and the mark of a comment inside a deletion.
+    let mut doc = crate::support::corpus_doc("libreoffice/record.docx");
+    let before = doc.comments().len();
+    doc.accept_all().unwrap_or_else(|e| panic!("{e}"));
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.comments().len(), before);
+    assert!(
+        doc.comments()
+            .iter()
+            .all(|comment| comment.anchor_text().is_ok_and(|text| text.is_some())),
+    );
+}
+
+/// `Kept 30 days tail` with a comment on `30 days`, its main part then
+/// rewritten by `edit`.
+fn comment_on_thirty_days(edit: impl FnOnce(&str) -> String) -> Document {
+    let mut doc = doc_with_body(
+        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:r><w:t>30</w:t></w:r><w:r><w:t xml:space="preserve"> days</w:t></w:r><w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>"#,
+    );
+    let range = oxoffice_docx::RunRange {
+        start: oxoffice_docx::RunPosition {
+            body_index: 0,
+            run_index: 1,
+        },
+        end: oxoffice_docx::RunPosition {
+            body_index: 0,
+            run_index: 3,
+        },
+    };
+    doc.add_comment_with_date(
+        range,
+        "Reviewer",
+        None,
+        "Check",
+        oxoffice_docx::CommentDate::Undated,
+    )
+    .unwrap();
+    let bytes = doc.to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    package.set_part(&part, edit(&xml).into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// `xml` with `from..to` wrapped in a tracked `wrapper` with this id, its
+/// text turned into deleted text for a deletion.
+fn wrapped(xml: &str, from: usize, to: usize, wrapper: &str, id: u32) -> String {
+    let inner = &xml[from..to];
+    let inner = if wrapper == "del" {
+        inner
+            .replace("<w:t>", "<w:delText>")
+            .replace(
+                "<w:t xml:space=\"preserve\">",
+                "<w:delText xml:space=\"preserve\">",
+            )
+            .replace("</w:t>", "</w:delText>")
+    } else {
+        inner.to_owned()
+    };
+    format!(
+        r#"{}<w:{wrapper} w:id="{id}" w:author="A" w:date="2026-01-01T00:00:00Z">{inner}</w:{wrapper}>{}"#,
+        &xml[..from],
+        &xml[to..]
+    )
+}
+
+/// The start of the comment through `30`, and ` days` through the comment
+/// mark, as two deletions 90 and 91.
+fn thirty_days_in_two_deletions(xml: &str) -> String {
+    let start = xml.find("<w:commentRangeStart").unwrap();
+    let thirty = xml.find("<w:t>30</w:t></w:r>").unwrap() + "<w:t>30</w:t></w:r>".len();
+    let days = xml.find("<w:r><w:t xml:space=\"preserve\"> days").unwrap();
+    let reference = xml.find("<w:commentReference").unwrap();
+    let mark = xml[reference..].find("</w:r>").unwrap() + reference + "</w:r>".len();
+    let xml = wrapped(xml, days, mark, "del", 91);
+    wrapped(&xml, start, thirty, "del", 90)
+}
+
+#[test]
+fn a_comment_whose_range_two_accepted_deletions_hold_goes_with_them() {
+    let mut doc = comment_on_thirty_days(thirty_days_in_two_deletions);
+    doc.accept_all().unwrap_or_else(|e| panic!("{e}"));
+    let doc = reopen(&mut doc);
+    assert!(doc.comments().is_empty());
+    assert_eq!(texts(&doc), ["Kept  tail"]);
+}
+
+#[test]
+fn accepting_only_the_deletion_with_a_comment_end_keeps_the_comment() {
+    // The start stays in the other deletion, which is not resolved.
+    let mut doc = comment_on_thirty_days(thirty_days_in_two_deletions);
+    doc.accept_revision_id(91).unwrap_or_else(|e| panic!("{e}"));
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.comments().len(), 1);
+    assert!(doc.comments()[0].anchor_text().is_ok());
+}
+
+#[test]
+fn a_comment_end_in_a_deletion_inside_a_rejected_insertion_stays() {
+    // ` days`, the end and the mark were inserted, then the end and the mark
+    // deleted by someone else.
+    let mut doc = comment_on_thirty_days(|xml| {
+        let end = xml.find("<w:commentRangeEnd").unwrap();
+        let reference = xml.find("<w:commentReference").unwrap();
+        let mark = xml[reference..].find("</w:r>").unwrap() + reference + "</w:r>".len();
+        let xml = wrapped(xml, end, mark, "del", 93);
+        let days = xml.find("<w:r><w:t xml:space=\"preserve\"> days").unwrap();
+        let close = xml.find("</w:del>").unwrap() + "</w:del>".len();
+        wrapped(&xml, days, close, "ins", 92)
+    });
+    assert_eq!(comment_after(&mut doc, Document::reject_all), "30");
+}
