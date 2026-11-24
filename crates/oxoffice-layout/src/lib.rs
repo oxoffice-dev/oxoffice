@@ -3,6 +3,7 @@
 pub mod bundled_fonts;
 pub mod error;
 pub mod font;
+pub mod font_embedding;
 pub mod glyph_coverage;
 pub mod line;
 pub mod output;

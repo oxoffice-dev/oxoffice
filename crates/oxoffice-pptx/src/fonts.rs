@@ -2,6 +2,10 @@
 
 use super::*;
 
+use oxoffice_layout::font_embedding::{
+    MAX_EMBEDDED_FACE_BYTES, SfntTables, check_embedding_license,
+};
+
 pub(super) const EMBEDDED_FONT_CONTENT_TYPE: &str = "application/x-fontdata";
 const EOT_VERSION: u32 = 0x0002_0001;
 const EOT_MAGIC: u16 = 0x504C;
@@ -85,7 +89,6 @@ pub struct EmbeddedTypeface {
     pub faces: Vec<EmbeddedFontFace>,
 }
 
-const MAX_EMBEDDED_FACE_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const MAX_EMBEDDED_DECODED_BYTES: usize = 256 * 1024 * 1024;
 pub(super) type DecodedEmbeddedFont = (EmbeddedFontFormat, Option<std::sync::Arc<[u8]>>);
 
@@ -337,22 +340,7 @@ fn font_incoming_relationship_count(package: &OpcPackage, target: &str) -> usize
 fn validate_font_embedding_license(
     license: &FontEmbeddingLicense,
 ) -> std::result::Result<(), String> {
-    if !license.authorized {
-        return Err("font embedding requires explicit caller authorization".to_owned());
-    }
-    if license.identity.trim().is_empty()
-        || license.identity.len() > 4096
-        || license
-            .identity
-            .bytes()
-            .any(|byte| matches!(byte, b'\t' | b'\n' | b'\r'))
-    {
-        return Err(
-            "font embedding requires an exact nonempty license identity of at most 4096 bytes"
-                .to_owned(),
-        );
-    }
-    Ok(())
+    check_embedding_license(license.authorized, &license.identity)
 }
 
 /// Inspects the complete stored envelope before exposing a borrowed sfnt body.
@@ -453,105 +441,15 @@ fn read_u32_be(bytes: &[u8], offset: usize) -> Option<u32> {
         .map(|slice| u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
-/// The `OS/2`, `head`, `name` and `post` tables of one TrueType or OpenType
-/// font, bounds-checked against the font bytes.
-struct SfntTables<'a> {
-    data: &'a [u8],
-    os2: &'a [u8],
-    head: &'a [u8],
-    name: &'a [u8],
+/// What PowerPoint reads from a checked face to write its embedded font.
+trait SfntFace<'a> {
+    fn panose(&self) -> &'a [u8];
+    fn code_page_ranges(&self) -> (u32, u32);
+    fn name_utf16le(&self, name_id: u16) -> Vec<u8>;
+    fn embedded_open_type(&self) -> std::result::Result<Vec<u8>, String>;
 }
 
-impl<'a> SfntTables<'a> {
-    fn parse(data: &'a [u8]) -> std::result::Result<Self, String> {
-        match data.first_chunk::<4>() {
-            Some(b"\x00\x01\x00\x00" | b"OTTO" | b"true") => {}
-            Some(b"ttcf") => {
-                return Err(
-                    "a font collection cannot be embedded, pass one TrueType or OpenType face"
-                        .to_owned(),
-                );
-            }
-            _ => return Err("embedded font bytes are not a supported sfnt font".to_owned()),
-        }
-        let malformed = || "embedded font bytes have a malformed sfnt table directory".to_owned();
-        let table_count = read_u16_be(data, 4).ok_or_else(malformed)?;
-        if table_count == 0 || table_count > 512 {
-            return Err(malformed());
-        }
-        if data.len() > MAX_EMBEDDED_FACE_BYTES || data.len() < 12 + usize::from(table_count) * 16 {
-            return Err(malformed());
-        }
-        let mut directory = HashMap::new();
-        for index in 0..usize::from(table_count) {
-            let record = 12 + index * 16;
-            let tag: [u8; 4] = data[record..record + 4].try_into().unwrap();
-            let offset = read_u32_be(data, record + 8).ok_or_else(malformed)? as usize;
-            let length = read_u32_be(data, record + 12).ok_or_else(malformed)? as usize;
-            let end = offset.checked_add(length).ok_or_else(malformed)?;
-            let bytes = data.get(offset..end).ok_or_else(malformed)?;
-            if directory.insert(tag, bytes).is_some()
-                || (length != 0 && offset < 12 + usize::from(table_count) * 16)
-            {
-                return Err(malformed());
-            }
-        }
-        let table = |tag: &[u8; 4]| -> std::result::Result<Option<&'a [u8]>, String> {
-            Ok(directory.get(tag).copied())
-        };
-        let required = |tag: &[u8; 4]| {
-            table(tag)?.ok_or_else(|| {
-                format!(
-                    "embedded font has no {} table",
-                    String::from_utf8_lossy(tag).trim_end()
-                )
-            })
-        };
-        let tables = Self {
-            data,
-            os2: required(b"OS/2")?,
-            head: required(b"head")?,
-            name: required(b"name")?,
-        };
-        if tables.os2.len() < 78 || tables.head.len() < 54 {
-            return Err("embedded font has a truncated OS/2 or head table".to_owned());
-        }
-        let minimum_os2 = match tables.os2_version() {
-            0 => 78,
-            1 => 86,
-            2..=4 => 96,
-            _ => 100,
-        };
-        if tables.os2.len() < minimum_os2 {
-            return Err("embedded font has a truncated OS/2 table".to_owned());
-        }
-        let count = read_u16_be(tables.name, 2).ok_or_else(malformed)? as usize;
-        let strings = read_u16_be(tables.name, 4).ok_or_else(malformed)? as usize;
-        let format = read_u16_be(tables.name, 0).ok_or_else(malformed)?;
-        if format > 1 || strings < 6 + count * 12 || strings > tables.name.len() {
-            return Err(malformed());
-        }
-        for index in 0..count {
-            let record = 6 + index * 12;
-            let platform = read_u16_be(tables.name, record).ok_or_else(malformed)?;
-            let length = read_u16_be(tables.name, record + 8).ok_or_else(malformed)? as usize;
-            let offset = read_u16_be(tables.name, record + 10).ok_or_else(malformed)? as usize;
-            if tables
-                .name
-                .get(strings + offset..strings + offset + length)
-                .is_none()
-                || (matches!(platform, 0 | 3) && !length.is_multiple_of(2))
-            {
-                return Err(malformed());
-            }
-        }
-        Ok(tables)
-    }
-
-    fn os2_version(&self) -> u16 {
-        read_u16_be(self.os2, 0).unwrap_or(0)
-    }
-
+impl<'a> SfntFace<'a> for SfntTables<'a> {
     fn panose(&self) -> &'a [u8] {
         &self.os2[32..42]
     }

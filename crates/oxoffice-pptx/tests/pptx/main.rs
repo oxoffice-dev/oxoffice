@@ -3,6 +3,7 @@
 
 mod charts;
 mod corpus;
+mod fonts;
 mod notes_and_comments;
 mod pictures;
 #[cfg(feature = "render")]

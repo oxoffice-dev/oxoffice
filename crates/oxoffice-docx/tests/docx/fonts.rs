@@ -36,22 +36,35 @@ const OBFUSCATED_FONT_TYPE: &str = "application/vnd.openxmlformats-officedocumen
 const WORD_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
-/// A one-table sfnt face whose `name` table holds `marker`: enough for the
-/// embedding checks, and each marker gives different bytes. `marker` needs
-/// four bytes or more.
+/// A minimal sfnt face: a `name` table with no records followed by
+/// `marker`, and `OS/2` (version 0) and `head` tables of their minimum
+/// lengths. Enough for the embedding checks, and each marker gives
+/// different bytes.
 fn tiny_font(marker: &str) -> Vec<u8> {
-    let table = marker.as_bytes();
+    let mut name = vec![0, 0, 0, 0, 0, 6]; // format 0, no records, strings at 6
+    name.extend_from_slice(marker.as_bytes());
+    let tables: [(&[u8; 4], Vec<u8>); 3] = [
+        (b"OS/2", vec![0; 78]),
+        (b"head", vec![0; 54]),
+        (b"name", name),
+    ];
     let mut font = Vec::new();
     font.extend_from_slice(&0x0001_0000u32.to_be_bytes()); // TrueType outlines
-    font.extend_from_slice(&1u16.to_be_bytes()); // numTables
-    font.extend_from_slice(&16u16.to_be_bytes()); // searchRange
-    font.extend_from_slice(&0u16.to_be_bytes()); // entrySelector
-    font.extend_from_slice(&0u16.to_be_bytes()); // rangeShift
-    font.extend_from_slice(b"name");
-    font.extend_from_slice(&0u32.to_be_bytes()); // checksum
-    font.extend_from_slice(&28u32.to_be_bytes()); // offset
-    font.extend_from_slice(&(table.len() as u32).to_be_bytes());
-    font.extend_from_slice(table);
+    font.extend_from_slice(&3u16.to_be_bytes()); // numTables
+    font.extend_from_slice(&32u16.to_be_bytes()); // searchRange
+    font.extend_from_slice(&1u16.to_be_bytes()); // entrySelector
+    font.extend_from_slice(&16u16.to_be_bytes()); // rangeShift
+    let mut offset = 12 + 16 * tables.len();
+    for (tag, table) in &tables {
+        font.extend_from_slice(*tag);
+        font.extend_from_slice(&0u32.to_be_bytes()); // checksum
+        font.extend_from_slice(&(offset as u32).to_be_bytes());
+        font.extend_from_slice(&(table.len() as u32).to_be_bytes());
+        offset += table.len();
+    }
+    for (_, table) in &tables {
+        font.extend_from_slice(table);
+    }
     font
 }
 
@@ -789,6 +802,31 @@ fn embedding_a_face_again_replaces_its_bytes_in_one_part() {
     let package = saved_package(&mut doc);
     assert_eq!(font_parts(&package).len(), 1);
     assert_eq!(font_relationships(&package).len(), 1);
+}
+
+#[test]
+fn a_face_without_its_os2_or_head_table_is_refused() {
+    let mut doc = Document::new();
+    let before = doc.to_bytes().unwrap();
+    let complete = tiny_font("complete");
+    // The same face with one of its three tables renamed away.
+    for (tag, renamed) in [(b"OS/2", b"OS/3"), (b"head", b"heae")] {
+        let mut face = complete.clone();
+        let record = face[12..60]
+            .chunks(16)
+            .position(|record| &record[..4] == tag)
+            .expect("the table is listed");
+        face[12 + record * 16..12 + record * 16 + 4].copy_from_slice(renamed);
+        let embedded = EmbeddedFont::new(Regular, face, KEY, license());
+        assert!(
+            doc.embed_font("Tiny", embedded).is_err(),
+            "a face without {} is refused",
+            String::from_utf8_lossy(tag)
+        );
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    doc.embed_font("Tiny", face(Regular, complete))
+        .expect("the complete face is embedded");
 }
 
 #[test]
