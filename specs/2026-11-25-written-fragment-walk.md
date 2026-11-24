@@ -140,7 +140,12 @@ oracle runs the staged route on a copy and compares.
 
 One pull request: the visitor (oxml), the three queries and their oracle
 (docx), `remove_style` in place. `Document.remove_style` leaves `GROWING`
-(102 -> 101 at the time of writing). Steady table at 25/100/400 paragraphs
+(102 -> 101 at the time of writing). The walk stays linear in the body:
+the call passes the scaling gate because a walk of the model costs far less
+than the gate's floor, not because it is flat. The pull request gives the
+steady cost of `remove_style` and of the slot queries at 400 and 4,000
+paragraphs, so the slope left (microseconds per paragraph, no
+serialization) is visible. Steady table at 25/100/400 paragraphs
 (main -> branch), Python behaviour tests (a style named only in a raw
 fragment or a tracked change is refused and the document is unchanged; a
 linked pair and a released numbering level still go), a mutation check of
