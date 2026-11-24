@@ -256,6 +256,9 @@ impl Document {
             ..
         } = undo;
         self.package.undo_part_journal(parts);
+        // The part journal put back the bytes the edit wrote or removed.
+        let mut reservations = reservations;
+        reservations.forget_package_writes();
         self.undo_reservations(reservations);
         if let Some(copy) = footnotes {
             self.footnotes = copy.footnotes;
@@ -623,6 +626,33 @@ mod tests {
             document.comments.is_some(),
             document.package.get_part("/word/extra.xml").is_some(),
         )
+    }
+
+    #[test]
+    fn a_refusal_after_a_custom_xml_store_and_a_removal_leaves_the_document_as_it_was() {
+        let mut document = Document::new();
+        document
+            .set_document_variable("kept", "value")
+            .expect("a variable is set");
+        let before = document.clone_for_staging().to_bytes().unwrap();
+        let identifiers = document.identifiers.clone();
+        let result: Result<()> =
+            document.edit_in_place(&[EditUnit::Settings, EditUnit::Parts], |document| {
+                crate::bibliography::add_custom_xml_store_in_place(document, b"<data/>", &[])?;
+                document.remove_document_variable("kept")?;
+                let settings = document
+                    .settings_part_name
+                    .clone()
+                    .expect("a settings part");
+                document.package.remove_part(&settings);
+                document.package.remove_part_rels(&settings);
+                document.package.remove_content_type_override(&settings);
+                document.identifiers.retire_authored_part(&settings);
+                Err(Error::Other("refused".to_owned()))
+            });
+        assert!(result.is_err());
+        assert_eq!(document.identifiers, identifiers);
+        assert_eq!(document.clone_for_staging().to_bytes().unwrap(), before);
     }
 
     #[test]

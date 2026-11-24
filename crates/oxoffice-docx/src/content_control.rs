@@ -481,11 +481,11 @@ impl Document {
         Ok(())
     }
 
-    /// Stage one custom XML item and its properties part.
+    /// Add one custom XML item and its properties part, in place.
     ///
     /// The returned value is the braced item id. An empty URI list writes an
     /// empty `ds:schemaRefs`. Invalid item bytes and an empty schema URI
-    /// publish nothing.
+    /// change nothing.
     pub fn add_custom_xml_store(
         &mut self,
         item_xml: &[u8],
@@ -498,15 +498,100 @@ impl Document {
             }
             oxoffice_core::xml::reject_non_xml_characters("custom XML schema URI", uri)?;
         }
-        let mut candidate = self.clone_for_staging();
-        candidate.prepare_staged_package()?;
-        let staged =
-            crate::bibliography::stage_custom_xml_store(&mut candidate, item_xml, schema_uris)?;
-        let mut reopened = candidate.reopen_prepared_staged().map_err(control_fault)?;
-        reopened.invalidate_layout();
-        let item_id = staged.item_id;
-        self.commit_staged_mutation(reopened);
-        Ok(item_id)
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        self.identifiers.open_journal();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::bibliography::add_custom_xml_store_in_place(self, item_xml, schema_uris)
+        }));
+        let journal = self.identifiers.close_journal();
+        let result = match result {
+            Err(panic) => {
+                // The writes come after every step that can fail.
+                if !journal.changed_package_bytes() {
+                    self.undo_reservations(journal);
+                }
+                std::panic::resume_unwind(panic)
+            }
+            Ok(Err(error)) => {
+                self.undo_reservations(journal);
+                Err(error)
+            }
+            Ok(Ok(item_id)) => {
+                let signed = self.package.package_rels.items.iter().any(|relationship| {
+                    relationship.rel_type
+                        == oxoffice_opc::relationship::rel_types::DIGITAL_SIGNATURE_ORIGIN
+                });
+                self.package_signatures_invalidated |= signed && journal.changed_package();
+                // A bound control shows the store's value.
+                self.invalidate_layout();
+                Ok(item_id)
+            }
+        };
+        #[cfg(debug_assertions)]
+        self.assert_custom_xml_store_matches_staged(before, item_xml, schema_uris, &result);
+        result
+    }
+
+    /// Debug proof that the in-place store addition wrote the parts,
+    /// relationships and content types the staged route writes, with the same
+    /// identity, or refused with its error and left the package as it was.
+    #[cfg(debug_assertions)]
+    fn assert_custom_xml_store_matches_staged(
+        &self,
+        before: Self,
+        item_xml: &[u8],
+        schema_uris: &[&str],
+        result: &Result<String>,
+    ) {
+        let mut staged = before.clone_for_staging();
+        let outcome = staged.prepare_staged_package().and_then(|_| {
+            crate::bibliography::stage_custom_xml_store(&mut staged, item_xml, schema_uris)
+        });
+        match (result, outcome) {
+            (Ok(direct), Ok(staged_store)) => {
+                assert_eq!(*direct, staged_store.item_id, "another store identity");
+                let part = staged_store.part_name;
+                let rels = |document: &Self, owner: &str| {
+                    document.package.get_part_rels(owner).map(|relationships| {
+                        let mut items = relationships
+                            .items
+                            .iter()
+                            .map(|item| {
+                                (item.id.clone(), item.rel_type.clone(), item.target.clone())
+                            })
+                            .collect::<Vec<_>>();
+                        items.sort();
+                        items
+                    })
+                };
+                let properties = rels(&staged, &part)
+                    .and_then(|items| items.first().cloned())
+                    .map(|(_, _, target)| {
+                        oxoffice_opc::OpcPackage::resolve_rel_target(&part, &target)
+                    })
+                    .expect("the staged item names its properties");
+                for name in [&part, &properties] {
+                    assert_eq!(staged.package.get_part(name), self.package.get_part(name));
+                    assert_eq!(
+                        staged.package.content_types.overrides.get(name.as_str()),
+                        self.package.content_types.overrides.get(name.as_str()),
+                    );
+                }
+                assert_eq!(rels(&staged, &part), rels(self, &part));
+                assert_eq!(
+                    rels(&staged, &staged.doc_part_name),
+                    rels(self, &self.doc_part_name)
+                );
+            }
+            (Err(direct), Err(staged)) => {
+                assert_eq!(direct.to_string(), staged.to_string());
+                assert!(before.package.same_package_as(&self.package));
+                assert_eq!(before.identifiers, self.identifiers);
+            }
+            (Ok(_), Err(staged)) => panic!("the in-place store addition hid {staged}"),
+            (Err(direct), Ok(_)) => panic!("the in-place store addition refused with {direct}"),
+        }
     }
 
     /// Attach `w:dataBinding` to one control after the store and path resolve.

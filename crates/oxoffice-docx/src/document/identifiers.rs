@@ -80,6 +80,14 @@ impl ReservationJournal {
     pub(crate) fn extend(&mut self, later: ReservationJournal) {
         self.entries.extend(later.entries);
         self.removed_from_package |= later.removed_from_package;
+        self.written_to_package |= later.written_to_package;
+    }
+
+    /// The part writes and removals this journal records were put back by
+    /// the part journal of an in-place edit, so undoing the rest is valid.
+    pub(crate) fn forget_package_writes(&mut self) {
+        self.removed_from_package = false;
+        self.written_to_package = false;
     }
 
     /// Whether the edit changed the package graph.

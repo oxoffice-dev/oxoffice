@@ -823,7 +823,7 @@ fn drop_edges_of_type(document: &mut Document, part_name: &str, rel_type: &str) 
 /// the open edit of the mail-merge call.
 pub(super) fn add_merge_store(document: &mut Document, xml: &[u8]) -> Result<String> {
     crate::content_control::validate_store_item(xml)?;
-    Ok(crate::bibliography::stage_custom_xml_store(document, xml, &[MERGE_DATA_NS])?.item_id)
+    crate::bibliography::add_custom_xml_store_in_place(document, xml, &[MERGE_DATA_NS])
 }
 
 fn retire_owned_part(document: &mut Document, part_name: &str) {

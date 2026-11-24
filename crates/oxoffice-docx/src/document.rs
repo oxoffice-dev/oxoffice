@@ -1707,7 +1707,7 @@ impl Default for Document {
 ///
 /// Falls back to the absolute part name when the two live in different
 /// directories, which OPC also permits.
-fn relative_target(source_part: &str, target_part: &str) -> String {
+pub(crate) fn relative_target(source_part: &str, target_part: &str) -> String {
     let dir = match source_part.rfind('/') {
         Some(pos) => &source_part[..=pos],
         None => "/",
