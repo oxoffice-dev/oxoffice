@@ -57,7 +57,10 @@ pays. The rule of which handles are kept and which retire does not change
    exit that is not a success (a returned refusal, an error, a panic) drops
    the guard, which puts the old paragraph back, as the drop guard of the
    root spec's decision 1 replays a journal. Nothing of the inventory
-   changes before the commit, which cannot fail. An
+   changes before the revision commit. That commit can still return an
+   error, before it changes anything: the guard then puts the paragraph
+   back. Once it succeeds, the inventory updates that follow cannot fail,
+   their room reserved beforehand. An
    edit that fails or panics leaves the document untouched. A paragraph that
    is not a direct body child (inside a block content control, a cell, a
    header) returns `Ok(None)` before `edit` runs: the caller keeps its
