@@ -952,7 +952,7 @@ pub(crate) struct TemplateEvaluation<'data, 'formatter> {
     // instead of once per published story.
     staged: Option<Vec<TemplateProgram>>,
     // Whether a publication changed a part since the last staging: debug
-    // builds then check a kept root against a fresh staging.
+    // builds then check every kept root against a fresh staging.
     #[cfg(debug_assertions)]
     published_since_staging: bool,
     // The callback lifetime stays on this field. A type alias would force 'static.
@@ -2324,12 +2324,24 @@ fn canonical_root_base(
             && program.story.kind() == current.story.kind()
             && program.story.owner_index() == current.story.owner_index()
     };
-    let cached = evaluation.staged.iter().flatten().find(same_owner).cloned();
+    let cached = evaluation
+        .staged
+        .iter()
+        .flatten()
+        .any(|program| same_owner(&program));
+    // Debug builds stage again after every publication and check that each
+    // root kept across it is the one a fresh staging reads.
     #[cfg(debug_assertions)]
-    let check = cached.is_some() && evaluation.published_since_staging;
+    let check = evaluation.published_since_staging;
     #[cfg(not(debug_assertions))]
     let check = false;
-    if cached.is_none() || check {
+    if !cached || check {
+        #[cfg(debug_assertions)]
+        let kept = if evaluation.published_since_staging {
+            evaluation.staged.take()
+        } else {
+            None
+        };
         #[cfg(debug_assertions)]
         {
             evaluation.published_since_staging = false;
@@ -2347,6 +2359,19 @@ fn canonical_root_base(
             &evaluation.lineage,
             &mut evaluation.sources,
         )?);
+        #[cfg(debug_assertions)]
+        for root in kept.iter().flatten() {
+            let fresh = evaluation
+                .staged
+                .iter()
+                .flatten()
+                .find(|program| program.part == root.part && program.story == root.story);
+            assert!(
+                fresh.is_some_and(|fresh| same_staged_root(root, fresh)),
+                "a template publication left the staged root of {} stale",
+                root.part
+            );
+        }
     }
     let mut fresh = evaluation
         .staged
@@ -2355,14 +2380,6 @@ fn canonical_root_base(
         .find(same_owner)
         .cloned()
         .ok_or_else(|| template_error("template physical owner disappeared during staging"))?;
-    #[cfg(debug_assertions)]
-    if let Some(cached) = &cached {
-        assert!(
-            same_staged_root(cached, &fresh),
-            "a template publication left the staged root of {} stale",
-            current.part
-        );
-    }
     retain_original_template_locations(current, &mut fresh)?;
     Ok(fresh)
 }
