@@ -210,6 +210,33 @@ What S1a builds differs from decision 1 in how the units are kept:
   a copy (`assert_in_place_matches_staged`) and applies the undo to a
   copy of the edited document (`assert_undo_restores`).
 
+### S1b as built (amended 2026-11-24)
+
+- **No note model for tables.** The notes parts stay the authority: the
+  typed footnotes model keeps paragraphs only and is never written over
+  an existing part, so `insert_content` at a destination in the
+  footnotes or endnotes part splices the block into the part's bytes on
+  the live document (`EditUnit::Footnotes` and a new `EditUnit::Endnotes`,
+  whose part has no model: the part journal undoes it, a copy of its
+  bytes answers the no-op). A fragment holding a note reference keeps the
+  staged route (copying a shown note reads the main part).
+- **A related story is read from its part.** `footnote_story`,
+  `endnote_story` and `story_items` of a header, footer, note or comment
+  story read that part alone; they serialized the main part before.
+- **Story splice in the binding.** The publication retires the owners of
+  the touched note, reads the owners of its part alone
+  (`WordPieces::read_part`), gives the touched note's owners the keys of
+  the retired ones (then new keys), and keeps every other owner and the
+  document epoch, as a paragraph edit does. When the part's other stories
+  read otherwise than before (a table or text box that renumbers the
+  part's cell or text-box stories), it publishes the whole inventory with
+  the same rule (`prepare_story_revision`). The Python API reaches that
+  case only through a note other than the newest, which no handle names
+  today. Debug builds check both against the whole inventory
+  (`assert_word_inventory_rebuilds`, `assert_kept_owners_name_their_elements`).
+- What stays linear: finding the touched note's owners walks the owner
+  list (a compare per owner), under a millisecond at 400 paragraphs.
+
 ### S4: content controls, forms, mail merge (amended 2026-11-25)
 
 S4 lands in three pull requests: settings-and-parts calls with the content
@@ -250,7 +277,6 @@ form operations (#7).
   400 paragraphs on `main`, 2.4, 2.5 and 2.6 ms in place;
   `remove_mail_merge_package` 10.0, 28.7 and 103.2 ms, 1.4, 1.5 and
   2.9 ms.
-
 - **A content control property is edited in its block.** The setters of
   a control's tag, alias, lock, appearance, placeholder flag, data binding
   and type write the one direct body block that holds the control (the

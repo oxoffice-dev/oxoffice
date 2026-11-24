@@ -1526,6 +1526,13 @@ pub(super) fn freshen_taken_content_fragment_identities(
     replace_wrapped_content_fragment(fragment, &updated)
 }
 
+/// Whether the fragment holds a note reference, which
+/// [`copy_shown_notes`] reads the main part for.
+pub(super) fn fragment_holds_note_references(fragment: &ContentFragment) -> Result<bool> {
+    let wrapped = wrapped_content_fragment(fragment)?;
+    Ok(!crate::field::fragment_note_references(&wrapped)?.is_empty())
+}
+
 /// Give each note reference of the fragment whose note a reference of
 /// `document` already shows a copy of that note, with fresh identities, as
 /// Word gives a pasted note mark: two references never share one note. A

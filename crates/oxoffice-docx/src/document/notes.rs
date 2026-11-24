@@ -1183,10 +1183,19 @@ impl Document {
         if matches.next().is_some() {
             return Err(Error::Other(format!("{kind:?} ID {id} is ambiguous")));
         }
-        let stories = self
-            .stories()?
+        // The note part alone holds the note stories: the body is not read.
+        let xml = self.package.get_part(&part_name).ok_or_else(|| {
+            Error::Other(format!("{kind:?} story targets missing part {part_name}"))
+        })?;
+        let stories = scan_story_owners(xml, kind)?
             .into_iter()
-            .filter(|story| story.kind == kind && story.part_name == part_name)
+            .filter(|owner| owner.kind == kind)
+            .map(|owner| StoryId {
+                kind,
+                part_name: part_name.clone(),
+                owner_index: owner.owner_index,
+                fingerprint: owner.fingerprint,
+            })
             .collect::<Vec<_>>();
         if stories.len() != normal.len() {
             return Err(Error::Other(
