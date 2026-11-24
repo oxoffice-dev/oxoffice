@@ -179,12 +179,10 @@ impl Document {
             styles,
             scalars,
             parts,
-            mut reservations,
+            reservations,
             ..
         } = undo;
         self.package.undo_part_journal(parts);
-        // The parts it wrote are back, so a removal it made is too.
-        reservations.forget_removal();
         self.undo_reservations(reservations);
         if let Some(copy) = footnotes {
             self.footnotes = copy.footnotes;
@@ -310,7 +308,8 @@ impl Document {
             .iter()
             .any(|relationship| relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN);
         if signed
-            && (undo.reservations.changed_package() || undo.parts.written_parts().next().is_some())
+            && (undo.reservations.changed_package()
+                || document.package.part_journal_changed(&undo.parts))
         {
             document.package_signatures_invalidated = true;
         }
@@ -445,6 +444,10 @@ impl Document {
                     before.to_bytes().map_err(|e| e.to_string()),
                     "in-place edit saves other bytes than the staged edit"
                 );
+                assert_eq!(
+                    self.package_signatures_invalidated, before.package_signatures_invalidated,
+                    "in-place edit invalidates signatures otherwise than the staged edit"
+                );
             }
             (Err(direct), Err(staged_error)) => {
                 assert_eq!(direct.to_string(), staged_error.to_string());
@@ -458,5 +461,60 @@ impl Document {
             }
             (Err(direct), Ok(_)) => panic!("in-place edit refused with {direct}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An edit that writes a part, reserves a part name and changes the
+    /// comments model, then fails as `fail` says.
+    fn edit_then(document: &mut Document, fail: impl FnOnce() -> Result<()>) -> Result<()> {
+        document.edit_in_place(&[EditUnit::Comments], |document| {
+            document
+                .package
+                .set_part("/word/extra.xml", b"<extra/>".to_vec());
+            document
+                .identifiers
+                .reserve_preferred_part_name("/word/reserved.xml")?;
+            document.comments = Some(oxoffice_docx_oxml::comments::CT_Comments::new());
+            document.comments_dirty = true;
+            fail()
+        })
+    }
+
+    fn state(document: &Document) -> (Vec<u8>, bool, bool) {
+        (
+            document.clone_for_staging().to_bytes().unwrap(),
+            document.comments.is_some(),
+            document.package.get_part("/word/extra.xml").is_some(),
+        )
+    }
+
+    #[test]
+    fn a_refused_in_place_edit_leaves_the_document_as_it_was() {
+        let mut document = Document::new();
+        let before = state(&document);
+        let identifiers = document.identifiers.clone();
+        let error = edit_then(&mut document, || Err(Error::Other("refused".into()))).unwrap_err();
+        assert_eq!(error.to_string(), "refused");
+        assert_eq!(state(&document), before);
+        assert_eq!(document.identifiers, identifiers);
+        assert!(!document.in_place.open);
+    }
+
+    #[test]
+    fn a_panic_inside_an_in_place_edit_leaves_the_document_as_it_was() {
+        let mut document = Document::new();
+        let before = state(&document);
+        let identifiers = document.identifiers.clone();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            edit_then(&mut document, || panic!("edit panicked"))
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(state(&document), before);
+        assert_eq!(document.identifiers, identifiers);
+        assert!(!document.in_place.open);
     }
 }

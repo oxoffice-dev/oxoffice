@@ -61,12 +61,6 @@ impl ReservationJournal {
         self.removed_from_package |= later.removed_from_package;
     }
 
-    /// The removal this journal records was put back by other means (the
-    /// part journal of an in-place edit), so undoing it is valid.
-    pub(crate) fn forget_removal(&mut self) {
-        self.removed_from_package = false;
-    }
-
     /// Whether the edit changed the package graph.
     pub(crate) fn changed_package(&self) -> bool {
         self.removed_from_package

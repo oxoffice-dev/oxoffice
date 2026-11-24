@@ -178,11 +178,14 @@ What S1a builds differs from decision 1 in how the units are kept:
   package records, at the first write of each part in a call
   (`set_part`, `remove_part`), its old bytes or its absence
   (`PartJournal`, `oxoffice-opc`). The undo writes them back. It costs
-  the parts the call writes, and it undoes a removal.
+  the parts the call writes. It puts a removed part's bytes back, but not
+  the relationships, content type overrides and registry entries the
+  removal retired: S1c, the first part with a removal, journals those
+  too. Until then the undo of a removal keeps the reservation journal's
+  debug refusal.
 - **The registry and the package graph are never copied.** They grow
   with the body. The #600 reservation journal undoes what the call
-  reserved; it also records the comment and bookmark ids a call releases
-  (`forget_removal`), so the undo holds them again.
+  reserved.
 - **The notes, comments and styles models are copied whole**
   (`EditUnit::{Footnotes, Comments, Styles}`). They grow with their own
   entries, not with the body: the scaling document carries three

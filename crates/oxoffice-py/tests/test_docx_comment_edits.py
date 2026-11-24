@@ -1,6 +1,10 @@
 """docx: an edit of a comment's own story (its resolved flag) changes no element a handle names, so it keeps every
 handle: a handle taken before the edit reads and edits the same element after it. The edit is made in place, without
 saving the document: an edit that changes nothing leaves the document as it was, byte for byte."""
+import io
+import re
+import zipfile
+
 import pytest
 
 import oxoffice.docx as oxdocx
@@ -84,3 +88,45 @@ def test_resolving_an_unknown_comment_leaves_the_document_as_it_was(saved):
     assert doc.resolve_comment(max(comment.id for comment in doc.comments) + 100) is False
     assert doc.to_bytes() == unchanged
     assert reads(taken) == before(taken)
+
+
+def test_resolving_a_thread_keeps_every_handle_and_marks_its_root(saved):
+    doc = oxdocx.Document.open(saved)
+    parent = the_comment(doc).id
+    reply = doc.reply_to(parent, author="Ben", text="agreed")
+    doc = oxdocx.Document.from_bytes(doc.to_bytes())
+    taken = handles_taken(doc)
+    assert doc.resolve_comment(parent)
+    assert reads(taken) == before(taken)
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    by_id = {comment.id: comment for comment in again.comments}
+    assert by_id[parent].resolved is True
+    assert by_id[reply].parent_id == parent
+
+
+def without_comments_extended(source):
+    """`source` as a producer without the comments extension part writes it (Word 2007, LibreOffice)."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(source) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            if item.filename == "word/commentsExtended.xml":
+                continue
+            data = zin.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                data = re.sub(rb'<Override PartName="/word/commentsExtended.xml"[^>]*/>', b"", data)
+            if item.filename == "word/_rels/document.xml.rels":
+                data = re.sub(rb'<Relationship [^>]*Target="commentsExtended.xml"[^>]*/>', b"", data)
+            zout.writestr(item, data)
+    return out.getvalue()
+
+
+def test_resolving_a_comment_adds_the_extension_part_and_keeps_every_handle(saved):
+    source = without_comments_extended(saved)
+    assert b"commentsExtended" not in zipfile.ZipFile(io.BytesIO(source)).read("[Content_Types].xml")
+    doc = oxdocx.Document.from_bytes(source)
+    taken = handles_taken(doc)
+    assert doc.resolve_comment(the_comment(doc).id)
+    assert reads(taken) == before(taken)
+    written = doc.to_bytes()
+    assert "word/commentsExtended.xml" in zipfile.ZipFile(io.BytesIO(written)).namelist()
+    assert the_comment(oxdocx.Document.from_bytes(written)).resolved is True

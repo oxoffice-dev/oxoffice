@@ -135,7 +135,24 @@ impl OpcPackage {
 
     /// Stop recording and return what was recorded.
     pub fn close_part_journal(&mut self) -> PartJournal {
+        debug_assert!(
+            self.part_journal.0.is_some(),
+            "no part journal is open (a nested commit replaced the package?)"
+        );
         self.part_journal.0.take().unwrap_or_default()
+    }
+
+    /// Whether a part `journal` recorded holds other bytes now than before
+    /// its first write: a rewrite with the same bytes changes nothing.
+    pub fn part_journal_changed(&self, journal: &PartJournal) -> bool {
+        journal
+            .before
+            .iter()
+            .any(|(name, before)| match (before, self.parts.get(name)) {
+                (Some(before), Some(now)) => !Arc::ptr_eq(before, now) && before != now,
+                (None, None) => false,
+                _ => true,
+            })
     }
 
     /// Put back, latest first, the bytes `journal` recorded.
