@@ -5154,11 +5154,9 @@ impl PyDocument {
     }
     fn set_font(&mut self, py: Python<'_>, font: PyRef<'_, PyFontDefinition>) -> PyResult<()> {
         let native = descriptive_font(py, &font, "set_font")?;
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        self.inner
             .set_font(native)
-            .map_err(|e| docx_to_pyerr(py, e))?;
-        self.publish_api_candidate(py, candidate, "Document.set_font")
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     fn set_font_at(
         &mut self,
@@ -5168,34 +5166,30 @@ impl PyDocument {
     ) -> PyResult<()> {
         let native = descriptive_font(py, &font, "set_font_at")?;
         self.check_font_index(py, index)?;
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        self.inner
             .set_font_at(index, native)
-            .map_err(|e| docx_to_pyerr(py, e))?;
-        self.publish_api_candidate(py, candidate, "Document.set_font_at")
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     fn remove_font(
         &mut self,
         py: Python<'_>,
         name: &str,
     ) -> PyResult<Option<Py<PyFontDefinition>>> {
-        let mut candidate = self.inner.clone_for_staging();
-        let removed = candidate
+        let removed = self
+            .inner
             .remove_font(name)
             .map_err(|e| docx_to_pyerr(py, e))?
             .map(|font| PyFontDefinition::snapshot(py, font))
             .transpose()?;
-        self.publish_api_candidate(py, candidate, "Document.remove_font")?;
         Ok(removed)
     }
     fn remove_font_at(&mut self, py: Python<'_>, index: usize) -> PyResult<Py<PyFontDefinition>> {
         self.check_font_index(py, index)?;
-        let mut candidate = self.inner.clone_for_staging();
-        let removed = candidate
+        let removed = self
+            .inner
             .remove_font_at(index)
             .map_err(|e| docx_to_pyerr(py, e))?;
         let removed = PyFontDefinition::snapshot(py, removed)?;
-        self.publish_api_candidate(py, candidate, "Document.remove_font_at")?;
         Ok(removed)
     }
     #[pyo3(signature = (name, kind="regular"))]
@@ -5206,13 +5200,12 @@ impl PyDocument {
         kind: &str,
     ) -> PyResult<Option<Py<PyEmbeddedFont>>> {
         let kind = checked_font_kind(kind)?;
-        let mut candidate = self.inner.clone_for_staging();
-        let removed = candidate
+        let removed = self
+            .inner
             .remove_embedded_font(name, kind)
             .map_err(|e| docx_to_pyerr(py, e))?
             .map(|font| PyEmbeddedFont::snapshot(py, font))
             .transpose()?;
-        self.publish_api_candidate(py, candidate, "Document.remove_embedded_font")?;
         Ok(removed)
     }
     #[pyo3(signature = (index, kind="regular"))]
@@ -5224,13 +5217,12 @@ impl PyDocument {
     ) -> PyResult<Option<Py<PyEmbeddedFont>>> {
         let kind = checked_font_kind(kind)?;
         self.check_font_index(py, index)?;
-        let mut candidate = self.inner.clone_for_staging();
-        let removed = candidate
+        let removed = self
+            .inner
             .remove_embedded_font_at(index, kind)
             .map_err(|e| docx_to_pyerr(py, e))?
             .map(|font| PyEmbeddedFont::snapshot(py, font))
             .transpose()?;
-        self.publish_api_candidate(py, candidate, "Document.remove_embedded_font_at")?;
         Ok(removed)
     }
     #[pyo3(signature = (name, font, kind="regular", *, license, font_key=None, subsetted=false))]
@@ -5246,11 +5238,9 @@ impl PyDocument {
         subsetted: bool,
     ) -> PyResult<()> {
         let font = embedded_face(py, font, kind, &license, font_key, subsetted)?;
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        self.inner
             .embed_font(name, font)
-            .map_err(|e| docx_to_pyerr(py, e))?;
-        self.publish_api_candidate(py, candidate, "Document.embed_font")
+            .map_err(|e| docx_to_pyerr(py, e))
     }
     #[pyo3(signature = (index, font, kind="regular", *, license, font_key=None, subsetted=false))]
     #[allow(clippy::too_many_arguments)] // Explicit operands match the native font authoring contract.
@@ -5266,11 +5256,9 @@ impl PyDocument {
     ) -> PyResult<()> {
         let font = embedded_face(py, font, kind, &license, font_key, subsetted)?;
         self.check_font_index(py, index)?;
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        self.inner
             .embed_font_at(index, font)
-            .map_err(|e| docx_to_pyerr(py, e))?;
-        self.publish_api_candidate(py, candidate, "Document.embed_font_at")
+            .map_err(|e| docx_to_pyerr(py, e))
     }
 
     #[getter]

@@ -378,18 +378,19 @@ impl Document {
                 record.pitch.is_some() && font.pitch.is_none(),
             )?;
         }
-        let mut candidate = self.font_table_mutation_candidate()?;
-        let table = candidate
-            .font_table
-            .as_mut()
-            .expect("font-table mutation candidate has a model");
-        let index = index.unwrap_or_else(|| table.add_font(font.name));
-        table.set_font_fields(index, font.alternate_name, font.family, font.pitch);
-        font_table_reads_back(table)?;
-        candidate.font_table_dirty = true;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.edit_font_table(|document| {
+            let mut table = document.reserve_font_table_part()?;
+            let index = index.unwrap_or_else(|| table.add_font(font.name.clone()));
+            table.set_font_fields(
+                index,
+                font.alternate_name.clone(),
+                font.family.clone(),
+                font.pitch.clone(),
+            );
+            font_table_reads_back(&table)?;
+            document.install_font_table(table);
+            Ok(())
+        })
     }
 
     /// Remove one font-table record, found by its name, and every embedded
@@ -421,7 +422,7 @@ impl Document {
             .expect("an indexed font record has a modelled table");
         table.can_remove_font(index)?;
         let record = table.font_at(index)?;
-        let name = &record.name;
+        let name = record.name.clone();
         // The cleanup after the record removes only its modelled faces'
         // relationships, so one its kept XML names another way must still be
         // used by the rest of the table once the record is gone.
@@ -445,32 +446,28 @@ impl Document {
             })
             .unwrap_or_default();
         let removed = self.project_font_records(&[record])?.remove(0);
-        let mut candidate = self.font_table_mutation_candidate()?;
-        let references = candidate
-            .font_table
-            .as_mut()
-            .expect("font-table mutation candidate has a model")
-            .remove_font(index)
-            .embedded_fonts;
-        let table = candidate
-            .font_table
-            .as_ref()
-            .expect("font-table mutation candidate has a model");
-        if let Some(orphan) = named.iter().find(|id| {
-            table.embedded_relationship_reference_count(id) == 0
-                && !table.retained_raw_mentions_relationship(id)
-        }) {
-            return Err(oxoffice_docx_oxml::OxmlError::InvalidValue(format!(
-                "cannot remove a font record whose retained XML names a relationship: font {name} names {orphan}, which nothing else in the font table uses"
-            ))
-            .into());
-        }
-        for reference in references {
-            candidate.remove_embedded_font_part(&reference)?;
-        }
-        candidate.font_table_dirty = true;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
+        self.edit_font_table(|document| {
+            let mut table = document.reserve_font_table_part()?;
+            let references = table.remove_font(index).embedded_fonts;
+            if let Some(orphan) = named.iter().find(|id| {
+                table.embedded_relationship_reference_count(id) == 0
+                    && !table.retained_raw_mentions_relationship(id)
+            }) {
+                return Err(oxoffice_docx_oxml::OxmlError::InvalidValue(format!(
+                    "cannot remove a font record whose retained XML names a relationship: font {name} names {orphan}, which nothing else in the font table uses"
+                ))
+                .into());
+            }
+            let targets = references
+                .iter()
+                .map(|reference| document.checked_embedded_font_target(reference))
+                .collect::<Result<Vec<_>>>()?;
+            document.install_font_table(table);
+            for (reference, target) in references.iter().zip(&targets) {
+                document.remove_embedded_font_part(reference, target);
+            }
+            Ok(())
+        })?;
         Ok(removed)
     }
 
@@ -517,164 +514,135 @@ impl Document {
             Error::Other("embedded font key must be a 16-byte OOXML GUID".to_owned())
         })?;
 
-        let mut candidate = self.font_table_mutation_candidate()?;
-        let table = candidate
-            .font_table
-            .as_mut()
-            .expect("font-table mutation candidate has a model");
-        let index = index.unwrap_or_else(|| table.add_font(font_name.to_owned()));
-        let table = candidate.font_table.as_ref().unwrap();
-        let font = table.font_at(index)?;
         let kind = FontFaceKind::from(embedded.kind);
-        table.can_embed_font(index, kind)?;
-        let existing = font
-            .embedded_fonts
-            .iter()
-            .find(|value| value.kind == kind)
-            .cloned();
-        let font_table_part = candidate
-            .font_table_part_name
-            .clone()
-            .expect("font-table mutation candidate has a part name");
-
-        if font
-            .embedded_fonts
-            .iter()
-            .filter(|face| face.kind == kind)
-            .count()
-            > 1
-        {
-            return Err(Error::Other("embedded font face is ambiguous".to_owned()));
-        }
-        let existing_target = existing
-            .as_ref()
-            .map(|reference| {
-                candidate
-                    .checked_embedded_font_source(reference)
-                    .map(|(target, _)| target)
-            })
-            .transpose()?;
         let obfuscated = obfuscate_odttf_with_key(&embedded.data, &guid);
-        if let (Some(reference), Some(target)) = (&existing, &existing_target)
-            && reference.font_key == embedded.font_key
+        if self.embeds_font_already(index, kind, &embedded, &obfuscated)? {
+            return Ok(());
+        }
+        self.edit_font_table(|document| {
+            let mut table = document.reserve_font_table_part()?;
+            let font_table_part = document
+                .font_table_part_name
+                .clone()
+                .expect("a reserved font table has a part name");
+            let index = index.unwrap_or_else(|| table.add_font(font_name.to_owned()));
+            let font = table.font_at(index)?;
+            table.can_embed_font(index, kind)?;
+            if font
+                .embedded_fonts
+                .iter()
+                .filter(|face| face.kind == kind)
+                .count()
+                > 1
+            {
+                return Err(Error::Other("embedded font face is ambiguous".to_owned()));
+            }
+            let existing = font
+                .embedded_fonts
+                .iter()
+                .find(|value| value.kind == kind)
+                .cloned();
+            let existing_target = existing
+                .as_ref()
+                .map(|reference| document.checked_embedded_font_target(reference))
+                .transpose()?;
+            let can_reuse_existing = existing.as_ref().is_some_and(|existing| {
+                let target = existing_target
+                    .as_ref()
+                    .expect("existing embedded font has a resolved target");
+                table.embedded_relationship_reference_count(&existing.relationship_id) == 1
+                    && document.internal_relationships_to(target) == 1
+                    && !table.retained_raw_mentions_relationship(&existing.relationship_id)
+            });
+            let (relationship_id, part_name) = match (&existing, &existing_target) {
+                (Some(existing), Some(target)) if can_reuse_existing => {
+                    (existing.relationship_id.clone(), target.clone())
+                }
+                _ => {
+                    let part_name = document
+                        .identifiers
+                        .reserve_preferred_part_name("/word/fonts/font1.odttf")?;
+                    let relationship_id = document
+                        .identifiers
+                        .reserve_relationship_id_checked(&font_table_part)?;
+                    (relationship_id, part_name)
+                }
+            };
+            table.set_embedded_font(
+                index,
+                EmbeddedFontReference::new(
+                    kind,
+                    relationship_id.clone(),
+                    embedded.font_key.clone(),
+                    Some(embedded.subsetted),
+                    Some(true),
+                    Some(embedded.license.identity.clone()),
+                ),
+            );
+            font_table_reads_back(&table)?;
+            if document.settings_part_name.is_some() && document.settings.is_none() {
+                return Err(Error::Other("cannot mutate unmodeled settings".to_owned()));
+            }
+            let mut settings = document.settings.clone().unwrap_or_default();
+            settings.set_embed_true_type_fonts(Some(true))?;
+            document.reserve_settings_part()?;
+            // Every check passed: what follows cannot fail.
+            if !can_reuse_existing {
+                let target = relative_target(&font_table_part, &part_name);
+                document.add_relationship_journaled(
+                    Some(&font_table_part),
+                    &relationship_id,
+                    rel_types::FONT,
+                    &target,
+                );
+            }
+            document.package.set_part(&part_name, obfuscated.clone());
+            document.identifiers.record_written_to_package();
+            document.add_override_journaled(&part_name, EMBEDDED_FONT_CONTENT_TYPE);
+            document
+                .identifiers
+                .register_content_type_override(&part_name);
+            document.install_font_table(table);
+            if !can_reuse_existing
+                && let (Some(existing), Some(target)) = (&existing, &existing_target)
+            {
+                document.remove_embedded_font_part(existing, target);
+            }
+            document.settings = Some(settings);
+            Ok(())
+        })
+    }
+
+    /// Whether the record at `index` already holds `embedded` as its face of
+    /// `kind`, with these bytes, and the settings ask Word to use embedded
+    /// faces: embedding it again changes nothing.
+    fn embeds_font_already(
+        &self,
+        index: Option<usize>,
+        kind: FontFaceKind,
+        embedded: &EmbeddedFont,
+        obfuscated: &[u8],
+    ) -> Result<bool> {
+        let (Some(index), Some(table)) = (index, &self.font_table) else {
+            return Ok(false);
+        };
+        let faces = &table.font_at(index)?.embedded_fonts;
+        let mut same_kind = faces.iter().filter(|face| face.kind == kind);
+        let (Some(reference), None) = (same_kind.next(), same_kind.next()) else {
+            return Ok(false);
+        };
+        if table.can_embed_font(index, kind).is_err() {
+            return Ok(false);
+        }
+        let Ok(target) = self.checked_embedded_font_target(reference) else {
+            return Ok(false);
+        };
+        Ok(reference.font_key == embedded.font_key
             && reference.subsetted == Some(embedded.subsetted)
             && reference.authorized == Some(true)
             && reference.license_identity.as_ref() == Some(&embedded.license.identity)
-            && candidate.package.get_part(target) == Some(obfuscated.as_slice())
-            && candidate.embed_true_type_fonts()? == Some(true)
-        {
-            return Ok(());
-        }
-        let can_reuse_existing = existing.as_ref().is_some_and(|existing| {
-            let relationship_reference_count =
-                table.embedded_relationship_reference_count(&existing.relationship_id);
-            let target = existing_target
-                .as_ref()
-                .expect("existing embedded font has a resolved target");
-            let target_relationship_count = std::iter::once(("/", &candidate.package.package_rels))
-                .chain(
-                    candidate
-                        .package
-                        .part_rels
-                        .iter()
-                        .map(|(source, relationships)| (source.as_str(), relationships)),
-                )
-                .flat_map(|(source, relationships)| {
-                    relationships
-                        .items
-                        .iter()
-                        .map(move |relationship| (source, relationship))
-                })
-                .filter(|(source, relationship)| {
-                    relationship_is_internal(relationship)
-                        && OpcPackage::resolve_rel_target(source, &relationship.target)
-                            .eq_ignore_ascii_case(target)
-                })
-                .count();
-            relationship_reference_count == 1
-                && target_relationship_count == 1
-                && !table.retained_raw_mentions_relationship(&existing.relationship_id)
-        });
-
-        let (relationship_id, part_name) = if can_reuse_existing {
-            (
-                existing
-                    .as_ref()
-                    .expect("reusable embedded font exists")
-                    .relationship_id
-                    .clone(),
-                existing_target.expect("reusable embedded font has a target"),
-            )
-        } else {
-            let part_name = candidate
-                .identifiers
-                .reserve_preferred_part_name("/word/fonts/font1.odttf")?;
-            let relationship_id = candidate
-                .identifiers
-                .reserve_relationship_id_checked(&font_table_part)?;
-            let target = relative_target(&font_table_part, &part_name);
-            candidate
-                .package
-                .get_or_create_part_rels(&font_table_part)
-                .add_with_id(&relationship_id, rel_types::FONT, &target);
-            (relationship_id, part_name)
-        };
-
-        candidate.package.set_part(&part_name, obfuscated);
-        candidate
-            .package
-            .content_types
-            .add_override(&part_name, EMBEDDED_FONT_CONTENT_TYPE);
-        candidate
-            .identifiers
-            .register_content_type_override(&part_name);
-        let reference = EmbeddedFontReference::new(
-            kind,
-            relationship_id,
-            embedded.font_key,
-            Some(embedded.subsetted),
-            Some(true),
-            Some(embedded.license.identity),
-        );
-        candidate
-            .font_table
-            .as_mut()
-            .expect("font-table mutation candidate has a model")
-            .set_embedded_font(index, reference);
-        if !can_reuse_existing && let Some(existing) = &existing {
-            candidate.remove_embedded_font_part(existing)?;
-        }
-        font_table_reads_back(
-            candidate
-                .font_table
-                .as_ref()
-                .expect("font-table mutation candidate has a model"),
-        )?;
-        if candidate.settings_part_name.is_some() && candidate.settings.is_none() {
-            return Err(Error::Other("cannot mutate unmodeled settings".to_owned()));
-        }
-        let created = candidate.settings_part_name.is_none();
-        let settings_part = match &candidate.settings_part_name {
-            Some(part) => part.clone(),
-            None => candidate
-                .identifiers
-                .reserve_preferred_part_name(DEFAULT_SETTINGS_PART)?,
-        };
-        candidate.ensure_part_relationship_checked(
-            &settings_part,
-            rel_types::SETTINGS,
-            SETTINGS_CONTENT_TYPE,
-        )?;
-        candidate.settings_part_name = Some(settings_part);
-        candidate.settings_owned |= created;
-        candidate
-            .settings
-            .get_or_insert_with(CT_Settings::new)
-            .set_embed_true_type_fonts(Some(true))?;
-        candidate.font_table_dirty = true;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
-        Ok(())
+            && self.package.get_part(&target) == Some(obfuscated)
+            && self.embed_true_type_fonts()? == Some(true))
     }
 
     /// Remove one embedded face without removing its font-table record, found
@@ -748,65 +716,209 @@ impl Document {
                 identity: reference.license_identity.clone().unwrap_or_default(),
             },
         };
-        let mut candidate = self.font_table_mutation_candidate()?;
-        let reference = candidate
-            .font_table
-            .as_mut()
-            .expect("font-table mutation candidate has a model")
-            .remove_embedded_font(index, kind.into())
-            .expect("embedded font existed before staging");
-        candidate.remove_embedded_font_part(&reference)?;
-        candidate.font_table_dirty = true;
-        candidate.invalidate_layout();
-        self.commit_staged_mutation(candidate);
+        self.edit_font_table(|document| {
+            let mut table = document.reserve_font_table_part()?;
+            let reference = table
+                .remove_embedded_font(index, kind.into())
+                .expect("the embedded font was found before the edit");
+            let target = document.checked_embedded_font_target(&reference)?;
+            document.install_font_table(table);
+            document.remove_embedded_font_part(&reference, &target);
+            Ok(())
+        })?;
         Ok(Some(removed))
     }
 
-    fn font_table_mutation_candidate(&self) -> Result<Self> {
-        let mut candidate = self.clone_for_staging();
-        candidate
-            .identifiers
-            .observe_package_graph(&candidate.package)?;
-        let part_name = match &candidate.font_table_part_name {
+    /// Apply `edit`, a font-table edit, in place, without staging the whole
+    /// document.
+    ///
+    /// `edit` first makes every check and reservation that can fail: the
+    /// font-table part, the settings part, part names and relationship ids,
+    /// on a copy of the font-table model; then it installs the model and
+    /// writes the package, which cannot fail. The registry journals what the
+    /// reservations add to it and to the package graph, and a refusal or a
+    /// panic removes it again, so a refused edit leaves the document as it
+    /// was. A success leaves what [`Self::commit_staged_mutation`] leaves for
+    /// a staged clone: the derived layout is dropped and a signed package
+    /// records a package mutation. Debug builds run the edit on a clone too,
+    /// compare, and check that a refusal changed nothing. `edit` is `Fn` for
+    /// that second run.
+    fn edit_font_table(&mut self, edit: impl Fn(&mut Self) -> Result<()>) -> Result<()> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let names = (
+            self.font_table_part_name.clone(),
+            self.settings_part_name.clone(),
+            self.settings_owned,
+        );
+        self.identifiers.open_journal();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(self)));
+        let journal = self.identifiers.close_journal();
+        let refused = |document: &mut Self, journal| {
+            document.undo_reservations(journal);
+            (
+                document.font_table_part_name,
+                document.settings_part_name,
+                document.settings_owned,
+            ) = names.clone();
+        };
+        let result = match result {
+            Err(panic) => {
+                refused(self, journal);
+                std::panic::resume_unwind(panic)
+            }
+            Ok(Err(error)) => {
+                refused(self, journal);
+                Err(error)
+            }
+            Ok(Ok(())) => {
+                let signed = self.package.package_rels.items.iter().any(|relationship| {
+                    relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN
+                });
+                self.package_signatures_invalidated |= signed && journal.changed_package();
+                self.invalidate_layout();
+                Ok(())
+            }
+        };
+        #[cfg(debug_assertions)]
+        self.assert_font_table_edit_matches_staged(before, &edit, &result);
+        result
+    }
+
+    /// Debug proof that an in-place font-table edit left what the same edit
+    /// leaves on a staged clone, or refused with its error and left the
+    /// document as it was.
+    #[cfg(debug_assertions)]
+    fn assert_font_table_edit_matches_staged(
+        &self,
+        before: Self,
+        edit: &impl Fn(&mut Self) -> Result<()>,
+        result: &Result<()>,
+    ) {
+        let mut staged = before.clone_for_staging();
+        let expected = match (result, edit(&mut staged)) {
+            (Ok(()), Ok(())) => staged,
+            (Err(direct), Err(staged)) => {
+                assert_eq!(
+                    direct.to_string(),
+                    staged.to_string(),
+                    "in-place font-table edit refused otherwise"
+                );
+                before
+            }
+            (Ok(()), Err(staged)) => {
+                panic!("in-place font-table edit hid the staged error {staged}")
+            }
+            (Err(direct), Ok(())) => panic!("in-place font-table edit refused with {direct}"),
+        };
+        assert!(
+            expected.package.same_package_as(&self.package),
+            "in-place font-table edit left another package graph"
+        );
+        assert_eq!(
+            expected.identifiers, self.identifiers,
+            "in-place font-table edit left another identifier registry"
+        );
+        assert_eq!(
+            (
+                &expected.font_table,
+                &expected.font_table_part_name,
+                &expected.settings,
+                &expected.settings_part_name,
+                expected.settings_owned,
+            ),
+            (
+                &self.font_table,
+                &self.font_table_part_name,
+                &self.settings,
+                &self.settings_part_name,
+                self.settings_owned,
+            ),
+            "in-place font-table edit left another font table or settings"
+        );
+    }
+
+    /// Reserve the font-table part, its content type and its relationship
+    /// from the main part, and return a copy of the font-table model to edit
+    /// (an empty one when the document has none).
+    fn reserve_font_table_part(&mut self) -> Result<FontTable> {
+        self.identifiers.observe_package_graph(&self.package)?;
+        let part_name = match &self.font_table_part_name {
             Some(part_name) => {
-                if candidate.font_table.is_none() {
+                if self.font_table.is_none() {
                     return Err(Error::Other(format!(
                         "cannot mutate unmodeled font table at {part_name}"
                     )));
                 }
                 part_name.clone()
             }
-            None => candidate
+            None => self
                 .identifiers
                 .reserve_preferred_part_name(DEFAULT_FONT_TABLE_PART)?,
         };
-        candidate
-            .ensure_part_relationship_checked(
-                &part_name,
-                rel_types::FONT_TABLE,
-                FONT_TABLE_CONTENT_TYPE,
-            )
-            .map_err(|error| {
-                Error::Other(format!(
-                    "font-table relationship allocation failed: {error}"
-                ))
-            })?;
-        candidate.font_table.get_or_insert_with(FontTable::new);
-        candidate.font_table_part_name = Some(part_name);
-        Ok(candidate)
+        self.ensure_part_relationship_checked(
+            &part_name,
+            rel_types::FONT_TABLE,
+            FONT_TABLE_CONTENT_TYPE,
+        )
+        .map_err(|error| {
+            Error::Other(format!(
+                "font-table relationship allocation failed: {error}"
+            ))
+        })?;
+        self.font_table_part_name = Some(part_name);
+        Ok(self.font_table.clone().unwrap_or_default())
     }
 
-    fn remove_embedded_font_part(&mut self, reference: &EmbeddedFontReference) -> Result<()> {
+    /// Install an edited font-table model, which the save writes.
+    fn install_font_table(&mut self, table: FontTable) {
+        self.font_table = Some(table);
+        self.font_table_dirty = true;
+    }
+
+    /// The part an embedded face's relationship names, checked.
+    fn checked_embedded_font_target(&self, reference: &EmbeddedFontReference) -> Result<String> {
+        self.checked_embedded_font_source(reference)
+            .map(|(target, _)| target)
+    }
+
+    /// The number of internal relationships of the package, from any part,
+    /// that name `target`.
+    fn internal_relationships_to(&self, target: &str) -> usize {
+        std::iter::once(("/", &self.package.package_rels))
+            .chain(
+                self.package
+                    .part_rels
+                    .iter()
+                    .map(|(source, relationships)| (source.as_str(), relationships)),
+            )
+            .flat_map(|(source, relationships)| {
+                relationships
+                    .items
+                    .iter()
+                    .map(move |relationship| (source, relationship))
+            })
+            .filter(|(source, relationship)| {
+                relationship_is_internal(relationship)
+                    && OpcPackage::resolve_rel_target(source, &relationship.target)
+                        .eq_ignore_ascii_case(target)
+            })
+            .count()
+    }
+
+    /// Remove an embedded face's relationship from the font-table part, and
+    /// its part, `target`, when nothing else names it. The face's target was
+    /// checked by the edit before anything changed, so this cannot fail.
+    fn remove_embedded_font_part(&mut self, reference: &EmbeddedFontReference, target: &str) {
         let owner = self
             .font_table_part_name
             .clone()
-            .ok_or_else(|| Error::Other("font-table part name is missing".to_owned()))?;
-        let (target, _) = self.checked_embedded_font_source(reference)?;
+            .expect("an edited font table has a part name");
         if self.font_table.as_ref().is_some_and(|table| {
             table.embedded_relationship_reference_count(&reference.relationship_id) > 0
                 || table.retained_raw_mentions_relationship(&reference.relationship_id)
         }) {
-            return Ok(());
+            return;
         }
         if let Some(relationships) = self.package.get_part_rels_mut(&owner) {
             relationships.items.retain(|relationship| {
@@ -817,27 +929,13 @@ impl Document {
         }
         self.identifiers
             .retire_authored_story_relationships(&owner, vec![reference.relationship_id.clone()]);
-        let still_referenced = std::iter::once(("/", &self.package.package_rels))
-            .chain(
-                self.package
-                    .part_rels
-                    .iter()
-                    .map(|(source, relationships)| (source.as_str(), relationships)),
-            )
-            .any(|(source, relationships)| {
-                relationships.items.iter().any(|relationship| {
-                    relationship_is_internal(relationship)
-                        && OpcPackage::resolve_rel_target(source, &relationship.target)
-                            .eq_ignore_ascii_case(&target)
-                })
-            });
-        if !still_referenced {
-            self.package.remove_part(&target);
-            self.package.remove_part_rels(&target);
-            self.package.content_types.remove_override(&target);
-            self.identifiers.retire_authored_part(&target);
+        self.identifiers.record_removed_from_package();
+        if self.internal_relationships_to(target) == 0 {
+            self.package.remove_part(target);
+            self.package.remove_part_rels(target);
+            self.package.content_types.remove_override(target);
+            self.identifiers.retire_authored_part(target);
         }
-        Ok(())
     }
 }
 
