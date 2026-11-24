@@ -3,6 +3,7 @@ even-page headers) or of a section's properties (page borders, the section's not
 names, so it keeps every handle: a handle taken before the edit reads and edits the same element after it. The edit is
 made in place, without saving the document: a refused edit leaves the document as it was, byte for byte."""
 import io
+import re
 import zipfile
 
 import pytest
@@ -73,8 +74,13 @@ def test_a_settings_edit_is_read_back_after_a_save(saved):
     for edit in EDITS.values():
         if edit is not EDITS["remove_document_protection"]:
             edit(doc)
-    again = oxdocx.Document.from_bytes(doc.to_bytes())
-    assert 'w:val="double"' in again.section(0).xml
+    saved_bytes = doc.to_bytes()
+    again = oxdocx.Document.from_bytes(saved_bytes)
+    section = again.section(0).xml
+    assert re.search(r'<w:left w:val="double"', section)
+    assert re.search(r'<w:endnotePr>.*<w:numFmt w:val="upperLetter"/>', section)
+    settings = zipfile.ZipFile(io.BytesIO(saved_bytes)).read("word/settings.xml").decode()
+    assert re.search(r'<w:footnotePr>.*<w:numFmt w:val="lowerRoman"/><w:numStart w:val="3"/>', settings)
     assert (again.embed_true_type_fonts, again.embed_system_fonts, again.save_subset_fonts) == (True, False, True)
     assert again.settings.odd_and_even_pages_header_footer
     assert again.document_protection.mode == "readOnly"

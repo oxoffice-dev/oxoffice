@@ -350,13 +350,16 @@ impl PySectionHandle {
         let (family, policy) = checked_note_policy(family, format, start, restart, placement)?;
         // A section property edit, as the geometry setters make: it changes
         // no element a handle names, so it publishes nothing.
-        self.document
-            .borrow_mut(py)
+        let mut document = self.document.borrow_mut(py);
+        document
             .inner
             .section_mut(self.index)
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_note_policy(family, policy)
-            .map_err(|error| docx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        #[cfg(debug_assertions)]
+        assert_section_edit_leaves_body_savable(&document.inner);
+        Ok(())
     }
 
     #[pyo3(signature = (edge, *, style="single", width=8, space=0, color="000000"))]
@@ -372,13 +375,16 @@ impl PySectionHandle {
         self.validate(py)?;
         // A section property edit, as the geometry setters make: it changes
         // no element a handle names, so it publishes nothing.
-        self.document
-            .borrow_mut(py)
+        let mut document = self.document.borrow_mut(py);
+        document
             .inner
             .section_mut(self.index)
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_page_border(edge, style, width, space, color)
-            .map_err(|error| docx_to_pyerr(py, error))
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        #[cfg(debug_assertions)]
+        assert_section_edit_leaves_body_savable(&document.inner);
+        Ok(())
     }
 
     /// Author actual DrawingML text, with styled real text in both representations.
@@ -791,5 +797,17 @@ impl PySection {
             different_first_page,
             break_type,
         }
+    }
+}
+
+/// Debug oracle of a section edit made in place (decision 2 of the edit-cost
+/// spec): the save is no longer made at the edit, so debug builds check that a
+/// body a typed edit can leave savable still saves after it.
+#[cfg(debug_assertions)]
+fn assert_section_edit_leaves_body_savable(document: &oxoffice_docx::Document) {
+    if document.unsavable_body_edit().is_none()
+        && let Err(error) = document.clone_for_staging().to_bytes()
+    {
+        panic!("a section edit left a savable body unsavable: {error}");
     }
 }
