@@ -614,6 +614,46 @@ fn a_property_part_with_no_relationship_id_left_is_refused_and_changes_nothing()
 }
 
 #[test]
+fn a_settings_part_with_no_relationship_id_left_is_refused_and_changes_nothing() {
+    // No settings part, and the main part's relationships hold the last
+    // numeric id: the settings and web settings parts, reserved first, can
+    // get no relationship.
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc_with(&["Body"]).to_bytes().unwrap())).unwrap();
+    let relationships = package.get_or_create_part_rels("/word/document.xml");
+    relationships
+        .items
+        .retain(|relationship| !relationship.rel_type.ends_with("/settings"));
+    relationships.add_with_id(
+        "rId4294967295",
+        "http://example.com/relationships/probe",
+        "document.xml",
+    );
+    package.remove_part("/word/settings.xml");
+    package.content_types.remove_override("/word/settings.xml");
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let before = doc.to_bytes().unwrap();
+
+    for _ in 0..2 {
+        let error = doc.set_track_revisions(true).unwrap_err().to_string();
+        assert!(
+            error.contains("settings relationship allocation failed"),
+            "{error}"
+        );
+        let error = doc.set_web_encoding("utf-8").unwrap_err().to_string();
+        assert!(
+            error.contains("web settings relationship allocation failed"),
+            "{error}"
+        );
+    }
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert_eq!(doc.track_revisions(), None);
+    assert_eq!(doc.web_encoding(), None);
+}
+
+#[test]
 fn a_custom_number_property_may_be_nan() {
     let mut doc = doc_with(&["Body"]);
     let outcome = catch_unwind(AssertUnwindSafe(|| {

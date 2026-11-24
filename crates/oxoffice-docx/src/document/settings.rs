@@ -353,19 +353,22 @@ impl Document {
         Ok(removed)
     }
 
-    /// Stage one settings mutation, apply it, and commit it atomically.
+    /// Apply one settings mutation and commit it atomically.
     ///
     /// Every typed settings member routes through here, which keeps part
     /// allocation, relationship allocation and layout invalidation in one
-    /// place instead of once per accessor.
+    /// place instead of once per accessor. `apply` runs on a copy of the
+    /// settings model, which the edit then installs in place
+    /// ([`Self::edit_settings_part`]): the rest of the document is not copied.
     pub(super) fn stage_settings_mutation(
         &mut self,
         apply: impl FnOnce(&mut CT_Settings) -> std::result::Result<(), oxoffice_docx_oxml::OxmlError>,
     ) -> Result<()> {
-        let mut candidate = self.settings_mutation_candidate()?;
-        apply(candidate.settings.get_or_insert_with(CT_Settings::new))?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        let mut settings = self.settings.clone().unwrap_or_default();
+        apply(&mut settings)?;
+        self.edit_settings_part(SettingsPart::Settings, |document| {
+            document.settings = Some(settings.clone());
+        })
     }
 
     /// Remove one typed settings member and prune an empty owned part.
@@ -375,37 +378,29 @@ impl Document {
             &mut CT_Settings,
         ) -> std::result::Result<Option<T>, oxoffice_docx_oxml::OxmlError>,
     ) -> Result<Option<T>> {
-        if self.settings.is_none() {
+        let Some(mut settings) = self.settings.clone() else {
             return Ok(None);
-        }
-        let mut candidate = self.settings_mutation_candidate()?;
-        let removed = apply(
-            candidate
-                .settings
-                .as_mut()
-                .expect("settings candidate retains its model"),
-        )?;
-        candidate.prune_empty_owned_settings();
-        self.commit_staged_mutation(candidate);
+        };
+        let removed = apply(&mut settings)?;
+        self.edit_settings_part(SettingsPart::Settings, |document| {
+            document.settings = Some(settings.clone());
+            document.prune_empty_owned_settings();
+        })?;
         Ok(removed)
     }
 
-    /// Stage one web settings mutation, applying it to a part created on
-    /// demand.
+    /// Apply one web settings mutation, to a part created on demand.
     fn stage_web_settings_mutation(
         &mut self,
         apply: impl FnOnce(
             &mut CT_WebSettings,
         ) -> std::result::Result<(), oxoffice_docx_oxml::OxmlError>,
     ) -> Result<()> {
-        let mut candidate = self.web_settings_mutation_candidate()?;
-        apply(
-            candidate
-                .web_settings
-                .get_or_insert_with(CT_WebSettings::new),
-        )?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        let mut settings = self.web_settings.clone().unwrap_or_default();
+        apply(&mut settings)?;
+        self.edit_settings_part(SettingsPart::WebSettings, |document| {
+            document.web_settings = Some(settings.clone());
+        })
     }
 
     /// Remove one typed web settings member and prune an empty owned part.
@@ -415,18 +410,14 @@ impl Document {
             &mut CT_WebSettings,
         ) -> std::result::Result<Option<T>, oxoffice_docx_oxml::OxmlError>,
     ) -> Result<Option<T>> {
-        if self.web_settings.is_none() {
+        let Some(mut settings) = self.web_settings.clone() else {
             return Ok(None);
-        }
-        let mut candidate = self.web_settings_mutation_candidate()?;
-        let removed = apply(
-            candidate
-                .web_settings
-                .as_mut()
-                .expect("web settings candidate retains its model"),
-        )?;
-        candidate.prune_empty_owned_web_settings();
-        self.commit_staged_mutation(candidate);
+        };
+        let removed = apply(&mut settings)?;
+        self.edit_settings_part(SettingsPart::WebSettings, |document| {
+            document.web_settings = Some(settings.clone());
+            document.prune_empty_owned_web_settings();
+        })?;
         Ok(removed)
     }
 
@@ -1046,57 +1037,194 @@ impl Document {
 impl Document {
     pub(super) fn settings_mutation_candidate(&self) -> Result<Self> {
         let mut candidate = self.clone_for_staging();
-        let created = candidate.settings_part_name.is_none();
-        candidate
-            .identifiers
-            .observe_package_graph(&candidate.package)?;
-        let part_name = match &candidate.settings_part_name {
-            Some(part_name) => part_name.clone(),
-            None => candidate
-                .identifiers
-                .reserve_preferred_part_name(DEFAULT_SETTINGS_PART)?,
-        };
-        candidate.invalidate_layout();
-        candidate.settings_part_name = Some(part_name.clone());
-        candidate.settings_owned |= created;
-        candidate
-            .ensure_part_relationship_checked(
-                &part_name,
-                rel_types::SETTINGS,
-                SETTINGS_CONTENT_TYPE,
-            )
-            .map_err(|error| {
-                Error::Other(format!("settings relationship allocation failed: {error}"))
-            })?;
+        candidate.reserve_settings_part()?;
         Ok(candidate)
     }
 
+    /// The staged web settings edit, which debug builds compare with the
+    /// in-place one.
+    #[cfg(debug_assertions)]
     fn web_settings_mutation_candidate(&self) -> Result<Self> {
         let mut candidate = self.clone_for_staging();
-        let created = candidate.web_settings_part_name.is_none();
-        candidate
-            .identifiers
-            .observe_package_graph(&candidate.package)?;
-        let part_name = match &candidate.web_settings_part_name {
+        candidate.reserve_web_settings_part()?;
+        Ok(candidate)
+    }
+
+    /// Reserve the settings part, its content type and its relationship from
+    /// the main part, and drop the derived layout.
+    fn reserve_settings_part(&mut self) -> Result<()> {
+        let created = self.settings_part_name.is_none();
+        self.identifiers.observe_package_graph(&self.package)?;
+        let part_name = match &self.settings_part_name {
             Some(part_name) => part_name.clone(),
-            None => candidate
+            None => self
+                .identifiers
+                .reserve_preferred_part_name(DEFAULT_SETTINGS_PART)?,
+        };
+        self.invalidate_layout();
+        self.settings_part_name = Some(part_name.clone());
+        self.settings_owned |= created;
+        self.ensure_part_relationship_checked(
+            &part_name,
+            rel_types::SETTINGS,
+            SETTINGS_CONTENT_TYPE,
+        )
+        .map_err(|error| Error::Other(format!("settings relationship allocation failed: {error}")))
+    }
+
+    /// Reserve the web settings part, its content type and its relationship
+    /// from the main part.
+    fn reserve_web_settings_part(&mut self) -> Result<()> {
+        let created = self.web_settings_part_name.is_none();
+        self.identifiers.observe_package_graph(&self.package)?;
+        let part_name = match &self.web_settings_part_name {
+            Some(part_name) => part_name.clone(),
+            None => self
                 .identifiers
                 .reserve_preferred_part_name(DEFAULT_WEB_SETTINGS_PART)?,
         };
-        candidate.web_settings_part_name = Some(part_name.clone());
-        candidate.web_settings_owned |= created;
-        candidate
-            .ensure_part_relationship_checked(
-                &part_name,
-                rel_types::WEB_SETTINGS,
-                WEB_SETTINGS_CONTENT_TYPE,
-            )
-            .map_err(|error| {
-                Error::Other(format!(
-                    "web settings relationship allocation failed: {error}"
-                ))
-            })?;
-        Ok(candidate)
+        self.web_settings_part_name = Some(part_name.clone());
+        self.web_settings_owned |= created;
+        self.ensure_part_relationship_checked(
+            &part_name,
+            rel_types::WEB_SETTINGS,
+            WEB_SETTINGS_CONTENT_TYPE,
+        )
+        .map_err(|error| {
+            Error::Other(format!(
+                "web settings relationship allocation failed: {error}"
+            ))
+        })
+    }
+
+    /// Reserve `part` in place, then run `install`, which writes its model and
+    /// cannot fail, without staging the whole document.
+    ///
+    /// The registry journals what the reservation adds to it and to the
+    /// package graph, and a refusal or a panic removes it again and puts the
+    /// part's name back, so a refused edit leaves the document as it was. A
+    /// success leaves what [`Self::commit_staged_mutation`] leaves for a
+    /// staged clone: the derived layout is dropped (by the reservation) and
+    /// a signed package records a package mutation. Debug builds run the
+    /// staged edit on a clone and compare. `install` is `Fn` for that run.
+    fn edit_settings_part(
+        &mut self,
+        part: SettingsPart,
+        install: impl Fn(&mut Self),
+    ) -> Result<()> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let names = (
+            self.settings_part_name.clone(),
+            self.settings_owned,
+            self.web_settings_part_name.clone(),
+            self.web_settings_owned,
+        );
+        self.identifiers.open_journal();
+        let reserved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match part {
+            SettingsPart::Settings => self.reserve_settings_part(),
+            SettingsPart::WebSettings => self.reserve_web_settings_part(),
+        }));
+        let journal = self.identifiers.close_journal();
+        let refused = |document: &mut Self, journal| {
+            document.undo_reservations(journal);
+            (
+                document.settings_part_name,
+                document.settings_owned,
+                document.web_settings_part_name,
+                document.web_settings_owned,
+            ) = names.clone();
+        };
+        let result = match reserved {
+            Err(panic) => {
+                refused(self, journal);
+                std::panic::resume_unwind(panic)
+            }
+            Ok(Err(error)) => {
+                refused(self, journal);
+                Err(error)
+            }
+            Ok(Ok(())) => {
+                install(self);
+                // A pruned part leaves the package graph as well.
+                let pruned = match part {
+                    SettingsPart::Settings => self.settings_part_name.is_none(),
+                    SettingsPart::WebSettings => self.web_settings_part_name.is_none(),
+                };
+                let signed = self.package.package_rels.items.iter().any(|relationship| {
+                    relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN
+                });
+                self.package_signatures_invalidated |=
+                    signed && (journal.changed_package() || pruned);
+                Ok(())
+            }
+        };
+        #[cfg(debug_assertions)]
+        self.assert_settings_edit_matches_staged(before, part, &install, &result);
+        result
+    }
+
+    /// Debug proof that an in-place settings edit left what the staged edit
+    /// leaves, or refused with its error and left the document as it was.
+    #[cfg(debug_assertions)]
+    fn assert_settings_edit_matches_staged(
+        &self,
+        before: Self,
+        part: SettingsPart,
+        install: &impl Fn(&mut Self),
+        result: &Result<()>,
+    ) {
+        let staged = match part {
+            SettingsPart::Settings => before.settings_mutation_candidate(),
+            SettingsPart::WebSettings => before.web_settings_mutation_candidate(),
+        };
+        let expected = match (result, staged) {
+            (Ok(()), Ok(mut staged)) => {
+                install(&mut staged);
+                let mut committed = before.clone_for_staging();
+                committed.commit_staged_mutation(staged);
+                committed
+            }
+            (Err(direct), Err(staged)) => {
+                assert_eq!(
+                    direct.to_string(),
+                    staged.to_string(),
+                    "in-place settings edit refused otherwise"
+                );
+                before
+            }
+            (Ok(()), Err(staged)) => panic!("in-place settings edit hid the staged error {staged}"),
+            (Err(direct), Ok(_)) => panic!("in-place settings edit refused with {direct}"),
+        };
+        assert!(
+            expected.package.same_package_as(&self.package),
+            "in-place settings edit left another package graph"
+        );
+        assert_eq!(
+            expected.identifiers, self.identifiers,
+            "in-place settings edit left another identifier registry"
+        );
+        assert_eq!(
+            (
+                &expected.settings,
+                &expected.settings_part_name,
+                expected.settings_owned,
+                &expected.web_settings,
+                &expected.web_settings_part_name,
+                expected.web_settings_owned,
+                expected.package_signatures_invalidated,
+            ),
+            (
+                &self.settings,
+                &self.settings_part_name,
+                self.settings_owned,
+                &self.web_settings,
+                &self.web_settings_part_name,
+                self.web_settings_owned,
+                self.package_signatures_invalidated,
+            ),
+            "in-place settings edit left other settings"
+        );
     }
 
     fn prune_empty_owned_web_settings(&mut self) {
@@ -1163,4 +1291,11 @@ impl Document {
         self.settings = None;
         self.settings_owned = false;
     }
+}
+
+/// The part a settings edit reserves.
+#[derive(Clone, Copy)]
+enum SettingsPart {
+    Settings,
+    WebSettings,
 }
