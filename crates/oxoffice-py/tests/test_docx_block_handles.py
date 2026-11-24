@@ -521,6 +521,70 @@ def test_an_edit_in_a_nested_block_content_control_still_works(call):
     assert texts[2] in ("inner", "inner1 two"), texts
 
 
+NESTED_EDITS = {
+    "Paragraph.add_run": (
+        lambda para: para.add_run(" added"),
+        lambda para: para.text == "edited two added",
+    ),
+    "Paragraph.add_equation": (
+        lambda para: para.add_equation("x^2", format="latex"),
+        lambda para: para.text == "edited two" and len(para.equations()) == 1,
+    ),
+    "Run.remove": (lambda para: para.runs[1].remove(), lambda para: para.text == "edited"),
+    "Paragraph.replace_text": (
+        lambda para: para.replace_text("ed tw", "ed, tw", expect=1),
+        lambda para: para.text == "edited, two",
+    ),
+    "Run.add_field": (
+        lambda para: para.runs[0].add_field("PAGE", "1"),
+        lambda para: para.text == "edited1 two",
+    ),
+}
+
+
+def edited_paragraph(doc):
+    return next(paragraph for paragraph in doc.paragraphs if paragraph.text.startswith("edited"))
+
+
+@pytest.mark.parametrize("call", NESTED_EDITS)
+@pytest.mark.parametrize("depth", [1, 2, 3])
+def test_a_run_edit_works_in_a_block_content_control_at_any_depth(call, depth):
+    edited = p("edited", " two")
+    for level in range(depth - 1):
+        edited = control(p(f"level {level}"), edited)
+    doc = document(p("before") + control(p("outer", " two"), edited, p("outer last")) + p("after"))
+    para = edited_paragraph(doc)
+    others = {
+        paragraph.text: (paragraph, paragraph.runs[0], paragraph.runs[0].text)
+        for paragraph in doc.paragraphs
+        if paragraph.text in ("before", "outer two", "outer last", "after")
+    }
+    edit, edited_as_asked = NESTED_EDITS[call]
+    edit(para)
+
+    if call == "Paragraph.replace_text":
+        # A replacement retires the paragraph handles, at any depth: the
+        # others are fetched again.
+        others = {
+            paragraph.text: (paragraph, paragraph.runs[0], run_text)
+            for paragraph in doc.paragraphs
+            for text, (_, _, run_text) in others.items()
+            if paragraph.text == text
+        }
+    else:
+        assert edited_as_asked(para), para.text
+    assert edited_as_asked(edited_paragraph(doc))
+    assert edited_as_asked(edited_paragraph(oxdocx.Document.from_bytes(doc.to_bytes())))
+    # Every other paragraph and run handle keeps reading and editing its own element.
+    for text, (paragraph, run, run_text) in others.items():
+        assert paragraph.text == text and run.text == run_text
+        paragraph.add_run("!")
+    reopened = oxdocx.Document.from_bytes(doc.to_bytes())
+    texts = [paragraph.text for paragraph in reopened.paragraphs]
+    for text in others:
+        assert text + "!" in texts, texts
+
+
 def plain_table_document(kind):
     """A table without hyperlinks, text boxes or nested tables between two body paragraphs, made through the API
     (new, or saved and opened again): `Paragraph.text` edits its cell paragraphs on the local cell route."""

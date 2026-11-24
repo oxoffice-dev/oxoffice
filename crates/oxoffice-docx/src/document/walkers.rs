@@ -386,60 +386,6 @@ pub(super) fn modeled_main_cell_route(
     Ok((content_index, cell_index))
 }
 
-/// The body story path of each paragraph of `body`, in
-/// [`CT_Body::paragraphs`] order, as [`Document::paragraph_story_location`]
-/// resolves it from the body story items `items`, or `None` where it gives
-/// no location.
-pub(super) fn body_paragraph_routes(
-    body: &CT_Body,
-    items: &[StoryItemSpan],
-) -> Vec<Option<Vec<usize>>> {
-    let mut targets = HashMap::new();
-    for (slot, child) in body.content.iter().enumerate() {
-        match child {
-            BodyContent::Paragraph(paragraph) => {
-                targets
-                    .entry(paragraph.as_ref() as *const CT_P)
-                    .or_insert((slot, None));
-            }
-            BodyContent::ContentControl(control) => {
-                for (ordinal, paragraph) in control
-                    .content
-                    .iter()
-                    .filter_map(|child| match child {
-                        SdtContent::Paragraph(paragraph) => Some(paragraph),
-                        _ => None,
-                    })
-                    .enumerate()
-                {
-                    targets
-                        .entry(paragraph as *const CT_P)
-                        .or_insert((slot, Some(ordinal)));
-                }
-            }
-            _ => {}
-        }
-    }
-    let direct = items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.direct_owner_child)
-        .collect::<Vec<_>>();
-    body.paragraphs()
-        .map(|paragraph| {
-            let (slot, ordinal) = *targets.get(&(paragraph as *const CT_P))?;
-            let (item_index, item) = direct.get(slot)?;
-            let expected_kind = if ordinal.is_some() {
-                StoryItemKind::ContentControl
-            } else {
-                StoryItemKind::Paragraph
-            };
-            (item.kind == expected_kind)
-                .then(|| std::iter::once(*item_index).chain(ordinal).collect())
-        })
-        .collect()
-}
-
 /// [`Document::cell_paragraph_story_locations`] of `body`, serialized as
 /// `xml` with the story owners `owners` in the main part `part_name`, and
 /// whether it routed every table cell owner. Like the single lookup, which
