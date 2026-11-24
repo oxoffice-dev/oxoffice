@@ -188,7 +188,7 @@ def test_a_restart_in_a_body_a_typed_edit_cannot_save_is_refused(tmp_path):
             z.writestr(name, data)
     doc = oxdocx.Document.open(path)
     before = doc.to_bytes()
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="namespace"):
         doc.restart_numbering(doc.paragraphs[2], start=4)
     assert doc.to_bytes() == before
     # The store and the link do not touch the body and still save.
