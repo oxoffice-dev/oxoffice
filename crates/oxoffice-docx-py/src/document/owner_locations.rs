@@ -185,20 +185,21 @@ impl WordOwnerIndexes {
         let mut tables = HashMap::new();
         for (key, owner) in owners.iter().enumerate() {
             indexes.by_generation.insert(owner.owner.generation(), key);
+            let body_slot = owner.body_slot();
             indexes.index_entry(
                 key,
                 owner.route_key(),
                 owner.route_shape(),
                 owner.parent,
-                owner.body_slot(),
+                body_slot,
             );
-            if let (WordOwnerLocation::Table(location), Some(slot)) =
-                (&*owner.location(), owner.body_slot())
-                && location.story().kind() == oxoffice_docx::StoryKind::Body
+            // Only a body table is resolved: its route in the table projection.
+            if let (WordOwnerLocation::Table(shape), Some(slot)) = (owner.route_shape(), body_slot)
+                && shape.story().kind() == oxoffice_docx::StoryKind::Body
+                && !tables.contains_key(&slot)
+                && let WordOwnerLocation::Table(location) = owner.location().into_owned()
             {
-                tables
-                    .entry(slot)
-                    .or_insert_with(|| indexes.items.route(location.clone()));
+                tables.insert(slot, indexes.items.route(location));
             }
         }
         indexes.project(projections, &tables);

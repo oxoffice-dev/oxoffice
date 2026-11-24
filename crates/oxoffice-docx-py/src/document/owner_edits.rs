@@ -731,8 +731,9 @@ impl PyDocument {
                         // A text-box paragraph is rewritten through its physical
                         // part. Its owner scope retires with the edit, so the
                         // handle that made the change cannot be reused.
+                        // The stored route holds the story kind.
                         if matches!(
-                            &*self.owners[before].location(),
+                            self.owners[before].route_shape(),
                             WordOwnerLocation::Paragraph(location)
                                 if location.story().kind() == oxoffice_docx::StoryKind::TextBox
                         ) {
@@ -744,7 +745,8 @@ impl PyDocument {
                     while let Some(parent) = self.owners[root].parent {
                         root = parent;
                     }
-                    match &*self.owners[root].location() {
+                    // The kind and the story kind, as the stored route holds them.
+                    match self.owners[root].route_shape() {
                         WordOwnerLocation::Section(_) => true,
                         WordOwnerLocation::Hyperlink(..) => matches!(
                             publication,

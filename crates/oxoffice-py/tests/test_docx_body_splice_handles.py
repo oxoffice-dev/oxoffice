@@ -294,3 +294,20 @@ def test_a_table_inserted_before_a_table_in_a_block_content_control_keeps_every_
     doc.insert_paragraph(0, "new")
     assert outcome(lambda: later.cell(0, 0).text) in ("d", STALE)
     assert [table.cell(0, 0).text for table in doc.tables] == ["", "a", "b", "d"]
+
+
+@IDS
+def test_a_property_edit_after_a_table_insertion_keeps_each_cell_handle_on_its_own_cell(ids):
+    # The owners a splice inserts come after the others; a property edit that keeps every owner hands each one its
+    # states by its place in its own table, never by where it sits in the inventory.
+    doc = document(p("x") + table(p("a")) + p("y") + table(p("b")) + p("z"), ids=ids)
+    first = doc.tables[0].cell(0, 0).paragraphs[0]
+    second = doc.tables[1].cell(0, 0).paragraphs[0]
+    doc.insert_table(0, 1, 1)
+    doc.insert_table(4, 1, 1)
+    doc.tables[1].set_cell_grid_span(0, 0, None)
+    assert runs_text(first) == "a"
+    assert runs_text(second) == "b"
+    first.text = "a edited"
+    second.text = "b edited"
+    assert [table.cell(0, 0).text for table in doc.tables] == ["", "a edited", "", "b edited"]

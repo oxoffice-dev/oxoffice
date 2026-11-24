@@ -226,6 +226,29 @@ impl WordAnchor {
         }
     }
 
+    /// [`Self::normalize_location`] in place: a body route keeps its path.
+    fn normalize_owned(&self, mut location: WordOwnerLocation) -> WordOwnerLocation {
+        let content = |route: &mut oxoffice_docx::ContentLocation| match route.story().kind() {
+            oxoffice_docx::StoryKind::Body => route.set_index_path_head(0),
+            oxoffice_docx::StoryKind::TableCell if self.cells => *route = self.normalize(route),
+            _ => {}
+        };
+        match &mut location {
+            WordOwnerLocation::Paragraph(route)
+            | WordOwnerLocation::Table(route)
+            | WordOwnerLocation::Run(route, _)
+            | WordOwnerLocation::Hyperlink(route, _) => content(route),
+            WordOwnerLocation::Cell { table, story, .. } => {
+                content(table);
+                if self.cells && story.kind() == oxoffice_docx::StoryKind::TableCell {
+                    story.set_owner_index(story.owner_index().wrapping_sub(self.item.cells()));
+                }
+            }
+            WordOwnerLocation::Section(_) => {}
+        }
+        location
+    }
+
     fn resolve_location(&self, location: &WordOwnerLocation) -> WordOwnerLocation {
         Self::map_location(
             location,
@@ -343,16 +366,40 @@ impl WordBodyItems {
                 .then(|| location.index_path().first().copied())
                 .flatten()
         };
-        // Per item index: its slot, and the projection ordinals of its body
-        // paragraphs and tables.
-        #[derive(Default)]
-        struct Facts {
-            slot: Option<usize>,
-            paragraphs: Vec<usize>,
-            tables: Vec<usize>,
-            cells: Vec<usize>,
+        // The ordinals one item holds, which must follow those of the items
+        // before it.
+        #[derive(Clone, Copy, Default)]
+        struct Span {
+            first: usize,
+            last: usize,
+            count: usize,
         }
-        let mut items = std::collections::BTreeMap::<usize, Facts>::new();
+        impl Span {
+            fn add(&mut self, ordinal: usize) {
+                if self.count == 0 {
+                    (self.first, self.last) = (ordinal, ordinal);
+                } else {
+                    self.first = self.first.min(ordinal);
+                    self.last = self.last.max(ordinal);
+                }
+                self.count += 1;
+            }
+
+            fn follows(&self, base: usize) -> bool {
+                self.count == 0 || (self.first == base && self.last + 1 == base + self.count)
+            }
+        }
+        // Per item index: whether it holds owners, its slot, and the
+        // projection ordinals of its body paragraphs and tables.
+        #[derive(Clone, Copy, Default)]
+        struct Facts {
+            owned: bool,
+            slot: Option<usize>,
+            paragraphs: Span,
+            tables: Span,
+            cells: Span,
+        }
+        let mut items = Vec::<Facts>::new();
         for address in addresses {
             let Some(route) = content_route(&address.location) else {
                 continue;
@@ -364,12 +411,16 @@ impl WordBodyItems {
             let Some(head) = body_head(route) else {
                 continue;
             };
-            let facts = items.entry(head).or_default();
+            if items.len() <= head {
+                items.resize(head + 1, Facts::default());
+            }
+            let facts = &mut items[head];
+            facts.owned = true;
             match &address.location {
                 WordOwnerLocation::Paragraph(_) => {
-                    facts.paragraphs.push(address.projection_ordinal?);
+                    facts.paragraphs.add(address.projection_ordinal?)
                 }
-                WordOwnerLocation::Table(_) => facts.tables.push(address.projection_ordinal?),
+                WordOwnerLocation::Table(_) => facts.tables.add(address.projection_ordinal?),
                 _ => {}
             }
             if matches!(
@@ -384,7 +435,9 @@ impl WordBodyItems {
             }
         }
         for location in projections.body_paragraphs.iter().flatten().flatten() {
-            items.get(&body_head(location)?)?;
+            if !items.get(body_head(location)?)?.owned {
+                return None;
+            }
         }
         // Main-part cell stories, by the item of the body table that holds
         // them, through nested tables.
@@ -450,9 +503,9 @@ impl WordBodyItems {
         }
         if cells_anchored {
             for (ordinal, item) in &cell_items {
-                match items.get_mut(item) {
-                    Some(facts) => facts.cells.push(*ordinal),
-                    None => cells_anchored = false,
+                match items.get_mut(*item) {
+                    Some(facts) if facts.owned => facts.cells.add(*ordinal),
+                    _ => cells_anchored = false,
                 }
             }
         }
@@ -460,32 +513,26 @@ impl WordBodyItems {
         let mut records = Vec::with_capacity(items.len());
         let (mut paragraphs, mut tables, mut cells) = (0, 0, 0);
         let mut last_slot = 0;
-        for (index, mut facts) in items {
+        for (index, facts) in items.into_iter().enumerate() {
+            if !facts.owned {
+                continue;
+            }
             if let Some(slot) = facts.slot {
                 if slot < last_slot {
                     return None;
                 }
                 last_slot = slot;
             }
-            facts.paragraphs.sort_unstable();
-            facts.tables.sort_unstable();
-            facts.cells.sort_unstable();
-            let dense = |ordinals: &[usize], base: usize| {
-                ordinals
-                    .iter()
-                    .enumerate()
-                    .all(|(offset, ordinal)| *ordinal == base + offset)
-            };
-            if !dense(&facts.paragraphs, paragraphs) || !dense(&facts.tables, tables) {
+            if !facts.paragraphs.follows(paragraphs) || !facts.tables.follows(tables) {
                 return None;
             }
-            if cells_anchored && !dense(&facts.cells, cells) {
+            if cells_anchored && !facts.cells.follows(cells) {
                 cells_anchored = false;
             }
             let counts = (
-                facts.paragraphs.len(),
-                facts.tables.len(),
-                facts.cells.len(),
+                facts.paragraphs.count,
+                facts.tables.count,
+                facts.cells.count,
             );
             records.push(BodyItem::new(
                 index,
@@ -757,7 +804,7 @@ impl WordOwner {
                     _ => 0,
                 };
                 (
-                    anchor.normalize_location(&location),
+                    anchor.normalize_owned(location),
                     projection_ordinal.map(|ordinal| ordinal.wrapping_sub(base)),
                 )
             }
@@ -809,6 +856,22 @@ impl WordOwner {
     /// read them through [`Self::location`].
     pub(super) fn route_shape(&self) -> &WordOwnerLocation {
         &self.route
+    }
+
+    /// The owner's route, read for its stories: the stored route when it is
+    /// a body route (whose story a splice never changes, only its head),
+    /// else the route as the document resolves it now.
+    pub(super) fn story_route(&self) -> Cow<'_, WordOwnerLocation> {
+        match &self.route {
+            WordOwnerLocation::Paragraph(route)
+            | WordOwnerLocation::Table(route)
+            | WordOwnerLocation::Run(route, _)
+                if route.story().kind() == oxoffice_docx::StoryKind::Body =>
+            {
+                Cow::Borrowed(&self.route)
+            }
+            _ => self.location(),
+        }
     }
 
     /// The direct body slot of a body paragraph or table.

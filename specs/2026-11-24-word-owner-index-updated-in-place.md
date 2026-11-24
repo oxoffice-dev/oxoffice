@@ -74,8 +74,12 @@ items. It never visits the owners of other blocks.
    local cell edit already does. The inventory is no longer in walk order
    after a splice: the whole-inventory routes match owners by route, the
    splice plan no longer reads that order, and the removal of the last body
-   paragraph (which wants the paragraph's owners last) takes the whole route
-   when owners added later sit after them.
+   paragraph (which wants the paragraph's owners last) takes the removal
+   splice when owners added later sit after them. The one relocation that
+   paired owners by key and position, a property edit that keeps every
+   owner (`relocated_property_owners`), now pairs an owner with a parent
+   among the old owners of the parent it matched: owners keyed alike in two
+   cells can no longer swap once the inventory left walk order.
 2. **Owners relative to their body item.** Each top-level body story item
    that holds owners gets a shared record (`BodyItem`) with its current item
    index, its direct body slot, and the number of body paragraphs, body
@@ -150,9 +154,11 @@ One pull request, `perf(python)`, a lot of #466.
    `cell_paragraphs` per facade table.
 3. Splice plan, preparation and commit as decided; removal compacts.
 4. Oracles as decided.
-5. A guard: the four calls must cost at 16N at most 1.5 times their cost at
-   N plus 1 ms (`test_docx_scaling.py`), which today's cost fails (3.07 ms
-   against 0.59 ms) and a flat cost passes with room on every runner.
+5. A guard: the four calls must cost at 16N at most 1.25 times their cost
+   at N plus 0.5 ms (`test_docx_scaling.py`), which today's cost fails
+   (`insert_paragraph` 3.07 ms against 0.59 ms, `insert_table` 6.80 ms
+   against 4.07 ms) and a flat cost passes with room. `insert_paragraph`
+   and `insert_table` join the QUICK set that every pull request times.
 6. Check: the Python suite on a debug build (every splice under the
    oracles); `OXOFFICE_SCALING=full` on `test_docx_scaling.py` on the
    `scaling` wheel; the table above measured again.
@@ -161,6 +167,50 @@ Estimate: a day of work, most of it step 1 and the checks. Risk: medium,
 local to the binding. A wrong record would hand a handle another element;
 the oracles check every splice of every debug test, and the new handle tests
 of the previous step pin kept, moved and retired handles.
+
+## Outcome
+
+As planned, with two corrections the independent review found:
+
+- A property edit that keeps every owner (`relocated_property_owners`) paired
+  old and new owners by key, then by position among the owners of that key.
+  An owner inside a cell has a key that does not name its table, so once a
+  splice appended a table's owners, a later property edit handed the cell
+  paragraph handles of one table to another. Owners with a parent are now
+  paired among the old owners of the parent they matched
+  (`test_a_property_edit_after_a_table_insertion_keeps_each_cell_handle_on_its_own_cell`
+  fails without it).
+- The guard of plan step 5 first allowed 1.5 times plus 1 ms, which the old
+  cost of `insert_table` passed (fixed cost of reading the table): it is
+  1.25 times plus 0.5 ms.
+
+`scaling` wheels of main and of this change on macOS, the body of
+`test_docx_scaling.py`, fastest of 9 calls on 3 documents, a quiet machine:
+
+| Call | 25 ¶ | 100 ¶ | 400 ¶ |
+| --- | --- | --- | --- |
+| `Document.insert_paragraph(10)` | 0.60 -> 0.33 ms | 1.10 -> 0.33 ms | 3.11 -> 0.35 ms |
+| `Paragraph.insert_paragraph_before` | 0.59 -> 0.33 ms | 1.07 -> 0.33 ms | 2.97 -> 0.35 ms |
+| `Document.insert_table(10, 2, 2)` | 4.01 -> 3.73 ms | 4.57 -> 3.69 ms | 6.81 -> 3.90 ms |
+| `Document.add_paragraph` | 0.72 -> 0.48 ms | 1.21 -> 0.49 ms | 3.13 -> 0.50 ms |
+
+`Document.add_table`, an appended table, is flat too (4.17 and 6.89 ms
+before, 4.04 and 3.98 ms after, at 25 and 400 paragraphs).
+
+- The guard fails on main for the four calls (`insert_paragraph` 3.0 ms at
+  400 paragraphs against 0.6 ms at 25, `insert_table` 6.5 against 4.0) and
+  passes on this change.
+- What it costs elsewhere: the whole-inventory publications now derive the
+  records from the walk and store the body owners relative to them.
+  `Paragraph.text`, which takes that route, costs about 5 % more at 25
+  paragraphs and 8 % more at 400 (3.9 -> 4.3 ms, 26.7 -> 28.9 ms, the
+  binding being unoptimised in the `scaling` profile); `Run.text`,
+  `Cell.text` and `Table.add_row` move by 2 % or less. Those routes are the
+  later lots of #466.
+- Python suite on a debug build, every splice under the oracles: 2214
+  passed, 11 skipped. `OXOFFICE_SCALING=full` on `test_docx_scaling.py`:
+  415 passed, 125 xfailed, no XPASS: `GROWING` does not change (the calls
+  this change made flat were already under the gate's band).
 
 ## Links
 

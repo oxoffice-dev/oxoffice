@@ -292,7 +292,8 @@ pub(super) fn block_retention(
         false
     };
     // An owner without a parent is matched by its story's ordinal.
-    let renumbered = |owner: &WordOwner| match &*owner.location() {
+    // A body route's story is that of its stored form: only its head moves.
+    let renumbered = |owner: &WordOwner| match &*owner.story_route() {
         WordOwnerLocation::Paragraph(location)
         | WordOwnerLocation::Table(location)
         | WordOwnerLocation::Run(location, _) => {
