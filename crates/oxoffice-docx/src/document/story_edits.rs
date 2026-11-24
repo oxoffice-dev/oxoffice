@@ -400,7 +400,12 @@ impl Document {
             #[cfg(debug_assertions)]
             let staged_fragment = fragment.clone();
             let result = self.edit_in_place(
-                &[crate::EditUnit::Footnotes, crate::EditUnit::Endnotes],
+                // The flush of pending typed notes may write pending comments.
+                &[
+                    crate::EditUnit::Footnotes,
+                    crate::EditUnit::Endnotes,
+                    crate::EditUnit::Comments,
+                ],
                 |document| document.insert_note_content(destination, fragment),
             );
             #[cfg(debug_assertions)]
@@ -421,12 +426,16 @@ impl Document {
         fragment: &ContentFragment,
     ) -> Result<bool> {
         let part = destination.story.part_name();
-        let in_notes = [StoryKind::Footnote, StoryKind::Endnote]
-            .into_iter()
-            .map(|kind| self.note_part_name(kind))
-            .collect::<Result<Vec<_>>>()?
-            .iter()
-            .any(|name| name.as_deref() == Some(part));
+        if part == self.doc_part_name {
+            return Ok(false);
+        }
+        // An endnotes relationship the staged route would refuse keeps it.
+        let in_notes = self.footnotes_part_name.as_deref() == Some(part)
+            || self
+                .note_part_name(StoryKind::Endnote)
+                .ok()
+                .flatten()
+                .is_some_and(|name| name == part);
         Ok(in_notes && !fragment_holds_note_references(fragment)?)
     }
 

@@ -52,6 +52,9 @@ struct FootnotesCopy {
     part_name: Option<String>,
     root_namespace_declarations: Vec<(String, String)>,
     dirty: bool,
+    /// The part's bytes, for the no-op answer: the model holds paragraphs
+    /// alone, and a table added to a note changes the part only.
+    part_bytes: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +153,7 @@ impl Document {
                             .footnotes_root_namespace_declarations
                             .clone(),
                         dirty: self.footnotes_dirty,
+                        part_bytes: self.footnotes_part_bytes(),
                     });
                 }
                 EditUnit::Comments => {
@@ -227,6 +231,7 @@ impl Document {
                         EditUnit::Footnotes => undo.footnotes.as_ref().is_some_and(|copy| {
                             copy.footnotes != self.footnotes
                                 || copy.part_name != self.footnotes_part_name
+                                || copy.part_bytes != self.footnotes_part_bytes()
                         }),
                         EditUnit::Comments => undo.comments.as_ref().is_some_and(|copy| {
                             copy.comments != self.comments
@@ -247,6 +252,13 @@ impl Document {
                 })
                 .collect(),
         }
+    }
+
+    /// The bytes of the footnotes part, if the document has one.
+    fn footnotes_part_bytes(&self) -> Option<Vec<u8>> {
+        self.footnotes_part_name
+            .as_deref()
+            .and_then(|name| self.package.get_part(name).map(<[u8]>::to_vec))
     }
 
     /// The bytes of the endnotes part, if the document has one.
