@@ -16,7 +16,7 @@ pub(super) enum IdentifierDefinition {
 /// back copies of both. It records the reservations of the part bundles,
 /// relationship ids, part names, content types and numbering ids that
 /// [`Document::edit_properties`] and the numbering edits make.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ReservationJournal {
     entries: Vec<Reservation>,
     /// Whether the edit removed a part, its relationships or its content
@@ -25,7 +25,7 @@ pub(crate) struct ReservationJournal {
     removed_from_package: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Reservation {
     PartName(String),
     PreservedPartName(String),
@@ -55,6 +55,18 @@ enum Reservation {
 }
 
 impl ReservationJournal {
+    /// Append `later`, a journal opened after this one closed.
+    pub(crate) fn extend(&mut self, later: ReservationJournal) {
+        self.entries.extend(later.entries);
+        self.removed_from_package |= later.removed_from_package;
+    }
+
+    /// The removal this journal records was put back by other means (the
+    /// part journal of an in-place edit), so undoing it is valid.
+    pub(crate) fn forget_removal(&mut self) {
+        self.removed_from_package = false;
+    }
+
     /// Whether the edit changed the package graph.
     pub(crate) fn changed_package(&self) -> bool {
         self.removed_from_package

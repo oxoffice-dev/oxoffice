@@ -3836,6 +3836,26 @@ impl PyDocument {
 
     #[pyo3(signature = (id, *, resolved = true))]
     fn resolve_comment(&mut self, id: i32, resolved: bool, py: Python<'_>) -> PyResult<bool> {
+        if self
+            .inner
+            .comment_paragraph_count(id)
+            .is_some_and(|count| count > 0)
+        {
+            // The flag lives in the comments extension part and the paragraph
+            // id beside the paragraph: no element a handle names changes, so
+            // the in-place edit publishes nothing and every handle stays.
+            let updated = self
+                .inner
+                .resolve_comment(id, resolved)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            #[cfg(debug_assertions)]
+            if self.snapshot_scope.is_some() {
+                self.assert_word_inventory_rebuilds(false);
+            }
+            return Ok(updated);
+        }
+        // An unknown id answers false on the staged route; an empty comment
+        // gains a paragraph there, which the inventory must publish.
         let mut candidate = self.inner.clone_for_staging();
         let updated = candidate
             .resolve_comment(id, resolved)

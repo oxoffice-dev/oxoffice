@@ -539,6 +539,7 @@ impl Document {
             normal_layout_engine: Mutex::new(None),
             deterministic_layout_cache: Mutex::new(None),
             bundled_fallback_layout_engine: Mutex::new(None),
+            in_place: InPlaceState::default(),
             parsed,
             main_body_scans: Arc::new(Mutex::new(MainBodyScans {
                 serialized: serialized_blocks,
