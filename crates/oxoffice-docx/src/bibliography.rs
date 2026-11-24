@@ -595,7 +595,7 @@ impl Document {
         #[cfg(debug_assertions)]
         let before = self.clone_for_staging();
         let result = self.edit_in_place(&[crate::EditUnit::Parts], |document| {
-            let guid = add_source_to(document, source.clone(), derived)?;
+            let guid = add_source_to(document, source.clone(), derived, true)?;
             settle_source_collection(document)?;
             Ok(guid)
         });
@@ -603,7 +603,7 @@ impl Document {
         self.assert_in_place_matches_staged(before, &result, |staged| {
             let mut candidate = staged.clone_for_staging();
             candidate.prepare_staged_package()?;
-            let guid = add_source_to(&mut candidate, source.clone(), derived)?;
+            let guid = add_source_to(&mut candidate, source.clone(), derived, false)?;
             publish_source_collection(staged, candidate)?;
             Ok(guid)
         });
@@ -1162,15 +1162,25 @@ impl Document {
 }
 
 /// Append `source` to the document's source collection, made when it has
-/// none, and answer its GUID: [`Document::add_bibliography_source`] on
-/// `document`, left half-done on an error.
+/// none (by the journaled store helper when `in_place`), and answer its
+/// GUID: [`Document::add_bibliography_source`] on `document`, left
+/// half-done on an error.
 fn add_source_to(
     document: &mut Document,
     mut source: BibliographySource,
     derived: bool,
+    in_place: bool,
 ) -> Result<String> {
     if bibliography_collection(&document.package, &document.doc_part_name)?.is_none() {
-        create_collection(document)?;
+        if in_place {
+            add_custom_xml_store_in_place(
+                document,
+                format!("<b:Sources xmlns:b=\"{BIB_NS}\"></b:Sources>").as_bytes(),
+                &[],
+            )?;
+        } else {
+            create_collection(document)?;
+        }
     }
     let collection = bibliography_collection(&document.package, &document.doc_part_name)?
         .ok_or_else(|| bibliography_error("source collection creation failed"))?;
