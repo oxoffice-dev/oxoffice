@@ -451,14 +451,14 @@ trait SfntFace<'a> {
 
 impl<'a> SfntFace<'a> for SfntTables<'a> {
     fn panose(&self) -> &'a [u8] {
-        &self.os2[32..42]
+        &self.os2()[32..42]
     }
 
     fn code_page_ranges(&self) -> (u32, u32) {
-        if self.os2_version() >= 1 && self.os2.len() >= 86 {
+        if self.os2_version() >= 1 && self.os2().len() >= 86 {
             (
-                read_u32_be(self.os2, 78).unwrap_or(0),
-                read_u32_be(self.os2, 82).unwrap_or(0),
+                read_u32_be(self.os2(), 78).unwrap_or(0),
+                read_u32_be(self.os2(), 82).unwrap_or(0),
             )
         } else {
             (0, 0)
@@ -467,8 +467,8 @@ impl<'a> SfntFace<'a> for SfntTables<'a> {
 
     /// One `name` table string as UTF-16LE, preferring Windows English.
     fn name_utf16le(&self, name_id: u16) -> Vec<u8> {
-        let count = read_u16_be(self.name, 2).unwrap_or(0);
-        let strings = usize::from(read_u16_be(self.name, 4).unwrap_or(0));
+        let count = read_u16_be(self.name(), 2).unwrap_or(0);
+        let strings = usize::from(read_u16_be(self.name(), 4).unwrap_or(0));
         let mut best: Option<(u8, &[u8], bool)> = None;
         for index in 0..usize::from(count) {
             let record = 6 + index * 12;
@@ -480,12 +480,12 @@ impl<'a> SfntFace<'a> for SfntTables<'a> {
                 Some(length),
                 Some(offset),
             ) = (
-                read_u16_be(self.name, record),
-                read_u16_be(self.name, record + 2),
-                read_u16_be(self.name, record + 4),
-                read_u16_be(self.name, record + 6),
-                read_u16_be(self.name, record + 8),
-                read_u16_be(self.name, record + 10),
+                read_u16_be(self.name(), record),
+                read_u16_be(self.name(), record + 2),
+                read_u16_be(self.name(), record + 4),
+                read_u16_be(self.name(), record + 6),
+                read_u16_be(self.name(), record + 8),
+                read_u16_be(self.name(), record + 10),
             )
             else {
                 break;
@@ -501,7 +501,7 @@ impl<'a> SfntFace<'a> for SfntTables<'a> {
                 _ => continue,
             };
             let start = strings + usize::from(offset);
-            let Some(bytes) = self.name.get(start..start + usize::from(length)) else {
+            let Some(bytes) = self.name().get(start..start + usize::from(length)) else {
                 continue;
             };
             if platform == 1 && !bytes.is_ascii() {
@@ -534,8 +534,8 @@ impl<'a> SfntFace<'a> for SfntTables<'a> {
     /// Wraps the font in an uncompressed Embedded OpenType 2.1 header.
     fn embedded_open_type(&self) -> std::result::Result<Vec<u8>, String> {
         let too_large = || "embedded font is too large for Embedded OpenType".to_owned();
-        let font_data_size = u32::try_from(self.data.len()).map_err(|_| too_large())?;
-        let os2 = self.os2;
+        let font_data_size = u32::try_from(self.data().len()).map_err(|_| too_large())?;
+        let os2 = self.os2();
         let (code_page_1, code_page_2) = self.code_page_ranges();
         let mut header = Vec::with_capacity(EOT_FIXED_HEADER_LEN + 256);
         header.extend_from_slice(&[0; 4]);
@@ -553,7 +553,7 @@ impl<'a> SfntFace<'a> for SfntTables<'a> {
         }
         header.extend_from_slice(&code_page_1.to_le_bytes());
         header.extend_from_slice(&code_page_2.to_le_bytes());
-        header.extend_from_slice(&read_u32_be(self.head, 8).unwrap_or(0).to_le_bytes());
+        header.extend_from_slice(&read_u32_be(self.head(), 8).unwrap_or(0).to_le_bytes());
         header.extend_from_slice(&[0; 16]);
         debug_assert_eq!(header.len(), EOT_FIXED_HEADER_LEN);
         // Family, style, version and full names, each after a zero padding word.
@@ -566,9 +566,9 @@ impl<'a> SfntFace<'a> for SfntTables<'a> {
         }
         // The padding word and an empty root string.
         header.extend_from_slice(&[0; 4]);
-        let eot_size = u32::try_from(header.len() + self.data.len()).map_err(|_| too_large())?;
+        let eot_size = u32::try_from(header.len() + self.data().len()).map_err(|_| too_large())?;
         header[0..4].copy_from_slice(&eot_size.to_le_bytes());
-        header.extend_from_slice(self.data);
+        header.extend_from_slice(self.data());
         Ok(header)
     }
 }

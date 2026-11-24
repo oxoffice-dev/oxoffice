@@ -43,26 +43,34 @@ const REL_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/rela
 fn tiny_font(marker: &str) -> Vec<u8> {
     let mut name = vec![0, 0, 0, 0, 0, 6]; // format 0, no records, strings at 6
     name.extend_from_slice(marker.as_bytes());
-    let tables: [(&[u8; 4], Vec<u8>); 3] = [
-        (b"OS/2", vec![0; 78]),
-        (b"head", vec![0; 54]),
-        (b"name", name),
-    ];
+    sfnt(&[
+        (*b"OS/2", vec![0; 78]),
+        (*b"head", vec![0; 54]),
+        (*b"name", name),
+    ])
+}
+
+/// A TrueType face holding `tables`, in that order, with its header's
+/// search hints.
+fn sfnt(tables: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
+    let count = tables.len() as u16;
+    let selector = count.ilog2() as u16;
+    let range = (1u16 << selector) * 16;
     let mut font = Vec::new();
     font.extend_from_slice(&0x0001_0000u32.to_be_bytes()); // TrueType outlines
-    font.extend_from_slice(&3u16.to_be_bytes()); // numTables
-    font.extend_from_slice(&32u16.to_be_bytes()); // searchRange
-    font.extend_from_slice(&1u16.to_be_bytes()); // entrySelector
-    font.extend_from_slice(&16u16.to_be_bytes()); // rangeShift
+    font.extend_from_slice(&count.to_be_bytes());
+    font.extend_from_slice(&range.to_be_bytes());
+    font.extend_from_slice(&selector.to_be_bytes());
+    font.extend_from_slice(&(count * 16 - range).to_be_bytes());
     let mut offset = 12 + 16 * tables.len();
-    for (tag, table) in &tables {
-        font.extend_from_slice(*tag);
+    for (tag, table) in tables {
+        font.extend_from_slice(tag);
         font.extend_from_slice(&0u32.to_be_bytes()); // checksum
         font.extend_from_slice(&(offset as u32).to_be_bytes());
         font.extend_from_slice(&(table.len() as u32).to_be_bytes());
         offset += table.len();
     }
-    for (_, table) in &tables {
+    for (_, table) in tables {
         font.extend_from_slice(table);
     }
     font
@@ -805,23 +813,42 @@ fn embedding_a_face_again_replaces_its_bytes_in_one_part() {
 }
 
 #[test]
-fn a_face_without_its_os2_or_head_table_is_refused() {
+fn a_face_without_its_os2_head_or_name_table_or_with_an_unprintable_tag_is_refused() {
     let mut doc = Document::new();
     let before = doc.to_bytes().unwrap();
     let complete = tiny_font("complete");
+    let mut refused = Vec::new();
     // The same face with one of its three tables renamed away.
-    for (tag, renamed) in [(b"OS/2", b"OS/3"), (b"head", b"heae")] {
+    for (tag, renamed) in [(b"OS/2", b"OS/3"), (b"head", b"heae"), (b"name", b"namf")] {
         let mut face = complete.clone();
         let record = face[12..60]
             .chunks(16)
             .position(|record| &record[..4] == tag)
             .expect("the table is listed");
         face[12 + record * 16..12 + record * 16 + 4].copy_from_slice(renamed);
+        refused.push((
+            format!("a face without {}", String::from_utf8_lossy(tag)),
+            face,
+        ));
+    }
+    // A complete face led by a table whose tag is not printable: Word could
+    // not tell its de-obfuscation key back on open.
+    let mut name = vec![0, 0, 0, 0, 0, 6];
+    name.extend_from_slice(b"unprintable");
+    refused.push((
+        "a face with an unprintable tag".to_owned(),
+        sfnt(&[
+            ([1, b'a', b'b', b'c'], vec![0; 4]),
+            (*b"OS/2", vec![0; 78]),
+            (*b"head", vec![0; 54]),
+            (*b"name", name),
+        ]),
+    ));
+    for (what, face) in refused {
         let embedded = EmbeddedFont::new(Regular, face, KEY, license());
         assert!(
             doc.embed_font("Tiny", embedded).is_err(),
-            "a face without {} is refused",
-            String::from_utf8_lossy(tag)
+            "{what} is refused"
         );
     }
     assert_eq!(doc.to_bytes().unwrap(), before);
@@ -871,7 +898,7 @@ fn embedding_refuses_bytes_that_are_not_one_font_face_and_malformed_keys() {
     let mut collection = tiny_font("a face inside a collection");
     collection[..4].copy_from_slice(b"ttcf");
     let mut nameless = tiny_font("a face without a name table");
-    nameless[12..16].copy_from_slice(b"glyf");
+    nameless[44..48].copy_from_slice(b"glyf"); // the `name` record, the third
     let mut truncated = tiny_font("a face cut short");
     truncated.truncate(truncated.len() - 3);
     for (what, data) in [

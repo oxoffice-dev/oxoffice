@@ -530,11 +530,7 @@ impl Document {
             &embedded.license.identity,
         )
         .map_err(Error::Other)?;
-        if !valid_authored_sfnt(&embedded.data) {
-            return Err(Error::Other(
-                "embedded font bytes are not a supported sfnt font".to_owned(),
-            ));
-        }
+        oxoffice_layout::font_embedding::SfntTables::parse(&embedded.data).map_err(Error::Other)?;
         let guid = font_key_bytes(&embedded.font_key).ok_or_else(|| {
             Error::Other("embedded font key must be a 16-byte OOXML GUID".to_owned())
         })?;

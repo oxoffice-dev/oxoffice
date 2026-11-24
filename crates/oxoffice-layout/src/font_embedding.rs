@@ -48,16 +48,16 @@ fn read_u32_be(bytes: &[u8], offset: usize) -> Option<u32> {
 /// rule both formats apply before embedding a face.
 #[derive(Clone, Copy, Debug)]
 pub struct SfntTables<'a> {
-    pub data: &'a [u8],
-    pub os2: &'a [u8],
-    pub head: &'a [u8],
-    pub name: &'a [u8],
+    data: &'a [u8],
+    os2: &'a [u8],
+    head: &'a [u8],
+    name: &'a [u8],
 }
 
 impl<'a> SfntTables<'a> {
     /// Parse one face: a single TrueType or OpenType face of at most
-    /// [`MAX_EMBEDDED_FACE_BYTES`], a sound table directory (no duplicate tag,
-    /// every table inside the file and after the directory), and `OS/2`,
+    /// [`MAX_EMBEDDED_FACE_BYTES`], a sound table directory (printable tags,
+    /// none twice, every table inside the file and after the directory), and `OS/2`,
     /// `head` and `name` tables of their minimum lengths with a readable
     /// `name` table.
     pub fn parse(data: &'a [u8]) -> std::result::Result<Self, String> {
@@ -83,6 +83,9 @@ impl<'a> SfntTables<'a> {
         for index in 0..usize::from(table_count) {
             let record = 12 + index * 16;
             let tag: [u8; 4] = data[record..record + 4].try_into().unwrap();
+            if !tag.iter().all(|byte| (0x20..=0x7e).contains(byte)) {
+                return Err(malformed());
+            }
             let offset = read_u32_be(data, record + 8).ok_or_else(malformed)? as usize;
             let length = read_u32_be(data, record + 12).ok_or_else(malformed)? as usize;
             let end = offset.checked_add(length).ok_or_else(malformed)?;
@@ -143,6 +146,26 @@ impl<'a> SfntTables<'a> {
             }
         }
         Ok(tables)
+    }
+
+    /// The whole face.
+    pub fn data(&self) -> &'a [u8] {
+        self.data
+    }
+
+    /// The `OS/2` table, at least as long as its version requires.
+    pub fn os2(&self) -> &'a [u8] {
+        self.os2
+    }
+
+    /// The `head` table, at least 54 bytes.
+    pub fn head(&self) -> &'a [u8] {
+        self.head
+    }
+
+    /// The `name` table, its records inside it.
+    pub fn name(&self) -> &'a [u8] {
+        self.name
     }
 
     /// The `OS/2` table version.
