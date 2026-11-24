@@ -255,15 +255,15 @@ mod walkers;
 use edited_paragraph::{admit_edited_paragraph, edited_paragraph_ancestor_context};
 use fragment_checks::{
     WordXmlOwner, content_fragment_for_insertion, copy_shown_notes, fragment_content_boundary,
-    fragment_insertion_boundary, fragment_uses_w14, freshen_content_fragment_identities,
-    freshen_taken_content_fragment_identities, insert_story_fragment, physical_table_cell_owner,
-    referenced_relationships, reject_section_owning_content_fragment, serialize_content_fragment,
-    standalone_body_item_span, story_owner_content_end, story_owner_content_end_in,
-    validate_element_owner_relationships, validate_element_xml_identity_change,
-    validate_fragment_block_item, validate_fragment_relationships,
-    validate_serialized_block_content_control, validated_content_boundary,
-    validated_direct_content_item, validated_insertion_boundary, without_w14_identities,
-    xml_1_0_whitespace,
+    fragment_holds_note_references, fragment_insertion_boundary, fragment_uses_w14,
+    freshen_content_fragment_identities, freshen_taken_content_fragment_identities,
+    insert_story_fragment, physical_table_cell_owner, referenced_relationships,
+    reject_section_owning_content_fragment, serialize_content_fragment, standalone_body_item_span,
+    story_owner_content_end, story_owner_content_end_in, validate_element_owner_relationships,
+    validate_element_xml_identity_change, validate_fragment_block_item,
+    validate_fragment_relationships, validate_serialized_block_content_control,
+    validated_content_boundary, validated_direct_content_item, validated_insertion_boundary,
+    without_w14_identities, xml_1_0_whitespace,
 };
 pub(crate) use fragment_checks::{
     close_content_fragment_namespaces, package_authoritative_body_fragment,
@@ -1706,7 +1706,7 @@ impl Default for Document {
 ///
 /// Falls back to the absolute part name when the two live in different
 /// directories, which OPC also permits.
-fn relative_target(source_part: &str, target_part: &str) -> String {
+pub(crate) fn relative_target(source_part: &str, target_part: &str) -> String {
     let dir = match source_part.rfind('/') {
         Some(pos) => &source_part[..=pos],
         None => "/",

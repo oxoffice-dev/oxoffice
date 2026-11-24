@@ -534,7 +534,7 @@ impl PyDocument {
             }
         }
         for key in removed {
-            self.unindex_owner(*key);
+            self.indexes.unindex_owner(*key, &self.owners[*key]);
         }
         let mut keys = removed.to_vec();
         keys.sort_unstable_by(|a, b| b.cmp(a));
@@ -559,51 +559,6 @@ impl PyDocument {
             WordOwnerLocation::Run(..) => &mut self.indexes.runs_by_parent,
             _ => return None,
         })
-    }
-
-    /// Drop every index entry of the owner at `key`, which stays in place.
-    fn unindex_owner(&mut self, key: usize) {
-        let owner = &self.owners[key];
-        let generation = owner.owner.generation();
-        let hash = owner.route_key();
-        let parent = owner.parent;
-        let route = owner.route_shape().clone();
-        let slot = match &route {
-            WordOwnerLocation::Paragraph(_) => owner.body_slot(),
-            _ => None,
-        };
-        if self.indexes.by_generation.get(&generation) == Some(&key) {
-            self.indexes.by_generation.remove(&generation);
-        }
-        if let Some(bucket) = self.indexes.by_route.get_mut(&hash) {
-            bucket.retain(|index| *index != key);
-            if bucket.is_empty() {
-                self.indexes.by_route.remove(&hash);
-            }
-        }
-        if let Some(parent) = parent
-            && let Some(map) = self.parent_list(&route)
-            && let Some(children) = map.get_mut(&parent)
-        {
-            children.retain(|child| *child != key);
-            if children.is_empty() {
-                map.remove(&parent);
-            }
-        }
-        for map in [
-            &mut self.indexes.paragraphs_by_parent,
-            &mut self.indexes.tables_by_parent,
-            &mut self.indexes.cells_by_parent,
-            &mut self.indexes.runs_by_parent,
-        ] {
-            map.remove(&key);
-        }
-        if let Some(slot) = slot
-            && let Some(entry) = self.indexes.direct_body_paragraphs.get_mut(slot)
-            && *entry == Some(key)
-        {
-            *entry = None;
-        }
     }
 
     /// Give the owner at `from` the key `to`, whose owner was unindexed:

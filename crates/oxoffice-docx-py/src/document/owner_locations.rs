@@ -232,6 +232,42 @@ impl WordOwnerIndexes {
         Ok(indexes)
     }
 
+    /// Drop the entries of the owner at `key`, whose children go with it:
+    /// the caller indexes its key again for another owner, or for none.
+    pub(super) fn unindex_owner(&mut self, key: usize, owner: &WordOwner) {
+        if self.by_generation.get(&owner.owner.generation()) == Some(&key) {
+            self.by_generation.remove(&owner.owner.generation());
+        }
+        let hash = owner.route_key();
+        if let Some(bucket) = self.by_route.get_mut(&hash) {
+            bucket.retain(|known| *known != key);
+            if bucket.is_empty() {
+                self.by_route.remove(&hash);
+            }
+        }
+        if let Some(slot) = owner.body_slot()
+            && self.direct_body_paragraphs.get(slot) == Some(&Some(key))
+        {
+            self.direct_body_paragraphs[slot] = None;
+        }
+        for children in [
+            &mut self.paragraphs_by_parent,
+            &mut self.tables_by_parent,
+            &mut self.cells_by_parent,
+            &mut self.runs_by_parent,
+        ] {
+            children.remove(&key);
+            if let Some(parent) = owner.parent
+                && let Some(siblings) = children.get_mut(&parent)
+            {
+                siblings.retain(|known| *known != key);
+                if siblings.is_empty() {
+                    children.remove(&parent);
+                }
+            }
+        }
+    }
+
     /// Index one owner at `key`.
     pub(super) fn index_owner(&mut self, key: usize, owner: &WordOwner) {
         self.by_generation.insert(owner.owner.generation(), key);

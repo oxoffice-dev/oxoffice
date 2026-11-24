@@ -60,6 +60,8 @@ use render_rtl::{
     apa_rtl_periodical_bibliography_paragraph, apa_rtl_site_bibliography_paragraph,
     apa_rtl_sound_bibliography_paragraph,
 };
+pub(crate) use source::add_custom_xml_store_in_place;
+#[cfg(debug_assertions)]
 pub(crate) use source::stage_custom_xml_store;
 use source::{
     append_to_source_node, apply_source_edits, authored_source_xml, bibliography_collection,
