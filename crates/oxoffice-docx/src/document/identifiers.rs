@@ -16,16 +16,19 @@ pub(super) enum IdentifierDefinition {
 /// back copies of both. It records the reservations of the part bundles,
 /// relationship ids, part names, content types and numbering ids that
 /// [`Document::edit_properties`] and the numbering edits make.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ReservationJournal {
     entries: Vec<Reservation>,
     /// Whether the edit removed a part, its relationships or its content
     /// type from the package, which undoing it cannot put back: such an
     /// edit cannot refuse after the removal.
     removed_from_package: bool,
+    /// Whether the edit wrote the bytes of a package part, which undoing it
+    /// cannot put back either: such an edit cannot refuse after the write.
+    written_to_package: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Reservation {
     PartName(String),
     PreservedPartName(String),
@@ -55,9 +58,22 @@ enum Reservation {
 }
 
 impl ReservationJournal {
+    /// Append `later`, a journal opened after this one closed.
+    pub(crate) fn extend(&mut self, later: ReservationJournal) {
+        self.entries.extend(later.entries);
+        self.removed_from_package |= later.removed_from_package;
+    }
+
     /// Whether the edit changed the package graph.
+    /// Whether the edit removed or wrote package bytes, which undoing the
+    /// journal cannot put back.
+    pub(crate) fn changed_package_bytes(&self) -> bool {
+        self.removed_from_package || self.written_to_package
+    }
+
     pub(crate) fn changed_package(&self) -> bool {
         self.removed_from_package
+            || self.written_to_package
             || self.entries.iter().any(|entry| {
                 matches!(
                     entry,
@@ -112,6 +128,12 @@ impl DocumentIdentifiers {
     pub(crate) fn record_removed_from_package(&mut self) {
         if let Some(journal) = &mut self.journal.0 {
             journal.removed_from_package = true;
+        }
+    }
+
+    pub(crate) fn record_written_to_package(&mut self) {
+        if let Some(journal) = &mut self.journal.0 {
+            journal.written_to_package = true;
         }
     }
 
@@ -225,6 +247,10 @@ impl Document {
         debug_assert!(
             !journal.removed_from_package,
             "a journaled edit refused after removing a package part"
+        );
+        debug_assert!(
+            !journal.written_to_package,
+            "a journaled edit refused after writing a package part"
         );
         let identifiers = &mut self.identifiers;
         for entry in journal.entries.into_iter().rev() {

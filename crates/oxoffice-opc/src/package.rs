@@ -80,6 +80,104 @@ pub struct OpcPackage {
     /// Set only by a byte read or a reread of such a package. A hand-built
     /// package is not a baseline, and reread then uses the ZIP.
     trusted_baseline: bool,
+    /// The part writes recorded since [`Self::open_part_journal`], if open.
+    part_journal: PartJournalSlot,
+}
+
+/// What the parts of a package held before an in-place edit wrote them, so
+/// that a refused edit puts them back at the cost of the parts it wrote. A
+/// part is recorded at its first write only.
+#[derive(Clone, Debug, Default)]
+pub struct PartJournal {
+    written: std::collections::HashSet<String>,
+    before: Vec<(String, Option<Arc<Vec<u8>>>)>,
+}
+
+impl PartJournal {
+    /// The stored names of the parts written, in their first-write order.
+    pub fn written_parts(&self) -> impl Iterator<Item = &str> {
+        self.before.iter().map(|(name, _)| name.as_str())
+    }
+
+    /// Whether `part_name`, as stored, was written.
+    pub fn wrote(&self, part_name: &str) -> bool {
+        self.written.contains(part_name)
+    }
+
+    /// Append `later`, a journal opened after this one closed: a part both
+    /// wrote keeps this journal's earlier bytes.
+    pub fn extend(&mut self, later: PartJournal) {
+        for (name, bytes) in later.before {
+            if self.written.insert(name.clone()) {
+                self.before.push((name, bytes));
+            }
+        }
+    }
+}
+
+/// A copy of a package starts without a journal, and the journal takes no
+/// part in what the package holds.
+#[derive(Debug, Default)]
+struct PartJournalSlot(Option<PartJournal>);
+
+impl Clone for PartJournalSlot {
+    fn clone(&self) -> Self {
+        Self(None)
+    }
+}
+
+impl OpcPackage {
+    /// Start recording the bytes each part holds before its first write.
+    pub fn open_part_journal(&mut self) {
+        debug_assert!(self.part_journal.0.is_none(), "a part journal is open");
+        self.part_journal.0 = Some(PartJournal::default());
+    }
+
+    /// Stop recording and return what was recorded.
+    pub fn close_part_journal(&mut self) -> PartJournal {
+        debug_assert!(
+            self.part_journal.0.is_some(),
+            "no part journal is open (a nested commit replaced the package?)"
+        );
+        self.part_journal.0.take().unwrap_or_default()
+    }
+
+    /// Whether a part `journal` recorded holds other bytes now than before
+    /// its first write: a rewrite with the same bytes changes nothing.
+    pub fn part_journal_changed(&self, journal: &PartJournal) -> bool {
+        journal
+            .before
+            .iter()
+            .any(|(name, before)| match (before, self.parts.get(name)) {
+                (Some(before), Some(now)) => !Arc::ptr_eq(before, now) && before != now,
+                (None, None) => false,
+                _ => true,
+            })
+    }
+
+    /// Put back, latest first, the bytes `journal` recorded.
+    pub fn undo_part_journal(&mut self, journal: PartJournal) {
+        for (name, bytes) in journal.before.into_iter().rev() {
+            match bytes {
+                Some(bytes) => {
+                    self.parts.insert(name, bytes);
+                }
+                None => {
+                    self.parts.remove(&name);
+                }
+            }
+        }
+    }
+
+    fn record_part_write(&mut self, key: &str) {
+        if let Some(journal) = &mut self.part_journal.0
+            && journal.written.insert(key.to_owned())
+        {
+            journal
+                .before
+                .push((key.to_owned(), self.parts.get(key).cloned()));
+        }
+    }
 }
 
 impl OpcPackage {
@@ -276,6 +374,7 @@ impl OpcPackage {
                 content_types: ContentTypes::from_xml(ct_xml)?,
             }),
             trusted_baseline: true,
+            part_journal: PartJournalSlot::default(),
         })
     }
 
@@ -561,6 +660,7 @@ impl OpcPackage {
         let key = deterministic_part_key(&self.parts, part_name)
             .cloned()
             .unwrap_or_else(|| part_name.to_owned());
+        self.record_part_write(&key);
         self.parts.insert(key, data.into());
     }
 
@@ -568,6 +668,7 @@ impl OpcPackage {
     /// it may still share with a clone of this package.
     pub fn remove_part(&mut self, part_name: &str) -> Option<Arc<Vec<u8>>> {
         let key = deterministic_part_key(&self.parts, part_name)?.clone();
+        self.record_part_write(&key);
         self.parts.remove(&key)
     }
 
@@ -695,6 +796,7 @@ impl OpcPackage {
             parts: HashMap::new(),
             content_types_source: None,
             trusted_baseline: false,
+            part_journal: PartJournalSlot::default(),
         }
     }
 

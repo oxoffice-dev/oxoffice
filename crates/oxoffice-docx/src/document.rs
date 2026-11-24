@@ -349,9 +349,12 @@ mod main_source;
 mod open_save;
 mod owner_snapshots;
 pub use owner_snapshots::resolved_xml_events;
+mod edit_in_place;
 mod relationships;
 mod staged_output;
 mod staging;
+use edit_in_place::InPlaceState;
+pub use edit_in_place::{EditReport, EditUndo, EditUnit};
 mod story_edits;
 mod story_items;
 mod story_pictures;
@@ -974,6 +977,8 @@ pub struct Document {
     deterministic_layout_cache: Mutex<Option<Arc<oxoffice_docx_layout::WordLayoutResult>>>,
     /// Reusable bundled-font engine with caller faces at highest priority.
     bundled_fallback_layout_engine: Mutex<Option<oxoffice_docx_layout::engine::Engine>>,
+    /// The in-place edit open on this document, and the undo a caller holds.
+    in_place: InPlaceState,
 }
 
 /// The actual source authority of a consumed staged document. No model copy.
@@ -1683,6 +1688,7 @@ impl Document {
             normal_layout_engine: Mutex::new(None),
             deterministic_layout_cache: Mutex::new(None),
             bundled_fallback_layout_engine: Mutex::new(None),
+            in_place: InPlaceState::default(),
             parsed: None,
             main_body_scans: Arc::new(Mutex::new(MainBodyScans::default())),
             main_part_blocks: None,
@@ -1924,5 +1930,45 @@ mod tests {
             found("<w:p><unclosed"),
             "an unreadable block counts as holding one"
         );
+    }
+
+    #[test]
+    fn a_font_embed_the_settings_refuse_leaves_no_reservation() {
+        // Two `w:embedTrueTypeFonts`: the embed reserves the face's part name
+        // and relationship id, then the settings refuse it.
+        let bytes = Document::new().to_bytes().expect("a new document saves");
+        let mut package =
+            OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("the package opens");
+        package.set_part(
+            "/word/settings.xml",
+            format!(
+                "<w:settings xmlns:w=\"{}\"><w:embedTrueTypeFonts/><w:embedTrueTypeFonts/>\
+                 </w:settings>",
+                WORD_NAMESPACE
+            )
+            .into_bytes(),
+        );
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).expect("the package writes");
+        let bytes = out.into_inner();
+        let fresh = Document::from_bytes(&bytes).expect("the document opens");
+        let mut doc = Document::from_bytes(&bytes).expect("the document opens");
+        let face = EmbeddedFont::new(
+            EmbeddedFontKind::Regular,
+            include_bytes!("../../oxoffice-layout/fonts/NotoSansSymbols2-bullets-subset.ttf")
+                .to_vec(),
+            "{00112233-4455-6677-8899-AABBCCDDEEFF}",
+            FontEmbeddingLicense::new(true, "SIL Open Font License 1.1"),
+        );
+        let error = doc.embed_font("Probe", face).unwrap_err();
+        assert!(
+            error.to_string().contains("ambiguous font setting"),
+            "{error}"
+        );
+        assert_eq!(
+            doc.identifiers, fresh.identifiers,
+            "the reservations are undone"
+        );
+        assert!(doc.package.same_package_as(&fresh.package));
     }
 }

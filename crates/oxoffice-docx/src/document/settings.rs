@@ -981,7 +981,7 @@ impl Document {
 
     /// Reserve the settings part, its content type and its relationship from
     /// the main part, and drop the derived layout.
-    fn reserve_settings_part(&mut self) -> Result<()> {
+    pub(super) fn reserve_settings_part(&mut self) -> Result<()> {
         let created = self.settings_part_name.is_none();
         self.identifiers.observe_package_graph(&self.package)?;
         let part_name = match &self.settings_part_name {
