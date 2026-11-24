@@ -15,6 +15,8 @@ use super::*;
 pub enum EditUnit {
     /// The footnotes model and its part.
     Footnotes,
+    /// The endnotes part, which has no model: the part journal undoes it.
+    Endnotes,
     /// The comments and extended comments models and their parts.
     Comments,
     /// The styles model.
@@ -88,6 +90,8 @@ pub struct EditUndo {
     footnotes: Option<FootnotesCopy>,
     comments: Option<CommentsCopy>,
     styles: Option<StylesCopy>,
+    /// The endnotes part's bytes before the edit, for its no-op answer.
+    endnotes: Option<Option<Vec<u8>>>,
     scalars: ScalarCopy,
     parts: oxoffice_opc::PartJournal,
     reservations: ReservationJournal,
@@ -126,6 +130,7 @@ impl Document {
             footnotes: None,
             comments: None,
             styles: None,
+            endnotes: None,
             scalars: ScalarCopy {
                 embedded_invalidated_signatures: self.embedded_invalidated_signatures.clone(),
                 freed_relationships: self.freed_relationships.clone(),
@@ -158,6 +163,7 @@ impl Document {
                         extended_owned: self.comments_extended_owned,
                     });
                 }
+                EditUnit::Endnotes => undo.endnotes = Some(self.endnotes_part_bytes()),
                 EditUnit::Styles => {
                     undo.styles = Some(StylesCopy {
                         styles: Arc::clone(&self.styles),
@@ -228,6 +234,10 @@ impl Document {
                                 || copy.part_name != self.comments_part_name
                                 || copy.extended_part_name != self.comments_extended_part_name
                         }),
+                        EditUnit::Endnotes => undo
+                            .endnotes
+                            .as_ref()
+                            .is_some_and(|before| *before != self.endnotes_part_bytes()),
                         EditUnit::Styles => undo
                             .styles
                             .as_ref()
@@ -237,6 +247,14 @@ impl Document {
                 })
                 .collect(),
         }
+    }
+
+    /// The bytes of the endnotes part, if the document has one.
+    fn endnotes_part_bytes(&self) -> Option<Vec<u8>> {
+        self.note_part_name(StoryKind::Endnote)
+            .ok()
+            .flatten()
+            .and_then(|name| self.package.get_part(&name).map(<[u8]>::to_vec))
     }
 
     /// Run `edit` on the live document, allowed to change `units` alone.
@@ -352,6 +370,7 @@ impl EditUndo {
             footnotes,
             comments,
             styles,
+            endnotes,
             parts,
             reservations,
             report,
@@ -365,6 +384,7 @@ impl EditUndo {
         self.footnotes = self.footnotes.take().or(footnotes);
         self.comments = self.comments.take().or(comments);
         self.styles = self.styles.take().or(styles);
+        self.endnotes = self.endnotes.take().or(endnotes);
         self.parts.extend(parts);
         self.reservations.extend(reservations);
         for (unit, changed) in report.units {

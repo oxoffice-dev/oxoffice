@@ -394,6 +394,81 @@ impl Document {
         destination: &ContentLocation,
         fragment: ContentFragment,
     ) -> Result<()> {
+        if self.inserts_in_note_part(destination, &fragment)? {
+            #[cfg(debug_assertions)]
+            let before = self.clone_for_staging();
+            #[cfg(debug_assertions)]
+            let staged_fragment = fragment.clone();
+            let result = self.edit_in_place(
+                &[crate::EditUnit::Footnotes, crate::EditUnit::Endnotes],
+                |document| document.insert_note_content(destination, fragment),
+            );
+            #[cfg(debug_assertions)]
+            self.assert_in_place_matches_staged(before, &result, |staged| {
+                staged.insert_content_staged(destination, staged_fragment)
+            });
+            return result;
+        }
+        self.insert_content_staged(destination, fragment)
+    }
+
+    /// Whether [`Self::insert_content`] edits in place: the destination is
+    /// in the footnotes or endnotes part, and the fragment holds no note
+    /// reference (a shown note is copied through the main part).
+    fn inserts_in_note_part(
+        &self,
+        destination: &ContentLocation,
+        fragment: &ContentFragment,
+    ) -> Result<bool> {
+        let part = destination.story.part_name();
+        let in_notes = [StoryKind::Footnote, StoryKind::Endnote]
+            .into_iter()
+            .map(|kind| self.note_part_name(kind))
+            .collect::<Result<Vec<_>>>()?
+            .iter()
+            .any(|name| name.as_deref() == Some(part));
+        Ok(in_notes && !fragment_holds_note_references(fragment)?)
+    }
+
+    /// [`Self::insert_content`] in a note part, on the live document: the
+    /// note part is rewritten, the body is neither serialized nor reopened.
+    fn insert_note_content(
+        &mut self,
+        destination: &ContentLocation,
+        fragment: ContentFragment,
+    ) -> Result<()> {
+        // Typed footnotes not yet in the part go there first, as the staged
+        // route's flush puts them.
+        self.flush_dirty_related_story_models()?;
+        let (source, owner) = self.story_source_and_owner(&destination.story)?;
+        let part_name = source.part_name.clone();
+        let source_xml = source.xml.into_owned();
+        let (boundary, _, _) = validated_insertion_boundary(&source_xml, &owner, destination)?;
+        reject_section_owning_content_fragment(&fragment)?;
+        let mut fragment = fragment;
+        freshen_taken_content_fragment_identities(self, &mut fragment)?;
+        let fragment_xml = content_fragment_for_insertion(self, &destination.story, &fragment)?;
+        let mut fragment_xml = without_w14_identities(&fragment_xml, &fragment.namespace_scope);
+        let edits = self
+            .identifiers
+            .fresh_drawing_id_edits(&fragment_xml, &fragment.namespace_scope)?;
+        for (start, end, replacement) in edits.into_iter().rev() {
+            fragment_xml.splice(start..end, replacement);
+        }
+        let mut updated = source_xml;
+        insert_story_fragment(&mut updated, &owner, boundary, fragment_xml)?;
+        set_story_source_xml(self, &part_name, updated)?;
+        self.invalidate_layout();
+        Ok(())
+    }
+
+    /// The staged route of [`Self::insert_content`]: a copy is edited, saved
+    /// and reopened. It is the debug oracle of the in-place route.
+    fn insert_content_staged(
+        &mut self,
+        destination: &ContentLocation,
+        fragment: ContentFragment,
+    ) -> Result<()> {
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
         let (source, owner) = candidate.story_source_and_owner(&destination.story)?;

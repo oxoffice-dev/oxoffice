@@ -269,6 +269,12 @@ impl Document {
         story: &StoryId,
         items: bool,
     ) -> Result<(StorySource<'a>, StoryOwnerSpan, Option<MainStoryLayout>)> {
+        if story.part_name != self.doc_part_name {
+            // A story of a related part (a header, a note, a comment) is read
+            // from its part alone, without serializing the main part.
+            let sources = self.related_story_sources()?;
+            return self.story_source_owner_and_layout_in(story, items, sources, &(0..0), &[]);
+        }
         let (sources, content, children) = self.spanned_story_sources()?;
         self.story_source_owner_and_layout_in(story, items, sources, &content, &children)
     }
@@ -289,7 +295,7 @@ impl Document {
         let (source, layout) = match source {
             Some(index) => {
                 let source = sources.swap_remove(index);
-                let layout = if index == 0 {
+                let layout = if index == 0 && source.root_kind == StoryKind::Body {
                     self.main_story_layout(&source.xml, content, children, items)
                         .ok()
                 } else {
