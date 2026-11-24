@@ -6,8 +6,6 @@ leaves the paragraph as it was keeps every handle; one that is refused, or whose
 paragraph was swapped in, leaves the document's bytes and every handle as they were. A field added before a later
 hyperlink retires that hyperlink, as the item count of the body changes. Reads stay in document order after the
 owners of an edit were removed by moving others into their keys."""
-import io
-import os
 
 import pytest
 
@@ -277,20 +275,45 @@ def test_an_edit_of_the_paragraph_that_ends_a_section_keeps_the_sections(body, c
 
 
 def test_removing_the_last_paragraph_after_edits_in_place_retires_its_runs():
-    # Each edit in place removes the edited paragraph's runs and appends the new ones, so the runs of the last
-    # paragraph end up before it in the inventory: its removal must still find them all.
+    # Each edit in place removes the edited paragraph's runs, moving the last owners into their keys, and appends the
+    # new runs: here the runs of the last paragraph end up before it in the inventory, and the removal of that plain
+    # last paragraph (the tail removal) must still find them all.
     doc = oxdocx.Document()
     doc.add_paragraph("a").add_run("b")
     doc.add_paragraph("z")
-    doc.paragraphs[0].add_run("c")
     doc.paragraphs[1].add_run("y")
     doc.paragraphs[0].text = "new"
     last = doc.paragraphs[1]
     runs = list(last.runs)
-    kept = doc.paragraphs[0]
     assert doc.remove_content(1)
     for run in runs:
         assert outcome(lambda: run.text) == STALE
     assert outcome(lambda: last.text) == STALE
-    assert kept.text == "new"
+    # A later edit publishes from the inventory the removal left (the debug oracles rebuild it).
+    doc.paragraphs[0].add_run(" more")
+    assert [paragraph.text for paragraph in doc.paragraphs] == ["new more"]
+    assert texts(reopened(doc)) == texts(doc)
+
+
+def test_a_property_edit_after_removals_that_moved_owners_keeps_each_text_box_handle_on_its_own_box():
+    # Text box paragraphs share their owner key and have no parent: a property edit that keeps every owner pairs them
+    # in document order, which their keys no longer give once removals moved owners into freed keys.
+    from test_docx_block_handles import document, p, table, text_box, text_box_paragraph
+
+    doc = document(
+        p("a", " b", " c", " d", " e", " f")
+        + p("one", text_box("box 1"))
+        + p("two", text_box("box 2"))
+        + p("three", text_box("box 3"))
+        + table(p("cell"))
+        + p("end", " x", " y", " z"),
+        ids=True,
+    )
+    boxes = [text_box_paragraph(doc, f"box {k}") for k in (1, 2, 3)]
+    doc.paragraphs[0].text = "edited"
+    doc.paragraphs[4].text = "end edited"
+    doc.tables[0].set_cell_grid_span(0, 0, 1)
+    assert [box.text for box in boxes] == ["box 1", "box 2", "box 3"]
+    boxes[0].text = "box 1 edited"
+    assert [item.text for item in doc.story_items if item.story.kind == "text_box"] == ["box 1 edited", "box 2", "box 3"]
     assert texts(reopened(doc)) == texts(doc)
