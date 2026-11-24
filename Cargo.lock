@@ -1125,6 +1125,7 @@ name = "oxoffice-cli"
 version = "0.5.1"
 dependencies = [
  "clap",
+ "oxoffice-cli-support",
  "oxoffice-docx",
  "oxoffice-docx-cli",
  "oxoffice-docx-oxml",

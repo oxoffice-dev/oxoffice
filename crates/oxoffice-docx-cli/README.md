@@ -75,8 +75,9 @@ oxoffice docx convert form.docx --to pdf --fillable-forms -o form.pdf
 oxoffice docx render redline.docx --revision-view tracked --revision-style legal
 oxoffice docx diff before.docx after.docx
 oxoffice docx diff before.docx after.docx --exit-code --json
-oxoffice docx validate report.docx
+oxoffice docx validate report.docx --json
 oxoffice docx render report.docx --page 0 -o rendered
+oxoffice docx render report.docx --pages 1-3 -o rendered --json
 oxoffice docx comment list report.docx --json
 oxoffice docx comment add report.docx --start-paragraph 0 --start-run 0 \
   --end-paragraph 0 --end-run 1 --author Reviewer --text 'Check this' \
@@ -359,12 +360,22 @@ directory, a symbolic link, a FIFO, or a device like `/dev/null`. A run checks
 every file it would write before it writes the first one, and publishes each
 file only once it is complete, so a failed run leaves no truncated output.
 
+With `--json`, `convert` and `render` write a schema-1 record of the files
+written instead of their `Written to` and `Page N` lines: `file`, `format`,
+`dpi` for a raster output, and `outputs`, each with its `path`, its size in
+`bytes`, and the one-based `pages` it holds (every page for a PDF, the
+selected pages for a TIFF, none for HTML, Markdown or a DOCX imported from
+HTML or Markdown). Standard output holds only the record; diagnostics stay on
+standard error.
+
 `validate` exits unsuccessfully on a structural error: a relationship to a
 missing part, a part without a content type, or a prefix that `mc:Ignorable`
 or `mc:MustUnderstand` lists without a namespace declaration. Empty
 paragraphs, heading level gaps, missing metadata, and a paragraph numbered by a
 numbering instance or a level the document does not define (Word shows it
-without a number) are warnings only.
+without a number) are warnings only. `validate --json` writes a schema-1 record
+instead of the plain report: `file`, `valid`, and the `errors` and `warnings`
+the plain report lists. The exit status is the same.
 
 The documented WordprocessingML subset also checks well-formed XML 1.0 in
 XML parts, style ids, direct body/p/r children and order, text placement,

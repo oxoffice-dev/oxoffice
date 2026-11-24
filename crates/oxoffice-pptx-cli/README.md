@@ -27,6 +27,20 @@ including package metadata, the `p:presentation` root child sequence, unknown
 direct shape-tree children, required unqualified `cNvPr` id and name on
 physical owners, table row against grid column equality, role content-type
 overrides, and the parsed-model issues. It is not a full schema validator.
+`validate --json` writes a schema-1 record instead of the plain report: `file`,
+`valid`, `errors`, every issue as the plain report prints it (each one fails
+the file), and `warnings`, always empty for a deck. The exit status is the same.
+
+`diff` compares the text of each slide through a longest common subsequence: a
+slide only the first deck holds prints a `-` line, one only the second holds a
+`+` line, each with its one-based slide number between brackets. `diff --json`
+writes a schema-1 record shaped like the one of `docx diff --json`: `file_a`,
+`file_b`, `scope` (`slide-text`), the `changed`, `added` and `removed` counts,
+each difference with its `change`, `story` (`slide`), `location_a` and
+`text_a`, `location_b` and `text_b` (the slide number as a string and the
+slide text, `null` on the side that lacks the slide), and `not_compared`,
+always empty. Between two matched slides, removed and added slides pair in
+order as changed slides.
 
 
 ## Package signatures
@@ -67,7 +81,9 @@ oxoffice pptx comment add deck.pptx --slide 2 --author Reviewer \
   --text "Check the figures" --date 2026-09-25T10:00:00Z -o reviewed.pptx
 oxoffice pptx comment list reviewed.pptx --json
 oxoffice pptx convert deck.pptx --to pdf -o deck.pdf
+oxoffice pptx render deck.pptx --slide 2-3 -o slides --json
 oxoffice pptx thumbnail deck.pptx -o thumbnail.png
+oxoffice pptx diff before.pptx after.pptx --json
 ```
 
 `inspect --json` keeps its existing keys and adds `shape_details` beside each
@@ -133,6 +149,16 @@ under any spelling of its path, and an output that is not a regular file, such
 as a directory, a symbolic link, a FIFO, or a device like `/dev/null`. A run
 checks every file it would write before it writes the first one, and publishes
 each file only once it is complete, so a failed run leaves no truncated output.
+
+With `--json`, `convert`, `render`, and `thumbnail` write a schema-1 record of
+the files written instead of their `Written to` and `Slide N` lines: `file`,
+`format`, `dpi` for a raster output, and `outputs`, each with its `path`, its
+size in `bytes`, and the one-based `slides` it holds (every slide for a PDF,
+the selected slides for a TIFF, none for HTML or Markdown). The `dpi` of a
+thumbnail is the resolution that draws slide one 320 pixels wide. HTML or
+Markdown lists the images written beside it, with `--embed-images=false`,
+under `assets`. Standard output holds only the record;
+rendering diagnostics stay on standard error.
 
 The output extension of `replace` and of every comment mutation selects the
 package class the output declares. A `.potx` template written to `deck.pptx`

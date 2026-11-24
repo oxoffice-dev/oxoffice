@@ -151,9 +151,18 @@ enum Command {
         /// Embed semantic images (default true), or use --embed-images=false for adjacent assets
         #[arg(long, num_args = 0..=1, default_missing_value = "true", require_equals = true)]
         embed_images: Option<bool>,
+        /// Output the files written as schema-1 JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Compare slide text using a longest-common-subsequence diff
-    Diff { file_a: PathBuf, file_b: PathBuf },
+    Diff {
+        file_a: PathBuf,
+        file_b: PathBuf,
+        /// Output the differences as schema-1 JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Replace literal presentation text while retaining run formatting
     Replace {
         file: PathBuf,
@@ -189,7 +198,12 @@ enum Command {
     /// table row against grid column equality, PowerPoint role content-type
     /// overrides, and the existing parsed-model issues. This is not a full
     /// schema validator.
-    Validate { file: PathBuf },
+    Validate {
+        file: PathBuf,
+        /// Output the verdict and the issues as schema-1 JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Render selected slides to image files
     Render {
         file: PathBuf,
@@ -219,6 +233,9 @@ enum Command {
         /// Preserve unpainted PNG pixels as transparent
         #[arg(long)]
         transparent: bool,
+        /// Output the files written as schema-1 JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Render slide one as a proportional 320-pixel-wide PNG
     Thumbnail {
@@ -236,6 +253,9 @@ enum Command {
         /// Replace an existing output file, but never the input file
         #[arg(long)]
         force: bool,
+        /// Output the file written as schema-1 JSON
+        #[arg(long)]
+        json: bool,
     },
     /// List the shapes of each slide, those inside groups included, in z-order
     Shapes {
@@ -565,8 +585,8 @@ pub fn run(cli: Cli) {
         }
     }
 
-    if let Command::Validate { file } = &cli.command {
-        match commands::validate(file) {
+    if let Command::Validate { file, json } = &cli.command {
+        match commands::validate(file, *json) {
             Ok(true) => return,
             Ok(false) => process::exit(1),
             Err(error) => {
@@ -661,6 +681,7 @@ pub fn run(cli: Cli) {
             notes,
             skip_hidden,
             embed_images,
+            json,
         } => {
             if matches!(to.as_str(), "html" | "md") {
                 if font_dir.is_some()
@@ -682,6 +703,7 @@ pub fn run(cli: Cli) {
                             skip_hidden,
                             inline_images: embed_images.unwrap_or(true),
                         },
+                        json,
                     )
                 }
             } else if notes || skip_hidden || embed_images.is_some() {
@@ -703,10 +725,15 @@ pub fn run(cli: Cli) {
                         quality: quality.unwrap_or(90),
                         transparent,
                     },
+                    json,
                 )
             }
         }
-        Command::Diff { file_a, file_b } => commands::diff(&file_a, &file_b),
+        Command::Diff {
+            file_a,
+            file_b,
+            json,
+        } => commands::diff(&file_a, &file_b, json),
         Command::Replace {
             file,
             placeholder,
@@ -735,6 +762,7 @@ pub fn run(cli: Cli) {
             format,
             quality,
             transparent,
+            json,
         } => commands::render(
             &file,
             output.as_deref(),
@@ -748,6 +776,7 @@ pub fn run(cli: Cli) {
                 quality,
                 transparent,
             },
+            json,
         ),
         Command::Thumbnail {
             file,
@@ -755,12 +784,14 @@ pub fn run(cli: Cli) {
             bundled_fonts_only,
             output,
             force,
+            json,
         } => commands::thumbnail(
             &file,
             output.as_deref(),
             force,
             font_dir.as_deref(),
             bundled_fonts_only,
+            json,
         ),
         Command::Shapes { file, slide, json } => commands::shapes(&file, slide, json),
         Command::Outline { file, json, notes } => commands::outline(&file, json, notes),
