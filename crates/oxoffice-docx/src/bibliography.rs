@@ -592,79 +592,45 @@ impl Document {
             source.guid = identity::derived_source_guid(&source, 0);
         }
         validate_source(&source)?;
-        let mut candidate = self.clone_for_staging();
-        candidate.prepare_staged_package()?;
-        if bibliography_collection(&candidate.package, &candidate.doc_part_name)?.is_none() {
-            create_collection(&mut candidate)?;
-        }
-        let collection = bibliography_collection(&candidate.package, &candidate.doc_part_name)?
-            .ok_or_else(|| bibliography_error("source collection creation failed"))?;
-        unique_collection_identities(&collection)?;
-        let guid_taken = |guid: &str| {
-            collection.sources.iter().any(|(_, existing)| {
-                existing.guid.as_ref().is_some_and(|existing| {
-                    crate::content_control::normalize_store_item_id(existing)
-                        == crate::content_control::normalize_store_item_id(guid)
-                })
-            })
-        };
-        let mut attempt = 0;
-        while derived && guid_taken(&source.guid) {
-            attempt += 1;
-            source.guid = identity::derived_source_guid(&source, attempt);
-        }
-        if guid_taken(&source.guid)
-            || collection
-                .sources
-                .iter()
-                .any(|(_, existing)| existing.tag == source.tag)
-        {
-            return Err(bibliography_error("source identity already exists"));
-        }
-        let edit = append_to_source_node(
-            &collection.xml,
-            &collection.parsed.nodes[0],
-            authored_source_xml(&source).as_bytes(),
-        )?;
-        candidate.package.set_part(
-            &collection.part,
-            apply_source_edits(&collection.xml, vec![edit])?,
-        );
-        publish_source_collection(self, candidate)?;
-        Ok(source.guid)
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(&[crate::EditUnit::Parts], |document| {
+            let guid = add_source_to(document, source.clone(), derived)?;
+            settle_source_collection(document)?;
+            Ok(guid)
+        });
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            let mut candidate = staged.clone_for_staging();
+            candidate.prepare_staged_package()?;
+            let guid = add_source_to(&mut candidate, source.clone(), derived)?;
+            publish_source_collection(staged, candidate)?;
+            Ok(guid)
+        });
+        result
     }
 
     /// Replace modeled members of one source, preserving its GUID and raw metadata.
     pub fn replace_bibliography_source(&mut self, source: &BibliographySource) -> Result<()> {
         validate_source(source)?;
-        let mut candidate = self.clone_for_staging();
-        candidate.prepare_staged_package()?;
-        let collection = bibliography_collection(&candidate.package, &candidate.doc_part_name)?
-            .ok_or_else(|| bibliography_error("source collection does not exist"))?;
-        unique_collection_identities(&collection)?;
-        let (index, existing) = collection
-            .sources
-            .iter()
-            .find(|(_, existing)| existing.tag == source.tag)
-            .ok_or_else(|| bibliography_error("source tag does not exist"))?;
-        // GUIDs compare as `add_bibliography_source` compares them; the saved
-        // spelling is kept.
-        let Some(guid) = existing.guid.as_ref().filter(|guid| {
-            crate::content_control::normalize_store_item_id(guid)
-                == crate::content_control::normalize_store_item_id(&source.guid)
-        }) else {
-            return Err(bibliography_error("source GUID cannot change"));
-        };
-        let source = &BibliographySource {
-            guid: guid.clone(),
-            ..source.clone()
-        };
-        let xml = replace_source_xml(&collection, *index, source)?;
-        if xml == collection.xml {
-            return Ok(());
-        }
-        candidate.package.set_part(&collection.part, xml);
-        publish_source_collection(self, candidate)
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(&[crate::EditUnit::Parts], |document| {
+            if replace_source_in(document, source)? {
+                settle_source_collection(document)?;
+            }
+            Ok(())
+        });
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            let mut candidate = staged.clone_for_staging();
+            candidate.prepare_staged_package()?;
+            if replace_source_in(&mut candidate, source)? {
+                publish_source_collection(staged, candidate)?;
+            }
+            Ok(())
+        });
+        result
     }
 
     /// Remove an unreferenced source without deleting its collection or properties.
@@ -1193,4 +1159,93 @@ impl Document {
         publish_source_collection(self, candidate)?;
         Ok(report)
     }
+}
+
+/// Append `source` to the document's source collection, made when it has
+/// none, and answer its GUID: [`Document::add_bibliography_source`] on
+/// `document`, left half-done on an error.
+fn add_source_to(
+    document: &mut Document,
+    mut source: BibliographySource,
+    derived: bool,
+) -> Result<String> {
+    if bibliography_collection(&document.package, &document.doc_part_name)?.is_none() {
+        create_collection(document)?;
+    }
+    let collection = bibliography_collection(&document.package, &document.doc_part_name)?
+        .ok_or_else(|| bibliography_error("source collection creation failed"))?;
+    unique_collection_identities(&collection)?;
+    let guid_taken = |guid: &str| {
+        collection.sources.iter().any(|(_, existing)| {
+            existing.guid.as_ref().is_some_and(|existing| {
+                crate::content_control::normalize_store_item_id(existing)
+                    == crate::content_control::normalize_store_item_id(guid)
+            })
+        })
+    };
+    let mut attempt = 0;
+    while derived && guid_taken(&source.guid) {
+        attempt += 1;
+        source.guid = identity::derived_source_guid(&source, attempt);
+    }
+    if guid_taken(&source.guid)
+        || collection
+            .sources
+            .iter()
+            .any(|(_, existing)| existing.tag == source.tag)
+    {
+        return Err(bibliography_error("source identity already exists"));
+    }
+    let edit = append_to_source_node(
+        &collection.xml,
+        &collection.parsed.nodes[0],
+        authored_source_xml(&source).as_bytes(),
+    )?;
+    document.package.set_part(
+        &collection.part,
+        apply_source_edits(&collection.xml, vec![edit])?,
+    );
+    Ok(source.guid)
+}
+
+/// Replace the modeled members of `source` in the collection, and answer
+/// whether its part changed: [`Document::replace_bibliography_source`] on
+/// `document`, left half-done on an error.
+fn replace_source_in(document: &mut Document, source: &BibliographySource) -> Result<bool> {
+    let collection = bibliography_collection(&document.package, &document.doc_part_name)?
+        .ok_or_else(|| bibliography_error("source collection does not exist"))?;
+    unique_collection_identities(&collection)?;
+    let (index, existing) = collection
+        .sources
+        .iter()
+        .find(|(_, existing)| existing.tag == source.tag)
+        .ok_or_else(|| bibliography_error("source tag does not exist"))?;
+    // GUIDs compare as `add_bibliography_source` compares them; the saved
+    // spelling is kept.
+    let Some(guid) = existing.guid.as_ref().filter(|guid| {
+        crate::content_control::normalize_store_item_id(guid)
+            == crate::content_control::normalize_store_item_id(&source.guid)
+    }) else {
+        return Err(bibliography_error("source GUID cannot change"));
+    };
+    let source = &BibliographySource {
+        guid: guid.clone(),
+        ..source.clone()
+    };
+    let xml = replace_source_xml(&collection, *index, source)?;
+    if xml == collection.xml {
+        return Ok(false);
+    }
+    document.package.set_part(&collection.part, xml);
+    Ok(true)
+}
+
+/// The checks the staged publication of a source collection makes, on the
+/// live document: the collection reads back with unique identities.
+fn settle_source_collection(document: &mut Document) -> Result<()> {
+    let collection = bibliography_collection(&document.package, &document.doc_part_name)?
+        .ok_or_else(|| bibliography_error("staged collection disappeared"))?;
+    unique_collection_identities(&collection)?;
+    document.invalidate_layout();
+    Ok(())
 }

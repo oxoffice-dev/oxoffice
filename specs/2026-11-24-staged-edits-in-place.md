@@ -321,6 +321,21 @@ form operations (#7).
   edit (a store, a mail-merge package) keeps it too.
   The seven setters cost 3.5 to 4.4 ms at 25, 100 and 400 paragraphs.
 
+### S2c: bibliography sources (amended 2026-11-25)
+
+- `add_bibliography_source` and `replace_bibliography_source` edit the
+  source collection's custom XML part on the live document under
+  `EditUnit::Parts`: the collection is read from the package (no body
+  serialization), created through the journaled custom XML store helpers
+  when absent, and the checks of the staged publication (the collection
+  reads back with unique identities) run on the live part. A replacement
+  that changes nothing writes nothing.
+- The binding publishes nothing: no body content changes, every handle
+  stays bound (as `add_custom_xml_store`). The staged route stays the
+  debug oracle.
+- `remove_bibliography_source` keeps its staged route: it reads every
+  citation field of the document to refuse removing a cited source.
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.
