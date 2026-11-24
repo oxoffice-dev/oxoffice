@@ -427,6 +427,18 @@ pub(super) fn accepted_display_text(elems: &[XmlElem], sdt: &XmlElem, text: &Xml
     accepted_owning_content(elems, sdt, text.parent, true)
 }
 
+/// Whether `change` is a tracked insertion, deletion or move among the
+/// control's display content, where its paragraphs and runs are: not one of
+/// a property or a paragraph mark, a nested control or a text box.
+pub(super) fn accepted_display_change(elems: &[XmlElem], sdt: &XmlElem, change: &XmlElem) -> bool {
+    change.word
+        && matches!(
+            change.local.as_slice(),
+            b"ins" | b"del" | b"moveFrom" | b"moveTo"
+        )
+        && accepted_owning_content(elems, sdt, change.parent, false)
+}
+
 pub(super) fn accepted_display_paragraph(
     elems: &[XmlElem],
     sdt: &XmlElem,

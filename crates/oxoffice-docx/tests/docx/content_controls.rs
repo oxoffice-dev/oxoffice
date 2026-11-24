@@ -2340,15 +2340,186 @@ fn an_inline_control_text_reads_its_tracked_insertions() {
     assert_eq!(doc.content_controls()[0].text(), "BCDE");
 }
 
+/// The author and date Word writes on a tracked change.
+const TRACKED: &str = r#"w:author="Ada" w:date="2026-11-24T09:00:00Z""#;
+
+/// A tracked insertion of `text`, as Word writes it.
+fn insertion(id: i32, text: &str) -> String {
+    format!(
+        r#"<w:ins w:id="{id}" {TRACKED}><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:ins>"#
+    )
+}
+
+/// A tracked deletion of `text`, as Word writes it.
+fn deletion(id: i32, text: &str) -> String {
+    format!(
+        r#"<w:del w:id="{id}" {TRACKED}><w:r><w:delText xml:space="preserve">{text}</w:delText></w:r></w:del>"#
+    )
+}
+
+/// A paragraph holding "A " then an inline control tagged "t" holding
+/// `content`.
+fn inline_control(content: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">A </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="t"/><w:id w:val="1"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt></w:p>"#
+    )
+}
+
 #[test]
-fn a_value_an_inline_control_already_shows_with_its_insertion_is_left_as_is() {
-    let mut doc = doc_with_body(concat!(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="t"/></w:sdtPr><w:sdtContent>"#,
-        r#"<w:r><w:t>B</w:t></w:r>"#,
-        r#"<w:ins w:id="5" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>C</w:t></w:r></w:ins>"#,
-        r#"</w:sdtContent></w:sdt></w:p>"#,
-    ));
+fn a_value_replaces_the_tracked_insertions_of_a_control() {
+    // Typed with track changes on: the inserted text shows in the control
+    // until the value replaces it, as an edit made with them off. A control
+    // holding nothing but the insertion takes the value in a run of its own,
+    // and a hyperlink holding nothing but one goes with it.
+    let inline = |content: &str| (inline_control(content), "A X");
+    let shapes = [
+        inline(&format!(r#"<w:r><w:t>B</w:t></w:r>{}"#, insertion(5, "C"))),
+        inline(&insertion(5, "C")),
+        (
+            format!(
+                r#"<w:sdt><w:sdtPr><w:tag w:val="t"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>B</w:t></w:r><w:hyperlink w:anchor="Terms">{}</w:hyperlink></w:p></w:sdtContent></w:sdt>"#,
+                insertion(5, "C")
+            ),
+            "X",
+        ),
+    ];
+    for (body, expected) in shapes {
+        for by_form in [false, true] {
+            let mut doc = doc_with_body(&body);
+            set_value(&mut doc, "t", "X", by_form);
+            let doc = reopen(&mut doc);
+            assert_eq!(texts(&doc), [expected], "{}: {body}", way(by_form));
+            assert_eq!(value(&doc, "t"), "X", "{}: {body}", way(by_form));
+            let saved = saved_content(&doc, "word/document.xml", "t");
+            for left in ["w:ins", "w:hyperlink"] {
+                assert!(!has(&saved, left), "{left}, {}: {saved}", way(by_form));
+            }
+        }
+    }
+}
+
+#[test]
+fn a_value_replaces_the_tracked_deletions_and_moves_of_a_control_and_keeps_those_outside() {
+    // The control's own formatting change stays, and so do the insertion and
+    // the other end of the move outside it.
+    let properties = format!(
+        r#"<w:sdtPr><w:rPr><w:b/><w:rPrChange w:id="1" {TRACKED}><w:rPr/></w:rPrChange></w:rPr><w:tag w:val="t"/><w:id w:val="2"/></w:sdtPr>"#
+    );
+    let source = format!(
+        r#"<w:moveFromRangeStart w:id="3" {TRACKED} w:name="move1"/><w:moveFrom w:id="4" {TRACKED}><w:r><w:t>moved</w:t></w:r></w:moveFrom><w:moveFromRangeEnd w:id="3"/>"#
+    );
+    let destination = format!(
+        r#"<w:moveToRangeStart w:id="5" {TRACKED} w:name="move1"/><w:moveTo w:id="6" {TRACKED}><w:r><w:t>moved</w:t></w:r></w:moveTo><w:moveToRangeEnd w:id="5"/>"#
+    );
+    let outside = insertion(7, "kept ");
+    let old = format!(r#"<w:r><w:t>Old</w:t></w:r>{}"#, deletion(8, " gone"));
+    let shapes = [
+        // A block control holding deleted text and the source of a move
+        // whose destination follows it.
+        (
+            format!(
+                r#"<w:sdt>{properties}<w:sdtContent><w:p>{old}{source}</w:p></w:sdtContent></w:sdt><w:p>{outside}{destination}</w:p>"#
+            ),
+            vec!["X", "kept moved"],
+            ["w:ins", "w:moveTo"],
+        ),
+        // An inline control holding deleted text and the destination of a
+        // move whose source comes before it.
+        (
+            format!(
+                r#"<w:p>{source}{outside}<w:sdt>{properties}<w:sdtContent>{old}{destination}</w:sdtContent></w:sdt></w:p>"#
+            ),
+            vec!["kept X"],
+            ["w:ins", "w:moveFrom"],
+        ),
+    ];
+    for (body, expected, kept) in shapes {
+        for by_form in [false, true] {
+            let mut doc = doc_with_body(&body);
+            set_value(&mut doc, "t", "X", by_form);
+            let doc = reopen(&mut doc);
+            assert_eq!(texts(&doc), expected, "{}: {body}", way(by_form));
+            assert_eq!(value(&doc, "t"), "X", "{}", way(by_form));
+            let saved = saved_content(&doc, "word/document.xml", "t");
+            for change in ["w:ins", "w:del", "w:delText", "w:moveFrom", "w:moveTo"] {
+                assert!(!has(&saved, change), "{change}, {}: {saved}", way(by_form));
+            }
+            let xml = doc.part_xml("word/document.xml").unwrap();
+            for change in kept {
+                assert!(has(&xml, change), "{change}, {}: {xml}", way(by_form));
+            }
+            let properties = saved_properties(&doc, "word/document.xml", 2);
+            assert!(
+                has(&properties, "w:rPrChange"),
+                "{}: {properties}",
+                way(by_form)
+            );
+        }
+    }
+}
+
+#[test]
+fn a_value_a_control_already_shows_through_a_tracked_insertion_still_replaces_it() {
+    let content = format!(r#"<w:r><w:t>B</w:t></w:r>{}"#, insertion(5, "C"));
+    let mut doc = doc_with_body(&inline_control(&content));
     doc.set_content_control_value_by_tag("t", "BC").unwrap();
-    assert_eq!(doc.content_controls()[0].text(), "BC");
-    assert_eq!(doc.paragraph(0).unwrap().text(), "BC");
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["A BC"]);
+    let saved = saved_content(&doc, "word/document.xml", "t");
+    assert!(!has(&saved, "w:ins"), "{saved}");
+    // A header's control is written in its part.
+    let mut doc = doc_with_raw_header(&inline_control(&content));
+    assert_eq!(doc.set_content_control_value_by_tag("t", "BC").unwrap(), 1);
+    let doc = reopen(&mut doc);
+    assert_eq!(value(&doc, "t"), "BC");
+    let saved = saved_content(&doc, "word/header1.xml", "t");
+    assert!(!has(&saved, "w:ins"), "{saved}");
+}
+
+#[test]
+fn a_value_is_refused_over_a_tracked_change_holding_what_a_partner_outside_it_needs() {
+    // Dropped with the change, a comment would lose its mark and a bookmark
+    // its start. A bookmark wholly inside the change goes with it.
+    let refused = [
+        (
+            format!(
+                r#"<w:commentRangeStart w:id="0"/><w:r><w:t>B</w:t></w:r><w:commentRangeEnd w:id="0"/><w:ins w:id="5" {TRACKED}><w:r><w:t>C</w:t></w:r><w:r><w:commentReference w:id="0"/></w:r></w:ins>"#
+            ),
+            "comment 0",
+        ),
+        (
+            format!(
+                r#"<w:bookmarkStart w:id="3" w:name="Client"/><w:r><w:t>B</w:t></w:r><w:ins w:id="5" {TRACKED}><w:r><w:t>C</w:t></w:r><w:bookmarkEnd w:id="3"/></w:ins>"#
+            ),
+            "bookmark 3",
+        ),
+    ];
+    for (content, partner) in refused {
+        for by_form in [false, true] {
+            let mut doc = doc_with_body(&inline_control(&content));
+            let error = if by_form {
+                let rule = prompt(target("t"), false, "");
+                doc.fill_form(&[rule], &[assign(target("t"), text("X"))])
+                    .unwrap_err()
+            } else {
+                doc.set_content_control_value_by_tag("t", "X").unwrap_err()
+            };
+            let message = error.to_string();
+            assert!(
+                message.contains(partner) && message.contains("accept or reject it first"),
+                "{}: {message}",
+                way(by_form)
+            );
+            assert_eq!(value(&doc, "t"), "BC", "{}: unchanged", way(by_form));
+        }
+    }
+    let inside = format!(
+        r#"<w:r><w:t>B</w:t></w:r><w:ins w:id="5" {TRACKED}><w:bookmarkStart w:id="3" w:name="_GoBack"/><w:bookmarkEnd w:id="3"/><w:r><w:t>C</w:t></w:r></w:ins>"#
+    );
+    for by_form in [false, true] {
+        let mut doc = doc_with_body(&inline_control(&inside));
+        set_value(&mut doc, "t", "X", by_form);
+        let doc = reopen(&mut doc);
+        assert_eq!(value(&doc, "t"), "X", "{}", way(by_form));
+    }
 }

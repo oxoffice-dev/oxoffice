@@ -3710,6 +3710,27 @@ impl CT_P {
                 .all(|(position, raw)| Self::raw_is_root_attributes(*position, raw))
     }
 
+    /// Remove the tracked insertions, deletions and moves among the
+    /// paragraph's children and inside its hyperlinks, with everything they
+    /// hold, and a hyperlink left with nothing in it. The other children stay
+    /// where they are, and the paragraph mark's own tracked state with its
+    /// properties. Returns how many went.
+    #[doc(hidden)]
+    pub fn remove_content_revisions(&mut self) -> usize {
+        let mut removed = 0;
+        for index in (0..self.revisions.len()).rev() {
+            if self.revisions[index].2.kind().changes_content() {
+                self.remove_revision(index);
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            // A bookmark the removed content held goes from the projection.
+            let _ = self.refresh_bookmark_projection();
+        }
+        removed
+    }
+
     /// Remove the revision wrapper at `index` with the placeholder that holds
     /// its place among the paragraph children, or its place inside a
     /// hyperlink, and the hyperlink when nothing else is left in it.

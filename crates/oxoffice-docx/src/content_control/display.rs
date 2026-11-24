@@ -84,7 +84,7 @@ pub(super) fn replace_document_controls(
             }
             BodyContent::Table(table) => replace_table_controls(table, replacements, &mut index)?,
             BodyContent::ContentControl(control) => {
-                replace_one_control(control, replacements, &mut index)?
+                replace_one_control(control, replacements, &mut index, false)?
             }
             BodyContent::RawXml(_) => {}
         }
@@ -102,20 +102,27 @@ pub(super) fn replace_document_controls(
     Ok(())
 }
 
+/// Give the control its value, if it takes one, then the controls nested in
+/// it theirs. `inline` says whether the control sits among runs.
 fn replace_one_control(
     control: &mut CT_Sdt,
     replacements: &ControlReplacements,
     index: &mut usize,
+    inline: bool,
 ) -> Result<()> {
     if let Some(value) = replacements.values.get(index) {
         let mut current = String::new();
         collect_sdt_text(control, &mut current);
-        if current != value.display || value.checkbox.is_some() {
+        // An untracked edit: the value replaces the content with its tracked
+        // changes, even when it shows the same text.
+        let dropped = drop_content_changes(control)?;
+        if current != value.display || value.checkbox.is_some() || dropped > 0 {
             replace_display_text(
                 control,
                 &value.display,
                 value.checkbox.as_ref().map(|(_, font)| font.as_str()),
                 &replacements.placeholder_styles,
+                inline,
             )?;
         }
         if let Some(properties) = &mut control.properties {
@@ -132,13 +139,16 @@ fn replace_one_control(
     *index = index
         .checked_add(1)
         .ok_or_else(|| Error::Other("content-control count overflow".to_owned()))?;
-    replace_nested_controls(control, replacements, index)
+    replace_nested_controls(control, replacements, index, inline)
 }
 
+/// A control nested directly in `control` sits among runs when `control`
+/// does, and among blocks, rows or cells as its siblings do otherwise.
 fn replace_nested_controls(
     control: &mut CT_Sdt,
     replacements: &ControlReplacements,
     index: &mut usize,
+    inline: bool,
 ) -> Result<()> {
     for content in &mut control.content {
         match content {
@@ -148,7 +158,9 @@ fn replace_nested_controls(
             SdtContent::Table(table) => replace_table_controls(table, replacements, index)?,
             SdtContent::Row(row) => replace_row_controls(row, replacements, index)?,
             SdtContent::Cell(cell) => replace_cell_controls(cell, replacements, index)?,
-            SdtContent::ContentControl(nested) => replace_one_control(nested, replacements, index)?,
+            SdtContent::ContentControl(nested) => {
+                replace_one_control(nested, replacements, index, inline)?
+            }
             SdtContent::Run(_) | SdtContent::RawXml(_) => {}
         }
     }
@@ -166,7 +178,7 @@ fn replace_paragraph_controls(
             .iter_mut()
             .filter(|(at, _, _, _)| *at == position)
         {
-            replace_one_control(control, replacements, index)?;
+            replace_one_control(control, replacements, index, true)?;
         }
     }
     Ok(())
@@ -183,7 +195,7 @@ fn replace_table_controls(
             .iter_mut()
             .filter(|(at, _, _)| *at == position)
         {
-            replace_one_control(control, replacements, index)?;
+            replace_one_control(control, replacements, index, false)?;
         }
         if let Some(row) = table.rows.get_mut(position) {
             replace_row_controls(row, replacements, index)?;
@@ -203,7 +215,7 @@ fn replace_row_controls(
             .iter_mut()
             .filter(|(at, _, _)| *at == position)
         {
-            replace_one_control(control, replacements, index)?;
+            replace_one_control(control, replacements, index, false)?;
         }
         if let Some(cell) = row.cells.get_mut(position) {
             replace_cell_controls(cell, replacements, index)?;
@@ -224,7 +236,7 @@ fn replace_cell_controls(
             }
             CellContent::Table(table) => replace_table_controls(table, replacements, index)?,
             CellContent::ContentControl(control) => {
-                replace_one_control(control, replacements, index)?
+                replace_one_control(control, replacements, index, false)?
             }
         }
     }
@@ -236,6 +248,7 @@ fn replace_display_text(
     value: &str,
     font: Option<&str>,
     placeholder_styles: &[String],
+    inline: bool,
 ) -> Result<()> {
     let (showing_placeholder, prompt_properties) = match &control.properties {
         Some(properties) => (
@@ -256,7 +269,12 @@ fn replace_display_text(
     let mut first = replacement();
     replace_sdt_display(control, &mut first);
     if !first.wrote_value {
-        if !add_text_to_first_paragraph(control, value) {
+        if inline {
+            // An inline control without a run, as one that held only tracked
+            // changes is now, takes one at the end of its content, as the
+            // form fill gives it one.
+            control.content.push(SdtContent::Run(CT_R::new(value)));
+        } else if !add_text_to_first_paragraph(control, value) {
             return Err(Error::Other(
                 "content control has no typed text display location".to_owned(),
             ));
@@ -267,6 +285,185 @@ fn replace_display_text(
     }
     drop_emptied_paragraphs(control);
     Ok(())
+}
+
+/// Drop the tracked insertions, deletions and moves of the content a value
+/// replaces, with everything they hold: those among the control's own
+/// children and those of its paragraphs, in its tables, rows and cells too,
+/// as `replace_sdt_display` walks them. A value is an untracked edit: the
+/// control then holds it and no pending change. The changes of a nested
+/// control, of a paragraph mark and of properties, the control's own
+/// included, stay. Returns how many went; when one is refused (see
+/// [`refuse_dropped_change`]), none goes.
+pub(super) fn drop_content_changes(control: &mut CT_Sdt) -> Result<usize> {
+    for (_, revision) in control.revisions() {
+        if revision.kind().changes_content() {
+            refuse_dropped_change(revision.retained_xml())?;
+        }
+    }
+    let mut paragraphs = Vec::new();
+    content_paragraphs(&mut control.content, &mut paragraphs);
+    for paragraph in &paragraphs {
+        for (_, _, revision) in &paragraph.revisions {
+            if revision.kind().changes_content() {
+                refuse_dropped_change(revision.retained_xml())?;
+            }
+        }
+    }
+    let mut dropped = 0;
+    for paragraph in paragraphs {
+        dropped += paragraph.remove_content_revisions();
+    }
+    Ok(dropped + control.remove_content_revisions())
+}
+
+/// The paragraphs among `content` whose runs a value rewrites, at any depth
+/// of its tables, rows and cells, without those of nested controls.
+fn content_paragraphs<'a>(content: &'a mut [SdtContent], paragraphs: &mut Vec<&'a mut CT_P>) {
+    for child in content {
+        match child {
+            SdtContent::Paragraph(paragraph) => paragraphs.push(paragraph),
+            SdtContent::Table(table) => table_paragraphs(table, paragraphs),
+            SdtContent::Row(row) => row_paragraphs(row, paragraphs),
+            SdtContent::Cell(cell) => cell_paragraphs(cell, paragraphs),
+            SdtContent::Run(_) | SdtContent::ContentControl(_) | SdtContent::RawXml(_) => {}
+        }
+    }
+}
+
+fn table_paragraphs<'a>(table: &'a mut CT_Tbl, paragraphs: &mut Vec<&'a mut CT_P>) {
+    for row in &mut table.rows {
+        row_paragraphs(row, paragraphs);
+    }
+}
+
+fn row_paragraphs<'a>(row: &'a mut CT_Row, paragraphs: &mut Vec<&'a mut CT_P>) {
+    for cell in &mut row.cells {
+        cell_paragraphs(cell, paragraphs);
+    }
+}
+
+fn cell_paragraphs<'a>(cell: &'a mut CT_Tc, paragraphs: &mut Vec<&'a mut CT_P>) {
+    for content in &mut cell.content {
+        match content {
+            CellContent::Paragraph(paragraph) => paragraphs.push(paragraph),
+            CellContent::Table(table) => table_paragraphs(table, paragraphs),
+            CellContent::ContentControl(_) => {}
+        }
+    }
+}
+
+/// Refuse to drop, with the content a value replaces, the tracked change
+/// `raw` when it holds something a partner outside it needs: a comment or
+/// note mark, whose comment or note would be left without it; a content
+/// control; one end of a bookmark, a permission or a tracked range whose
+/// other end is outside it; part of a complex field whose other parts are.
+/// The value is then refused and the document left as it was, as
+/// `Paragraph::set_text` refuses part of a range.
+pub(super) fn refuse_dropped_change(raw: &[u8]) -> Result<()> {
+    let refused = |what: String| {
+        Err(Error::Other(format!(
+            "the content control holds a tracked change with {what}, which a value would drop; \
+             accept or reject it first"
+        )))
+    };
+    let mut reader = Reader::from_reader(raw);
+    let mut buffer = Vec::new();
+    // Open complex fields, and the range markers by family, start or end, id.
+    let mut fields = 0usize;
+    let mut ranges: Vec<(String, bool, Vec<u8>)> = Vec::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("tracked change XML is invalid: {error}")))?;
+        let element = match &event {
+            Event::Start(element) | Event::Empty(element) => element,
+            Event::Eof => break,
+            _ => {
+                buffer.clear();
+                continue;
+            }
+        };
+        // Local names, as a preserved subtree does not always declare its
+        // prefixes.
+        let attribute = |local: &[u8]| {
+            element
+                .attributes()
+                .flatten()
+                .find(|attribute| attribute.key.local_name().as_ref() == local)
+                .map(|attribute| attribute.value.into_owned())
+                .unwrap_or_default()
+        };
+        let id = || String::from_utf8_lossy(&attribute(b"id")).into_owned();
+        let local = String::from_utf8_lossy(element.local_name().as_ref()).into_owned();
+        match local.as_str() {
+            "commentRangeStart" | "commentRangeEnd" | "commentReference" => {
+                return refused(format!("a mark of comment {}", id()));
+            }
+            "footnoteReference" | "endnoteReference" => {
+                let kind = local.trim_end_matches("Reference");
+                return refused(format!("the mark of {kind} {}", id()));
+            }
+            "sdt" => return refused("a content control".to_owned()),
+            "fldChar" => match attribute(b"fldCharType").as_slice() {
+                b"begin" => fields += 1,
+                b"separate" if fields == 0 => {
+                    return refused("part of a complex field".to_owned());
+                }
+                b"end" => {
+                    if fields == 0 {
+                        return refused("part of a complex field".to_owned());
+                    }
+                    fields -= 1;
+                }
+                _ => {}
+            },
+            "instrText" | "delInstrText" if fields == 0 => {
+                return refused("part of a complex field".to_owned());
+            }
+            _ => {
+                if let Some((family, start)) = range_marker(&local) {
+                    ranges.push((family.to_owned(), start, attribute(b"id")));
+                }
+            }
+        }
+        buffer.clear();
+    }
+    if fields > 0 {
+        return refused("part of a complex field".to_owned());
+    }
+    for (family, start, id) in &ranges {
+        let paired = ranges.iter().any(|(other, other_start, other_id)| {
+            other == family && other_start != start && other_id == id
+        });
+        if !paired {
+            let id = String::from_utf8_lossy(id);
+            return refused(format!("one end of {family} {id}"));
+        }
+    }
+    Ok(())
+}
+
+/// The family of a range marker element and whether it starts the range:
+/// bookmarks, permissions and the tracked move and custom XML ranges.
+fn range_marker(local: &str) -> Option<(&str, bool)> {
+    const FAMILIES: [&str; 8] = [
+        "bookmark",
+        "perm",
+        "moveFromRange",
+        "moveToRange",
+        "customXmlInsRange",
+        "customXmlDelRange",
+        "customXmlMoveFromRange",
+        "customXmlMoveToRange",
+    ];
+    FAMILIES
+        .into_iter()
+        .find_map(|family| match local.strip_prefix(family)? {
+            "Start" => Some((family, true)),
+            "End" => Some((family, false)),
+            _ => None,
+        })
 }
 
 /// Remove the paragraphs of a block control that the value left empty, so

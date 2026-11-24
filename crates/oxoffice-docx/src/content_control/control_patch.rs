@@ -126,9 +126,11 @@ fn edit_checked(xml: &mut Vec<u8>, sdt_start: usize, checked: bool) -> Result<()
 
 /// Write a control's display text: the value in its first `w:t`, its tabs
 /// and line breaks as `w:tab` and `w:br`, every other text of the control
-/// emptied, as the typed tag setters write it. A value over a prompt takes
-/// the control's own run properties, and a block control keeps no paragraph
-/// the value left empty.
+/// emptied, as the typed tag setters write it. The tracked insertions,
+/// deletions and moves of its display content go first, as
+/// `drop_content_changes` drops them in the typed model. A value over a
+/// prompt takes the control's own run properties, and a block control keeps
+/// no paragraph the value left empty.
 fn rewrite_display(
     xml: &mut Vec<u8>,
     sdt_start: usize,
@@ -137,6 +139,7 @@ fn rewrite_display(
     prompt: Option<bool>,
     placeholder_styles: &[String],
 ) -> Result<()> {
+    drop_display_changes(xml, sdt_start)?;
     let mut separators = Vec::new();
     {
         let elems = index_elements(xml)?;
@@ -201,6 +204,53 @@ fn rewrite_display(
         apply_display_font(xml, first, font)?;
     }
     drop_emptied_display_paragraphs(xml, sdt_start)
+}
+
+/// Remove the tracked insertions, deletions and moves of the control's
+/// display content, with everything they hold, as `drop_content_changes`
+/// does in the typed model: not those of a nested control, a text box, a
+/// paragraph mark or properties. One that `refuse_dropped_change` refuses
+/// refuses the value, before anything is removed. A hyperlink that holds
+/// nothing but changes goes with them, as the typed model removes one left
+/// empty.
+fn drop_display_changes(xml: &mut Vec<u8>, sdt_start: usize) -> Result<()> {
+    let mut changes = {
+        let elems = index_elements(xml)?;
+        let sdt = find_sdt(&elems, sdt_start)?;
+        let selected = elems
+            .iter()
+            .filter(|elem| accepted_display_change(&elems, sdt, elem))
+            .collect::<Vec<_>>();
+        let is_selected = |elem: &XmlElem| selected.iter().any(|change| change.id == elem.id);
+        selected
+            .iter()
+            .map(|change| match change.parent.map(|id| &elems[id]) {
+                Some(parent)
+                    if parent.word
+                        && parent.local == b"hyperlink"
+                        && direct_children(&elems, parent.id).all(is_selected) =>
+                {
+                    parent.range.clone()
+                }
+                _ => change.range.clone(),
+            })
+            .collect::<Vec<_>>()
+    };
+    changes.sort_by_key(|range| range.start);
+    // A change inside another goes with it.
+    let mut outermost: Vec<Range<usize>> = Vec::new();
+    for range in changes {
+        if outermost.last().is_none_or(|last| range.start >= last.end) {
+            outermost.push(range);
+        }
+    }
+    for range in &outermost {
+        refuse_dropped_change(&xml[range.clone()])?;
+    }
+    for range in outermost.into_iter().rev() {
+        xml.splice(range, Vec::new());
+    }
+    Ok(())
 }
 
 /// The starts of the control's display `w:t` elements, in document order.

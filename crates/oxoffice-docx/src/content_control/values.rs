@@ -294,8 +294,9 @@ fn write_story_control_values(
 
 /// The part edit that gives a story control `value`, as `replace_one_control`
 /// gives one of the body: the prompt flag goes, a date takes its full date,
-/// a check box its state, and the display text changes when it differs or
-/// the control is a check box.
+/// a check box its state, and the display text changes when it differs, the
+/// control is a check box or its content holds tracked changes the value
+/// drops.
 fn story_value_patch(control: &CT_Sdt, value: &ControlValue) -> Result<ControlPatch> {
     let showing_placeholder = match &control.properties {
         Some(properties) => properties.showing_placeholder()?,
@@ -303,7 +304,8 @@ fn story_value_patch(control: &CT_Sdt, value: &ControlValue) -> Result<ControlPa
     };
     let mut current = String::new();
     collect_sdt_text(control, &mut current);
-    let rewrite = current != value.display || value.checkbox.is_some();
+    let changes = drop_content_changes(&mut control.clone())?;
+    let rewrite = current != value.display || value.checkbox.is_some() || changes > 0;
     Ok(ControlPatch {
         placeholder: control.properties.is_some().then_some(false),
         full_date: match &value.full_date {

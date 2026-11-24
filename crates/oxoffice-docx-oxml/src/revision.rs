@@ -215,6 +215,17 @@ pub enum RevisionKind {
     SectionPropertyChange,
 }
 
+impl RevisionKind {
+    /// Whether the change adds or removes content: an insertion, a deletion
+    /// or either end of a move, not a change of properties.
+    pub fn changes_content(self) -> bool {
+        matches!(
+            self,
+            Self::Insertion | Self::Deletion | Self::MoveFrom | Self::MoveTo
+        )
+    }
+}
+
 /// Existing substantive body-reader modes. Deletions need the real source
 /// ownership probe, never a header-only guess.
 #[derive(Clone, Copy, Debug)]

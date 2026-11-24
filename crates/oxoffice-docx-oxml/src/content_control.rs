@@ -2089,6 +2089,27 @@ impl CT_Sdt {
         &mut self.revisions
     }
 
+    /// Remove the tracked insertions, deletions and moves among the direct
+    /// children of `w:sdtContent`, with everything they hold. The other
+    /// children stay where they are. Returns how many went.
+    #[doc(hidden)]
+    pub fn remove_content_revisions(&mut self) -> usize {
+        let mut removed = 0;
+        for index in (0..self.revisions.len()).rev() {
+            if !self.revisions[index].1.kind().changes_content() {
+                continue;
+            }
+            // The revision is written in place of the raw child at its
+            // boundary, which goes with it.
+            let (boundary, _) = self.revisions.remove(index);
+            if matches!(self.content.get(boundary), Some(SdtContent::RawXml(_))) {
+                self.remove_content(boundary);
+            }
+            removed += 1;
+        }
+        removed
+    }
+
     pub(crate) fn append_accepted_run_paths(
         &self,
         prefix: &mut Vec<AcceptedRunPathSegment>,
