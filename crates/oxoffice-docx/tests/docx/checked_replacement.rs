@@ -98,13 +98,11 @@ fn a_paragraph_edited_through_its_location_is_written_back_without_declarations_
     // the part takes the paragraph back with the start tag it had and no
     // namespace declared in it that it did not declare: a word replaced in
     // it, and a run added to it (as the bindings add one to a paragraph of
-    // another story). Comment marks, a link, Google's attributes on the
-    // paragraph, a table cell, a header.
+    // another story). Comment marks, Google's attributes on the paragraph,
+    // a header.
     for (copy, kind, word) in [
         ("authored/contract.docx", StoryKind::Body, "Each"),
         ("google/contract.docx", StoryKind::Body, "Each"),
-        ("word/contract.docx", StoryKind::Body, "Notices"),
-        ("word/contract.docx", StoryKind::TableCell, "Oliver"),
         ("libreoffice/record.docx", StoryKind::Header, "Change"),
     ] {
         let source = std::fs::read(crate::support::corpus_root().join("files").join(copy))

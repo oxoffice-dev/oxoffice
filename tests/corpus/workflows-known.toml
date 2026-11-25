@@ -5,30 +5,31 @@
 # `message` is text the failure must hold, so that a failure with another
 # cause still fails the test.
 
-# compare-after-edit: a text box in mc:AlternateContent; an edit inside it,
-# and with Google's box (a picture as fallback) any edit of the document, fail
-# the acceptance check. Issue to come (#659).
+# compare-after-edit: an edit inside a text box in mc:AlternateContent is
+# redlined as the whole box deleted and inserted, and the deleted copy keeps
+# w:t in the box's paragraphs inside the w:del: the redline fails validation.
+# Issue to come (#659).
 
 [[known]]
 file = "authored/newsletter.docx"
 workflow = "compare-after-edit"
 issue = 659
-message = "kinds failing: text box (compare: comparison acceptance does not reproduce the edited stories at body story item[0])."
-
-[[known]]
-file = "libreoffice/newsletter.docx"
-workflow = "compare-after-edit"
-issue = 659
-message = "kinds failing: text box (compare: comparison acceptance does not reproduce the edited stories at body story item[0])."
-
-[[known]]
-file = "word/newsletter.docx"
-workflow = "compare-after-edit"
-issue = 659
-message = "kinds failing: text box (compare: comparison acceptance does not reproduce the edited stories at body story item[0])."
+message = "kinds failing: text box (the redline is invalid: [\"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\"])."
 
 [[known]]
 file = "google/newsletter.docx"
 workflow = "compare-after-edit"
 issue = 659
-message = "kinds failing: plain (compare: comparison acceptance does not reproduce the edited stories at body story item[0]); footer (compare: comparison acceptance does not reproduce the edited stories at body story item[0]); bookmark (compare: comparison acceptance does not reproduce the edited stories at body story item[0]); text box (compare: comparison acceptance does not reproduce the edited stories at body story item[0])."
+message = "kinds failing: text box (the redline is invalid: [\"part /word/document.xml: w:t inside w:del must use w:delText\"])."
+
+[[known]]
+file = "libreoffice/newsletter.docx"
+workflow = "compare-after-edit"
+issue = 659
+message = "kinds failing: text box (the redline is invalid: [\"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\"])."
+
+[[known]]
+file = "word/newsletter.docx"
+workflow = "compare-after-edit"
+issue = 659
+message = "kinds failing: text box (the redline is invalid: [\"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\"])."
