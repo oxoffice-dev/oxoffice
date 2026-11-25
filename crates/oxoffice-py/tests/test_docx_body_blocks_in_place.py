@@ -335,7 +335,7 @@ BOOKMARKED = {
     "owned around": '<w:bookmarkStart w:id="1" w:name="a"/>' + "{p}" + '<w:bookmarkEnd w:id="1"/>',
     # Between the paragraph and the start it owns, a start whose bookmark ends further on stays: the markers that go
     # are not one range, and the staged route takes them.
-    "split by a start that stays": '<w:bookmarkStart w:id="2" w:name="b"/><w:bookmarkStart w:id="3" w:name="c"/>'
+    "split by a start that stays": '<w:bookmarkStart w:id="3" w:name="c"/><w:bookmarkStart w:id="2" w:name="b"/>'
     + "{p}"
     + '<w:bookmarkEnd w:id="3"/>',
 }
