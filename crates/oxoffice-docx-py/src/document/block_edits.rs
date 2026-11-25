@@ -504,6 +504,25 @@ pub(super) fn assert_kept_owners_name_their_elements(
     (after, new): (&oxoffice_docx::Document, &[WordOwner]),
     edit: Option<(&BlockShift, &RevisionState)>,
 ) {
+    assert_kept_owners_name_their_elements_but(
+        (before, old),
+        (after, new),
+        edit,
+        &std::collections::HashSet::new(),
+    );
+}
+
+/// [`assert_kept_owners_name_their_elements`] for a publication that keeps
+/// owners over an edit of their own element: those whose owner state
+/// generation is in `edited` are left out of the check (a section whose
+/// properties an edit rewrote, and the paragraph that holds them).
+#[cfg(debug_assertions)]
+pub(super) fn assert_kept_owners_name_their_elements_but(
+    (before, old): (&oxoffice_docx::Document, &[WordOwner]),
+    (after, new): (&oxoffice_docx::Document, &[WordOwner]),
+    edit: Option<(&BlockShift, &RevisionState)>,
+    edited: &std::collections::HashSet<u64>,
+) {
     type Key = (oxoffice_docx::StoryKind, String, usize, Vec<usize>);
     let key = |location: &oxoffice_docx::ContentLocation| -> Key {
         let story = location.story();
@@ -600,6 +619,9 @@ pub(super) fn assert_kept_owners_name_their_elements(
         let Some(&index) = by_generation.get(&owner.owner.generation()) else {
             continue;
         };
+        if edited.contains(&owner.owner.generation()) {
+            continue;
+        }
         let previous = &old[index];
         if let Some((shift, selected)) = edit {
             let expected = if owner.owner.same_state(selected) {

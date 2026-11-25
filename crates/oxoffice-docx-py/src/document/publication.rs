@@ -760,6 +760,20 @@ pub(crate) fn section_stories(document: &oxoffice_docx::Document) -> Option<Sect
         .collect()
 }
 
+/// Which states of an owner a story parts publication renews.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Renewal {
+    /// Every state: the owner names another element and shows other stories.
+    All,
+    /// The content view alone: a section that shows other stories.
+    Content,
+    /// None: a section whose properties alone changed, as the staged
+    /// element replacement published it. Its handles name the same section
+    /// and the paragraph that holds the properties keeps its handle; only
+    /// that paragraph's piece follows its new bytes.
+    Nothing,
+}
+
 /// How an edit of header and footer parts was published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StoryPartsPublication {
@@ -977,15 +991,25 @@ impl PyDocument {
             retiring.push(name.clone());
         }
         drop(old_parts);
-        // A section whose properties changed (a header reference) is another
-        // element: its owner retires with its content view. One that shows
-        // other stories through an earlier section retires its content view.
+        // A section that shows other stories renews its content view,
+        // retiring its header and footer handles; when its properties
+        // changed too (a header reference) it is another element and every
+        // state renews. A change of its properties alone (an XML
+        // replacement of its margins) renews nothing: its handles name the
+        // same section and read and edit it as before.
         let changed_sections = sections
             .iter()
             .zip(&after)
             .enumerate()
             .filter(|(_, (before, after))| before != after)
-            .map(|(index, (before, after))| (index, before.0 != after.0))
+            .map(|(index, (before, after))| {
+                let renewal = match (before.0 != after.0, before.1 != after.1) {
+                    (true, true) => Renewal::All,
+                    (true, false) => Renewal::Nothing,
+                    _ => Renewal::Content,
+                };
+                (index, renewal)
+            })
             .collect::<Vec<_>>();
         if retiring.is_empty() && born_parts.is_empty() && changed_sections.is_empty() {
             // The edit changed no story part and no section's stories: no
@@ -1024,11 +1048,11 @@ impl PyDocument {
             })
             .map(|(slot, _)| slot)
             .collect::<Vec<_>>();
-        // Each renewed owner: its key, and whether all its states renew
-        // (else its content view alone), in birth order.
+        // Each renewed owner: its key, and which of its states renew, in
+        // birth order.
         let mut renewed = Vec::with_capacity(2 * changed_sections.len());
         let mut held = Vec::new();
-        for &(index, properties) in &changed_sections {
+        for &(index, renewal) in &changed_sections {
             let Some(key) = self
                 .indexes
                 .find(&self.owners, &WordOwnerLocation::Section(index))
@@ -1038,12 +1062,20 @@ impl PyDocument {
             if self.owners[key].content.is_none() {
                 return Ok(false);
             }
-            renewed.push((key, properties));
-            if properties && let Some(&slot) = holders.get(index) {
+            renewed.push((key, renewal));
+            // The paragraph that holds the properties: its bytes changed, so
+            // its piece follows them. It is another element when the section
+            // shows other stories too; a properties-only change keeps its
+            // handle, as the staged element replacement did.
+            if renewal != Renewal::Content
+                && let Some(&slot) = holders.get(index)
+            {
                 let Some(key) = self.indexes.direct_body_paragraph(slot) else {
                     return Ok(false);
                 };
-                renewed.push((key, true));
+                if renewal == Renewal::All {
+                    renewed.push((key, Renewal::All));
+                }
                 held.push(slot);
             }
         }
@@ -1052,6 +1084,26 @@ impl PyDocument {
         if renewed.iter().any(|(key, _)| keys.contains(key)) {
             return Ok(false);
         }
+        // The owners a properties-only change keeps over its own element,
+        // which the debug check below leaves out: that section's owners and
+        // the paragraph that holds its properties.
+        #[cfg(debug_assertions)]
+        let kept_over_the_edit = changed_sections
+            .iter()
+            .filter(|(_, renewal)| *renewal == Renewal::Nothing)
+            .flat_map(|&(index, _)| {
+                let section = self
+                    .indexes
+                    .find(&self.owners, &WordOwnerLocation::Section(index))
+                    .map(|key| self.owners[key].owner.generation());
+                let holder = holders
+                    .get(index)
+                    .and_then(|&slot| self.indexes.direct_body_paragraph(slot))
+                    .map(|key| self.owners[key].owner.generation());
+                [section, holder]
+            })
+            .flatten()
+            .collect::<std::collections::HashSet<_>>();
         // The new owners of the holding paragraphs, read before the revision
         // is prepared: a paragraph read fails before anything is published.
         let mut held_owners = Vec::with_capacity(held.len());
@@ -1071,12 +1123,12 @@ impl PyDocument {
             .collect::<Vec<_>>();
         let section_states = renewed
             .iter()
-            .flat_map(|&(key, all)| {
+            .flat_map(|&(key, renewal)| {
                 let owner = &self.owners[key];
-                if all {
-                    owner.states()
-                } else {
-                    owner.content.iter().cloned().collect()
+                match renewal {
+                    Renewal::All => owner.states(),
+                    Renewal::Content => owner.content.iter().cloned().collect(),
+                    Renewal::Nothing => Vec::new(),
                 }
             })
             .collect::<Vec<_>>();
@@ -1096,11 +1148,11 @@ impl PyDocument {
             .flatten()
             .flat_map(|address| address.location.scopes().iter().copied())
             .collect::<Vec<_>>();
-        for &(key, all) in &renewed {
-            if all {
-                births.extend_from_slice(self.owners[key].location().scopes());
-            } else {
-                births.push(RevisionScope::Text);
+        for &(key, renewal) in &renewed {
+            match renewal {
+                Renewal::All => births.extend_from_slice(self.owners[key].location().scopes()),
+                Renewal::Content => births.push(RevisionScope::Text),
+                Renewal::Nothing => {}
             }
         }
         births.push(RevisionScope::Text);
@@ -1173,14 +1225,17 @@ impl PyDocument {
                 "a renewed owner follows the compaction"
             );
         }
-        for (key, all) in renewed {
+        for (key, renewal) in renewed {
             let mut next = || {
                 let state = states[offset].clone();
                 offset += 1;
                 state
             };
             let owner = &mut self.owners[key];
-            if !all {
+            if renewal == Renewal::Nothing {
+                continue;
+            }
+            if renewal == Renewal::Content {
                 owner.content = Some(next());
                 continue;
             }
@@ -1188,9 +1243,11 @@ impl PyDocument {
             // owner state follows.
             let previous = owner.owner.generation();
             owner.owner = next();
-            for state in [&mut owner.content, &mut owner.properties, &mut owner.grid] {
-                if state.is_some() {
-                    *state = Some(next());
+            if renewal == Renewal::All {
+                for state in [&mut owner.content, &mut owner.properties, &mut owner.grid] {
+                    if state.is_some() {
+                        *state = Some(next());
+                    }
                 }
             }
             let current = owner.owner.generation();
@@ -1212,10 +1269,14 @@ impl PyDocument {
         #[cfg(debug_assertions)]
         {
             self.assert_word_inventory_rebuilds(false);
-            assert_kept_owners_name_their_elements(
+            // A section whose properties alone changed keeps its handles,
+            // and so does the paragraph that holds them: their element is
+            // the one the edit rewrote.
+            super::block_edits::assert_kept_owners_name_their_elements_but(
                 (before, &old_owners),
                 (&self.inner, &self.owners),
                 None,
+                &kept_over_the_edit,
             );
         }
         Ok(true)

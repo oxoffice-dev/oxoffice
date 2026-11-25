@@ -220,4 +220,48 @@ impl PyDocument {
             }
         }
     }
+
+    /// The location of the direct body paragraph whose owner state is
+    /// `state`, for an in-place route, read from the inventory alone: `None`
+    /// for a paragraph anywhere else, which keeps its route.
+    pub(crate) fn in_place_paragraph_location(
+        &mut self,
+        py: Python<'_>,
+        state: &RevisionState,
+    ) -> PyResult<Option<oxoffice_docx::ContentLocation>> {
+        self.ensure_word_authority(py)?;
+        let Some((selected, _)) = self.plain_paragraph_owner(state) else {
+            return Ok(None);
+        };
+        let WordOwnerLocation::Paragraph(location) = &*self.owners[selected].location() else {
+            return Ok(None);
+        };
+        Ok(Some(location.clone()))
+    }
+
+    /// Replace the XML of the direct body paragraph at `location` in place
+    /// (`Document::replace_paragraph_xml_in_block`) and publish it as
+    /// `Paragraph.text` publishes its paragraph: the paragraph's handle
+    /// stays, its runs retire, every other handle stays. `false`, with
+    /// nothing changed, when the in-place route does not take it: the
+    /// caller takes the staged route. A refusal leaves the document and
+    /// every handle as they were.
+    pub(crate) fn replace_paragraph_xml_in_place(
+        &mut self,
+        py: Python<'_>,
+        location: &oxoffice_docx::ContentLocation,
+        xml: &str,
+    ) -> PyResult<bool> {
+        let Some(block) = self.story_item_block(py, location)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .publish_blocks_edited_in_place(
+                py,
+                "Paragraph.replace_xml",
+                BlockRetention::EditedParagraphKeepsItsOwner,
+                |document| document.replace_paragraph_xml_in_block(location, block, xml),
+            )?
+            .is_some())
+    }
 }

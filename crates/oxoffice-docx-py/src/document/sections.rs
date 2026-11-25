@@ -157,19 +157,26 @@ impl PySectionHandle {
         String::from_utf8(bytes).map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
-    fn replace_xml(&self, py: Python<'_>, xml: &str) -> PyResult<()> {
+    // The section's properties are replaced in place and published as the
+    // header and footer edits are: a change of what the section shows
+    // retires that section's header and footer handles, a change of its
+    // properties alone retires nothing, and every other handle stays.
+    fn replace_xml(&mut self, py: Python<'_>, xml: &str) -> PyResult<()> {
         self.validate(py)?;
         let mut document = self.document.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        candidate
-            .replace_section_properties_xml(self.index, xml)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        document.publish_owner_candidate(
-            py,
-            candidate,
-            "Section.replace_xml",
-            WordPublication::ElementXml(WordOwnerLocation::Section(self.index)),
-        )
+        let index = self.index;
+        document.edit_story_parts(py, "Section.replace_xml", |document| {
+            document.replace_section_properties_xml(index, xml)
+        })?;
+        let (next, next_owner) = document.capture_owner(
+            &WordOwnerLocation::Section(self.index),
+            smallvec![],
+            WordView::Owner,
+            None,
+        )?;
+        self.path = next;
+        self.owner = next_owner;
+        Ok(())
     }
 
     #[getter]

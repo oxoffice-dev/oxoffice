@@ -907,6 +907,11 @@ impl PyParagraph {
             .owner
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("paragraph XML owner route is unsupported"))?;
+        if let Some(location) = document.in_place_paragraph_location(py, owner)?
+            && document.replace_paragraph_xml_in_place(py, &location, xml)?
+        {
+            return Ok(());
+        }
         let location = document.current_paragraph_owner(owner)?;
         let mut candidate = document.inner.clone_for_staging();
         candidate

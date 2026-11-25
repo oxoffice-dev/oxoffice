@@ -819,7 +819,7 @@ GROWING = {
     "Document.replace_text_at", "Document.reply_to", "Document.set_chart_legend", "Document.set_hyperlink_url",
     "Document.set_picture_size", "Document.set_picture_sizes_for_relationship", "Document.unwrap_content_control",
     "FootnoteEndnote.delete", "Paragraph.add_hyperlink", "Paragraph.add_internal_hyperlink", "Paragraph.replace_text",
-    "Paragraph.replace_xml", "Run.add_picture", "Run.replace_xml", "Run.text", "SectionHandle.replace_xml",
+    "Run.add_picture", "Run.replace_xml", "Run.text",
     "Table.add_row", "Table.clone_row", "Table.delete_column", "Table.insert_column", "Table.remove_row",
     "Table.replace_xml", "Table.set_cell_grid_span",
 }

@@ -544,6 +544,49 @@ section's properties.
 - Oracles: each in-place route runs the staged route on a copy in debug
   builds and compares the saved parts.
 
+#### As built (amended 2026-11-25, bindings)
+
+- **`Paragraph.replace_xml`** keeps its plain fast path first, then takes
+  the in-place route for a direct body paragraph (the owner's location read
+  from the inventory, `story_item_block`, `publish_blocks_edited_in_place`
+  with `replace_paragraph_xml_in_block`), else today's staged route. The edited
+  paragraph keeps its handle and its runs retire, as `Paragraph.text`
+  publishes it; the staged route retired the runs too. 54.9, 124.7 and
+  403.2 ms at 25, 100 and 400 paragraphs on `main`, 3.2, 3.2 and 3.2 ms in
+  place.
+- **`SectionHandle.replace_xml`** goes through `edit_story_parts` and the
+  facade's `replace_section_properties_xml`; the handle is refreshed with
+  `capture_owner`, as the watermark setters do. A properties-only change
+  renews no owner state (`Renewal::Nothing`): every handle of that section,
+  the paragraph that holds the properties and the section's header and
+  footer handles keep working, which the staged `ElementXml` publication
+  did too but at the cost of the header handles. A change of what the
+  section shows renews its content view, retiring its header and footer
+  handles, as an S3 header edit does. The debug check of kept owners leaves
+  out the owners a properties-only change keeps over their own element
+  (`assert_kept_owners_name_their_elements_but`). 31.1, 65.4 and 206.4 ms
+  on `main`, 2.4, 2.5 and 2.8 ms in place.
+- **The oracle sets the XML declaration's whitespace aside.** Since "a body
+  edit keeps the producer's main-part root", an edit in place keeps the
+  newline a producer writes between the XML declaration and the root element
+  while a part written from a staged copy drops it, so the saved parts of
+  the two routes differ by that byte on any file Word wrote. The comparison
+  that sets the namespace declarations aside sets that whitespace aside too
+  (`without_declaration_whitespace`). Without it the oracle of every route
+  that uses it fails on the corpus Word report, `add_footnote` included.
+- **`Paragraph.replace_text` and `Document.replace_text_at` keep today's
+  staged route.** `replace_text_in_block` swaps the edited block into the
+  typed model, so a save writes the whole main part from the model, while
+  the staged scoped replacement edits the part's bytes and keeps the rest
+  of them verbatim. The two routes write other bytes for blocks the call
+  does not touch (on the corpus Word report the staged route expands the
+  defaults of a `w:cnfStyle` the in-place route keeps; on a python-docx
+  file the in-place route writes `w:val="false"` where the staged one keeps
+  `w:val="0"`), and the facade's own oracle fails with "in-place edit saves
+  other parts than the staged edit". The two calls convert once the block
+  swap keeps the part's other bytes, as the paragraph XML replacement's
+  route does.
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.
