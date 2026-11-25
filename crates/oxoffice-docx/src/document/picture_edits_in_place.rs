@@ -387,17 +387,18 @@ impl Document {
         let mut resized_blocks = Vec::new();
         let mut resized = 0;
         for slot in slots {
-            let Some((head, xml, tail)) = self.framed_body_block(slot)? else {
+            let Some(part) = self.framed_body_block(slot)? else {
                 return Ok(None);
             };
-            let (updated, count) = resize_story_pictures(&xml, rel_id, cx, cy)?;
+            let (updated, count) = resize_story_pictures(&part.xml, rel_id, cx, cy)?;
             if count == 0 {
                 continue;
             }
-            let child = &updated[head.len()..updated.len() - tail];
-            let Some(block) =
-                Self::reparse_body_block(&head, &updated[updated.len() - tail..], child)
-            else {
+            let Some(block) = Self::reparse_body_block(
+                &part.head,
+                &updated[updated.len() - part.tail..],
+                part.block_of(&updated),
+            ) else {
                 return Ok(None);
             };
             // Nothing is published: a block that reads back with other

@@ -2,8 +2,8 @@
   "id": "docx-form-cost",
   "format": "docx",
   "area": "forms",
-  "title": "Form operations cost seconds on long documents",
-  "symptom": "about 0.1 s at 25 paragraphs, 3 to 9 s at 1,000",
+  "title": "Form operations on legacy form fields cost seconds on long documents",
+  "symptom": "a fill_form or reset_form call that names a legacy form field takes about 0.5 s at 25 paragraphs and 29 s at 1,000; content controls take a few milliseconds",
   "workaround": "pass every rule in one call",
   "issue": 7
 }

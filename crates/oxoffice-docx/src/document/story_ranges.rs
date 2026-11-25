@@ -1110,6 +1110,56 @@ impl Document {
         Ok((controls, carriers, text_boxes))
     }
 
+    /// The content controls [`Self::accepted_form_regions`] reads in a story
+    /// part `xml` whose root story is of `root` (a main part holding one
+    /// body block, `Self::body_block_part`, or a header or footer part),
+    /// deduplicated by span, in document order.
+    pub(crate) fn part_form_controls(
+        xml: &[u8],
+        root: StoryKind,
+    ) -> Result<Vec<std::ops::Range<usize>>> {
+        let mut controls = Vec::<std::ops::Range<usize>>::new();
+        for owner in scan_story_owners(xml, root)? {
+            for item in scan_story_items(xml, &owner, None)? {
+                if item.kind == StoryItemKind::ContentControl && !controls.contains(&item.full) {
+                    controls.push(item.full.clone());
+                }
+            }
+        }
+        controls.sort_by(|left, right| left.start.cmp(&right.start).then(left.end.cmp(&right.end)));
+        Ok(controls)
+    }
+
+    /// The story parts other than the main part that name one of `tags` as
+    /// a content control's tag, read from those parts alone, with the kind
+    /// of their root story; `None` when such a part is not a header or a
+    /// footer (a part the document models: notes, comments).
+    pub(crate) fn header_parts_naming_control_tags(
+        &self,
+        tags: &[String],
+    ) -> Result<Option<Vec<(String, StoryKind)>>> {
+        let mut parts = Vec::new();
+        for source in self.related_story_sources()? {
+            if !super::written_references::raw_attribute_values(
+                source.xml.as_ref(),
+                &[b"tag"],
+                b"val",
+                &mut |value| tags.iter().any(|tag| tag == value),
+            ) {
+                continue;
+            }
+            if !matches!(source.root_kind, StoryKind::Header | StoryKind::Footer)
+                || self.package.get_part(&source.part_name) != Some(source.xml.as_ref())
+            {
+                return Ok(None);
+            }
+            if !parts.iter().any(|(name, _)| name == &source.part_name) {
+                parts.push((source.part_name.clone(), source.root_kind));
+            }
+        }
+        Ok(Some(parts))
+    }
+
     pub(super) fn story_range_paragraph_source<'a>(
         &'a self,
         location: &ContentLocation,

@@ -1074,6 +1074,30 @@ pub(crate) struct BodyBlockItem {
     pub(super) span: StoryItemSpan,
 }
 
+/// One direct body block written alone between the head and the tail of the
+/// main part.
+pub(crate) struct BodyBlockPart {
+    /// The bytes before the block, through the body start tag.
+    pub(crate) head: Vec<u8>,
+    /// The head, the block and the tail.
+    pub(crate) xml: Vec<u8>,
+    /// The length of the bytes after the block, from the final section on.
+    pub(crate) tail: usize,
+}
+
+impl BodyBlockPart {
+    /// The block of `xml`, an edit of [`Self::xml`] that kept its head and
+    /// tail.
+    pub(crate) fn block_of<'a>(&self, xml: &'a [u8]) -> &'a [u8] {
+        &xml[self.head.len()..xml.len() - self.tail]
+    }
+
+    /// The tail of [`Self::xml`].
+    pub(crate) fn tail_bytes(&self) -> &[u8] {
+        &self.xml[self.xml.len() - self.tail..]
+    }
+}
+
 impl BodyBlockItem {
     /// The block of `xml`, an edit of [`Self::xml`] that kept its head and
     /// tail.
@@ -1121,7 +1145,7 @@ impl Document {
         index: usize,
         item_kind: StoryItemKind,
     ) -> Result<Option<BodyBlockItem>> {
-        let Some((head, xml, tail)) = self.framed_body_block(slot)? else {
+        let Some(BodyBlockPart { head, xml, tail }) = self.framed_body_block(slot)? else {
             return Ok(None);
         };
         let block_span = head.len()..xml.len() - tail;
@@ -1153,14 +1177,23 @@ impl Document {
     }
 
     /// The direct body block at `slot` written alone under the root and the
-    /// final section of the main part, at the cost of that block: the bytes
-    /// before the block, the whole, and the length of the bytes after it.
-    /// `None` for a slot out of range.
-    #[allow(clippy::type_complexity)] // The head, the whole and the tail's length.
-    pub(crate) fn framed_body_block(
-        &self,
-        slot: usize,
-    ) -> Result<Option<(Vec<u8>, Vec<u8>, usize)>> {
+    /// final section of the main part, at the cost of that block. `None`
+    /// when the body has no such block or a save of the body is known to
+    /// fail, which the staged route reports.
+    pub(crate) fn body_block_part(&self, slot: usize) -> Result<Option<BodyBlockPart>> {
+        // Computed once after an invalidation: an empty cache is no answer,
+        // and the swap keeps a savable answer
+        // (`keep_body_savable_after_typed_insert`).
+        if self.unsavable_body_edit().is_some() {
+            return Ok(None);
+        }
+        self.framed_body_block(slot)
+    }
+
+    /// [`Self::body_block_part`] without asking whether a save of the body
+    /// is known to fail: for a caller that asked before its edit and reads
+    /// the block it edits. `None` for a slot out of range.
+    pub(crate) fn framed_body_block(&self, slot: usize) -> Result<Option<BodyBlockPart>> {
         let Some(block) = self.document.body.content.get(slot) else {
             return Ok(None);
         };
@@ -1186,7 +1219,11 @@ impl Document {
         // The declaration a save adds to the root when the block uses w14.
         declare_w14_on_part_root(&mut xml)?;
         let head = xml[..head.len() + xml.len() - written].to_vec();
-        Ok(Some((head, xml, tail.len())))
+        Ok(Some(BodyBlockPart {
+            head,
+            xml,
+            tail: tail.len(),
+        }))
     }
 
     /// The block `child` reads as between `head` and `tail`, when it writes
