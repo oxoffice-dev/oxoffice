@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 /// Whether the workflow tests read every producer's copy (`main` and the
-/// nightly run) or one file each (pull requests). Read at run time, so that
+/// full checks) or one file each (pull requests). Read at run time, so that
 /// a build without the variable still compiles every test target.
 #[allow(dead_code)]
 pub fn every_copy() -> bool {

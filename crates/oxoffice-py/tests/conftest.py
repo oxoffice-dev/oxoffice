@@ -7,7 +7,7 @@ OXOFFICE_SCALING picks what runs:
 
 - unset: only the checks that every mutating call is timed, and each timed docx call made once, untimed
 - quick: also the calls of each module's QUICK set, for pull requests and main (ci.yml)
-- full: every call, every night (nightly.yml)
+- full: every call, in the full checks (full-checks.yml)
 """
 import os
 import threading

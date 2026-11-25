@@ -5,10 +5,11 @@ One manual workflow, no manual tags, no hand-edited changelog.
 ## Cutting a release
 
 1. Make sure `main` is green, and run the full checks on the commit you
-   release first: the last nightly run on `main`
-   (`gh run list -w nightly.yml -b main -L 1 --json headSha,conclusion`) if
-   it ran on that commit, otherwise `gh workflow run nightly.yml --ref main`
-   and wait for it (about 30 minutes). PR CI skips the full corpus walks, so
+   release first: the last full checks run on `main`
+   (`gh run list -w full-checks.yml -b main -L 1 --json headSha,conclusion`)
+   if it ran on that commit, otherwise
+   `gh workflow run full-checks.yml --ref main -f report=true` and wait for
+   it (about 90 minutes). PR CI skips the full corpus walks, so
    this is where snapshot drift shows. It is a habit, not a gate: the release
    does not check it, and a small change after the last green run (docs, the
    release tooling) needs no new run.
@@ -26,7 +27,8 @@ One manual workflow, no manual tags, no hand-edited changelog.
    installed on its platform and opens, edits, saves, reopens and renders
    four corpus files on the main thread (`scripts/wheel_smoke.py --files`,
    about a minute), and each conda package is built and tested into a local
-   channel. The stack a script needs is measured every night, not here.
+   channel. The stack a script needs is measured by the full checks, not
+   here.
 3. Only once all of that is green, the last job sets the version again on
    the dispatched commit, prepends the release's section to `CHANGELOG.md`
    with git-cliff, commits
@@ -45,7 +47,7 @@ A conflict in that merge is resolved by the workflow: `CHANGELOG.md` takes
 the release's, `Cargo.toml` and `Cargo.lock` take `main`'s, and the version is
 set again on them (a crate added during the run gets it too).
 
-Every night, the full checks build a release-profile Linux wheel, open, edit,
+The full checks build a release-profile Linux wheel, open, edit,
 save and render the whole corpus with it on the main thread, then measure the
 smallest thread stack the same work needs and fail above its budget, 1 MiB
 (`STACK_BUDGET_KIB`): the main thread of most Windows programs that embed
