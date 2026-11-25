@@ -4157,12 +4157,20 @@ impl PyDocument {
     }
 
     fn accept_revision_id(&mut self, py: Python<'_>, id: i32) -> PyResult<usize> {
+        const OPERATION: &str = "Document.accept_revision_id";
+        if let Some(count) = self.revision_id_in_place(py, id, true, OPERATION)? {
+            return Ok(count);
+        }
         self.counted_mutation(py, "Document.accept_revision_id", |document| {
             document.accept_revision_id(id)
         })
     }
 
     fn reject_revision_id(&mut self, py: Python<'_>, id: i32) -> PyResult<usize> {
+        const OPERATION: &str = "Document.reject_revision_id";
+        if let Some(count) = self.revision_id_in_place(py, id, false, OPERATION)? {
+            return Ok(count);
+        }
         self.counted_mutation(py, "Document.reject_revision_id", |document| {
             document.reject_revision_id(id)
         })

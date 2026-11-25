@@ -807,12 +807,12 @@ def documents(tmp_path_factory):
 # fix makes it flat, which the strict xfail reports as an XPASS.
 GROWING = {
     "Cell.add_paragraph", "Cell.add_picture", "Cell.add_table", "Cell.merge", "Cell.replace_text", "Cell.replace_xml",
-    "Cell.split", "Cell.text", "Document.accept_revision_id", "Document.add_chart", "Document.add_heading_hyperlink",
+    "Cell.split", "Cell.text", "Document.add_chart", "Document.add_heading_hyperlink",
     "Document.add_hyperlink_to_story", "Document.add_picture", "Document.clone_content",
     "Document.clone_content_control", "Document.import_fragment", "Document.insert_bibliography",
     "Document.insert_content", "Document.insert_content_control", "Document.insert_document", "Document.insert_html",
     "Document.insert_section", "Document.move_comment", "Document.move_content", "Document.move_content_control",
-    "Document.pop_content", "Document.reject_revision_id", "Document.remove_comment", "Document.remove_content",
+    "Document.pop_content", "Document.remove_comment", "Document.remove_content",
     "Document.remove_content_control", "Document.remove_content_range", "Document.remove_endnote",
     "Document.remove_footnote", "Document.remove_hyperlink", "Document.remove_section",
     "Document.repeat_content_control", "Document.replace_image", "Document.replace_image_for_story",

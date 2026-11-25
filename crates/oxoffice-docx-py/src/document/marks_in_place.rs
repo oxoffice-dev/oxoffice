@@ -139,4 +139,76 @@ impl PyDocument {
         held.undo = None;
         Ok(Some(id))
     }
+
+    /// Accept (`accept`) or reject revision `id` on the live document when
+    /// the facade resolves it in place in one direct body paragraph
+    /// ([`oxoffice_docx::Document::revision_id_in_place_slots`]) that a
+    /// block replacement publishes: that paragraph is published alone
+    /// ([`Self::publish_body_paragraphs_and_story`]), every other handle
+    /// stays, and a resolution that changes nothing keeps every handle.
+    /// `Ok(None)` leaves the document and every handle as they were, for
+    /// the whole route, decided before the edit (no slot, or several). A
+    /// refusal of the facade leaves them as they were too, and is the
+    /// answer.
+    pub(super) fn revision_id_in_place(
+        &mut self,
+        py: Python<'_>,
+        id: i32,
+        accept: bool,
+        operation: &'static str,
+    ) -> PyResult<Option<usize>> {
+        let Some(slots) = self.inner.revision_id_in_place_slots(id, accept) else {
+            return Ok(None);
+        };
+        if slots.len() != 1 {
+            return Ok(None);
+        }
+        self.ensure_word_authority(py)?;
+        if !self.body_paragraphs_publishable(&slots) {
+            return Ok(None);
+        }
+        self.inner.hold_edit_undo();
+        let resolved = if accept {
+            self.inner.accept_revision_id(id)
+        } else {
+            self.inner.reject_revision_id(id)
+        };
+        let undo = self.inner.take_edit_undo();
+        let count = match resolved {
+            Ok(count) => count,
+            Err(error) => {
+                if let Some(undo) = undo {
+                    self.inner.undo_edit(undo);
+                }
+                return Err(docx_to_pyerr(py, error));
+            }
+        };
+        // Nothing changed in place: every handle stays.
+        let Some(undo) = undo else {
+            return Ok(Some(count));
+        };
+        let report = undo.report();
+        let previous = undo
+            .previous_body_block_units()
+            .filter(|(slot, _)| report.body_blocks.iter().any(|change| change.slot == *slot))
+            .map(|(slot, blocks)| blocks.first().cloned().map(|block| (slot, block)))
+            .collect::<Option<Vec<_>>>();
+        let mut held = HeldEdit {
+            document: self,
+            undo: Some(undo),
+        };
+        let Some(previous) = previous else {
+            return Ok(None);
+        };
+        match held
+            .document
+            .publish_body_paragraphs_and_story(py, &previous, None, operation)?
+        {
+            BlocksPublication::Published | BlocksPublication::Unchanged => {
+                held.undo = None;
+                Ok(Some(count))
+            }
+            BlocksPublication::WholeRoute => Ok(None),
+        }
+    }
 }
