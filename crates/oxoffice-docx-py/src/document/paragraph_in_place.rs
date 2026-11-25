@@ -12,6 +12,10 @@ pub(crate) enum BlockRetention {
     /// properties states, and what it holds is born again (decision 1 of
     /// the one-block publication spec).
     EditedParagraphKeepsItsOwner,
+    /// Blocks removed or inserted: their owners retire or are born, every
+    /// other owner keeps its states, and the document epoch and the
+    /// snapshot retire ("body handles follow their element", decision 2).
+    Spliced,
 }
 
 /// What [`PyDocument::publish_body_blocks_replaced`] did.
@@ -128,10 +132,12 @@ impl PyDocument {
     /// items moved by the change in body story items. `retention` says which
     /// owners keep their states.
     ///
-    /// Shapes taken: one block replaced by one (`previous.len() == 1`,
-    /// `inserted == 1`), both direct body paragraphs holding no table, cell
-    /// story, text box or hyperlink, with
-    /// [`BlockRetention::EditedParagraphKeepsItsOwner`]. Any other shape, an
+    /// Shapes taken: with [`BlockRetention::EditedParagraphKeepsItsOwner`],
+    /// one block replaced by one (`previous.len() == 1`, `inserted == 1`),
+    /// both direct body paragraphs holding no table, cell story, text box or
+    /// hyperlink; with [`BlockRetention::Spliced`], any number of direct body
+    /// paragraphs, tables and block content controls replaced by any number
+    /// of them, none holding a text box or a section break. Any other shape, an
     /// inventory whose body records are not anchored, pieces not aligned with
     /// `previous`, or a change in body story items when a later item holds
     /// a hyperlink answers [`BlocksPublication::WholeRoute`] with nothing
@@ -146,7 +152,10 @@ impl PyDocument {
         operation: &'static str,
         retention: BlockRetention,
     ) -> PyResult<BlocksPublication> {
-        let BlockRetention::EditedParagraphKeepsItsOwner = retention;
+        if let BlockRetention::Spliced = retention {
+            self.ensure_word_authority(py)?;
+            return self.publish_body_blocks_spliced(slot, previous, inserted, operation);
+        }
         let ([old], 1) = (previous, inserted) else {
             return Ok(BlocksPublication::WholeRoute);
         };

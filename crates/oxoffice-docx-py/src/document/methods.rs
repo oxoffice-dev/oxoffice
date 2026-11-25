@@ -4792,6 +4792,14 @@ impl PyDocument {
             }
             return Ok(removed);
         }
+        // The block and the markers it owns, removed in place and published
+        // as a splice of their owners alone.
+        if self
+            .remove_body_blocks_local(py, index, index + 1, "Document.remove_content")?
+            .is_some()
+        {
+            return Ok(true);
+        }
         if let Some(plan) = self.plan_body_splice(
             py,
             BodySplice {
@@ -4843,6 +4851,11 @@ impl PyDocument {
         }
         if start == end {
             return Ok(0);
+        }
+        if let Some(removed) =
+            self.remove_body_blocks_local(py, start, end, "Document.remove_content_range")?
+        {
+            return Ok(removed);
         }
         if let Some(plan) = self.plan_body_splice(
             py,
@@ -5092,10 +5105,29 @@ impl PyDocument {
         py: Python<'_>,
         index: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyContentFragment>> {
+        // A direct body item is taken in place when the splice of its
+        // owners publishes it; any other item, or a refusal, stages.
         let location = if let Ok(item) = index.cast::<PyStoryItem>() {
-            slf.borrow(py).native_location(py, &item.borrow())?
+            let location = slf.borrow(py).native_location(py, &item.borrow())?;
+            let slot = item.borrow().direct_body_index.filter(|_| {
+                location.story().kind() == oxoffice_docx::StoryKind::Body
+                    && location.index_path().len() == 1
+            });
+            if let Some(slot) = slot
+                && let Some(fragment) =
+                    slf.borrow_mut(py)
+                        .pop_body_block_local(py, slot, Some(&location))?
+            {
+                return Py::new(py, PyContentFragment { inner: fragment });
+            }
+            location
         } else {
             let index = body_index_argument(index, "index must be an int or a StoryItem")?;
+            if index < slf.borrow(py).inner.content_count()
+                && let Some(fragment) = slf.borrow_mut(py).pop_body_block_local(py, index, None)?
+            {
+                return Py::new(py, PyContentFragment { inner: fragment });
+            }
             let location = slf.borrow(py).body_location(py, index)?;
             if index == slf.borrow(py).inner.content_count() {
                 return Err(PyIndexError::new_err("content index out of range"));
