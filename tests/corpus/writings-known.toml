@@ -127,13 +127,6 @@ message = "nested namespace owner after mutation"
 # original's is rewritten from the model: the edit writes it otherwise
 # (oxoffice-docx-oxml paragraph properties).
 
-[[known]]
-input = "word/manual.docx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "reads otherwise"
-
 # G: under the default namespace a save reads back other ids than it holds
 # (debug check, document/canonicalize.rs:611-639): #663.
 

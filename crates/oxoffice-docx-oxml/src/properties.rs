@@ -387,7 +387,7 @@ pub(crate) fn modeled_toggle_attributes<'a>(
             Event::Empty(source) => (source, 2),
             _ => continue,
         };
-        let prefixes = word_prefixes_at(&source, &["w".to_owned()])?.into_owned();
+        let prefixes = carrier_word_prefixes(&source)?;
         // Actual reader positions select the borrowed physical header. The
         // UTF8 probe selects borrowing only, it never refuses a legacy input.
         let end = reader.buffer_position() as usize - close;
@@ -425,6 +425,27 @@ pub(crate) fn modeled_toggle_attributes<'a>(
         }
     }
     Ok(preserved)
+}
+
+/// The prefixes that name WordprocessingML on `carrier`, the retained source
+/// of a modelled Word element: `w`, those it declares, and its own prefix
+/// when it does not declare it, since the reader took it for a Word element
+/// under the binding of its part (a document that names WordprocessingML
+/// `ox0` carries `ox0:cnfStyle ox0:val="..."`).
+fn carrier_word_prefixes(carrier: &BytesStart<'_>) -> Result<Vec<String>> {
+    let mut prefixes = word_prefixes_at(carrier, &["w".to_owned()])?.into_owned();
+    let name = carrier.name();
+    if let Some(prefix) = name.prefix() {
+        let prefix = std::str::from_utf8(prefix.as_ref())?;
+        let declaration = format!("xmlns:{prefix}");
+        let declared = carrier.attributes().any(|attribute| {
+            attribute.is_ok_and(|attribute| attribute.key.as_ref() == declaration.as_bytes())
+        });
+        if !declared && !prefixes.iter().any(|known| known == prefix) {
+            prefixes.push(prefix.to_owned());
+        }
+    }
+    Ok(prefixes)
 }
 
 pub(crate) fn word_prefixes_at<'scope>(
