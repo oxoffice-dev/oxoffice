@@ -213,6 +213,49 @@ impl Document {
         Ok((part, xml))
     }
 
+    /// `block` as a reopen of the saved document reads it: its bytes in
+    /// this document's main part, read back, at the cost of the block alone.
+    /// A picture whose drawing id the save still allocates
+    /// ([`CT_Inline::doc_pr_id_unallocated`]) stays the drawing `block`
+    /// holds, so that the save still gives it its id.
+    #[doc(hidden)]
+    pub fn reread_body_block(&self, block: &BodyContent) -> Result<BodyContent> {
+        let part = self.document.standalone_body_item_xml(block)?;
+        let mut read = oxoffice_docx_oxml::document::CT_Document::from_xml(&part)?;
+        let mut reread = match (read.body.content.len(), read.body.content.pop()) {
+            (1, Some(reread)) => reread,
+            _ => {
+                return Err(Error::Other(
+                    "a body block reads back as one block".to_owned(),
+                ));
+            }
+        };
+        // A picture whose drawing id the save still allocates stays the live
+        // drawing: the reader keeps a read drawing's bytes, which the save's
+        // allocation passes over.
+        let mut drawings = Vec::new();
+        super::walkers::visit_all_drawings(std::slice::from_ref(block), &mut |drawing| {
+            let unallocated = drawing
+                .inline
+                .as_ref()
+                .is_some_and(|inline| inline.doc_pr_id_unallocated);
+            drawings.push(unallocated.then(|| drawing.clone()));
+        });
+        let mut read_drawings = 0;
+        super::walkers::visit_all_drawings_mut(std::slice::from_mut(&mut reread), &mut |drawing| {
+            if let Some(Some(live)) = drawings.get(read_drawings) {
+                *drawing = live.clone();
+            }
+            read_drawings += 1;
+        });
+        if read_drawings != drawings.len() {
+            return Err(Error::Other(
+                "a body block reads back with its own drawings".to_owned(),
+            ));
+        }
+        Ok(reread)
+    }
+
     /// Close the fragment at `span` of a standalone main part over the
     /// declarations in scope there, as the whole part would close it, except
     /// for `w14`.

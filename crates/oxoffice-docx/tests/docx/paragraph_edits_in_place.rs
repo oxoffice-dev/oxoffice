@@ -191,3 +191,104 @@ fn a_swapped_block_saves_the_bytes_of_before_the_edit() {
             .is_err()
     );
 }
+
+/// A new document of three short paragraphs and the body slot of the second.
+fn three_paragraphs() -> (Document, usize) {
+    let mut document = Document::new();
+    for index in 0..3 {
+        document.add_paragraph(&format!("para {index}"));
+    }
+    let slot = document
+        .content_index_of_paragraph(1)
+        .expect("a direct body paragraph");
+    (document, slot)
+}
+
+#[test]
+fn a_block_edited_in_place_reads_back_as_a_reopen_reads_it() {
+    let (mut document, slot) = three_paragraphs();
+    document
+        .edit_body_paragraph_in_place(1, |paragraph| {
+            paragraph.run_mut(0).expect("a run").add_field("PAGE", "1")
+        })
+        .expect("edits")
+        .expect("a direct body paragraph");
+    // The edit leaves the field in the run; the reader splits it out.
+    assert!(
+        document
+            .reread_body_blocks_in_place(slot, 1)
+            .expect("rereads")
+    );
+    let reopened = Document::from_bytes(&document.to_bytes().expect("saves")).expect("reopens");
+    assert_eq!(
+        document.body_children()[slot],
+        reopened.body_children()[slot]
+    );
+    assert!(
+        !document
+            .reread_body_blocks_in_place(slot, 1)
+            .expect("rereads")
+    );
+    assert!(
+        document
+            .reread_body_blocks_in_place(document.content_count(), 1)
+            .is_err()
+    );
+}
+
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
+
+#[test]
+fn a_reread_block_leaves_the_save_to_give_its_pictures_their_drawing_ids() {
+    use oxoffice_docx::Length;
+    let (mut document, _) = three_paragraphs();
+    let relationship = document.embed_image(PNG, "dot.png");
+    // Two pictures added by handle, each in a block reread before the save.
+    for index in 0..2 {
+        document
+            .edit_body_paragraph_in_place(index, |paragraph| {
+                let mut run = paragraph.run_mut(0).expect("a run");
+                run.add_picture(&relationship, Length::inches(1.0), Length::inches(1.0));
+                run.add_field("PAGE", "1")
+            })
+            .expect("edits")
+            .expect("a direct body paragraph");
+        let slot = document
+            .content_index_of_paragraph(index)
+            .expect("a direct body paragraph");
+        assert!(
+            document
+                .reread_body_blocks_in_place(slot, 1)
+                .expect("rereads")
+        );
+    }
+    let reopened = Document::from_bytes(&document.to_bytes().expect("saves")).expect("reopens");
+    let mut ids = Vec::new();
+    for block in reopened.body_children() {
+        let oxoffice_docx_oxml::BodyContent::Paragraph(paragraph) = block else {
+            continue;
+        };
+        for content in paragraph.runs.iter().flat_map(|run| &run.content) {
+            if let oxoffice_docx_oxml::text::RunContent::Drawing(drawing) = content {
+                ids.push(
+                    drawing
+                        .inline
+                        .as_ref()
+                        .expect("an inline picture")
+                        .doc_pr_id,
+                );
+            }
+        }
+    }
+    assert_eq!(ids.len(), 2);
+    assert_ne!(
+        ids[0], ids[1],
+        "the save gives each picture its own drawing id"
+    );
+}

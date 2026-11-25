@@ -232,6 +232,9 @@ impl PyDocument {
         retention: BlockRetention,
     ) -> PyResult<BlocksPublication> {
         self.ensure_word_authority(py)?;
+        if !self.reread_inserted_blocks(slot, inserted) {
+            return Ok(BlocksPublication::WholeRoute);
+        }
         let plan = match self.plan_blocks_replaced(slot, previous, inserted, retention)? {
             None => return Ok(BlocksPublication::WholeRoute),
             Some(BlocksPlan::Unchanged) => return Ok(BlocksPublication::Unchanged),
@@ -274,8 +277,45 @@ impl PyDocument {
         self.apply_blocks_replaced(plan, states);
         self.snapshot_scope = Some(snapshot.clone());
         #[cfg(debug_assertions)]
-        self.assert_blocks_replaced(&before, &summary);
+        {
+            self.assert_blocks_replaced(&before, &summary);
+            self.assert_blocks_read_as_their_bytes(slot, inserted);
+        }
         Ok(BlocksPublication::Published)
+    }
+
+    /// Put in place of each block at `slot..slot + inserted`, which an edit
+    /// in place built, the block a reopen of the saved document reads, so
+    /// that the model, the owners read from it and every read after the
+    /// edit are those of the saved file; at the cost of those blocks alone.
+    /// `false` when a block does not read back: the caller takes the whole
+    /// route, and puts its old blocks back as for any refusal.
+    fn reread_inserted_blocks(&mut self, slot: usize, inserted: usize) -> bool {
+        inserted == 0
+            || self
+                .inner
+                .reread_body_blocks_in_place(slot, inserted)
+                .is_ok()
+    }
+
+    /// Under debug assertions, after a block replacement: each new block is
+    /// what its own bytes read back as (O(blocks)). It holds once
+    /// [`Self::reread_inserted_blocks`] ran, as the reread is a fixed point;
+    /// it fails when a publication skips that step or when a reread is not
+    /// stable. That the reread is what a reopen of the saved file reads is
+    /// tested against reopens, not here.
+    #[cfg(debug_assertions)]
+    fn assert_blocks_read_as_their_bytes(&self, slot: usize, inserted: usize) {
+        for block in &self.inner.body_children()[slot..slot + inserted] {
+            let reread = self
+                .inner
+                .reread_body_block(block)
+                .expect("an edited block reads back");
+            assert!(
+                *block == reread,
+                "an edited block is what its own bytes read back as"
+            );
+        }
     }
 
     /// The body slot of the paragraph at `location`, from the inventory
@@ -332,6 +372,9 @@ impl PyDocument {
         story: &oxoffice_docx::StoryId,
         operation: &'static str,
     ) -> PyResult<BlocksPublication> {
+        if !self.reread_inserted_blocks(slot, 1) {
+            return Ok(BlocksPublication::WholeRoute);
+        }
         match self.inner.body_children().get(slot) {
             Some(new) if new != previous => {}
             _ => return Ok(BlocksPublication::WholeRoute),
@@ -391,7 +434,10 @@ impl PyDocument {
         self.apply_story_splice(story, splice, story_states);
         self.snapshot_scope = Some(snapshot.clone());
         #[cfg(debug_assertions)]
-        self.assert_blocks_replaced(&before, &summary);
+        {
+            self.assert_blocks_replaced(&before, &summary);
+            self.assert_blocks_read_as_their_bytes(slot, 1);
+        }
         Ok(BlocksPublication::Published)
     }
 

@@ -321,9 +321,29 @@ Decisions 6, 8 and 9 as decided, with these corrections:
 
 The three calls leave `GROWING` (80 -> 77 on main at 090a022f).
 
+## Correction: an edited block reads as its own bytes (#651)
+
+An edit builds its block in memory, and that model is not always the one the
+reader builds from the same bytes: a field added to a run stays in the run,
+which the reader splits into the run, the field's runs and its result. The
+staged route reopened the document, so its reads matched the saved file; the
+in-place route read the edited model, so live reads and the owners read from
+it differed from a reopen (#651, `Run.add_field`, `Run.add_legacy_form_field`).
+
+Corrected for the class: before planning, `publish_body_blocks_replaced` and
+`publish_body_paragraph_and_story` put in place of each inserted block the
+block a reopen reads (`Document::reread_body_blocks_in_place`: the block's
+bytes in the main part written alone, read back), at the cost of those
+blocks. The model, the owners read from it and every read after the edit are
+then those of the saved file, for every call that publishes through a block
+replacement. A picture whose drawing id the save still allocates keeps that
+mark, which its bytes do not carry. A block that does not read back takes the
+whole route. Debug builds check after every block replacement that each new
+block equals the reread of its own bytes.
+
 ## Links
 
-- #466 (edit cost at the root), #6, #622
+- #466 (edit cost at the root), #6, #622, #651
 - [Publishing the one block an edit touched](2026-11-21-edit-cost-one-block-publication.md)
 - [A body splice updates the owner index in place](2026-11-24-word-owner-index-updated-in-place.md)
 - [Body handles follow their element](2026-11-24-body-handles-follow-their-element.md)
