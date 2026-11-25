@@ -428,7 +428,7 @@ fn compare_owned_story(
         let left_bindings = root_namespace_bindings(left_xml, owner_local, original_bindings)?;
         let right_bindings = root_namespace_bindings(right_xml, owner_local, edited_bindings)?;
         let tracked_inner = compare_story_inner(
-            &left_xml[left_inner.clone()],
+            &left_xml[left_inner],
             &right_xml[right_inner],
             &format!(
                 "{}:{}/{}[{index}]",
@@ -442,9 +442,7 @@ fn compare_owned_story(
             metadata,
             diagnostics,
         )?;
-        let mut owner = left_xml.to_owned();
-        owner.replace_range(left_inner, &tracked_inner);
-        replacements.push(owner);
+        replacements.push(replace_owner_inner(left_xml, owner_local, &tracked_inner)?.0);
     }
     let mut tracked = original.to_owned();
     for (span, replacement) in original_spans.into_iter().zip(replacements).rev() {
@@ -556,7 +554,7 @@ pub(super) fn compare_story_inner_impl(
             let right_bindings =
                 root_namespace_bindings(right_box, "txbxContent", edited_bindings)?;
             let tracked_inner = compare_story_inner(
-                &left_box[left_inner.clone()],
+                &left_box[left_inner],
                 &right_box[right_inner],
                 &format!("{location}/text-box[{run_ordinal}:{box_ordinal}]"),
                 word_prefix,
@@ -565,9 +563,7 @@ pub(super) fn compare_story_inner_impl(
                 metadata,
                 diagnostics,
             )?;
-            let mut tracked_box = left_box.to_owned();
-            tracked_box.replace_range(left_inner, &tracked_inner);
-            tracked_boxes.push(tracked_box);
+            tracked_boxes.push(replace_owner_inner(left_box, "txbxContent", &tracked_inner)?.0);
         }
         let tracked_hosts = replace_text_boxes_in_hosts(
             original,

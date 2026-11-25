@@ -180,13 +180,15 @@ pub(super) fn compare_control_from_xml(
             );
             metadata.unbind_cloned_control_runs(field_bindings)?;
             let compared = compared_result?;
-            let actual_inner =
-                element_inner_range_any_prefix(&original_xml[content_span.clone()], "sdtContent")?;
+            // The leaves sit where the written content starts, which moves
+            // when a self-closing content gets its end tag.
+            let (output, inner_start) =
+                replace_element_inner(original_xml, "w:sdtContent", &compared)?;
             shift_leaf_publications(
                 &mut metadata.leaf_publications[child_mark..],
-                (content_span.start + actual_inner.start) as isize,
+                inner_start as isize,
             )?;
-            return replace_element_inner(original_xml, "w:sdtContent", &compared);
+            return Ok(output);
         }
         let whitespace_slots = control_whitespace_slots(original)?;
         let original_signatures = original_content
@@ -448,27 +450,20 @@ pub(super) fn compare_control_from_xml(
             }
             child_offsets.push((child_mark, metadata.leaf_publications.len(), child_offset));
         }
-        let container = direct_word_element_spans(original_xml, "sdtContent")?
-            .into_iter()
-            .next()
-            .ok_or_else(|| Error::Other("control has no actual content source".into()))?;
-        let actual_content =
-            element_inner_range_any_prefix(&original_xml[container.clone()], "sdtContent")?;
-        let actual_content =
-            container.start + actual_content.start..container.start + actual_content.end;
-        for (start, end, offset) in child_offsets {
-            shift_leaf_publications(
-                &mut metadata.leaf_publications[start..end],
-                (actual_content.start + offset) as isize,
-            )?;
-        }
         if let Some(trailing) = whitespace_slots.last()
             && !trailing.is_empty()
         {
             content.push((EmittedOwner::Whitespace, trailing.clone()));
         }
         let content = content.into_iter().map(|(_, xml)| xml).collect::<String>();
-        replace_element_inner(original_xml, "w:sdtContent", &content)
+        let (output, inner_start) = replace_element_inner(original_xml, "w:sdtContent", &content)?;
+        for (start, end, offset) in child_offsets {
+            shift_leaf_publications(
+                &mut metadata.leaf_publications[start..end],
+                (inner_start + offset) as isize,
+            )?;
+        }
+        Ok(output)
     })()?;
     let old_open = element_opening(&output)?.0;
     let output = metadata.restore_owner_root(original as *const CT_Sdt as usize, output)?;
@@ -1174,7 +1169,7 @@ pub(super) fn marked_control<'a>(
     }
     metadata
         .ids
-        .generated(replace_element_inner(&source, "w:sdtContent", &content)?)
+        .generated(replace_element_inner(&source, "w:sdtContent", &content)?.0)
 }
 
 /// Whether unmodelled XML between the owners of a block content control is

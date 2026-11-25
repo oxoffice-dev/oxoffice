@@ -775,7 +775,7 @@ fn project_paired_textboxes(
             // The qualified host already supplies the actual ancestor scope.
             // Closing a retained p here would turn extraction into authored bytes.
             let left_content = left_xml[left_inner.clone()].to_owned();
-            let right_content = right_xml[right_inner.clone()].to_owned();
+            let right_content = right_xml[right_inner].to_owned();
             let left_model = story_document(&left_content, &left_box.1)?;
             let right_model = story_document(&right_content, &right_box.1)?;
             let mut left_sources = SourceSnapshots::default();
@@ -946,8 +946,8 @@ fn project_paired_textboxes(
                 }
             }
             inner_replacements.push((
-                right_box.0.start + right_inner.start..right_box.0.start + right_inner.end,
-                projected,
+                right_box.0.clone(),
+                replace_owner_inner(right_xml, "txbxContent", &projected)?.0,
             ));
         }
         for (span, projected) in inner_replacements.into_iter().rev() {
