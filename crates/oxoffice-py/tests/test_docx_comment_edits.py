@@ -9,7 +9,13 @@ import pytest
 
 import oxoffice.docx as oxdocx
 from builders import edit_cost_docx
-from test_docx_block_handles import outcome
+from test_docx_block_handles import STALE, outcome
+
+
+def debug_build():
+    import oxoffice.docx._native as native
+
+    return native._debug_build
 
 
 @pytest.fixture(scope="module")
@@ -130,3 +136,89 @@ def test_resolving_a_comment_adds_the_extension_part_and_keeps_every_handle(save
     written = doc.to_bytes()
     assert "word/commentsExtended.xml" in zipfile.ZipFile(io.BytesIO(written)).namelist()
     assert the_comment(oxdocx.Document.from_bytes(written)).resolved is True
+
+
+def body_range(doc, start, end, last=None):
+    """The runs `start` to `end` of paragraph 6, or to run `end` of paragraph `last`."""
+    first = doc.find_content_index(doc.paragraphs[6])
+    to = first if last is None else doc.find_content_index(doc.paragraphs[last])
+    return oxdocx.RunRange(start=oxdocx.RunPosition(body_index=first, run_index=start),
+                           end=oxdocx.RunPosition(body_index=to, run_index=end))
+
+
+@pytest.mark.parametrize("end", [1, 4])
+def test_a_comment_on_one_body_paragraph_keeps_every_other_handle(saved, end):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    edited = doc.paragraphs[6]
+    text = edited.text
+    edited_run = edited.runs[0]
+
+    added = doc.add_comment(body_range(doc, 0, end), author="Reviewer", text="new remark")
+
+    (comment,) = [comment for comment in doc.comments if comment.id == added]
+    assert comment.text == "new remark"
+    assert the_comment(doc).text == "a remark"
+    # The paragraph and the comment edited alone: every handle outside them reads what it read.
+    assert reads(taken) == before(taken)
+    # The edited paragraph keeps its handle; its runs are born again, as any edit of the paragraph makes them.
+    assert edited.text == text
+    assert outcome(lambda: edited_run.text) == STALE
+    assert "w:commentRangeStart" in edited.xml and "w:commentReference" in edited.xml
+    taken["run"][0].text = "edited run"
+    edited.runs[0].text = "edited commented run "
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert again.paragraphs[3].runs[2].text == "edited run"
+    (saved_comment,) = [comment for comment in again.comments if comment.id == added]
+    assert saved_comment.text == "new remark"
+    assert saved_comment.anchor_text.startswith("edited commented run ")
+
+
+def test_a_refused_comment_leaves_the_document_and_every_handle_as_they_were(saved):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    edited_run = doc.paragraphs[6].runs[0]
+    data = doc.to_bytes()
+
+    with pytest.raises(oxdocx.DocxError, match="exceeds paragraph run count"):
+        doc.add_comment(body_range(doc, 0, 99), author="Reviewer", text="new remark")
+
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert edited_run.text == "run 0 of paragraph 6 "
+
+
+def test_a_comment_over_two_paragraphs_is_added_and_saved(saved):
+    doc = oxdocx.Document.open(saved)
+
+    added = doc.add_comment(body_range(doc, 0, 1, last=7), author="Reviewer", text="two paragraphs")
+
+    assert "w:commentRangeStart" in doc.paragraphs[6].xml
+    assert "w:commentRangeEnd" in doc.paragraphs[7].xml
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    (comment,) = [comment for comment in again.comments if comment.id == added]
+    assert comment.text == "two paragraphs"
+    assert comment.anchor_text.startswith("run 0 of paragraph 6 ")
+
+
+@pytest.mark.skipif(not debug_build(), reason="a debug build fails the publication on request")
+@pytest.mark.parametrize("failure", ["error", "panic"])
+def test_a_comment_whose_publication_fails_leaves_the_document_and_every_handle_as_they_were(
+        saved, failure, monkeypatch):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    edited_run = doc.paragraphs[6].runs[0]
+    data = doc.to_bytes()
+
+    # Debug builds fail the publication of the paragraph and the comment on request, before its one commit.
+    monkeypatch.setenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE", failure)
+    with pytest.raises(BaseException) as raised:
+        doc.add_comment(body_range(doc, 0, 1), author="Reviewer", text="new remark")
+    monkeypatch.delenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE")
+
+    assert "on request" in str(raised.value)
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert edited_run.text == "run 0 of paragraph 6 "
+    added = doc.add_comment(body_range(doc, 0, 1), author="Reviewer", text="new remark")
+    assert [comment.text for comment in doc.comments if comment.id == added] == ["new remark"]

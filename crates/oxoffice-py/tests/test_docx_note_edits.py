@@ -9,6 +9,12 @@ from test_docx_block_handles import STALE, outcome
 from test_docx_comment_edits import before, handles_taken, reads
 
 
+def debug_build():
+    import oxoffice.docx._native as native
+
+    return native._debug_build
+
+
 @pytest.fixture(scope="module")
 def saved(tmp_path_factory):
     """The edit-cost document with a footnote on paragraph 2 and an endnote on paragraph 4."""
@@ -100,3 +106,102 @@ def test_a_table_in_a_note_survives_a_new_note_and_a_reopen(saved):
     assert "kept cell" in [p.text for p in again.story_paragraphs]
     assert note_texts(again, "footnote") == ["other footnote", "new note", "kept cell", "later note", "after"]
 
+
+
+def add_to(doc, kind):
+    return doc.add_footnote if kind == "footnote" else doc.add_endnote
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+@pytest.mark.parametrize("reference", ["paragraph", "run"])
+def test_a_note_on_a_body_paragraph_keeps_every_other_handle(saved, kind, reference):
+    doc = oxdocx.Document.open(saved)
+    earlier = add_to(doc, kind)(doc.paragraphs[8], "earlier note")
+    earlier_run = earlier.paragraphs[0].runs[-1]
+    taken = handles_taken(doc)
+    edited = doc.paragraphs[6]
+    text = edited.text
+    edited_run = edited.runs[1]
+    (other,) = [p for p in note_paragraphs(doc, kind) if p.text.strip() == f"other {kind}"]
+
+    note = add_to(doc, kind)(edited if reference == "paragraph" else edited_run, "new note")
+
+    assert [p.text.strip() for p in note.paragraphs] == ["new note"]
+    assert note_texts(doc, kind) == [f"other {kind}", "earlier note", "new note"]
+    # The note part is published by its new story alone: a handle into an earlier note, its run included, stays
+    # bound, where the whole route retires them.
+    assert [p.text.strip() for p in earlier.paragraphs] == ["earlier note"]
+    assert earlier_run.text.strip() == "earlier note"
+    # The paragraph and note edited alone: every handle outside them reads what it read.
+    assert reads(taken) == before(taken)
+    assert other.text.strip() == f"other {kind}"
+    # The edited paragraph keeps its handle; its runs are born again, as any edit of the paragraph makes them.
+    assert edited.text == text
+    assert outcome(lambda: edited_run.text) == STALE
+    # The reference goes after the run, or at the paragraph's end, and the kept handles still edit.
+    reference_at = 2 if reference == "run" else 6
+    assert f"w:{kind}Reference" in edited.runs[reference_at].xml
+    taken["run"][0].text = "edited run"
+    note.add_paragraph("more")
+    earlier_run.text = "edited earlier note"
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert again.paragraphs[3].runs[2].text == "edited run"
+    assert f"w:{kind}Reference" in again.paragraphs[6].runs[reference_at].xml
+    assert note_texts(again, kind) == [f"other {kind}", "edited earlier note", "new note", "more"]
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_a_refused_note_leaves_the_document_and_every_handle_as_they_were(saved, kind):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    edited = doc.paragraphs[6]
+    edited_run = edited.runs[1]
+    data = doc.to_bytes()
+
+    with pytest.raises(ValueError, match="cannot carry"):
+        add_to(doc, kind)(edited_run, "bad \x01 text")
+
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert edited_run.text == "run 1 of paragraph 6 "
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_a_note_in_a_table_cell_is_added_and_saved(saved, kind):
+    doc = oxdocx.Document.open(saved)
+    cell = doc.tables[0].cell(0, 0)
+
+    note = add_to(doc, kind)(cell.paragraphs[0], "cell note")
+
+    assert [p.text.strip() for p in note.paragraphs] == ["cell note"]
+    assert f"w:{kind}Reference" in cell.paragraphs[0].xml
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert note_texts(again, kind) == [f"other {kind}", "cell note"]
+    assert f"w:{kind}Reference" in again.tables[0].cell(0, 0).paragraphs[0].xml
+
+
+@pytest.mark.skipif(not debug_build(), reason="a debug build fails the publication on request")
+@pytest.mark.parametrize("failure", ["error", "panic"])
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_a_note_whose_publication_fails_leaves_the_document_and_every_handle_as_they_were(
+        saved, kind, failure, monkeypatch):
+    doc = oxdocx.Document.open(saved)
+    earlier = add_to(doc, kind)(doc.paragraphs[8], "earlier note")
+    earlier_run = earlier.paragraphs[0].runs[-1]
+    taken = handles_taken(doc)
+    edited_run = doc.paragraphs[6].runs[1]
+    data = doc.to_bytes()
+
+    # Debug builds fail the publication of the paragraph and the note on request, before its one commit.
+    monkeypatch.setenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE", failure)
+    with pytest.raises(BaseException) as raised:
+        add_to(doc, kind)(edited_run, "new note")
+    monkeypatch.delenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE")
+
+    assert "on request" in str(raised.value)
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert edited_run.text == "run 1 of paragraph 6 "
+    assert earlier_run.text.strip() == "earlier note"
+    add_to(doc, kind)(edited_run, "new note")
+    assert note_texts(doc, kind) == [f"other {kind}", "earlier note", "new note"]
