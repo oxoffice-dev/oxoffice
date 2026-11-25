@@ -14,12 +14,20 @@ pub(super) fn root_prefix(xml: &str, local: &str) -> Result<String> {
     Ok(xml[name_start..suffix_at].to_owned())
 }
 
+/// The range of the content of the `local` owner that `xml` starts with,
+/// whatever its prefix. An owner written self-closing has no content: its
+/// range is empty, at the end of its tag, so a reader reads it as empty. A
+/// writer gives it an end tag before writing content in it
+/// ([`replace_owner_inner`]).
 pub(super) fn element_inner_range_any_prefix(xml: &str, local: &str) -> Result<Range<usize>> {
-    let (open_end, _, name) = element_opening(xml)?;
+    let (open_end, empty, name) = element_opening(xml)?;
     if name.rsplit(':').next() != Some(local) {
         return Err(Error::Other(format!(
             "{local} source has a different owner name"
         )));
+    }
+    if empty {
+        return Ok(open_end..open_end);
     }
     let close = format!("</{name}>");
     let close_start = xml

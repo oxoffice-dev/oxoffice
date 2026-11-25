@@ -358,16 +358,37 @@ pub(super) fn extract_body_inner(document: &[u8]) -> Result<&str> {
     Ok(&xml[range])
 }
 
-pub(super) fn replace_element_inner(xml: &str, name: &str, inner: &str) -> Result<String> {
+/// `xml` with the content of its first direct Word `name` child replaced
+/// by `inner`, and where `inner` starts in the result (see
+/// [`replace_owner_inner`]).
+pub(super) fn replace_element_inner(xml: &str, name: &str, inner: &str) -> Result<(String, usize)> {
     let local = name.rsplit(':').next().unwrap_or(name);
     let spans = direct_word_element_spans(xml, local)?;
     let span = spans
         .first()
         .ok_or_else(|| Error::Other(format!("serialized XML has no Word {local} child")))?;
-    let (opening, closing) = paragraph_shell(Some(&xml[span.clone()]))?;
+    let (owner, start) = replace_owner_inner(&xml[span.clone()], local, inner)?;
     let mut output = xml.to_owned();
-    output.replace_range(span.clone(), &format!("{opening}{inner}{closing}"));
-    Ok(output)
+    output.replace_range(span.clone(), &owner);
+    Ok((output, span.start + start))
+}
+
+/// The `local` owner `xml` starts with, its content replaced by `inner`,
+/// and where `inner` starts in the result. An owner written self-closing
+/// gets an end tag to hold `inner`, and stays as written when `inner` is
+/// empty.
+pub(super) fn replace_owner_inner(xml: &str, local: &str, inner: &str) -> Result<(String, usize)> {
+    let range = element_inner_range_any_prefix(xml, local)?;
+    if !inner.is_empty() && element_opening(xml)?.1 {
+        let (opening, closing) = paragraph_shell(Some(xml))?;
+        return Ok((
+            format!("{opening}{inner}{closing}{}", &xml[range.end..]),
+            opening.len(),
+        ));
+    }
+    let mut output = xml.to_owned();
+    output.replace_range(range.clone(), inner);
+    Ok((output, range.start))
 }
 
 pub(super) fn inject_before_close(xml: &str, closing: &str, addition: &str) -> Result<String> {
@@ -796,4 +817,30 @@ pub(super) fn word_ids(xml: &[u8]) -> Result<HashSet<i32>> {
 
 pub(super) fn utf8_error(error: impl std::fmt::Display) -> Error {
     Error::Other(format!("comparison XML is not UTF-8: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_written_in_a_self_closing_owner_starts_where_its_end_tag_puts_it() {
+        let control = r#"<w:sdt><w:sdtPr/><w:sdtContent/></w:sdt>"#;
+        let (written, start) = replace_element_inner(control, "w:sdtContent", "<w:r/>").unwrap();
+        assert_eq!(
+            written,
+            r#"<w:sdt><w:sdtPr/><w:sdtContent><w:r/></w:sdtContent></w:sdt>"#
+        );
+        assert_eq!(&written[start..], "<w:r/></w:sdtContent></w:sdt>");
+        // Nothing to write keeps the owner as its producer wrote it.
+        assert_eq!(
+            replace_element_inner(control, "w:sdtContent", "")
+                .unwrap()
+                .0,
+            control
+        );
+        // An owner with an end tag keeps it.
+        let (written, start) = replace_element_inner(&written, "w:sdtContent", "<w:p/>").unwrap();
+        assert_eq!(&written[start..], "<w:p/></w:sdtContent></w:sdt>");
+    }
 }

@@ -171,8 +171,8 @@ use xml::{
     inject_before_close, insert_first_child, main_body_source, modeled_paragraph_run_spans,
     paragraph_close_start, paragraph_owned_run_xml, paragraph_run_spans, paragraph_xml,
     property_xml, replace_body_inner, replace_direct_word_elements, replace_element_inner,
-    replace_paragraph_run_elements, replace_ranges, row_xml, run_xml, section_property_xml,
-    table_xml, utf8_error, with_mark_revision, word_element_starts, word_ids,
+    replace_owner_inner, replace_paragraph_run_elements, replace_ranges, row_xml, run_xml,
+    section_property_xml, table_xml, utf8_error, with_mark_revision, word_element_starts, word_ids,
 };
 
 mod attributed_runs;

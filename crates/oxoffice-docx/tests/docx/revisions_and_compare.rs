@@ -4686,6 +4686,204 @@ fn a_list_item_without_a_level_keeps_that_form_through_a_tracked_mark_change() {
     }
 }
 
+// ---- Owners written self-closing ----
+// Google Docs leaves empty inline content controls written `<w:sdtContent/>`
+// in ordinary paragraphs. An owner written self-closing reads as an empty
+// one, keeps that form while nothing is written in it, and gets an end tag
+// when the redline writes in it.
+
+/// A paragraph holding an inline content control as Google Docs writes it,
+/// with `inside` as its text, or empty and self-closing.
+fn paragraph_with_control(word: &str, inside: Option<&str>) -> String {
+    let content = inside.map_or("<w:sdtContent/>".to_owned(), |text| {
+        format!("<w:sdtContent><w:r><w:t>{text}</w:t></w:r></w:sdtContent>")
+    });
+    format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Alpha beta </w:t></w:r>"#,
+            r#"<w:sdt><w:sdtPr><w:tag w:val="goog_rdk_1"/><w:id w:val="1"/></w:sdtPr>{}</w:sdt>"#,
+            r#"<w:r><w:t>{}.</w:t></w:r></w:p>"#
+        ),
+        content, word
+    )
+}
+
+/// Compare the body `original` with the body `edited` both ways, at every
+/// granularity: each redline resolves to the body it goes to once accepted
+/// and to the one it comes from once rejected, and `check` reads its main
+/// part.
+fn check_paragraphs_both_ways(original: &str, edited: &str, check: impl Fn(&str, bool)) {
+    for (from, to, forward) in [(original, edited, true), (edited, original, false)] {
+        for granularity in [
+            ComparisonGranularity::Run,
+            ComparisonGranularity::Word,
+            ComparisonGranularity::Character,
+        ] {
+            let context = format!("{granularity:?}, forward {forward}");
+            let mut doc = doc_with_body(from);
+            let options = ComparisonOptions {
+                granularity,
+                ..Default::default()
+            };
+            let diagnostics = doc
+                .compare_with_options(&doc_with_body(to), AUTHOR, DATE, &options)
+                .unwrap_or_else(|error| panic!("{context}: {error}"));
+            assert!(diagnostics.is_empty(), "{context}: {diagnostics:?}");
+            let mut doc = reopen(&mut doc);
+            check(&main_xml(&mut doc), forward);
+            assert_eq!(
+                texts(&accepted(&mut doc)),
+                texts(&doc_with_body(to)),
+                "{context}"
+            );
+            assert_eq!(
+                texts(&rejected(&mut doc)),
+                texts(&doc_with_body(from)),
+                "{context}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_changed_paragraph_holding_an_empty_control_written_self_closing_is_compared() {
+    // The control stays as Google Docs wrote it.
+    check_paragraphs_both_ways(
+        &paragraph_with_control("gamma", None),
+        &paragraph_with_control("delta", None),
+        |xml, _| assert!(xml.contains("<w:sdtContent/></w:sdt>"), "{xml}"),
+    );
+    // Nested in a control that holds text.
+    let nested = |word: &str| {
+        paragraph_with_control(word, Some("kept")).replace(
+            "<w:sdtContent><w:r>",
+            "<w:sdtContent><w:sdt><w:sdtPr/><w:sdtContent/></w:sdt><w:r>",
+        )
+    };
+    check_paragraphs_both_ways(&nested("gamma"), &nested("delta"), |xml, _| {
+        assert!(xml.contains("<w:sdtPr/><w:sdtContent/></w:sdt>"), "{xml}");
+    });
+}
+
+#[test]
+fn text_typed_in_an_empty_control_written_self_closing_is_tracked_inside_it() {
+    for word in ["gamma", "delta"] {
+        check_paragraphs_both_ways(
+            &paragraph_with_control("gamma", None),
+            &paragraph_with_control(word, Some("new")),
+            |xml, forward| {
+                let content = xml
+                    .split_once("<w:sdtContent>")
+                    .and_then(|(_, rest)| rest.split_once("</w:sdtContent>"))
+                    .map_or("", |(content, _)| content);
+                let tag = if forward { "<w:ins " } else { "<w:del " };
+                assert!(
+                    content.starts_with(tag) && content.contains(">new<"),
+                    "{xml}"
+                );
+            },
+        );
+    }
+}
+
+/// Whether the last `local` Word owner of `xml` is written self-closing.
+fn last_owner_is_self_closing(xml: &str, local: &str) -> bool {
+    let start = xml
+        .rfind(&format!("<w:{local} "))
+        .unwrap_or_else(|| panic!("{local} owner in {xml}"));
+    let end = start + xml[start..].find('>').expect("owner start tag");
+    xml[..end].ends_with('/')
+}
+
+#[test]
+fn an_empty_text_box_comment_or_note_written_self_closing_is_compared_around() {
+    const EMPTY_BOX: &str = concat!(
+        r#"<w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="box" style="width:120pt;height:40pt">"#,
+        r#"<v:textbox><w:txbxContent/></v:textbox></v:shape></w:pict></w:r>"#
+    );
+    // Each pair of versions differs by the text of a paragraph around the
+    // empty owner, which `part` keeps self-closing once compared.
+    let in_body = |text: &str| doc_with_body(&format!("<w:p>{EMPTY_BOX}</w:p>{}", plain(text)));
+    let in_header = |text: &str| {
+        let mut doc = doc_with(&["Body."]);
+        doc.set_header(text);
+        with_part(&mut doc, "header1.xml", |xml| {
+            xml.replacen("<w:r>", &format!("{EMPTY_BOX}<w:r>"), 1)
+        })
+    };
+    let commented = |text: &str| {
+        let mut doc = doc_with(&["Claim.", text]);
+        let at = |run_index| oxoffice_docx::RunPosition {
+            body_index: 0,
+            run_index,
+        };
+        let range = oxoffice_docx::RunRange {
+            start: at(0),
+            end: at(1),
+        };
+        doc.add_comment_with_date(
+            range,
+            "Ada",
+            None,
+            "Note.",
+            oxoffice_docx::CommentDate::Undated,
+        )
+        .unwrap();
+        with_part(&mut doc, "comments.xml", |xml| {
+            let start = xml.find("<w:comment ").unwrap();
+            let open = start + xml[start..].find('>').unwrap();
+            let end = xml.find("</w:comment>").unwrap() + "</w:comment>".len();
+            format!("{}/>{}", &xml[..open], &xml[end..])
+        })
+    };
+    let noted = |owner: &str, text: &str| {
+        let paragraphs = [("Claim.", Some("Source.")), (text, None)];
+        let mut doc = if owner == "footnote" {
+            doc_with_notes(&paragraphs)
+        } else {
+            doc_with_endnote_texts(&paragraphs)
+        };
+        with_part(&mut doc, &format!("{owner}s.xml"), |xml| {
+            let start = xml.rfind(&format!("<w:{owner} ")).unwrap();
+            let open = start + xml[start..].find('>').unwrap();
+            let end = xml.rfind(&format!("</w:{owner}>")).unwrap() + owner.len() + 5;
+            format!("{}/>{}", &xml[..open], &xml[end..])
+        })
+    };
+    let version = |part: &str, text: &str| match part {
+        "document.xml" => in_body(text),
+        "header1.xml" => in_header(text),
+        "comments.xml" => commented(text),
+        notes => noted(notes.trim_end_matches("s.xml"), text),
+    };
+    for (part, owner) in [
+        ("document.xml", "txbxContent"),
+        ("header1.xml", "txbxContent"),
+        ("comments.xml", "comment"),
+        ("footnotes.xml", "footnote"),
+        ("endnotes.xml", "endnote"),
+    ] {
+        let mut doc = redline(version(part, "Before."), &version(part, "After."));
+        let package = crate::support::package_parts(&doc.to_bytes().unwrap());
+        let xml = String::from_utf8_lossy(&package[&format!("word/{part}")]).into_owned();
+        if owner == "txbxContent" {
+            assert!(xml.contains("<w:txbxContent/>"), "{part}: {xml}");
+        } else {
+            assert!(last_owner_is_self_closing(&xml, owner), "{part}: {xml}");
+        }
+        assert_eq!(
+            story_texts(&accepted(&mut doc)),
+            story_texts(&version(part, "After.")),
+            "{part}"
+        );
+        assert_eq!(
+            story_texts(&rejected(&mut doc)),
+            story_texts(&version(part, "Before.")),
+            "{part}"
+        );
+    }
+}
+
 // ---- Hyperlinks of whole paragraphs ----
 //
 // A hyperlink of a paragraph inserted or deleted whole is written as one

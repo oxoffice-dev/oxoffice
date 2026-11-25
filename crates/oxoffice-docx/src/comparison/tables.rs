@@ -329,11 +329,9 @@ fn mark_control_owned_rows(
             SdtContent::RawXml(raw) => String::from_utf8(raw.clone()).map_err(utf8_error)?,
         });
     }
-    metadata.ids.generated(replace_element_inner(
-        original_xml,
-        "w:sdtContent",
-        &content,
-    )?)
+    metadata
+        .ids
+        .generated(replace_element_inner(original_xml, "w:sdtContent", &content)?.0)
 }
 
 pub(super) fn marked_row(row: &CT_Row, kind: &str, metadata: &mut Metadata<'_>) -> Result<String> {
