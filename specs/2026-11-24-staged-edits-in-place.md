@@ -453,6 +453,86 @@ paragraphs publish through the BLK lane's block replacement.
   publish the whole inventory, as before. Debug builds check each
   publication against the whole inventory.
 
+### S3b: body pictures added and resized (amended 2026-11-25)
+
+- **`Run.add_picture` on a run of a direct body paragraph** edits that
+  paragraph under one `BodyBlocks { slot, count: 1 }` unit
+  (`insert_picture_in_block`): the media part, its content type default,
+  the image relationship and the drawing id are reserved at insert through
+  the journals, and the picture returned is read from that block written
+  alone (`framed_body_block_item`), its story unfingerprinted: a body
+  fingerprint is a read of the whole main part. The binding publishes the
+  block with the BLK block replacement: the paragraph's handle stays, its
+  runs retire, every other handle stays (the staged route retired them
+  all). A run of a cell, a text box, a header or another story, and a
+  body whose save is known to fail, keep the staged route.
+- **`Document.set_picture_size` on a picture of a direct body paragraph**
+  finds the picture in its block alone (the binding finds the block from
+  its pieces, `story_item_block`), writes its extents in that block's bytes
+  as the staged route writes them in the part, reads the block back (it
+  must write the same bytes) and swaps it in, published the same way. The
+  binding's revision check vouches for the handle, so the story's
+  fingerprint is not compared; a picture whose paragraph changed since it
+  was read is refused as stale, as before. A picture handle holds the size
+  it was read with: a resize retires it, as before. A picture of a cell,
+  a header or another story keeps the staged route, which reads the
+  fingerprint of a handle the in-place route returned from the stories.
+- **`Document.set_picture_sizes_for_relationship`** finds the direct body
+  blocks that may show the relationship by a walk of the typed body
+  (`BodyContent::may_show_relationship`: a typed drawing that names it, or
+  a piece kept as raw XML that holds its bytes), resizes each block written
+  alone as the staged route resizes the part, and swaps them in under one
+  `BodyBlocks` unit each (#642). The rule for the staged route: a
+  relationship the page background names, more than 16 blocks, a block
+  that holds a drawing still waiting for the id a save gives it, a body
+  whose save is known to fail, or a block that does not read back as it
+  writes. No element a handle names changes: nothing is published, every
+  handle stays (as before), and the binding reads the pieces of the
+  changed blocks again so that later block routes still take them.
+- What stays linear: the walk of the typed body (no serialization), and
+  the reservation of a relationship id and a media part name, which scan
+  the main part's relationship ids and the part names.
+
+### S3b, part edits: images, chart legends, hyperlink URLs (amended 2026-11-25)
+
+- **Four calls write package state alone.** `replace_image`,
+  `replace_image_for_story`, `set_chart_legend` on a chart no other element
+  shows, and `set_hyperlink_url` on a link of the main part's body whose
+  relationship is an external hyperlink no other element names and which
+  has no anchor, change no XML of a story: an image part, a relationship
+  target, a part a new name leaves behind and its content types, or a chart
+  part. They run under `EditUnit::Parts` and the reservation journal, and
+  the binding publishes nothing: every handle stays.
+- **A relationship retarget is journaled alone.**
+  `OpcPackage::set_relationship_target` records the target a relationship
+  held before the first change of the call (owner, id, target), which the
+  undo puts back after the copies and the removals; an owner recorded whole
+  records nothing more. It costs that relationship, never a copy of the
+  main part's relationships (`record_part_rels`), which grow with the body.
+- **Whether another element names a relationship** is counted by the
+  written-fragment walk of the main part
+  ([references found by a walk](2026-11-25-written-fragment-walk.md)): the
+  typed ids (a hyperlink, a picture or chart drawing, a header or footer
+  reference) and, in raw fragments, every attribute that holds the id. The
+  count may be larger than the serialized part's, never smaller (debug
+  builds compare): a larger count only sends the call to its staged route.
+  Whether another relationship names a part is a compare per relationship
+  of the package.
+- **The element is read from its block.** The chart's paragraph and the
+  link's item are read from their direct body block written alone, without
+  the question whether the body saves after a typed edit (asked once after
+  an invalidation, over the whole main part): these calls write no body
+  block, and the save reports such a body, as after a section edit. The
+  binding finds the link's block from its owner and the inventory pieces
+  (`story_item_block`), and the body story of `replace_image_for_story` is
+  not looked up (the main part always holds it).
+- **What keeps the staged route:** a chart two paragraphs or two
+  relationships show (it is isolated in a copy of its part), a link whose
+  relationship another element names, a link with an anchor, a link
+  outside the main part's body or a constructed `Hyperlink` record, a URL
+  the relationships part cannot carry, and any refusal. The staged routes
+  stay the debug oracles.
+
 ### S2c: bibliography sources (amended 2026-11-25)
 
 - `add_bibliography_source` and `replace_bibliography_source` edit the
