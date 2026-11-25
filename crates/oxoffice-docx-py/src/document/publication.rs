@@ -518,13 +518,40 @@ impl PyDocument {
         story: &oxoffice_docx::StoryId,
         #[cfg(debug_assertions)] before: &oxoffice_docx::Document,
     ) -> PyResult<bool> {
+        let Some(splice) = self.read_story_splice(py, story)? else {
+            return Ok(false);
+        };
+        #[cfg(debug_assertions)]
+        let old_owners = self.owners.clone();
+        self.commit_story_splice(operation, story, splice)?;
+        #[cfg(debug_assertions)]
+        {
+            self.assert_word_inventory_rebuilds(false);
+            assert_kept_owners_name_their_elements(
+                (before, &old_owners),
+                (&self.inner, &self.owners),
+                None,
+            );
+        }
+        Ok(true)
+    }
+
+    /// The read half of [`Self::splice_story_owners`]: the story's part read
+    /// alone and checked, `None` when the splice cannot publish it. It reads
+    /// no body owner, so a body publication may come between it and
+    /// [`Self::commit_story_splice`].
+    pub(crate) fn read_story_splice(
+        &self,
+        py: Python<'_>,
+        story: &oxoffice_docx::StoryId,
+    ) -> PyResult<Option<StorySplice>> {
         let part_name = story.part_name();
         let Some((part, old)) = self
             .pieces
             .as_ref()
             .and_then(|pieces| pieces.part_owner_addresses(part_name))
         else {
-            return Ok(false);
+            return Ok(None);
         };
         let read = {
             let sources = self
@@ -537,21 +564,49 @@ impl PyDocument {
                 .and_then(|(kind, name, xml)| WordPieces::read_part(&self.inner, *kind, name, xml))
         };
         let Some((piece, new)) = read else {
-            return Ok(false);
+            return Ok(None);
         };
         let (old_inside, new_inside) = (in_story(&old, story), in_story(&new, story));
         if routes_outside(&old, &old_inside) != routes_outside(&new, &new_inside) {
-            return Ok(false);
+            return Ok(None);
         }
-        let keys = (0..self.owners.len())
+        if self.story_owner_keys(story).len() != old_inside.iter().filter(|inside| **inside).count()
+        {
+            return Ok(None);
+        }
+        Ok(Some(StorySplice {
+            part,
+            piece,
+            new,
+            new_inside,
+        }))
+    }
+
+    /// The keys of the owners whose root is in `story`.
+    fn story_owner_keys(&self, story: &oxoffice_docx::StoryId) -> Vec<usize> {
+        (0..self.owners.len())
             .filter(|&key| {
                 owner_root_story(&self.owners, key)
                     .is_some_and(|owned| same_story_owner(&owned, story))
             })
-            .collect::<Vec<_>>();
-        if keys.len() != old_inside.iter().filter(|inside| **inside).count() {
-            return Ok(false);
-        }
+            .collect()
+    }
+
+    /// The commit half of [`Self::splice_story_owners`], without its debug
+    /// checks: the caller runs them once the whole edit is published.
+    pub(crate) fn commit_story_splice(
+        &mut self,
+        operation: &'static str,
+        story: &oxoffice_docx::StoryId,
+        splice: StorySplice,
+    ) -> PyResult<()> {
+        let StorySplice {
+            part,
+            piece,
+            new,
+            new_inside,
+        } = splice;
+        let keys = self.story_owner_keys(story);
         let mut retired = keys
             .iter()
             .flat_map(|&key| self.owners[key].states())
@@ -580,8 +635,6 @@ impl PyDocument {
         let states = (0..births.len())
             .map(|index| revision.born(index).expect("prepared owner birth"))
             .collect::<Vec<_>>();
-        #[cfg(debug_assertions)]
-        let old_owners = self.owners.clone();
         self.revisions
             .commit_scopes(revision)
             .map_err(revision_to_pyerr)?;
@@ -628,15 +681,15 @@ impl PyDocument {
             .as_mut()
             .expect("active pieces")
             .replace_part(part, piece);
-        #[cfg(debug_assertions)]
-        {
-            self.assert_word_inventory_rebuilds(false);
-            assert_kept_owners_name_their_elements(
-                (before, &old_owners),
-                (&self.inner, &self.owners),
-                None,
-            );
-        }
-        Ok(true)
+        Ok(())
     }
+}
+
+/// A story's part read and checked by [`PyDocument::read_story_splice`],
+/// for [`PyDocument::commit_story_splice`].
+pub(crate) struct StorySplice {
+    part: usize,
+    piece: std::sync::Arc<WordPartPiece>,
+    new: Vec<WordOwnerAddress>,
+    new_inside: Vec<bool>,
 }

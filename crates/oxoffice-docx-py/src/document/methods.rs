@@ -3667,6 +3667,18 @@ impl PyDocument {
         py: Python<'_>,
     ) -> PyResult<i32> {
         let date = comment_date(date, undated)?;
+        if let Ok(range) = range.cast::<PyRunRange>()
+            && let Some(id) = self.add_body_comment_in_place(
+                py,
+                (*range.borrow()).into(),
+                author,
+                initials,
+                text,
+                date,
+            )?
+        {
+            return Ok(id);
+        }
         let mut candidate = self.inner.clone_for_staging();
         let id = if let Ok(range) = range.cast::<PyRunRange>() {
             candidate.add_comment_with_date((*range.borrow()).into(), author, initials, text, date)

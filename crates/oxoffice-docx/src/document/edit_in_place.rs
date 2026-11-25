@@ -717,7 +717,7 @@ fn without_repeated_namespaces(xml: &[u8]) -> Vec<u8> {
     for declaration in &declarations {
         below = below.replace(declaration.as_str(), "");
     }
-    let mut out = text[..root_end].as_bytes().to_vec();
+    let mut out = text.as_bytes()[..root_end].to_vec();
     out.extend_from_slice(below.as_bytes());
     out
 }

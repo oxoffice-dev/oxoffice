@@ -176,6 +176,87 @@ impl PyDocument {
         Ok(published)
     }
 
+    /// The body slot of the paragraph at `location`, from the inventory
+    /// alone, when it is a direct body paragraph that a block replacement
+    /// can publish ([`Self::publishable_body_slot`]). The caller ensured the
+    /// Word authority.
+    pub(crate) fn publishable_paragraph_slot(&self, location: &ParagraphLocation) -> Option<usize> {
+        let ParagraphLocation::Body(index) = location else {
+            return None;
+        };
+        let native = self
+            .indexes
+            .body_paragraphs
+            .as_ref()?
+            .get(*index)?
+            .as_ref()?
+            .location();
+        let key = self
+            .indexes
+            .find(&self.owners, &WordOwnerLocation::Paragraph(native))?;
+        let slot = self.owners[key].body_slot()?;
+        (self.indexes.direct_body_paragraph(slot) == Some(key) && self.publishable_body_slot(slot))
+            .then_some(slot)
+    }
+
+    /// Whether the direct body block at `slot` is a paragraph that a block
+    /// replacement can publish. The caller ensured the Word authority.
+    pub(crate) fn publishable_body_slot(&self, slot: usize) -> bool {
+        self.inner
+            .body_children()
+            .get(slot)
+            .is_some_and(|block| self.replaced_block(slot, block).is_some())
+    }
+
+    /// Publish an in-place edit that changed the direct body paragraph at
+    /// `slot` (it was `previous`) and added `story` in a related part (a
+    /// note or a comment, the last entry of its part): the paragraph keeps
+    /// its owner and properties states and its runs are born again, as
+    /// [`Self::publish_body_blocks_replaced`] publishes them, then the
+    /// story's owners are born as [`Self::splice_story_owners`] publishes
+    /// them; every other owner keeps its states.
+    ///
+    /// [`BlocksPublication::WholeRoute`] when either half cannot be taken,
+    /// with nothing published: both are checked before either commits. Under
+    /// debug assertions the whole edit is checked once both are published
+    /// (each half alone sees the other's change unpublished).
+    pub(crate) fn publish_body_paragraph_and_story(
+        &mut self,
+        py: Python<'_>,
+        slot: usize,
+        previous: &oxoffice_docx_oxml::BodyContent,
+        story: &oxoffice_docx::StoryId,
+        operation: &'static str,
+    ) -> PyResult<BlocksPublication> {
+        match self.inner.body_children().get(slot) {
+            Some(new) if new != previous => {}
+            _ => return Ok(BlocksPublication::WholeRoute),
+        }
+        self.ensure_word_authority(py)?;
+        let Some(target) = self.replaced_block(slot, previous) else {
+            return Ok(BlocksPublication::WholeRoute);
+        };
+        let Some(splice) = self.read_story_splice(py, story)? else {
+            return Ok(BlocksPublication::WholeRoute);
+        };
+        #[cfg(debug_assertions)]
+        let before = {
+            let mut document = self.inner.clone_for_staging();
+            document
+                .swap_body_block(slot, previous.clone())
+                .expect("the replaced slot is in the body");
+            (document, self.owners.clone())
+        };
+        // Every answer but `Published` comes before the commit.
+        if self.replace_paragraph_owners(&target, operation)? != BlocksPublication::Published {
+            return Ok(BlocksPublication::WholeRoute);
+        }
+        self.commit_story_splice(operation, story, splice)?;
+        #[cfg(debug_assertions)]
+        self.assert_paragraph_replacement(&before, &target);
+        Ok(BlocksPublication::Published)
+    }
+
     /// The inventory facts of the direct body block at `slot`, whose block
     /// is (or was, before an edit in place) `block`, when a block replacement
     /// can publish it: a paragraph whose body item and owners are anchored

@@ -100,3 +100,68 @@ def test_a_table_in_a_note_survives_a_new_note_and_a_reopen(saved):
     assert "kept cell" in [p.text for p in again.story_paragraphs]
     assert note_texts(again, "footnote") == ["other footnote", "new note", "kept cell", "later note", "after"]
 
+
+
+def add_to(doc, kind):
+    return doc.add_footnote if kind == "footnote" else doc.add_endnote
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+@pytest.mark.parametrize("reference", ["paragraph", "run"])
+def test_a_note_on_a_body_paragraph_keeps_every_other_handle(saved, kind, reference):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    edited = doc.paragraphs[6]
+    text = edited.text
+    edited_run = edited.runs[1]
+    (other,) = [p for p in note_paragraphs(doc, kind) if p.text.strip() == f"other {kind}"]
+
+    note = add_to(doc, kind)(edited if reference == "paragraph" else edited_run, "new note")
+
+    assert [p.text.strip() for p in note.paragraphs] == ["new note"]
+    assert note_texts(doc, kind) == [f"other {kind}", "new note"]
+    # The paragraph and note edited alone: every handle outside them reads what it read.
+    assert reads(taken) == before(taken)
+    assert other.text.strip() == f"other {kind}"
+    # The edited paragraph keeps its handle; its runs are born again, as any edit of the paragraph makes them.
+    assert edited.text == text
+    assert outcome(lambda: edited_run.text) == STALE
+    # The reference goes after the run, or at the paragraph's end, and the kept handles still edit.
+    reference_at = 2 if reference == "run" else 6
+    assert f"w:{kind}Reference" in edited.runs[reference_at].xml
+    taken["run"][0].text = "edited run"
+    note.add_paragraph("more")
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert again.paragraphs[3].runs[2].text == "edited run"
+    assert f"w:{kind}Reference" in again.paragraphs[6].runs[reference_at].xml
+    assert note_texts(again, kind) == [f"other {kind}", "new note", "more"]
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_a_refused_note_leaves_the_document_and_every_handle_as_they_were(saved, kind):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    edited = doc.paragraphs[6]
+    edited_run = edited.runs[1]
+    data = doc.to_bytes()
+
+    with pytest.raises(ValueError, match="cannot carry"):
+        add_to(doc, kind)(edited_run, "bad \x01 text")
+
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert edited_run.text == "run 1 of paragraph 6 "
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_a_note_in_a_table_cell_is_added_and_saved(saved, kind):
+    doc = oxdocx.Document.open(saved)
+    cell = doc.tables[0].cell(0, 0)
+
+    note = add_to(doc, kind)(cell.paragraphs[0], "cell note")
+
+    assert [p.text.strip() for p in note.paragraphs] == ["cell note"]
+    assert f"w:{kind}Reference" in cell.paragraphs[0].xml
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert note_texts(again, kind) == [f"other {kind}", "cell note"]
+    assert f"w:{kind}Reference" in again.tables[0].cell(0, 0).paragraphs[0].xml

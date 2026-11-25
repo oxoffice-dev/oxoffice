@@ -808,9 +808,8 @@ def documents(tmp_path_factory):
 GROWING = {
     "Cell.add_paragraph", "Cell.add_picture", "Cell.add_table", "Cell.merge", "Cell.replace_text",
     "Cell.replace_xml", "Cell.split", "Cell.text", "Document.accept_revision_id",
-    "Document.add_bibliography_source", "Document.add_chart", "Document.add_comment",
-    "Document.add_endnote",
-    "Document.add_footnote", "Document.add_heading_hyperlink", "Document.add_hyperlink_to_story",
+    "Document.add_bibliography_source", "Document.add_chart",
+    "Document.add_heading_hyperlink", "Document.add_hyperlink_to_story",
     "Document.add_picture", "Document.add_story_permission_range", "Document.clone_content",
     "Document.clone_content_control", "Document.create_section_story",
     "Document.import_fragment",

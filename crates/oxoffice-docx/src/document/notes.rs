@@ -201,6 +201,7 @@ impl Document {
         run_index: usize,
         text: &str,
     ) -> Result<i32> {
+        oxoffice_core::xml::reject_non_xml_characters("note text", text)?;
         let mark_style = self.note_reference_style_id(kind)?;
         let Some(BodyContent::Paragraph(paragraph)) = self.document.body.content.get(slot) else {
             unreachable!("the caller checked the slot");
@@ -241,6 +242,9 @@ impl Document {
                 "note references require body or body-table content".to_owned(),
             ));
         }
+        // A character XML 1.0 cannot carry is refused before anything is
+        // written, on both routes, as python-docx refuses such text.
+        oxoffice_core::xml::reject_non_xml_characters("note text", text)?;
         let mut candidate = self.clone_for_staging();
         let mark_style = candidate.note_reference_style_id(kind)?;
         candidate
@@ -578,6 +582,55 @@ impl Document {
     /// Find the current story identity for a normal endnote ID.
     pub fn endnote_story(&self, id: i32) -> Result<Option<StoryId>> {
         self.note_story(StoryKind::Endnote, id)
+    }
+
+    /// The part that holds the footnotes, endnotes or comments, if the
+    /// document has one, read from the relationships alone.
+    #[doc(hidden)]
+    pub fn annotation_part_name(&self, kind: StoryKind) -> Result<Option<String>> {
+        match kind {
+            StoryKind::Comment => Ok(self.comments_part_name.clone()),
+            _ => self.note_part_name(kind),
+        }
+    }
+
+    /// The story of the comment `id`, read from the comments part alone:
+    /// the body is not read. `None` when no comment has that ID.
+    #[doc(hidden)]
+    pub fn comment_story(&self, id: i32) -> Result<Option<StoryId>> {
+        let (Some(part_name), Some(comments)) = (&self.comments_part_name, &self.comments) else {
+            return Ok(None);
+        };
+        let mut matches = comments
+            .comments
+            .iter()
+            .enumerate()
+            .filter(|(_, comment)| comment.id == id);
+        let Some((index, _)) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some() {
+            return Err(Error::Other(format!("comment ID {id} is ambiguous")));
+        }
+        let xml = self.package.get_part(part_name).ok_or_else(|| {
+            Error::Other(format!("comment stories target missing part {part_name}"))
+        })?;
+        let stories = scan_story_owners(xml, StoryKind::Comment)?
+            .into_iter()
+            .filter(|owner| owner.kind == StoryKind::Comment)
+            .map(|owner| StoryId {
+                kind: StoryKind::Comment,
+                part_name: part_name.clone(),
+                owner_index: owner.owner_index,
+                fingerprint: owner.fingerprint,
+            })
+            .collect::<Vec<_>>();
+        if stories.len() != comments.comments.len() {
+            return Err(Error::Other(
+                "comment story count differs from the comment definitions".to_owned(),
+            ));
+        }
+        Ok(stories.into_iter().nth(index))
     }
 
     /// Omit review state only within transferred body content and its selected notes.
