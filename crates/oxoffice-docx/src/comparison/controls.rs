@@ -190,10 +190,17 @@ pub(super) fn compare_control_from_xml(
             )?;
             return Ok(output);
         }
-        // The last paragraph mark of a control's content cannot be taken
-        // out: a control holding nothing in one version cannot be marked to
-        // hold the other's content.
-        if original_content.is_empty() != edited_content.is_empty() {
+        // The last paragraph mark of a block control's content cannot be
+        // taken out: a control holding nothing in one version cannot be
+        // marked to hold the other's paragraphs. Runs of an inline one can.
+        let blocks = |content: &[&SdtContent]| {
+            content
+                .iter()
+                .any(|item| matches!(item, SdtContent::Paragraph(_) | SdtContent::Table(_)))
+        };
+        if original_content.is_empty() != edited_content.is_empty()
+            && (blocks(&original_content) || blocks(&edited_content))
+        {
             return Err(Error::Other(format!(
                 "comparison cannot give an empty block content control content, nor take all of it, at {location}"
             )));
