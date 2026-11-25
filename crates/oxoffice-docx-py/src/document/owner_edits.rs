@@ -936,10 +936,15 @@ impl PyDocument {
     pub(crate) fn publish_owner_candidate(
         &mut self,
         py: Python<'_>,
-        candidate: oxoffice_docx::Document,
+        mut candidate: oxoffice_docx::Document,
         operation: &'static str,
         publication: WordPublication,
     ) -> PyResult<()> {
+        let publication = if self.reread_edited_body_blocks(&mut candidate) {
+            publication
+        } else {
+            WordPublication::Conservative
+        };
         if self
             .inner
             .saves_as(&candidate)
@@ -961,11 +966,16 @@ impl PyDocument {
     pub(crate) fn publish_block_candidate(
         &mut self,
         py: Python<'_>,
-        candidate: oxoffice_docx::Document,
+        mut candidate: oxoffice_docx::Document,
         operation: &'static str,
         publication: WordPublication,
         slot: usize,
     ) -> PyResult<()> {
+        let publication = if self.reread_edited_body_blocks(&mut candidate) {
+            publication
+        } else {
+            WordPublication::Conservative
+        };
         let Some(same) = self.direct_paragraph_saves_as(&candidate, slot) else {
             return self.publish_owner_candidate(py, candidate, operation, publication);
         };
@@ -2275,9 +2285,11 @@ impl PyDocument {
     pub(super) fn publish_api_candidate(
         &mut self,
         py: Python<'_>,
-        candidate: oxoffice_docx::Document,
+        mut candidate: oxoffice_docx::Document,
         operation: &'static str,
     ) -> PyResult<()> {
+        // Every handle retires here: the reread needs no check.
+        self.reread_edited_body_blocks(&mut candidate);
         if self
             .inner
             .saves_as(&candidate)
@@ -2298,10 +2310,15 @@ impl PyDocument {
     pub(super) fn publish_form_candidate(
         &mut self,
         py: Python<'_>,
-        candidate: oxoffice_docx::Document,
+        mut candidate: oxoffice_docx::Document,
         operation: &'static str,
         publication: WordPublication,
     ) -> PyResult<()> {
+        let publication = if self.reread_edited_body_blocks(&mut candidate) {
+            publication
+        } else {
+            WordPublication::Conservative
+        };
         if self
             .inner
             .saves_as(&candidate)

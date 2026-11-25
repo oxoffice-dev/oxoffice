@@ -476,7 +476,13 @@ impl PyDocument {
         operation: &'static str,
         publication: WordPublication,
     ) -> PyResult<()> {
-        self.reread_edited_body_blocks(&mut candidate);
+        // A changed block that was not in the reader's form keeps no handle:
+        // its reread may split runs that kept handles name by index.
+        let publication = if self.reread_edited_body_blocks(&mut candidate) {
+            publication
+        } else {
+            WordPublication::Conservative
+        };
         let shift = self.block_shift(py, &candidate, &publication)?;
         if shift.as_ref().is_some_and(|shift| shift.unchanged) {
             return Ok(());
@@ -491,18 +497,26 @@ impl PyDocument {
 
 impl PyDocument {
     /// Put in place of each direct body block that `candidate`, this
-    /// document after a block edit, changed the block a reopen of the saved
-    /// file reads ([`oxoffice_docx::Document::reread_body_block`]), so that
-    /// reads after the edit are those of the saved file (a field added to a
-    /// run reads as its own runs). The staged route copied the body already;
+    /// document after an edit, changed the block a reopen of the saved file
+    /// reads ([`oxoffice_docx::Document::reread_body_block`]), so that reads
+    /// after the edit are those of the saved file (a field added to a run
+    /// reads as its own runs). A staged route copied the body already;
     /// finding the changed blocks costs no more. A block that does not read
     /// back keeps its model, as before; a body whose block count changed is
     /// left as it is.
-    fn reread_edited_body_blocks(&self, candidate: &mut oxoffice_docx::Document) {
+    ///
+    /// `false` when the live block in place of a changed one was not what
+    /// its own bytes read back as: owners kept outside the edited element
+    /// (another cell of a table) may then name runs the reread split, so the
+    /// caller keeps no handle.
+    pub(crate) fn reread_edited_body_blocks(
+        &self,
+        candidate: &mut oxoffice_docx::Document,
+    ) -> bool {
         let live = self.inner.body_children();
         let edited = candidate.body_children();
         if live.len() != edited.len() {
-            return;
+            return true;
         }
         let changed = live
             .iter()
@@ -511,7 +525,12 @@ impl PyDocument {
             .filter(|(_, (live, edited))| live != edited)
             .map(|(slot, _)| slot)
             .collect::<Vec<_>>();
+        let mut kept_live = true;
         for slot in changed {
+            kept_live &= self
+                .inner
+                .reread_body_block(&live[slot])
+                .is_ok_and(|reread| reread == live[slot]);
             let _ = candidate.reread_body_blocks_in_place(slot, 1);
             #[cfg(debug_assertions)]
             if let Ok(reread) = candidate.reread_body_block(&candidate.body_children()[slot]) {
@@ -521,6 +540,7 @@ impl PyDocument {
                 );
             }
         }
+        kept_live
     }
 }
 

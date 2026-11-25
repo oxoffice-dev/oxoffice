@@ -342,9 +342,15 @@ whole route. The staged route of a block edit (`publish_block_edit`) no
 longer reopens either: it installs the edited copy. It now rereads the direct
 body blocks the copy changed the same way before it publishes, which costs no
 more than the copy it already made; so an in-place call that falls back to it
-(a field added before a later hyperlink) reads as the saved file too. Debug
-builds check after every block replacement and every staged block edit that
-each new block equals the reread of its own bytes.
+(a field added before a later hyperlink) reads as the saved file too. The
+other staged publications of an edited copy (owner, block, form and API
+candidates, `insert_citation*` among them) reread the same way. When the
+live block in place of a changed one was not in the reader's form, the
+publication keeps no handle, since its reread may split runs that kept
+handles name by index. Stories outside the body (headers, footers, notes,
+comments) publish through their own story read, which already reads the
+part again. Debug builds check after every block replacement and every
+staged block edit that each new block equals the reread of its own bytes.
 
 ## Links
 

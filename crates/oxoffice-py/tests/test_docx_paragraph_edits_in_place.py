@@ -50,6 +50,10 @@ EDITS = {
 }
 
 
+# The calls that add a field, whose result the reader splits into a run of its own.
+FIELD_CALLS = ("Run.add_field", "Run.add_legacy_form_field")
+
+
 def texts(doc):
     """Every read the edits must leave in document order, from fresh handles."""
     return {
@@ -58,6 +62,12 @@ def texts(doc):
         "tables": [[[cell.text for cell in row.cells] for row in table.rows] for table in doc.tables],
         "cell paragraphs": [
             [paragraph.text for paragraph in cell.paragraphs]
+            for table in doc.tables
+            for row in table.rows
+            for cell in row.cells
+        ],
+        "cell runs": [
+            [[run.text for run in paragraph.runs] for paragraph in cell.paragraphs]
             for table in doc.tables
             for row in table.rows
             for cell in row.cells
@@ -105,6 +115,15 @@ def test_a_field_added_in_a_new_document_reads_as_its_own_runs(call):
     EDITS[call][0](doc, doc.paragraphs[1])
     assert texts(doc) == texts(reopened(doc))
     assert len(doc.paragraphs[1].runs) > 1
+
+
+@pytest.mark.parametrize("call", FIELD_CALLS)
+def test_a_field_added_in_a_cell_reads_as_the_saved_file_reads(body, call):
+    doc = oxdocx.Document.from_bytes(body)
+    cell = doc.tables[0].cell(1, 1).paragraphs[0]
+    EDITS[call][0](doc, cell)
+    assert texts(doc) == texts(reopened(doc))
+    assert len(doc.tables[0].cell(1, 1).paragraphs[0].runs) > 1
 
 
 @pytest.mark.parametrize("call", list(EDITS))
@@ -218,10 +237,6 @@ def test_a_publication_that_fails_after_the_swap_puts_the_paragraph_back(body, c
     assert "on request" in str(raised.value)
     monkeypatch.delenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE")
     check_unchanged(doc, before, handles)
-
-
-# The calls that add a field, whose result the reader splits into a run of its own.
-FIELD_CALLS = ("Run.add_field", "Run.add_legacy_form_field")
 
 
 def reads_the_same_after_a_reopen(doc, call):
