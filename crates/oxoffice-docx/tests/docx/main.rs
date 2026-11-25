@@ -34,6 +34,7 @@ mod property_strings;
 mod reader_view;
 mod render;
 mod revisions_and_compare;
+mod revisions_in_place;
 mod sections_and_headers;
 mod settings_strings;
 mod story_paragraphs;

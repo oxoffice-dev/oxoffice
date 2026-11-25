@@ -358,6 +358,7 @@ mod edit_in_place;
 #[cfg(debug_assertions)]
 pub(crate) use edit_in_place::without_namespace_declarations;
 mod relationships;
+mod revisions_in_place;
 mod staged_output;
 mod staging;
 use edit_in_place::InPlaceState;

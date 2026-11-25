@@ -27,6 +27,18 @@ pub struct SlotHit {
 }
 
 const STYLE_ELEMENTS: &[&[u8]] = &[b"pStyle", b"rStyle", b"tblStyle"];
+/// The revision elements the resolver selects by `w:id`
+/// (`revision::is_revision_local`).
+pub(crate) const REVISION_ELEMENTS: &[&[u8]] = &[
+    b"ins",
+    b"del",
+    b"moveFrom",
+    b"moveTo",
+    b"rPrChange",
+    b"pPrChange",
+    b"tblPrChange",
+    b"sectPrChange",
+];
 const COMMENT_ELEMENTS: &[&[u8]] = &[
     b"commentRangeStart",
     b"commentRangeEnd",
@@ -37,7 +49,7 @@ const COMMENT_ELEMENTS: &[&[u8]] = &[
 /// is `attribute`, on each element start whose local name is one of
 /// `elements`, whatever their prefixes. A value that does not unescape is
 /// passed as written.
-fn raw_attribute_values(
+pub(crate) fn raw_attribute_values(
     xml: &[u8],
     elements: &[&[u8]],
     attribute: &[u8],
@@ -328,6 +340,48 @@ impl Document {
         #[cfg(debug_assertions)]
         self.assert_slots_match_serialized(&hits, COMMENT_ELEMENTS, &raw_id);
         hits
+    }
+
+    /// The body blocks that hold a revision element of id `id` (an
+    /// insertion, a deletion, a move, a property change). Every revision is
+    /// written from bytes the model keeps, so each hit is raw.
+    #[doc(hidden)]
+    pub fn body_slots_with_revision_id(&self, id: i32) -> Vec<SlotHit> {
+        let raw_id = move |value: i32| value == id;
+        let typed_run = |_: &RunContent| false;
+        let hits = search_slots(self, &mut |block| {
+            let mut search = ReferenceSearch {
+                elements: REVISION_ELEMENTS,
+                raw_id: &raw_id,
+                typed_run: &typed_run,
+                comment_ranges: false,
+                typed: 0,
+                raw_hit: false,
+            };
+            block.visit_written(&mut search);
+            (search.typed, search.raw_hit)
+        });
+        #[cfg(debug_assertions)]
+        self.assert_slots_match_serialized(&hits, REVISION_ELEMENTS, &raw_id);
+        hits.into_iter().map(|(hit, _)| hit).collect()
+    }
+
+    /// Whether what the main part writes outside its body's blocks (the
+    /// background, the body's final section properties) holds a revision
+    /// element of id `id`.
+    pub(crate) fn main_part_frame_has_revision_id(&self, id: i32) -> bool {
+        let raw_id = move |value: i32| value == id;
+        let typed_run = |_: &RunContent| false;
+        let mut search = ReferenceSearch {
+            elements: REVISION_ELEMENTS,
+            raw_id: &raw_id,
+            typed_run: &typed_run,
+            comment_ranges: false,
+            typed: 0,
+            raw_hit: false,
+        };
+        self.document.visit_written_outside_body(&mut search);
+        search.raw_hit
     }
 
     /// Debug proof of a slot query: the blocks of the serialized main part

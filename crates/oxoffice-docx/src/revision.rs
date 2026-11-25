@@ -455,12 +455,12 @@ impl Document {
 
     /// Accept every modeled revision element carrying `id`.
     pub fn accept_revision_id(&mut self, id: i32) -> Result<usize> {
-        self.resolve_revisions(Resolution::Accept, RevisionScope::Id(id))
+        self.resolve_revision_id(Resolution::Accept, id)
     }
 
     /// Reject every modeled revision element carrying `id`.
     pub fn reject_revision_id(&mut self, id: i32) -> Result<usize> {
-        self.resolve_revisions(Resolution::Reject, RevisionScope::Id(id))
+        self.resolve_revision_id(Resolution::Reject, id)
     }
 
     /// Accept every modeled revision element whose `w:id` is in `ids`.
@@ -752,6 +752,113 @@ pub(crate) fn resolve_story_xml(
 ) -> Result<(Vec<u8>, usize)> {
     let (output, count, _) = resolve_story_xml_with_leaf_ranges(source, resolution, scope, &[])?;
     Ok((output, count))
+}
+
+/// Resolve revision `id` in a main part that holds one direct body
+/// paragraph (`Document::body_block_in_frame`), as the main part's route
+/// renders a whole main part, with no note custody pair: the part and the
+/// number of revision elements resolved. The caller proved with
+/// [`body_paragraph_resolves_alone`] that the paragraph resolves alone.
+pub(crate) fn resolve_body_paragraph_alone(
+    xml: &[u8],
+    resolution: Resolution,
+    id: i32,
+) -> Result<(Vec<u8>, usize)> {
+    let tree = XmlTree::parse(xml)?;
+    let (output, count, _) =
+        render_with_source_ranges(&tree, resolution, RevisionScope::Id(id), Vec::new())?;
+    Ok((output, count))
+}
+
+/// Whether resolving revision `id` in the one direct body paragraph of the
+/// main part `xml` (`Document::body_block_in_frame`) reads and changes that
+/// paragraph alone, so that it gives the paragraph the whole main part's
+/// route gives it, and nothing else changes:
+///
+/// - no paragraph mark carries a revision of `id`: removing a mark joins
+///   the paragraph with the next one;
+/// - it holds no section properties, no comment range mark or reference
+///   (a comment whose marks go is removed with them), no footnote or
+///   endnote reference and no comparison custody pair (note custody), and
+///   no field character, field instruction or simple field (a field may
+///   cross into another paragraph, and its carriage is checked across the
+///   part).
+///
+/// The checks read the whole paragraph, revised or not, and the stories it
+/// holds (text boxes): they keep the route conservative.
+pub(crate) fn body_paragraph_resolves_alone(xml: &[u8], id: i32) -> Result<bool> {
+    let tree = XmlTree::parse(xml)?;
+    let word_child = |parent: usize, local: &str| {
+        tree.elements[parent]
+            .children
+            .iter()
+            .copied()
+            .filter(|child| tree.elements[*child].word && tree.elements[*child].local == local)
+            .collect::<Vec<_>>()
+    };
+    let [body] = word_child(tree.root, "body")[..] else {
+        return Ok(false);
+    };
+    let owners = tree.elements[body]
+        .children
+        .iter()
+        .copied()
+        .filter(|child| tree.story_owner(*child))
+        .collect::<Vec<_>>();
+    let [paragraph] = owners[..] else {
+        return Ok(false);
+    };
+    if tree.elements[paragraph].local != "p" {
+        return Ok(false);
+    }
+    let span = tree.elements[paragraph].start..tree.elements[paragraph].end;
+    let id = id.to_string();
+    for (index, element) in tree.elements.iter().enumerate() {
+        if !span.contains(&element.start) {
+            continue;
+        }
+        if element.word
+            && matches!(
+                element.local.as_str(),
+                "sectPr"
+                    | "commentRangeStart"
+                    | "commentRangeEnd"
+                    | "commentReference"
+                    | "footnoteReference"
+                    | "endnoteReference"
+                    | "fldChar"
+                    | "instrText"
+                    | "fldSimple"
+            )
+        {
+            return Ok(false);
+        }
+        if element.word
+            && element.local == "bookmarkStart"
+            && tree
+                .word_attribute(index, "name")?
+                .is_some_and(|name| name.starts_with("_rdocxCmpNote"))
+        {
+            return Ok(false);
+        }
+        // A revision of the paragraph mark: a revision element of `id` in
+        // the run properties of the paragraph's properties.
+        if is_revision_local(&element.local)
+            && tree
+                .element_id(index)
+                .is_some_and(|value| value.trim() == id)
+            && element.parent.is_some_and(|properties| {
+                let properties = &tree.elements[properties];
+                properties.local == "rPr"
+                    && properties
+                        .parent
+                        .is_some_and(|owner| tree.elements[owner].local == "pPr")
+            })
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Transport positively associated whole text leaves through the actual resolver.
