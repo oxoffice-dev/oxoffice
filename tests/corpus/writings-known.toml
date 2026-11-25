@@ -1,18 +1,9 @@
-# Inputs whose equivalent writings give another result than the original
-# today, read by the writings tests of the docx and pptx test binaries
-# (specs/2026-11-25-equivalent-xml-writings.md). Written by hand. Like every
-# known failure of the suite, an entry is strict: a difference not listed
-# fails the test, and an entry that no longer happens fails it too, so that
-# a fix removes its entries. `input` is an input's name, or `*` and the end
-# of the names it stands for (`*.docx`) for a class met on many inputs: such
-# an entry is checked for staleness by the full checks only. `message` is
-# text the finding must hold, so that a difference with another cause still
-# fails. `debug_assertions = true` marks an entry only a build with debug
-# assertions meets (the full checks: one of their cross-checks fails first),
-# `false` one only a build without them meets (pull requests). Entries are
-# grouped by root cause, one block per class, never reordered so that
-# branches fixing other classes merge cleanly; an entry cites #658 until its
-# class has an issue of its own.
+# Differences equivalent writings give today (specs/2026-11-25-equivalent-
+# xml-writings.md), strict: an unlisted one fails, and so does an entry that
+# no longer happens. `input` is a name, or `*.docx`/`*.pptx` for a class
+# (stale only under the full checks); `message` is text the finding holds;
+# `debug_assertions` keeps an entry to builds with or without them. One block
+# per class, never reordered, so branches merge cleanly.
 
 # A: an empty element written with an end tag is read only from an
 # empty-element tag: the Event::Empty arms model it, the Event::Start arm
@@ -83,20 +74,6 @@ message = "gives another result"
 # src), a:bodyPr anchor and insets (oxoffice-drawing text/body.rs);
 # oxoffice_core::xml::attribute_text resolves them.
 
-[[known]]
-input = "*.docx"
-writing = "leading-character-reference"
-operation = "open"
-issue = 658
-message = "OXML parsing error: invalid value"
-
-[[known]]
-input = "*.pptx"
-writing = "leading-character-reference"
-operation = "open"
-issue = 658
-message = "has invalid @"
-
 # D1: an edited paragraph declares `w` only, and writes `r:id` with no
 # binding: the part written is no XML (oxoffice-docx-oxml
 # text/emission.rs:542-547 restore_word_binding,
@@ -157,10 +134,8 @@ operation = "edit xml"
 issue = 658
 message = "alphaModFix"
 
-# D4: a document whose root binds the default namespace refuses every edit:
-# oxoffice-docx document/namespaces.rs:219-229
-# unsafe_serializer_namespace_prefix. A known limitation,
-# docx-default-namespace (#663).
+# D4: a document whose root binds the default namespace refuses every edit
+# (document/namespaces.rs:219-229): limitation docx-default-namespace, #663.
 
 [[known]]
 input = "*.docx"
@@ -211,11 +186,8 @@ operation = "edit xml"
 issue = 658
 message = "reads otherwise"
 
-# G: under the default namespace, a save holds other ids than it writes: a
-# debug cross-check of every save (oxoffice-docx
-# document/canonicalize.rs:611-639) reads other bookmark, drawing and
-# relationship ids back than the model holds. A known limitation,
-# docx-default-namespace (#663).
+# G: under the default namespace a save reads back other ids than it holds
+# (debug check, document/canonicalize.rs:611-639): #663.
 
 [[known]]
 input = "*.docx"
@@ -236,9 +208,8 @@ debug_assertions = true
 # O: the original fails too: no writing is to blame: the original refuses the
 # comparison otherwise.
 
-# H: the comparison after an edit that another class broke (D1 writes `r:id`
-# unbound in the edited paragraph; D6 keeps a cell paragraph's `w:cnfStyle`
-# under another prefix raw): these go with their class.
+# H: compare after an edit D1 (`r:id` unbound) or D6 (`w:cnfStyle` kept raw)
+# broke: these go with their class.
 
 [[known]]
 input = "word/contract.docx"

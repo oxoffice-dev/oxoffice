@@ -37,20 +37,21 @@ writing:
 | --- | --- | --- |
 | `empty-with-end-tag` | every `<x .../>` as `<x ...></x>` | LibreOffice (`w:fldChar`, #413) |
 | `empty-self-closed` | every `<x ...></x>` with nothing inside as `<x .../>` | Google Docs (`w:sdtContent`, #656) |
-| `other-prefixes` | the main namespaces (WordprocessingML, PresentationML, DrawingML main, relationships, math, wordprocessingDrawing, picture, chart, diagram; transitional and strict) bound to `ox0`, `ox1`... where their prefixes were declared | generated writers (`ns0:`) |
-| `default-namespace` | the root's namespace as the default namespace: its elements without a prefix, its attributes keeping theirs (an attribute without a prefix has no namespace) | .NET `XElement` writers |
+| `other-prefixes` | the main namespaces (WordprocessingML, PresentationML, DrawingML main, relationships, math, wordprocessingDrawing, picture, chart) bound to `ox0`, `ox1`... where their prefixes were declared | generated writers (ElementTree's `ns0:`) |
+| `default-namespace` | the root's namespace as the default namespace: its elements without a prefix, its attributes keeping theirs (an attribute without a prefix has no namespace); only in a part where every element has a prefix and none declares a default namespace | .NET `XElement` writers |
 | `indented` | a line break and an indent between tags, never in an element without child elements, in an element with text of its own, or under `xml:space="preserve"` | pretty printers |
 | `attribute-order` | the attributes of every tag, namespace declarations included, in reverse order | any writer |
 | `single-quotes` | every attribute value between `'` | any writer |
 | `tag-spacing` | line breaks and spaces inside tags: around `=`, between attributes, before `>`, `/>` and the `>` of an end tag | hand edits |
 | `character-references` | every character outside ASCII as `&#x..;`, `>`, `"` and `'` as entities, in text and attribute values | ASCII-only writers |
-| `leading-character-reference` | the first non-space character of every text and of every attribute value that declares no namespace as `&#..;`, ASCII letters and digits included | none known: the worst case of the one above |
 
-The markup compatibility attributes that list prefixes (`mc:Ignorable`,
-`mc:MustUnderstand`, `mc:ProcessContent`, `mc:PreserveElements`,
-`mc:PreserveAttributes`, `Requires` on `mc:Choice`) follow a renamed
-prefix. Whitespace and references to whitespace are never written, so no
-attribute value changes under attribute-value normalisation.
+No rewrite tracks namespace scopes: a part that binds a prefix twice, or
+whose markup compatibility lists (`mc:Ignorable`, `Requires`...) name a
+renamed main prefix, is refused (none in the corpus). Whitespace and
+references to whitespace are never written, so no attribute value changes
+under attribute-value normalisation. A first version also wrote the first
+character of every value as a reference (`&#49;2240`); no producer does,
+and it was dropped.
 
 Not done: CDATA sections, comments and processing instructions added,
 line ends, the XML declaration, other encodings. No producer of the
@@ -68,8 +69,7 @@ with references resolved and literal whitespace normalised; one line per
 text, references resolved and CDATA read; an empty-element tag as a start
 and an end. A text of whitespace only, outside `xml:space="preserve"`, in
 an element that holds elements is no line: WordprocessingML, PresentationML
-and DrawingML declare element-only content there. The prefixes the markup
-compatibility attributes list are expanded. Two writings are equivalent
+and DrawingML declare element-only content there. Two writings are equivalent
 when their canonical forms are equal; this is the infoset minus namespace
 declarations, prefixes and that whitespace.
 
@@ -146,8 +146,6 @@ The same result is, step by step:
   binary under the `ci` profile the full checks use (2,892 in `scaling`),
   about 30 minutes of wall time on a 4-core runner, and 396 for the deck
   binary.
-- `OXOFFICE_WRITINGS_ONLY="google/form.docx indented"` narrows a local run
-  to the inputs and writings named.
 
 ### 6. Known differences are strict
 

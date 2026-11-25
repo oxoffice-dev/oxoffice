@@ -1,481 +1,284 @@
-//! The check the writings tests of both facades run: each input rewritten
-//! in each writing, the operations run on the original and on the rewrite,
-//! what they give compared, and the differences matched against the strict
-//! list of known ones.
+//! The check both facades' writings tests run: each input in each writing,
+//! the operations compared with the original's, the differences matched
+//! against the strict list of known ones.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::canonical::{canonical, first_difference};
-use crate::package::{package_parts, rewrite_package};
-use crate::writing::Writing;
-
-/// What an operation gave, as text, or why it failed.
-pub type Step = Result<String, String>;
+use crate::writing::{Writing, package_parts, rewrite_package};
 
 /// Every operation on one writing of a document.
 pub type Operations = dyn Fn(&[u8]) -> Outcome + Sync;
-
-/// A save without an edit of one writing of a document.
+/// A save without an edit.
 pub type Save = dyn Fn(&[u8]) -> Result<Vec<u8>, String> + Sync;
 
-/// The canonical form of every XML part of a package, and the size and a
-/// hash of every other part, by name.
-pub type Parts = BTreeMap<String, Result<String, String>>;
-
-/// What the operations give on one writing of a document.
+/// What the operations give on one writing: each step's result as text or
+/// its error, and the XML each saving step wrote.
 #[derive(Default)]
 pub struct Outcome {
-    pub steps: BTreeMap<&'static str, Step>,
-    /// The parts each saving step wrote.
-    pub saved: BTreeMap<&'static str, Parts>,
+    steps: BTreeMap<&'static str, Result<String, String>>,
+    saved: BTreeMap<&'static str, BTreeMap<String, Result<String, String>>>,
 }
 
 impl Outcome {
-    pub fn step(&mut self, name: &'static str, step: Step) {
+    pub fn step(&mut self, name: &'static str, step: Result<String, String>) {
         self.steps.insert(name, step);
     }
 
-    /// The package a step saved, read part by part.
-    pub fn saved(&mut self, name: &'static str, bytes: &[u8]) {
-        self.saved.insert(name, parts(bytes).unwrap_or_default());
+    /// A step that saved: its text (or error), and the XML it wrote.
+    pub fn saving(&mut self, name: &'static str, result: &Result<(Vec<u8>, String), String>) {
+        let (bytes, text) = match result {
+            Ok((bytes, text)) => (Some(bytes), Ok(text.clone())),
+            Err(error) => (None, Err(error.clone())),
+        };
+        self.step(name, text);
+        bytes.into_iter().for_each(|bytes| self.saved(name, bytes));
     }
-}
 
-fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
-    panic
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
-        .unwrap_or_default()
+    /// The XML parts of the package a step saved, in their canonical form.
+    fn saved(&mut self, name: &'static str, bytes: &[u8]) {
+        let parts = package_parts(bytes).unwrap_or_default().into_iter();
+        let xml = parts.filter(|(part, _)| part.ends_with(".xml") || part.ends_with(".rels"));
+        self.saved.insert(
+            name,
+            xml.map(|(part, data)| (part, canonical(&data))).collect(),
+        );
+    }
 }
 
 /// `f`, with a panic as its message.
 pub fn attempt<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    catch_unwind(AssertUnwindSafe(f))
-        .unwrap_or_else(|panic| Err(format!("panicked: {}", panic_text(&*panic))))
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|panic| {
+        let text = panic.downcast_ref::<String>().cloned();
+        let text = text.or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()));
+        Err(format!("panicked: {}", text.unwrap_or_default()))
+    })
 }
 
-/// Every part of a package, the XML ones in their canonical form.
-pub fn parts(bytes: &[u8]) -> Result<Parts, String> {
-    Ok(package_parts(bytes)?
-        .into_iter()
-        .map(|(name, data)| {
-            let read = if name.ends_with(".xml") || name.ends_with(".rels") {
-                canonical(&data)
-            } else {
-                let mut hasher = DefaultHasher::new();
-                data.hash(&mut hasher);
-                Ok(format!("{} bytes, {:x}", data.len(), hasher.finish()))
-            };
-            (name, read)
-        })
-        .collect())
+/// One document the writings are tried on: its name and its bytes.
+pub type Input = (String, Vec<u8>);
+
+fn shorten(text: &str) -> String {
+    text.lines()
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(300)
+        .collect()
 }
 
-/// One document the writings are tried on.
-pub struct Input {
-    pub name: String,
-    pub bytes: Vec<u8>,
-}
-
-/// A difference between what the operations give on a writing and on the
-/// original, or a writing that could not be made.
-#[derive(Clone, Debug)]
-pub struct Finding {
-    pub input: String,
-    pub writing: Writing,
-    pub operation: String,
-    pub message: String,
-}
-
-/// The first line of a message, at most 300 characters.
-pub fn shorten(text: &str) -> String {
-    let line = text.lines().next().unwrap_or_default();
-    if line.chars().count() > 300 {
-        format!("{}...", line.chars().take(300).collect::<String>())
-    } else {
-        line.to_owned()
-    }
-}
-
-/// `f` over every item on as many threads as the machine has, each with an
-/// 8 MiB stack, the results in item order; a panic is `None`.
-fn map_in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<Option<R>> {
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+/// `f` over every item on as many threads as the machine has, with 8 MiB
+/// stacks, the results in item order; a panic is `None`.
+fn in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<Option<R>> {
     let next = AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut results: Vec<(usize, Option<R>)> = std::thread::scope(|scope| {
+        let work = || {
+            let mut done = Vec::new();
+            loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(item) = items.get(index) else {
+                    break done;
+                };
+                done.push((index, catch_unwind(AssertUnwindSafe(|| f(item))).ok()));
+            }
+        };
         let workers: Vec<_> = (0..threads.min(items.len()))
             .map(|_| {
                 std::thread::Builder::new()
-                    .stack_size(8 * 1024 * 1024)
-                    .spawn_scoped(scope, || {
-                        let mut done = Vec::new();
-                        loop {
-                            let index = next.fetch_add(1, Ordering::Relaxed);
-                            let Some(item) = items.get(index) else {
-                                break done;
-                            };
-                            done.push((index, catch_unwind(AssertUnwindSafe(|| f(item))).ok()));
-                        }
-                    })
-                    .expect("a worker thread starts")
+                    .stack_size(8 << 20)
+                    .spawn_scoped(scope, work)
             })
-            .collect();
+            .collect::<Result<_, _>>()
+            .expect("worker threads start");
         workers
             .into_iter()
-            .flat_map(|worker| worker.join().expect("a worker thread ends"))
+            .flat_map(|worker| worker.join().expect("a worker ends"))
             .collect()
     });
     results.sort_by_key(|(index, _)| *index);
     results.into_iter().map(|(_, result)| result).collect()
 }
 
-/// The parts a save without an edit changes or drops.
+/// The parts a save without an edit changes or drops, of those given.
 fn changed_by_save(
-    input: &BTreeMap<String, Vec<u8>>,
+    parts: &[(String, Vec<u8>)],
     save: &Save,
     bytes: &[u8],
 ) -> Option<BTreeSet<String>> {
-    let saved: BTreeMap<_, _> = package_parts(&attempt(|| save(bytes)).ok()?)
+    let saved: HashMap<_, _> = package_parts(&attempt(|| save(bytes)).ok()?)
         .ok()?
         .into_iter()
         .collect();
     Some(
-        input
+        parts
             .iter()
-            .filter(|(name, data)| saved.get(*name) != Some(*data))
+            .filter(|(name, data)| saved.get(name) != Some(data))
             .map(|(name, _)| name.clone())
             .collect(),
     )
 }
 
-/// Where `rewritten` differs from `original`, operation by operation, then
-/// the XML each saving step wrote, part by part.
+/// Where `rewritten` differs from `original`: step by step, then the XML each
+/// saving step wrote, part by part.
 fn differences(original: &Outcome, rewritten: &Outcome) -> Vec<(String, String)> {
     let mut found = Vec::new();
-    for (operation, expected) in &original.steps {
-        let message = match (expected, rewritten.steps.get(operation)) {
-            // A step that did not run: an earlier one already differs.
-            (_, None) => None,
-            (Ok(expected), Some(Ok(got))) => first_difference(expected, got)
-                .map(|at| format!("gives another result, {}", at.replace('\n', " | "))),
+    for (step, expected) in &original.steps {
+        let message = match (expected, rewritten.steps.get(step)) {
+            (_, None) => None, // an earlier step already differs
+            (Ok(expected), Some(Ok(got))) => {
+                first_difference(expected, got).map(|at| format!("gives another result, {at}"))
+            }
             (Ok(_), Some(Err(error))) => Some(error.clone()),
             (Err(error), Some(Ok(_))) => Some(format!("passes, but the original fails: {error}")),
             (Err(expected), Some(Err(error))) => {
                 (expected != error).then(|| format!("fails otherwise: {error}"))
             }
         };
-        if let Some(message) = message {
-            found.push((operation.to_string(), shorten(&message)));
-        }
+        found.extend(message.map(|message| (step.to_string(), shorten(&message))));
     }
     for (step, expected) in &original.saved {
         let Some(got) = rewritten.saved.get(step) else {
             continue;
         };
-        for (part, read) in expected {
-            let message = match (read, got.get(part)) {
-                (_, None) => Some("is not written".to_owned()),
+        let differs = expected
+            .iter()
+            .find_map(|(part, read)| match (read, got.get(part)) {
+                (_, None) => Some(format!("{part} is not written")),
                 (Ok(expected), Some(Ok(got))) => first_difference(expected, got)
-                    .map(|at| format!("reads otherwise, {}", at.replace('\n', " | "))),
-                (Ok(_), Some(Err(error))) => Some(format!("is no XML: {error}")),
+                    .map(|at| format!("{part} reads otherwise, {at}")),
+                (Ok(_), Some(Err(error))) => Some(format!("{part} is no XML: {error}")),
                 (Err(_), _) => None,
-            };
-            if let Some(message) = message {
-                found.push((format!("{step} xml"), shorten(&format!("{part} {message}"))));
-                break;
-            }
-        }
+            });
+        found.extend(differs.map(|message| (format!("{step} xml"), shorten(&message))));
     }
     found
 }
 
-/// What one run found: the differences, and the steps that fail on the
-/// originals already, which no writing explains.
-pub struct Run {
-    pub findings: Vec<Finding>,
-    pub original_failures: Vec<(String, String, String)>,
-    /// How long the operations took on each original.
-    pub timings: Vec<(String, std::time::Duration)>,
-}
-
-/// Each input rewritten in each writing, `run` on the original and on each
-/// rewrite, and what differs. `save` saves without an edit: a part the
-/// rewrite changed, which a save keeps byte for byte on the original, keeps
-/// its writing too.
-pub fn check(inputs: &[Input], writings: &[Writing], run: &Operations, save: &Save) -> Run {
-    let originals = map_in_parallel(inputs, |input| {
-        let parts: BTreeMap<_, _> = package_parts(&input.bytes)
-            .expect("an input is a package")
-            .into_iter()
-            .collect();
-        let changed = changed_by_save(&parts, save, &input.bytes);
-        let started = std::time::Instant::now();
-        let outcome = run(&input.bytes);
-        (outcome, changed, started.elapsed())
+/// The entries of the known list, each `key = value` line of one
+/// `[[known]]` table by key, those for the other kind of build left out
+/// (`debug_assertions = true` or `false`).
+fn read_known(path: &Path) -> Vec<HashMap<String, String>> {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let entries = text.split("[[known]]").skip(1).map(|entry| {
+        let pairs = entry.lines().filter_map(|line| line.split_once(" = "));
+        let unquoted = |value: &str| value.trim_matches('"').replace("\\\"", "\"");
+        pairs
+            .map(|(key, value)| (key.to_owned(), unquoted(value)))
+            .collect::<HashMap<_, _>>()
     });
-    let mut original_failures = Vec::new();
-    let mut timings = Vec::new();
-    for (input, original) in inputs.iter().zip(&originals) {
-        let (outcome, _, elapsed) = original
-            .as_ref()
-            .expect("the operations run on the original");
-        timings.push((input.name.clone(), *elapsed));
-        for (operation, step) in &outcome.steps {
-            if let Err(error) = step {
-                original_failures.push((input.name.clone(), operation.to_string(), shorten(error)));
-            }
-        }
-    }
-    let cases: Vec<(usize, Writing)> = (0..inputs.len())
-        .flat_map(|index| writings.iter().map(move |writing| (index, *writing)))
-        .collect();
-    let results = map_in_parallel(&cases, |&(index, writing)| {
-        let (original, changed_on_original, _) = originals[index].as_ref().expect("checked above");
-        let rewritten = match rewrite_package(&inputs[index].bytes, writing) {
-            Ok(rewritten) => rewritten,
-            Err(error) => return vec![("rewrite".to_owned(), shorten(&error))],
-        };
-        if rewritten.parts.is_empty() {
-            return Vec::new();
-        }
-        let mut found = differences(original, &run(&rewritten.bytes));
-        let rewritten_parts: BTreeMap<_, _> = package_parts(&rewritten.bytes)
-            .expect("a rewrite is a package")
-            .into_iter()
-            .filter(|(name, _)| rewritten.parts.contains(name))
-            .collect();
-        if let (Some(changed), Some(on_original)) = (
-            changed_by_save(&rewritten_parts, save, &rewritten.bytes),
-            changed_on_original,
-        ) {
-            let lost: Vec<&String> = changed.difference(on_original).collect();
-            if !lost.is_empty() {
-                found.push((
-                    "save verbatim".to_owned(),
-                    format!("a save without an edit rewrites {lost:?}"),
-                ));
-            }
-        }
-        found
-    });
-    let findings = results
-        .into_iter()
-        .zip(&cases)
-        .flat_map(|(found, &(index, writing))| {
-            found
-                .unwrap_or_else(|| vec![("harness".to_owned(), "panicked".to_owned())])
-                .into_iter()
-                .map(move |(operation, message)| Finding {
-                    input: inputs[index].name.clone(),
-                    writing,
-                    operation,
-                    message,
-                })
-        })
-        .collect();
-    Run {
-        findings,
-        original_failures,
-        timings,
-    }
-}
-
-/// A difference a writing gives today, from the known list. `input` is an
-/// input's name, or `*` and the end of the names it stands for (`*.docx`)
-/// for a class of difference met on many inputs.
-pub struct Known {
-    pub input: String,
-    pub writing: String,
-    pub operation: String,
-    pub issue: u32,
-    pub message: String,
-    /// Met only by a build with debug assertions (`debug_assertions =
-    /// true`: one of their cross-checks fails first) or only by one without
-    /// (`false`: that cross-check hides it). Other builds skip the entry.
-    pub debug_assertions: Option<bool>,
-}
-
-impl Known {
-    fn names(&self, input: &str) -> bool {
-        match self.input.strip_prefix('*') {
-            Some(end) => input.ends_with(end),
-            None => self.input == input,
-        }
-    }
-}
-
-/// Every entry of a known list (`tests/corpus/writings-known.toml`).
-pub fn known(path: &Path) -> Vec<Known> {
-    let text =
-        std::fs::read_to_string(path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    text.split("[[known]]")
-        .skip(1)
-        .map(|entry| {
-            let value = |key: &str| {
-                entry
-                    .lines()
-                    .find_map(|line| {
-                        line.strip_prefix(key)
-                            .and_then(|rest| rest.trim_start().strip_prefix('='))
-                            .map(|v| v.trim().trim_matches('"').replace("\\\"", "\""))
-                    })
-                    .unwrap_or_else(|| panic!("an entry of {} has its {key}", path.display()))
-            };
-            Known {
-                input: value("input"),
-                writing: value("writing"),
-                operation: value("operation"),
-                issue: value("issue").parse().expect("an issue number"),
-                message: value("message"),
-                debug_assertions: entry.lines().find_map(|line| {
-                    match line.replace(' ', "").as_str() {
-                        "debug_assertions=true" => Some(true),
-                        "debug_assertions=false" => Some(false),
-                        _ => None,
-                    }
-                }),
-            }
-        })
+    let debug = cfg!(debug_assertions).to_string();
+    entries
         .filter(|entry| {
             entry
-                .debug_assertions
-                .is_none_or(|debug| debug == cfg!(debug_assertions))
+                .get("debug_assertions")
+                .is_none_or(|value| *value == debug)
         })
         .collect()
 }
 
-/// The inputs and writings `OXOFFICE_WRITINGS_ONLY` names, if it is set:
-/// `OXOFFICE_WRITINGS_ONLY="word/report.docx indented"`.
-pub fn only() -> Option<Vec<String>> {
-    std::env::var("OXOFFICE_WRITINGS_ONLY")
-        .ok()
-        .map(|value| value.split_whitespace().map(str::to_owned).collect())
+/// Whether an entry's `input` names this input: one name, or `*.docx`.
+fn names(entry: &HashMap<String, String>, input: &str) -> bool {
+    entry["input"]
+        .strip_prefix('*')
+        .map_or(entry["input"] == input, |end| input.ends_with(end))
 }
 
-/// The writings `only` keeps: those it names, or all when it names none.
-pub fn selected_writings(only: Option<&[String]>) -> Vec<Writing> {
-    let named: Vec<Writing> = only
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|name| Writing::from_name(name))
-        .collect();
-    if named.is_empty() {
-        Writing::ALL.to_vec()
-    } else {
-        named
-    }
-}
-
-/// The inputs `only` keeps: those it names, or all when it names none.
-pub fn selected_inputs(inputs: Vec<Input>, only: Option<&[String]>) -> Vec<Input> {
-    let names = only.unwrap_or_default();
-    if inputs.iter().any(|input| names.contains(&input.name)) {
-        inputs
-            .into_iter()
-            .filter(|input| names.contains(&input.name))
-            .collect()
-    } else {
-        inputs
-    }
-}
-
-/// How much of the inputs and writings a run takes.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
-    /// `OXOFFICE_WRITINGS_ONLY` narrowed it: no entry is stale.
-    Narrowed,
-    /// The pull request sample: an entry for one input is stale when its
-    /// input and writing ran without it.
-    Sample,
-    /// Every input: an entry for many inputs (`*.docx`) is stale too when
-    /// nothing matched it.
-    Full,
-}
-
-/// Runs the check and fails on a difference the known list does not hold,
-/// or on a stale entry (see [`Scope`]). Prints how long each original took,
-/// its own failures and every finding, tab-separated, for `--nocapture`.
-pub fn assert_known(
-    known_list: &Path,
-    inputs: &[Input],
-    writings: &[Writing],
-    scope: Scope,
-    run: &Operations,
-    save: &Save,
-) {
-    let result = check(inputs, writings, run, save);
-    for (input, elapsed) in &result.timings {
-        println!("{input}\ttime\t{:.2} s", elapsed.as_secs_f64());
-    }
-    for (input, operation, error) in &result.original_failures {
-        println!("{input}\toriginal\t{operation}\t{error}");
-    }
-    let known = known(known_list);
-    let mut unexpected = Vec::new();
-    let mut matched = vec![false; known.len()];
-    for finding in &result.findings {
-        println!(
-            "{}\t{}\t{}\t{}",
-            finding.input,
-            finding.writing.name(),
-            finding.operation,
-            finding.message
-        );
-        let same_place = |entry: &&Known| {
-            entry.names(&finding.input)
-                && entry.writing == finding.writing.name()
-                && entry.operation == finding.operation
-        };
-        let what = format!(
-            "{} {} {}",
-            finding.input,
-            finding.writing.name(),
-            finding.operation
-        );
-        if let Some(at) = known
-            .iter()
-            .position(|entry| same_place(&entry) && finding.message.contains(&entry.message))
-        {
-            matched[at] = true;
-        } else if let Some(entry) = known.iter().find(same_place) {
-            unexpected.push(format!(
-                "{what}: not #{} ({:?}) but {}",
-                entry.issue, entry.message, finding.message
-            ));
-        } else {
-            unexpected.push(format!("{what}: {}", finding.message));
+/// Runs `run` on each input and on each of its writings, and fails on a
+/// difference `known_list` does not hold, on one of its entries that did not
+/// happen (one for a kind of inputs only when `full`), or on a writing that
+/// changed no input. Prints the originals' own failures and every
+/// difference, tab-separated, for `--nocapture`.
+pub fn check_writings(known: &Path, inputs: Vec<Input>, full: bool, run: &Operations, save: &Save) {
+    let originals = in_parallel(&inputs, |(_, bytes)| {
+        let parts = package_parts(bytes).expect("an input is a package");
+        (run(bytes), changed_by_save(&parts, save, bytes))
+    });
+    for ((name, _), original) in inputs.iter().zip(&originals) {
+        for (step, result) in &original.as_ref().expect("the original runs").0.steps {
+            if let Err(error) = result {
+                println!("{name}\toriginal\t{step}\t{}", shorten(error));
+            }
         }
     }
-    let ran: BTreeSet<(&str, &str)> = inputs
-        .iter()
-        .flat_map(|input| writings.iter().map(|w| (input.name.as_str(), w.name())))
+    let cases: Vec<(usize, Writing)> = (0..inputs.len())
+        .flat_map(|index| Writing::ALL.map(|writing| (index, writing)))
         .collect();
-    let stale = known.iter().zip(&matched).filter(|(entry, matched)| {
-        let took = if entry.input.starts_with('*') {
-            scope == Scope::Full
-                && ran
-                    .iter()
-                    .any(|(input, writing)| entry.names(input) && *writing == entry.writing)
-        } else {
-            scope != Scope::Narrowed
-                && ran.contains(&(entry.input.as_str(), entry.writing.as_str()))
+    let results = in_parallel(&cases, |&(index, writing)| {
+        let (original, on_original) = originals[index].as_ref().expect("checked above");
+        let (bytes, changed) = match rewrite_package(&inputs[index].1, writing) {
+            Ok(rewritten) => rewritten,
+            Err(error) => return (true, vec![("rewrite".to_owned(), shorten(&error))]),
         };
-        !**matched && took
+        if changed.is_empty() {
+            return (false, Vec::new());
+        }
+        let mut found = differences(original, &run(&bytes));
+        // A save keeps byte for byte every part it keeps on the original.
+        let parts = package_parts(&bytes).expect("a package").into_iter();
+        let parts: Vec<_> = parts.filter(|(name, _)| changed.contains(name)).collect();
+        if let (Some(lost), Some(kept)) = (changed_by_save(&parts, save, &bytes), on_original)
+            && lost.difference(kept).next().is_some()
+        {
+            let lost: Vec<_> = lost.difference(kept).collect();
+            found.push((
+                "save verbatim".into(),
+                format!("a save without an edit rewrites {lost:?}"),
+            ));
+        }
+        (true, found)
     });
-    for (entry, _) in stale {
-        unexpected.push(format!(
-            "{} {} {} gives the same result now: remove its entry (#{}) from {}",
-            entry.input,
-            entry.writing,
-            entry.operation,
-            entry.issue,
-            known_list.display()
-        ));
+    let known = read_known(known);
+    let (mut unexpected, mut matched, mut changing) =
+        (Vec::new(), vec![false; known.len()], BTreeSet::new());
+    for (&(index, writing), result) in cases.iter().zip(results) {
+        let (changed, found) =
+            result.unwrap_or((true, vec![("harness".into(), "panicked".into())]));
+        if changed {
+            changing.insert(writing.name());
+        }
+        let input = &inputs[index].0;
+        for (operation, message) in found {
+            println!("{input}\t{}\t{operation}\t{message}", writing.name());
+            let place = |entry: &&HashMap<String, String>| {
+                names(entry, input)
+                    && entry["writing"] == writing.name()
+                    && entry["operation"] == operation
+            };
+            let what = format!("{input} {} {operation}", writing.name());
+            match known
+                .iter()
+                .position(|entry| place(&entry) && message.contains(&entry["message"]))
+            {
+                Some(at) => matched[at] = true,
+                None => match known.iter().find(place) {
+                    Some(entry) => {
+                        unexpected.push(format!("{what}: not #{} but {message}", entry["issue"]))
+                    }
+                    None => unexpected.push(format!("{what}: {message}")),
+                },
+            }
+        }
+    }
+    for (entry, _) in known.iter().zip(&matched).filter(|(_, matched)| !**matched) {
+        let ran = inputs.iter().any(|(name, _)| names(entry, name));
+        if (ran && (full || !entry["input"].starts_with('*')))
+            || !Writing::ALL.iter().any(|w| w.name() == entry["writing"])
+        {
+            unexpected.push(format!(
+                "{} {} {}: no longer happens, remove its entry (#{})",
+                entry["input"], entry["writing"], entry["operation"], entry["issue"]
+            ));
+        }
+    }
+    for writing in Writing::ALL
+        .iter()
+        .filter(|writing| !changing.contains(&writing.name()))
+    {
+        unexpected.push(format!("{} rewrites no input", writing.name()));
     }
     assert!(unexpected.is_empty(), "{}", unexpected.join("\n"));
 }

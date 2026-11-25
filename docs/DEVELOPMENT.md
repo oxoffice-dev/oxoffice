@@ -261,8 +261,7 @@ A difference known today is listed in `tests/corpus/writings-known.toml`,
 strict like every known failure. Code that needs where an element's content
 or end tag is reads it with `oxoffice_core::xml_element`, never by searching
 for `</name>`: `crates/oxoffice-core/tests/xml_element.rs` refuses such a
-search in `crates/*/src`. `OXOFFICE_WRITINGS_ONLY="google/form.docx
-indented"` narrows a local run; `--nocapture` prints every finding.
+search in `crates/*/src`. `--nocapture` prints every finding.
 
 ## Known limitations
 
