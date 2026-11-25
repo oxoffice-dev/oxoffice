@@ -388,6 +388,34 @@ form operations (#7).
   publishes the changed blocks as above. Measured at 25 and 1,000
   paragraphs, in the body and in a header; the limitation
   `docx-form-cost` goes with the fix.
+- **Form operations as built (amended 2026-11-25).** The blocks that
+  hold a target are found by the walk of what the body writes (#637), a
+  query by tag (`body_slots_with_control_tags`: a typed control's `tag`, or a
+  `tag` element in a raw fragment, whatever its prefix; debug builds check
+  it misses no block of the serialized part). Each such block is written
+  alone between the head and the tail of the main part
+  (`body_block_part`) and read by today's scan, so the controls a call sees
+  are the staged route's, at the cost of those blocks; a header or footer
+  part that names a target is read whole, as today, at its own cost.
+  The checks that need every control holding a tag see every block that
+  holds it. The plan is today's; each changed block is swapped under its
+  own `BodyBlocks` unit, a header or footer part and the custom XML items
+  are written under `Parts`, all in one edit. The binding keeps every
+  handle of a changed block whose stories, items, paragraphs, tables and
+  links are those it held (the paragraphs it holds read their new text),
+  and reads a changed header or footer part again alone (#634's story
+  splice); a block of another shape undoes the edit and takes today's
+  route. A tag a note or a comment names (parts the document models) and a
+  legacy field target keep today's route: a legacy field is addressed by
+  its ordinal in its part, which counts every field of the part, and
+  `set_legacy_form_field_value` stages the document. The staged route
+  patches the producer's bytes of a main part no edit wrote yet, where the
+  in-place route writes it from the model, as every body edit does: the
+  debug oracle compares the main parts read and written again. At 25 and
+  1,000 paragraphs (scaling build), a fill of a body control costs 3.7 and
+  7.6 ms, of a header control 4.5 and 9.0 ms (27.5 s on `main`); a fill of
+  a legacy field still costs 0.5 and 28.7 s, so `docx-form-cost` narrows
+  to legacy fields and #7 stays open for them.
 
 ### S3: headers, footers, section stories, watermarks, page colour (amended 2026-11-25)
 
