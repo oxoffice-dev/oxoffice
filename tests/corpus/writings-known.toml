@@ -81,38 +81,6 @@ message = "gives another result"
 # text/paragraph_write.rs:789-795); debug assertions see it first as ids the
 # saved package does not read back.
 
-[[known]]
-input = "google/contract.docx"
-writing = "other-prefixes"
-operation = "edit"
-issue = 658
-message = "reads other identifiers than it holds"
-debug_assertions = true
-
-[[known]]
-input = "word/contract.docx"
-writing = "other-prefixes"
-operation = "edit"
-issue = 658
-message = "reads other identifiers than it holds"
-debug_assertions = true
-
-[[known]]
-input = "google/contract.docx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "the prefix of r:id is not bound"
-debug_assertions = false
-
-[[known]]
-input = "word/contract.docx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "the prefix of r:id is not bound"
-debug_assertions = false
-
 # D2: a fragment the comparison cuts out is read without the bindings of the
 # part: ox0:history is not w:history (oxoffice-docx
 # comparison/fields.rs:1203-1253).

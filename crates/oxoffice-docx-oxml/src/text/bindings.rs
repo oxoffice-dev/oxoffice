@@ -12,6 +12,35 @@ pub(crate) const ROOT_R_BINDING: u8 = 1;
 pub(crate) const ROOT_MC_BINDING: u8 = 2;
 pub(crate) const ROOT_WP_BINDING: u8 = 4;
 
+/// The bindings of the names the Publication writers generate (`w:p`,
+/// `r:id`, `w14:paraId`, `mc:AlternateContent`, `m:oMath`...), which the
+/// canonical part roots declare.
+const PUBLICATION_BINDINGS: [(&str, &str); 7] = [
+    ("w", crate::namespace::W_NS),
+    ("r", crate::namespace::R_NS),
+    ("mc", MC_NS),
+    ("wp", WP_NS),
+    ("w14", W14_NS),
+    ("w15", crate::comments_extended::W15_NS),
+    ("m", crate::namespace::M_NS),
+];
+
+/// `bindings`, the bindings in scope where a block the Publication writers
+/// wrote goes, with the binding of each name those writers generate whose
+/// prefix the scope leaves free: a part that names the main namespaces with
+/// other prefixes binds no `w` or `r`, and a generated name must not be left
+/// unbound there. A prefix the scope binds keeps its binding.
+pub(crate) fn with_publication_bindings(
+    mut bindings: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    for (prefix, namespace) in PUBLICATION_BINDINGS {
+        if !bindings.iter().any(|(bound, _)| bound == prefix) {
+            bindings.push((prefix.to_owned(), namespace.to_owned()));
+        }
+    }
+    bindings
+}
+
 thread_local! {
     pub(super) static ROOT_BINDINGS: Cell<u8> = const { Cell::new(0) };
     static EMITTED_BINDINGS: RefCell<Option<Rc<EmittedBindings>>> = const { RefCell::new(None) };

@@ -47,7 +47,8 @@ pub(crate) use bindings::{
     raw_with_external_bindings, raw_with_external_bindings_and_map, raw_with_external_bindings_in,
     restore_generated_word_binding, retained_binding_plan, retained_binding_work,
     retained_owner_work, retained_raw_roots, retained_root_plan, retained_source_envelope,
-    root_attribute_value_prefixes, root_binding_scope, write_raw_with_word_override_in,
+    root_attribute_value_prefixes, root_binding_scope, with_publication_bindings,
+    write_raw_with_word_override_in,
 };
 pub use bindings::{declare_w14_on_part_root, is_root_attribute_record};
 use emission::{FieldXmlRecord, field_source_prefix};

@@ -292,3 +292,56 @@ fn a_reread_block_leaves_the_save_to_give_its_pictures_their_drawing_ids() {
         "the save gives each picture its own drawing id"
     );
 }
+
+#[test]
+fn an_edited_paragraph_binds_every_prefix_it_writes_when_the_document_names_them_otherwise() {
+    use oxoffice_xml_test::{Writing, canonical, rewrite_package};
+
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship("https://example.com/schedule");
+    let mut paragraph = doc.add_paragraph("Read the delivery ");
+    paragraph.add_hyperlink("schedule", &relationship);
+    paragraph.add_run(" before the meeting.");
+    let bytes = doc.to_bytes().expect("saves");
+    // The main namespaces under other prefixes (`ox0:p`, `ox3:id`), as a
+    // generated writer names them: no `w` or `r` binding left in the part.
+    let bytes = rewrite_package(&bytes, Writing::OtherPrefixes)
+        .expect("rewrites")
+        .bytes;
+    let mut doc = Document::from_bytes(&bytes).expect("opens");
+    let paragraphs = doc.story_paragraphs().expect("reads");
+    let edited = paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text.contains("delivery"))
+        .expect("the paragraph");
+    assert_eq!(
+        doc.try_replace_text_at(&edited.location, "delivery", "DELIVERY", Some(1))
+            .expect("edits"),
+        Ok(1)
+    );
+    let saved = doc.to_bytes().expect("saves");
+    let part = crate::support::package_parts(&saved)
+        .remove("word/document.xml")
+        .expect("main part");
+    // Every prefix the edited paragraph writes is bound: the part is XML.
+    canonical(&part).expect("the edited part binds every prefix it uses");
+    let mut reopened = Document::from_bytes(&saved).expect("reopens");
+    let text = reopened
+        .story_paragraphs()
+        .expect("reads")
+        .into_iter()
+        .map(|paragraph| paragraph.text)
+        .collect::<Vec<_>>();
+    assert!(
+        text.iter().any(|text| text.contains("DELIVERY schedule")),
+        "{text:?}"
+    );
+    let reopened = reopened.to_bytes().expect("saves again");
+    assert!(
+        String::from_utf8_lossy(
+            &crate::support::package_parts(&reopened)["word/_rels/document.xml.rels"]
+        )
+        .contains("https://example.com/schedule"),
+        "the hyperlink keeps its target"
+    );
+}
