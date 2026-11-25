@@ -280,6 +280,47 @@ The amendment to the one-block spec's decision 3: a whole block content
 control removed, inserted or replaced is a body block like the others;
 paragraphs and tables inside a control, edited alone, keep their route.
 
+## Outcome (B4, phase 1)
+
+Decisions 6, 8 and 9 as decided, with these corrections:
+
+- **Removals and insertions take the splice retention; edits keep B2's.**
+  `publish_body_blocks_replaced` takes N blocks replaced by M with a new
+  `BlockRetention::Spliced`: the old blocks' owners retire, the new ones
+  are born, every other owner keeps its states, the epoch retires. No owner
+  inside the replaced blocks is kept, so decision 7's matcher is not needed
+  for it; it comes with the table as block (decision 10), whose retentions
+  keep owners inside the block. `EditedParagraphKeepsItsOwner` stays B2's
+  1 -> 1 paragraph path.
+- **Plan, reserve, apply.** The publication is split so that another
+  splice can share its revision: `plan_blocks_replaced` (read only; whole
+  route, unchanged, or a plan with the scopes it retires and bears),
+  `reserve_blocks_replaced`, one `commit_scopes` by the caller,
+  `apply_blocks_replaced` (cannot fail), and the debug oracle
+  `assert_blocks_replaced` after every application.
+- **Paragraph section breaks** are refused by the facade (decision 9) and,
+  for insertions, by the splice itself.
+- **"A body that cannot be edited in place"** is a body a typed edit
+  cannot save (`unsavable_body_edit`), not a package that blocks plain
+  local edits: every body Word saved blocks those, and B2 edits such
+  bodies in place. A removal keeps the answer that the body saves, since a
+  body without some of its blocks holds no namespace owner it did not hold
+  (debug builds check a kept answer against a cold one on each read).
+- **Old cell records.** The splice takes cell stories only when they are
+  anchored to their items (#617); records that cannot place a cell-story
+  hyperlink make every later item count as holding one.
+
+`scaling` wheels of main (e473ce26) and of this branch on Linux, the body of
+`test_docx_scaling.py`, fastest of 3 calls:
+
+| Call | 25 ¶ | 100 ¶ | 400 ¶ |
+| --- | --- | --- | --- |
+| `Document.remove_content` | 36.43 -> 0.30 ms | 96.25 -> 0.31 ms | 339.65 -> 0.30 ms |
+| `Document.remove_content_range` | 36.00 -> 0.30 ms | 95.82 -> 0.30 ms | 344.11 -> 0.31 ms |
+| `Document.pop_content` | 30.05 -> 0.38 ms | 67.97 -> 0.39 ms | 226.76 -> 0.38 ms |
+
+The three calls leave `GROWING` (80 -> 77 on main at 090a022f).
+
 ## Links
 
 - #466 (edit cost at the root), #6, #622
