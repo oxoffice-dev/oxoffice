@@ -4204,10 +4204,17 @@ fn apply_style_to_shape(
     let style_xml = style_xml(style, colors, index)?;
     let xml = String::from_utf8(shape.to_xml().map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
-    let marker = xml
-        .find("<p:txBody")
-        .unwrap_or_else(|| xml.rfind("</p:sp>").expect("shape end"));
-    let expanded = format!("{}{}{}", &xml[..marker], style_xml, &xml[marker..]);
+    // The style goes before the text body, or last when the shape has none.
+    let expanded = match oxoffice_core::xml_element::find_element(&xml, "p:txBody")
+        .map_err(|error| error.to_string())?
+    {
+        Some(body) => {
+            let marker = body.start_tag.start;
+            format!("{}{}{}", &xml[..marker], style_xml, &xml[marker..])
+        }
+        None => oxoffice_core::xml_element::append_content(&xml, &style_xml)
+            .map_err(|error| error.to_string())?,
+    };
     CT_Shape::from_xml(expanded.as_bytes()).map_err(|error| error.to_string())
 }
 
@@ -4219,10 +4226,8 @@ fn apply_style_to_connector(
     let style_xml = style_xml(style, colors, 0)?;
     let xml = String::from_utf8(connector.to_xml().map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
-    let marker = xml
-        .rfind("</p:cxnSp>")
-        .ok_or_else(|| "connector XML has no end tag".to_owned())?;
-    let expanded = format!("{}{}{}", &xml[..marker], style_xml, &xml[marker..]);
+    let expanded = oxoffice_core::xml_element::append_content(&xml, &style_xml)
+        .map_err(|error| error.to_string())?;
     CT_ConnectionShape::from_xml(expanded.as_bytes()).map_err(|error| error.to_string())
 }
 
@@ -4279,9 +4284,10 @@ fn color_xml(color: &ColorChoice) -> Result<String, String> {
             .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
-    xml.strip_prefix("<a:solidFill>")
-        .and_then(|value| value.strip_suffix("</a:solidFill>"))
-        .map(str::to_owned)
+    oxoffice_core::xml_element::element_span(&xml)
+        .ok()
+        .filter(|fill| fill.name == "a:solidFill")
+        .map(|fill| xml[fill.content].to_owned())
         .ok_or_else(|| "cannot encode SmartArt colour choice".to_owned())
 }
 

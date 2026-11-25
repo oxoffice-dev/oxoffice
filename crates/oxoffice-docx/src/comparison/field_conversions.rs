@@ -936,9 +936,16 @@ pub(super) fn restore_whole_hyperlinks(
         }
         let mut opening = String::from("<w:hyperlink");
         for (name, carried) in &witness.opening {
+            // The link's own name, whatever its prefix; the field carries it
+            // under the writer's.
+            let key = match name.rsplit(':').next() {
+                Some("id") => "r:id".to_owned(),
+                Some(local) => format!("w:{local}"),
+                None => name.clone(),
+            };
             let value = carried
                 .clone()
-                .or_else(|| values.remove(name.as_str()))
+                .or_else(|| values.remove(key.as_str()))
                 .ok_or_else(|| {
                     Error::Other(format!(
                         "a whole-paragraph hyperlink field does not carry the link's {name}"

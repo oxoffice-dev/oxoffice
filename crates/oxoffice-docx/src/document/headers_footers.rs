@@ -599,13 +599,10 @@ impl Document {
         // Word preserves solid text-fill opacity, while the supported WPS
         // importer preserves the equivalent constant-gradient opacity. Keep
         // both real text owners under their actual declared capability choices.
-        let choice_start = alternate
-            .find("<mc:Choice Requires=\"wps\">")
+        let choice = oxoffice_core::xml_element::find_element(&alternate, "mc:Choice")?
+            .filter(|choice| alternate[choice.start_tag.clone()].contains("Requires=\"wps\""))
             .ok_or_else(|| Error::Other("watermark capability choice is missing".into()))?;
-        let choice_end = alternate[choice_start..]
-            .find("</mc:Choice>")
-            .map(|offset| choice_start + offset + "</mc:Choice>".len())
-            .ok_or_else(|| Error::Other("watermark capability choice is incomplete".into()))?;
+        let (choice_start, choice_end) = (choice.range().start, choice.range().end);
         let original_choice = &alternate[choice_start..choice_end];
         let word_choice = original_choice.replacen("Requires=\"wps\"", "Requires=\"wps w16\" xmlns:w16=\"http://schemas.microsoft.com/office/word/2018/wordml\"", 1);
         alternate.replace_range(choice_start..choice_end, &word_choice);
@@ -624,13 +621,9 @@ impl Document {
         .map_err(|_| Error::Other("watermark textpath source is not UTF-8".into()))?;
         // Word's authored type 136 uses this formula-driven straight text path.
         // Keep the legacy VML authoring writer unchanged and adapt only this fallback.
-        let shape_type_start = fallback
-            .find("<v:shapetype ")
+        let shape_type = oxoffice_core::xml_element::find_element(&fallback, "v:shapetype")?
             .ok_or_else(|| Error::Other("watermark textpath shape type is missing".into()))?;
-        let shape_type_end = fallback[shape_type_start..]
-            .find("</v:shapetype>")
-            .map(|offset| shape_type_start + offset + "</v:shapetype>".len())
-            .ok_or_else(|| Error::Other("watermark textpath shape type is incomplete".into()))?;
+        let (shape_type_start, shape_type_end) = (shape_type.range().start, shape_type.range().end);
         let shape_type = concat!(
             "<v:shapetype id=\"rdocx-watermark-type-text\" coordsize=\"21600,21600\" o:spt=\"136\" adj=\"10800\" path=\"m@7,l@8,m@5,21600l@6,21600e\">",
             "<v:formulas><v:f eqn=\"sum #0 0 10800\"/><v:f eqn=\"prod #0 2 1\"/><v:f eqn=\"sum 21600 0 @1\"/><v:f eqn=\"sum 0 0 @2\"/><v:f eqn=\"sum 21600 0 @3\"/><v:f eqn=\"if @0 @3 0\"/><v:f eqn=\"if @0 21600 @1\"/><v:f eqn=\"if @0 0 @2\"/><v:f eqn=\"if @0 @4 21600\"/><v:f eqn=\"mid @5 @6\"/><v:f eqn=\"mid @8 @5\"/><v:f eqn=\"mid @7 @8\"/><v:f eqn=\"mid @6 @7\"/><v:f eqn=\"sum @6 0 @5\"/></v:formulas>",
@@ -655,15 +648,10 @@ impl Document {
                 "rdocx-watermark-type-text",
                 &format!("rdocx-watermark-type-text-{drawing_id}"),
             );
-        let fallback_start = alternate
-            .find("<mc:Fallback>")
+        let fallback_span = oxoffice_core::xml_element::find_element(&alternate, "mc:Fallback")?
             .ok_or_else(|| Error::Other("watermark fallback source is missing".into()))?;
-        let fallback_end = alternate[fallback_start..]
-            .find("</mc:Fallback>")
-            .map(|offset| fallback_start + offset + "</mc:Fallback>".len())
-            .ok_or_else(|| Error::Other("watermark fallback source is incomplete".into()))?;
         alternate.replace_range(
-            fallback_start..fallback_end,
+            fallback_span.range(),
             &format!("<mc:Fallback>{fallback}</mc:Fallback>"),
         );
         let checksum = structural_fingerprint(alternate.as_bytes())?;

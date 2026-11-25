@@ -626,10 +626,11 @@ fn write_source_autofit<W: Write>(
     let insertion = start_end - if empty { 2 } else { 1 };
     edits.push((insertion, insertion, added));
     if !empty {
-        let close = source
-            .windows(2)
-            .rposition(|bytes| bytes == b"</")
-            .ok_or_else(|| missing_end("autofit"))?
+        let element = std::str::from_utf8(source).map_err(|_| missing_end("autofit"))?;
+        let close = oxoffice_core::xml_element::element_span(element)
+            .map_err(|_| missing_end("autofit"))?
+            .end_tag
+            .start
             + 2;
         edits.push((close, close + old_name.len(), name));
     }

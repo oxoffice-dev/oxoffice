@@ -10,8 +10,9 @@
 # fails. `debug_assertions = true` marks an entry only a build with debug
 # assertions meets (the full checks: one of their cross-checks fails first),
 # `false` one only a build without them meets (pull requests). Entries are
-# grouped by root cause; each issue is #658 until its class has an issue of
-# its own.
+# grouped by root cause, one block per class, never reordered so that
+# branches fixing other classes merge cleanly; an entry cites #658 until its
+# class has an issue of its own.
 
 # A: an empty element written with an end tag is read only from an
 # empty-element tag: the Event::Empty arms model it, the Event::Start arm
@@ -96,18 +97,6 @@ operation = "open"
 issue = 658
 message = "has invalid @"
 
-# C: the end tag of an element is found by searching for its text: `</w:p\n>`
-# is not `</w:p>` (oxoffice-docx comparison/xml.rs:509-512
-# paragraph_close_start, xml.rfind(&closing)); the self-closing owners were
-# #656.
-
-[[known]]
-input = "*.docx"
-writing = "tag-spacing"
-operation = "compare"
-issue = 658
-message = "serialized owner has no end"
-
 # D1: an edited paragraph declares `w` only, and writes `r:id` with no
 # binding: the part written is no XML (oxoffice-docx-oxml
 # text/emission.rs:542-547 restore_word_binding,
@@ -150,14 +139,6 @@ debug_assertions = false
 # part: ox0:history is not w:history (oxoffice-docx
 # comparison/fields.rs:1203-1253).
 
-[[known]]
-input = "word/contract.docx"
-writing = "other-prefixes"
-operation = "compare"
-issue = 658
-message = "history, which no HYPERLINK field switch carries"
-debug_assertions = false
-
 # D3: a namespace is looked up on three elements only, the prefix `a` assumed:
 # a:alphaModFix under another prefix is kept raw, its opacity unread
 # (oxoffice-drawing fill.rs:724-745).
@@ -178,13 +159,14 @@ message = "alphaModFix"
 
 # D4: a document whose root binds the default namespace refuses every edit:
 # oxoffice-docx document/namespaces.rs:219-229
-# unsafe_serializer_namespace_prefix.
+# unsafe_serializer_namespace_prefix. A known limitation,
+# docx-default-namespace (#663).
 
 [[known]]
 input = "*.docx"
 writing = "default-namespace"
 operation = "edit"
-issue = 658
+issue = 663
 message = "shadowed `default` namespace"
 
 # D5: the replay of nested namespace owners cannot match an owner written
@@ -229,172 +211,17 @@ operation = "edit xml"
 issue = 658
 message = "reads otherwise"
 
-# E: an attribute value is found by searching the part's text:
-# `val="FootnoteReference"` is not `val='FootnoteReference'`: a save without
-# an edit adds the style (oxoffice-docx document/staged_output.rs:36-46).
-
-[[known]]
-input = "google/paper.docx"
-writing = "single-quotes"
-operation = "accept xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "google/thesis.docx"
-writing = "single-quotes"
-operation = "accept xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "google/paper.docx"
-writing = "single-quotes"
-operation = "compare xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "google/thesis.docx"
-writing = "single-quotes"
-operation = "compare xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "*.docx"
-writing = "single-quotes"
-operation = "edit xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "google/paper.docx"
-writing = "single-quotes"
-operation = "reject xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "google/thesis.docx"
-writing = "single-quotes"
-operation = "reject xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "*.docx"
-writing = "single-quotes"
-operation = "save verbatim"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "*.docx"
-writing = "single-quotes"
-operation = "save xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "*.docx"
-writing = "single-quotes"
-operation = "validate"
-issue = 658
-message = "gives another result"
-
-[[known]]
-input = "*.docx"
-writing = "tag-spacing"
-operation = "edit xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "*.docx"
-writing = "tag-spacing"
-operation = "save verbatim"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "*.docx"
-writing = "tag-spacing"
-operation = "save xml"
-issue = 658
-message = "word/styles.xml"
-
-[[known]]
-input = "*.docx"
-writing = "tag-spacing"
-operation = "validate"
-issue = 658
-message = "gives another result"
-
-# F: the comparison compares retained XML as text: two writings of one element
-# read as a change: formatting kept with a diagnostic
-# (comparison/paragraph_properties.rs:113-118) or a refusal
-# (comparison/run_source.rs:205-210).
-
-[[known]]
-input = "word/manual.docx"
-writing = "attribute-order"
-operation = "compare"
-issue = 658
-message = "formatting differs and the original formatting was retained"
-
-[[known]]
-input = "word/thesis.docx"
-writing = "attribute-order"
-operation = "compare"
-issue = 658
-message = "formatting differs and the original formatting was retained"
-
-[[known]]
-input = "word/manual.docx"
-writing = "other-prefixes"
-operation = "compare"
-issue = 658
-message = "formatting differs and the original formatting was retained"
-
-[[known]]
-input = "word/thesis.docx"
-writing = "other-prefixes"
-operation = "compare"
-issue = 658
-message = "formatting differs and the original formatting was retained"
-
-[[known]]
-input = "word/manual.docx"
-writing = "single-quotes"
-operation = "compare"
-issue = 658
-message = "formatting differs and the original formatting was retained"
-
-[[known]]
-input = "word/thesis.docx"
-writing = "single-quotes"
-operation = "compare"
-issue = 658
-message = "formatting differs and the original formatting was retained"
-
-[[known]]
-input = "*.docx"
-writing = "tag-spacing"
-operation = "compare"
-issue = 658
-message = "has a different physical role"
-
 # G: under the default namespace, a save holds other ids than it writes: a
 # debug cross-check of every save (oxoffice-docx
 # document/canonicalize.rs:611-639) reads other bookmark, drawing and
-# relationship ids back than the model holds.
+# relationship ids back than the model holds. A known limitation,
+# docx-default-namespace (#663).
 
 [[known]]
 input = "*.docx"
 writing = "default-namespace"
 operation = "save"
-issue = 658
+issue = 663
 message = "reads other identifiers than it holds"
 debug_assertions = true
 
@@ -402,17 +229,36 @@ debug_assertions = true
 input = "*.docx"
 writing = "default-namespace"
 operation = "validate"
-issue = 658
+issue = 663
 message = "reads other identifiers than it holds"
 debug_assertions = true
 
 # O: the original fails too: no writing is to blame: the original refuses the
 # comparison otherwise.
 
+# H: the comparison after an edit that another class broke (D1 writes `r:id`
+# unbound in the edited paragraph; D6 keeps a cell paragraph's `w:cnfStyle`
+# under another prefix raw): these go with their class.
+
+[[known]]
+input = "word/contract.docx"
+writing = "other-prefixes"
+operation = "compare"
+issue = 658
+message = "comparison acceptance does not reproduce the edited stories"
+debug_assertions = false
+
 [[known]]
 input = "google/contract.docx"
 writing = "other-prefixes"
 operation = "compare"
 issue = 658
-message = "fails otherwise: comparison acceptance does not reproduce"
+message = "comparison acceptance does not reproduce the edited stories"
 debug_assertions = false
+
+[[known]]
+input = "word/manual.docx"
+writing = "other-prefixes"
+operation = "compare"
+issue = 658
+message = "formatting differs and the original formatting was retained"

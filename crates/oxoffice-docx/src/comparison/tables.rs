@@ -213,7 +213,7 @@ fn table_properties_xml(
     let current = table_property_xml(&current)?;
     metadata
         .ids
-        .generated(inject_before_close(&current, "</w:tblPr>", &change)?)
+        .generated(append_word_child(&current, "tblPr", &change)?)
 }
 
 fn modeled_table_properties(properties: Option<&CT_TblPr>) -> Option<CT_TblPr> {
@@ -442,23 +442,15 @@ fn marked_direct_runs_xml(owner: &str, kind: &str, metadata: &mut Metadata<'_>) 
                 for (local, deleted_local) in [("t", "delText"), ("instrText", "delInstrText")] {
                     for text in direct_word_element_spans(&run, local)?.into_iter().rev() {
                         let raw = &run[text.clone()];
-                        let (_, empty, name) = element_opening(raw)?;
+                        let (_, _, name) = element_opening(raw)?;
                         let prefix = name
                             .rsplit_once(':')
                             .map(|(prefix, _)| format!("{prefix}:"))
                             .unwrap_or_default();
-                        let mut deleted = raw.to_owned();
-                        if !empty {
-                            let close = deleted
-                                .rfind(&format!("</{name}>"))
-                                .ok_or_else(|| Error::Other("marked text has no end".into()))?;
-                            deleted.replace_range(
-                                close + 2..close + 2 + name.len(),
-                                &format!("{prefix}{deleted_local}"),
-                            );
-                        }
-                        deleted
-                            .replace_range(1..1 + name.len(), &format!("{prefix}{deleted_local}"));
+                        let deleted = oxoffice_core::xml_element::rename(
+                            raw,
+                            &format!("{prefix}{deleted_local}"),
+                        )?;
                         run.replace_range(text, &deleted);
                     }
                 }

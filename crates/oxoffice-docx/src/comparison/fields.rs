@@ -1083,10 +1083,19 @@ pub(super) fn whole_paragraph_hyperlinks(
     if paragraph.hyperlinks.is_empty() {
         return Ok(());
     }
-    let scope: NamespaceBindings = vec![
-        ("xmlns:w".into(), W_NS.into()),
-        ("xmlns:r".into(), R_NS.into()),
-    ];
+    // The writer's own prefixes, and those the paragraph's source binds: a
+    // link attribute kept as read keeps the prefix of its source
+    // (`ox0:history`), declared on the part's root.
+    let mut scope: NamespaceBindings = match metadata.paragraph_source(paragraph) {
+        Some(source) => actual_root_bindings(source, &Vec::new())?
+            .into_iter()
+            .filter(|(name, _)| name != "xmlns:w" && name != "xmlns:r")
+            .collect(),
+        None => Vec::new(),
+    };
+    scope.push(("xmlns:w".into(), W_NS.into()));
+    scope.push(("xmlns:r".into(), R_NS.into()));
+    let scope = actual_root_bindings(xml, &scope)?;
     let spans = direct_word_element_spans_in_scope(xml, "hyperlink", &scope)?;
     if spans.len() != paragraph.hyperlinks.len() {
         return Err(Error::Other(
@@ -1205,7 +1214,9 @@ fn hyperlink_field_instruction(
             .decoded_and_normalized_value(XmlVersion::Implicit1_0, element.decoder())
             .map_err(|error| Error::Other(error.to_string()))?
             .into_owned();
-        let name = match (namespace, local.as_ref()) {
+        // The name as the link writes it: its prefix may be another than `w`.
+        let written = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+        match (namespace, local.as_ref()) {
             (ResolveResult::Bound(Namespace(uri)), b"id") if uri == R_NS.as_bytes() => {
                 let (address, external) = metadata
                     .whole_hyperlinks
@@ -1223,7 +1234,6 @@ fn hyperlink_field_instruction(
                     )));
                 }
                 target = Some(address.clone());
-                "r:id"
             }
             (ResolveResult::Bound(Namespace(uri)), local) if uri == W_NS.as_bytes() => {
                 match local {
@@ -1231,7 +1241,7 @@ fn hyperlink_field_instruction(
                     b"tooltip" => switches.push(("o", value)),
                     b"tgtFrame" => switches.push(("t", value)),
                     b"history" => {
-                        names.push(("w:history".to_owned(), Some(value)));
+                        names.push((written, Some(value)));
                         continue;
                     }
                     _ => {
@@ -1241,11 +1251,6 @@ fn hyperlink_field_instruction(
                         )));
                     }
                 }
-                match local {
-                    b"anchor" => "w:anchor",
-                    b"tooltip" => "w:tooltip",
-                    _ => "w:tgtFrame",
-                }
             }
             _ => {
                 return Err(Error::Other(format!(
@@ -1253,8 +1258,8 @@ fn hyperlink_field_instruction(
                     String::from_utf8_lossy(attribute.key.as_ref())
                 )));
             }
-        };
-        names.push((name.to_owned(), None));
+        }
+        names.push((written, None));
     }
     let quoted = |value: &str| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""));
     let mut instruction = String::from("HYPERLINK");
@@ -1987,10 +1992,11 @@ fn split_field_run(xml: &str, marker: usize, after: bool) -> Result<String> {
         return Ok(xml.to_owned());
     }
     let head = &run[..children[first_content].start];
-    let close = run
-        .rfind("</")
-        .map(|at| &run[at..])
-        .ok_or_else(|| Error::Other("complex field run has no end tag".to_owned()))?;
+    let span = oxoffice_core::xml_element::element_span(run)?;
+    if span.is_self_closing() {
+        return Err(Error::Other("complex field run has no end tag".to_owned()));
+    }
+    let close = &run[span.end_tag.start..];
     let at = run_start + children[split].start;
     Ok(format!("{}{close}{head}{}", &xml[..at], &xml[at..]))
 }

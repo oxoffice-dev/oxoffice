@@ -422,10 +422,12 @@ impl Document {
         let mut writer = quick_xml::Writer::new(Vec::new());
         block.body.to_xml(&mut writer)?;
         let body_xml = writer.into_inner();
-        let content = body_xml
-            .strip_prefix(b"<w:body>")
-            .and_then(|xml| xml.strip_suffix(b"</w:body>"))
+        let wrapper = std::str::from_utf8(&body_xml)
+            .ok()
+            .and_then(|xml| oxoffice_core::xml_element::element_span(xml).ok())
+            .filter(|wrapper| wrapper.name == "w:body")
             .ok_or_else(|| Error::Other("invalid building block body wrapper".to_owned()))?;
+        let content = &body_xml[wrapper.content];
         let mut part = CT_DocPart::from_body_xml(content)?;
         apply_block(&mut part, block.clone())?;
         validate_relationship_free_body(content)?;

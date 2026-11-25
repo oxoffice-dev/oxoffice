@@ -20,20 +20,14 @@ pub(super) fn root_prefix(xml: &str, local: &str) -> Result<String> {
 /// writer gives it an end tag before writing content in it
 /// ([`replace_owner_inner`]).
 pub(super) fn element_inner_range_any_prefix(xml: &str, local: &str) -> Result<Range<usize>> {
-    let (open_end, empty, name) = element_opening(xml)?;
-    if name.rsplit(':').next() != Some(local) {
+    let span = oxoffice_core::xml_element::element_span(xml)
+        .map_err(|error| Error::Other(format!("{local} source: {error}")))?;
+    if span.local_name() != local {
         return Err(Error::Other(format!(
             "{local} source has a different owner name"
         )));
     }
-    if empty {
-        return Ok(open_end..open_end);
-    }
-    let close = format!("</{name}>");
-    let close_start = xml
-        .rfind(&close)
-        .ok_or_else(|| Error::Other(format!("{local} source has no end tag")))?;
-    Ok(open_end..close_start)
+    Ok(span.content)
 }
 
 pub(super) fn drawing_signature(

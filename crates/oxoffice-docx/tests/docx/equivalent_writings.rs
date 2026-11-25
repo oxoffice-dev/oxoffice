@@ -17,17 +17,21 @@
 //!
 //! Pull requests run the documents built here and two corpus copies; the
 //! full checks (`OXOFFICE_WORKFLOWS=full`) run every Word document of the
-//! corpus but the long ones. `OXOFFICE_WRITINGS_ONLY="word/report.docx
-//! indented"` runs the inputs and writings it names (all of a kind when it
-//! names none of it) and checks no stale entry.
+//! corpus but the long ones and the thesis copies.
+//! `OXOFFICE_WRITINGS_ONLY="word/report.docx indented"` runs the inputs and
+//! writings it names (all of a kind when it names none of it) and checks no
+//! stale entry.
 
 use oxoffice_docx::{Document, StoryKind, StoryParagraph, validate_document_bytes};
 use oxoffice_xml_test::harness::{
     Input, Outcome, Scope, assert_known, attempt, only, selected_inputs, selected_writings,
 };
-use oxoffice_xml_test::{Writing, canonical, rewrite};
+use oxoffice_xml_test::{Writing, canonical, rewrite, rewrite_package};
 
-use crate::support::{corpus_files, corpus_root, doc_with_body, every_copy, small_thesis};
+use crate::support::{
+    corpus_files, corpus_root, doc_with_body, docx_with_body, every_copy, package_parts,
+    small_thesis,
+};
 
 const AUTHOR: &str = "Writings";
 const DATE: &str = "2026-11-25T00:00:00Z";
@@ -77,9 +81,11 @@ fn inputs() -> Vec<Input> {
     ];
     let full = every_copy();
     for file in corpus_files("docx") {
-        // A long copy repeats the markup of its family at minutes a writing.
-        let long = file.path.contains("/long-");
-        if (full && !long) || SAMPLE.contains(&file.path.as_str()) {
+        // A long copy repeats the markup of its family at minutes a writing;
+        // the thesis copies cost a fifth of the rest, and the small thesis
+        // keeps their landmarks.
+        let costly = file.path.contains("/long-") || file.path.ends_with("/thesis.docx");
+        if (full && !costly) || SAMPLE.contains(&file.path.as_str()) {
             inputs.push(Input {
                 bytes: file.bytes(),
                 name: file.path,
@@ -178,8 +184,7 @@ fn run(bytes: &[u8]) -> Outcome {
             Ok(format!("{:?}\n{:?}", stored.findings, live.findings))
         }),
     );
-    let original_texts = attempt(|| story_texts(&doc));
-    outcome.step("text", original_texts.clone());
+    outcome.step("text", attempt(|| story_texts(&doc)));
     // The model as Markdown: headings, lists, tables, bold and italic.
     outcome.step("markdown", attempt(|| Ok(doc.to_markdown())));
 
@@ -256,9 +261,16 @@ fn run(bytes: &[u8]) -> Outcome {
         return outcome;
     };
     outcome.saved("compare", &redline_bytes);
+    // Rejecting every change also rejects the changes the original tracked
+    // already: the version it gives back is the original with those rejected.
+    let original_rejected = attempt(|| {
+        let mut copy = open(bytes)?;
+        copy.reject_all().map_err(|error| error.to_string())?;
+        story_texts(&open(&copy.to_bytes().map_err(|error| error.to_string())?)?)
+    });
     for (name, accept, version) in [
         ("accept", true, Ok(edited_texts)),
-        ("reject", false, original_texts),
+        ("reject", false, original_rejected),
     ] {
         let resolved = attempt(|| {
             let mut copy = open(&redline_bytes)?;
@@ -376,4 +388,181 @@ fn each_writing_changes_what_it_names_and_says_the_same() {
     let indented =
         String::from_utf8(rewrite(xml.as_bytes(), Writing::Indented).unwrap().xml).unwrap();
     assert!(indented.contains(r#"<w:t xml:space="preserve">Café > </w:t>"#));
+}
+
+/// `bytes` with every XML part written as `writing` says.
+fn written(bytes: &[u8], writing: Writing) -> Vec<u8> {
+    rewrite_package(bytes, writing)
+        .expect("the document rewrites")
+        .bytes
+}
+
+// The notes of a Google Docs file name a footnote mark style its styles part
+// does not define; a save keeps the styles as written however the notes
+// write that name, rather than adding the style.
+#[test]
+fn a_save_keeps_the_styles_whatever_the_writing_of_a_style_reference() {
+    let source = std::fs::read(corpus_root().join("files/google/contract.docx")).unwrap();
+    for writing in [Writing::SingleQuotes, Writing::TagSpacing] {
+        let input = written(&source, writing);
+        let saved = save(&input).expect("the document saves");
+        assert_eq!(
+            package_parts(&saved)["word/styles.xml"],
+            package_parts(&input)["word/styles.xml"],
+            "{}",
+            writing.name()
+        );
+    }
+}
+
+/// A body of a paragraph before, `middle`, a bookmarked target and a
+/// paragraph after.
+fn linked_body(middle: &str) -> Vec<u8> {
+    let plain = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    docx_with_body(&format!(
+        r#"{}{middle}<w:p><w:bookmarkStart w:id="0" w:name="Target"/><w:r><w:t>Target section.</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>{}"#,
+        plain("Before."),
+        plain("After.")
+    ))
+}
+
+// A link of a paragraph added or removed whole becomes a HYPERLINK field; its
+// attributes are read with the prefixes the document binds, not `w:` alone.
+#[test]
+fn a_linked_paragraph_added_or_removed_whole_compares_under_other_prefixes() {
+    let link = r#"<w:p><w:hyperlink w:anchor="Target" w:history="1"><w:r><w:t>See the target.</w:t></w:r></w:hyperlink></w:p>"#;
+    let (with, without) = (
+        written(&linked_body(link), Writing::OtherPrefixes),
+        written(&linked_body(""), Writing::OtherPrefixes),
+    );
+    let texts = |bytes: &[u8]| story_texts(&open(bytes).unwrap()).unwrap();
+    for (from, to) in [(&with, &without), (&without, &with)] {
+        let mut redline = open(from).unwrap();
+        redline
+            .compare(&open(to).unwrap(), AUTHOR, DATE)
+            .expect("the comparison");
+        let redline = redline.to_bytes().unwrap();
+        for (accept, version) in [(true, to), (false, from)] {
+            let mut copy = open(&redline).unwrap();
+            if accept {
+                copy.accept_all().unwrap();
+            } else {
+                copy.reject_all().unwrap();
+            }
+            assert_eq!(texts(&copy.to_bytes().unwrap()), texts(version), "{accept}");
+        }
+    }
+}
+
+// Word marks the paragraphs of a table with `w:cnfStyle` and its region
+// attributes, kept as written; a save writes it again its own way, which is
+// no change of formatting for the comparison.
+#[test]
+fn a_kept_table_paragraph_property_written_another_way_is_no_formatting_change() {
+    let input = docx_with_body(concat!(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>"#,
+        r#"<w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr>"#,
+        r#"<w:cnfStyle w:val="100000000000" w:firstRow="1" w:lastRow="0" w:firstColumn="0" w:lastColumn="0"/>"#,
+        r#"</w:pPr><w:r><w:t>Quarterly totals by region.</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+    ));
+    for writing in [
+        Writing::AttributeOrder,
+        Writing::SingleQuotes,
+        Writing::TagSpacing,
+    ] {
+        let original = written(&input, writing);
+        let mut edited = open(&original).unwrap();
+        let paragraphs = edited.story_paragraphs().unwrap();
+        let cell = paragraphs
+            .iter()
+            .find(|paragraph| paragraph.text.starts_with("Quarterly"))
+            .expect("the cell paragraph");
+        edited
+            .try_replace_text_at(&cell.location, "Quarterly", "Yearly", Some(1))
+            .unwrap()
+            .unwrap();
+        let edited = open(&edited.to_bytes().unwrap()).unwrap();
+        let diagnostics = open(&original)
+            .unwrap()
+            .compare(&edited, AUTHOR, DATE)
+            .expect("the comparison");
+        assert!(
+            diagnostics.is_empty(),
+            "{}: {diagnostics:?}",
+            writing.name()
+        );
+    }
+}
+
+/// `bytes` with `old` replaced by `new` in the main part, and the paragraph
+/// holding it declaring again the bindings of `w` and `r` its root holds.
+fn edited_with_redundant_declarations(bytes: &[u8], old: &str, new: &str) -> Vec<u8> {
+    let parts = oxoffice_xml_test::package_parts(bytes).unwrap();
+    let parts = parts
+        .into_iter()
+        .map(|(name, data)| {
+            if name != "word/document.xml" {
+                return (name, data);
+            }
+            let xml = String::from_utf8(data).unwrap();
+            let at = xml.find(old).unwrap_or_else(|| panic!("{old}"));
+            let paragraph = ["<w:p>", "<w:p "]
+                .iter()
+                .filter_map(|tag| xml[..at].rfind(tag))
+                .max()
+                .unwrap();
+            let declarations = concat!(
+                r#" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+                r#" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#,
+            );
+            let xml = format!(
+                "{}<w:p{declarations}{}",
+                &xml[..paragraph],
+                &xml[paragraph + 4..]
+            )
+            .replacen(old, new, 1);
+            (name, xml.into_bytes())
+        })
+        .collect::<Vec<_>>();
+    oxoffice_xml_test::write_package(&parts)
+}
+
+// An edited paragraph may declare again the `w` and `r` bindings its root
+// holds; the comparison reads its numbering, links, comment marks and
+// bookmarks as unchanged, whatever order the bindings in scope come in.
+#[test]
+fn an_edited_paragraph_declaring_its_bindings_again_compares_as_its_text_edit() {
+    let source = std::fs::read(corpus_root().join("files/authored/contract.docx")).unwrap();
+    let texts = |bytes: &[u8]| story_texts(&open(bytes).unwrap()).unwrap();
+    for (old, new) in [
+        (">Notices under", ">Letters under"),
+        (">Each party shall keep", ">Every party shall keep"),
+        (">Confidentiality<", ">Secrecy<"),
+    ] {
+        let edited = edited_with_redundant_declarations(&source, old, new);
+        let mut redline = open(&source).unwrap();
+        redline
+            .compare(&open(&edited).unwrap(), AUTHOR, DATE)
+            .unwrap_or_else(|error| panic!("{old}: {error}"));
+        let redline = redline.to_bytes().unwrap();
+        // The contract tracks changes of its own: rejecting gives the
+        // original with them rejected too.
+        let resolved = |bytes: &[u8], accept: bool| {
+            let mut copy = open(bytes).unwrap();
+            if accept {
+                copy.accept_all().unwrap();
+            } else {
+                copy.reject_all().unwrap();
+            }
+            texts(&copy.to_bytes().unwrap())
+        };
+        for (accept, version) in [(true, &edited), (false, &source)] {
+            let (got, want) = (resolved(&redline, accept), resolved(version, accept));
+            assert!(
+                got == want,
+                "{old} {accept}: {:?}",
+                oxoffice_xml_test::first_difference(&want, &got)
+            );
+        }
+    }
 }

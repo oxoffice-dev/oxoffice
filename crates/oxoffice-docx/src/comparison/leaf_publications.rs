@@ -810,21 +810,16 @@ pub(super) fn preserve_run_source(
                     && word.contains(&span.start)
                     && word_element_starts(&content_source.scoped)?.contains(&source_span.start)
                 {
-                    let (_, empty, name) = element_opening(&source_child_xml)?;
+                    let (_, _, name) = element_opening(&source_child_xml)?;
                     let replacement = name
                         .rsplit_once(':')
                         .map_or(target.to_owned(), |(prefix, _)| {
                             format!("{prefix}:{target}")
                         });
-                    if !empty {
-                        let close = paragraph_close_start(&source_child_xml)?;
-                        source_child_xml
-                            .replace_range(close + 2..close + 2 + name.len(), &replacement);
-                    }
-                    source_child_xml.replace_range(1..1 + name.len(), &replacement);
+                    source_child_xml =
+                        oxoffice_core::xml_element::rename(&source_child_xml, &replacement)?;
                 }
-                let lexical = raw_occurrence_representation(&source_child_xml, &context)?
-                    == raw_occurrence_representation(generated_child, &context)?;
+                let lexical = same_raw_occurrence(&source_child_xml, generated_child, &context)?;
                 let modeled = if raw_ordinal.is_none() && !lexical {
                     let actual = source_content_model(&source_child_xml, &context)?;
                     // These generated typed Word events come from CT_R's writer,

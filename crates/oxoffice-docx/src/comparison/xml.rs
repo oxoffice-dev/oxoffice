@@ -195,11 +195,8 @@ pub(super) fn paragraph_owned_run_xml(run: &CT_R) -> Result<String> {
     let mut paragraph = CT_P::new();
     paragraph.runs.push(run.clone());
     let xml = paragraph_xml(&paragraph)?;
-    let start = element_opening(&xml)?.0;
-    let end = xml
-        .rfind("</w:p>")
-        .ok_or_else(|| Error::Other("serialized paragraph has no end".to_owned()))?;
-    Ok(xml[start..end].to_owned())
+    let span = oxoffice_core::xml_element::element_span(&xml)?;
+    Ok(xml[span.content].to_owned())
 }
 
 /// A run as deleted content. The field instruction of a field that spans
@@ -215,13 +212,7 @@ pub(super) fn deleted_run_xml(run: &CT_R) -> Result<String> {
             .map_or("delInstrText".to_owned(), |(prefix, _)| {
                 format!("{prefix}:delInstrText")
             });
-        let mut renamed = child.to_owned();
-        if !element_opening(child)?.1 {
-            let close = paragraph_close_start(child)?;
-            renamed.replace_range(close + 2..close + 2 + name.len(), &replacement);
-        }
-        let name_start = 1;
-        renamed.replace_range(name_start..name_start + name.len(), &replacement);
+        let renamed = oxoffice_core::xml_element::rename(child, &replacement)?;
         xml.replace_range(span, &renamed);
     }
     Ok(xml)
@@ -378,35 +369,17 @@ pub(super) fn replace_element_inner(xml: &str, name: &str, inner: &str) -> Resul
 /// gets an end tag to hold `inner`, and stays as written when `inner` is
 /// empty.
 pub(super) fn replace_owner_inner(xml: &str, local: &str, inner: &str) -> Result<(String, usize)> {
-    let range = element_inner_range_any_prefix(xml, local)?;
-    if !inner.is_empty() && element_opening(xml)?.1 {
-        let (opening, closing) = paragraph_shell(Some(xml))?;
-        return Ok((
-            format!("{opening}{inner}{closing}{}", &xml[range.end..]),
-            opening.len(),
-        ));
-    }
-    let mut output = xml.to_owned();
-    output.replace_range(range.clone(), inner);
-    Ok((output, range.start))
+    element_inner_range_any_prefix(xml, local)?;
+    Ok(oxoffice_core::xml_element::replace_content(xml, inner)?)
 }
 
-pub(super) fn inject_before_close(xml: &str, closing: &str, addition: &str) -> Result<String> {
-    let at = xml
-        .rfind(closing)
-        .ok_or_else(|| Error::Other(format!("serialized XML has no {closing}")))?;
-    Ok(format!("{}{}{}", &xml[..at], addition, &xml[at..]))
-}
-
+/// The `local` owner `xml` is, `addition` written at the end of its
+/// content (an owner written self-closing gets an end tag).
 pub(super) fn append_word_child(xml: &str, local: &str, addition: &str) -> Result<String> {
     if element_local_name(xml) != local {
         return Err(Error::Other(format!("serialized owner is not {local}")));
     }
-    let (opening, closing) = paragraph_shell(Some(xml))?;
-    if xml.trim_end().ends_with("/>") {
-        return Ok(format!("{opening}{addition}{closing}"));
-    }
-    inject_before_close(xml, &closing, addition)
+    Ok(oxoffice_core::xml_element::append_content(xml, addition)?)
 }
 
 pub(super) fn with_mark_revision(run_properties: &str, marker: &str) -> Result<String> {
@@ -506,10 +479,14 @@ pub(super) fn direct_word_element_spans_in_scope(
     Ok(spans)
 }
 
+/// Where the end tag of the owner `xml` starts. An owner written
+/// self-closing has none.
 pub(super) fn paragraph_close_start(xml: &str) -> Result<usize> {
-    let (_, closing) = paragraph_shell(Some(xml))?;
-    xml.rfind(&closing)
-        .ok_or_else(|| Error::Other("serialized owner has no end".to_owned()))
+    let span = oxoffice_core::xml_element::element_span(xml)?;
+    if span.is_self_closing() {
+        return Err(Error::Other("serialized owner has no end".to_owned()));
+    }
+    Ok(span.end_tag.start)
 }
 
 pub(super) fn paragraph_run_spans(xml: &str) -> Result<Vec<Range<usize>>> {

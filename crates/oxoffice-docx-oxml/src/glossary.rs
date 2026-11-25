@@ -2059,14 +2059,13 @@ fn serialize_doc_part_body(
         body.to_xml(&mut writer)?;
         GlossaryXml::generated(writer.into_inner(), false)
     };
-    let content = xml
-        .bytes
-        .strip_prefix(b"<w:body>")
-        .and_then(|xml| xml.strip_suffix(b"</w:body>"))
+    let wrapper = oxoffice_core::xml_element::element_span(std::str::from_utf8(&xml.bytes)?)
+        .ok()
+        .filter(|wrapper| wrapper.name == "w:body" && wrapper.end_tag.end == xml.bytes.len())
         .ok_or_else(|| OxmlError::MissingElement("serialized w:body wrapper".to_owned()))?;
     let (root_start, root_end) = expanded_root_wrapper(source)?;
     let mut output = GlossaryXml::generated(root_start, tracked);
-    output.append_slice(&xml, 8..8 + content.len())?;
+    output.append_slice(&xml, wrapper.content)?;
     output.append(GlossaryXml::generated(root_end, tracked))?;
     Ok(output)
 }

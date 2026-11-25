@@ -255,9 +255,13 @@ references), prove each rewrite says the same through a canonical form, and
 check that open, validate, the text read, a save, an edit and (Word) a
 comparison with accept and reject give what they give on the original (see
 [the spec](../specs/2026-11-25-equivalent-xml-writings.md)). Pull requests
-run a sample, `OXOFFICE_WORKFLOWS=full` every corpus copy but the long ones.
+run a sample, `OXOFFICE_WORKFLOWS=full` every corpus copy but the long Word
+ones and the thesis copies.
 A difference known today is listed in `tests/corpus/writings-known.toml`,
-strict like every known failure. `OXOFFICE_WRITINGS_ONLY="google/form.docx
+strict like every known failure. Code that needs where an element's content
+or end tag is reads it with `oxoffice_core::xml_element`, never by searching
+for `</name>`: `crates/oxoffice-core/tests/xml_element.rs` refuses such a
+search in `crates/*/src`. `OXOFFICE_WRITINGS_ONLY="google/form.docx
 indented"` narrows a local run; `--nocapture` prints every finding.
 
 ## Known limitations

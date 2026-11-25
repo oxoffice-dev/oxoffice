@@ -1,6 +1,6 @@
 ---
 date: 2026-11-25
-status: draft
+status: accepted
 scope: tests, docx, pptx
 ---
 
@@ -133,16 +133,19 @@ The same result is, step by step:
   (`google/form.docx`, `libreoffice/contract.docx`: the writings furthest
   from Word's, with comments, notes, tracked changes, fields and controls),
   the built deck and the deck of each producer, every writing. Measured on
-  a 32-core machine in the `scaling` profile of the PR CI: 98 CPU seconds
-  for the Word binary (10 s of wall time), 34 for the deck binary (3 s),
-  so about half a minute of wall time on a 4-core runner.
+  a 32-core machine: 103 CPU seconds for the Word binary in the `scaling`
+  profile of the PR CI (10 s of wall time; 234 under the debug assertions of
+  the `ci` profile), 34 for the deck binary, so about half a minute of wall
+  time on a 4-core runner.
 - The full checks (`OXOFFICE_WORKFLOWS=full`, the switch of the workflow
   walks in `crates/oxoffice-docx/tests/docx/support.rs`) run every corpus
-  copy, every writing, but the Word `long-*` copies: they repeat their
-  family's markup and cost as much as all the other Word copies together.
-  Measured: 3,556 CPU seconds for the Word binary in the `scaling` profile
-  (about twice that under the debug assertions of the `ci` profile the full
-  checks use), 332 for the deck binary.
+  copy, every writing, but the Word `long-*` copies (they repeat their
+  family's markup and cost as much as all the other Word copies together)
+  and the four `thesis.docx` copies (a fifth of the Word set; the small
+  thesis keeps their landmarks). Measured: 7,086 CPU seconds for the Word
+  binary under the `ci` profile the full checks use (2,892 in `scaling`),
+  about 30 minutes of wall time on a 4-core runner, and 396 for the deck
+  binary.
 - `OXOFFICE_WRITINGS_ONLY="google/form.docx indented"` narrows a local run
   to the inputs and writings named.
 
@@ -161,34 +164,68 @@ reads back other ids than it holds): such an entry says
 `false`. Entries are grouped by root cause, each with the code it points
 at; they cite #658 until their class has an issue of its own.
 
-### 7. The class fix (phase 2)
+### 7. The classes found, and what is fixed where
 
-- One shared helper for the inner content of an element, an element
-  written self-closing included (an empty range at the end of its tag),
-  and one to write content into it (the owner gets an end tag when content
-  is written, keeps its writing when none is): the comparison's
-  `element_inner_range_any_prefix` and `replace_owner_inner` (#656) move to
-  `oxoffice-core`, and every close-tag search of docx, pptx and the docx
-  CLI goes through them.
-- A check refusing new hand-written close-tag searches outside that helper
-  (`find`/`rfind` of a string starting `</`, literal or formatted): a test
-  that walks `crates/*/src`, with the few searches of our own output (HTML,
-  EPUB) listed by file.
-- The other classes the inventory finds: fixed in the same pull request when
-  small, otherwise one issue per root cause, each with its entries in the
-  known list.
+The first run found 345 differences on the corpus in eleven classes, each
+with the code it points at in the known list. #656 (an owner written
+self-closing) was fixed before; the harness finds it when that fix is
+taken out. Decided:
+
+- **Fixed here, the text searches of the comparison and of our writers.**
+  - `oxoffice_core::xml_element` reads where an element's start tag,
+    content and end tag are, whatever its prefix, an element written
+    self-closing or spaces in its end tag: `element_span`, `find_element`,
+    `root_element_span`, and the writers `replace_content` (a self-closed
+    element gets an end tag when content is written, keeps its writing when
+    none is), `append_content` and `rename`. The comparison's
+    `element_inner_range_any_prefix`, `replace_owner_inner` and
+    `paragraph_close_start` (#656) are built on it, and so is every search
+    for an end tag as text in `crates/*/src`: the comparison (end tags of
+    owners, runs, renamed `w:t`, note contents), the watermark, building
+    blocks and glossary bodies, the RTF equation wrapper, DrawingML table
+    borders and autofit, the deck's SmartArt styles, master list and
+    section and comment extension lists.
+  - `crates/oxoffice-core/tests/xml_element.rs` refuses a new one: a
+    `find`, `rfind`, `strip_suffix`, `ends_with`, `contains`, `windows`...
+    of a literal or `format!` starting `</`, directly or through a variable
+    bound to one, outside a file's `#[cfg(test)]` module. Four are allowed
+    by file and literal: the HTML and EPUB this library writes itself
+    (`epub.rs`, `html.rs`, the docx CLI's `commands.rs`) and the render
+    tests' support crate.
+  - A stored style reference is found with a reader, not by the text
+    `val="FootnoteReference"` (a save added the style to a file whose notes
+    write it with other quotes or spacing).
+  - A link of a paragraph added or removed whole is read with the bindings
+    of its source paragraph and keeps the names its attributes are written
+    with (`ox0:history`).
+  - The comparison reads retained XML in its canonical form
+    (`canonical_fragment`), not byte for byte: a retained property written
+    again in another attribute order, quote or spacing is no change of
+    formatting, and a run's raw child no change of role. The bindings in
+    scope kept with `w:ilvl` and `w:numId` compare as a set: an edited
+    paragraph that declares its parent's bindings again (found by the
+    compare-after-edit walk of #659) no longer reads as a changed boundary.
+- **Not fixed: the default namespace.** Every edit of a document written
+  with WordprocessingML as its default namespace is refused, and in debug
+  builds a save reads back other ids than it holds: #663, a known
+  limitation (`docx-default-namespace`) the refusal names.
+- **Fixed by another pull request, from this harness:** the readers of an
+  empty element written with an end tag, of attribute values with
+  references, and the namespace bindings and scopes of writers and readers
+  (an edited paragraph declaring only `w`, a namespace looked up on three
+  elements, the replay of nested namespace owners, a paragraph's
+  `w:cnfStyle` under another prefix). Their entries cite #658 meanwhile.
 
 ## Plan
 
-1. This pull request, phase 1: the crate, the two test modules, the known
-   list, this spec. The inventory of what fails, by class, is in the pull
-   request.
-2. Phase 2, same pull request, after #656: the shared helper and the check,
-   the classes agreed in the inventory fixed, their entries removed.
+1. Phase 1: the crate, the two test modules, the known list, this spec.
+2. Phase 2: the shared helper and its check, and the fixes above, their
+   entries removed; the full checks leave out the four `thesis.docx` copies
+   too.
 
 ## Links
 
-- #658, #656, #413
+- #658, #656, #413, #659, #663
 - [The test suite from scratch](2026-11-20-test-suite-from-scratch.md),
   [Corpus at scale](2026-11-21-corpus-at-scale-and-behaviour-tests.md),
   [Consumer workflows](2026-11-21-consumer-workflows.md)

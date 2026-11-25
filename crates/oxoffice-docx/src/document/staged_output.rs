@@ -30,18 +30,37 @@ fn assert_same_reopen(reopened: &Result<Document>, through_zip: &Result<Document
     }
 }
 
+/// Whether an element of `xml` has a `val` attribute, whatever its prefix,
+/// quotes, spacing or character references, whose value is `value`.
+fn part_has_val(xml: &[u8], value: &str) -> bool {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element)) => {
+                let named = element.attributes().flatten().any(|attribute| {
+                    oxoffice_core::xml::local_name(attribute.key.as_ref()) == b"val"
+                        && oxoffice_core::xml::attribute_text(&attribute)
+                            .is_ok_and(|text| text == value)
+                });
+                if named {
+                    return true;
+                }
+            }
+            Ok(Event::Eof) | Err(_) => return false,
+            Ok(_) => {}
+        }
+    }
+}
+
 impl Document {
     /// Whether a word part the package holds now, as read or as last saved,
     /// names the style `id` as a value: the producer's own reference.
     fn stored_story_parts_name_style(&self, id: &str) -> bool {
-        let needle = format!(r#"val="{id}""#);
         self.package.parts.iter().any(|(name, bytes)| {
             name.starts_with("/word/")
                 && name.ends_with(".xml")
                 && !name.ends_with("/styles.xml")
-                && bytes
-                    .windows(needle.len())
-                    .any(|window| window == needle.as_bytes())
+                && part_has_val(bytes, id)
         })
     }
 
