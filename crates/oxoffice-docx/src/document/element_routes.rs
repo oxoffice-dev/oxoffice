@@ -909,6 +909,7 @@ impl Document {
 
     /// [`Self::replace_section_properties_xml`] through a closed candidate,
     /// staged and reopened: the debug oracle of the in-place route.
+    #[cfg(any(debug_assertions, test))]
     pub(super) fn replace_section_properties_xml_staged(
         &mut self,
         index: usize,

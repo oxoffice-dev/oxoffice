@@ -149,7 +149,6 @@ pub use render::ContentMeasurement;
 mod block_edits_in_place;
 mod body;
 mod content;
-#[cfg(debug_assertions)]
 pub(crate) use content::BodyBlockItem;
 mod headers_footers;
 mod media;
