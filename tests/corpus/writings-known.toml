@@ -10,7 +10,7 @@
 # keeps it raw or skips it: a tab or break leaves the text (oxoffice-docx
 # document/story_paragraphs.rs:332-347), bold, italic and paragraph toggles
 # are not modelled (oxoffice-docx-oxml run_properties.rs:791 against :1157,
-# which models only rtl and lang).
+# which models only rtl and lang). Its own issue: #664.
 
 [[known]]
 input = "*.docx"
