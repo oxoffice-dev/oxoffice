@@ -134,10 +134,15 @@ impl Document {
             return None;
         }
         // The reference run travels whole: it holds the reference alone,
-        // its properties aside (else the staged route keeps the rest).
+        // its properties and the attributes of its root aside (else the
+        // staged route keeps the rest).
         let transported = paragraph.runs[*reference_run].clone();
         if transported.content.len() != 1
-            || !transported.extra_xml.is_empty()
+            || transported.extra_xml_positions.len() != transported.extra_xml.len()
+            || !transported
+                .extra_xml_positions
+                .iter()
+                .all(|encoded| CT_R::raw_child_is_root_attributes(*encoded))
             || !transported.alt_drawings.is_empty()
         {
             return None;
@@ -167,6 +172,11 @@ impl Document {
         }
         let reference_index = reference_index?;
         let mut moved = paragraph.clone();
+        // Without its root's attributes the emptied run goes whole, as the
+        // staged route removes it.
+        let emptied = &mut moved.runs[*reference_run];
+        emptied.extra_xml.clear();
+        emptied.extra_xml_positions.clear();
         moved.remove_comment_anchors(&[id]);
         let left = moved.comment_ranges.iter().any(|marker| {
             let (CommentRangeMarker::Start { id: found, .. }

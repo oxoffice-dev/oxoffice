@@ -1968,3 +1968,36 @@ fn a_comment_move_the_staged_route_refuses_is_refused_unchanged() {
         None
     );
 }
+
+#[test]
+fn a_reference_run_with_root_attributes_travels_whole_in_place() {
+    let mut doc = doc_with(&["text"]);
+    let id = doc
+        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "root")
+        .unwrap();
+    let body = format!(
+        concat!(
+            r#"<w:p w:rsidR="00AB0001"><w:commentRangeStart w:id="{id}"/>"#,
+            r#"<w:r w:rsidR="00AB0002"><w:t>commented</w:t></w:r><w:commentRangeEnd w:id="{id}"/>"#,
+            r#"<w:r w:rsidR="00AB0003"><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>"#,
+            r#"<w:commentReference w:id="{id}"/></w:r><w:r><w:t> tail</w:t></w:r></w:p>"#
+        ),
+        id = id
+    );
+    for (start, end, anchored) in [(0, 0, ""), (2, 3, " tail"), (0, 3, "commented tail")] {
+        let mut doc = Document::from_bytes(&with_body(doc.to_bytes().unwrap(), &body)).unwrap();
+        let range = story_range(&body_paragraph(&doc, 0), start, end);
+        assert_eq!(
+            doc.move_comment_in_place_slots(id, &range, paragraph_block(0)),
+            Some(vec![0])
+        );
+        assert_eq!(move_in_place(&mut doc, id, range, 0), [0]);
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["commented tail"]);
+        assert_eq!(
+            doc.comment_anchor_text(id).unwrap().as_deref(),
+            Some(anchored),
+            "{start}..{end}"
+        );
+    }
+}
