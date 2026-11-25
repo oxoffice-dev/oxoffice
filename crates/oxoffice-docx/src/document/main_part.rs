@@ -1010,13 +1010,28 @@ impl MainPartBlocks {
         part.extend_from_slice(&head);
         part.extend_from_slice(body);
         part.extend_from_slice(&self.tail);
+        // The frame reads as the written one, as a producer source record's
+        // does: the proofs that start from it hold for these bytes too.
+        let shell =
+            CT_Document::from_xml(&[head.as_slice(), self.tail.as_slice()].concat()).ok()?;
+        let written_shell = self.frame.get()?.as_ref()?;
+        if !shell.body.content.is_empty() || shell.to_xml().ok()? != written_shell.to_xml().ok()? {
+            return None;
+        }
+        // A different frame gets new pieces: the pieces' proofs are keyed by
+        // the frame they were read under.
+        let blocks = self
+            .blocks
+            .iter()
+            .map(BodyBlockScan::fresh_context_piece)
+            .collect();
         let record = Self {
             head,
             root: kept_root,
             tail: self.tail.clone(),
-            blocks: Arc::clone(&self.blocks),
+            blocks: Arc::new(blocks),
             part: Some(Arc::new(part.clone())),
-            frame: std::sync::OnceLock::new(),
+            frame: std::sync::OnceLock::from(Some(shell)),
             nested_namespace_owners: std::sync::OnceLock::new(),
             identifier_frame: std::sync::OnceLock::new(),
             canonical_frame: std::sync::OnceLock::new(),
@@ -3155,4 +3170,44 @@ pub(super) fn story_control_paragraphs(
         .into_iter()
         .map(|paragraph| paragraph.start + shift..paragraph.end + shift)
         .collect())
+}
+
+#[cfg(test)]
+mod producer_root_tests {
+    use super::*;
+
+    /// After a flush that kept Word's root, the record of the written part
+    /// still proves it: its frame is read, so the flush's own checks and a
+    /// later flush after another edit need no whole parse.
+    #[test]
+    fn a_kept_producer_root_leaves_a_record_that_proves_the_saved_part() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/files/word/report.docx");
+        let mut doc = Document::open(path).unwrap();
+        for text in ["first", " second"] {
+            doc.paragraph_mut(0).unwrap().add_run(text);
+            doc.flush_document_to_package().unwrap();
+            let saved = doc.package.get_part(&doc.doc_part_name).unwrap().to_vec();
+            assert!(saved.starts_with(b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<w:document xmlns:wpc="));
+            let record = doc
+                .main_part_blocks
+                .as_ref()
+                .expect("a record of the saved part");
+            assert!(matches!(record.frame.get(), Some(Some(_))));
+            // The proofs answer for these bytes as they do for the written
+            // ones, instead of declining to a whole read.
+            let (written, canonical) = doc.canonical_source().unwrap();
+            let canonical = canonical.unwrap();
+            assert_eq!(
+                record.proved_document_matches(&saved, &doc.document),
+                canonical.proved_document_matches(&written, &doc.document),
+            );
+            assert!(
+                record
+                    .proved_document_matches(&saved, &doc.document)
+                    .is_some()
+            );
+            assert!(record.retained_nested_owners(&saved).is_some());
+        }
+    }
 }
