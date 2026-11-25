@@ -345,3 +345,41 @@ fn an_edited_paragraph_binds_every_prefix_it_writes_when_the_document_names_them
         "the hyperlink keeps its target"
     );
 }
+
+#[test]
+fn an_edit_keeps_a_paragraph_that_declares_its_own_namespace_whatever_the_spacing_of_its_tags() {
+    // A paragraph declaring a namespace for markup it keeps as read, whose
+    // end tags carry a line break before `>`, as a hand edit leaves them.
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Handheld terminal guide</w:t></w:r></w:p>"#,
+        r#"<w:p xmlns:x="urn:example"><w:r><w:t>Note </w:t></w:r>"#,
+        "<w:r><x:note x:kind=\"a\"><x:inner x:v=\"1\"/></x:note\n></w:r></w:p>",
+        r#"<w:p xmlns:x="urn:example"><w:r><w:t>Note </w:t></w:r>"#,
+        "<w:r><x:note x:kind=\"b\"><x:inner x:v=\"2\"/></x:note\n></w:r></w:p>",
+    );
+    let mut doc = crate::support::doc_with_body(body);
+    let paragraphs = doc.story_paragraphs().expect("reads");
+    let edited = paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text.contains("Handheld"))
+        .expect("the paragraph");
+    assert_eq!(
+        doc.try_replace_text_at(&edited.location, "Handheld", "HANDHELD", Some(1))
+            .expect("edits"),
+        Ok(1)
+    );
+    let saved = doc.to_bytes().expect("saves");
+    let part = String::from_utf8(
+        crate::support::package_parts(&saved)
+            .remove("word/document.xml")
+            .expect("main part"),
+    )
+    .expect("UTF-8");
+    assert!(part.contains("HANDHELD terminal guide"));
+    assert_eq!(
+        part.matches(r#"xmlns:x="urn:example""#).count(),
+        2,
+        "{part}"
+    );
+    assert!(part.contains(r#"x:kind="a""#) && part.contains(r#"x:kind="b""#));
+}

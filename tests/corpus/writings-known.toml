@@ -116,13 +116,6 @@ operation = "edit"
 issue = 658
 message = "nested namespace owner after mutation"
 
-[[known]]
-input = "authored/manual.docx"
-writing = "tag-spacing"
-operation = "edit"
-issue = 658
-message = "nested namespace owner after mutation"
-
 # D6: a paragraph's w:cnfStyle under another prefix is kept raw where the
 # original's is rewritten from the model: the edit writes it otherwise
 # (oxoffice-docx-oxml paragraph properties).
