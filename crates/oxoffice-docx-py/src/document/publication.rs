@@ -600,33 +600,13 @@ impl PyDocument {
         story: &oxoffice_docx::StoryId,
         splice: StorySplice,
     ) -> PyResult<()> {
-        let StorySplice {
-            part,
-            piece,
-            new,
-            new_inside,
-        } = splice;
-        let keys = self.story_owner_keys(story);
-        let mut retired = keys
-            .iter()
-            .flat_map(|&key| self.owners[key].states())
-            .collect::<Vec<_>>();
+        let (mut retired, mut births) = self.story_splice_scopes(story, &splice);
         retired.push(
             self.snapshot_scope
                 .as_ref()
                 .expect("active Word authority")
                 .clone(),
         );
-        let born = new
-            .iter()
-            .zip(&new_inside)
-            .filter(|(_, inside)| **inside)
-            .map(|(address, _)| address)
-            .collect::<Vec<_>>();
-        let mut births = born
-            .iter()
-            .flat_map(|address| address.location.scopes().iter().copied())
-            .collect::<Vec<_>>();
         births.push(RevisionScope::Text);
         let revision = self
             .revisions
@@ -635,12 +615,66 @@ impl PyDocument {
         let states = (0..births.len())
             .map(|index| revision.born(index).expect("prepared owner birth"))
             .collect::<Vec<_>>();
+        self.reserve_story_splice(&splice)?;
         self.revisions
             .commit_scopes(revision)
             .map_err(revision_to_pyerr)?;
-        // The story's owners take the keys of its retired ones, then keys
-        // after every current one; a parent is in the story with its child.
-        // A story that lost owners removes them by swap (`remove_owners`).
+        let (snapshot, states) = states.split_last().expect("snapshot birth");
+        self.apply_story_splice(story, splice, states);
+        self.snapshot_scope = Some(snapshot.clone());
+        Ok(())
+    }
+
+    /// The states the owners of `story` retire and the scopes its new
+    /// owners are born with, the snapshot scope aside.
+    pub(crate) fn story_splice_scopes(
+        &self,
+        story: &oxoffice_docx::StoryId,
+        splice: &StorySplice,
+    ) -> (Vec<RevisionState>, Vec<RevisionScope>) {
+        let retired = self
+            .story_owner_keys(story)
+            .iter()
+            .flat_map(|&key| self.owners[key].states())
+            .collect::<Vec<_>>();
+        let births = splice
+            .new
+            .iter()
+            .zip(&splice.new_inside)
+            .filter(|(_, inside)| **inside)
+            .flat_map(|(address, _)| address.location.scopes().iter().copied())
+            .collect::<Vec<_>>();
+        (retired, births)
+    }
+
+    /// Reserve the owner slots [`Self::apply_story_splice`] may push, so
+    /// that nothing fails once the revision commits.
+    pub(crate) fn reserve_story_splice(&mut self, splice: &StorySplice) -> PyResult<()> {
+        let count = splice.new_inside.iter().filter(|inside| **inside).count();
+        self.owners.try_reserve(count).map_err(|_| {
+            pyo3::exceptions::PyMemoryError::new_err("Word story splice allocation failed")
+        })
+    }
+
+    /// Install the owners of `story` that `splice` read, under `states`
+    /// (the births of [`Self::story_splice_scopes`], in order), after the
+    /// revision committed: the story's owners take the keys of its retired
+    /// ones, then keys after every current one; a parent is in the story
+    /// with its child. A story that lost owners removes them by swap
+    /// (`remove_owners`).
+    pub(crate) fn apply_story_splice(
+        &mut self,
+        story: &oxoffice_docx::StoryId,
+        splice: StorySplice,
+        states: &[RevisionState],
+    ) {
+        let StorySplice {
+            part,
+            piece,
+            new,
+            new_inside,
+        } = splice;
+        let keys = self.story_owner_keys(story);
         let count = new_inside.iter().filter(|inside| **inside).count();
         let mut free = keys.clone();
         if count < keys.len() {
@@ -676,12 +710,10 @@ impl PyDocument {
                 self.owners.push(owner);
             }
         }
-        self.snapshot_scope = Some(states.last().expect("snapshot birth").clone());
         self.pieces
             .as_mut()
             .expect("active pieces")
             .replace_part(part, piece);
-        Ok(())
     }
 }
 

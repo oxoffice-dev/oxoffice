@@ -2472,7 +2472,9 @@ impl PyDocument {
     /// part: the paragraph and the new note story are published alone
     /// ([`Self::publish_body_paragraph_and_story`]), every other handle
     /// stays. `Ok(None)` leaves the document and every handle as they were,
-    /// for the staged route. A refusal leaves them as they were too.
+    /// for the staged route, also when the edited note part does not tell
+    /// the new story alone. A refusal of the edit leaves them as they were
+    /// too, and is the answer.
     fn create_note_in_place(
         &mut self,
         py: Python<'_>,
@@ -2519,29 +2521,57 @@ impl PyDocument {
             }
         };
         let undo = undo.expect("a note creation edits in place");
-        let published = (|| {
-            let story = if endnote {
-                self.inner.endnote_story(id)
-            } else {
-                self.inner.footnote_story(id)
-            }
-            .map_err(|error| docx_to_pyerr(py, error))?
-            .ok_or_else(|| PyValueError::new_err("the new note has no story"))?;
-            self.publish_body_paragraph_and_story(py, slot, &previous, &story, OPERATION)
-        })();
-        match published {
-            Ok(paragraph_in_place::BlocksPublication::Published) => {
-                Ok(Some((id, self.revisions.capture(smallvec![]))))
-            }
-            Ok(_) => {
-                self.inner.undo_edit(undo);
-                Ok(None)
-            }
-            Err(error) => {
-                self.inner.undo_edit(undo);
-                Err(error)
+        let story = if endnote {
+            self.inner.endnote_story(id)
+        } else {
+            self.inner.footnote_story(id)
+        };
+        let published =
+            self.publish_annotation_in_place(py, undo, slot, &previous, story, OPERATION)?;
+        Ok(published.then(|| (id, self.revisions.capture(smallvec![]))))
+    }
+
+    /// Publish an annotation edit that the facade made in place under the
+    /// held `undo`: the paragraph at `slot` (it was `previous`) and the new
+    /// `story` ([`Self::publish_body_paragraph_and_story`]). `false` when a
+    /// story the part does not tell alone, or a shape the publication does
+    /// not take, leaves the edit to the staged route. The edit is undone on
+    /// every exit but a publication: `false`, an error or a panic.
+    fn publish_annotation_in_place(
+        &mut self,
+        py: Python<'_>,
+        undo: oxoffice_docx::EditUndo,
+        slot: usize,
+        previous: &oxoffice_docx_oxml::BodyContent,
+        story: oxoffice_docx::Result<Option<oxoffice_docx::StoryId>>,
+        operation: &'static str,
+    ) -> PyResult<bool> {
+        struct Held<'a> {
+            document: &'a mut PyDocument,
+            undo: Option<oxoffice_docx::EditUndo>,
+        }
+        impl Drop for Held<'_> {
+            fn drop(&mut self) {
+                if let Some(undo) = self.undo.take() {
+                    self.document.inner.undo_edit(undo);
+                }
             }
         }
+        let mut held = Held {
+            document: self,
+            undo: Some(undo),
+        };
+        let Ok(Some(story)) = story else {
+            return Ok(false);
+        };
+        let published = held
+            .document
+            .publish_body_paragraph_and_story(py, slot, previous, &story, operation)?;
+        if published != paragraph_in_place::BlocksPublication::Published {
+            return Ok(false);
+        }
+        held.undo = None;
+        Ok(true)
     }
 
     /// Add the comment of `Document.add_comment` over `range` on the live
@@ -2550,8 +2580,9 @@ impl PyDocument {
     /// by part: the paragraph and the new comment story are published alone
     /// ([`Self::publish_body_paragraph_and_story`]), every other handle
     /// stays. `Ok(None)` leaves the document and every handle as they were,
-    /// for the staged route; a range over two paragraphs takes it. A
-    /// refusal leaves them as they were too.
+    /// for the staged route; a range over two paragraphs takes it, and so
+    /// does an edited comments part that does not tell the new story alone.
+    /// A refusal of the edit leaves them as they were too, and is the answer.
     pub(super) fn add_body_comment_in_place(
         &mut self,
         py: Python<'_>,
@@ -2589,25 +2620,10 @@ impl PyDocument {
         };
         // A slot in the body: the facade anchors the comment in place.
         let undo = undo.expect("a body comment edits in place");
-        let published = (|| {
-            let story = self
-                .inner
-                .comment_story(id)
-                .map_err(|error| docx_to_pyerr(py, error))?
-                .ok_or_else(|| PyValueError::new_err("the new comment has no story"))?;
-            self.publish_body_paragraph_and_story(py, slot, &previous, &story, OPERATION)
-        })();
-        match published {
-            Ok(paragraph_in_place::BlocksPublication::Published) => Ok(Some(id)),
-            Ok(_) => {
-                self.inner.undo_edit(undo);
-                Ok(None)
-            }
-            Err(error) => {
-                self.inner.undo_edit(undo);
-                Err(error)
-            }
-        }
+        let story = self.inner.comment_story(id);
+        let published =
+            self.publish_annotation_in_place(py, undo, slot, &previous, story, OPERATION)?;
+        Ok(published.then_some(id))
     }
 
     /// Whether the document has a footnotes, endnotes or comments part

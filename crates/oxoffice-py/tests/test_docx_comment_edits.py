@@ -193,3 +193,25 @@ def test_a_comment_over_two_paragraphs_is_added_and_saved(saved):
     (comment,) = [comment for comment in again.comments if comment.id == added]
     assert comment.text == "two paragraphs"
     assert comment.anchor_text.startswith("run 0 of paragraph 6 ")
+
+
+@pytest.mark.parametrize("failure", ["error", "panic"])
+def test_a_comment_whose_publication_fails_leaves_the_document_and_every_handle_as_they_were(
+        saved, failure, monkeypatch):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    edited_run = doc.paragraphs[6].runs[0]
+    data = doc.to_bytes()
+
+    # Debug builds fail the publication of the paragraph and the comment on request, before its one commit.
+    monkeypatch.setenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE", failure)
+    with pytest.raises(BaseException) as raised:
+        doc.add_comment(body_range(doc, 0, 1), author="Reviewer", text="new remark")
+    monkeypatch.delenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE")
+
+    assert "on request" in str(raised.value)
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert edited_run.text == "run 0 of paragraph 6 "
+    added = doc.add_comment(body_range(doc, 0, 1), author="Reviewer", text="new remark")
+    assert [comment.text for comment in doc.comments if comment.id == added] == ["new remark"]

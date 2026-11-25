@@ -628,11 +628,11 @@ impl Document {
                 // declarations on it; the in-place model writes them once.
                 assert_eq!(
                     live.as_deref()
-                        .map(saved_without_repeated_namespaces)
+                        .map(saved_parts_in_normal_form)
                         .map_err(Clone::clone),
                     before
                         .to_bytes()
-                        .map(|saved| saved_without_repeated_namespaces(&saved))
+                        .map(|saved| saved_parts_in_normal_form(&saved))
                         .map_err(|e| e.to_string()),
                     "in-place edit saves other bytes than the staged edit"
                 );
@@ -665,10 +665,10 @@ impl Document {
     }
 }
 
-/// The parts a saved package holds, each XML part without the namespace
-/// declarations that repeat one of its root element's, for the debug oracle.
+/// The parts a saved package holds, each XML part in the oracle's normal
+/// form ([`oracle_normal_form`]), for the debug oracle.
 #[cfg(debug_assertions)]
-fn saved_without_repeated_namespaces(saved: &[u8]) -> Vec<(String, Vec<u8>)> {
+fn saved_parts_in_normal_form(saved: &[u8]) -> Vec<(String, Vec<u8>)> {
     let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(saved.to_vec()))
         .expect("a saved package opens");
     package
@@ -677,13 +677,21 @@ fn saved_without_repeated_namespaces(saved: &[u8]) -> Vec<(String, Vec<u8>)> {
         .into_iter()
         .map(|(name, bytes)| {
             let bytes = if name.ends_with(".xml") || name.ends_with(".rels") {
-                without_repeated_namespaces(&bytes)
+                oracle_normal_form(&bytes)
             } else {
                 bytes.into_owned()
             };
             (name, bytes)
         })
         .collect()
+}
+
+/// An XML part as the debug oracle compares it: the staged route splices a
+/// rewritten fragment into the part's bytes and may repeat the root's
+/// namespace declarations on it, which the in-place model writes once.
+#[cfg(debug_assertions)]
+fn oracle_normal_form(part: &[u8]) -> Vec<u8> {
+    without_repeated_namespaces(part)
 }
 
 /// `xml` without the ` xmlns:p="uri"` declarations below its root element
