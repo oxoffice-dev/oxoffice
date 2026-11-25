@@ -708,7 +708,12 @@ fn numbering_references(xml: &[u8]) -> Vec<String> {
                         .attributes()
                         .flatten()
                         .filter(|attribute| attribute.key.local_name().as_ref() == b"val")
-                        .map(|attribute| String::from_utf8_lossy(&attribute.value).into_owned()),
+                        .map(|attribute| {
+                            oxoffice_core::xml::attribute_text(&attribute).map_or_else(
+                                |_| String::from_utf8_lossy(&attribute.value).into_owned(),
+                                std::borrow::Cow::into_owned,
+                            )
+                        }),
                 );
             }
             Ok((_, Event::Eof)) | Err(_) => return values,
