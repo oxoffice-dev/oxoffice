@@ -17,6 +17,12 @@ pub(crate) enum BlockRetention {
     /// other owner keeps its states, and the document epoch and the
     /// snapshot retire ("body handles follow their element", decision 2).
     Spliced,
+    /// The runs of one paragraph edited where they stand (`Run.text`,
+    /// `Run.replace_xml`): when the paragraph holds the same run routes
+    /// before and after, the paragraph and each of its runs keep every
+    /// state, as the staged run publications keep the handles of the
+    /// paragraph and of its runs. Any other shape takes the whole route.
+    EditedRunsKeepTheirOwners,
 }
 
 /// What [`PyDocument::publish_body_blocks_replaced`] did.
@@ -82,6 +88,8 @@ impl BlocksPlan {
 pub(crate) enum BlocksSummary {
     Unchanged,
     Paragraph(ReplacedBlock),
+    /// A paragraph whose runs kept their owners.
+    RunsKept(ReplacedBlock),
     /// The owners retired and born.
     Spliced {
         retired: usize,
@@ -95,6 +103,9 @@ impl BlocksPlan {
     pub(crate) fn summary(&self) -> BlocksSummary {
         match self {
             Self::Unchanged => BlocksSummary::Unchanged,
+            Self::Paragraph(target, plan) if plan.keeps_runs => {
+                BlocksSummary::RunsKept(target.clone())
+            }
             Self::Paragraph(target, _) => BlocksSummary::Paragraph(target.clone()),
             Self::Spliced(plan) => {
                 let (retired, born) = plan.counts();
@@ -162,6 +173,24 @@ impl PyDocument {
         operation: &'static str,
         edit: impl FnOnce(&mut oxoffice_docx::Paragraph<'_>) -> oxoffice_docx::Result<T>,
     ) -> PyResult<Option<T>> {
+        self.edit_body_paragraph_in_place_with(
+            py,
+            index,
+            operation,
+            BlockRetention::EditedParagraphKeepsItsOwner,
+            edit,
+        )
+    }
+
+    /// [`Self::edit_body_paragraph_in_place`] published with `retention`.
+    pub(crate) fn edit_body_paragraph_in_place_with<T>(
+        &mut self,
+        py: Python<'_>,
+        index: usize,
+        operation: &'static str,
+        retention: BlockRetention,
+        edit: impl FnOnce(&mut oxoffice_docx::Paragraph<'_>) -> oxoffice_docx::Result<T>,
+    ) -> PyResult<Option<T>> {
         self.ensure_word_authority(py)?;
         // A paragraph the splice would not take keeps its route before the
         // edit runs, so that the edit runs once.
@@ -193,7 +222,7 @@ impl PyDocument {
             std::slice::from_ref(old.as_ref().expect("held old block")),
             1,
             operation,
-            BlockRetention::EditedParagraphKeepsItsOwner,
+            retention,
         )?;
         if published == BlocksPublication::WholeRoute {
             // Dropping the guard puts the old paragraph back.
@@ -438,8 +467,9 @@ impl PyDocument {
         let Some(target) = self.replaced_block(slot, old) else {
             return Ok(None);
         };
+        let keeps_runs = matches!(retention, BlockRetention::EditedRunsKeepTheirOwners);
         Ok(self
-            .plan_paragraph_owners(&target)?
+            .plan_paragraph_owners(&target, keeps_runs)?
             .map(|plan| BlocksPlan::Paragraph(target, Box::new(plan))))
     }
 
@@ -492,6 +522,7 @@ impl PyDocument {
         match summary {
             BlocksSummary::Unchanged => {}
             BlocksSummary::Paragraph(target) => self.assert_paragraph_replacement(before, target),
+            BlocksSummary::RunsKept(target) => self.assert_runs_kept(before, target),
             BlocksSummary::Spliced { retired, born } => {
                 self.assert_blocks_splice(before, *retired, *born);
             }
@@ -580,7 +611,17 @@ impl PyDocument {
     /// commits; `None` when a block replacement does not take it. Decision 1
     /// of the one-block publication spec: the paragraph's content retires,
     /// its runs retire and the new ones are born.
-    fn plan_paragraph_owners(&self, target: &ReplacedBlock) -> PyResult<Option<ParagraphPlan>> {
+    ///
+    /// With `keeps_runs` ([`BlockRetention::EditedRunsKeepTheirOwners`]), the
+    /// paragraph must hold the routes of its old runs, no more and no fewer,
+    /// and the same body items: no state retires (a run handle names its
+    /// paragraph's content view too, which the staged run publications
+    /// keep), only the paragraph's read text and its piece follow the edit.
+    fn plan_paragraph_owners(
+        &self,
+        target: &ReplacedBlock,
+        keeps_runs: bool,
+    ) -> PyResult<Option<ParagraphPlan>> {
         let block = &self.inner.body_children()[target.slot];
         if !matches!(block, oxoffice_docx_oxml::BodyContent::Paragraph(_)) {
             return Ok(None);
@@ -609,6 +650,26 @@ impl PyDocument {
             return Ok(None);
         }
         let selected = &self.owners[target.selected];
+        if keeps_runs {
+            // Each new run route names one old run owner, in order.
+            let Some(kept) = self.kept_run_owners(target, &runs) else {
+                return Ok(None);
+            };
+            if items != 0 {
+                return Ok(None);
+            }
+            return Ok(Some(ParagraphPlan {
+                owners,
+                text,
+                runs,
+                first,
+                items,
+                retired: Vec::new(),
+                births: Vec::new(),
+                keeps_runs: true,
+                kept,
+            }));
+        }
         let mut retired = Vec::new();
         retired
             .try_reserve(target.runs.len() * 2 + 1)
@@ -633,7 +694,35 @@ impl PyDocument {
             items,
             retired,
             births,
+            keeps_runs: false,
+            kept: Vec::new(),
         }))
+    }
+
+    /// The old run owners of `target`, one per route of `runs` and in that
+    /// order, when the paragraph's runs have the same routes as before.
+    fn kept_run_owners(
+        &self,
+        target: &ReplacedBlock,
+        runs: &[oxoffice_docx::AcceptedRunPath],
+    ) -> Option<Vec<usize>> {
+        if runs.len() != target.runs.len() {
+            return None;
+        }
+        let mut kept = Vec::with_capacity(runs.len());
+        for path in runs {
+            let owner = target.runs.iter().copied().find(|key| {
+                matches!(
+                    self.owners[*key].route_shape(),
+                    WordOwnerLocation::Run(_, owned) if owned == path
+                )
+            })?;
+            if kept.contains(&owner) {
+                return None;
+            }
+            kept.push(owner);
+        }
+        Some(kept)
     }
 
     /// Reserve what [`Self::apply_paragraph_owners`] adds, so that nothing
@@ -670,6 +759,8 @@ impl PyDocument {
             runs,
             first,
             items,
+            keeps_runs,
+            kept,
             ..
         } = plan;
         let block = &self.inner.body_children()[target.slot];
@@ -677,6 +768,14 @@ impl PyDocument {
             block: std::sync::Arc::new(block.clone()),
             owners: Some(owners),
         });
+        if keeps_runs {
+            // Every owner stays at its key with its states: only the
+            // paragraph's read text and its piece follow the edit.
+            debug_assert!(states.is_empty() && kept.len() == runs.len());
+            self.owners[target.selected].read_facts = WordReadFacts::Paragraph(text);
+            self.pieces.as_mut().expect("active pieces").blocks[target.slot] = piece;
+            return;
+        }
         let generation = self.owners[target.selected].owner.generation();
         let paragraph = &mut self.owners[target.selected];
         paragraph.content = Some(states[0].clone());
@@ -775,6 +874,55 @@ impl PyDocument {
     }
 }
 
+impl PyDocument {
+    /// Under debug assertions, after a block replacement whose runs kept
+    /// their owners: the inventory equals its rebuild, every owner keeps its
+    /// route and every state, and the owners outside the paragraph name
+    /// their own elements.
+    #[cfg(debug_assertions)]
+    fn assert_runs_kept(
+        &self,
+        (document, owners): &(oxoffice_docx::Document, Vec<WordOwner>),
+        target: &ReplacedBlock,
+    ) {
+        self.assert_word_inventory_rebuilds(false);
+        let edited = std::iter::once(target.selected)
+            .chain(target.runs.iter().copied())
+            .map(|key| owners[key].owner.generation())
+            .collect::<std::collections::HashSet<_>>();
+        super::block_edits::assert_kept_owners_name_their_elements_but(
+            (document, owners),
+            (&self.inner, &self.owners),
+            None,
+            &edited,
+        );
+        assert_eq!(
+            owners.len(),
+            self.owners.len(),
+            "no owner retires or is born"
+        );
+        for old in owners {
+            let key = *self
+                .indexes
+                .by_generation
+                .get(&old.owner.generation())
+                .expect("every owner keeps its owner state");
+            let new = &self.owners[key];
+            assert_eq!(
+                unfingerprinted_owner_location(&old.location()),
+                unfingerprinted_owner_location(&new.location()),
+                "a kept owner keeps its route"
+            );
+            let (before, after) = (old.states(), new.states());
+            assert!(
+                before.len() == after.len()
+                    && before.iter().zip(&after).all(|(a, b)| a.same_state(b)),
+                "every owner keeps every state"
+            );
+        }
+    }
+}
+
 /// Whether the owner facts of a body block are those of one paragraph with
 /// runs alone: no table, cell story, text box or hyperlink.
 fn plain_block(owners: &WordBlockOwners) -> bool {
@@ -821,6 +969,10 @@ pub(crate) struct ParagraphPlan {
     /// The states that retire and the scopes born, the snapshot scope aside.
     retired: Vec<RevisionState>,
     births: Vec<RevisionScope>,
+    /// [`BlockRetention::EditedRunsKeepTheirOwners`]: the run owners stay,
+    /// `kept` in the order of `runs`.
+    keeps_runs: bool,
+    kept: Vec<usize>,
 }
 
 fn allocation_failed(_: std::collections::TryReserveError) -> PyErr {

@@ -264,4 +264,98 @@ impl PyDocument {
             )?
             .is_some())
     }
+
+    /// `Run.text` on a run of the direct body paragraph at facade index
+    /// `index`, in place, published with
+    /// [`BlockRetention::EditedRunsKeepTheirOwners`]: the paragraph and its
+    /// runs keep their handles, every other handle stays. `false`, with
+    /// nothing changed, when the in-place route does not take it.
+    pub(crate) fn set_run_text_in_place(
+        &mut self,
+        py: Python<'_>,
+        index: usize,
+        path: &oxoffice_docx::AcceptedRunPath,
+        text: &str,
+    ) -> PyResult<bool> {
+        Ok(self
+            .edit_body_paragraph_in_place_with(
+                py,
+                index,
+                "Run.text",
+                BlockRetention::EditedRunsKeepTheirOwners,
+                |paragraph| paragraph.edit_run(path, |run| run.set_text(text)),
+            )?
+            .is_some())
+    }
+
+    /// The position of the run whose owner state is `state` in its direct
+    /// body paragraph, read from the inventory and that paragraph alone:
+    /// `None` for a run anywhere else, which keeps its route.
+    pub(crate) fn in_place_run_position(
+        &mut self,
+        py: Python<'_>,
+        state: &RevisionState,
+    ) -> PyResult<Option<oxoffice_docx::StoryRunPosition>> {
+        self.ensure_word_authority(py)?;
+        let Some(&key) = self.indexes.by_generation.get(&state.generation()) else {
+            return Ok(None);
+        };
+        let owner = &self.owners[key];
+        let (true, WordOwnerLocation::Run(_, path), Some(parent)) = (
+            owner.owner.same_state(state),
+            owner.route_shape(),
+            owner.parent,
+        ) else {
+            return Ok(None);
+        };
+        let Some(slot) = self.owners[parent].body_slot() else {
+            return Ok(None);
+        };
+        if self.indexes.direct_body_paragraph(slot) != Some(parent) {
+            return Ok(None);
+        }
+        let WordOwnerLocation::Paragraph(location) = &*self.owners[parent].location() else {
+            return Ok(None);
+        };
+        let Some(oxoffice_docx_oxml::BodyContent::Paragraph(paragraph)) =
+            self.inner.body_children().get(slot)
+        else {
+            return Ok(None);
+        };
+        let Some(run_index) = paragraph
+            .accepted_run_paths()
+            .iter()
+            .position(|candidate| candidate == path)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(oxoffice_docx::StoryRunPosition {
+            location: location.clone(),
+            run_index,
+        }))
+    }
+
+    /// `Run.replace_xml` on the run at `position` of a direct body
+    /// paragraph, in place (`Document::replace_run_xml_in_block`), published
+    /// as [`Self::set_run_text_in_place`] publishes. `false`, with nothing
+    /// changed, when the in-place route does not take it. A refusal leaves
+    /// the document and every handle as they were.
+    pub(crate) fn replace_run_xml_in_place(
+        &mut self,
+        py: Python<'_>,
+        position: &oxoffice_docx::StoryRunPosition,
+        xml: &str,
+    ) -> PyResult<bool> {
+        let Some(block) = self.story_item_block(py, &position.location)? else {
+            return Ok(false);
+        };
+        Ok(self
+            .publish_blocks_edited_in_place(
+                py,
+                "Run.replace_xml",
+                BlockRetention::EditedRunsKeepTheirOwners,
+                |document| document.replace_run_xml_in_block(position, block, xml),
+            )?
+            .is_some())
+    }
 }

@@ -566,6 +566,20 @@ section's properties.
   out the owners a properties-only change keeps over their own element
   (`assert_kept_owners_name_their_elements_but`). 31.1, 65.4 and 206.4 ms
   on `main`, 2.4, 2.5 and 2.8 ms in place.
+- **`Run.text` and `Run.replace_xml`** take the in-place route for a run
+  of a direct body paragraph (`edit_body_paragraph_in_place_with`, and
+  `replace_run_xml_in_block` through `publish_blocks_edited_in_place`),
+  published with `BlockRetention::EditedRunsKeepTheirOwners`: when the
+  paragraph holds the same run routes before and after, no owner state
+  retires, so the paragraph, the edited run and its siblings keep their
+  handles, as the staged `RunText` and `ElementXml` publications keep them
+  (a run handle names its paragraph's content view, which they keep); the
+  paragraph's read text and its piece follow the edit. Any other shape, a
+  change of the body items, and a run anywhere else keep today's route.
+  The staged `ElementXml` publication also renewed the replaced run's own
+  content view, which no handle reads; the in-place route keeps it. Debug
+  builds check the rebuild, every owner's route and states, and that the
+  owners outside the paragraph name their elements (`assert_runs_kept`).
 - **The oracle sets the XML declaration's whitespace aside.** Since "a body
   edit keeps the producer's main-part root", an edit in place keeps the
   newline a producer writes between the XML declaration and the root element

@@ -260,6 +260,12 @@ impl PyRun {
             .owner
             .as_ref()
             .ok_or_else(|| PyValueError::new_err("run XML owner route is unsupported"))?;
+        // A run of a direct body paragraph is replaced in place.
+        if let Some(position) = document.in_place_run_position(py, owner)?
+            && document.replace_run_xml_in_place(py, &position, xml)?
+        {
+            return Ok(());
+        }
         let (location, path) = document.current_run_owner(owner)?;
         let current = document
             .inner
@@ -309,6 +315,13 @@ impl PyRun {
         let (location, _) = self.validate(py)?;
         crate::refuse_non_xml_characters(py, "run text", text)?;
         let mut document = self.document.borrow_mut(py);
+        // A run of a direct body paragraph is edited in place.
+        if let ParagraphLocation::Body(index) = location
+            && self.owner.is_some()
+            && document.set_run_text_in_place(py, index, &self.run_path, text)?
+        {
+            return Ok(());
+        }
         let publication = match &self.owner {
             Some(owner) => {
                 let (location, path) = document.run_route(owner)?;

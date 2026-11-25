@@ -1,4 +1,7 @@
-"""docx: `Paragraph.replace_xml` of a direct body paragraph and `SectionHandle.replace_xml` edit their element in place.
+"""docx: `Paragraph.replace_xml`, `Run.text` and `Run.replace_xml` in a direct body paragraph, and
+`SectionHandle.replace_xml`, edit their element in place.
+
+A run edit keeps the handles of the paragraph and of every run in it, as the staged route did.
 
 The paragraph keeps its handle and its runs retire, as `Paragraph.text` publishes it; every other paragraph, run, table,
 cell, section and header handle keeps reading and editing its own element. A section replacement keeps every handle of
@@ -276,3 +279,131 @@ def test_a_section_xml_replacement_on_a_new_document_keeps_the_other_handles():
     assert doc.section(1).margin_top == section.margin_top
     assert run.text == "first" and first.text == "first"
     assert texts(reopened(doc))["sections"] == texts(doc)["sections"]
+
+
+# ------------------------------------------------------------------ Run.text and Run.replace_xml
+
+RUN = 2  # the run edited in paragraph EDITED
+
+RUN_EDITS = {
+    "Run.text": lambda run: setattr(run, "text", "a new run text "),
+    "Run.replace_xml": lambda run: run.replace_xml(run.xml.replace("run 2 of", "RUN 2 of")),
+}
+
+
+def run_handles(doc):
+    paragraph = doc.paragraphs[EDITED]
+    return paragraph, list(paragraph.runs)
+
+
+def check_runs_kept(doc, paragraph, own_runs):
+    assert paragraph.text == doc.paragraphs[EDITED].text
+    assert [run.text for run in own_runs] == [run.text for run in doc.paragraphs[EDITED].runs]
+
+
+@pytest.mark.parametrize("call", list(RUN_EDITS))
+def test_a_run_edit_in_place_keeps_the_paragraph_and_every_run_handle(body, call):
+    doc = oxdocx.Document.from_bytes(body)
+    paragraph, own_runs = run_handles(doc)
+    fresh, taken, runs = handles(doc)
+
+    RUN_EDITS[call](own_runs[RUN])
+
+    expected = "a new run text " if call == "Run.text" else "RUN 2 of paragraph 3 "
+    assert own_runs[RUN].text == expected
+    check_runs_kept(doc, paragraph, own_runs)
+    check_kept(fresh, taken, runs)
+    # The edited run, its siblings and the paragraph take further edits.
+    own_runs[RUN].text = "again "
+    own_runs[RUN + 1].text = "sibling "
+    assert [run.text for run in doc.paragraphs[EDITED].runs][RUN : RUN + 2] == ["again ", "sibling "]
+    own_runs[0].replace_xml(own_runs[0].xml.replace("run 0 of", "RUN 0 of"))
+    assert doc.paragraphs[EDITED].runs[0].text.startswith("RUN 0 of")
+    paragraph.add_run("tail")
+    assert doc.paragraphs[EDITED].text.endswith("tail")
+    runs["after"].text = "after, edited"
+    assert doc.paragraphs[EDITED + 1].runs[0].text == "after, edited"
+    assert texts(reopened(doc)) == texts(doc)
+
+
+@pytest.mark.parametrize("call", ["Run.text", "Run.replace_xml"])
+def test_a_run_edit_that_changes_nothing_keeps_every_handle(body, call):
+    doc = oxdocx.Document.from_bytes(body)
+    # A run Word saved carries identifiers that setting its text drops: the first setting is an edit.
+    if call == "Run.text":
+        doc.paragraphs[EDITED].runs[RUN].text = "the same text "
+    paragraph, own_runs = run_handles(doc)
+    fresh, taken, runs = handles(doc)
+    before = doc.to_bytes()
+    if call == "Run.text":
+        own_runs[RUN].text = own_runs[RUN].text
+    else:
+        own_runs[RUN].replace_xml(own_runs[RUN].xml)
+    assert doc.to_bytes() == before
+    check_runs_kept(doc, paragraph, own_runs)
+    check_kept(fresh, taken, runs)
+
+
+RUN_REFUSALS = {
+    "Run.text with a character XML cannot carry": lambda run: setattr(run, "text", "a\x01b"),
+    "Run.replace_xml with malformed XML": lambda run: run.replace_xml(run.xml[:-5]),
+    "Run.replace_xml with another element": lambda run: run.replace_xml(
+        '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
+    ),
+    "Run.replace_xml with two runs": lambda run: run.replace_xml(run.xml + run.xml),
+}
+
+
+@pytest.mark.parametrize("refusal", list(RUN_REFUSALS))
+def test_a_refused_run_edit_leaves_the_bytes_and_every_handle_unchanged(body, refusal):
+    doc = oxdocx.Document.from_bytes(body)
+    paragraph, own_runs = run_handles(doc)
+    fresh, taken, runs = handles(doc)
+    before = doc.to_bytes()
+    with pytest.raises((oxdocx.DocxError, ValueError)):
+        RUN_REFUSALS[refusal](own_runs[RUN])
+    assert doc.to_bytes() == before
+    check_runs_kept(doc, paragraph, own_runs)
+    check_kept(fresh, taken, runs)
+    own_runs[RUN].text = "still mine "
+    assert doc.paragraphs[EDITED].runs[RUN].text == "still mine "
+
+
+@pytest.mark.skipif(not debug_build(), reason="a debug build fails the publication on request")
+@pytest.mark.parametrize("failure", ["error", "panic"])
+@pytest.mark.parametrize("call", list(RUN_EDITS))
+def test_a_run_edit_whose_publication_fails_puts_the_paragraph_back(body, call, failure, monkeypatch):
+    # The failure on request is that of the block publication: it also proves the edit took the in-place route.
+    doc = oxdocx.Document.from_bytes(body)
+    paragraph, own_runs = run_handles(doc)
+    fresh, taken, runs = handles(doc)
+    before = doc.to_bytes()
+    monkeypatch.setenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE", failure)
+    with pytest.raises(BaseException) as raised:
+        RUN_EDITS[call](own_runs[RUN])
+    assert "on request" in str(raised.value)
+    monkeypatch.delenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE")
+    assert doc.to_bytes() == before
+    check_runs_kept(doc, paragraph, own_runs)
+    check_kept(fresh, taken, runs)
+
+
+@pytest.mark.parametrize("call", list(RUN_EDITS))
+@pytest.mark.parametrize("where", ["table cell", "content control"])
+def test_a_run_edit_outside_a_direct_body_paragraph_keeps_its_route(body, call, where):
+    doc = oxdocx.Document.from_bytes(body)
+    if where == "table cell":
+        target = lambda: doc.tables[0].cell(1, 1).paragraphs[0]  # noqa: E731
+    else:
+        index = next(index for index, p in enumerate(doc.paragraphs) if p.text == "control 0")
+        target = lambda: doc.paragraphs[index]  # noqa: E731
+    run = target().runs[0]
+    after = doc.paragraphs[EDITED + 1].runs[0]
+    edit = {
+        "Run.text": lambda run: setattr(run, "text", "edited elsewhere"),
+        "Run.replace_xml": lambda run: run.replace_xml(run.xml.replace("</w:t>", " edited</w:t>", 1)),
+    }[call]
+    edit(run)
+    assert "edited" in target().runs[0].text
+    assert after.text == doc.paragraphs[EDITED + 1].runs[0].text
+    assert texts(reopened(doc)) == texts(doc)
