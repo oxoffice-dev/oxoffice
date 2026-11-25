@@ -4826,6 +4826,33 @@ fn a_changed_paragraph_holding_an_empty_revision_is_compared() {
 }
 
 #[test]
+fn a_block_control_empty_in_one_version_is_refused_with_why() {
+    // The last mark of a control's content cannot be taken out, as the
+    // body's last cannot: a control holding nothing in one version cannot
+    // be marked to hold the other's paragraph.
+    let version = |content: &str| {
+        doc_with_body(&format!(
+            r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>{}"#,
+            plain("After")
+        ))
+    };
+    for (from, to) in [
+        (String::new(), plain("Inside")),
+        (plain("Inside"), String::new()),
+    ] {
+        let error = version(&from)
+            .compare(&version(&to), AUTHOR, DATE)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot give an empty block content control content"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn an_empty_text_box_comment_or_note_written_self_closing_is_compared_around() {
     const EMPTY_BOX: &str = concat!(
         r#"<w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="box" style="width:120pt;height:40pt">"#,

@@ -190,6 +190,14 @@ pub(super) fn compare_control_from_xml(
             )?;
             return Ok(output);
         }
+        // The last paragraph mark of a control's content cannot be taken
+        // out: a control holding nothing in one version cannot be marked to
+        // hold the other's content.
+        if original_content.is_empty() != edited_content.is_empty() {
+            return Err(Error::Other(format!(
+                "comparison cannot give an empty block content control content, nor take all of it, at {location}"
+            )));
+        }
         let whitespace_slots = control_whitespace_slots(original)?;
         let original_signatures = original_content
             .iter()
