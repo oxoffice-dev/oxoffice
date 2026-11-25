@@ -466,6 +466,37 @@ impl WordPieces {
         self.blocks.splice(slot..slot + removed, piece);
     }
 
+    /// Keep body pieces aligned with an in-place splice of `document` that
+    /// put the blocks of `inserted` in place of `removed` pieces at `slot`.
+    /// A count or slot that does not match the document drops the body
+    /// pieces, as [`Self::splice`] does.
+    pub(super) fn splice_blocks(
+        &mut self,
+        document: &oxoffice_docx::Document,
+        slot: usize,
+        removed: usize,
+        inserted: Vec<WordBlockOwners>,
+    ) {
+        let blocks = document.body_children();
+        if self.blocks.len() + inserted.len() != blocks.len() + removed
+            || slot + removed > self.blocks.len()
+        {
+            self.blocks.clear();
+            return;
+        }
+        let pieces = inserted
+            .into_iter()
+            .enumerate()
+            .map(|(offset, owners)| {
+                std::sync::Arc::new(WordBlockPiece {
+                    block: std::sync::Arc::new(blocks[slot + offset].clone()),
+                    owners: Some(owners),
+                })
+            })
+            .collect::<Vec<_>>();
+        self.blocks.splice(slot..slot + removed, pieces);
+    }
+
     fn inventory(
         &self,
         document: &oxoffice_docx::Document,

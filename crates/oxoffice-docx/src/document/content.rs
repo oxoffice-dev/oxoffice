@@ -1068,6 +1068,30 @@ pub(crate) struct BodyBlockItem {
     pub(super) span: StoryItemSpan,
 }
 
+/// One direct body block written alone between the head and the tail of the
+/// main part.
+pub(crate) struct BodyBlockPart {
+    /// The bytes before the block, through the body start tag.
+    pub(crate) head: Vec<u8>,
+    /// The head, the block and the tail.
+    pub(crate) xml: Vec<u8>,
+    /// The length of the bytes after the block, from the final section on.
+    pub(crate) tail: usize,
+}
+
+impl BodyBlockPart {
+    /// The block of `xml`, an edit of [`Self::xml`] that kept its head and
+    /// tail.
+    pub(crate) fn block_of<'a>(&self, xml: &'a [u8]) -> &'a [u8] {
+        &xml[self.head.len()..xml.len() - self.tail]
+    }
+
+    /// The tail of [`Self::xml`].
+    pub(crate) fn tail_bytes(&self) -> &[u8] {
+        &self.xml[self.xml.len() - self.tail..]
+    }
+}
+
 impl BodyBlockItem {
     /// The block of `xml`, an edit of [`Self::xml`] that kept its head and
     /// tail.
@@ -1078,35 +1102,6 @@ impl BodyBlockItem {
     /// The tail of [`Self::xml`].
     pub(crate) fn tail_bytes(&self) -> &[u8] {
         &self.xml[self.xml.len() - self.tail..]
-    }
-}
-
-/// One direct body block written alone between the head and the tail of the
-/// main part.
-pub(crate) struct BodyBlockAlone {
-    /// The bytes before the block, through the body start tag.
-    pub(crate) head: Vec<u8>,
-    /// The head, the block and the tail.
-    pub(crate) xml: Vec<u8>,
-    /// The length of the bytes after the block, from the final section on.
-    pub(crate) tail: usize,
-}
-
-impl BodyBlockAlone {
-    /// The block of `xml`, an edit of [`Self::xml`] that kept its head and
-    /// tail.
-    pub(crate) fn block_of<'a>(&self, xml: &'a [u8]) -> &'a [u8] {
-        &xml[self.head.len()..xml.len() - self.tail]
-    }
-
-    /// The tail of [`Self::xml`].
-    pub(crate) fn tail_bytes(&self) -> &[u8] {
-        &self.xml[self.xml.len() - self.tail..]
-    }
-
-    /// The block, in [`Self::xml`].
-    pub(crate) fn block_span(&self) -> Range<usize> {
-        self.head.len()..self.xml.len() - self.tail
     }
 }
 
@@ -1125,11 +1120,13 @@ impl Document {
         index: usize,
         item_kind: StoryItemKind,
     ) -> Result<Option<BodyBlockItem>> {
-        let Some(alone) = self.body_block_alone(slot)? else {
+        // Computed once after an invalidation: an empty cache is no answer,
+        // and the swap keeps a savable answer
+        // (`keep_body_savable_after_typed_insert`).
+        let Some(BodyBlockPart { head, xml, tail }) = self.body_block_part(slot)? else {
             return Ok(None);
         };
-        let block_span = alone.block_span();
-        let BodyBlockAlone { head, xml, tail } = alone;
+        let block_span = head.len()..xml.len() - tail;
         let owners = scan_story_owners(&xml, StoryKind::Body)?;
         let Some(owner) = owners
             .iter()
@@ -1158,9 +1155,10 @@ impl Document {
     }
 
     /// The direct body block at `slot` written alone under the root and the
-    /// final section of the main part, at the cost of that block. `None` when the body has no block `slot` or a save of
-    /// the body is known to fail, which the staged route reports.
-    pub(crate) fn body_block_alone(&self, slot: usize) -> Result<Option<BodyBlockAlone>> {
+    /// final section of the main part, at the cost of that block. `None`
+    /// when the body has no such block or a save of the body is known to
+    /// fail, which the staged route reports.
+    pub(crate) fn body_block_part(&self, slot: usize) -> Result<Option<BodyBlockPart>> {
         // Computed once after an invalidation: an empty cache is no answer,
         // and the swap keeps a savable answer
         // (`keep_body_savable_after_typed_insert`).
@@ -1192,12 +1190,15 @@ impl Document {
         // The declaration a save adds to the root when the block uses w14.
         declare_w14_on_part_root(&mut xml)?;
         let head = xml[..head.len() + xml.len() - written].to_vec();
-        let tail = tail.len();
-        Ok(Some(BodyBlockAlone { head, xml, tail }))
+        Ok(Some(BodyBlockPart {
+            head,
+            xml,
+            tail: tail.len(),
+        }))
     }
 
     /// The direct body block at `slot` after `edit`, a byte edit of the
-    /// part [`Self::body_block_alone`] writes that keeps its head and tail,
+    /// part [`Self::body_block_part`] writes that keeps its head and tail,
     /// at the cost of that block. `None` when the block cannot be written
     /// alone, the edit changed the head or the tail, or the edited block
     /// does not read back as it writes.
@@ -1206,7 +1207,7 @@ impl Document {
         slot: usize,
         edit: impl FnOnce(&[u8]) -> Result<Vec<u8>>,
     ) -> Result<Option<BodyContent>> {
-        let Some(alone) = self.body_block_alone(slot)? else {
+        let Some(alone) = self.body_block_part(slot)? else {
             return Ok(None);
         };
         let edited = edit(&alone.xml)?;

@@ -88,6 +88,7 @@ use templates::{template_render_pyerr, template_value};
 
 mod block_edits;
 mod block_edits_in_place;
+mod blocks_spliced;
 mod body_splice;
 mod inventory_matches;
 mod owner_anchors;
@@ -582,6 +583,7 @@ struct WordOwnerFacts {
     links: Vec<oxoffice_docx::ContentLocation>,
 }
 
+#[derive(Default)]
 struct WordIndexProjections {
     body_paragraphs: Option<Vec<Option<oxoffice_docx::ContentLocation>>>,
     cell_paragraphs: CellParagraphRoutes,

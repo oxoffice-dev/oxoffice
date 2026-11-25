@@ -63,7 +63,7 @@ pub use comparison::{
 };
 pub use content_control::{
     ContentControlAppearance, ContentControlEdit, ContentControlLock, ContentControlPlacement,
-    ContentControlRef, ContentControlSpec, ContentControlTypePayload, ControlBlock,
+    ContentControlRef, ContentControlSpec, ContentControlTypePayload, ControlBlock, FormEdit,
     FormFieldAssignment, FormFieldRule, FormFieldTarget, FormFieldValue, FormResetValue,
     FormValidationIssue,
 };
@@ -78,13 +78,14 @@ pub use document::{
     NotePlacement, NotePolicy, NoteRestart, NoteSpecialRecord, NumberedOutlineNode,
     NumberingDefinition, NumberingDefinitionLevel, NumberingFormat, NumberingInstance,
     NumberingJournal, NumberingLevel, NumberingLevelOverride, OutlineNode, OwnerElementXml,
-    PictureAnchor, PictureCrop, PictureOccurrence, PictureOptions, RenderOptions, ReplaceOptions,
-    ReplacementCountMismatch, ReplacementRefusal, Section, SectionRef, SectionStory, SlotHit,
-    StoryError, StoryId, StoryItemKind, StoryItemRef, StoryItemSnapshot, StoryKind, StoryParagraph,
-    StoryText, StoryTextItem, TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport,
-    TextWatermarkOptions, UncheckedReplacement, UnreachedReplacement, UnsupportedXmlRef,
-    ValidationFinding, ValidationReport, ValidationSeverity, WordCreationProfile, WordPackageClass,
-    derive_font_key, resolved_xml_events, validate_document_bytes, validate_document_file,
+    PictureAnchor, PictureCrop, PictureOccurrence, PictureOptions, RemovedBodyBlocks,
+    RenderOptions, ReplaceOptions, ReplacementCountMismatch, ReplacementRefusal, Section,
+    SectionRef, SectionStory, SlotHit, StoryError, StoryId, StoryItemKind, StoryItemRef,
+    StoryItemSnapshot, StoryKind, StoryParagraph, StoryText, StoryTextItem, TextBoxDirection,
+    TextBoxOptions, TextDiagnostic, TextReport, TextWatermarkOptions, UncheckedReplacement,
+    UnreachedReplacement, UnsupportedXmlRef, ValidationFinding, ValidationReport,
+    ValidationSeverity, WordCreationProfile, WordPackageClass, derive_font_key,
+    resolved_xml_events, validate_document_bytes, validate_document_file,
 };
 pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,

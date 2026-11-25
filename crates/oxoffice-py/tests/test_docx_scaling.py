@@ -187,6 +187,15 @@ def controls(doc, k):
     return control(doc, k), found(doc, lambda it: it.kind == "paragraph" and it.text == f"spot {k}")
 
 
+def form_target(k):
+    """The block content control probe_k of the document (edit_cost_docx) as a form target."""
+    return oxdocx.FormFieldTarget.content_control_tag(f"probe{k}")
+
+
+def form_rule(k):
+    return oxdocx.FormFieldRule(target=form_target(k), reset=oxdocx.FormResetValue.placeholder("Type here"))
+
+
 def hyperlink(doc, k):
     text = f"link {next(IDS)}"
     para(doc, k).add_hyperlink(text, URL)
@@ -497,6 +506,9 @@ TIMED = {
     "Document.insert_content_control": on_made(location, lambda doc, loc: doc.insert_content_control(
         loc, "block", "plain_text", tag="new")),
     "Document.set_content_control_tag": on_made(control, lambda doc, loc: doc.set_content_control_tag(loc, "renamed")),
+    "Document.fill_form": on_made(lambda doc, k: k, lambda doc, k: doc.fill_form(
+        [form_rule(k)], [oxdocx.FormFieldAssignment(target=form_target(k), value=oxdocx.FormFieldValue.text("filled"))])),
+    "Document.reset_form": on_made(lambda doc, k: k, lambda doc, k: doc.reset_form([form_rule(k)])),
     "Document.set_content_control_alias": on_made(control, lambda doc, loc: doc.set_content_control_alias(
         loc, "Alias")),
     "Document.set_content_control_lock": on_made(control, lambda doc, loc: doc.set_content_control_lock(
@@ -715,9 +727,6 @@ WHOLE_DOCUMENT = {
     "Document.set_content_control_value_by_tag": "searches every content control by tag",
     "Document.set_content_control_value_by_alias": "searches every content control by alias",
     "Document.set_legacy_form_field_value": "searches every story for the field's name",
-    # The form operations validate the whole candidate document before they publish, a rule or none
-    # (oxoffice-dev/oxoffice#7).
-    "Document.fill_form": "validates the whole document", "Document.reset_form": "validates the whole document",
     "Document.protect_form": "validates the whole document",
     "Document.update_fields": "every field", "Document.update_all_fields": "every field",
     "Document.update_page_fields": "lays out every page",
@@ -812,14 +821,14 @@ GROWING = {
     "Document.clone_content_control", "Document.import_fragment", "Document.insert_bibliography",
     "Document.insert_content", "Document.insert_content_control", "Document.insert_document", "Document.insert_html",
     "Document.insert_section", "Document.move_comment", "Document.move_content", "Document.move_content_control",
-    "Document.pop_content", "Document.reject_revision_id", "Document.remove_content", "Document.remove_content_control",
-    "Document.remove_content_range", "Document.remove_hyperlink", "Document.remove_section",
-    "Document.repeat_content_control", "Document.replace_image", "Document.replace_image_for_story",
-    "Document.replace_text_at", "Document.reply_to", "Document.set_chart_legend", "Document.set_hyperlink_url",
-    "Document.set_picture_size", "Document.set_picture_sizes_for_relationship", "Document.unwrap_content_control",
-    "Paragraph.add_hyperlink", "Paragraph.add_internal_hyperlink", "Paragraph.replace_text", "Paragraph.replace_xml",
-    "Run.add_picture", "Run.replace_xml", "Run.text", "SectionHandle.replace_xml", "Table.add_row", "Table.clone_row",
-    "Table.delete_column", "Table.insert_column", "Table.remove_row", "Table.replace_xml", "Table.set_cell_grid_span",
+    "Document.reject_revision_id", "Document.remove_content_control", "Document.remove_hyperlink",
+    "Document.remove_section", "Document.repeat_content_control", "Document.replace_image",
+    "Document.replace_image_for_story", "Document.replace_text_at", "Document.reply_to", "Document.set_chart_legend",
+    "Document.set_hyperlink_url", "Document.set_picture_size", "Document.set_picture_sizes_for_relationship",
+    "Document.unwrap_content_control", "Paragraph.add_hyperlink", "Paragraph.add_internal_hyperlink",
+    "Paragraph.replace_text", "Paragraph.replace_xml", "Run.add_picture", "Run.replace_xml", "Run.text",
+    "SectionHandle.replace_xml", "Table.add_row", "Table.clone_row", "Table.delete_column", "Table.insert_column",
+    "Table.remove_row", "Table.replace_xml", "Table.set_cell_grid_span",
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 

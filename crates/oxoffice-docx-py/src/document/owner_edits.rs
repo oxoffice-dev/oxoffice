@@ -2269,42 +2269,7 @@ impl PyDocument {
     /// false, changing nothing, when the block now holds other stories,
     /// items, paragraphs, tables or links than it held.
     fn follow_control_property_edit(&mut self, slot: usize) -> bool {
-        let Some(live) = self.inner.body_children().get(slot) else {
-            return false;
-        };
-        let Ok(Some(owners)) = word_block_owners(&self.inner, live) else {
-            return false;
-        };
-        let Some(pieces) = &mut self.pieces else {
-            return false;
-        };
-        if pieces.context.as_ref() != Some(&self.inner.body_item_context())
-            || pieces.blocks.len() != self.inner.body_children().len()
-        {
-            return false;
-        }
-        let Some(held) = pieces.blocks[slot].owners.as_ref() else {
-            return false;
-        };
-        let shape = |owners: &WordBlockOwners| {
-            (
-                owners.body_items,
-                owners.cell_stories,
-                owners.text_boxes,
-                owners.tables,
-                owners.paragraphs.clone(),
-                owners.relationships.clone(),
-                owners.facts.links.len(),
-            )
-        };
-        if shape(held) != shape(&owners) {
-            return false;
-        }
-        pieces.blocks[slot] = std::sync::Arc::new(WordBlockPiece {
-            block: std::sync::Arc::new(live.clone()),
-            owners: Some(owners),
-        });
-        true
+        self.follow_blocks_keeping_owners(&[slot])
     }
 
     pub(super) fn publish_api_candidate(

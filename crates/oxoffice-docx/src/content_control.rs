@@ -27,6 +27,8 @@ mod custom_xml;
 mod data_binding;
 mod display;
 mod element_index;
+mod form_in_place;
+pub use form_in_place::FormEdit;
 mod form_issues;
 mod form_plan;
 mod form_rules;
@@ -1008,6 +1010,89 @@ impl Document {
         rules: &[FormFieldRule],
         assignments: &[FormFieldAssignment],
     ) -> Result<Vec<usize>> {
+        match self.fill_form_in_blocks(rules, assignments)? {
+            Some(edit) => Ok(edit.counts),
+            None => self.fill_form_staged(rules, assignments),
+        }
+    }
+
+    /// Restore every rule's reset value atomically. Required fields may become empty.
+    /// A control's reset value replaces its content and the tracked changes
+    /// in it, as a value does.
+    pub fn reset_form(&mut self, rules: &[FormFieldRule]) -> Result<Vec<usize>> {
+        match self.reset_form_in_blocks(rules)? {
+            Some(edit) => Ok(edit.counts),
+            None => self.reset_form_staged(rules),
+        }
+    }
+
+    /// [`Self::fill_form`] on the body blocks that hold its targets, one
+    /// `EditUnit::BodyBlocks` unit per changed block, and the header and
+    /// footer parts that hold them and the custom XML items of its bound
+    /// controls (`EditUnit::Parts`). `Ok(None)` changes
+    /// nothing and leaves the call to the staged route: a legacy field
+    /// target, a tag a note or a comment names, a body that cannot be saved after
+    /// a typed edit, a block that does not read back as it writes. A refusal
+    /// leaves the document as it was, with the staged route's error.
+    #[doc(hidden)]
+    pub fn fill_form_in_blocks(
+        &mut self,
+        rules: &[FormFieldRule],
+        assignments: &[FormFieldAssignment],
+    ) -> Result<Option<FormEdit>> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.form_in_blocks(rules, form_in_place::FormPlanner::Fill(assignments));
+        #[cfg(debug_assertions)]
+        self.assert_form_in_blocks_matches_staged(before, &result, |staged| {
+            staged.fill_form_staged(rules, assignments)
+        });
+        result
+    }
+
+    /// [`Self::reset_form`] on the body blocks that hold its targets, as
+    /// [`Self::fill_form_in_blocks`].
+    #[doc(hidden)]
+    pub fn reset_form_in_blocks(&mut self, rules: &[FormFieldRule]) -> Result<Option<FormEdit>> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.form_in_blocks(rules, form_in_place::FormPlanner::Reset);
+        #[cfg(debug_assertions)]
+        self.assert_form_in_blocks_matches_staged(before, &result, |staged| {
+            staged.reset_form_staged(rules)
+        });
+        result
+    }
+
+    #[cfg(debug_assertions)]
+    fn assert_form_in_blocks_matches_staged(
+        &self,
+        before: Document,
+        result: &Result<Option<FormEdit>>,
+        staged: impl FnOnce(&mut Document) -> Result<Vec<usize>>,
+    ) {
+        match result {
+            Ok(None) => assert_eq!(
+                self.clone_for_staging().to_bytes().ok(),
+                before.clone_for_staging().to_bytes().ok(),
+                "a form operation left to the staged route changed the document"
+            ),
+            Ok(Some(edit)) => {
+                let counts = Ok(edit.counts.clone());
+                self.assert_in_place_matches_staged_main_part_rewritten(before, &counts, staged);
+            }
+            Err(error) => {
+                let error: Result<Vec<usize>> = Err(Error::Other(error.to_string()));
+                self.assert_in_place_matches_staged_main_part_rewritten(before, &error, staged);
+            }
+        }
+    }
+
+    fn fill_form_staged(
+        &mut self,
+        rules: &[FormFieldRule],
+        assignments: &[FormFieldAssignment],
+    ) -> Result<Vec<usize>> {
         let mut candidate = flushed_form_document(self)?;
         let mut state = read_form_state(&candidate)?;
         let selections = select_rules(&candidate, &mut state, rules)?;
@@ -1017,10 +1102,7 @@ impl Document {
         Ok(plan.counts)
     }
 
-    /// Restore every rule's reset value atomically. Required fields may become empty.
-    /// A control's reset value replaces its content and the tracked changes
-    /// in it, as a value does.
-    pub fn reset_form(&mut self, rules: &[FormFieldRule]) -> Result<Vec<usize>> {
+    fn reset_form_staged(&mut self, rules: &[FormFieldRule]) -> Result<Vec<usize>> {
         let mut candidate = flushed_form_document(self)?;
         let mut state = read_form_state(&candidate)?;
         let selections = select_rules(&candidate, &mut state, rules)?;

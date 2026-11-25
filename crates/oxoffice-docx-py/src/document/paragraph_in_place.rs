@@ -3,6 +3,7 @@
 //! blocks, touching the owners of the replaced ones and the records of the
 //! body items after them, never the rest of the inventory.
 
+use super::blocks_spliced::BlocksSplice;
 use super::*;
 
 /// Which owners of a replaced block keep their states.
@@ -12,6 +13,10 @@ pub(crate) enum BlockRetention {
     /// properties states, and what it holds is born again (decision 1 of
     /// the one-block publication spec).
     EditedParagraphKeepsItsOwner,
+    /// Blocks removed or inserted: their owners retire or are born, every
+    /// other owner keeps its states, and the document epoch and the
+    /// snapshot retire ("body handles follow their element", decision 2).
+    Spliced,
 }
 
 /// What [`PyDocument::publish_body_blocks_replaced`] did.
@@ -25,6 +30,83 @@ pub(crate) enum BlocksPublication {
     /// and the caller puts the old blocks back and takes the whole route.
     WholeRoute,
 }
+
+/// A block replacement planned with no state changed.
+pub(crate) enum BlocksPlan {
+    /// The new blocks are the old ones.
+    Unchanged,
+    /// One paragraph edited where it stands.
+    Paragraph(ReplacedBlock, Box<ParagraphPlan>),
+    /// Blocks removed or inserted.
+    Spliced(Box<BlocksSplice>),
+}
+
+impl BlocksPlan {
+    /// The states the publication retires, the snapshot scope aside.
+    pub(crate) fn retired(&self) -> &[RevisionState] {
+        match self {
+            Self::Unchanged => &[],
+            Self::Paragraph(_, plan) => &plan.retired,
+            Self::Spliced(plan) => &plan.retired,
+        }
+    }
+
+    /// The scopes the publication gives birth to, the snapshot scope aside.
+    pub(crate) fn births(&self) -> &[RevisionScope] {
+        match self {
+            Self::Unchanged => &[],
+            Self::Paragraph(_, plan) => &plan.births,
+            Self::Spliced(plan) => &plan.births,
+        }
+    }
+
+    /// Whether the document epoch survives (a revision prepared local): an
+    /// edit keeps it, a splice that removes or inserts blocks retires it.
+    pub(crate) fn keeps_epoch(&self) -> bool {
+        !matches!(self, Self::Spliced(_))
+    }
+
+    /// Debug builds fail or panic before the commit on request, so that tests
+    /// see the old blocks put back.
+    pub(crate) fn debug_fail(&self) -> PyResult<()> {
+        match self {
+            Self::Spliced(_) => debug_fail_block_splice(),
+            _ => debug_fail_paragraph_splice(),
+        }
+    }
+}
+
+/// What the debug oracle of a block replacement needs of its plan.
+#[cfg(debug_assertions)]
+#[derive(Clone)]
+pub(crate) enum BlocksSummary {
+    Unchanged,
+    Paragraph(ReplacedBlock),
+    /// The owners retired and born.
+    Spliced {
+        retired: usize,
+        born: usize,
+    },
+}
+
+#[cfg(debug_assertions)]
+impl BlocksPlan {
+    /// What the debug oracle needs, taken before the commit consumes the plan.
+    pub(crate) fn summary(&self) -> BlocksSummary {
+        match self {
+            Self::Unchanged => BlocksSummary::Unchanged,
+            Self::Paragraph(target, _) => BlocksSummary::Paragraph(target.clone()),
+            Self::Spliced(plan) => {
+                let (retired, born) = plan.counts();
+                BlocksSummary::Spliced { retired, born }
+            }
+        }
+    }
+}
+
+/// The document and the inventory before a block replacement.
+#[cfg(debug_assertions)]
+pub(crate) type BlocksDebugCopy = (oxoffice_docx::Document, Vec<WordOwner>);
 
 /// The old block of a swap the facade made, held until the publication
 /// commits: any other exit (a refusal, an error, a panic) puts it back.
@@ -54,7 +136,8 @@ impl Drop for SwappedBlock<'_> {
 
 /// What the block replacement needs of the replaced block, read from the
 /// inventory and the pieces.
-struct ReplacedBlock {
+#[derive(Clone)]
+pub(crate) struct ReplacedBlock {
     slot: usize,
     /// The block's root owner and its body story item.
     selected: usize,
@@ -128,10 +211,12 @@ impl PyDocument {
     /// items moved by the change in body story items. `retention` says which
     /// owners keep their states.
     ///
-    /// Shapes taken: one block replaced by one (`previous.len() == 1`,
-    /// `inserted == 1`), both direct body paragraphs holding no table, cell
-    /// story, text box or hyperlink, with
-    /// [`BlockRetention::EditedParagraphKeepsItsOwner`]. Any other shape, an
+    /// Shapes taken: with [`BlockRetention::EditedParagraphKeepsItsOwner`],
+    /// one block replaced by one (`previous.len() == 1`, `inserted == 1`),
+    /// both direct body paragraphs holding no table, cell story, text box or
+    /// hyperlink; with [`BlockRetention::Spliced`], any number of direct body
+    /// paragraphs, tables and block content controls replaced by any number
+    /// of them, none holding a text box or a section break. Any other shape, an
     /// inventory whose body records are not anchored, pieces not aligned with
     /// `previous`, or a change in body story items when a later item holds
     /// a hyperlink answers [`BlocksPublication::WholeRoute`] with nothing
@@ -146,34 +231,51 @@ impl PyDocument {
         operation: &'static str,
         retention: BlockRetention,
     ) -> PyResult<BlocksPublication> {
-        let BlockRetention::EditedParagraphKeepsItsOwner = retention;
-        let ([old], 1) = (previous, inserted) else {
-            return Ok(BlocksPublication::WholeRoute);
-        };
-        let Some(new) = self.inner.body_children().get(slot) else {
-            return Ok(BlocksPublication::WholeRoute);
-        };
-        if new == old {
-            return Ok(BlocksPublication::Unchanged);
-        }
         self.ensure_word_authority(py)?;
-        let Some(target) = self.replaced_block(slot, old) else {
-            return Ok(BlocksPublication::WholeRoute);
+        let plan = match self.plan_blocks_replaced(slot, previous, inserted, retention)? {
+            None => return Ok(BlocksPublication::WholeRoute),
+            Some(BlocksPlan::Unchanged) => return Ok(BlocksPublication::Unchanged),
+            Some(plan) => plan,
         };
         #[cfg(debug_assertions)]
-        let before = {
-            let mut document = self.inner.clone_for_staging();
-            document
-                .swap_body_block(slot, old.clone())
-                .expect("the replaced slot is in the body");
-            (document, self.owners.clone())
-        };
-        let published = self.replace_paragraph_owners(&target, operation)?;
-        #[cfg(debug_assertions)]
-        if published == BlocksPublication::Published {
-            self.assert_paragraph_replacement(&before, &target);
+        let (before, summary) = (
+            self.blocks_replaced_debug_copy(slot, previous, inserted),
+            plan.summary(),
+        );
+        // One revision retires and gives birth for the blocks and the
+        // snapshot; a caller composing another splice adds its own scopes
+        // to the same revision.
+        let mut retired = plan.retired().to_vec();
+        retired.push(
+            self.snapshot_scope
+                .as_ref()
+                .expect("active Word authority")
+                .clone(),
+        );
+        let mut births = plan.births().to_vec();
+        births.push(RevisionScope::Text);
+        let revision = if plan.keeps_epoch() {
+            self.revisions
+                .prepare_local_scopes(operation, &retired, &births)
+        } else {
+            self.revisions.prepare_scopes(operation, &retired, &births)
         }
-        Ok(published)
+        .map_err(revision_to_pyerr)?;
+        let states = (0..births.len())
+            .map(|index| revision.born(index).expect("prepared birth"))
+            .collect::<Vec<_>>();
+        self.reserve_blocks_replaced(&plan)?;
+        plan.debug_fail()?;
+        self.revisions
+            .commit_scopes(revision)
+            .map_err(revision_to_pyerr)?;
+        // The commit: nothing below fails.
+        let (snapshot, states) = states.split_last().expect("snapshot birth");
+        self.apply_blocks_replaced(plan, states);
+        self.snapshot_scope = Some(snapshot.clone());
+        #[cfg(debug_assertions)]
+        self.assert_blocks_replaced(&before, &summary);
+        Ok(BlocksPublication::Published)
     }
 
     /// The body slot of the paragraph at `location`, from the inventory
@@ -235,29 +337,29 @@ impl PyDocument {
             _ => return Ok(BlocksPublication::WholeRoute),
         }
         self.ensure_word_authority(py)?;
-        let Some(target) = self.replaced_block(slot, previous) else {
-            return Ok(BlocksPublication::WholeRoute);
-        };
         // A part that does not read alone takes the whole route, as one
         // that reads otherwise does.
         let Some(splice) = self.read_story_splice(py, story).ok().flatten() else {
             return Ok(BlocksPublication::WholeRoute);
         };
-        let Some(plan) = self.plan_paragraph_owners(&target)? else {
+        let Some(plan @ BlocksPlan::Paragraph(..)) = self.plan_blocks_replaced(
+            slot,
+            std::slice::from_ref(previous),
+            1,
+            BlockRetention::EditedParagraphKeepsItsOwner,
+        )?
+        else {
             return Ok(BlocksPublication::WholeRoute);
         };
         #[cfg(debug_assertions)]
-        let before = {
-            let mut document = self.inner.clone_for_staging();
-            document
-                .swap_body_block(slot, previous.clone())
-                .expect("the replaced slot is in the body");
-            (document, self.owners.clone())
-        };
+        let (before, summary) = (
+            self.blocks_replaced_debug_copy(slot, std::slice::from_ref(previous), 1),
+            plan.summary(),
+        );
         // One revision retires and gives birth for both halves: whatever can
         // fail comes before its commit, so both halves publish or neither.
         let (story_retired, story_births) = self.story_splice_scopes(story, &splice);
-        let mut retired = plan.retired.clone();
+        let mut retired = plan.retired().to_vec();
         retired.extend(story_retired);
         retired.push(
             self.snapshot_scope
@@ -265,8 +367,8 @@ impl PyDocument {
                 .expect("active Word authority")
                 .clone(),
         );
-        let paragraph_births = plan.births.len();
-        let mut births = plan.births.clone();
+        let paragraph_births = plan.births().len();
+        let mut births = plan.births().to_vec();
         births.extend(story_births);
         births.push(RevisionScope::Text);
         let revision = self
@@ -276,21 +378,126 @@ impl PyDocument {
         let states = (0..births.len())
             .map(|index| revision.born(index).expect("prepared birth"))
             .collect::<Vec<_>>();
-        self.reserve_paragraph_owners(std::slice::from_ref(&plan))?;
+        self.reserve_blocks_replaced(&plan)?;
         self.reserve_story_splice(&splice)?;
-        debug_fail_paragraph_splice()?;
+        plan.debug_fail()?;
         self.revisions
             .commit_scopes(revision)
             .map_err(revision_to_pyerr)?;
         // The commit: nothing below fails.
         let (snapshot, states) = states.split_last().expect("snapshot birth");
         let (paragraph_states, story_states) = states.split_at(paragraph_births);
-        self.apply_paragraph_owners(&target, plan, paragraph_states);
+        self.apply_blocks_replaced(plan, paragraph_states);
         self.apply_story_splice(story, splice, story_states);
         self.snapshot_scope = Some(snapshot.clone());
         #[cfg(debug_assertions)]
-        self.assert_paragraph_replacement(&before, &target);
+        self.assert_blocks_replaced(&before, &summary);
         Ok(BlocksPublication::Published)
+    }
+
+    /// The plan of [`Self::publish_body_blocks_replaced`], read from the
+    /// inventory, the pieces and the new blocks with no state changed:
+    /// `None` for the whole route, [`BlocksPlan::Unchanged`] for new blocks
+    /// equal to the old ones (nothing to publish, every handle stays). The
+    /// caller has ensured the Word authority. Debug builds check here that
+    /// the old owners found by route are the blocks' closure.
+    ///
+    /// A caller composing this publication with its own: put
+    /// [`BlocksPlan::retired`] and [`BlocksPlan::births`] in its revision
+    /// (prepared local when [`BlocksPlan::keeps_epoch`], else not), call
+    /// [`Self::reserve_blocks_replaced`] and its own reservations, commit the
+    /// revision once, then [`Self::apply_blocks_replaced`] with the states
+    /// born for [`BlocksPlan::births`], in order, its own application and
+    /// the snapshot scope; under debug assertions, take
+    /// [`Self::blocks_replaced_debug_copy`] before and call
+    /// [`Self::assert_blocks_replaced`] after every application.
+    pub(crate) fn plan_blocks_replaced(
+        &self,
+        slot: usize,
+        previous: &[oxoffice_docx_oxml::BodyContent],
+        inserted: usize,
+        retention: BlockRetention,
+    ) -> PyResult<Option<BlocksPlan>> {
+        if let BlockRetention::Spliced = retention {
+            let Some(plan) = self.plan_blocks_splice(slot, previous, inserted) else {
+                return Ok(None);
+            };
+            #[cfg(debug_assertions)]
+            self.assert_old_owners_are_the_blocks_closure(&plan);
+            return Ok(Some(BlocksPlan::Spliced(Box::new(plan))));
+        }
+        let ([old], 1) = (previous, inserted) else {
+            return Ok(None);
+        };
+        let Some(new) = self.inner.body_children().get(slot) else {
+            return Ok(None);
+        };
+        if new == old {
+            return Ok(Some(BlocksPlan::Unchanged));
+        }
+        let Some(target) = self.replaced_block(slot, old) else {
+            return Ok(None);
+        };
+        Ok(self
+            .plan_paragraph_owners(&target)?
+            .map(|plan| BlocksPlan::Paragraph(target, Box::new(plan))))
+    }
+
+    /// Reserve what [`Self::apply_blocks_replaced`] adds, so that nothing
+    /// fails once the revision commits.
+    pub(crate) fn reserve_blocks_replaced(&mut self, plan: &BlocksPlan) -> PyResult<()> {
+        match plan {
+            BlocksPlan::Unchanged => Ok(()),
+            BlocksPlan::Paragraph(_, plan) => {
+                self.reserve_paragraph_owners(std::slice::from_ref(plan))
+            }
+            BlocksPlan::Spliced(plan) => self.reserve_blocks_splice(plan),
+        }
+    }
+
+    /// Install `plan` after its revision committed, under `states`: the
+    /// states born for [`BlocksPlan::births`], in order. Nothing here fails;
+    /// the caller sets the snapshot scope. No debug oracle runs here.
+    pub(crate) fn apply_blocks_replaced(&mut self, plan: BlocksPlan, states: &[RevisionState]) {
+        match plan {
+            BlocksPlan::Unchanged => {}
+            BlocksPlan::Paragraph(target, plan) => {
+                self.apply_paragraph_owners(&target, *plan, states);
+            }
+            BlocksPlan::Spliced(plan) => self.apply_blocks_splice(*plan, states),
+        }
+    }
+
+    /// Under debug assertions, the document and the inventory as they were
+    /// before the blocks at `slot..slot + inserted` replaced `previous`, for
+    /// [`Self::assert_blocks_replaced`]. Take it before the commit.
+    #[cfg(debug_assertions)]
+    pub(crate) fn blocks_replaced_debug_copy(
+        &self,
+        slot: usize,
+        previous: &[oxoffice_docx_oxml::BodyContent],
+        inserted: usize,
+    ) -> BlocksDebugCopy {
+        let mut document = self.inner.clone_for_staging();
+        document
+            .splice_body_blocks(slot, inserted, previous.to_vec())
+            .expect("the replaced slots are in the body");
+        (document, self.owners.clone())
+    }
+
+    /// Under debug assertions, after a block replacement was applied and any
+    /// application that goes with it: the oracles of the plan's shape (the
+    /// rebuild, kept owners naming their elements, and the retention of the
+    /// whole route or of a splice).
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_blocks_replaced(&self, before: &BlocksDebugCopy, summary: &BlocksSummary) {
+        match summary {
+            BlocksSummary::Unchanged => {}
+            BlocksSummary::Paragraph(target) => self.assert_paragraph_replacement(before, target),
+            BlocksSummary::Spliced { retired, born } => {
+                self.assert_blocks_splice(before, *retired, *born);
+            }
+        }
     }
 
     /// Publish an in-place removal of `stories` (a note, or the comments of
@@ -460,6 +667,11 @@ impl PyDocument {
     /// can publish it: a paragraph whose body item and owners are anchored
     /// and indexed, whose piece is aligned with `block`, and which holds no
     /// text box, table, cell story or hyperlink.
+    /// The inventory facts of the direct body block at `slot`, whose block
+    /// is (or was, before an edit in place) `block`, when a block replacement
+    /// can publish it: a paragraph whose body item and owners are anchored
+    /// and indexed, whose piece is aligned with `block`, and which holds no
+    /// text box, table, cell story or hyperlink.
     fn replaced_block(
         &self,
         slot: usize,
@@ -530,44 +742,6 @@ impl PyDocument {
             runs,
             items: facts.body_items,
         })
-    }
-
-    /// Publish the paragraph now at `target`'s slot, which replaced the
-    /// block `target` read, keeping the paragraph's owner.
-    fn replace_paragraph_owners(
-        &mut self,
-        target: &ReplacedBlock,
-        operation: &'static str,
-    ) -> PyResult<BlocksPublication> {
-        let Some(plan) = self.plan_paragraph_owners(target)? else {
-            return Ok(BlocksPublication::WholeRoute);
-        };
-        let mut retired = plan.retired.clone();
-        retired.push(
-            self.snapshot_scope
-                .as_ref()
-                .expect("active Word authority")
-                .clone(),
-        );
-        let mut births = plan.births.clone();
-        births.push(RevisionScope::Text);
-        let revision = self
-            .revisions
-            .prepare_local_scopes(operation, &retired, &births)
-            .map_err(revision_to_pyerr)?;
-        let states = (0..births.len())
-            .map(|index| revision.born(index).expect("prepared birth"))
-            .collect::<Vec<_>>();
-        self.reserve_paragraph_owners(std::slice::from_ref(&plan))?;
-        debug_fail_paragraph_splice()?;
-        self.revisions
-            .commit_scopes(revision)
-            .map_err(revision_to_pyerr)?;
-        // The commit: nothing below fails.
-        let (snapshot, states) = states.split_last().expect("snapshot birth");
-        self.apply_paragraph_owners(target, plan, states);
-        self.snapshot_scope = Some(snapshot.clone());
-        Ok(BlocksPublication::Published)
     }
 
     /// What publishing the paragraph now at `target`'s slot retires and
@@ -807,7 +981,7 @@ impl PyDocument {
 }
 
 /// What [`PyDocument::plan_paragraph_owners`] read of a replaced paragraph.
-struct ParagraphPlan {
+pub(crate) struct ParagraphPlan {
     owners: WordBlockOwners,
     text: String,
     runs: Vec<oxoffice_docx::AcceptedRunPath>,
@@ -833,6 +1007,22 @@ pub(super) fn debug_fail_paragraph_splice() -> PyResult<()> {
             ));
         }
         Ok("panic") => panic!("paragraph splice panicked on request"),
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Debug builds can fail or panic before a block splice commits, on
+/// request, so that tests see the old blocks put back.
+fn debug_fail_block_splice() -> PyResult<()> {
+    #[cfg(debug_assertions)]
+    match std::env::var("OXOFFICE_DEBUG_FAIL_BLOCK_SPLICE").as_deref() {
+        Ok("error") => {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "block splice failed on request",
+            ));
+        }
+        Ok("panic") => panic!("block splice panicked on request"),
         _ => {}
     }
     Ok(())

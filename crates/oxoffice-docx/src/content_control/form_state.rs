@@ -113,7 +113,7 @@ pub(super) fn read_form_state(document: &Document) -> Result<FormState> {
     })
 }
 
-fn read_physical_control(
+pub(super) fn read_physical_control(
     xml: &[u8],
     elems: &[XmlElem],
     sdt: &XmlElem,

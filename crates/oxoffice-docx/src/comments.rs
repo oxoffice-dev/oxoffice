@@ -2779,7 +2779,7 @@ impl Document {
         let mut tail = Vec::new();
         let mut blocks = Vec::with_capacity(hits.len());
         for hit in &hits {
-            let Some(alone) = self.body_block_alone(hit.slot)? else {
+            let Some(alone) = self.body_block_part(hit.slot)? else {
                 return Ok(None);
             };
             if main.is_empty() {

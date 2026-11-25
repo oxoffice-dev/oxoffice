@@ -15,7 +15,7 @@
 
 use super::*;
 use crate::borders::CT_BorderEdge;
-use crate::content_control::WrittenSdtPart;
+use crate::content_control::{CT_SdtPr, WrittenSdtPart};
 use crate::document::{BodyContent, CT_Document, CT_SectPr};
 use crate::table::{CT_TblBorders, CT_TblPr};
 
@@ -41,6 +41,8 @@ pub trait WrittenVisitor {
     fn run_properties(&mut self, _properties: &CT_RPr) {}
     /// Table properties written from their typed fields (`style_id`).
     fn table_properties(&mut self, _properties: &CT_TblPr) {}
+    /// Content control properties written from their typed fields (`tag`).
+    fn control_properties(&mut self, _properties: &CT_SdtPr) {}
 }
 
 impl BodyContent {
@@ -688,6 +690,7 @@ fn visit_control(control: &CT_Sdt, visitor: &mut dyn WrittenVisitor) {
     }
     control.for_each_written_part(|part| match part {
         WrittenSdtPart::Properties(properties) => {
+            visitor.control_properties(properties);
             for raw in properties.written_raw_slots() {
                 visitor.raw(raw);
             }

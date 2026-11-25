@@ -429,6 +429,13 @@ impl PyDocument {
     ) -> PyResult<Py<PyTuple>> {
         let rules = copied_rules(py, rules)?;
         let assignments = copied_assignments(py, assignments)?;
+        if let Some(counts) =
+            self.publish_form_edited_in_place(py, "Document.fill_form", |document| {
+                document.fill_form_in_blocks(&rules, &assignments)
+            })?
+        {
+            return Ok(PyTuple::new(py, counts)?.unbind());
+        }
         let mut candidate = self.inner.clone_for_staging();
         let counts = candidate
             .fill_form(&rules, &assignments)
@@ -445,6 +452,13 @@ impl PyDocument {
 
     fn reset_form(&mut self, py: Python<'_>, rules: &Bound<'_, PyAny>) -> PyResult<Py<PyTuple>> {
         let rules = copied_rules(py, rules)?;
+        if let Some(counts) =
+            self.publish_form_edited_in_place(py, "Document.reset_form", |document| {
+                document.reset_form_in_blocks(&rules)
+            })?
+        {
+            return Ok(PyTuple::new(py, counts)?.unbind());
+        }
         let mut candidate = self.inner.clone_for_staging();
         let counts = candidate
             .reset_form(&rules)
@@ -4774,6 +4788,14 @@ impl PyDocument {
             }
             return Ok(removed);
         }
+        // The block and the markers it owns, removed in place and published
+        // as a splice of their owners alone.
+        if self
+            .remove_body_blocks_local(py, index, index + 1, "Document.remove_content")?
+            .is_some()
+        {
+            return Ok(true);
+        }
         if let Some(plan) = self.plan_body_splice(
             py,
             BodySplice {
@@ -4825,6 +4847,11 @@ impl PyDocument {
         }
         if start == end {
             return Ok(0);
+        }
+        if let Some(removed) =
+            self.remove_body_blocks_local(py, start, end, "Document.remove_content_range")?
+        {
+            return Ok(removed);
         }
         if let Some(plan) = self.plan_body_splice(
             py,
@@ -5074,10 +5101,35 @@ impl PyDocument {
         py: Python<'_>,
         index: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyContentFragment>> {
+        // A direct body item is taken in place when the splice of its
+        // owners publishes it; any other item, or a refusal, stages.
         let location = if let Ok(item) = index.cast::<PyStoryItem>() {
-            slf.borrow(py).native_location(py, &item.borrow())?
+            let location = slf.borrow(py).native_location(py, &item.borrow())?;
+            // Only the item that is the block at its slot: a field, a
+            // drawing or a paragraph inside a block control names the slot
+            // of the block that holds it.
+            let slot = item.borrow().direct_body_index.filter(|slot| {
+                location.story().kind() == oxoffice_docx::StoryKind::Body
+                    && location.index_path().len() == 1
+                    && slf
+                        .borrow(py)
+                        .is_body_block_item(*slot, location.index_path()[0])
+            });
+            if let Some(slot) = slot
+                && let Some(fragment) =
+                    slf.borrow_mut(py)
+                        .pop_body_block_local(py, slot, Some(&location))?
+            {
+                return Py::new(py, PyContentFragment { inner: fragment });
+            }
+            location
         } else {
             let index = body_index_argument(index, "index must be an int or a StoryItem")?;
+            if index < slf.borrow(py).inner.content_count()
+                && let Some(fragment) = slf.borrow_mut(py).pop_body_block_local(py, index, None)?
+            {
+                return Py::new(py, PyContentFragment { inner: fragment });
+            }
             let location = slf.borrow(py).body_location(py, index)?;
             if index == slf.borrow(py).inner.content_count() {
                 return Err(PyIndexError::new_err("content index out of range"));
