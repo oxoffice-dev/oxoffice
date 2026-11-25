@@ -3254,8 +3254,8 @@ mod producer_root_tests {
             // pieces, with their proofs.
             if let Some(previous) = &previous {
                 assert!(!Arc::ptr_eq(&record.blocks[0], &previous[0]));
-                for index in 1..previous.len() {
-                    assert!(Arc::ptr_eq(&record.blocks[index], &previous[index]));
+                for (kept, before) in record.blocks.iter().zip(previous).skip(1) {
+                    assert!(Arc::ptr_eq(kept, before));
                 }
             }
             previous = Some(record.blocks.as_ref().clone());
