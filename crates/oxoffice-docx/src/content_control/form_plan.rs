@@ -3,9 +3,9 @@
 use super::*;
 
 pub(super) struct LogicalPatch {
-    part: String,
-    ordinal: usize,
-    patch: ControlPatch,
+    pub(super) part: String,
+    pub(super) ordinal: usize,
+    pub(super) patch: ControlPatch,
 }
 
 pub(super) struct LegacyWrite {
@@ -330,7 +330,7 @@ pub(super) fn preview_bindings(
     Ok(())
 }
 
-fn apply_binding_groups(
+pub(super) fn apply_binding_groups(
     document: &Document,
     doc_part: &str,
     writes: &[BindingWrite],

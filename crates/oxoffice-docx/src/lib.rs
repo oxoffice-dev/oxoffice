@@ -63,7 +63,7 @@ pub use comparison::{
 };
 pub use content_control::{
     ContentControlAppearance, ContentControlEdit, ContentControlLock, ContentControlPlacement,
-    ContentControlRef, ContentControlSpec, ContentControlTypePayload, ControlBlock,
+    ContentControlRef, ContentControlSpec, ContentControlTypePayload, ControlBlock, FormEdit,
     FormFieldAssignment, FormFieldRule, FormFieldTarget, FormFieldValue, FormResetValue,
     FormValidationIssue,
 };
