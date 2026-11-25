@@ -496,18 +496,11 @@ impl Document {
 
         self.package.set_part(part_name, image_data.to_vec());
         let content_type = format.content_type();
+        // Journaled, so that an in-place edit puts the declarations back.
         match self.package.content_types.content_type_for(part_name) {
             Some(existing) if existing == content_type => {}
-            Some(_) => self
-                .package
-                .content_types
-                .add_override(part_name, content_type),
-            None => {
-                self.package
-                    .content_types
-                    .add_default(extension, content_type);
-                self.identifiers.register_content_type_default(extension);
-            }
+            Some(_) => self.add_override_journaled(part_name, content_type),
+            None => self.add_content_type_default_journaled(extension, content_type),
         }
         if self.package.content_types.contains_override(part_name) {
             self.identifiers.register_content_type_override(part_name);

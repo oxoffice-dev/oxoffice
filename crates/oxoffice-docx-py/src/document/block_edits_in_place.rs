@@ -7,10 +7,12 @@ use super::paragraph_in_place::{BlockRetention, BlocksPublication};
 use super::*;
 
 /// Stops holding the edit undo however the edit ends; an edit that panics
-/// or fails leaves the document as it was.
-struct HeldUndo<'a> {
-    document: &'a mut oxoffice_docx::Document,
-    armed: bool,
+/// or fails leaves the document as it was. Arm it right after
+/// `hold_edit_undo`; [`HeldUndo::take`] ends the hold and hands the undo
+/// over.
+pub(super) struct HeldUndo<'a> {
+    pub(super) document: &'a mut oxoffice_docx::Document,
+    pub(super) armed: bool,
 }
 
 impl Drop for HeldUndo<'_> {
@@ -25,7 +27,7 @@ impl Drop for HeldUndo<'_> {
 }
 
 impl HeldUndo<'_> {
-    fn take(mut self) -> Option<oxoffice_docx::EditUndo> {
+    pub(super) fn take(mut self) -> Option<oxoffice_docx::EditUndo> {
         self.armed = false;
         self.document.take_edit_undo()
     }

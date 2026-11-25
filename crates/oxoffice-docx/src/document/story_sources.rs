@@ -230,6 +230,37 @@ impl Document {
         Self::stories_in_sources(sources, main)
     }
 
+    /// The stories of [`Self::stories`] whose part is `part_name`, in the
+    /// same order. A related part (a header, a footer, the notes, the
+    /// comments) is read alone, without serializing the main part, so
+    /// finding a header story does not cost the body.
+    pub fn stories_in_part(&self, part_name: &str) -> Result<Vec<StoryId>> {
+        if part_name == self.doc_part_name {
+            return Ok(self
+                .stories()?
+                .into_iter()
+                .filter(|story| story.part_name == part_name)
+                .collect());
+        }
+        let sources = self
+            .related_story_sources()?
+            .into_iter()
+            .filter(|source| source.part_name == part_name)
+            .collect();
+        let stories = Self::stories_in_sources(sources, None)?;
+        #[cfg(debug_assertions)]
+        if let Ok(all) = self.stories() {
+            assert_eq!(
+                stories,
+                all.into_iter()
+                    .filter(|story| story.part_name == part_name)
+                    .collect::<Vec<_>>(),
+                "the stories of {part_name} read alone differ from the document's"
+            );
+        }
+        Ok(stories)
+    }
+
     pub(super) fn stories_in_sources(
         sources: Vec<StorySource<'_>>,
         main: Option<MainStoryLayout>,

@@ -389,6 +389,70 @@ form operations (#7).
   paragraphs, in the body and in a header; the limitation
   `docx-form-cost` goes with the fix.
 
+### S3: headers, footers, section stories, watermarks, page colour (amended 2026-11-25)
+
+S3 lands in two pull requests: the story parts and document-level
+properties (S3a), then pictures, charts and hyperlinks (S3b), whose body
+paragraphs publish through the BLK lane's block replacement.
+
+- **Two more units.** `EditUnit::SectionProperties { index }` copies the
+  `w:sectPr` of one section only (the one inside a body paragraph's
+  properties, or the final one), never the paragraph that holds it: a
+  section break is not a body owner, so a changed section reference
+  publishes no body block. Finding the section compares the body blocks
+  and copies none. `EditUnit::Background` copies the document background.
+  `EditUnit::FontTable` copies the font table model and its part name.
+  Header and footer parts are package bytes: the part journal is their
+  copy (`EditUnit::Parts`), with the relationships and content types the
+  edit records (the image default of a new watermark picture through
+  `add_content_type_default_journaled`).
+- **A relationship set is recorded once.** When the part journal already
+  holds an owner's relationships (a prune that recorded the header's), a
+  relationship added to that owner is not also reserved: the undo would
+  remove what the part journal had just put back
+  (`OpcPackage::part_journal_records_rels`).
+- **Header text, section stories, watermarks.** `try_set_header`,
+  `try_set_footer` and the first-page setters, `insert_content` into a
+  header or footer, `create_section_story`, `link_section_story`,
+  `inherit_section_story`, `unlink_section_story`, `remove_section_story`,
+  the VML and DrawingML watermarks and `remove_drawingml_watermark_for`
+  write the header and footer parts they name, the section references and
+  the media of a watermark picture in place, reserving every part name,
+  relationship and drawing id at insert. The written part is checked for
+  characters XML 1.0 cannot carry (`reject_part_xml_characters`), the
+  refusal the reopen gave. The calls that replace or drop a story keep
+  the staged route in a document whose header or footer parts hold
+  comment markers, since only the staged reconcile removes the comments
+  such a story anchored: the header and footer text setters (`try_set_header`,
+  `try_set_footer` and the first-page setters), `create_section_story`,
+  `link_section_story`, `inherit_section_story`, `unlink_section_story`
+  (through `replace_section_story`), `remove_section_story`,
+  `set_text_watermark_for`, `set_drawingml_text_watermark_for` and
+  `set_drawingml_image_watermark_for`. `set_text_watermark`,
+  `set_image_watermark`, `remove_drawingml_watermark_for` and
+  `insert_content` into a header or footer replace no story and need no
+  fallback. Whatever the route, the binding publishes the whole inventory
+  for such a document (`header_footer_edits_are_staged`).
+- **The font table joins the mechanism.** `edit_font_table` runs inside
+  `edit_in_place` with the `FontTable`, `Settings` and `Parts` units: a
+  panic after the font table part is written is undone like any other.
+- **`set_page_color`** writes the background and the settings in place
+  and publishes nothing.
+- **Publication.** The binding runs these calls on its live
+  document and publishes from the story parts (`edit_story_parts`): a
+  header or footer part whose bytes changed has its owners retired and
+  read again alone (`WordPieces::read_part`), an added part is read
+  alone, a part no section shows any more is retired, and every other
+  owner and the document epoch are kept, as the note splice of S1b does.
+  A section whose stories changed renews the content view of its
+  `HeaderFooter` handles. A section whose `w:sectPr` changed renews its
+  states. The body paragraph holding that `w:sectPr` is read again too,
+  because its bytes changed. `set_page_color` and a no-op publish nothing.
+  A document whose header or footer parts hold comment markers, pieces
+  that do not match the story parts, or a part that cannot be read alone
+  publish the whole inventory, as before. Debug builds check each
+  publication against the whole inventory.
+
 ### S2c: bibliography sources (amended 2026-11-25)
 
 - `add_bibliography_source` and `replace_bibliography_source` edit the

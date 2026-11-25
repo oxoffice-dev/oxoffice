@@ -1240,3 +1240,192 @@ fn the_word_paper_keeps_its_sections_through_rtf() {
     let read = Document::from_rtf_bytes(&rtf).unwrap().document;
     assert_eq!(section_layouts(&read), section_layouts(&doc));
 }
+
+// ---- Linking drops a story only once nothing uses it ----
+
+/// The footer parts the document would save.
+fn footer_part_count(doc: &Document) -> usize {
+    doc.part_names()
+        .expect("document saves")
+        .iter()
+        .filter(|name| name.starts_with("/word/footer"))
+        .count()
+}
+
+/// Two sections, each showing a footer of its own: the first one's shared
+/// footer and the second one's copy, which says "own footer". Returns the
+/// document, the first story and the copy.
+fn own_footer_in_second_section() -> (Document, StoryId, StoryId) {
+    let mut doc = doc_with(&["first"]);
+    doc.set_footer("shared footer");
+    doc.insert_section(1).expect("a section appends");
+    doc.add_paragraph("second");
+    let shared = shown(&doc, 0, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .expect("the first section shows a footer")
+        .story()
+        .clone();
+    let copy = doc
+        .unlink_section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .expect("the footer unlinks");
+    write_in(&mut doc, &copy, "own footer");
+    (doc, shared, copy)
+}
+
+#[test]
+fn linking_a_section_away_from_its_own_footer_drops_the_footer_nothing_uses() {
+    let (mut doc, shared, _) = own_footer_in_second_section();
+    assert_eq!(footer_part_count(&doc), 2);
+    doc.link_section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default, &shared)
+        .expect("the footer links");
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        footer_part_count(&doc),
+        1,
+        "the unused copy leaves the file"
+    );
+    assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
+}
+
+#[test]
+fn linking_a_section_away_from_a_footer_another_section_shows_keeps_it() {
+    let (mut doc, shared, _) = own_footer_in_second_section();
+    doc.insert_section(2).expect("a third section appends");
+    doc.add_paragraph("third");
+    let copy = shown(&doc, 1, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .expect("the second section shows its copy")
+        .story()
+        .clone();
+    doc.link_section_story(2, HeaderFooterKind::Footer, HdrFtrType::Default, &copy)
+        .expect("the third section links the copy");
+    doc.link_section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default, &shared)
+        .expect("the footer links");
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        footer_part_count(&doc),
+        2,
+        "the third section's footer stays"
+    );
+    assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
+    let third = footer(&doc, 2).expect("the third section shows a footer");
+    assert!(third.contains("own footer"), "{third}");
+}
+
+#[test]
+fn linking_a_section_away_from_a_footer_raw_body_xml_names_keeps_it() {
+    // A block the model keeps verbatim holds a section that names the copy:
+    // the copy is still in use, though no modeled section shows it.
+    let (mut doc, _, copy) = own_footer_in_second_section();
+    let bytes = doc.to_bytes().expect("document saves");
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
+    let main = package.main_document_part().expect("main document part");
+    let copy_name = copy.part_name().rsplit('/').next().unwrap().to_owned();
+    let copy_id = package
+        .get_part_rels(&main)
+        .expect("main part relationships")
+        .items
+        .iter()
+        .find(|relationship| relationship.target.ends_with(&copy_name))
+        .expect("the copy's relationship")
+        .id
+        .clone();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    let raw = format!(
+        r#"<w:customXml w:element="kept"><w:p><w:pPr><w:sectPr><w:footerReference w:type="default" r:id="{copy_id}"/></w:sectPr></w:pPr></w:p></w:customXml>"#
+    );
+    let at = xml.find("<w:body>").expect("body") + "<w:body>".len();
+    let xml = format!("{}{raw}{}", &xml[..at], &xml[at..]);
+    package.set_part(&main, xml.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    let mut doc = Document::from_bytes(&out.into_inner()).expect("document opens");
+    let copy = shown(&doc, 1, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .expect("the second section shows its copy")
+        .story()
+        .clone();
+    let shared = shown(&doc, 0, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .expect("the first section shows a footer")
+        .story()
+        .clone();
+    assert_ne!(copy, shared);
+    doc.link_section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default, &shared)
+        .expect("the footer links");
+    let mut doc = reopen(&mut doc);
+    assert_eq!(
+        footer_part_count(&doc),
+        2,
+        "the copy the raw block names stays"
+    );
+    assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
+    let saved = doc.to_bytes().expect("document saves");
+    let main_xml = String::from_utf8(main_part(&saved)).unwrap();
+    assert!(
+        main_xml.contains(&format!(r#"r:id="{copy_id}""#)),
+        "{main_xml}"
+    );
+    let rels = doc.part_xml("word/_rels/document.xml.rels").unwrap();
+    assert!(rels.contains(&format!(r#"Id="{copy_id}""#)), "{rels}");
+}
+
+#[test]
+fn the_stories_of_a_header_part_read_alone_are_the_documents() {
+    let (doc, shared, copy) = own_footer_in_second_section();
+    for story in [&shared, &copy] {
+        let alone = doc
+            .stories_in_part(story.part_name())
+            .expect("stories read");
+        let all = doc
+            .stories()
+            .expect("stories read")
+            .into_iter()
+            .filter(|candidate| candidate.part_name() == story.part_name())
+            .collect::<Vec<_>>();
+        assert_eq!(alone, all);
+        assert!(
+            !alone.is_empty(),
+            "{} holds a footer story",
+            story.part_name()
+        );
+    }
+    let main = doc.stories().expect("stories read")[0]
+        .part_name()
+        .to_owned();
+    assert!(!doc.stories_in_part(&main).expect("stories read").is_empty());
+}
+
+#[test]
+fn a_held_footer_creation_and_write_cut_by_a_panic_is_undone_whole() {
+    // The binding's sequence for `HeaderFooter.add_paragraph` on a section
+    // with no footer of its own: hold the undo, create the footer in place,
+    // write into it; a panic there drops the binding's guard, which takes the
+    // held undo and applies it. The document is as it was, and the hold is
+    // off: the next in-place edit commits on its own.
+    let mut doc = two_sections();
+    let before = doc.to_bytes().expect("document saves");
+    doc.hold_edit_undo();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let story = doc
+            .create_section_story(0, HeaderFooterKind::Footer, HdrFtrType::Default)
+            .expect("a footer is created");
+        write_in(&mut doc, &story, "footer");
+        panic!("the write panicked after the footer was created");
+    }));
+    assert!(panicked.is_err());
+    let undo = doc.take_edit_undo().expect("the creation ran in place");
+    assert!(undo.report().changed());
+    doc.undo_edit(undo);
+    assert_eq!(doc.to_bytes().expect("document saves"), before);
+    let story = doc
+        .create_section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .expect("a footer is created");
+    write_in(&mut doc, &story, "kept");
+    assert!(doc.take_edit_undo().is_none(), "no undo is held any more");
+    let reopened = reopen(&mut doc);
+    assert!(
+        reopened
+            .section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default)
+            .unwrap()
+            .is_some(),
+        "the later edit committed"
+    );
+}
