@@ -5,46 +5,6 @@
 # `message` is text the failure must hold, so that a failure with another
 # cause still fails the test.
 
-# compare-after-edit: a paragraph the scoped edit writes back with namespace
-# declarations of its own, holding a link, comment marks or a bookmark, is
-# refused as a change of its boundary structures. Issue to come (#659).
-
-[[known]]
-file = "authored/contract.docx"
-workflow = "compare-after-edit"
-issue = 659
-message = "kinds failing: hyperlink (compare: comparison cannot revise paragraph boundary structures at body/paragraph[41]); comment anchor (compare: comparison cannot revise paragraph boundary structures at body/paragraph[29]); bookmark (compare: comparison cannot revise paragraph boundary structures at body/paragraph[28])."
-
-[[known]]
-file = "google/contract.docx"
-workflow = "compare-after-edit"
-issue = 659
-message = "kinds failing: comment anchor (compare: comparison cannot revise paragraph boundary structures at body/paragraph[31])."
-
-[[known]]
-file = "libreoffice/contract.docx"
-workflow = "compare-after-edit"
-issue = 659
-message = "kinds failing: hyperlink (compare: comparison cannot revise paragraph boundary structures at body/paragraph[41]); comment anchor (compare: comparison cannot revise paragraph boundary structures at body/paragraph[29]); bookmark (compare: comparison cannot revise paragraph boundary structures at body/paragraph[28])."
-
-[[known]]
-file = "word/contract.docx"
-workflow = "compare-after-edit"
-issue = 659
-message = "kinds failing: hyperlink (compare: comparison cannot revise paragraph boundary structures at body/paragraph[41]); comment anchor (compare: comparison cannot revise paragraph boundary structures at body/paragraph[29]); bookmark (compare: comparison cannot revise paragraph boundary structures at body/paragraph[28])."
-
-[[known]]
-file = "libreoffice/record.docx"
-workflow = "compare-after-edit"
-issue = 659
-message = "kinds failing: bookmark (compare: comparison cannot revise paragraph boundary structures at body/paragraph[3])."
-
-[[known]]
-file = "libreoffice/thesis.docx"
-workflow = "compare-after-edit"
-issue = 659
-message = "kinds failing: bookmark (compare: comparison cannot revise paragraph boundary structures at body/paragraph[23])."
-
 # compare-after-edit: a text box in mc:AlternateContent; an edit inside it,
 # and with Google's box (a picture as fallback) any edit of the document, fail
 # the acceptance check. Issue to come (#659).

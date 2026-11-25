@@ -5,7 +5,9 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use oxoffice_docx::{Document, ReplaceOptions, ReplacementRefusal, UnreachedReplacement};
+use oxoffice_docx::{
+    Document, ReplaceOptions, ReplacementRefusal, StoryKind, UnreachedReplacement,
+};
 use oxoffice_opc::OpcPackage;
 
 const PRODUCERS: [&str; 2] = ["word", "google"];
@@ -65,5 +67,95 @@ fn a_value_as_long_as_its_placeholder_is_checked_too() {
         let mut doc = body_with(producer, SPLIT);
         let refusal = unreached(doc.try_replace_all_checked(&[("ACME", "ACNE", None)], CHECKED));
         assert_eq!(refusal.left, 3, "{producer}");
+    }
+}
+
+// ---- A replacement scoped to one paragraph ----
+
+/// The bytes of `part` in this package.
+fn package_part(bytes: &[u8], part: &str) -> String {
+    let parts = crate::support::package_parts(bytes);
+    String::from_utf8(parts[part.trim_start_matches('/')].clone()).expect("the part is UTF-8")
+}
+
+/// The paragraph of `xml` that holds `text`: from its start tag to its end.
+fn paragraph_holding<'a>(xml: &'a str, text: &str) -> &'a str {
+    let at = xml
+        .find(text)
+        .unwrap_or_else(|| panic!("{text} is in the part"));
+    let start = xml[..at]
+        .rmatch_indices("<w:p")
+        .find(|(index, _)| matches!(xml.as_bytes()[index + 4], b' ' | b'>'))
+        .map(|(index, _)| index)
+        .expect("a paragraph holds the text");
+    let end = xml[at..].find("</w:p>").expect("the paragraph ends") + at + "</w:p>".len();
+    &xml[start..end]
+}
+
+#[test]
+fn a_paragraph_edited_through_its_location_is_written_back_without_declarations_of_its_own() {
+    // An edit reads the paragraph with the bindings in scope declared on it;
+    // the part takes the paragraph back with the start tag it had and no
+    // namespace declared in it that it did not declare: a word replaced in
+    // it, and a run added to it (as the bindings add one to a paragraph of
+    // another story). Comment marks, a link, Google's attributes on the
+    // paragraph, a table cell, a header.
+    for (copy, kind, word) in [
+        ("authored/contract.docx", StoryKind::Body, "Each"),
+        ("google/contract.docx", StoryKind::Body, "Each"),
+        ("word/contract.docx", StoryKind::Body, "Notices"),
+        ("word/contract.docx", StoryKind::TableCell, "Oliver"),
+        ("libreoffice/record.docx", StoryKind::Header, "Change"),
+    ] {
+        let source = std::fs::read(crate::support::corpus_root().join("files").join(copy))
+            .expect("the corpus copy reads");
+        let doc = Document::from_bytes(&source).expect("the copy opens");
+        let paragraph = doc
+            .story_paragraphs()
+            .expect("story paragraphs")
+            .into_iter()
+            .find(|paragraph| {
+                paragraph.location.story().kind() == kind
+                    && paragraph
+                        .text
+                        .split(|c: char| !c.is_alphabetic())
+                        .any(|w| w == word)
+                    && paragraph.text.matches(word).count() == 1
+            })
+            .unwrap_or_else(|| panic!("{copy}: a {kind:?} paragraph holds {word}"));
+        let part = paragraph.part_name().to_owned();
+        let before = package_part(&source, &part);
+        assert_eq!(
+            before.matches(word).count(),
+            1,
+            "{copy}: {word} once in {part}"
+        );
+        let before = paragraph_holding(&before, word);
+        let mut replaced = Document::from_bytes(&source).unwrap();
+        assert_eq!(
+            replaced
+                .try_replace_text_at(&paragraph.location, word, "Zephyr", Some(1))
+                .unwrap(),
+            Ok(1),
+            "{copy}"
+        );
+        let mut added = Document::from_bytes(&source).unwrap();
+        added
+            .edit_story_paragraph(&paragraph.location, |edited| {
+                edited.add_run(" Zephyr.");
+                Ok(())
+            })
+            .unwrap_or_else(|error| panic!("{copy}: {error}"));
+        for (edit, mut doc) in [("replaced", replaced), ("added", added)] {
+            let after = package_part(&doc.to_bytes().unwrap(), &part);
+            let after = paragraph_holding(&after, "Zephyr");
+            let start_tag = |paragraph: &str| paragraph[..=paragraph.find('>').unwrap()].to_owned();
+            assert_eq!(start_tag(after), start_tag(before), "{copy} {part} {edit}");
+            assert_eq!(
+                after.matches("xmlns").count(),
+                before.matches("xmlns").count(),
+                "{copy} {part} {edit}: {after}"
+            );
+        }
     }
 }

@@ -564,7 +564,8 @@ impl Document {
             replacement,
             literal_input,
         );
-        let (mut raw, count) = selected?;
+        let (raw, count) = selected?;
+        let mut raw = without_inherited_root_declarations(&xml[span.clone()], raw, &scope);
         if let Some(expected) = expected
             && count != expected
         {
