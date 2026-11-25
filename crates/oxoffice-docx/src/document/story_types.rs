@@ -195,6 +195,13 @@ impl ContentLocation {
             *head = index;
         }
     }
+
+    /// Set the owner index of the location's story to `owner_index`
+    /// ([`StoryId::set_owner_index`]), keeping the rest of the location.
+    #[doc(hidden)]
+    pub fn set_story_owner_index(&mut self, owner_index: usize) {
+        self.story.set_owner_index(owner_index);
+    }
 }
 
 /// One exact owner slice used for generated-table discovery and cache edits.

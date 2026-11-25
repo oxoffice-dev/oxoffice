@@ -506,6 +506,56 @@ trusted. A table cell, a header or footer, a block content control, a
 text box, a hyperlink or a story item the caller built keep today's
 route; `insert_citation_after_text` (a text search) too.
 
+### S1c-2: note and comment removals (amended 2026-11-25)
+
+`remove_footnote`, `remove_endnote`, `FootnoteEndnote.delete` and
+`remove_comment` edit in place over one `BodyBlocks { slot, count: 1 }`
+unit per body block that holds a reference or a mark of what goes (a
+comment thread across three paragraphs names three units, never a span
+from the first to the last, which could cover the whole body), the notes
+or comments model and `Parts`. The facade writes each hit block alone
+under the main part's head and tail, removes the references or marks from
+those bytes as the staged route removes them from the whole part, and
+reads the block back (`body_block_after_byte_edit`); a block that writes
+the same as the opened one is put back as it was, so a round trip keeps
+the producer's bytes. The comment thread and its ownership are read with
+the main part replaced by the hit blocks alone; a comment id the removal
+frees is journaled.
+
+- **Declines** (nothing changed, the staged route runs): a dirty notes or
+  comments model, a story part not yet in the package, comment marks
+  inside the removed note, a content relationship the note releases, a
+  thread with no mark in the body, a removal that leaves no comment (the
+  owned comment parts go), an ownership that reads another thread than
+  the typed one, a block that does not read back.
+- **Binding.** The body half is one paragraph replacement per changed
+  slot (each keeps its count), all planned before one revision commits;
+  the story half is a removed-story splice: the removed stories' owners
+  retire, the part is read alone, and every other owner of the part keeps
+  its key and states at its new address (a later note's `owner_index`
+  moves down by one). A table or other non-paragraph block, or a removed
+  story holding nested stories, undoes the edit and publishes as today.
+  Every handle outside the removed stories and the edited paragraphs'
+  runs stays valid; today's route made every handle stale.
+- **The savable answer stays.** The removals and the S1c-1 adds keep
+  the body's "a typed edit saves" answer when no edited block holds an
+  element named like a nested namespace owner
+  (`keep_body_savable_after_typed_edits`, one check per edited block):
+  without it the next in-place edit computed it again over the whole
+  main part (about 35 ms at 400 paragraphs for a removal after an add).
+- **Oracle normal form.** One function (`oracle_normal_form`, used by
+  `assert_in_place_matches_staged_declarations_aside`) sets aside both
+  the repeated namespace declarations and the whitespace-only text between
+  elements outside text elements and `xml:space="preserve"`: the staged
+  route edits the producer's indented bytes, the in-place route writes the
+  block from the model. The main part is compared as its model writes
+  it: a live body edit writes the whole part from the model while the
+  staged removal edits the producer's bytes, which may spell a value
+  otherwise (`w:val="0"` for `"false"`, single-quoted declaration); what
+  the model keeps verbatim still compares byte for byte. A whitespace
+  change inside `w:t` or a text node that is not only whitespace still
+  fails the oracle.
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.

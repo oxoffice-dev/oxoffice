@@ -165,6 +165,7 @@ impl Document {
         }
         #[cfg(debug_assertions)]
         let before = self.clone_for_staging();
+        let savable_before = self.body_known_savable();
         let result = self.edit_in_place(
             // The flush of typed footnotes may write pending comments; the
             // first note adds its part, relationship and override.
@@ -177,6 +178,11 @@ impl Document {
             ],
             |document| document.create_note_in_slot_here(kind, slot, run_index, text),
         );
+        // The paragraph took a typed reference run: a later edit need not
+        // check the whole main part again.
+        if result.is_ok() {
+            self.keep_body_savable_after_typed_insert(slot, savable_before);
+        }
         #[cfg(debug_assertions)]
         {
             let location = before
@@ -1389,6 +1395,123 @@ impl Document {
     }
 
     fn remove_note(&mut self, kind: StoryKind, id: i32) -> Result<()> {
+        match self.remove_note_in_place(kind, id) {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => self.remove_note_staged(kind, id),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Remove the note `id` of `kind` (`StoryKind::Footnote` or
+    /// `StoryKind::Endnote`) in place when the in-place route takes it, and
+    /// answer its story; `None`, with nothing changed, when it leaves the
+    /// note to the staged route. The binding publishes the body blocks of
+    /// the edit and that story.
+    #[doc(hidden)]
+    pub fn remove_note_in_place(&mut self, kind: StoryKind, id: i32) -> Result<Option<StoryId>> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.remove_note_in_place_unchecked(kind, id);
+        #[cfg(debug_assertions)]
+        if !matches!(result, Ok(None)) {
+            let answer = match &result {
+                Ok(_) => Ok(()),
+                Err(error) => Err(Error::Other(error.to_string())),
+            };
+            self.assert_in_place_matches_staged_declarations_aside(before, &answer, |staged| {
+                staged.remove_note_staged(kind, id)
+            });
+        }
+        result
+    }
+
+    /// [`Self::remove_note`] on the live document, at the cost of the note's
+    /// part and the body blocks that hold its references (the written
+    /// fragment walk finds them): each such block is written alone, loses
+    /// its references as the staged route's byte remover removes them, and
+    /// is read back. `None`, with nothing changed, for what the staged route
+    /// keeps: a stale notes part, a note that carries comment marks, a
+    /// block that does not read back. The relationships only the note used
+    /// are released in the edit's journal.
+    fn remove_note_in_place_unchecked(
+        &mut self,
+        kind: StoryKind,
+        id: i32,
+    ) -> Result<Option<StoryId>> {
+        let label = if kind == StoryKind::Footnote {
+            "footnote"
+        } else {
+            "endnote"
+        };
+        let story = self
+            .note_story(kind, id)?
+            .ok_or_else(|| Error::Other(format!("{label} ID {id} does not exist")))?;
+        if kind == StoryKind::Footnote && self.footnotes_dirty {
+            return Ok(None);
+        }
+        let part_name = story.part_name.clone();
+        let Some(part) = self.package.get_part(&part_name) else {
+            return Ok(None);
+        };
+        let mut notes_xml = part.to_vec();
+        let Some(owner) = scan_story_owners(&notes_xml, kind)?
+            .into_iter()
+            .find(|owner| owner.kind == kind && owner.owner_index == story.owner_index)
+        else {
+            return Ok(None);
+        };
+        // A comment marked in the note goes with it: the staged route
+        // reconciles the comments.
+        if crate::comments::comment_source_markers(&notes_xml)?
+            .iter()
+            .any(|marker| {
+                owner.full.start <= marker.span.start && marker.span.end <= owner.full.end
+            })
+        {
+            return Ok(None);
+        }
+        let referenced_before = xml_attribute_values(&notes_xml)?;
+        notes_xml.drain(owner.full);
+        let referenced_after = xml_attribute_values(&notes_xml)?;
+        let hits = self.body_slots_referencing_note(kind, id);
+        let mut blocks = Vec::with_capacity(hits.len());
+        for hit in &hits {
+            let Some(block) = self.body_block_after_byte_edit(hit.slot, |xml| {
+                remove_note_references(xml, id, kind)
+            })?
+            else {
+                return Ok(None);
+            };
+            blocks.push((hit.slot, block));
+        }
+        let mut units = vec![if kind == StoryKind::Footnote {
+            EditUnit::Footnotes
+        } else {
+            EditUnit::Endnotes
+        }];
+        // One unit per hit block, and the package for the relationships the
+        // note releases.
+        units.extend(hits.iter().map(|hit| EditUnit::BodyBlocks {
+            slot: hit.slot,
+            count: 1,
+        }));
+        units.push(EditUnit::Parts);
+        self.edit_in_place_with_body_blocks(&units, blocks, |document| {
+            // The pictures and links only the removed note showed go with
+            // it, journaled.
+            document.release_unreferenced_relationships(
+                &part_name,
+                &referenced_before,
+                &referenced_after,
+            );
+            set_story_source_xml(document, &part_name, notes_xml)
+        })?;
+        Ok(Some(story))
+    }
+
+    /// The staged route of [`Self::remove_note`]: the whole main part is
+    /// serialized and scanned, the debug oracle of the in-place route.
+    fn remove_note_staged(&mut self, kind: StoryKind, id: i32) -> Result<()> {
         let label = if kind == StoryKind::Footnote {
             "footnote"
         } else {

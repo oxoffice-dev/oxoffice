@@ -17,9 +17,18 @@ impl PyNote {
         } else {
             document.inner.footnote_story(self.id)
         };
+        // A note removed in place retires its handle alone: the document
+        // epoch the handle is bound to stays.
         story
             .map_err(|error| docx_to_pyerr(py, error))?
-            .ok_or_else(|| PyValueError::new_err("note owner no longer exists"))
+            .ok_or_else(|| {
+                crate::public_error(
+                    py,
+                    "StaleElementError",
+                    "note no longer exists. Re-fetch the note after structural mutation."
+                        .to_owned(),
+                )
+            })
     }
 }
 #[pymethods]
@@ -55,6 +64,18 @@ impl PyNote {
     fn delete(&self, py: Python<'_>) -> PyResult<()> {
         self.story(py)?;
         let mut document = self.document.borrow_mut(py);
+        let kind = if self.endnote {
+            oxoffice_docx::StoryKind::Endnote
+        } else {
+            oxoffice_docx::StoryKind::Footnote
+        };
+        if document.remove_stories_in_place(py, "Note.delete", |document| {
+            Ok(document
+                .remove_note_in_place(kind, self.id)?
+                .map(|story| vec![story]))
+        })? {
+            return Ok(());
+        }
         let mut candidate = document.inner.clone_for_staging();
         if self.endnote {
             candidate.remove_endnote(self.id)
@@ -158,13 +179,24 @@ impl PyNote {
         #[cfg(debug_assertions)]
         let before = document.inner.clone_for_staging();
         document.inner.hold_edit_undo();
-        let inserted = document
-            .inner
+        // An insertion that fails or panics leaves the note as it was: the
+        // guard undoes it as it drops.
+        let held = super::block_edits_in_place::HeldUndo {
+            document: &mut document.inner,
+            armed: true,
+        };
+        let inserted = held
+            .document
             .insert_content(&oxoffice_docx::ContentLocation::end(story), fragment);
-        let undo = document.inner.take_edit_undo();
-        inserted.map_err(|error| docx_to_pyerr(py, error))?;
-        let undo = undo.expect("a note insertion edits in place");
-        let published = (|| {
+        if let Err(error) = inserted {
+            drop(held);
+            return Err(docx_to_pyerr(py, error));
+        }
+        let undo = held.take().expect("a note insertion edits in place");
+        // A publication that fails or panics leaves the document as it was:
+        // undo the edit before the error or the panic goes on.
+        let published = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::paragraph_in_place::debug_fail_paragraph_splice()?;
             let story = if self.endnote {
                 document.inner.endnote_story(self.id)
             } else {
@@ -190,12 +222,16 @@ impl PyNote {
                 document.commit_story_revision(prepared)?;
             }
             Ok(story)
-        })();
+        }));
         let story = match published {
-            Ok(story) => story,
-            Err(error) => {
+            Ok(Ok(story)) => story,
+            Ok(Err(error)) => {
                 document.inner.undo_edit(undo);
                 return Err(error);
+            }
+            Err(panic) => {
+                document.inner.undo_edit(undo);
+                std::panic::resume_unwind(panic);
             }
         };
         let segment = match kind {

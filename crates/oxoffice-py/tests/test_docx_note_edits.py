@@ -205,3 +205,28 @@ def test_a_note_whose_publication_fails_leaves_the_document_and_every_handle_as_
     assert earlier_run.text.strip() == "earlier note"
     add_to(doc, kind)(edited_run, "new note")
     assert note_texts(doc, kind) == [f"other {kind}", "earlier note", "new note"]
+
+
+@pytest.mark.skipif(not debug_build(), reason="a debug build fails the publication on request")
+@pytest.mark.parametrize("failure", ["error", "panic"])
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_a_paragraph_added_to_a_note_whose_publication_fails_leaves_the_note_as_it_was(
+        saved, kind, failure, monkeypatch):
+    doc = oxdocx.Document.open(saved)
+    target = add_note(doc, kind, "new note")
+    taken = handles_taken(doc)
+    (inside,) = target.paragraphs
+    data = doc.to_bytes()
+
+    # Debug builds fail the publication of the note's story on request, after the edit made in place.
+    monkeypatch.setenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE", failure)
+    with pytest.raises(BaseException) as raised:
+        target.add_paragraph("more")
+    monkeypatch.delenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE")
+
+    assert "on request" in str(raised.value)
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert inside.text.strip() == "new note"
+    target.add_paragraph("more")
+    assert note_texts(doc, kind) == [f"other {kind}", "new note", "more"]

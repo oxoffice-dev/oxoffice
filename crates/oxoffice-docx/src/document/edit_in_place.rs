@@ -225,6 +225,16 @@ impl EditUndo {
             _ => None,
         }
     }
+
+    /// The direct body blocks each `BodyBlocks` unit copied before the
+    /// edit, with the unit's slot, in slot order.
+    pub fn previous_body_units(
+        &self,
+    ) -> impl Iterator<Item = (usize, &[oxoffice_docx_oxml::document::BodyContent])> {
+        self.body
+            .iter()
+            .map(|copy| (copy.slot, copy.blocks.as_slice()))
+    }
 }
 
 /// The in-place edit open on a document and the undo its caller holds. A
@@ -847,9 +857,10 @@ impl Document {
 
     /// [`Self::assert_in_place_matches_staged`] for an in-place edit that
     /// writes its element from the model while the staged route writes it
-    /// from a fragment that declares its namespaces again: the two packages
-    /// hold the same parts, and the same bytes once the namespace
-    /// declarations are set aside.
+    /// from a fragment that declares its namespaces again, or edits the
+    /// producer's bytes: the two packages hold the same parts, and the same
+    /// bytes once the namespace declarations and the whitespace-only text
+    /// between elements are set aside (`oracle_normal_form`).
     #[cfg(debug_assertions)]
     pub(crate) fn assert_in_place_matches_staged_declarations_aside<
         T: PartialEq + std::fmt::Debug,
@@ -859,6 +870,7 @@ impl Document {
         result: &Result<T>,
         staged: impl FnOnce(&mut Self) -> Result<T>,
     ) {
+        let main_part = self.doc_part_name.clone();
         self.assert_in_place_matches_staged_by(before, result, staged, |live, staged| {
             let parts = |saved: &std::result::Result<Vec<u8>, String>| {
                 saved.as_ref().map_err(String::clone).map(|bytes| {
@@ -868,7 +880,9 @@ impl Document {
                     let mut parts = package
                         .parts
                         .iter()
-                        .map(|(name, bytes)| (name.clone(), without_namespace_declarations(bytes)))
+                        .map(|(name, bytes)| {
+                            (name.clone(), oracle_normal_form(name, bytes, &main_part))
+                        })
                         .collect::<Vec<_>>();
                     parts.sort();
                     parts
@@ -933,6 +947,27 @@ impl Document {
     }
 }
 
+/// A saved part as the debug oracle compares it: an XML part without its
+/// namespace declarations and its whitespace-only text between elements,
+/// and the main part `main_part` as its model writes it, what an in-place
+/// edit may write otherwise than its staged route with no change for a
+/// reader (a live body edit writes the whole part from the model, a staged
+/// byte edit keeps the producer's spelling: `w:val="0"`, the declaration's
+/// quotes); other parts as they are.
+#[cfg(debug_assertions)]
+fn oracle_normal_form(name: &str, bytes: &[u8], main_part: &str) -> Vec<u8> {
+    if name == main_part
+        && let Ok(written) = CT_Document::from_xml(bytes).and_then(|document| document.to_xml())
+    {
+        return without_whitespace_between_elements(&without_namespace_declarations(&written));
+    }
+    if name.ends_with(".xml") || name.ends_with(".rels") {
+        without_whitespace_between_elements(&without_namespace_declarations(bytes))
+    } else {
+        bytes.to_vec()
+    }
+}
+
 /// `xml` without the namespace declarations of its tags (` xmlns="..."`,
 /// ` xmlns:p="..."` inside `<...>`); text and other bytes as they are. A
 /// prefix bound again to another namespace is not told apart: the oracle
@@ -969,6 +1004,72 @@ pub(crate) fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
         }
         out.push(byte);
         at += 1;
+    }
+    out
+}
+
+/// `xml` without its whitespace-only text nodes that sit between element
+/// tags, except the only content of an element (`<w:t> </w:t>`) and any
+/// text inside a text element (`w:t`, `w:delText`, `w:instrText`,
+/// `w:delInstrText`, `m:t`) or under `xml:space="preserve"`. Bytes that do
+/// not read as XML are kept as they are.
+#[cfg(debug_assertions)]
+fn without_whitespace_between_elements(xml: &[u8]) -> Vec<u8> {
+    use quick_xml::events::Event;
+    const TEXT_ELEMENTS: &[&[u8]] = &[b"t", b"delText", b"instrText", b"delInstrText"];
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut out = Vec::with_capacity(xml.len());
+    // Per open element: whether its text is kept whatever it holds.
+    let mut kept = Vec::<bool>::new();
+    // The whitespace text held until the next event tells where it sits,
+    // and whether the event before it opened its parent.
+    let mut held: Option<(std::ops::Range<usize>, bool)> = None;
+    let mut after_start = false;
+    let mut start = 0;
+    loop {
+        let event = match reader.read_event() {
+            Ok(event) => event,
+            Err(_) => return xml.to_vec(),
+        };
+        let end = reader.buffer_position() as usize;
+        let span = start..end;
+        start = end;
+        let whitespace_text = match &event {
+            Event::Text(text) => {
+                <[u8]>::iter(text).all(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+            }
+            _ => false,
+        };
+        if whitespace_text && !kept.last().copied().unwrap_or(false) {
+            held = Some((span, after_start));
+            continue;
+        }
+        if let Some((text, opened)) = held.take() {
+            // The only content of an element stays.
+            if opened && matches!(event, Event::End(_)) {
+                out.extend_from_slice(&xml[text]);
+            }
+        }
+        match &event {
+            Event::Eof => break,
+            Event::Start(element) => {
+                let name = element.name();
+                let preserve = element.attributes().flatten().any(|attribute| {
+                    attribute.key.as_ref() == b"xml:space"
+                        && attribute.value.as_ref() == b"preserve"
+                });
+                let text_element =
+                    TEXT_ELEMENTS.contains(&name.local_name().as_ref()) || name.as_ref() == b"m:t";
+                kept.push(text_element || preserve || kept.last().copied().unwrap_or(false));
+            }
+            Event::End(_) => {
+                kept.pop();
+            }
+            _ => {}
+        }
+        after_start = matches!(event, Event::Start(_));
+        out.extend_from_slice(&xml[span]);
     }
     out
 }
@@ -1302,5 +1403,43 @@ mod tests {
             document.invalidate_layout();
             Ok(())
         });
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn the_oracle_normal_form_drops_whitespace_between_elements_only() {
+        let normal = |xml: &str| {
+            String::from_utf8(oracle_normal_form("/word/document.xml", xml.as_bytes(), "")).unwrap()
+        };
+        // Indentation between elements is no change for a reader.
+        assert_eq!(
+            normal("<w:p>\r\n  <w:r><w:t>a</w:t></w:r>\n</w:p>"),
+            normal("<w:p><w:r><w:t>a</w:t></w:r></w:p>"),
+        );
+        // A space inside a text element stays, alone or not.
+        assert_ne!(
+            normal("<w:r><w:t> </w:t></w:r>"),
+            normal("<w:r><w:t></w:t></w:r>")
+        );
+        assert_ne!(
+            normal("<w:r><w:t>a b</w:t></w:r>"),
+            normal("<w:r><w:t>ab</w:t></w:r>")
+        );
+        assert_ne!(
+            normal("<w:r><w:t xml:space=\"preserve\">a </w:t></w:r>"),
+            normal("<w:r><w:t xml:space=\"preserve\">a</w:t></w:r>"),
+        );
+        assert_ne!(
+            normal("<m:r><m:t> </m:t></m:r>"),
+            normal("<m:r><m:t/></m:r>")
+        );
+        // Whitespace under xml:space="preserve" stays, even between elements.
+        assert_ne!(
+            normal("<w:x xml:space=\"preserve\"> <w:y/></w:x>"),
+            normal("<w:x xml:space=\"preserve\"><w:y/></w:x>"),
+        );
+        // A text node that is not only whitespace stays.
+        assert_ne!(normal("<w:p>x<w:r/></w:p>"), normal("<w:p><w:r/></w:p>"));
+        assert_ne!(normal("<w:p> x <w:r/></w:p>"), normal("<w:p>x<w:r/></w:p>"));
     }
 }

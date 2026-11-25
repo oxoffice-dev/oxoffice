@@ -385,6 +385,19 @@ pub struct StoryId {
     fingerprint: u64,
 }
 
+impl StoryId {
+    /// The story of `owner`, a story owner of `part_name` read by
+    /// `scan_story_owners`.
+    pub(crate) fn of_owner(kind: StoryKind, part_name: &str, owner: &StoryOwnerSpan) -> Self {
+        StoryId {
+            kind,
+            part_name: part_name.to_owned(),
+            owner_index: owner.owner_index,
+            fingerprint: owner.fingerprint,
+        }
+    }
+}
+
 /// A checked path to one item inside a story owner.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContentLocation {
@@ -1899,6 +1912,44 @@ mod tests {
         doc.keep_body_savable_after_typed_insert(slot, savable_before);
         let kept = doc.unsavable_body_edit_cache.get() == Some(&None);
         (doc, kept)
+    }
+
+    #[test]
+    fn a_note_or_comment_added_in_place_keeps_the_savable_answer() {
+        let body = format!("<w:p><w:r><w:t>one</w:t></w:r></w:p>{}", control_owner());
+        let mut doc = read_with_body(&body);
+        assert_eq!(doc.unsavable_body_edit(), None, "the body is savable");
+        doc.create_note_in_body_slot(StoryKind::Footnote, 0, 1, "note")
+            .unwrap()
+            .expect("a direct paragraph takes the note in place");
+        assert_eq!(doc.unsavable_body_edit_cache.get(), Some(&None));
+        let range = crate::RunRange {
+            start: crate::RunPosition {
+                body_index: 0,
+                run_index: 0,
+            },
+            end: crate::RunPosition {
+                body_index: 0,
+                run_index: 1,
+            },
+        };
+        doc.add_comment_with_date(range, "A", None, "comment", crate::CommentDate::Undated)
+            .unwrap();
+        assert_eq!(doc.unsavable_body_edit_cache.get(), Some(&None));
+        assert_eq!(doc.unsavable_body_edit(), None);
+    }
+
+    #[test]
+    fn typed_edits_of_several_blocks_keep_the_answer_only_when_none_holds_an_owner() {
+        let body = format!("<w:p><w:r><w:t>one</w:t></w:r></w:p>{}", control_owner());
+        let mut doc = read_with_body(&body);
+        assert_eq!(doc.unsavable_body_edit(), None, "the body is savable");
+        doc.invalidate_layout();
+        // The second block holds the owner's element name.
+        doc.keep_body_savable_after_typed_edits(0..2, true);
+        assert!(doc.unsavable_body_edit_cache.get().is_none());
+        doc.keep_body_savable_after_typed_edits(0..1, true);
+        assert_eq!(doc.unsavable_body_edit_cache.get(), Some(&None));
     }
 
     #[test]

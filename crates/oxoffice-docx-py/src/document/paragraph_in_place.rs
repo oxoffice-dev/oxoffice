@@ -276,7 +276,7 @@ impl PyDocument {
         let states = (0..births.len())
             .map(|index| revision.born(index).expect("prepared birth"))
             .collect::<Vec<_>>();
-        self.reserve_paragraph_owners(&plan)?;
+        self.reserve_paragraph_owners(std::slice::from_ref(&plan))?;
         self.reserve_story_splice(&splice)?;
         debug_fail_paragraph_splice()?;
         self.revisions
@@ -291,6 +291,168 @@ impl PyDocument {
         #[cfg(debug_assertions)]
         self.assert_paragraph_replacement(&before, &target);
         Ok(BlocksPublication::Published)
+    }
+
+    /// Publish an in-place removal of `stories` (a note, or the comments of
+    /// a thread, all of one part; identities before the removal) that also
+    /// changed the direct body paragraphs `blocks` (each a slot and the
+    /// paragraph it held before), one paragraph for one: each paragraph
+    /// keeps its owner and properties states and its runs are born again,
+    /// as [`Self::publish_body_blocks_replaced`] publishes them, the owners
+    /// of the removed stories retire, and every other owner keeps its
+    /// states, the stories after a removed one followed to their new owner
+    /// index ([`Self::read_removed_story_splice`]).
+    ///
+    /// [`BlocksPublication::WholeRoute`] when either half cannot be taken
+    /// (a changed block that is not such a paragraph, a part that does not
+    /// tell the removal alone, several paragraphs one of which changes its
+    /// body item count), with nothing published. Both halves publish under
+    /// one revision, prepared and reserved before it commits: an error
+    /// leaves the inventory as it was, and nothing after the commit fails.
+    /// Under debug assertions the whole edit is checked once both are
+    /// published against `before`, the document before the edit.
+    pub(crate) fn publish_body_blocks_and_removed_stories(
+        &mut self,
+        py: Python<'_>,
+        blocks: &[(usize, &oxoffice_docx_oxml::BodyContent)],
+        stories: &[oxoffice_docx::StoryId],
+        operation: &'static str,
+        #[cfg(debug_assertions)] before: &oxoffice_docx::Document,
+    ) -> PyResult<BlocksPublication> {
+        self.ensure_word_authority(py)?;
+        let mut targets = Vec::new();
+        targets
+            .try_reserve(blocks.len())
+            .map_err(allocation_failed)?;
+        for &(slot, previous) in blocks {
+            match self.inner.body_children().get(slot) {
+                Some(new) if new != previous => {}
+                _ => return Ok(BlocksPublication::WholeRoute),
+            }
+            let Some(target) = self.replaced_block(slot, previous) else {
+                return Ok(BlocksPublication::WholeRoute);
+            };
+            targets.push(target);
+        }
+        let Some(splice) = self.read_removed_story_splice(py, stories).ok().flatten() else {
+            return Ok(BlocksPublication::WholeRoute);
+        };
+        let mut plans = Vec::new();
+        plans
+            .try_reserve(targets.len())
+            .map_err(allocation_failed)?;
+        for target in &targets {
+            let Some(plan) = self.plan_paragraph_owners(target)? else {
+                return Ok(BlocksPublication::WholeRoute);
+            };
+            plans.push(plan);
+        }
+        // A paragraph that changes its body item count moves the items of
+        // the later ones, which their plans read before it: one at most.
+        if plans.len() > 1 && plans.iter().any(|plan| plan.items != 0) {
+            return Ok(BlocksPublication::WholeRoute);
+        }
+        // Each paragraph's owner and runs, by generation: applying one
+        // plan removes owners by swap, which moves the keys of the others.
+        let generations = targets
+            .iter()
+            .map(|target| {
+                (
+                    self.owners[target.selected].owner.generation(),
+                    target
+                        .runs
+                        .iter()
+                        .map(|&run| self.owners[run].owner.generation())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        #[cfg(debug_assertions)]
+        let old_owners = self.owners.clone();
+        let mut retired = Vec::new();
+        let mut births = Vec::new();
+        let mut paragraph_births = Vec::new();
+        for plan in &plans {
+            retired.extend(plan.retired.iter().cloned());
+            births.extend_from_slice(&plan.births);
+            paragraph_births.push(plan.births.len());
+        }
+        retired.extend(self.removed_story_splice_scopes(&splice));
+        retired.push(
+            self.snapshot_scope
+                .as_ref()
+                .expect("active Word authority")
+                .clone(),
+        );
+        births.push(RevisionScope::Text);
+        let revision = self
+            .revisions
+            .prepare_local_scopes(operation, &retired, &births)
+            .map_err(revision_to_pyerr)?;
+        let states = (0..births.len())
+            .map(|index| revision.born(index).expect("prepared birth"))
+            .collect::<Vec<_>>();
+        self.reserve_paragraph_owners(&plans)?;
+        debug_fail_paragraph_splice()?;
+        self.revisions
+            .commit_scopes(revision)
+            .map_err(revision_to_pyerr)?;
+        // The commit: nothing below fails.
+        let (snapshot, mut states) = states.split_last().expect("snapshot birth");
+        for ((target, plan), (owner, runs)) in targets.iter().zip(plans).zip(&generations) {
+            let (plan_states, rest) = states.split_at(plan.births.len());
+            states = rest;
+            let by_generation = &self.indexes.by_generation;
+            let target = ReplacedBlock {
+                selected: by_generation[owner],
+                runs: runs.iter().map(|run| by_generation[run]).collect(),
+                location: target.location.clone(),
+                ..*target
+            };
+            self.apply_paragraph_owners(&target, plan, plan_states);
+        }
+        self.apply_removed_story_splice(stories, splice);
+        self.snapshot_scope = Some(snapshot.clone());
+        #[cfg(debug_assertions)]
+        self.assert_removal_publication(before, old_owners, &generations);
+        Ok(BlocksPublication::Published)
+    }
+
+    /// Under debug assertions, after [`Self::publish_body_blocks_and_removed_stories`]:
+    /// the inventory equals its rebuild from the whole document, every kept
+    /// owner but the edited paragraphs names its own element, and each
+    /// edited paragraph kept its owner while its runs were born again.
+    #[cfg(debug_assertions)]
+    fn assert_removal_publication(
+        &self,
+        before: &oxoffice_docx::Document,
+        mut old_owners: Vec<WordOwner>,
+        edited: &[(u64, Vec<u64>)],
+    ) {
+        self.assert_word_inventory_rebuilds(false);
+        for (owner, runs) in edited {
+            assert!(
+                self.indexes.by_generation.contains_key(owner),
+                "an edited paragraph keeps its owner"
+            );
+            assert!(
+                runs.iter()
+                    .all(|run| !self.indexes.by_generation.contains_key(run)),
+                "an edited paragraph's runs are born again"
+            );
+        }
+        // The edited paragraphs name their new element: the check of the
+        // kept owners sets them aside.
+        old_owners.retain(|owner| {
+            !edited
+                .iter()
+                .any(|(edited, _)| owner.owner.generation() == *edited)
+        });
+        assert_kept_owners_name_their_elements(
+            (before, &old_owners),
+            (&self.inner, &self.owners),
+            None,
+        );
     }
 
     /// The inventory facts of the direct body block at `slot`, whose block
@@ -396,7 +558,7 @@ impl PyDocument {
         let states = (0..births.len())
             .map(|index| revision.born(index).expect("prepared birth"))
             .collect::<Vec<_>>();
-        self.reserve_paragraph_owners(&plan)?;
+        self.reserve_paragraph_owners(std::slice::from_ref(&plan))?;
         debug_fail_paragraph_splice()?;
         self.revisions
             .commit_scopes(revision)
@@ -469,10 +631,10 @@ impl PyDocument {
         }))
     }
 
-    /// Reserve what [`Self::apply_paragraph_owners`] adds, so that nothing
-    /// fails once the revision commits.
-    fn reserve_paragraph_owners(&mut self, plan: &ParagraphPlan) -> PyResult<()> {
-        let runs = plan.runs.len();
+    /// Reserve what [`Self::apply_paragraph_owners`] adds for `plans`, so
+    /// that nothing fails once the revision commits.
+    fn reserve_paragraph_owners(&mut self, plans: &[ParagraphPlan]) -> PyResult<()> {
+        let runs = plans.iter().map(|plan| plan.runs.len()).sum();
         self.owners.try_reserve(runs).map_err(allocation_failed)?;
         self.indexes
             .by_generation
@@ -484,7 +646,7 @@ impl PyDocument {
             .map_err(allocation_failed)?;
         self.indexes
             .runs_by_parent
-            .try_reserve(1)
+            .try_reserve(plans.len())
             .map_err(allocation_failed)?;
         Ok(())
     }
@@ -662,7 +824,7 @@ fn allocation_failed(_: std::collections::TryReserveError) -> PyErr {
 
 /// Debug builds can fail or panic before a paragraph publication commits,
 /// on request, so that tests see the old paragraph put back.
-fn debug_fail_paragraph_splice() -> PyResult<()> {
+pub(super) fn debug_fail_paragraph_splice() -> PyResult<()> {
     #[cfg(debug_assertions)]
     match std::env::var("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE").as_deref() {
         Ok("error") => {

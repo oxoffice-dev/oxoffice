@@ -1816,6 +1816,7 @@ impl Document {
         }
         #[cfg(debug_assertions)]
         let before = self.clone_for_staging();
+        let savable_before = self.body_known_savable();
         let result = self.edit_in_place(
             // The flush of pending typed notes and comments writes their
             // parts; the first comment adds its parts, relationships and
@@ -1836,6 +1837,11 @@ impl Document {
                 Ok(id)
             },
         );
+        // The paragraphs took typed marks: a later edit need not check the
+        // whole main part again.
+        if result.is_ok() {
+            self.keep_body_savable_after_typed_edits(slots.clone(), savable_before);
+        }
         #[cfg(debug_assertions)]
         self.assert_in_place_matches_staged_declarations_aside(before, &result, |staged| {
             staged.add_comment_with_date_staged(range, author, initials, text, date)
@@ -2689,6 +2695,155 @@ impl Document {
         if !self.comments().iter().any(|comment| comment.id() == id) {
             return Ok(false);
         }
+        match self.remove_comment_in_place(id) {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => self.remove_comment_staged(id),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Remove the thread of the comment `id` in place when the in-place
+    /// route takes it, and answer the stories of its comments; `None`, with
+    /// nothing changed, when it leaves the thread to the staged route. The
+    /// binding publishes the body blocks of the edit and those stories.
+    #[doc(hidden)]
+    pub fn remove_comment_in_place(&mut self, id: i32) -> Result<Option<Vec<crate::StoryId>>> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.remove_comment_in_place_unchecked(id);
+        #[cfg(debug_assertions)]
+        if !matches!(result, Ok(None)) {
+            let answer = match &result {
+                Ok(_) => Ok(true),
+                Err(error) => Err(Error::Other(error.to_string())),
+            };
+            self.assert_in_place_matches_staged_declarations_aside(before, &answer, |staged| {
+                staged.remove_comment_staged(id)
+            });
+        }
+        result
+    }
+
+    /// [`Self::remove_comment`] on the live document, at the cost of the
+    /// comment parts and the body blocks that hold the thread's marks (the
+    /// written fragment walk finds them, one unit each): the thread and its ownership are read with the main part
+    /// replaced by those blocks written alone, which lose the thread's marks
+    /// as the staged route's byte removal removes them, and are read back.
+    /// `None`, with nothing changed, for what the staged route keeps: stale
+    /// story parts, a thread with no mark in the body, a removal that leaves
+    /// no comment (it may remove the owned comment parts), a block that does
+    /// not read back, a thread the ownership reads otherwise.
+    fn remove_comment_in_place_unchecked(
+        &mut self,
+        id: i32,
+    ) -> Result<Option<Vec<crate::StoryId>>> {
+        // The staged route reads the comment parts it flushes first.
+        let unwritten = |part: &Option<String>| {
+            part.as_ref()
+                .is_some_and(|part| self.package.get_part(part).is_none())
+        };
+        if self.comments_dirty
+            || self.footnotes_dirty
+            || unwritten(&self.comments_part_name)
+            || unwritten(&self.comments_extended_part_name)
+        {
+            return Ok(None);
+        }
+        let comments = self.comments();
+        let mut ids = HashSet::from([id]);
+        loop {
+            let before = ids.len();
+            for comment in &comments {
+                if comment
+                    .parent_id()
+                    .is_some_and(|parent| ids.contains(&parent))
+                {
+                    ids.insert(comment.id());
+                }
+            }
+            if ids.len() == before {
+                break;
+            }
+        }
+        if comments.iter().all(|comment| ids.contains(&comment.id())) {
+            return Ok(None);
+        }
+        drop(comments);
+        let hits = self.body_slots_referencing_comments(&ids);
+        if hits.is_empty() {
+            return Ok(None);
+        }
+        // The main part as the ownership reads it: the hit blocks, each
+        // written alone, under the part's head and tail.
+        let mut main = Vec::new();
+        let mut tail = Vec::new();
+        let mut blocks = Vec::with_capacity(hits.len());
+        for hit in &hits {
+            let Some(alone) = self.body_block_alone(hit.slot)? else {
+                return Ok(None);
+            };
+            if main.is_empty() {
+                main.extend_from_slice(&alone.head);
+                tail = alone.tail_bytes().to_vec();
+            }
+            main.extend_from_slice(alone.block_of(&alone.xml));
+            let Some(block) =
+                self.body_block_after_byte_edit(hit.slot, |xml| without_comment_marks(xml, &ids))?
+            else {
+                return Ok(None);
+            };
+            blocks.push((hit.slot, block));
+        }
+        main.extend_from_slice(&tail);
+        let ownership = self.comment_ownership_with(&self.doc_part_name, Some(&main))?;
+        if ownership.descendants(id) != ids {
+            return Ok(None);
+        }
+        // The stories of the thread: the comment owners of the part, in the
+        // order of the comments model.
+        let Some(part_name) = self.comments_part_name.clone() else {
+            return Ok(None);
+        };
+        let Some(part) = self.package.get_part(&part_name) else {
+            return Ok(None);
+        };
+        let owners = crate::document::scan_story_owners(part, crate::StoryKind::Comment)?
+            .into_iter()
+            .filter(|owner| owner.kind == crate::StoryKind::Comment)
+            .collect::<Vec<_>>();
+        let model = &self.comments.as_ref().expect("a comment exists").comments;
+        if owners.len() != model.len() {
+            return Ok(None);
+        }
+        let stories = model
+            .iter()
+            .zip(owners)
+            .filter(|(comment, _)| ids.contains(&comment.id))
+            .map(|(_, owner)| {
+                crate::StoryId::of_owner(crate::StoryKind::Comment, &part_name, &owner)
+            })
+            .collect::<Vec<_>>();
+        // One unit per hit block: a span from the first to the last could
+        // cover the whole body.
+        let units = hits
+            .iter()
+            .map(|hit| crate::EditUnit::BodyBlocks {
+                slot: hit.slot,
+                count: 1,
+            })
+            .chain([crate::EditUnit::Comments, crate::EditUnit::Parts])
+            .collect::<Vec<_>>();
+        self.edit_in_place_with_body_blocks(&units, blocks, |document| {
+            let owner = document.doc_part_name.clone();
+            document.remove_comment_ids_with(&owner, &ids, Some(&main))
+        })?;
+        Ok(Some(stories))
+    }
+
+    /// The staged route of [`Self::remove_comment`]: the whole main part is
+    /// serialized and its marks inventoried, the debug oracle of the
+    /// in-place route.
+    fn remove_comment_staged(&mut self, id: i32) -> Result<bool> {
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
         let ownership = candidate.comment_ownership_at(&candidate.doc_part_name)?;
@@ -3797,6 +3952,38 @@ impl CommentAnchorRead {
     }
 }
 
+/// `xml` without the range marks and references of the comments `ids`, as
+/// the staged removal drains them: a reference with its run when the run
+/// holds nothing else.
+fn without_comment_marks(xml: &[u8], ids: &HashSet<i32>) -> Result<Vec<u8>> {
+    let mut ranges = comment_source_markers(xml)?
+        .into_iter()
+        .filter(|marker| ids.contains(&marker.id))
+        .map(|marker| marker.empty_run.unwrap_or(marker.span))
+        .collect::<Vec<_>>();
+    ranges.sort_by_key(|range| range.start);
+    ranges.dedup();
+    let mut outer = Vec::<Range<usize>>::new();
+    for range in ranges {
+        if let Some(previous) = outer.last() {
+            if range.end <= previous.end {
+                continue;
+            }
+            if range.start < previous.end {
+                return Err(Error::Other(
+                    "comment removal spans overlap ambiguously".into(),
+                ));
+            }
+        }
+        outer.push(range);
+    }
+    let mut xml = xml.to_vec();
+    for range in outer.into_iter().rev() {
+        xml.drain(range);
+    }
+    Ok(xml)
+}
+
 pub(crate) fn comment_source_markers(xml: &[u8]) -> Result<Vec<CommentSourceMarker>> {
     let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -4221,6 +4408,16 @@ impl Document {
         &self,
         owner: &str,
     ) -> Result<BTreeMap<String, Vec<CommentSourceMarker>>> {
+        self.comment_source_inventory_with(owner, None)
+    }
+
+    /// [`Self::comment_source_inventory_at`], the main part read as `main`
+    /// when given (the body blocks an in-place edit changes, written alone).
+    fn comment_source_inventory_with(
+        &self,
+        owner: &str,
+        main: Option<&[u8]>,
+    ) -> Result<BTreeMap<String, Vec<CommentSourceMarker>>> {
         if self.package.get_part(&self.doc_part_name).is_none() {
             return Err(Error::Other("main comment source part is missing".into()));
         }
@@ -4259,7 +4456,11 @@ impl Document {
         for part in parts {
             // Dangling story relationships contain no source to inventory.
             // Package validation diagnoses them independently of comment ownership.
-            if let Some(xml) = self.package.get_part(&part) {
+            let xml = match main {
+                Some(main) if part == self.doc_part_name => Some(main),
+                _ => self.package.get_part(&part),
+            };
+            if let Some(xml) = xml {
                 markers.insert(part, comment_source_markers(xml)?);
             }
         }
@@ -4428,8 +4629,18 @@ impl Document {
         parsed: Option<&CT_Comments>,
         companion_overrides: Option<&BTreeMap<String, Vec<u8>>>,
     ) -> Result<CommentOwnership> {
+        self.comment_owned_graph_with(owner, parsed, companion_overrides, None)
+    }
+
+    fn comment_owned_graph_with(
+        &self,
+        owner: &str,
+        parsed: Option<&CT_Comments>,
+        companion_overrides: Option<&BTreeMap<String, Vec<u8>>>,
+        main: Option<&[u8]>,
+    ) -> Result<CommentOwnership> {
         let mut ownership = CommentOwnership {
-            markers: self.comment_source_inventory_at(owner)?,
+            markers: self.comment_source_inventory_with(owner, main)?,
             parents: BTreeMap::new(),
             entries: BTreeMap::new(),
         };
@@ -4608,7 +4819,13 @@ impl Document {
     }
 
     fn comment_ownership_at(&self, owner: &str) -> Result<CommentOwnership> {
-        let ownership = self.comment_owned_graph_at(owner, None, None)?;
+        self.comment_ownership_with(owner, None)
+    }
+
+    /// [`Self::comment_ownership_at`], the main part read as `main` when
+    /// given.
+    fn comment_ownership_with(&self, owner: &str, main: Option<&[u8]>) -> Result<CommentOwnership> {
+        let ownership = self.comment_owned_graph_with(owner, None, None, main)?;
         let counts = CommentOwnership::marker_counts(&ownership.markers);
         if !counts.is_empty()
             && self
@@ -4760,7 +4977,19 @@ impl Document {
     }
 
     fn remove_comment_ids_staged_at(&mut self, owner: &str, ids: &HashSet<i32>) -> Result<()> {
-        let ownership = self.comment_ownership_at(owner)?;
+        self.remove_comment_ids_with(owner, ids, None)
+    }
+
+    /// [`Self::remove_comment_ids_staged_at`], the main part read as `main`
+    /// when given: its marks are left to the caller, which removes them
+    /// from the body blocks `main` holds.
+    fn remove_comment_ids_with(
+        &mut self,
+        owner: &str,
+        ids: &HashSet<i32>,
+        main: Option<&[u8]>,
+    ) -> Result<()> {
+        let ownership = self.comment_ownership_with(owner, main)?;
         for (part, entries) in &ownership.entries {
             for (_, span) in entries.iter().filter(|(id, _)| ids.contains(id)) {
                 if let Some(marker) =
@@ -4801,6 +5030,9 @@ impl Document {
             }
         }
         for (part, mut ranges) in spans {
+            if main.is_some() && part == self.doc_part_name {
+                continue;
+            }
             ranges.sort_by_key(|range| range.start);
             ranges.dedup();
             // A removed definition can contain a source marker of another removed comment.
