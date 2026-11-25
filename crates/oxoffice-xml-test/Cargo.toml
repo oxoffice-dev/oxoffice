@@ -1,0 +1,15 @@
+[package]
+name = "oxoffice-xml-test"
+description = "Equivalent writings of the XML parts of a package, and the canonical form that proves two writings the same"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+quick-xml = { workspace = true }
+zip = { workspace = true }

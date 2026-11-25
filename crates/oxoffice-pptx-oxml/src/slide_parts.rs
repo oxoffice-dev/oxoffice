@@ -552,10 +552,11 @@ impl CT_Slide {
             rewritten.extend_from_slice(&xml[end..]);
             rewritten
         } else {
-            let closing = xml
-                .windows(b"</p:sld>".len())
-                .position(|window| window == b"</p:sld>")
-                .ok_or_else(|| OxmlError::MissingElement("closing p:sld".to_owned()))?;
+            let root = oxoffice_core::xml_element::root_element_span(std::str::from_utf8(&xml)?)?;
+            if root.is_self_closing() {
+                return Err(OxmlError::MissingElement("closing p:sld".to_owned()));
+            }
+            let closing = root.end_tag.start;
             let mut rewritten = Vec::with_capacity(xml.len() + extension.len() + 21);
             rewritten.extend_from_slice(&xml[..closing]);
             rewritten.extend_from_slice(b"<p:extLst>");

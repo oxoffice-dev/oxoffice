@@ -26,8 +26,9 @@ type NamespaceBindings = Vec<(String, String)>;
 /// The target of each hyperlink relationship, by story part and id, with
 /// whether it is external.
 type HyperlinkTargets = HashMap<String, HashMap<String, (String, bool)>>;
-/// The attributes of a link's start tag, in order, with the value of those
-/// no `HYPERLINK` switch carries.
+/// The attributes of a link's start tag, named as written (another prefix
+/// than `w` included), in order, with the value of those no `HYPERLINK`
+/// switch carries.
 type HyperlinkOpening = Vec<(String, Option<String>)>;
 type SourceCoordinates = (usize, Vec<(Range<usize>, Range<usize>)>);
 type RawSourceSelection = (usize, usize, usize);
@@ -135,7 +136,7 @@ mod xml;
 
 use run_source::{
     raw_occurrence_representation, resolved_source_bindings, run_content_source_width,
-    run_source_events,
+    run_source_events, same_raw_occurrence,
 };
 
 use alignment::{
@@ -168,11 +169,11 @@ use xml::{
     append_word_child, body_content_xml, cell_child_spans, cell_xml, control_xml, deleted_run,
     deleted_run_xml, detach_field_spans, direct_element_spans, direct_word_element_spans,
     direct_word_element_spans_in_scope, element_local_name, element_opening, extract_body_inner,
-    inject_before_close, insert_first_child, main_body_source, modeled_paragraph_run_spans,
-    paragraph_close_start, paragraph_owned_run_xml, paragraph_run_spans, paragraph_xml,
-    property_xml, replace_body_inner, replace_direct_word_elements, replace_element_inner,
-    replace_owner_inner, replace_paragraph_run_elements, replace_ranges, row_xml, run_xml,
-    section_property_xml, table_xml, utf8_error, with_mark_revision, word_element_starts, word_ids,
+    insert_first_child, main_body_source, modeled_paragraph_run_spans, paragraph_close_start,
+    paragraph_owned_run_xml, paragraph_run_spans, paragraph_xml, property_xml, replace_body_inner,
+    replace_direct_word_elements, replace_element_inner, replace_owner_inner,
+    replace_paragraph_run_elements, replace_ranges, row_xml, run_xml, section_property_xml,
+    table_xml, utf8_error, with_mark_revision, word_element_starts, word_ids,
 };
 
 mod attributed_runs;
@@ -224,7 +225,7 @@ use paragraph_properties::{
     clear_default_orientation, compared_paragraph_properties, deleted_paragraph,
     final_paragraph_properties_xml, inserted_paragraph, modeled_paragraph_properties,
     nonempty_paragraph_properties, paragraph_children_xml, paragraph_properties_differ,
-    paragraph_properties_xml, place_shared_bookmarks, section_properties_xml,
+    paragraph_properties_xml, place_shared_bookmarks, same_xml_fragment, section_properties_xml,
     shared_bookmark_markers,
 };
 use paragraphs::{

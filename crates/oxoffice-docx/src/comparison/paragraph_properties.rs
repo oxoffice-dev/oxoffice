@@ -111,10 +111,12 @@ fn paragraph_properties_xml_impl(
         })
         .unwrap_or_default();
     let edited_properties = edited.properties.as_ref().cloned().unwrap_or_default();
-    if edited_properties.numbering_revision_xml != original_numbering_xml
-        || edited_properties.numbering_revision_xml_positions != original_numbering_positions
+    if !same_retained_xml(
+        &edited_properties.numbering_revision_xml,
+        &original_numbering_xml,
+    ) || edited_properties.numbering_revision_xml_positions != original_numbering_positions
         || edited_properties.numbering_revision_position != original_numbering_position
-        || edited_properties.revision_xml != original_revision_xml
+        || !same_retained_xml(&edited_properties.revision_xml, &original_revision_xml)
         || edited_properties.revision_xml_positions != original_revision_positions
     {
         formatting_diagnostic(diagnostics, location.to_owned());
@@ -149,15 +151,12 @@ fn paragraph_properties_xml_impl(
             let updated = append_word_child(&current_xml[span.clone()], "rPr", &change)?;
             current_xml.replace_range(span, &updated);
         } else {
-            current_xml = inject_before_close(
-                &current_xml,
-                "</w:pPr>",
-                &format!("<w:rPr>{change}</w:rPr>"),
-            )?;
+            current_xml =
+                append_word_child(&current_xml, "pPr", &format!("<w:rPr>{change}</w:rPr>"))?;
         }
     }
     if !tracked_section.is_empty() {
-        current_xml = inject_before_close(&current_xml, "</w:pPr>", &tracked_section)?;
+        current_xml = append_word_child(&current_xml, "pPr", &tracked_section)?;
     }
     if compared_paragraph_properties(original_base.clone())
         != compared_paragraph_properties(edited_base.clone())
@@ -172,7 +171,7 @@ fn paragraph_properties_xml_impl(
             metadata
                 .ids
                 .revision("pPrChange", metadata.author, metadata.timestamp, &previous)?;
-        current_xml = inject_before_close(&current_xml, "</w:pPr>", &change)?;
+        current_xml = append_word_child(&current_xml, "pPr", &change)?;
     }
     metadata.ids.generated(current_xml)
 }
@@ -250,8 +249,10 @@ pub(super) fn final_paragraph_properties_xml(
     // of two paragraphs that a resolution merges, not a formatting edit, and
     // Word's merged paragraph keeps this mark's unless the change says so.
     if accepted_modeled == rejected_modeled
-        && without_empty_mark(accepted.xml.as_deref())?
-            == without_empty_mark(rejected.xml.as_deref())?
+        && same_written_property(
+            &without_empty_mark(accepted.xml.as_deref())?,
+            &without_empty_mark(rejected.xml.as_deref())?,
+        )
     {
         return Ok(own.xml.clone().unwrap_or_default());
     }
@@ -279,7 +280,7 @@ pub(super) fn final_paragraph_properties_xml(
     };
     let accepted_mark = mark(accepted)?;
     let rejected_mark = mark(rejected)?;
-    if accepted_mark != rejected_mark {
+    if !same_written_property(&accepted_mark, &rejected_mark) {
         let previous = rejected_mark
             .clone()
             .unwrap_or(metadata.ids.generated("<w:rPr/>".to_owned())?);
@@ -301,7 +302,7 @@ pub(super) fn final_paragraph_properties_xml(
     };
     let accepted_base = base(accepted)?;
     let rejected_base = base(rejected)?;
-    if accepted_base != rejected_base {
+    if !same_written_property(&accepted_base, &rejected_base) {
         let previous = rejected_base.unwrap_or(metadata.ids.generated("<w:pPr/>".to_owned())?);
         let change =
             metadata
@@ -330,11 +331,104 @@ pub(super) fn modeled_paragraph_properties(properties: Option<&CT_PPr>) -> Optio
 
 /// `properties` as two paragraphs' properties are compared, never written: a
 /// `w:numId` without `w:ilvl` takes the level both inputs show.
+/// Whether two lists of retained elements say the same, however each was
+/// written: a save may write a retained element again in its own writing
+/// (attribute order, quotes, spacing, a local declaration), which is no
+/// change of formatting.
+pub(super) fn same_retained_xml(left: &[Vec<u8>], right: &[Vec<u8>]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| left == right || same_xml_fragment(left, right))
+}
+
+/// Whether two written properties (or their absence) say the same, one
+/// read from a source and one written by the model perhaps: another writing
+/// of the same properties is no change.
+fn same_written_property(left: &Option<String>, right: &Option<String>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            left == right || same_xml_fragment(left.as_bytes(), right.as_bytes())
+        }
+        (left, right) => left == right,
+    }
+}
+
+/// Whether two fragments read the same in their canonical form
+/// (`oxoffice_core::xml_element::canonical_fragment`).
+pub(super) fn same_xml_fragment(left: &[u8], right: &[u8]) -> bool {
+    let canonical = |xml: &[u8]| {
+        std::str::from_utf8(xml)
+            .ok()
+            .and_then(|xml| oxoffice_core::xml_element::canonical_fragment(xml).ok())
+    };
+    matches!((canonical(left), canonical(right)), (Some(left), Some(right)) if left == right)
+}
+
 pub(super) fn compared_paragraph_properties(properties: Option<CT_PPr>) -> Option<CT_PPr> {
     properties.map(|mut properties| {
         super::numbering::normalize_numbering(&mut properties);
+        retained_xml_as_said(&mut properties);
         properties
     })
+}
+
+/// The XML the properties keep as written, as what it says: in its
+/// canonical form (the kept `w:ilvl` and `w:numId` read with the bindings in
+/// scope they carry, then without them), and attributes kept as written in
+/// one order. Another writing of a kept element (attribute order, quotes,
+/// spacing, prefix) or of its scope (a paragraph that declares again a
+/// binding its parent holds, as an edit may write) is no change.
+fn retained_xml_as_said(properties: &mut CT_PPr) {
+    let canonical = |raw: &mut Vec<u8>, bindings: &[(String, String)]| {
+        if let Some(canonical) = std::str::from_utf8(raw)
+            .ok()
+            .and_then(|xml| oxoffice_core::xml_element::canonical_fragment_in(xml, bindings).ok())
+        {
+            *raw = canonical.into_bytes();
+            true
+        } else {
+            false
+        }
+    };
+    for (_, raw, scope) in [&mut properties.num_ilvl_raw, &mut properties.num_id_raw]
+        .into_iter()
+        .flatten()
+    {
+        // A binding is kept as `\0prefix\0namespace`.
+        let bindings: Vec<(String, String)> = scope
+            .iter()
+            .filter_map(|entry| {
+                let (prefix, uri) = entry.strip_prefix('\0')?.split_once('\0')?;
+                Some((prefix.to_owned(), uri.to_owned()))
+            })
+            .collect();
+        if canonical(raw, &bindings) {
+            scope.clear();
+        } else {
+            scope.sort();
+            scope.dedup();
+        }
+    }
+    properties.num_pr_extra_attributes.sort();
+    for (_, _, raw) in &mut properties.num_pr_extra_xml {
+        canonical(raw, &[]);
+    }
+    for raw in properties
+        .numbering_revision_xml
+        .iter_mut()
+        .chain(&mut properties.revision_xml)
+    {
+        canonical(raw, &[]);
+    }
+    if let Some(mark) = properties.rpr.as_mut() {
+        for raw in &mut mark.revision_xml {
+            canonical(raw, &[]);
+        }
+        mark.font_extra_attributes.sort();
+        mark.language_extra_attributes.sort();
+    }
 }
 
 pub(super) fn nonempty_paragraph_properties(mut properties: CT_PPr) -> Option<CT_PPr> {
@@ -358,6 +452,7 @@ pub(super) fn paragraph_properties_differ(
                 clear_default_orientation(section);
             }
             super::numbering::normalize_numbering(&mut properties);
+            retained_xml_as_said(&mut properties);
             nonempty_paragraph_properties(properties)
         })
     };
@@ -428,7 +523,7 @@ pub(super) fn section_properties_xml(
     let current = section_property_xml(&edited_modeled)?;
     metadata
         .ids
-        .generated(inject_before_close(&current, "</w:sectPr>", &change)?)
+        .generated(append_word_child(&current, "sectPr", &change)?)
 }
 
 /// A paragraph deleted whole. Unless it is `carried` (deleted inside a complex

@@ -2455,37 +2455,16 @@ fn write_extension_list(
             return Ok(Some(original.to_vec()));
         }
         let section_xml = write_section_list(sections)?;
-        if original.trim_ascii_end().ends_with(b"/>") {
-            let slash = original
-                .windows(2)
-                .rposition(|window| window == b"/>")
-                .expect("trimmed empty element ends with its slash");
-            let name_end = original[1..]
-                .iter()
-                .position(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'>'))
-                .map(|index| index + 1)
-                .ok_or_else(|| invalid_value("malformed empty p:extLst".to_owned()))?;
-            let mut output = Vec::with_capacity(original.len() + section_xml.len() + 80);
-            output.extend_from_slice(&original[..slash]);
-            output.extend_from_slice(b">");
-            output.extend_from_slice(format!("<p:ext uri=\"{SECTION_EXTENSION_URI}\">").as_bytes());
-            output.extend_from_slice(&section_xml);
-            output.extend_from_slice(b"</p:ext></");
-            output.extend_from_slice(&original[1..name_end]);
-            output.extend_from_slice(b">");
-            return Ok(Some(output));
-        }
-        let closing = original
-            .windows(b"</".len())
-            .rposition(|window| window == b"</")
-            .ok_or_else(|| invalid_value("p:extLst has no closing tag".to_owned()))?;
-        let mut output = Vec::with_capacity(original.len() + section_xml.len() + 80);
-        output.extend_from_slice(&original[..closing]);
-        output.extend_from_slice(format!("<p:ext uri=\"{SECTION_EXTENSION_URI}\">").as_bytes());
-        output.extend_from_slice(&section_xml);
-        output.extend_from_slice(b"</p:ext>");
-        output.extend_from_slice(&original[closing..]);
-        return Ok(Some(output));
+        // The section list goes last in the list, which gets an end tag when
+        // it is written self-closing.
+        let addition = format!(
+            "<p:ext uri=\"{SECTION_EXTENSION_URI}\">{}</p:ext>",
+            std::str::from_utf8(&section_xml)?
+        );
+        let original = std::str::from_utf8(original)?;
+        return Ok(Some(
+            oxoffice_core::xml_element::append_content(original, &addition)?.into_bytes(),
+        ));
     }
     let section_xml = write_section_list(sections)?;
     let mut output = format!("<p:extLst><p:ext uri=\"{SECTION_EXTENSION_URI}\">").into_bytes();

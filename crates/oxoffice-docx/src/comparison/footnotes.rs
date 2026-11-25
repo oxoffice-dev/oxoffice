@@ -2548,10 +2548,8 @@ pub(super) fn compare_note_parts(
                 metadata,
                 diagnostics,
             )?;
-            let mut owner = l.xml[left_owner.span.clone()].to_owned();
-            let relative = left_owner.inner.start - left_owner.span.start
-                ..left_owner.inner.end - left_owner.span.start;
-            owner.replace_range(relative, &inner);
+            let (owner, _) =
+                replace_owner_inner(&l.xml[left_owner.span.clone()], kind.owner(), &inner)?;
             replacements.push((left_owner.span.clone(), owner));
         }
     }
@@ -2574,12 +2572,9 @@ pub(super) fn compare_note_parts(
             let note_mark =
                 note_bookmark(kind, token, left.is_some(), right.is_some(), 'N', note_id);
             tracked = insert_note_marker(&tracked, kind, &owner.bindings, &note_mark, addition)?;
-            let mut owner_xml = source.xml[owner.span.clone()].to_owned();
-            owner_xml.replace_range(
-                owner.inner.start - owner.span.start..owner.inner.end - owner.span.start,
-                &tracked,
-            );
-            owner_xml = close_note_fragment(&owner_xml, &owner.bindings)?;
+            let (owner_xml, _) =
+                replace_owner_inner(&source.xml[owner.span.clone()], kind.owner(), &tracked)?;
+            let owner_xml = close_note_fragment(&owner_xml, &owner.bindings)?;
             if addition && left.is_some() {
                 let next = right_anchors
                     .iter()

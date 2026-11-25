@@ -1240,12 +1240,15 @@ fn append_imported_master_id(source: &[u8], id: u32, relationship: &str) -> Resu
                 result.splice(head_end - 2..head_end, expanded.bytes());
             }
             XmlEvent::Start(_) => {
-                let close = source[*begin..*end]
-                    .windows(2)
-                    .rposition(|token| token == b"</")
-                    .ok_or_else(|| {
+                let incomplete =
+                    |_| invalid_shape_mutation("import master", "master list is incomplete");
+                let list = std::str::from_utf8(&source[*begin..*end]).map_err(incomplete)?;
+                let close = oxoffice_core::xml_element::element_span(list)
+                    .map_err(|_| {
                         invalid_shape_mutation("import master", "master list is incomplete")
                     })?
+                    .end_tag
+                    .start
                     + *begin;
                 result.splice(close..close, item.bytes());
             }

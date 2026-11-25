@@ -3578,20 +3578,12 @@ fn parse_color(xml: &[u8]) -> Result<crate::color::ColorChoice> {
 fn parse_named_line(xml: &[u8]) -> Result<CT_LineProperties> {
     let text = std::str::from_utf8(xml)?;
     let name_start = text.find('<').ok_or_else(|| missing("table border"))? + 1;
-    let name_end = text[name_start..]
-        .find(|character: char| character.is_whitespace() || matches!(character, '>' | '/'))
-        .map(|offset| name_start + offset)
-        .ok_or_else(|| missing("table border name"))?;
-    let original_name = &text[name_start..name_end];
-    let mut renamed = String::with_capacity(text.len() + 8);
-    renamed.push_str(&text[..name_start]);
-    renamed.push_str("a:ln");
-    renamed.push_str(&text[name_end..]);
-    let closing = format!("</{original_name}>");
-    if renamed.ends_with(&closing) {
-        renamed.truncate(renamed.len() - closing.len());
-        renamed.push_str("</a:ln>");
-    }
+    let renamed = format!(
+        "{}{}",
+        &text[..name_start - 1],
+        oxoffice_core::xml_element::rename(&text[name_start - 1..], "a:ln")
+            .map_err(drawing_error)?
+    );
     CT_LineProperties::from_xml(renamed.as_bytes()).map_err(drawing_error)
 }
 
@@ -3692,13 +3684,7 @@ fn write_optional_named_line<W: Write>(
     };
     let xml = line.to_xml().map_err(drawing_error)?;
     let text = std::str::from_utf8(&xml)?;
-    let mut renamed = text.replacen("<a:ln", &format!("<{tag}"), 1);
-    if renamed.ends_with("</a:ln>") {
-        renamed.truncate(renamed.len() - "</a:ln>".len());
-        renamed.push_str("</");
-        renamed.push_str(tag);
-        renamed.push('>');
-    }
+    let renamed = oxoffice_core::xml_element::rename(text, tag).map_err(drawing_error)?;
     writer.get_mut().write_all(renamed.as_bytes())?;
     Ok(())
 }

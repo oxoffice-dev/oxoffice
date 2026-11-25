@@ -45,5 +45,6 @@ zip = { workspace = true }
 lopdf = { workspace = true }
 miniz_oxide = { workspace = true }
 oxoffice-render-test = { workspace = true }
+oxoffice-xml-test = { workspace = true }
 resvg = { version = "=0.48.1", default-features = false, features = ["raster-images", "text"] }
 oxoffice-pptx = { workspace = true, features = ["default-template", "render"] }

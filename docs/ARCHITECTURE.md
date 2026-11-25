@@ -57,6 +57,9 @@ crates/
   # Test support (dev-dependency only, never published)
   oxoffice-render-test   the render tests' shared pieces: a PDF read back,
                          page hashes, baseline files and the checks
+  oxoffice-xml-test      equivalent writings of a part (another prefix, an
+                         end tag, indentation...), the canonical form that
+                         proves them the same, and the writings check
 ```
 
 ## The dependency rule

@@ -102,3 +102,4 @@ dependency bumps and documentation.
 | 2026-11-24 | [Word binding: body handles follow their element across insertions and removals](2026-11-24-body-handles-follow-their-element.md) | accepted |
 | 2026-11-24 | [Word binding: a body splice updates the owner index in place](2026-11-24-word-owner-index-updated-in-place.md) | accepted |
 | 2026-11-25 | [One block location resolver: paragraphs and ends inside block content controls](2026-11-25-block-locations-inside-content-controls.md) | accepted |
+| 2026-11-25 | [Equivalent XML writings give the same result](2026-11-25-equivalent-xml-writings.md) | accepted |

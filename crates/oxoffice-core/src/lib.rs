@@ -8,6 +8,7 @@ mod length;
 pub mod raw_xml;
 pub mod units;
 pub mod xml;
+pub mod xml_element;
 pub mod xml_text;
 
 pub use error::{OxmlError, Result};

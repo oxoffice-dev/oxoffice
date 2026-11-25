@@ -393,11 +393,11 @@ fn reject_non_xml_character_references(what: &str, raw: &str) -> Result<()> {
     let mut rest = raw;
     'scan: while let Some(start) = rest.find(['&', '<']) {
         rest = &rest[start..];
-        for (open, close) in [("<![CDATA[", "]]>"), ("<!--", "-->")] {
+        for (open, ending) in [("<![CDATA[", "]]>"), ("<!--", "-->")] {
             if rest.starts_with(open) {
                 rest = rest
-                    .find(close)
-                    .map_or("", |end| &rest[end + close.len()..]);
+                    .find(ending)
+                    .map_or("", |end| &rest[end + ending.len()..]);
                 continue 'scan;
             }
         }

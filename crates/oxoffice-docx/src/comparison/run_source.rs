@@ -97,6 +97,19 @@ impl RunSource {
 
 /// Only root declaration plumbing is projected here, after a physical slot is
 /// already selected. Every non-declaration byte and descendant remains exact.
+/// Whether two writings of one raw child hold the same element: the same
+/// bindings it needs and the same canonical form, however each is written.
+pub(super) fn same_raw_occurrence(
+    left: &str,
+    right: &str,
+    context: &[(String, String)],
+) -> Result<bool> {
+    let (left, left_bindings) = raw_occurrence_representation(left, context)?;
+    let (right, right_bindings) = raw_occurrence_representation(right, context)?;
+    Ok(left_bindings == right_bindings
+        && (left == right || same_xml_fragment(left.as_bytes(), right.as_bytes())))
+}
+
 pub(super) fn raw_occurrence_representation(
     xml: &str,
     context: &[(String, String)],
@@ -202,9 +215,7 @@ impl RunSource {
             if !comment {
                 let actual = &self.scoped[span.clone()];
                 let modeled = std::str::from_utf8(modeled_raw).map_err(utf8_error)?;
-                if raw_occurrence_representation(actual, &context)?
-                    != raw_occurrence_representation(modeled, &context)?
-                {
+                if !same_raw_occurrence(actual, modeled, &context)? {
                     return Err(Error::Other(format!(
                         "source raw ordinal {ordinal} has a different physical role"
                     )));

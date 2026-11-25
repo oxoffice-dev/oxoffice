@@ -245,6 +245,24 @@ overflow, at both widths). A change that moves them rewrites those files
 layout moves`: the changelog prints the squash titles only, and it tells
 the tools whose fit checks may change.
 
+## Writings tests
+
+The `equivalent_writings` modules of the docx and pptx test binaries write
+each input again the way another producer may write the same XML (an empty
+element with an end tag or self-closed, other prefixes, the default
+namespace, indentation, attribute order, quotes and spacing, character
+references), prove each rewrite says the same through a canonical form, and
+check that open, validate, the text read, a save, an edit and (Word) a
+comparison with accept and reject give what they give on the original (see
+[the spec](../specs/2026-11-25-equivalent-xml-writings.md)). Pull requests
+run a sample, `OXOFFICE_WORKFLOWS=full` every corpus copy but the long Word
+ones and the thesis copies.
+A difference known today is listed in `tests/corpus/writings-known.toml`,
+strict like every known failure. Code that needs where an element's content
+or end tag is reads it with `oxoffice_core::xml_element`, never by searching
+for `</name>`: `crates/oxoffice-core/tests/xml_element.rs` refuses such a
+search in `crates/*/src`. `--nocapture` prints every finding.
+
 ## Known limitations
 
 A limitation users can hit, with a workaround, gets its own file,

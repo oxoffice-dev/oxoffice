@@ -596,9 +596,8 @@ impl MathBuilder {
             self.xml
         );
         // The root element of the equation, with the namespaces declared.
-        let inner = xml
-            .strip_prefix(&format!(r#"<m:root xmlns:m="{M_NS}" xmlns:w="{W_NS}">"#))
-            .and_then(|rest| rest.strip_suffix("</m:root>"))
+        let inner = oxoffice_core::xml_element::element_span(&xml)
+            .map(|root| &xml[root.content])
             .unwrap_or_default();
         let declared = |tag: &str| {
             inner.replacen(

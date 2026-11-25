@@ -1173,6 +1173,7 @@ dependencies = [
  "oxoffice-pdf",
  "oxoffice-pptx",
  "oxoffice-render-test",
+ "oxoffice-xml-test",
  "pulldown-cmark",
  "quick-xml",
  "regex",
@@ -1346,6 +1347,7 @@ dependencies = [
  "oxoffice-pptx-render",
  "oxoffice-render-test",
  "oxoffice-sml",
+ "oxoffice-xml-test",
  "quick-xml",
  "scraper",
  "sha2",
@@ -1467,6 +1469,14 @@ dependencies = [
  "oxoffice-opc",
  "quick-xml",
  "thiserror",
+]
+
+[[package]]
+name = "oxoffice-xml-test"
+version = "0.6.0"
+dependencies = [
+ "quick-xml",
+ "zip",
 ]
 
 [[package]]

@@ -1378,5 +1378,14 @@ pub(super) fn unsafe_nested_namespace_prefix(owners: &[NestedNamespaceOwner]) ->
 }
 
 pub(super) fn shadowed_namespace_diagnostic(prefix: &str) -> String {
-    format!("cannot serialize a modified document with a shadowed `{prefix}` namespace")
+    let diagnostic =
+        format!("cannot serialize a modified document with a shadowed `{prefix}` namespace");
+    if prefix == "default" {
+        // A known limitation (#663): the writer cannot rebind the main
+        // namespace a document writes without a prefix.
+        return format!(
+            "{diagnostic}: a document written with WordprocessingML as its default namespace cannot be edited yet (limitation docx-default-namespace, see `oxoffice limitations`)"
+        );
+    }
+    diagnostic
 }
