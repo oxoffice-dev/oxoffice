@@ -12,7 +12,7 @@ impl Document {
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
         let destination = ContentLocation::end(story.clone());
-        let (boundary, _, _) = validated_content_boundary(&source_xml, &owner, &destination)?;
+        let boundary = resolve_block_location(&source_xml, &owner, &destination)?.boundary;
         fragment.source_part_name = Some(part_name.clone());
         fragment.source_story_kind = Some(story.kind);
         fragment.source_owner_index = Some(story.owner_index);
@@ -315,6 +315,10 @@ impl Document {
             Some(items) => direct_story_content_items_in(&source_xml, &story_owner, items)?,
             None => direct_story_content_items(&source_xml, &story_owner)?,
         };
+        // A picture after a block of a block control goes in that control,
+        // and takes the location `[control, k]`.
+        let mut insert_owner = story_owner.clone();
+        let mut nested_path = None;
         let (boundary, inserted_direct_index) = match after {
             Some(after) => {
                 if after.story != *story {
@@ -322,12 +326,23 @@ impl Document {
                         "picture placement must belong to the target story".to_owned(),
                     ));
                 }
-                let item = validated_direct_content_item(&source_xml, &story_owner, after)?;
-                let index = direct_items
-                    .iter()
-                    .position(|candidate| candidate.full == item.full)
-                    .ok_or_else(|| Error::Other("picture placement was not found".to_owned()))?;
-                (item.full.end, index + 1)
+                let slot = resolve_block_location(&source_xml, &story_owner, after)?;
+                let item = slot.block()?.clone();
+                if slot.control.is_some() {
+                    slot.check_takes_block()?;
+                    nested_path =
+                        Some(slot.paragraph_path_at(&source_xml, &story_owner, item.full.end)?);
+                    insert_owner = slot.owner.clone();
+                    (item.full.end, 0)
+                } else {
+                    let index = direct_items
+                        .iter()
+                        .position(|candidate| candidate.full == item.full)
+                        .ok_or_else(|| {
+                            Error::Other("picture placement was not found".to_owned())
+                        })?;
+                    (item.full.end, index + 1)
+                }
             }
             None => (
                 match &shared_items {
@@ -357,7 +372,7 @@ impl Document {
         fragment.source_owner_index = Some(story.owner_index);
         let fragment_xml = content_fragment_for_insertion(&candidate, story, &fragment)?;
         let mut updated = source_xml;
-        insert_story_fragment(&mut updated, &story_owner, boundary, fragment_xml)?;
+        insert_story_fragment(&mut updated, &insert_owner, boundary, fragment_xml)?;
         set_story_source_xml(&mut candidate, &part_name, updated)?;
         if part_name == candidate.doc_part_name {
             candidate
@@ -365,7 +380,7 @@ impl Document {
                 .register_nested_story_relationship(story, relationship_id);
         }
         let reopened = candidate.prepare_and_reopen_staged()?;
-        let location = {
+        let location = 'location: {
             let read = reopened.prepared_main_read()?;
             let related = reopened.related_story_sources()?;
             let refreshed_story = read
@@ -378,6 +393,19 @@ impl Document {
                 })
                 .ok_or_else(|| Error::Other("inserted picture story was not found".to_owned()))?;
             let (source, owner, _) = read.owner_and_layout(&refreshed_story, false, &related)?;
+            if let Some(path) = nested_path {
+                if let Some(inventory) = inventory
+                    && !holds_field_words(&read.xml)
+                    && related.iter().all(|source| !holds_field_words(&source.xml))
+                {
+                    *inventory = Some(reopened.pictures_in_prepared(&read, &related)?);
+                }
+                break 'location ContentLocation::new(
+                    refreshed_story,
+                    StoryItemKind::Paragraph,
+                    path,
+                );
+            }
             let shared_projected = if !holds_field_words(source.xml.as_ref()) {
                 Some(scan_story_items(source.xml.as_ref(), &owner, None)?)
             } else {

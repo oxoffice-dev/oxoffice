@@ -67,41 +67,6 @@ pub(super) fn control_fault(error: Error) -> Error {
     }
 }
 
-pub(super) fn require_block_parent(
-    document: &Document,
-    destination: &ContentLocation,
-) -> Result<()> {
-    let kind = destination.story().kind();
-    if !matches!(
-        kind,
-        StoryKind::Body
-            | StoryKind::TableCell
-            | StoryKind::Header
-            | StoryKind::Footer
-            | StoryKind::Footnote
-            | StoryKind::Endnote
-            | StoryKind::Comment
-            | StoryKind::TextBox
-    ) {
-        return Err(Error::Other(
-            "content control placement does not match its parent".to_owned(),
-        ));
-    }
-    if Document::location_is_end(destination) {
-        return Ok(());
-    }
-    let (_, _, _, direct) = document
-        .copy_indexed_story_item(destination, destination.index_path())
-        .map_err(control_fault)?;
-    if direct {
-        Ok(())
-    } else {
-        Err(Error::Other(
-            "content control placement does not match its parent".to_owned(),
-        ))
-    }
-}
-
 pub(super) fn table_parent_range(
     document: &Document,
     destination: &ContentLocation,

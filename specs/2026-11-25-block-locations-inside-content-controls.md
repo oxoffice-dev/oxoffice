@@ -84,9 +84,12 @@ Rules the resolver applies, for every operation:
 - **Block controls only.** A control in a paragraph, around rows or around cells names no block container. A
   repeating section's content holds only its items: a block goes into an item (`control_end(story, item)`), an
   item is added with `repeat_content_control`.
-- **A control keeps a block.** Removing or moving out the only paragraph, table or control of a block control is
+- **A container keeps a block.** Removing or moving out the only paragraph, table or control of a block control is
   refused: the route is to remove the control itself (`remove_content_control`, or `remove_content_at` on the
-  control). oxoffice opens an empty `w:sdtContent`; whether Word does is not checked, so we do not write one.
+  control). oxoffice opens an empty `w:sdtContent`; whether Word does is not checked, so we do not write one. The
+  same holds for the only block of a header, footer, note, comment or text box, whose schema asks for one block
+  (a comment refused it already; the others were left empty): remove the note, comment or header itself. The body
+  may be empty, and a cell keeps a paragraph as before.
 - **A typed control keeps one block.** A plain text, date, drop-down list, combo box, picture or check box control
   that holds a block takes no other (decision 3 below).
 - **A block cannot move into itself** (a control into its own content).
@@ -103,7 +106,7 @@ Rules the resolver applies, for every operation:
 | --- | --- | --- | --- |
 | `insert_content` (in place for notes, headers, footers; staged otherwise) | destination | `[i]`, end | every shape |
 | `import_fragment` | destination | `[i]`, end, `[c, k]` | every shape |
-| `insert_html_fragment` | destination (body, cell, header, footer) | `[i]`, end | every shape; in a control the serialized route, and `direct_range` counts the control's children |
+| `insert_html_fragment` | destination (body, cell, header, footer) | `[i]`, end | every shape; in a control the serialized route, and `direct_range` counts the control's children; in a cell the modeled route no longer counts the cell's `w:tcPr`, which put the HTML after the paragraph named |
 | `clone_content` | source, destination | `[i]`; `[i]`, end | every block; every shape |
 | `move_content` | source, destination (same story) | `[i]`; `[i]`, end | every block; every shape, across containers of the story |
 | `remove_content_at` | location | `[i]` | every block |
@@ -179,10 +182,13 @@ break an exhaustive match).
 | an end as a source or a range start | name the block |
 | a block into a repeating section's own content | `control_end` of an item, `repeat_content_control` |
 | the only block of a control removed or moved out | `remove_content_control` |
+| the only block of a header, footer, note, comment or text box removed | remove that header, note or comment |
+| the only paragraph of a cell removed | clear its text, or remove its row |
 | a second block into a typed control | set the control's value, or remove or unwrap the control |
 | a copy holding part of a complex field (`clone_content`, `move_content`, `from_range`) | a block with whole fields, or a range from the field's begin to its end |
 | a range across containers | `control_end(story, c)` or the control `[c]` |
 | a move to another story | `clone_content` then `remove_content_at` |
+| HTML into a note, comment or text box | `from_html`, then `from_range` and `import_fragment` |
 | a section-inclusive fragment elsewhere than the body | a direct body location or `end(body)` |
 | Python `find_content_index` of a block outside the body's direct children | the handle itself to the location calls |
 | a table written directly in a block control, as a location | the limitation `docx-block-control-table-location` (#660) |
@@ -235,15 +241,16 @@ and #661, in two commits:
      entry and field-end paragraph refused by clone, move and range; a middle and the last entry accepted.
    - `the_last_paragraph_of_a_block_control_is_copied_up_to_its_end`,
      `a_paragraph_is_appended_at_the_end_of_a_block_control_and_the_story_end_stays_after_it`,
-     `a_block_control_keeps_one_block`, `a_typed_control_takes_no_second_block`,
-     `a_repeating_section_takes_blocks_only_in_its_items`,
+     `a_paragraph_is_cloned_into_and_moved_out_of_a_block_control`,
      `bookmark_markers_inside_a_block_control_go_with_their_paragraph`,
-     `a_caption_inserted_in_a_block_control_returns_its_paragraph_location`.
+     `a_typed_control_takes_no_second_block`; a control keeping its block, the repeating section and the caption's
+     returned location are cells of the matrix.
 2. **Python.** The converter, `ContentLocation.control_end` and `is_end`, `insert_paragraph_before` on every
    paragraph, the `find_content_index` refusal, stubs and docstrings. Tests in
-   `crates/oxoffice-py/tests/test_docx_block_locations.py`: the same matrix for the Python calls (with
-   `insert_paragraph_before` and `find_content_index` as rows), the issue's six lines as written in the issue, the
-   TOC case, and each argument form once.
+   `crates/oxoffice-py/tests/test_docx_block_locations.py`: the matrix of the Python calls
+   (`insert_paragraph_before`, `clone_content` from and to, `move_content`, `pop_content`, `import_fragment`) by
+   shape, each in one of the argument forms; the issue's six lines; `insert_paragraph_before` on every paragraph;
+   the `find_content_index` refusals; each argument form once; the TOC case.
 
 Checks: `cargo fmt`, clippy on `oxoffice-docx` and `oxoffice-docx-py` (all targets, all features, warnings denied),
 `cargo test -p oxoffice-docx --test docx block_locations` and the modules the resolver's callers touch

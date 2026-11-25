@@ -172,6 +172,29 @@ impl ContentLocation {
         }
     }
 
+    /// Construct the insertion boundary after the last child of the content
+    /// of the block content control that is story item `control_index`.
+    ///
+    /// The path is `[control_index]` and the kind
+    /// [`StoryItemKind::ContentControl`], as the location of the control
+    /// itself, and [`Self::is_end`] tells them apart. A paragraph `k` of the
+    /// control is `[control_index, k]`; `[control_index, n]`, past its `n`
+    /// paragraphs, names nothing.
+    pub fn control_end(story: StoryId, control_index: usize) -> Self {
+        Self {
+            story,
+            item_kind: StoryItemKind::ContentControl,
+            index_path: vec![control_index],
+            is_end: true,
+        }
+    }
+
+    /// Whether this location is an end: of its story ([`Self::end`]) or of
+    /// a block content control's content ([`Self::control_end`]).
+    pub fn is_end(&self) -> bool {
+        self.is_end
+    }
+
     pub fn story(&self) -> &StoryId {
         &self.story
     }

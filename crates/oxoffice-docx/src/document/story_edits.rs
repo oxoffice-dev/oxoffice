@@ -587,7 +587,9 @@ impl Document {
         ids
     }
 
-    /// Insert one owned fragment at a checked direct-child boundary.
+    /// Insert one owned fragment at a checked block location: before the
+    /// block a location names, or at an end, in a story or inside a block
+    /// content control ([`ContentLocation::control_end`]).
     ///
     /// A location at a block inserts before the bookmark starts written just
     /// before it, which belong to that block (Google Docs writes a heading's
@@ -711,7 +713,8 @@ impl Document {
         let (source, owner) = self.story_source_and_owner(&destination.story)?;
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
-        let (boundary, _, _) = validated_insertion_boundary(&source_xml, &owner, destination)?;
+        let slot = resolve_block_location(&source_xml, &owner, destination)?;
+        let (boundary, _) = slot.insertion(&source_xml)?;
         reject_section_owning_content_fragment(&fragment)?;
         let mut fragment = fragment;
         freshen_taken_content_fragment_identities(self, &mut fragment)?;
@@ -724,7 +727,7 @@ impl Document {
             fragment_xml.splice(start..end, replacement);
         }
         let mut updated = source_xml;
-        insert_story_fragment(&mut updated, &owner, boundary, fragment_xml)?;
+        insert_story_fragment(&mut updated, &slot.owner, boundary, fragment_xml)?;
         set_story_source_xml(self, &part_name, updated)?;
         self.invalidate_layout();
         Ok(())
@@ -742,7 +745,8 @@ impl Document {
         let (source, owner) = candidate.story_source_and_owner(&destination.story)?;
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
-        let (boundary, _, _) = validated_insertion_boundary(&source_xml, &owner, destination)?;
+        let slot = resolve_block_location(&source_xml, &owner, destination)?;
+        let (boundary, _) = slot.insertion(&source_xml)?;
         reject_section_owning_content_fragment(&fragment)?;
         // The same fragment can be inserted twice: what the document already
         // holds takes a fresh identity (bookmark ids and names, control and
@@ -767,14 +771,14 @@ impl Document {
             }
         }
         let mut updated = source_xml;
-        insert_story_fragment(&mut updated, &owner, boundary, fragment_xml)?;
+        insert_story_fragment(&mut updated, &slot.owner, boundary, fragment_xml)?;
         set_story_source_xml(&mut candidate, &part_name, updated)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(())
     }
 
-    /// Insert one bounded HTML fragment at a checked direct-child boundary.
+    /// Insert one bounded HTML fragment at a checked block location.
     ///
     /// Images are resolved only from data URIs or the explicit resource slice.
     /// The document remains unchanged if parsing, projection, package
@@ -790,7 +794,10 @@ impl Document {
             StoryKind::Body | StoryKind::TableCell | StoryKind::Header | StoryKind::Footer
         ) {
             return Err(Error::Other(
-                "HTML fragments support body, table-cell, header, and footer stories".to_owned(),
+                "HTML fragments support body, table-cell, header, and footer stories: for another \
+                 story, read the HTML into a document (from_html), take its body with \
+                 from_range and import_fragment it"
+                    .to_owned(),
             ));
         }
         let mut candidate = self.clone_for_staging();
@@ -798,16 +805,23 @@ impl Document {
         let (source, owner) = candidate.story_source_and_owner(&destination.story)?;
         let part_name = source.part_name.clone();
         let mut source_xml = source.xml.into_owned();
-        let (boundary, direct_index, _) =
-            validated_insertion_boundary(&source_xml, &owner, destination)?;
+        let slot = resolve_block_location(&source_xml, &owner, destination)?;
+        let (boundary, direct_index) = slot.insertion(&source_xml)?;
+        // Inside a block control the fragment is written as XML: the
+        // modeled routes splice the story owner's own children.
+        let in_control = slot.control.is_some();
         let modeled_cell_route = (destination.story.kind == StoryKind::TableCell
-            && part_name == candidate.doc_part_name)
+            && part_name == candidate.doc_part_name
+            && !in_control)
             .then(|| modeled_main_cell_route(&source_xml, &owner))
             .transpose()?;
         let projected =
             crate::html::project_html_fragment(&mut candidate, &destination.story, html, images)?;
         let inserted_count = projected.content.len();
-        if destination.story.kind == StoryKind::Body && part_name == candidate.doc_part_name {
+        if destination.story.kind == StoryKind::Body
+            && part_name == candidate.doc_part_name
+            && !in_control
+        {
             candidate
                 .document
                 .body
@@ -815,6 +829,7 @@ impl Document {
                 .splice(direct_index..direct_index, projected.content);
         } else if destination.story.kind == StoryKind::TableCell
             && part_name == candidate.doc_part_name
+            && !in_control
         {
             let (content_index, mut cell_index) = modeled_cell_route.ok_or_else(|| {
                 Error::Other("modeled table-cell route disappeared before insertion".to_owned())
@@ -837,13 +852,22 @@ impl Document {
             .ok_or_else(|| StoryError::OwnerNotFound {
                 story: destination.story.clone(),
             })?;
-            insert_html_content_into_cell(cell, direct_index, projected.content)?;
+            // The modeled cell counts its children without its properties.
+            let properties = slot.items[..direct_index]
+                .iter()
+                .filter(|item| {
+                    item.kind == StoryItemKind::PreservedNode
+                        && root_local_name(&source_xml[item.full.clone()]).as_deref()
+                            == Some(b"tcPr".as_slice())
+                })
+                .count();
+            insert_html_content_into_cell(cell, direct_index - properties, projected.content)?;
         } else {
             let mut fragment_xml = Vec::new();
             for content in projected.content {
                 fragment_xml.extend_from_slice(&serialize_content_fragment(content)?);
             }
-            insert_story_fragment(&mut source_xml, &owner, boundary, fragment_xml)?;
+            insert_story_fragment(&mut source_xml, &slot.owner, boundary, fragment_xml)?;
             set_story_source_xml(&mut candidate, &part_name, source_xml)?;
         }
         let reopened = candidate.prepare_and_reopen_staged()?;
@@ -869,7 +893,7 @@ impl Document {
         })
     }
 
-    /// Import an owned cross-document fragment at a checked story boundary.
+    /// Import an owned cross-document fragment at a checked block location.
     ///
     /// The complete supported dependency closure is allocated on a staged
     /// candidate. Unreconcilable dependencies return an error before the
@@ -886,14 +910,16 @@ impl Document {
             candidate.fragment_story_source_owner_and_owners(&destination.story)?;
         let part_name = source.part_name.clone();
         let mut source_xml = source.xml.into_owned();
-        let (mut owner, mut boundary, _, _) =
-            fragment_insertion_boundary(&source_xml, &owner, destination)?;
+        let slot = resolve_block_location(&source_xml, &owner, destination)?;
+        let (mut boundary, _) = slot.insertion(&source_xml)?;
+        let mut owner = slot.owner.clone();
         if fragment.include_final_section_properties
-            && (destination.story.kind != StoryKind::Body
-                || (!destination.is_end && destination.index_path.len() != 1))
+            && (destination.story.kind != StoryKind::Body || slot.control.is_some())
         {
             return Err(Error::Other(
-                "section-inclusive fragments require the main body destination".to_owned(),
+                "section-inclusive fragments require the main body destination: import it at a \
+                 direct body location or at end(body)"
+                    .to_owned(),
             ));
         }
         let imported_xml = fragment.import_content_staged(
@@ -914,10 +940,9 @@ impl Document {
             let (updated_source, updated_owner, _) =
                 candidate.fragment_story_source_owner_and_owners(&destination.story)?;
             source_xml = updated_source.xml.into_owned();
-            let (updated_owner, updated_boundary, _, _) =
-                fragment_insertion_boundary(&source_xml, &updated_owner, destination)?;
-            owner = updated_owner;
-            boundary = updated_boundary;
+            let slot = resolve_block_location(&source_xml, &updated_owner, destination)?;
+            boundary = slot.insertion(&source_xml)?.0;
+            owner = slot.owner;
         }
         insert_story_fragment(&mut source_xml, &owner, boundary, imported_xml)?;
         set_story_source_xml(&mut candidate, &part_name, source_xml)?;
@@ -926,7 +951,9 @@ impl Document {
         Ok(())
     }
 
-    /// Remove one checked direct child and return it as an owned fragment.
+    /// Remove the block a checked location names and return it as an owned
+    /// fragment. The only block of a block content control, header, footer,
+    /// note, comment or text box stays: remove that container instead.
     ///
     /// The bookmark markers the child owns go with it, in the fragment: the
     /// bookmark starts written just before it whose bookmark ends inside it
@@ -945,21 +972,27 @@ impl Document {
         let (source, owner) = candidate.story_source_and_owner(&location.story)?;
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
-        let item = validated_direct_content_item(&source_xml, &owner, location)?;
+        let slot = resolve_block_location(&source_xml, &owner, location)?;
+        let item = slot.block()?.clone();
+        slot.check_leaves_a_block()?;
         let namespace_scope = story_namespace_scope_at(&source_xml, item.full.start)?;
         let closed =
             close_content_fragment_namespaces(&source_xml[item.full.clone()], &namespace_scope)?;
         Self::refuse_commented_fragment(&closed)?;
         if owner.kind == StoryKind::TableCell
+            && slot.control.is_none()
             && item.kind == StoryItemKind::Paragraph
-            && direct_story_content_items(&source_xml, &owner)?
+            && slot
+                .items
                 .iter()
                 .filter(|candidate| candidate.kind == StoryItemKind::Paragraph)
                 .count()
                 == 1
         {
             return Err(Error::Other(
-                "cannot remove the final required table-cell paragraph".to_owned(),
+                "cannot remove the final required table-cell paragraph: a cell ends with a \
+                 paragraph, so clear its text, or remove its row"
+                    .to_owned(),
             ));
         }
         let mut fragment = ContentFragment {
@@ -976,16 +1009,10 @@ impl Document {
         validate_fragment_relationships(&candidate, &location.story, &fragment)?;
         fragment.relationships = referenced_relationships(&candidate, &location.story, &fragment)?;
         // The bookmark markers the item owns go too, in the fragment.
-        let direct_items = direct_story_content_items(&source_xml, &owner)?;
-        let owned = match direct_items
-            .iter()
-            .position(|direct| direct.full == item.full)
-        {
-            Some(index) => {
-                owned_bookmark_marker_items(&source_xml, &direct_items, index, index..index + 1)?
-            }
-            None => OwnedMarkers::default(),
-        };
+        let direct_items = &slot.items;
+        let index = slot.index;
+        let owned =
+            owned_bookmark_marker_items(&source_xml, direct_items, index, index..index + 1)?;
         let marker = |index: &usize| source_xml[direct_items[*index].full.clone()].to_vec();
         fragment.markers = FragmentMarkers {
             before: owned.before.iter().map(marker).collect(),
@@ -1026,7 +1053,8 @@ impl Document {
         Ok(fragment)
     }
 
-    /// Clone one checked direct child into a checked insertion boundary.
+    /// Clone the block a checked location names into a checked insertion
+    /// boundary. A block holding only part of a complex field is refused.
     ///
     /// The bookmark markers the child owns (see [`Self::remove_content_at`])
     /// are copied with it. Document-wide identities of the copy are made
@@ -1041,8 +1069,13 @@ impl Document {
         candidate.flush_to_package()?;
         let (source, source_owner) = candidate.story_source_and_owner(&source_location.story)?;
         let source_xml = source.xml.into_owned();
-        let source_item =
-            validated_direct_content_item(&source_xml, &source_owner, source_location)?;
+        let source_slot = resolve_block_location(&source_xml, &source_owner, source_location)?;
+        let source_item = source_slot.block()?.clone();
+        refuse_partial_complex_field(
+            &source_xml,
+            std::slice::from_ref(&source_item.full),
+            &format!("the block at {:?}", source_location.index_path),
+        )?;
         let mut fragment = ContentFragment {
             kind: source_item.kind,
             xml: source_xml[source_item.full.clone()].to_vec(),
@@ -1056,39 +1089,43 @@ impl Document {
         reject_section_owning_content_fragment(&fragment)?;
         fragment.relationships =
             referenced_relationships(&candidate, &source_location.story, &fragment)?;
-        let source_items = direct_story_content_items(&source_xml, &source_owner)?;
-        if let Some(index) = source_items
-            .iter()
-            .position(|direct| direct.full == source_item.full)
-        {
-            let owned =
-                owned_bookmark_marker_items(&source_xml, &source_items, index, index..index + 1)?;
-            let marker = |index: &usize| source_xml[source_items[*index].full.clone()].to_vec();
-            fragment.markers = FragmentMarkers {
-                before: owned.before.iter().map(marker).collect(),
-                after: owned.after.iter().map(marker).collect(),
-            };
-        }
+        let source_items = &source_slot.items;
+        let index = source_slot.index;
+        let owned =
+            owned_bookmark_marker_items(&source_xml, source_items, index, index..index + 1)?;
+        let marker = |index: &usize| source_xml[source_items[*index].full.clone()].to_vec();
+        fragment.markers = FragmentMarkers {
+            before: owned.before.iter().map(marker).collect(),
+            after: owned.after.iter().map(marker).collect(),
+        };
 
         let (destination_source, destination_owner) =
             candidate.story_source_and_owner(&destination.story)?;
         let destination_part_name = destination_source.part_name.clone();
         let destination_xml = destination_source.xml.into_owned();
-        let (boundary, _, _) =
-            validated_insertion_boundary(&destination_xml, &destination_owner, destination)?;
+        let destination_slot =
+            resolve_block_location(&destination_xml, &destination_owner, destination)?;
+        let (boundary, _) = destination_slot.insertion(&destination_xml)?;
         copy_shown_notes(&mut candidate, &mut fragment)?;
         freshen_content_fragment_identities(&mut candidate, &mut fragment)?;
         let fragment_xml =
             content_fragment_for_insertion(&candidate, &destination.story, &fragment)?;
         let mut updated = destination_xml;
-        insert_story_fragment(&mut updated, &destination_owner, boundary, fragment_xml)?;
+        insert_story_fragment(
+            &mut updated,
+            &destination_slot.owner,
+            boundary,
+            fragment_xml,
+        )?;
         set_story_source_xml(&mut candidate, &destination_part_name, updated)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(())
     }
 
-    /// Move one checked direct child within its current story owner.
+    /// Move the block a checked location names within its story, into or
+    /// out of a block content control too. A block holding only part of a
+    /// complex field is refused.
     ///
     /// The bookmark markers the child owns (see [`Self::remove_content_at`])
     /// move with it; a start whose bookmark ends further on stays. A
@@ -1104,23 +1141,25 @@ impl Document {
         let (source, owner) = candidate.story_source_and_owner(&source_location.story)?;
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
-        let source_item = validated_direct_content_item(&source_xml, &owner, source_location)?;
+        let source_slot = resolve_block_location(&source_xml, &owner, source_location)?;
+        let source_item = source_slot.block()?.clone();
 
         let (destination_source, destination_owner) =
             candidate.story_source_and_owner(&destination.story)?;
         let destination_xml = destination_source.xml.into_owned();
-        let (boundary, destination_index, _) =
-            validated_insertion_boundary(&destination_xml, &destination_owner, destination)?;
+        let destination_slot =
+            resolve_block_location(&destination_xml, &destination_owner, destination)?;
+        let (boundary, destination_index) = destination_slot.leading_boundary(&destination_xml)?;
         if source_location.story != destination.story {
             return Err(Error::Other(
-                "content can move only within one unchanged story owner".to_owned(),
+                "content can move only within one unchanged story owner: to another story, \
+                 clone_content then remove_content_at"
+                    .to_owned(),
             ));
         }
-        let direct_items = direct_story_content_items(&source_xml, &owner)?;
-        let source_index = direct_items
-            .iter()
-            .position(|item| item.full == source_item.full)
-            .ok_or_else(|| Error::Other("direct content source was not found".to_owned()))?;
+        let direct_items = &source_slot.items;
+        let source_index = source_slot.index;
+        let same_container = source_slot.owner.full == destination_slot.owner.full;
         let fragment = ContentFragment {
             kind: source_item.kind,
             xml: source_xml[source_item.full.clone()].to_vec(),
@@ -1137,15 +1176,31 @@ impl Document {
         // at the item, at its markers or just after them changes nothing.
         let owned = owned_bookmark_marker_items(
             &source_xml,
-            &direct_items,
+            direct_items,
             source_index,
             source_index..source_index + 1,
         )?;
-        let leading_first = leading_bookmark_start_item(&source_xml, &direct_items, source_index)?;
+        let leading_first = leading_bookmark_start_item(&source_xml, direct_items, source_index)?;
         let last = owned.after.last().copied().unwrap_or(source_index);
-        if (leading_first..=last + 1).contains(&destination_index) {
+        if same_container && (leading_first..=last + 1).contains(&destination_index) {
             return Ok(());
         }
+        if !same_container {
+            if source_item.full.start < boundary && boundary < source_item.full.end {
+                return Err(Error::Other(
+                    "a block cannot move into itself: the destination is inside the content \
+                     control being moved"
+                        .to_owned(),
+                ));
+            }
+            source_slot.check_leaves_a_block()?;
+            destination_slot.check_takes_block()?;
+        }
+        refuse_partial_complex_field(
+            &source_xml,
+            std::slice::from_ref(&source_item.full),
+            &format!("the block at {:?}", source_location.index_path),
+        )?;
         let mut removed = owned
             .before
             .iter()
@@ -1175,5 +1230,20 @@ impl Document {
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(())
+    }
+}
+
+/// The local name of the root element of `xml`.
+fn root_local_name(xml: &[u8]) -> Option<Vec<u8>> {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer).ok()? {
+            Event::Start(element) | Event::Empty(element) => {
+                return Some(element.local_name().as_ref().to_vec());
+            }
+            Event::Eof => return None,
+            _ => buffer.clear(),
+        }
     }
 }

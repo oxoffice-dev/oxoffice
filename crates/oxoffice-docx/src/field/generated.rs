@@ -303,13 +303,12 @@ impl Document {
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
         let hyperlink_style = candidate.hyperlink_style_id();
-        let index = before
-            .index_path()
-            .first()
-            .copied()
-            .unwrap_or(candidate.story_items(before.story())?.len());
+        // The location the first paragraph takes, in its story or its block
+        // control.
+        let first = candidate.block_insertion_location(before)?;
         // Keep the original checked sibling boundary while inserting in native category order.
-        let mut original_index = index;
+        let mut original_index = before.index_path().first().copied().unwrap_or_default();
+        let mut paragraphs_before = 0;
         let mut boundary = before.clone();
         for instruction in instructions {
             let previous_count = candidate.story_items(boundary.story())?.len();
@@ -367,10 +366,16 @@ impl Document {
             original_index += new_count
                 .checked_sub(previous_count)
                 .ok_or_else(|| Error::Other("generated insertion removed story items".into()))?;
-            boundary = if before.index_path().is_empty() {
-                crate::ContentLocation::end(story)
-            } else {
-                crate::ContentLocation::new(story, before.item_kind(), vec![original_index])
+            paragraphs_before += 1;
+            boundary = match (before.is_end(), before.index_path()) {
+                (true, []) => crate::ContentLocation::end(story),
+                (true, [control]) => crate::ContentLocation::control_end(story, *control),
+                (false, [control, paragraph]) => crate::ContentLocation::new(
+                    story,
+                    before.item_kind(),
+                    vec![*control, paragraph + paragraphs_before],
+                ),
+                _ => crate::ContentLocation::new(story, before.item_kind(), vec![original_index]),
             };
         }
         let reopened = candidate.prepare_and_reopen_staged()?;
@@ -383,12 +388,11 @@ impl Document {
                     && story.owner_index() == before.story().owner_index()
             })
             .ok_or_else(|| Error::Other("inserted generated story disappeared".into()))?;
-        let first = reopened
-            .story_items(&story)?
-            .get(index)
-            .ok_or_else(|| Error::Other("inserted generated table has no checked location".into()))?
-            .location()
-            .clone();
+        let first = crate::ContentLocation::new(
+            story,
+            crate::StoryItemKind::Paragraph,
+            first.index_path().to_vec(),
+        );
         self.commit_staged_mutation(reopened);
         Ok(first)
     }

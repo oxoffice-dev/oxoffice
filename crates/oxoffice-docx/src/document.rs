@@ -240,6 +240,7 @@ use xml_ids::{
     xml_relationship_ids_in_collection_range, xml_relationship_ids_in_order_with_bindings,
 };
 
+mod block_locations;
 mod edited_paragraph;
 mod fragment_checks;
 mod leading_bookmarks;
@@ -257,25 +258,24 @@ mod written_references;
 #[doc(hidden)]
 pub use written_references::SlotHit;
 
+use block_locations::{BlockSlot, refuse_partial_complex_field, resolve_block_location};
 use edited_paragraph::{admit_edited_paragraph, edited_paragraph_ancestor_context};
 use fragment_checks::{
-    WordXmlOwner, content_fragment_for_insertion, copy_shown_notes, fragment_content_boundary,
-    fragment_holds_note_references, fragment_insertion_boundary, fragment_uses_w14,
-    freshen_content_fragment_identities, freshen_taken_content_fragment_identities,
-    insert_story_fragment, physical_table_cell_owner, referenced_relationships,
-    reject_section_owning_content_fragment, serialize_content_fragment, standalone_body_item_span,
-    story_owner_content_end, story_owner_content_end_in, validate_element_owner_relationships,
-    validate_element_xml_identity_change, validate_fragment_block_item,
-    validate_fragment_relationships, validate_serialized_block_content_control,
-    validated_content_boundary, validated_direct_content_item, validated_insertion_boundary,
-    without_w14_identities, xml_1_0_whitespace,
+    WordXmlOwner, content_fragment_for_insertion, copy_shown_notes, fragment_holds_note_references,
+    fragment_uses_w14, freshen_content_fragment_identities,
+    freshen_taken_content_fragment_identities, insert_story_fragment, physical_table_cell_owner,
+    referenced_relationships, reject_section_owning_content_fragment, serialize_content_fragment,
+    standalone_body_item_span, story_owner_content_end, story_owner_content_end_in,
+    validate_element_owner_relationships, validate_element_xml_identity_change,
+    validate_fragment_block_item, validate_fragment_relationships,
+    validate_serialized_block_content_control, without_w14_identities, xml_1_0_whitespace,
 };
 pub(crate) use fragment_checks::{
     close_content_fragment_namespaces, package_authoritative_body_fragment,
     package_authoritative_body_source, validate_fragment_block_content,
 };
 pub(crate) use leading_bookmarks::is_block_bookmark_marker;
-use leading_bookmarks::{OwnedMarkers, leading_bookmark_start_item, owned_bookmark_marker_items};
+use leading_bookmarks::{leading_bookmark_start_item, owned_bookmark_marker_items};
 pub(crate) use numbering_types::effective_numbering_reference;
 use package_checks::{validate_fresh_word_compatible_package, validated_word_package_class};
 use story_fields::{admit_story_sdt_content_slot, complex_story_field_xml, modeled_story_event};

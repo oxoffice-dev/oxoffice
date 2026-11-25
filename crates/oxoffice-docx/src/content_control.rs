@@ -97,8 +97,8 @@ use shells::{
     reject_control_text, row_shell, shell_contains_paragraph, xml_attr,
 };
 use structure::{
-    ControlRewrite, control_fault, control_item, paragraph_parent_range, require_block_parent,
-    row_parent_range, splice_inside, table_parent_range,
+    ControlRewrite, control_fault, control_item, paragraph_parent_range, row_parent_range,
+    splice_inside, table_parent_range,
 };
 use type_change::{
     content_embeds_relationship, is_type_child, part_owns_image, replace_control_type_markup,
@@ -451,7 +451,6 @@ impl Document {
         candidate.flush_to_package()?;
         match spec.placement {
             ContentControlPlacement::Block | ContentControlPlacement::Paragraph => {
-                require_block_parent(&candidate, destination)?;
                 let control = parse_control(&shell)?;
                 candidate
                     .insert_content(destination, ContentFragment::content_control(control)?)
@@ -837,7 +836,9 @@ impl Document {
                 "cannot move the last repeating section item".to_owned(),
             ));
         }
-        if direct && control_parent_is_block(&xml, &range)? {
+        // A block control, direct or written in another block control's
+        // content, moves as a block.
+        if control_parent_is_block(&xml, &range)? && (direct || self.names_a_block(source)) {
             if !control_matches_context(
                 ParentSlot::Block,
                 story_inside_repeating_section(self, destination.story())?,
@@ -888,7 +889,7 @@ impl Document {
         destination: &ContentLocation,
     ) -> Result<()> {
         let (_part, xml, range, direct) = control_item(self, source)?;
-        if direct && control_parent_is_block(&xml, &range)? {
+        if control_parent_is_block(&xml, &range)? && (direct || self.names_a_block(source)) {
             if !control_matches_context(
                 ParentSlot::Block,
                 story_inside_repeating_section(self, destination.story())?,

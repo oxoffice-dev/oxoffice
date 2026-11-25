@@ -1,0 +1,9 @@
+{
+  "id": "docx-block-control-table-location",
+  "format": "docx",
+  "area": "editing",
+  "title": "A table written directly in a block content control has no location of its own",
+  "symptom": "the block operations (insert_content, clone_content, move_content, remove_content_at, from_range and import_fragment, and the same in Python) name a paragraph of a block content control as [control, k], but a table written directly in the control is no story item and has no such location: a location of kind table [control, k] is refused, and in Python so is a Table handle of such a table",
+  "workaround": "copy, move or remove the table with its whole control, or within a DocumentFragment.from_range that starts at the paragraph before it (or the control itself) and ends at the block after it or at the control's end (control_end), then import_fragment",
+  "issue": 660
+}

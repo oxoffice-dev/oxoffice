@@ -135,6 +135,20 @@ CLI where it makes sense and Python everywhere.
   with those ends, and the ends just after it that close a bookmark
   started inside it. A cut fragment carries them and an insertion writes
   them back.
+- **A block location is read by one resolver** (`document/block_locations.rs`)
+  for every operation that inserts, copies, moves or removes whole blocks.
+  Four shapes, the same in every story: `[i]`, story item `i` (a direct
+  child of the story owner, or a block control written in another block
+  control's content); `[c, k]`, paragraph `k` of block control `c`;
+  `ContentLocation::end(story)`, before the body's section properties; and
+  `ContentLocation::control_end(story, c)`, after the last child of `c`'s
+  content. The container of a location is the story owner or that
+  control's `w:sdtContent`, and the bookmark rule above applies among the
+  container's children. A container keeps a block (a block control, a
+  header, footer, note, comment or text box; a cell keeps a paragraph), a
+  repeating section takes blocks only in its items, a plain text, date,
+  list, picture or check box control takes no second block, and a copy
+  holds whole complex fields. A refusal names the route that works.
 - `thiserror` for errors, never `anyhow`.
 - Edition 2024, MSRV and toolchain pinned in `rust-toolchain.toml`.
 
