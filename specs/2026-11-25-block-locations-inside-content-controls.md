@@ -90,9 +90,9 @@ Rules the resolver applies, for every operation:
   control). oxoffice opens an empty `w:sdtContent`; whether Word does is not checked, so we do not write one. The
   same holds for the only block of a header, footer, note, comment or text box, whose schema asks for one block
   (a comment refused it already; the others were left empty): the route is to insert the new content first, or
-  remove the note or comment, or unwrap a control (`unwrap_content_control`). A table cell keeps a direct
-  paragraph, for a removal or a move out of it, the removal of a control holding its only paragraph included (as
-  `remove_content_control` refused it). The body may be empty. **Behaviour change**: `remove_content_control` of a
+  remove the note or comment, or unwrap a control (`unwrap_content_control`). A table cell keeps a
+  paragraph, directly or in another of its blocks (a control's paragraph counts, as `remove_content_control`
+  counts it), for a removal or a move out of it, the removal of a control holding its only paragraph included. The body may be empty. **Behaviour change**: `remove_content_control` of a
   direct block control that is the only block of a header, footer, note, comment or text box is refused too (it
   left the story empty); `unwrap_content_control` keeps its content.
 - **A typed control keeps one block.** A plain text, date, drop-down list, combo box, picture or check box control

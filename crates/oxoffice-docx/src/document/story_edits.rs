@@ -978,7 +978,7 @@ impl Document {
         let source_xml = source.xml.into_owned();
         let slot = resolve_block_location(&source_xml, &owner, location)?;
         let item = slot.block()?.clone();
-        slot.check_leaves_a_block()?;
+        slot.check_leaves_a_block(&source_xml)?;
         let namespace_scope = story_namespace_scope_at(&source_xml, item.full.start)?;
         let closed =
             close_content_fragment_namespaces(&source_xml[item.full.clone()], &namespace_scope)?;
@@ -1182,7 +1182,7 @@ impl Document {
                         .to_owned(),
                 ));
             }
-            source_slot.check_leaves_a_block()?;
+            source_slot.check_leaves_a_block(&source_xml)?;
             destination_slot.check_takes(&close_content_fragment_namespaces(
                 &fragment.xml,
                 &fragment.namespace_scope,

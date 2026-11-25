@@ -440,9 +440,9 @@ impl BlockSlot {
     /// Refuse taking the block named out of its container when the
     /// container needs it: the only block of a block control, or of a
     /// header, footer, note, comment or text box, whose schema asks for one;
-    /// the only direct paragraph of a table cell, which ends with one. The
-    /// body may be empty.
-    pub(super) fn check_leaves_a_block(&self) -> Result<()> {
+    /// the last paragraph of a table cell, which needs one (in another block
+    /// of the cell, a control's included). The body may be empty.
+    pub(super) fn check_leaves_a_block(&self, xml: &[u8]) -> Result<()> {
         let others = |keep: fn(&StoryItemSpan) -> bool| {
             self.items
                 .iter()
@@ -468,8 +468,33 @@ impl BlockSlot {
             )));
         }
         if self.owner.kind == StoryKind::TableCell {
-            if others(|item| item.kind == StoryItemKind::Paragraph) {
-                return Ok(());
+            // A paragraph anywhere in another block of the cell counts, as
+            // `remove_content_control` counts it.
+            let holds_paragraph = |item: &StoryItemSpan| -> Result<bool> {
+                if item.kind == StoryItemKind::Paragraph || !is_block(item) {
+                    return Ok(item.kind == StoryItemKind::Paragraph);
+                }
+                let scope = story_namespace_scope_at(xml, item.full.start)?;
+                let closed = close_content_fragment_namespaces(&xml[item.full.clone()], &scope)?;
+                let mut reader = NsReader::from_reader(closed.as_slice());
+                let mut buffer = Vec::new();
+                loop {
+                    match reader.read_resolved_event_into(&mut buffer) {
+                        Ok((namespace, Event::Start(element) | Event::Empty(element)))
+                            if word_element(&namespace)
+                                && element.local_name().as_ref() == b"p" =>
+                        {
+                            return Ok(true);
+                        }
+                        Ok((_, Event::Eof)) | Err(_) => return Ok(false),
+                        _ => buffer.clear(),
+                    }
+                }
+            };
+            for (index, item) in self.items.iter().enumerate() {
+                if index != self.index && holds_paragraph(item)? {
+                    return Ok(());
+                }
             }
             return Err(refused(format!(
                 "this is the only paragraph of its table cell, which ends with one: clear its \
