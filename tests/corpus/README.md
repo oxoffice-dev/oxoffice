@@ -15,7 +15,8 @@ for the tests that read real documents (round trips, edits, performance). See
   the same sources opened and saved by each editor, written by
   [`generate/produce.py`](generate/produce.py).
 - `files/google-docs/`: documents written in Google Docs itself, through the
-  Docs API, by [`generate/google_docs.py`](generate/google_docs.py): `review`
+  Docs API, by [`generate/google_docs.py`](generate/google_docs.py) from the requests of
+  [`generate/google_docs.json`](generate/google_docs.json): `review`
   (headings, lists, links to headings, chips, a footnote, a header and a
   footer, a table, a page break, then suggestions) and `comments` (a source
   with comments in every anchor shape, converted, then suggestions over
@@ -67,11 +68,10 @@ so a run only needs a commit.
 ## Written in Google Docs
 
 ```bash
-# An access token with the Drive and Docs scopes; the run writes in a
-# temporary folder of that Drive, exports, deletes the folder and rewrites the manifest.
+# An access token with the Drive and Docs scopes; the run replays the requests
+# of generate/google_docs.json in a temporary folder of that Drive, exports,
+# deletes the folder and rewrites the manifest.
 OXOFFICE_GOOGLE_TOKEN=$(gcloud auth print-access-token) python3 tests/corpus/generate/google_docs.py
-# The requests of one step for a document read by hand (documents.get), to replay with another client
-python3 tests/corpus/generate/google_docs.py --plan review fill document.json
 ```
 
 Author names are replaced after export: Google writes the Drive account's
