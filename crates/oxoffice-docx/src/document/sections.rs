@@ -1301,17 +1301,14 @@ impl Document {
             })
             .collect::<Vec<_>>();
 
-        if !candidates.is_empty() {
-            // An in-place edit puts the main part's relationships back.
-            let owner = self.doc_part_name.clone();
-            self.package.record_part_rels(&owner);
-        }
         for (relationship_id, target) in candidates {
-            if let Some(relationships) = self.package.get_part_rels_mut(&self.doc_part_name) {
-                relationships
-                    .items
-                    .retain(|relationship| relationship.id != relationship_id);
-            }
+            // Journaled one by one: an undo puts back the removed items, not
+            // a copy of the main part's relationships.
+            let owner = self.doc_part_name.clone();
+            self.package
+                .remove_relationships_where(&owner, |relationship| {
+                    relationship.id == relationship_id
+                });
             self.identifiers
                 .retire_authored_story_relationships(&self.doc_part_name, [relationship_id]);
             let target_identity = part_name_identity(&target);
@@ -1547,6 +1544,62 @@ mod tests {
         }));
         assert!(unwound.is_err());
         assert_eq!(state(&document), before);
+    }
+
+    /// The main part's header relationships.
+    fn header_relationships(document: &Document) -> usize {
+        document
+            .package
+            .get_part_rels(&document.doc_part_name)
+            .into_iter()
+            .flat_map(|relationships| &relationships.items)
+            .filter(|relationship| relationship.rel_type == rel_types::HEADER)
+            .count()
+    }
+
+    #[test]
+    fn a_refused_prune_of_the_main_part_relationships_is_undone_item_by_item() {
+        // The prune journals the removed relationship alone: alone, and
+        // before an edit that records the main part's relationships whole,
+        // an undo puts them back as they were.
+        for record_after in [false, true] {
+            let mut document = with_header_picture();
+            let before = state(&document);
+            let headers = header_relationships(&document);
+            let units = [
+                crate::EditUnit::Parts,
+                crate::EditUnit::Settings,
+                crate::EditUnit::SectionProperties { index: 0 },
+                crate::EditUnit::SectionProperties { index: 1 },
+            ];
+            let error = document
+                .edit_in_place(&units, |document| {
+                    document.inherit_section_story_body(
+                        0,
+                        HeaderFooterKind::Header,
+                        HdrFtrType::Default,
+                    )?;
+                    assert_eq!(
+                        header_relationships(document),
+                        headers - 1,
+                        "the unreachable header was pruned"
+                    );
+                    if record_after {
+                        // A later edit that records the main part's
+                        // relationships whole and adds one.
+                        let owner = document.doc_part_name.clone();
+                        document.package.record_part_rels(&owner);
+                        document
+                            .package
+                            .get_or_create_part_rels(&owner)
+                            .add_external(rel_types::HYPERLINK, "https://example.com/");
+                    }
+                    Err::<(), _>(Error::Other("refused".into()))
+                })
+                .unwrap_err();
+            assert_eq!(error.to_string(), "refused");
+            assert_eq!(state(&document), before, "record after: {record_after}");
+        }
     }
 
     #[test]

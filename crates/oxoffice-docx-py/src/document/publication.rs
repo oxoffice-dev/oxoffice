@@ -759,18 +759,24 @@ impl PyDocument {
         #[cfg(debug_assertions)]
         let before = self.inner.clone_for_staging();
         self.inner.hold_edit_undo();
-        let inner = &mut self.inner;
-        let result = py.detach(|| edit(inner));
-        let undo = self.inner.take_edit_undo();
+        // An edit that fails or panics leaves the document as it was and
+        // stops holding the undo: the guard undoes it as it drops.
+        let held = super::block_edits_in_place::HeldUndo {
+            document: &mut self.inner,
+            armed: true,
+        };
+        let (result, held) = py.detach(move || {
+            let result = edit(held.document);
+            (result, held)
+        });
         let value = match result {
             Ok(value) => value,
             Err(error) => {
-                if let Some(undo) = undo {
-                    self.inner.undo_edit(undo);
-                }
+                drop(held);
                 return Err(docx_to_pyerr(py, error));
             }
         };
+        let undo = held.take();
         // No in-place edit ran (the call found nothing to do), or it
         // changed nothing: no publication.
         let Some(undo) = undo.filter(|undo| undo.report().changed()) else {
@@ -778,8 +784,10 @@ impl PyDocument {
             self.assert_word_inventory_rebuilds(false);
             return Ok((value, StoryPartsPublication::Nothing));
         };
-        let published = self
-            .splice_story_parts(
+        // A publication that panics leaves the document as it was: undo the
+        // edit before the panic goes on.
+        let published = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.splice_story_parts(
                 py,
                 operation,
                 &sections,
@@ -800,7 +808,15 @@ impl PyDocument {
                 self.commit_word_revision(prepared)?;
                 self.install_inner(candidate);
                 Ok(StoryPartsPublication::Whole)
-            });
+            })
+        }));
+        let published = match published {
+            Ok(published) => published,
+            Err(panic) => {
+                self.inner.undo_edit(undo);
+                std::panic::resume_unwind(panic);
+            }
+        };
         match published {
             Ok(publication) => Ok((value, publication)),
             Err(error) => {
@@ -955,9 +971,27 @@ impl PyDocument {
                 held.push(slot);
             }
         }
+        // A renewed owner is never a retiring one: a compaction below moves
+        // it, never drops it.
+        if renewed.iter().any(|(key, _)| keys.contains(key)) {
+            return Ok(false);
+        }
+        // The new owners of the holding paragraphs, read before the revision
+        // is prepared: a paragraph read fails before anything is published.
+        let mut held_owners = Vec::with_capacity(held.len());
+        {
+            let blocks = self.inner.body_children();
+            for &slot in &held {
+                let Ok(Some(owners)) = word_block_owners(&self.inner, &blocks[slot]) else {
+                    return Ok(false);
+                };
+                held_owners.push((slot, owners));
+            }
+        }
+        #[cfg(debug_assertions)]
         let renewed_locations = renewed
             .iter()
-            .map(|&(key, all)| (self.owners[key].location().into_owned(), all))
+            .map(|&(key, _)| self.owners[key].location().into_owned())
             .collect::<Vec<_>>();
         let section_states = renewed
             .iter()
@@ -1012,6 +1046,19 @@ impl PyDocument {
         let count = born_parts.iter().map(Vec::len).sum::<usize>();
         let mut free = keys.clone();
         if count < keys.len() {
+            // The compaction moves the last owner into each removed key,
+            // from the highest removed key down: the renewed owners follow.
+            let mut removed = keys.clone();
+            removed.sort_unstable_by(|a, b| b.cmp(a));
+            let mut len = self.owners.len();
+            for key in removed {
+                len -= 1;
+                for (renewed_key, _) in &mut renewed {
+                    if *renewed_key == len {
+                        *renewed_key = key;
+                    }
+                }
+            }
             self.remove_owners(&keys);
             free.clear();
         } else {
@@ -1041,12 +1088,16 @@ impl PyDocument {
                 }
             }
         }
-        // The renewed owners are found again: a compaction moved their keys.
-        for (location, all) in renewed_locations {
-            let key = self
-                .indexes
-                .find(&self.owners, &location)
-                .expect("a renewed owner stays");
+        // The renewed owners, at the keys the compaction moved them to.
+        #[cfg(debug_assertions)]
+        for (&(key, _), location) in renewed.iter().zip(&renewed_locations) {
+            debug_assert_eq!(
+                self.indexes.find(&self.owners, location),
+                Some(key),
+                "a renewed owner follows the compaction"
+            );
+        }
+        for (key, all) in renewed {
             let mut next = || {
                 let state = states[offset].clone();
                 offset += 1;
@@ -1071,16 +1122,11 @@ impl PyDocument {
             self.indexes.by_generation.insert(current, key);
         }
         // The pieces of the holding paragraphs follow their new bytes.
-        for slot in held {
-            let blocks = self.inner.body_children();
-            if let Some(owners) = word_block_owners(&self.inner, &blocks[slot]).ok().flatten() {
-                self.pieces.as_mut().expect("active pieces").splice(
-                    &self.inner,
-                    slot,
-                    1,
-                    Some(owners),
-                );
-            }
+        for (slot, owners) in held_owners {
+            self.pieces
+                .as_mut()
+                .expect("active pieces")
+                .splice(&self.inner, slot, 1, Some(owners));
         }
         self.snapshot_scope = Some(states.last().expect("snapshot birth").clone());
         self.pieces

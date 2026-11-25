@@ -420,9 +420,19 @@ paragraphs publish through the BLK lane's block replacement.
   the media of a watermark picture in place, reserving every part name,
   relationship and drawing id at insert. The written part is checked for
   characters XML 1.0 cannot carry (`reject_part_xml_characters`), the
-  refusal the reopen gave. A document whose header or footer parts hold
-  comment markers keeps the staged route: replacing such a story can
-  remove comments, which only the staged reconcile handles today.
+  refusal the reopen gave. The calls that replace or drop a story keep
+  the staged route in a document whose header or footer parts hold
+  comment markers, since only the staged reconcile removes the comments
+  such a story anchored: the header and footer text setters (`try_set_header`,
+  `try_set_footer` and the first-page setters), `create_section_story`,
+  `link_section_story`, `inherit_section_story`, `unlink_section_story`
+  (through `replace_section_story`), `remove_section_story`,
+  `set_text_watermark_for`, `set_drawingml_text_watermark_for` and
+  `set_drawingml_image_watermark_for`. `set_text_watermark`,
+  `set_image_watermark`, `remove_drawingml_watermark_for` and
+  `insert_content` into a header or footer replace no story and need no
+  fallback. Whatever the route, the binding publishes the whole inventory
+  for such a document (`header_footer_edits_are_staged`).
 - **The font table joins the mechanism.** `edit_font_table` runs inside
   `edit_in_place` with the `FontTable`, `Settings` and `Parts` units: a
   panic after the font table part is written is undone like any other.

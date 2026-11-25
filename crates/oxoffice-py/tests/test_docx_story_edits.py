@@ -4,7 +4,9 @@ header or footer part retire; a section that shows another story than before ret
 the page colour touches no story. A refused edit, and one that changes nothing, leave the document and every handle as
 they were."""
 import io
+import posixpath
 import zipfile
+from xml.etree import ElementTree
 
 import pytest
 
@@ -61,6 +63,27 @@ def part(data, suffix):
 def headers(data):
     with zipfile.ZipFile(io.BytesIO(data)) as package:
         return b"".join(package.read(name) for name in package.namelist() if name.startswith("word/header"))
+
+
+IMAGE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+
+
+def header_images(data):
+    """The bytes of each media part a header relationship of the image type names, in the saved package."""
+    images = []
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        names = set(package.namelist())
+        for name in sorted(names):
+            if not (name.startswith("word/_rels/header") and name.endswith(".xml.rels")):
+                continue
+            for relationship in ElementTree.fromstring(package.read(name)):
+                if relationship.get("Type") != IMAGE_RELATIONSHIP or relationship.get("TargetMode") == "External":
+                    continue
+                # A target is relative to the header's folder, or absolute from the package root.
+                target = posixpath.normpath(posixpath.join("/word", relationship.get("Target"))).lstrip("/")
+                assert target.startswith("word/media/") and target in names, target
+                images.append(package.read(target))
+    return images
 
 
 def the_body_handles_still_edit(doc, taken):
@@ -218,13 +241,16 @@ def test_watermarks_of_the_document_keep_the_body_handles(saved):
     doc.set_text_watermark("DRAFT")
     assert reads(taken) == before(taken)
     assert b"DRAFT" in headers(doc.to_bytes())
-    doc.set_image_watermark(noise_png(8, 1), "mark.png", EMU, EMU)
+    picture = noise_png(8, 1)
+    assert picture not in header_images(doc.to_bytes())
+    doc.set_image_watermark(picture, "mark.png", EMU, EMU)
     assert reads(taken) == before(taken)
     # The header keeps its text beside the watermark.
     assert header_texts(doc)[0] == "header"
     again = the_body_handles_still_edit(doc, taken)
     assert header_texts(again)[0] == "header"
-    assert b"mark" in headers(again.to_bytes()) or b"image" in headers(again.to_bytes())
+    # The saved package holds the picture as a media part, which a header relationship of the image type names.
+    assert picture in header_images(again.to_bytes())
 
 
 def test_section_watermarks_keep_the_section_and_body_handles(saved):

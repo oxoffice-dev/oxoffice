@@ -1392,3 +1392,40 @@ fn the_stories_of_a_header_part_read_alone_are_the_documents() {
         .to_owned();
     assert!(!doc.stories_in_part(&main).expect("stories read").is_empty());
 }
+
+#[test]
+fn a_held_footer_creation_and_write_cut_by_a_panic_is_undone_whole() {
+    // The binding's sequence for `HeaderFooter.add_paragraph` on a section
+    // with no footer of its own: hold the undo, create the footer in place,
+    // write into it; a panic there drops the binding's guard, which takes the
+    // held undo and applies it. The document is as it was, and the hold is
+    // off: the next in-place edit commits on its own.
+    let mut doc = two_sections();
+    let before = doc.to_bytes().expect("document saves");
+    doc.hold_edit_undo();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let story = doc
+            .create_section_story(0, HeaderFooterKind::Footer, HdrFtrType::Default)
+            .expect("a footer is created");
+        write_in(&mut doc, &story, "footer");
+        panic!("the write panicked after the footer was created");
+    }));
+    assert!(panicked.is_err());
+    let undo = doc.take_edit_undo().expect("the creation ran in place");
+    assert!(undo.report().changed());
+    doc.undo_edit(undo);
+    assert_eq!(doc.to_bytes().expect("document saves"), before);
+    let story = doc
+        .create_section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default)
+        .expect("a footer is created");
+    write_in(&mut doc, &story, "kept");
+    assert!(doc.take_edit_undo().is_none(), "no undo is held any more");
+    let reopened = reopen(&mut doc);
+    assert!(
+        reopened
+            .section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default)
+            .unwrap()
+            .is_some(),
+        "the later edit committed"
+    );
+}
