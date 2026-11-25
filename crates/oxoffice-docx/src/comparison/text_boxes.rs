@@ -424,7 +424,7 @@ pub(super) fn paired_run_replacement(
     };
     if !projected && (holds_box(original) || holds_box(edited)) {
         return Err(Error::Other(format!(
-            "comparison cannot track an edit inside a text box written as mc:AlternateContent at {location}: it would replace the whole box (#666)"
+            "comparison cannot track a change to a run holding a text box at {location}: it would replace the whole box (#666)"
         )));
     }
     let inserted_xml = publish_run_source(

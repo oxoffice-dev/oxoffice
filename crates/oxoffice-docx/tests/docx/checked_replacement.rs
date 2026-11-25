@@ -194,45 +194,73 @@ fn a_replacement_in_one_paragraph_names_the_text_it_cannot_reach() {
     assert_eq!((mismatch.found, mismatch.unreached), (0, 0));
 }
 
+/// The location of the story paragraph that reads `text`.
+fn location_of(doc: &Document, text: &str) -> oxoffice_docx::ContentLocation {
+    doc.story_paragraphs()
+        .unwrap()
+        .into_iter()
+        .find(|paragraph| paragraph.text == text)
+        .unwrap_or_else(|| panic!("a paragraph reads {text}"))
+        .location
+}
+
 #[test]
 fn every_route_that_writes_an_item_back_declares_no_namespace_in_it() {
     // A run added and a word replaced in a text box, written twice (its
-    // choice and its fallback), and a field inserted at a run: no edited
+    // choice and its fallback), a field inserted at a run, a cell's and a
+    // control's paragraph replaced as XML, a run replaced as XML: no edited
     // paragraph declares what the part binds.
+    const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
     let body = format!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{}</w:p><w:p><w:r><w:t>Plain words.</w:t></w:r></w:p>"#,
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{}</w:p><w:p><w:r><w:t>Plain words.</w:t></w:r></w:p>"#,
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell words.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+            r#"<w:sdt><w:sdtPr><w:id w:val="9"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Control words.</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p/>"#,
+        ),
         crate::support::text_box_run(7, "<w:p><w:r><w:t>Inside the box</w:t></w:r></w:p>")
     );
-    let at = |doc: &Document, text: &str| {
-        doc.story_paragraphs()
-            .unwrap()
-            .into_iter()
-            .find(|paragraph| paragraph.text == text)
-            .unwrap()
-            .location
-    };
-    type Edit = fn(&mut Document, oxoffice_docx::ContentLocation, oxoffice_docx::ContentLocation);
-    let routes: [(&str, Edit); 3] = [
-        ("run added in a text box", |doc, boxed, _| {
-            doc.edit_story_paragraph(&boxed, |paragraph| {
+    let paragraph_xml = format!("<w:p {W}><w:r><w:t>Other words.</w:t></w:r></w:p>");
+    type Edit<'a> = &'a dyn Fn(&mut Document);
+    let routes: [(&str, Edit); 6] = [
+        ("run added in a text box", &|doc| {
+            doc.edit_story_paragraph(&location_of(doc, "Inside the box"), |paragraph| {
                 paragraph.add_run(" Zephyr.");
                 Ok(())
             })
             .unwrap();
         }),
-        ("word replaced in a text box", |doc, boxed, _| {
+        ("word replaced in a text box", &|doc| {
+            let boxed = location_of(doc, "Inside the box");
             assert_eq!(
                 doc.try_replace_text_at(&boxed, "Inside", "Within", Some(1))
                     .unwrap(),
                 Ok(1)
             );
         }),
-        ("field inserted", |doc, _, plain| {
+        ("field inserted", &|doc| {
+            let location = location_of(doc, "Plain words.");
             let position = oxoffice_docx::StoryRunPosition {
-                location: plain,
+                location,
                 run_index: 1,
             };
             doc.insert_field(&position, oxoffice_docx::Field::new("PAGE", "1"))
+                .unwrap();
+        }),
+        ("cell paragraph replaced as XML", &|doc| {
+            doc.replace_paragraph_xml(&location_of(doc, "Cell words."), &paragraph_xml)
+                .unwrap();
+        }),
+        ("control paragraph replaced as XML", &|doc| {
+            doc.replace_paragraph_xml(&location_of(doc, "Control words."), &paragraph_xml)
+                .unwrap();
+        }),
+        ("run replaced as XML", &|doc| {
+            let location = location_of(doc, "Plain words.");
+            let position = oxoffice_docx::StoryRunPosition {
+                location,
+                run_index: 0,
+            };
+            doc.replace_run_xml(&position, &format!("<w:r {W}><w:t>Run words.</w:t></w:r>"))
                 .unwrap();
         }),
     ];
@@ -240,8 +268,7 @@ fn every_route_that_writes_an_item_back_declares_no_namespace_in_it() {
         .into_iter()
         .filter(|(_, edit)| {
             let mut doc = crate::support::doc_with_body(&body);
-            let (boxed, plain) = (at(&doc, "Inside the box"), at(&doc, "Plain words."));
-            edit(&mut doc, boxed, plain);
+            edit(&mut doc);
             package_part(&doc.to_bytes().unwrap(), "/word/document.xml").contains("<w:p xmlns")
         })
         .map(|(route, _)| route)

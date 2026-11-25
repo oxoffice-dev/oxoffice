@@ -290,3 +290,35 @@ pub(super) fn normalized_package(
     )?;
     Ok((main, related))
 }
+
+/// Whether `xml` holds a `w:t` or `w:instrText` inside a `w:del`: deleted
+/// text written as text, which Word cannot read (moved text keeps `w:t`).
+/// A run that holds a text box, deleted whole, writes it so.
+pub(super) fn text_in_deletions(xml: &[u8]) -> bool {
+    let mut reader = Reader::from_reader(xml);
+    let mut deletions = Vec::<Vec<u8>>::new();
+    let prefix = |name: &[u8]| {
+        name.split(|byte| *byte == b':')
+            .next()
+            .unwrap_or_default()
+            .to_vec()
+    };
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) if element.local_name().as_ref() == b"del" => {
+                deletions.push(prefix(element.name().as_ref()));
+            }
+            Ok(Event::End(element)) if element.local_name().as_ref() == b"del" => {
+                deletions.pop();
+            }
+            Ok(Event::Start(element) | Event::Empty(element))
+                if matches!(element.local_name().as_ref(), b"t" | b"instrText")
+                    && deletions.last() == Some(&prefix(element.name().as_ref())) =>
+            {
+                return true;
+            }
+            Ok(Event::Eof) | Err(_) => return false,
+            _ => {}
+        }
+    }
+}

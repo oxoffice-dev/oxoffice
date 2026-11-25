@@ -4836,23 +4836,49 @@ fn a_changed_paragraph_holding_an_empty_revision_is_compared() {
 }
 
 #[test]
-fn an_edit_inside_a_text_box_is_refused_until_it_can_be_tracked_inside() {
-    // Word's text box, a DrawingML choice and a VML fallback: replaced whole,
-    // its deleted copy would keep its text as inserted text (#666). An edit
-    // beside the box compares.
-    let version = |inside: &str, tail: &str| {
+fn a_text_box_changed_whole_is_refused_never_written_as_an_invalid_redline() {
+    // Replaced or deleted whole, a box's deleted copy keeps its text as
+    // text to insert (#666): an edit inside Word's box (a DrawingML choice
+    // and a VML fallback) or inside a DrawingML box alone, and a box
+    // deleted. An edit beside the box compares.
+    let word_box = |text: &str| {
+        crate::support::text_box_run(7, &format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"))
+    };
+    let drawing_box = |text: &str| {
+        let run = word_box(text);
+        let choice = &run[run.find("<w:drawing>").unwrap()..run.find("</mc:Choice>").unwrap()];
+        format!("<w:r>{choice}</w:r>")
+    };
+    let version = |boxed: &str, tail: &str| {
         doc_with_body(&format!(
-            r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{}</w:p>{}"#,
-            crate::support::text_box_run(7, &format!("<w:p><w:r><w:t>{inside}</w:t></w:r></w:p>")),
+            r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{boxed}</w:p>{}"#,
             plain(tail)
         ))
     };
-    let error = version("Inside the box", "Tail.")
-        .compare(&version("Within the box", "Tail."), AUTHOR, DATE)
-        .unwrap_err();
-    assert!(error.to_string().contains("inside a text box"), "{error}");
-    let edited = version("Inside the box", "Tails.");
-    let mut doc = redline(version("Inside the box", "Tail."), &edited);
+    for (case, from, to) in [
+        (
+            "edit inside",
+            word_box("Inside the box"),
+            word_box("Within the box"),
+        ),
+        (
+            "edit inside DrawingML",
+            drawing_box("Inside the box"),
+            drawing_box("Within the box"),
+        ),
+        ("box deleted", word_box("Inside the box"), String::new()),
+    ] {
+        let mut doc = version(&from, "Tail.");
+        match doc.compare(&version(&to, "Tail."), AUTHOR, DATE) {
+            Err(error) => assert!(error.to_string().contains("#666"), "{case}: {error}"),
+            Ok(_) => panic!(
+                "{case}: compared, valid {}",
+                doc.validate().unwrap().is_valid()
+            ),
+        }
+    }
+    let edited = version(&word_box("Inside the box"), "Tails.");
+    let mut doc = redline(version(&word_box("Inside the box"), "Tail."), &edited);
     let report = doc.validate().unwrap();
     assert!(report.is_valid(), "{:?}", report.findings);
     assert_eq!(story_texts(&accepted(&mut doc)), story_texts(&edited));
