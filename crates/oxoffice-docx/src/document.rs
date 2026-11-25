@@ -1940,6 +1940,56 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_removal_checks_every_hit_block_before_keeping_the_answer() {
+        // The thread marks paragraphs 0 and 2; paragraph 2 holds an inline
+        // control named like the body's nested owner.
+        let body = format!(
+            "<w:p><w:r><w:t>zero</w:t></w:r></w:p><w:p><w:r><w:t>one</w:t></w:r></w:p>\
+             <w:p><w:sdt><w:sdtContent><w:r><w:t>in</w:t></w:r></w:sdtContent></w:sdt>\
+             <w:r><w:t>two</w:t></w:r></w:p>{}",
+            control_owner()
+        );
+        let mut doc = read_with_body(&body);
+        let range = |start: usize, end: usize, end_run: usize| crate::RunRange {
+            start: crate::RunPosition {
+                body_index: start,
+                run_index: 0,
+            },
+            end: crate::RunPosition {
+                body_index: end,
+                run_index: end_run,
+            },
+        };
+        let thread = doc
+            .add_comment_with_date(
+                range(0, 2, 2),
+                "A",
+                None,
+                "thread",
+                crate::CommentDate::Undated,
+            )
+            .unwrap();
+        doc.add_comment_with_date(
+            range(1, 1, 1),
+            "A",
+            None,
+            "other",
+            crate::CommentDate::Undated,
+        )
+        .unwrap();
+        let mut doc = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
+        assert_eq!(doc.unsavable_body_edit(), None, "the body is savable");
+        doc.remove_comment_in_place(thread)
+            .unwrap()
+            .expect("the thread is removed in place");
+        assert!(
+            doc.unsavable_body_edit_cache.get().is_none(),
+            "a hit block holds an owner's element name"
+        );
+        assert_eq!(doc.unsavable_body_edit(), None);
+    }
+
+    #[test]
     fn typed_edits_of_several_blocks_keep_the_answer_only_when_none_holds_an_owner() {
         let body = format!("<w:p><w:r><w:t>one</w:t></w:r></w:p>{}", control_owner());
         let mut doc = read_with_body(&body);

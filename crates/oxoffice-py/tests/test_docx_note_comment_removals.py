@@ -219,3 +219,32 @@ def test_a_refused_comment_removal_leaves_the_document_and_every_handle_as_they_
 
     assert doc.to_bytes() == data
     assert reads(taken) == before(taken)
+
+
+@pytest.mark.parametrize("kind", ["footnote", "endnote"])
+def test_removing_a_note_with_a_link_releases_its_relationship_in_place(saved, kind):
+    import io
+    import zipfile
+
+    url = "https://example.com/only-in-the-removed-note"
+    doc = oxdocx.Document.open(saved)
+    first, middle, middle_id, last = three_notes(doc, kind)
+    middle.add_hyperlink("link", url)
+    doc = oxdocx.Document.from_bytes(doc.to_bytes())
+    (first,) = [p for p in doc.story_paragraphs if p.kind == kind and p.text.strip() == "first"]
+    (last,) = [p for p in doc.story_paragraphs if p.kind == kind and p.text.strip() == "last"]
+    taken = handles_taken(doc)
+
+    remove_from(doc, kind)(middle_id)
+
+    # The link only the removed note showed goes with it; every other handle stays.
+    assert note_texts(doc, kind) == [f"other {kind}", "first", "last"]
+    assert first.text.strip() == "first"
+    assert last.text.strip() == "last"
+    assert reads(taken) == before(taken)
+    saved_bytes = doc.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(saved_bytes)) as package:
+        rels = b"".join(package.read(name) for name in package.namelist() if name.endswith(".rels"))
+    assert url.encode() not in rels
+    again = oxdocx.Document.from_bytes(saved_bytes)
+    assert note_texts(again, kind) == [f"other {kind}", "first", "last"]

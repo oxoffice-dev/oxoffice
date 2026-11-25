@@ -520,12 +520,13 @@ reads the block back (`body_block_after_byte_edit`); a block that writes
 the same as the opened one is put back as it was, so a round trip keeps
 the producer's bytes. The comment thread and its ownership are read with
 the main part replaced by the hit blocks alone; a comment id the removal
-frees is journaled.
+frees is journaled, and so are the picture and link relationships only
+the removed note used (released under `Parts`, as the staged route
+releases them).
 
 - **Declines** (nothing changed, the staged route runs): a dirty notes or
   comments model, a story part not yet in the package, comment marks
-  inside the removed note, a content relationship the note releases, a
-  thread with no mark in the body, a removal that leaves no comment (the
+  inside the removed note, a thread with no mark in the body, a removal that leaves no comment (the
   owned comment parts go), an ownership that reads another thread than
   the typed one, a block that does not read back.
 - **Binding.** The body half is one paragraph replacement per changed

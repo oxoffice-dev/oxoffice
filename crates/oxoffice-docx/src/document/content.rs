@@ -29,7 +29,7 @@ impl Document {
     /// an element named like a nested namespace owner.
     pub(crate) fn keep_body_savable_after_typed_edits(
         &mut self,
-        slots: Range<usize>,
+        slots: impl IntoIterator<Item = usize>,
         savable_before: bool,
     ) {
         if !savable_before || self.unsavable_body_edit_cache.get().is_some() {
@@ -1271,9 +1271,8 @@ impl Document {
             document.invalidate_layout();
             Ok(value)
         })?;
-        for slot in slots {
-            self.keep_body_savable_after_typed_insert(slot, savable_before);
-        }
+        // Every edited block is checked before the answer is kept.
+        self.keep_body_savable_after_typed_edits(slots, savable_before);
         Ok(value)
     }
 

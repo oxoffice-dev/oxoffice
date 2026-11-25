@@ -2607,8 +2607,14 @@ impl PyDocument {
     ) -> PyResult<bool> {
         self.ensure_word_authority(py)?;
         self.inner.hold_edit_undo();
-        let removed = remove(&mut self.inner);
-        let undo = self.inner.take_edit_undo();
+        // A removal that panics leaves the document as it was: the guard
+        // undoes it as it drops.
+        let held = super::block_edits_in_place::HeldUndo {
+            document: &mut self.inner,
+            armed: true,
+        };
+        let removed = remove(held.document);
+        let undo = held.take();
         let stories = match removed {
             Ok(Some(stories)) => stories,
             Ok(None) | Err(_) => {
