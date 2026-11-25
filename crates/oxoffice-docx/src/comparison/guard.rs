@@ -248,6 +248,10 @@ impl GuardProjection<'_> {
                 Ok(drawing)
             })
             .transpose()?;
+        let outside = outside
+            .into_iter()
+            .map(|raw| String::from_utf8(without_drawing_ids(raw.as_bytes())).unwrap_or(raw))
+            .collect();
         Ok(Some(GuardHost {
             outside,
             bodies,
@@ -887,6 +891,70 @@ fn project_source_body(
     Ok(output)
 }
 
+/// `raw` with the `id` of every `docPr` it holds written `0`. A drawing's id
+/// is its identity: the redline renumbers the ids it repeats (a drawing both
+/// deleted and inserted, or one the source already repeats), so a drawing
+/// kept as raw XML, as an `mc:AlternateContent` is, forgets it here as a
+/// modeled one does in [`normalize_drawing_identity`].
+fn without_drawing_ids(raw: &[u8]) -> Vec<u8> {
+    if !raw.windows(b"docPr".len()).any(|window| window == b"docPr") {
+        return raw.to_vec();
+    }
+    let mut reader = Reader::from_reader(raw);
+    // A piece of a host between its text boxes closes elements it does not open.
+    reader.config_mut().trim_text(false);
+    reader.config_mut().allow_unmatched_ends = true;
+    let mut values = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element))
+                if element.local_name().as_ref() == b"docPr" =>
+            {
+                let after = reader.buffer_position() as usize;
+                if let Some(value) = unprefixed_id_value(&raw[before..after]) {
+                    values.push(before + value.start..before + value.end);
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    let mut written = Vec::with_capacity(raw.len());
+    let mut at = 0;
+    for value in values {
+        written.extend_from_slice(&raw[at..value.start]);
+        written.push(b'0');
+        at = value.end;
+    }
+    written.extend_from_slice(&raw[at..]);
+    written
+}
+
+/// The value of a start tag's unprefixed `id` attribute, between its quotes.
+fn unprefixed_id_value(tag: &[u8]) -> Option<Range<usize>> {
+    let name = (1..tag.len()).find(|&at| {
+        tag[at - 1].is_ascii_whitespace()
+            && tag[at..].starts_with(b"id")
+            && tag[at + 2..]
+                .iter()
+                .find(|byte| !byte.is_ascii_whitespace())
+                .is_some_and(|byte| *byte == b'=')
+    })?;
+    let equals = name + 2 + tag[name + 2..].iter().position(|byte| *byte == b'=')?;
+    let quote = equals
+        + 1
+        + tag[equals + 1..]
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace())?;
+    let mark = tag[quote];
+    if !matches!(mark, b'"' | b'\'') {
+        return None;
+    }
+    let end = quote + 1 + tag[quote + 1..].iter().position(|byte| *byte == mark)?;
+    Some(quote + 1..end)
+}
+
 fn normalize_drawing_identity(
     drawing: &mut oxoffice_docx_oxml::drawing::CT_Drawing,
     document: &Document,
@@ -929,6 +997,11 @@ fn normalize_relationship_identities(
         }
     });
     crate::document::visit_body_paragraphs_mut(&mut model.body.content, &mut |paragraph| {
+        for run in &mut paragraph.runs {
+            for raw in &mut run.extra_xml {
+                *raw = without_drawing_ids(raw);
+            }
+        }
         for id in paragraph
             .hyperlinks
             .iter_mut()
