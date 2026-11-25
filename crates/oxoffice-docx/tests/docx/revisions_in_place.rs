@@ -327,3 +327,38 @@ fn an_in_place_resolution_leaves_an_undo_the_binding_takes() {
     doc.undo_edit(undo);
     assert_eq!(doc.to_bytes().unwrap(), saved);
 }
+
+#[test]
+fn a_main_part_another_producer_framed_keeps_the_staged_route() {
+    // The XML declaration as python-docx writes it: a typed edit would
+    // write the frame again, the staged route keeps it.
+    let body = three_paragraphs(&[run("keep "), ins(5, "added")].concat());
+    let bytes = crate::support::docx_with_body(&body);
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
+    let part = package.main_document_part().expect("main document part");
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let end = xml.find("?>").unwrap() + 2;
+    let framed = format!(
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n{}",
+        &xml[end..]
+    );
+    package.set_part(&part, framed.into_bytes());
+    let mut saved = Vec::new();
+    package
+        .write_to(std::io::Cursor::new(&mut saved))
+        .expect("package saves");
+    for accept in [true, false] {
+        let mut doc = Document::from_bytes(&saved).unwrap();
+        assert_eq!(doc.revision_id_in_place_slots(5, accept), None);
+        let count = if accept {
+            doc.accept_revision_id(5)
+        } else {
+            doc.reject_revision_id(5)
+        }
+        .unwrap();
+        assert_eq!(count, 1);
+        let expected = if accept { "keep added" } else { "keep " };
+        assert_eq!(texts(&reopen(&mut doc)), ["first", expected, "last"]);
+    }
+}

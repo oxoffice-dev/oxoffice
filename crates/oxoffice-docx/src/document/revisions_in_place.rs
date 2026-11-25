@@ -25,8 +25,11 @@ impl Document {
     /// saved, each paragraph resolves alone
     /// (`revision::body_paragraph_resolves_alone`: no paragraph mark of the
     /// id, no section break, comment mark, note reference, field or custody
-    /// pair in it), and each resolved paragraph writes back the bytes the
-    /// resolver gave it, which the staged route saves as they are. It costs
+    /// pair in it), each resolved paragraph writes back the bytes the
+    /// resolver gave it, which the staged route saves as they are, and the
+    /// main part's bytes start and end with the frame a typed edit writes
+    /// (else the staged route keeps a frame a typed save would not write).
+    /// It costs
     /// those paragraphs and the parts of the other stories, not the body.
     #[doc(hidden)]
     pub fn revision_id_in_place_slots(&self, id: i32, accept: bool) -> Option<Vec<usize>> {
@@ -77,6 +80,14 @@ impl Document {
                 return None;
             }
             let (xml, head, tail) = self.body_block_in_frame(block).ok()?;
+            // The staged route renders the main part from its bytes, which
+            // keep the frame (the declaration, the root, the final section)
+            // as its producer wrote it, while a typed edit writes the frame
+            // from the model: in place only when the two agree.
+            let source = self.package.get_part(&self.doc_part_name)?;
+            if !source.starts_with(&xml[..head]) || !source.ends_with(&xml[xml.len() - tail..]) {
+                return None;
+            }
             if !body_paragraph_resolves_alone(&xml, id).ok()? {
                 return None;
             }
