@@ -983,7 +983,7 @@ impl Document {
 
 impl Document {
     /// The package a save would write now, staged on a copy.
-    fn staged_output_package(&self) -> Result<OpcPackage> {
+    pub(crate) fn staged_output_package(&self) -> Result<OpcPackage> {
         self.validate_model_resource_limits()?;
         let mut candidate = self.clone_for_staging();
         candidate.prepare_staged_output()?;
