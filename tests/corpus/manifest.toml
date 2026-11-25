@@ -207,6 +207,18 @@ size = 72640
 features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "connector", "auto-shape", "text-box", "hyperlink", "hidden-slide", "comments", "slide-number", "widescreen"]
 
 [[file]]
+path = "google-docs/comments.docx"
+producer = "Google Docs (written through the Docs API)"
+size = 11726
+features = ["headings", "table", "comment", "tracked-changes", "format-change", "bookmark", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "google-docs/review.docx"
+producer = "Google Docs (written through the Docs API)"
+size = 11006
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "footnote", "tracked-changes", "format-change", "header-footer", "bookmark", "hyperlink", "rsid", "paraId"]
+
+[[file]]
 path = "libreoffice/contract.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 29010
