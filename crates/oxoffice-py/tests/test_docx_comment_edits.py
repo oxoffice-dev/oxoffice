@@ -12,6 +12,12 @@ from builders import edit_cost_docx
 from test_docx_block_handles import STALE, outcome
 
 
+def debug_build():
+    import oxoffice.docx._native as native
+
+    return native._debug_build
+
+
 @pytest.fixture(scope="module")
 def saved(tmp_path_factory):
     """A body whose paragraphs, runs and rows carry Word's identifiers, two sections, the first with a header, and a
@@ -195,6 +201,7 @@ def test_a_comment_over_two_paragraphs_is_added_and_saved(saved):
     assert comment.anchor_text.startswith("run 0 of paragraph 6 ")
 
 
+@pytest.mark.skipif(not debug_build(), reason="a debug build fails the publication on request")
 @pytest.mark.parametrize("failure", ["error", "panic"])
 def test_a_comment_whose_publication_fails_leaves_the_document_and_every_handle_as_they_were(
         saved, failure, monkeypatch):

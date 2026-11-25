@@ -9,6 +9,12 @@ from test_docx_block_handles import STALE, outcome
 from test_docx_comment_edits import before, handles_taken, reads
 
 
+def debug_build():
+    import oxoffice.docx._native as native
+
+    return native._debug_build
+
+
 @pytest.fixture(scope="module")
 def saved(tmp_path_factory):
     """The edit-cost document with a footnote on paragraph 2 and an endnote on paragraph 4."""
@@ -174,6 +180,7 @@ def test_a_note_in_a_table_cell_is_added_and_saved(saved, kind):
     assert f"w:{kind}Reference" in again.tables[0].cell(0, 0).paragraphs[0].xml
 
 
+@pytest.mark.skipif(not debug_build(), reason="a debug build fails the publication on request")
 @pytest.mark.parametrize("failure", ["error", "panic"])
 @pytest.mark.parametrize("kind", ["footnote", "endnote"])
 def test_a_note_whose_publication_fails_leaves_the_document_and_every_handle_as_they_were(
