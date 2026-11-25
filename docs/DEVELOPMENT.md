@@ -186,7 +186,7 @@ with it.
 maturin build --profile scaling -m crates/oxoffice-py/Cargo.toml -o dist
 pip install --force-reinstall dist/*.whl
 OXOFFICE_SCALING=quick pytest crates/oxoffice-py/tests   # the QUICK sets (ci.yml)
-OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call (nightly.yml)
+OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call (full-checks.yml)
 ```
 
 Without `OXOFFICE_SCALING`, only the check that every mutating call is timed
@@ -280,20 +280,23 @@ merge variant).
   rendering crates); `Test` on the three platforms, built without debug
   assertions (`--profile scaling`); `Timings` on Linux, the QUICK scaling
   sets. Debug assertions run in every local debug build and `cargo test`, in
-  lint's pptx tests without `render`, and at night. A push to `main` runs in full, beside the runs before it, so
+  lint's pptx tests without `render`, and in the full checks. A push to `main` runs in full, beside the runs before it, so
   every merge has its own verdict. See
   [the spec](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
-- **The full sets run every night** (`nightly.yml`, "Full checks", 02:23
-  UTC), on Linux, macOS and Windows alike: the Rust and Python tests under
-  debug assertions with the whole render corpus and every producer's copy in
-  the workflow walks, and every scaling call; on Linux also the stack of a
-  release-profile wheel. A failure opens or comments one issue labelled
-  `ci-nightly`, closed by the next green run; whoever sees it fixes it the
-  same day. Run it on a branch or a tag with
-  `gh workflow run nightly.yml --ref BRANCH`; to find the commit that broke
-  it, push a branch at each candidate commit and run it there. It reports to
-  the issue only from `main`, on schedule or with `-f report=true`. Another
-  workflow calls it with `workflow_call`, granting `issues: write`.
+- **The full sets run on demand** (`full-checks.yml`, "Full checks", about
+  90 minutes, no schedule), on Linux, macOS and Windows alike: the Rust and
+  Python tests under debug assertions with the whole render corpus and every
+  producer's copy in the workflow walks, and every scaling call; on Linux
+  also the stack of a release-profile wheel. Run it before a release
+  ([RELEASE.md](RELEASE.md)), and on a pull request whose change the CI of
+  pull requests does not cover: a call that leaves or joins `GROWING`, a
+  change to the corpus walks, a snapshot, the render. Run it on a branch or
+  a tag with `gh workflow run full-checks.yml --ref BRANCH`; to find the
+  commit that broke it, push a branch at each candidate commit and run it
+  there. On `main` with `-f report=true`, a failure opens or comments one
+  issue labelled `ci-full-checks`, closed by the next green reporting run;
+  whoever sees it fixes it the same day. Another workflow calls it with
+  `workflow_call`, granting `issues: write`.
 - **Merge only once `gh pr checks` is all green**: `main` requires no status
   check, so nothing stops a merge whose macOS or Windows run is red or still
   queued.
@@ -311,7 +314,7 @@ merge variant).
   request, and the skills follow at the next release.
 - **Rust caches are saved by runs on `main` only** (pushes, a dispatch on
   `main`), even when a test fails after the compile; pull requests and the
-  nightly run restore them and save nothing. A new pull request used to save
+  full checks restore them and save nothing. A new pull request used to save
   about 2.25 GB of caches that only its own later runs could read: five of
   them filled the 10 GB of the Actions cache and evicted `main`'s.
 - **Lint runs clippy without debug assertions** too (`cargo clippy

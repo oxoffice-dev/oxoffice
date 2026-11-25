@@ -17,7 +17,7 @@ name: Release
 # Nothing reaches main or the tags before the push of step 2. Merging into
 # main during the run is fine: those merges are not in the release, and the
 # tag holds exactly the tree that was built. No test suite runs here: run
-# the full checks (nightly.yml) on the commit first. See docs/RELEASE.md,
+# the full checks (full-checks.yml) on the commit first. See docs/RELEASE.md,
 # specs/2026-11-21-release-pushes-after-the-builds.md and
 # specs/2026-11-22-a-short-release.md.
 
@@ -76,7 +76,7 @@ jobs:
             echo "::error::tag v$VERSION already exists"; exit 1
           fi
       # The tests do not run in the release. Running the full checks
-      # (nightly.yml) on the commit first is the maintainer's habit, not a gate
+      # (full-checks.yml) on the commit first is the maintainer's habit, not a gate
       # (docs/RELEASE.md).
 
   cli:

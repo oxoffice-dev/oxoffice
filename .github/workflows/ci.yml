@@ -5,13 +5,13 @@ name: CI
 # Windows, and the timings on Linux.
 # About 10 minutes, bounded by the slowest platform. The full sets (debug
 # assertions everywhere, the whole render corpus, every producer's copy in
-# the workflow walks, every scaling call) run every night in nightly.yml.
+# the workflow walks, every scaling call) run on demand in full-checks.yml.
 # See specs/2026-11-22-one-ci-for-pull-requests-and-main.md.
 # The tests build without debug assertions (the `scaling` profile): with
 # them every edit re-checks the whole document, which doubles the Rust
 # tests and quadruples the Python ones. They stay in every local debug
 # build and `cargo test`, in lint's pptx tests without `render`, and in
-# the nightly run. Only runs on main (pushes, a dispatch on main) save the
+# the full checks. Only runs on main (pushes, a dispatch on main) save the
 # Rust caches; pull requests restore them
 # (specs/2026-11-21-faster-build-job.md).
 
@@ -121,7 +121,7 @@ jobs:
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # nightly.yml's full scaling job restores this cache (same profile),
+          # full-checks.yml's full scaling job restores this cache (same profile),
           # its full test job only the downloaded crates (another profile).
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -143,10 +143,10 @@ jobs:
           oxoffice pptx --help > /dev/null
       # The render tests (specs/2026-11-21-render-fidelity.md) render the
       # corpus without its long files on Linux and skip it on macOS and
-      # Windows (the render is the same bytes on every platform); the nightly
-      # run renders the whole corpus on the three. The workflow tests read one
+      # Windows (the render is the same bytes on every platform); the full
+      # checks render the whole corpus on the three. The workflow tests read one
       # corpus file each (specs/2026-11-21-consumer-workflows.md), every
-      # producer's copy at night. Under CI an unset OXOFFICE_RENDER fails the
+      # producer's copy in the full checks. Under CI an unset OXOFFICE_RENDER fails the
       # render tests.
       - name: Rust integration tests
         shell: bash
@@ -161,7 +161,7 @@ jobs:
 
   # The QUICK scaling sets time one call of each area, the edits of #6
   # among them, at N and 16N (docx) or 4N (pptx): a call made linear fails.
-  # Every call is timed at night. The untimed run-once test is left to the
+  # Every call is timed in the full checks. The untimed run-once test is left to the
   # test jobs. Sequential: the timings need a quiet runner.
   timings:
     name: Timings (ubuntu-latest)

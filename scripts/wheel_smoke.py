@@ -2,7 +2,7 @@
 the main thread, then measure the stack the same work needs.
 
 The release workflow runs it on each wheel it built, on a few files (--files), before the GitHub release, PyPI and
-prefix.dev; the nightly run (nightly.yml) runs it on the whole corpus of a release-profile Linux wheel, with
+prefix.dev; the full checks (full-checks.yml) run it on the whole corpus of a release-profile Linux wheel, with
 --measure. It stays off pytest on purpose: the Python tests run each test on an 8 MiB thread
 (crates/oxoffice-py/tests/conftest.py), while a user's script runs on the main thread. A stack overflow ends the
 process without a traceback.

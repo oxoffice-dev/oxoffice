@@ -199,7 +199,7 @@ pub fn text_box_run(id: u32, content: &str) -> String {
 }
 
 /// Whether the workflow tests read every producer's copy (`main` and the
-/// nightly run, `OXOFFICE_WORKFLOWS=full`) or one copy each (pull requests).
+/// full checks, `OXOFFICE_WORKFLOWS=full`) or one copy each (pull requests).
 /// Read at run time, so that a build without the variable still compiles.
 pub fn every_copy() -> bool {
     std::env::var("OXOFFICE_WORKFLOWS").is_ok_and(|value| value == "full")

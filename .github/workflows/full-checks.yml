@@ -1,25 +1,25 @@
 name: Full checks
 
-# Every night, the full sets that the CI of pull requests and main leaves out
+# On demand, the full sets that the CI of pull requests and main leaves out
 # (ci.yml): the Rust and Python tests under debug assertions on Linux, macOS
 # and Windows, with the whole render corpus and every producer's copy in the
 # workflow walks; every scaling call on the three platforms; the stack a
-# release-profile wheel needs on the whole corpus. Nobody waits for it: a
-# failure opens or updates one issue, labelled `ci-nightly`, which the next
-# green run closes. Run it on a commit before releasing it (docs/RELEASE.md).
-# `workflow_dispatch` runs it on any branch or tag (it reports to the issue
-# only on main, when asked); `workflow_call` lets another workflow run it,
-# which must grant `issues: write`: the report job asks for it even when it
-# is skipped.
-# See specs/2026-11-22-one-ci-for-pull-requests-and-main.md.
+# release-profile wheel needs on the whole corpus. No schedule: run it on a
+# commit before releasing it (docs/RELEASE.md), and on a pull request whose
+# change the CI of pull requests does not cover (every scaling call, the
+# whole corpus). `workflow_dispatch` runs it on any branch or tag; on main,
+# with `report`, a failure opens or updates one issue, labelled
+# `ci-full-checks`, which the next green reporting run closes.
+# `workflow_call` lets another workflow run it, which must grant
+# `issues: write`: the report job asks for it even when it is skipped.
+# See specs/2026-11-22-one-ci-for-pull-requests-and-main.md and
+# specs/2026-11-25-full-checks-on-demand.md.
 
 on:
-  schedule:
-    - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
       report:
-        description: "Open, update or close the ci-nightly issue like the nightly run"
+        description: "On main: open, update or close the ci-full-checks issue"
         type: boolean
         default: false
   workflow_call:
@@ -119,7 +119,7 @@ jobs:
   # thread then on threads of decreasing stack: over 1 MiB, the main thread
   # of most Windows programs that embed Python, it fails
   # (specs/2026-11-21-release-wheel-smoke-test.md). Linux only: one fat-LTO
-  # build a night is the cost.
+  # build a run is the cost.
   stack:
     name: Release wheel and stack (ubuntu-latest)
     runs-on: ubuntu-latest
@@ -139,14 +139,14 @@ jobs:
       - name: Open, edit, save and render the corpus, measure the stack
         run: python -I scripts/wheel_smoke.py tests/corpus/files --measure
 
-  # One issue for a red night, so that a failure shows without anyone looking
-  # at the runs: opened (or commented) on a failure, closed on the next green
-  # run. Only the scheduled run, or a dispatch on main that asks for it; never
-  # a run called by another workflow.
+  # One issue for a red run of main, so that a failure shows without anyone
+  # looking at the runs: opened (or commented) on a failure, closed on the
+  # next green one. Only a dispatch on main that asks for it; never a run
+  # called by another workflow.
   report:
     name: Report
     needs: [test, scaling, stack]
-    if: ${{ !cancelled() && github.workflow == 'Full checks' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || inputs.report) }}
+    if: ${{ !cancelled() && github.workflow == 'Full checks' && github.ref == 'refs/heads/main' && inputs.report }}
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -156,22 +156,22 @@ jobs:
       NEEDS: ${{ toJSON(needs) }}
       RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - name: Open, update or close the ci-nightly issue
+      - name: Open, update or close the ci-full-checks issue
         run: |
           failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")"
-          issue="$(gh issue list --label ci-nightly --state open --json number --jq '.[0].number // empty')"
+          issue="$(gh issue list --label ci-full-checks --state open --json number --jq '.[0].number // empty')"
           sha="$(cut -c1-8 <<< "$GITHUB_SHA")"
           if [ -n "$failed" ]; then
             body="$(printf 'Run %s on %s (%s) failed:\n\n%s\n' "$RUN" "$sha" "$GITHUB_REF_NAME" "$(sed 's/^/- /' <<< "$failed")")"
             if [ -n "$issue" ]; then
               gh issue comment "$issue" --body "$body"
             else
-              gh label create ci-nightly --color B60205 --description "The nightly full checks failed" --force
-              gh issue create --title "Nightly full checks failing" --label ci-nightly --label "area: ci" \
+              gh label create ci-full-checks --color B60205 --description "The full checks failed on main" --force
+              gh issue create --title "Full checks failing" --label ci-full-checks --label "area: ci" \
                 --label "S2 wrong result" \
-                --body "$(printf '%s\n\nSeen with: the %s run of nightly.yml on main. Closed by the next green run.\n' "$body" "$GITHUB_EVENT_NAME")"
+                --body "$(printf '%s\n\nSeen with: the %s run of full-checks.yml on main. Closed by the next green run on main with report=true.\n' "$body" "$GITHUB_EVENT_NAME")"
             fi
-            echo "::error::nightly checks failed: $(tr '\n' ' ' <<< "$failed")"
+            echo "::error::full checks failed: $(tr '\n' ' ' <<< "$failed")"
           elif [ -n "$issue" ]; then
             gh issue close "$issue" --comment "Green again: $RUN on $sha."
           fi
