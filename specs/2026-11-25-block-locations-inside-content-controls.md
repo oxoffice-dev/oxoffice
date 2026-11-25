@@ -126,6 +126,19 @@ Element operations on one paragraph (`set_story_text`, run edits, `replace_parag
 control at any depth: unchanged. The resolver reads `[c, k]` with the same paragraph scan, so both families name
 the same paragraph.
 
+### Copies keep complex fields whole (#661)
+
+A copy that would leave a complex field unbalanced is refused: `clone_content` and `move_content` of a block, and
+`DocumentFragment::from_range` (so `import_fragment` of its range), when the block or the range holds a
+`w:fldChar` begin without its end or an end without its begin (counted in document order, nested fields, hyperlinks,
+controls and tables included). Today the copy is accepted and the field gets two begins or two ends (#661): cloning
+the first entry of a table of contents, which begins the TOC field, or the paragraph after the last one, which ends
+it. The message names the route: copy a block that holds whole fields, or a range from the field's begin to its
+end. A block or range holding whole fields, inside another field's result or not (a TOC entry with its own
+`PAGEREF`), is copied as today. A removal (`remove_content_at`, Python `pop_content`) is not a copy and is
+unchanged: its fragment put back where it was restores the field. This makes the copies stricter than today: a
+behaviour change, said in the pull request.
+
 ### Python
 
 - **One argument converter** for every location argument: `ContentLocation`; `StoryItem` (its location);
@@ -167,6 +180,7 @@ break an exhaustive match).
 | a block into a repeating section's own content | `control_end` of an item, `repeat_content_control` |
 | the only block of a control removed or moved out | `remove_content_control` |
 | a second block into a typed control | set the control's value, or remove or unwrap the control |
+| a copy holding part of a complex field (`clone_content`, `move_content`, `from_range`) | a block with whole fields, or a range from the field's begin to its end |
 | a range across containers | `control_end(story, c)` or the control `[c]` |
 | a move to another story | `clone_content` then `remove_content_at` |
 | a section-inclusive fragment elsewhere than the body | a direct body location or `end(body)` |
@@ -197,39 +211,39 @@ ends at `control_end`.
   above. `[c, k]` of kind table would need the element operations on tables to take it too.
 - Location forms for the direct body index calls (`insert_paragraph`, `insert_table`...), and a CLI command.
 - Keeping Python handles across an insertion inside a control (the body splice handles only direct body blocks).
-- A clone of a paragraph that holds only part of a complex field (a TOC entry holding the field's begin or end) is
-  accepted today at story level and duplicates that part; not a location question, and not changed here (#661).
 - Blocks inside `w:customXml`: the facade does not list them as paragraphs.
 
 ## Plan
 
-Two pull requests, stacked, each with its tests:
+One pull request, `feat(docx): one resolver for block locations, inside block content controls too`, closing #657
+and #661, in two commits:
 
-1. **`feat(docx): one resolver for block locations, inside block content controls too`** (Refs #657). The
-   resolver and `control_end` / `is_end`; every Rust operation of the table through it; the wrappers' returned
-   locations from `inserted_paragraph_location`; the refusals; the limitation file; `docs/ARCHITECTURE.md` (a model
-   convention: the four shapes and the resolver). Tests in a new area module `tests/docx/block_locations.rs`:
+1. **Rust facade.** The resolver and `control_end` / `is_end`; every Rust operation of the table through it; the
+   wrappers' returned locations from `inserted_paragraph_location`; the refusals; whole fields in copies; the
+   limitation file; `docs/ARCHITECTURE.md` (a model convention: the four shapes and the resolver). Tests in a new
+   area module `tests/docx/block_locations.rs`:
    - `every_block_operation_takes_every_location_shape_or_names_the_working_route`: a table-driven matrix,
      operation (insert, import, HTML insert, clone source and destination, move source and destination, remove,
      range start and end, caption insert) by shape (`[i]` in the body; `[c, k]` and `control_end` of a body
      control; `[c, k]`, `control_end` and `[i]` of a control nested in it; `end(body)`; `(c, n)`; a cell
-     paragraph and a control in a cell; a header paragraph and a control in it; a footnote, a text box and a comment
-     paragraph; a typed control). Each cell
-     either works (the story's paragraphs as expected, the document saved, reopened with the same story
-     paragraphs, and saved again to the same bytes) or is refused with a message containing its route. The
-     refused cells are listed, so a gap shows in the test.
+     paragraph and a control in a cell; a header paragraph and a control in it; a footnote, a text box and a
+     comment paragraph; a typed control). Each cell either works (the story's paragraphs as expected, the document
+     saved, reopened with the same story paragraphs, and saved again to the same bytes) or is refused with a
+     message containing its route. The refused cells are listed, so a gap shows in the test.
    - `a_toc_entry_is_added_after_the_last_one_by_cloning_it` (Word and Google thesis).
+   - `a_copy_never_leaves_a_complex_field_unbalanced`: at body level and inside a block control; the TOC's first
+     entry and field-end paragraph refused by clone, move and range; a middle and the last entry accepted.
    - `the_last_paragraph_of_a_block_control_is_copied_up_to_its_end`,
      `a_paragraph_is_appended_at_the_end_of_a_block_control_and_the_story_end_stays_after_it`,
      `a_block_control_keeps_one_block`, `a_typed_control_takes_no_second_block`,
      `a_repeating_section_takes_blocks_only_in_its_items`,
      `bookmark_markers_inside_a_block_control_go_with_their_paragraph`,
      `a_caption_inserted_in_a_block_control_returns_its_paragraph_location`.
-2. **`feat(python): every block location form in every location argument`** (Closes #657). The converter,
-   `ContentLocation.control_end` and `is_end`, `insert_paragraph_before` on every paragraph, the
-   `find_content_index` refusal, stubs and docstrings. Tests in `crates/oxoffice-py/tests/test_docx_block_locations.py`:
-   the same matrix for the Python calls (with `insert_paragraph_before` and `find_content_index` as rows), the
-   issue's six lines as written in the issue, the TOC case, and each argument form once.
+2. **Python.** The converter, `ContentLocation.control_end` and `is_end`, `insert_paragraph_before` on every
+   paragraph, the `find_content_index` refusal, stubs and docstrings. Tests in
+   `crates/oxoffice-py/tests/test_docx_block_locations.py`: the same matrix for the Python calls (with
+   `insert_paragraph_before` and `find_content_index` as rows), the issue's six lines as written in the issue, the
+   TOC case, and each argument form once.
 
 Checks: `cargo fmt`, clippy on `oxoffice-docx` and `oxoffice-docx-py` (all targets, all features, warnings denied),
 `cargo test -p oxoffice-docx --test docx block_locations` and the modules the resolver's callers touch
@@ -238,7 +252,8 @@ and the fragment, story and content control tests after `maturin develop`, and t
 
 ## Decisions of the review (2026-11-25)
 
-1. Two stacked pull requests, as planned: the Rust one says `Refs #657`, the Python one `Closes #657`.
+1. One pull request for the Rust facade and Python (two commits), closing #657 and #661 (maintainer, replacing
+   the two stacked pull requests first agreed).
 2. The limitation `docx-block-control-table-location` has its own issue, #660: a table inside a control is not a
    story item (`story_scan.rs`), and giving it an `[i]` would shift the later indices.
 3. **Typed controls refuse a second block.** An insertion into a plain text, date, drop-down list, combo box,
@@ -247,13 +262,13 @@ and the fragment, story and content control tests after `maturin develop`, and t
    the control's value, or remove or unwrap the control). This makes the fragment route stricter than today
    (`import_fragment` took it): a behaviour change, said in the pull request. Rich text, unconstrained, gallery
    (TOC, bibliography), group and repeating section item controls are unchanged.
-4. The clone of a paragraph holding part of a complex field is #661, out of this work. The TOC test clones an entry
-   that holds only whole fields, never the first entry or the field-end paragraph.
+4. The copy of a block holding part of a complex field (#661) is folded in: refused, with the route (see "Copies
+   keep complex fields whole").
 5. The matrix has a text box paragraph row (`w:txbxContent` is its own nested owner in `scan_story_items`) and a
    comment paragraph row.
 
 ## Links
 
-- Issue #657; related #433, #622, #466; limitation #660; partial field clones #661.
+- Issues #657 and #661; related #433, #622, #466; limitation #660.
 - [Compare adds, removes and moves block content controls whole](2026-11-23-compare-block-content-controls.md).
 - [Cut and pasted content keeps its bookmarks whole and its ids unique](2026-11-22-cut-content-keeps-its-bookmarks-and-ids.md).
