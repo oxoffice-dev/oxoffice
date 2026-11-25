@@ -959,6 +959,102 @@ pub(super) fn holds_field_words(xml: &[u8]) -> bool {
             .any(|window| window == b"fldSimple")
 }
 
+impl MainPartBlocks {
+    /// This written part with the declaration and root start tag of
+    /// `existing` (the main part the package holds) in place of its own,
+    /// when they differ only in the order of the root's attributes and in
+    /// the whitespace after the declaration: the root a producer wrote stays
+    /// as it was (rule 7) when an edit rewrites the body. `None` when this
+    /// record does not prove `xml`, the declarations differ, or the roots
+    /// differ in a name, an attribute or a value (a namespace the edit
+    /// needs that the producer's root lacks keeps the written root).
+    pub(super) fn with_producer_root(
+        &self,
+        xml: &[u8],
+        existing: &[u8],
+    ) -> Option<(Vec<u8>, Self)> {
+        if self.part.as_deref().map(Vec::as_slice) != Some(xml) || self.head.is_empty() {
+            return None;
+        }
+        let written = self.head.get(..self.root.end)?;
+        let kept = root_start_tag(existing)?;
+        let decl = |bytes: &[u8], root: &std::ops::Range<usize>| {
+            let before = bytes.get(..root.start)?;
+            let end = before.windows(2).position(|window| window == b"?>")? + 2;
+            before[end..]
+                .iter()
+                .all(u8::is_ascii_whitespace)
+                .then(|| before[..end].to_vec())
+        };
+        let mut kept_root = kept.clone();
+        kept_root.start += existing[kept.clone()]
+            .iter()
+            .take_while(|byte| byte.is_ascii_whitespace())
+            .count();
+        if decl(existing, &kept_root)? != decl(written, &self.root)? {
+            return None;
+        }
+        let kept_tag = existing.get(kept_root.clone())?;
+        let written_tag = written.get(self.root.clone())?;
+        if kept_tag == written_tag {
+            return None;
+        }
+        if root_attributes(kept_tag)? != root_attributes(written_tag)? {
+            return None;
+        }
+        let mut head = Vec::with_capacity(self.head.len() + kept.end);
+        head.extend_from_slice(&existing[..kept_root.end]);
+        head.extend_from_slice(&self.head[self.root.end..]);
+        let body = xml.get(self.head.len()..xml.len().checked_sub(self.tail.len())?)?;
+        let mut part = Vec::with_capacity(head.len() + body.len() + self.tail.len());
+        part.extend_from_slice(&head);
+        part.extend_from_slice(body);
+        part.extend_from_slice(&self.tail);
+        let record = Self {
+            head,
+            root: kept_root,
+            tail: self.tail.clone(),
+            blocks: Arc::clone(&self.blocks),
+            part: Some(Arc::new(part.clone())),
+            frame: std::sync::OnceLock::new(),
+            nested_namespace_owners: std::sync::OnceLock::new(),
+            identifier_frame: std::sync::OnceLock::new(),
+            canonical_frame: std::sync::OnceLock::new(),
+            namespace_frame: std::sync::OnceLock::new(),
+            namespace_frame_spans: std::sync::OnceLock::new(),
+        };
+        Some((part, record))
+    }
+}
+
+/// The name and the sorted attributes of a `w:document` start tag, when
+/// `tag` is one.
+fn root_attributes(tag: &[u8]) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+    let inner = tag.strip_prefix(b"<")?.strip_suffix(b">")?;
+    if inner.ends_with(b"/") {
+        return None;
+    }
+    let start = quick_xml::events::BytesStart::from_content(
+        std::str::from_utf8(inner).ok()?,
+        b"w:document".len(),
+    );
+    if start.name().as_ref() != b"w:document"
+        || !inner.starts_with(b"w:document")
+        || !inner
+            .get(b"w:document".len())
+            .is_some_and(u8::is_ascii_whitespace)
+    {
+        return None;
+    }
+    let mut attributes = Vec::new();
+    for attribute in start.attributes() {
+        let attribute = attribute.ok()?;
+        attributes.push((attribute.key.as_ref().to_vec(), attribute.value.to_vec()));
+    }
+    attributes.sort();
+    Some(attributes)
+}
+
 pub(super) fn root_start_tag(head: &[u8]) -> Option<std::ops::Range<usize>> {
     let decl = head.windows(2).position(|window| window == b"?>")?;
     let start = decl + 2;
