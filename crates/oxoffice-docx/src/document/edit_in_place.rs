@@ -31,6 +31,8 @@ pub enum EditUnit {
     /// The `count` direct body blocks from `slot` (0 for an insertion at
     /// `slot`): the edit may replace them with any number of blocks, and
     /// change no other block. They are copied, at the cost of these blocks.
+    /// An edit may name several, disjoint and in slot order: then only the
+    /// last may change its number of blocks, each other one keeps it.
     BodyBlocks { slot: usize, count: usize },
 }
 
@@ -50,8 +52,11 @@ pub struct BodyBlocksChange {
 pub struct EditReport {
     /// Each unit the edit named, and whether it changed.
     pub units: Vec<(EditUnit, bool)>,
-    /// The blocks of the `BodyBlocks` unit, when it changed.
+    /// The blocks of the `BodyBlocks` unit, when the edit named one and it
+    /// changed.
     pub body: Option<BodyBlocksChange>,
+    /// The blocks of each `BodyBlocks` unit that changed, in slot order.
+    pub body_blocks: Vec<BodyBlocksChange>,
 }
 
 impl EditReport {
@@ -99,13 +104,22 @@ struct BodyBlocksCopy {
     unsavable: Option<Option<String>>,
 }
 
-impl BodyBlocksCopy {
-    /// The range of the body that holds what the edit left in place of the
-    /// copied blocks, found from the change of the body's length.
-    fn current_range(&self, length: usize) -> std::ops::Range<usize> {
-        let end = (self.slot + self.blocks.len() + length).saturating_sub(self.length);
-        self.slot..end.max(self.slot)
-    }
+/// The ranges of the body that hold what the edit left in place of each
+/// copy, now that the body has `length` blocks: each unit but the last kept
+/// its length, the last takes the change of the body's length.
+fn body_ranges(copies: &[BodyBlocksCopy], length: usize) -> Vec<std::ops::Range<usize>> {
+    let last = copies.len().saturating_sub(1);
+    copies
+        .iter()
+        .enumerate()
+        .map(|(index, copy)| {
+            if index < last {
+                return copy.slot..copy.slot + copy.blocks.len();
+            }
+            let end = (copy.slot + copy.blocks.len() + length).saturating_sub(copy.length);
+            copy.slot..end.max(copy.slot)
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -141,7 +155,8 @@ pub struct EditUndo {
     comments: Option<CommentsCopy>,
     styles: Option<StylesCopy>,
     settings: Option<SettingsCopy>,
-    body: Option<BodyBlocksCopy>,
+    /// One copy per `BodyBlocks` unit, in slot order.
+    body: Vec<BodyBlocksCopy>,
     /// The endnotes part's bytes before the edit, for its no-op answer.
     endnotes: Option<Option<Vec<u8>>>,
     scalars: ScalarCopy,
@@ -154,6 +169,16 @@ impl EditUndo {
     /// What the edit changed.
     pub fn report(&self) -> &EditReport {
         &self.report
+    }
+
+    /// The direct body blocks the `BodyBlocks` unit copied before the edit,
+    /// from its slot on, when the edit named one such unit (as
+    /// [`EditReport::body`]).
+    pub fn previous_body_blocks(&self) -> Option<&[oxoffice_docx_oxml::document::BodyContent]> {
+        match self.body.as_slice() {
+            [copy] => Some(copy.blocks.as_slice()),
+            _ => None,
+        }
     }
 }
 
@@ -185,7 +210,7 @@ impl Document {
             comments: None,
             styles: None,
             settings: None,
-            body: None,
+            body: Vec::new(),
             endnotes: None,
             scalars: ScalarCopy {
                 embedded_invalidated_signatures: self.embedded_invalidated_signatures.clone(),
@@ -239,7 +264,13 @@ impl Document {
                 EditUnit::BodyBlocks { slot, count } => {
                     let content = &self.document.body.content;
                     let end = (*slot + *count).min(content.len());
-                    undo.body = Some(BodyBlocksCopy {
+                    debug_assert!(
+                        undo.body
+                            .last()
+                            .is_none_or(|copy| copy.slot + copy.blocks.len() <= *slot),
+                        "body block units are disjoint and in slot order"
+                    );
+                    undo.body.push(BodyBlocksCopy {
                         slot: *slot,
                         blocks: content[(*slot).min(end)..end].to_vec(),
                         length: content.len(),
@@ -307,12 +338,14 @@ impl Document {
         self.freed_relationships = scalars.freed_relationships;
         self.package_signatures_invalidated = scalars.package_signatures_invalidated;
         // Only a body unit changes what a save of the body answers.
-        let unsavable = match &body {
+        let unsavable = match body.first() {
             Some(copy) => copy.unsavable.clone(),
             None => self.unsavable_body_edit_cache.get().cloned(),
         };
-        if let Some(copy) = body {
-            let range = copy.current_range(self.document.body.content.len());
+        // Each unit's range is where its copy goes back: the units before
+        // the last kept their lengths, so no splice moves another's range.
+        let ranges = body_ranges(&body, self.document.body.content.len());
+        for (copy, range) in body.into_iter().zip(ranges).rev() {
             self.document.body.content.splice(range, copy.blocks);
         }
         self.invalidate_layout();
@@ -323,6 +356,29 @@ impl Document {
 
     /// Whether the units of `undo` differ from what the document holds now.
     fn report_changes(&self, undo: &EditUndo) -> EditReport {
+        let content = &self.document.body.content;
+        let ranges = body_ranges(&undo.body, content.len());
+        // One flag per copy, in unit order: two units may start at one slot
+        // (an insertion before a replaced block).
+        let changed: Vec<bool> = undo
+            .body
+            .iter()
+            .zip(&ranges)
+            .map(|(copy, range)| content.get(range.clone()) != Some(&copy.blocks[..]))
+            .collect();
+        let body_blocks: Vec<BodyBlocksChange> = undo
+            .body
+            .iter()
+            .zip(&ranges)
+            .zip(&changed)
+            .filter(|(_, changed)| **changed)
+            .map(|((copy, range), _)| BodyBlocksChange {
+                slot: copy.slot,
+                removed: copy.blocks.len(),
+                inserted: range.len(),
+            })
+            .collect();
+        let mut body_changed = changed.into_iter();
         EditReport {
             units: undo
                 .units
@@ -353,23 +409,16 @@ impl Document {
                                 || copy.part_name != self.settings_part_name
                         }),
                         EditUnit::Parts => self.package.part_journal_changed(&undo.parts),
-                        EditUnit::BodyBlocks { .. } => undo.body.as_ref().is_some_and(|copy| {
-                            let content = &self.document.body.content;
-                            content.get(copy.current_range(content.len())) != Some(&copy.blocks[..])
-                        }),
+                        EditUnit::BodyBlocks { .. } => body_changed.next().unwrap_or(false),
                     };
                     (unit.clone(), changed)
                 })
                 .collect(),
-            body: undo.body.as_ref().and_then(|copy| {
-                let content = &self.document.body.content;
-                let range = copy.current_range(content.len());
-                (content.get(range.clone()) != Some(&copy.blocks[..])).then_some(BodyBlocksChange {
-                    slot: copy.slot,
-                    removed: copy.blocks.len(),
-                    inserted: range.len(),
-                })
-            }),
+            body: match undo.body.len() {
+                1 => body_blocks.first().copied(),
+                _ => None,
+            },
+            body_blocks,
         }
     }
 
@@ -540,11 +589,14 @@ impl EditUndo {
         self.styles = self.styles.take().or(styles);
         self.settings = self.settings.take().or(settings);
         debug_assert!(
-            self.body.is_none() || body.is_none(),
+            self.body.is_empty() || body.is_empty(),
             "two held edits name body blocks"
         );
-        self.body = self.body.take().or(body);
-        self.report.body = self.report.body.or(report.body);
+        if self.body.is_empty() {
+            self.body = body;
+            self.report.body = report.body;
+            self.report.body_blocks = report.body_blocks;
+        }
         self.endnotes = self.endnotes.take().or(endnotes);
         self.parts.extend(parts);
         self.reservations.extend(reservations);
@@ -607,9 +659,63 @@ impl Document {
     /// document as it was.
     pub(crate) fn assert_in_place_matches_staged<T: PartialEq + std::fmt::Debug>(
         &self,
+        before: Self,
+        result: &Result<T>,
+        staged: impl FnOnce(&mut Self) -> Result<T>,
+    ) {
+        self.assert_in_place_matches_staged_by(before, result, staged, |live, staged| {
+            assert_eq!(
+                live, staged,
+                "in-place edit saves other bytes than the staged edit"
+            );
+        });
+    }
+
+    /// [`Self::assert_in_place_matches_staged`] for an in-place edit that
+    /// writes its element from the model while the staged route writes it
+    /// from a fragment that declares its namespaces again: the two packages
+    /// hold the same parts, and the same bytes once the namespace
+    /// declarations are set aside.
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_in_place_matches_staged_declarations_aside<
+        T: PartialEq + std::fmt::Debug,
+    >(
+        &self,
+        before: Self,
+        result: &Result<T>,
+        staged: impl FnOnce(&mut Self) -> Result<T>,
+    ) {
+        self.assert_in_place_matches_staged_by(before, result, staged, |live, staged| {
+            let parts = |saved: &std::result::Result<Vec<u8>, String>| {
+                saved.as_ref().map_err(String::clone).map(|bytes| {
+                    let package =
+                        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes))
+                            .expect("a saved package reopens");
+                    let mut parts = package
+                        .parts
+                        .iter()
+                        .map(|(name, bytes)| (name.clone(), without_namespace_declarations(bytes)))
+                        .collect::<Vec<_>>();
+                    parts.sort();
+                    parts
+                })
+            };
+            assert!(
+                parts(live) == parts(staged),
+                "in-place edit saves other parts than the staged edit, namespace declarations aside"
+            );
+        });
+    }
+
+    fn assert_in_place_matches_staged_by<T: PartialEq + std::fmt::Debug>(
+        &self,
         mut before: Self,
         result: &Result<T>,
         staged: impl FnOnce(&mut Self) -> Result<T>,
+        same_saves: impl FnOnce(
+            &std::result::Result<Vec<u8>, String>,
+            &std::result::Result<Vec<u8>, String>,
+        ),
     ) {
         let unchanged = before
             .clone_for_staging()
@@ -623,19 +729,7 @@ impl Document {
         match (result, &staged_result) {
             (Ok(direct), Ok(staged_value)) => {
                 assert_eq!(direct, staged_value, "in-place edit answered otherwise");
-                // The staged route splices a rewritten fragment into the
-                // part's bytes and may repeat the root's namespace
-                // declarations on it; the in-place model writes them once.
-                assert_eq!(
-                    live.as_deref()
-                        .map(saved_parts_in_normal_form)
-                        .map_err(Clone::clone),
-                    before
-                        .to_bytes()
-                        .map(|saved| saved_parts_in_normal_form(&saved))
-                        .map_err(|e| e.to_string()),
-                    "in-place edit saves other bytes than the staged edit"
-                );
+                same_saves(&live, &before.to_bytes().map_err(|e| e.to_string()));
                 assert_eq!(
                     self.package_signatures_invalidated, before.package_signatures_invalidated,
                     "in-place edit invalidates signatures otherwise than the staged edit"
@@ -665,68 +759,43 @@ impl Document {
     }
 }
 
-/// The parts a saved package holds, each XML part in the oracle's normal
-/// form ([`oracle_normal_form`]), for the debug oracle.
+/// `xml` without the namespace declarations of its tags (` xmlns="..."`,
+/// ` xmlns:p="..."` inside `<...>`); text and other bytes as they are. A
+/// prefix bound again to another namespace is not told apart: the oracle
+/// that uses this compares what both routes wrote from one model.
 #[cfg(debug_assertions)]
-fn saved_parts_in_normal_form(saved: &[u8]) -> Vec<(String, Vec<u8>)> {
-    let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(saved.to_vec()))
-        .expect("a saved package opens");
-    package
-        .zip_entries()
-        .expect("a saved package lists its entries")
-        .into_iter()
-        .map(|(name, bytes)| {
-            let bytes = if name.ends_with(".xml") || name.ends_with(".rels") {
-                oracle_normal_form(&bytes)
-            } else {
-                bytes.into_owned()
-            };
-            (name, bytes)
-        })
-        .collect()
-}
-
-/// An XML part as the debug oracle compares it: the staged route splices a
-/// rewritten fragment into the part's bytes and may repeat the root's
-/// namespace declarations on it, which the in-place model writes once.
-#[cfg(debug_assertions)]
-fn oracle_normal_form(part: &[u8]) -> Vec<u8> {
-    without_repeated_namespaces(part)
-}
-
-/// `xml` without the ` xmlns:p="uri"` declarations below its root element
-/// that the root already makes.
-#[cfg(debug_assertions)]
-fn without_repeated_namespaces(xml: &[u8]) -> Vec<u8> {
-    let Ok(text) = std::str::from_utf8(xml) else {
-        return xml.to_vec();
-    };
-    let Some(root_start) = text
-        .match_indices('<')
-        .map(|(at, _)| at)
-        .find(|&at| !text[at + 1..].starts_with(['?', '!']))
-    else {
-        return xml.to_vec();
-    };
-    let Some(root_end) = text[root_start..].find('>').map(|end| root_start + end + 1) else {
-        return xml.to_vec();
-    };
-    let root = &text[root_start..root_end];
-    let declarations = root
-        .match_indices(" xmlns:")
-        .filter_map(|(at, _)| {
-            let rest = &root[at..];
-            let value_start = rest.find("=\"")? + 2;
-            let value_end = value_start + rest[value_start..].find('"')?;
-            Some(rest[..=value_end].to_owned())
-        })
-        .collect::<Vec<_>>();
-    let mut below = text[root_end..].to_owned();
-    for declaration in &declarations {
-        below = below.replace(declaration.as_str(), "");
+fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(xml.len());
+    let mut in_tag = false;
+    let mut quote = None;
+    let mut at = 0;
+    while at < xml.len() {
+        let byte = xml[at];
+        match quote {
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None if in_tag && (byte == b'"' || byte == b'\'') => quote = Some(byte),
+            None if in_tag && byte == b'>' => in_tag = false,
+            None if byte == b'<' => in_tag = true,
+            None if in_tag
+                && (xml[at..].starts_with(b" xmlns=") || xml[at..].starts_with(b" xmlns:")) =>
+            {
+                // Skip the attribute: its name, `=` and its quoted value.
+                let Some(open) = xml[at..].iter().position(|b| *b == b'"' || *b == b'\'') else {
+                    break;
+                };
+                let delimiter = xml[at + open];
+                let Some(close) = xml[at + open + 1..].iter().position(|b| *b == delimiter) else {
+                    break;
+                };
+                at += open + 1 + close + 1;
+                continue;
+            }
+            None => {}
+        }
+        out.push(byte);
+        at += 1;
     }
-    let mut out = text.as_bytes()[..root_end].to_vec();
-    out.extend_from_slice(below.as_bytes());
     out
 }
 
@@ -877,7 +946,7 @@ mod tests {
         paragraph
             .insert_accepted_run(1, CT_R::new("!"))
             .expect("the paragraph takes a run at its end");
-        document.assert_in_place_matches_staged(before, &Ok(()), |staged| {
+        document.assert_in_place_matches_staged_declarations_aside(before, &Ok(()), |staged| {
             let mut candidate = staged.clone_for_staging();
             candidate.insert_story_run_staged(
                 &crate::StoryRunPosition {
@@ -899,19 +968,165 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "in-place edit saves other bytes than the staged edit")]
+    #[should_panic(expected = "in-place edit saves other parts than the staged edit")]
     #[cfg(debug_assertions)]
     fn the_oracle_sees_a_difference_inside_a_respliced_paragraph() {
         check_appended_run("?");
     }
 
+    /// Five paragraphs, "p0" to "p4".
+    fn five_paragraphs() -> Document {
+        let mut document = Document::new();
+        for index in 0..5 {
+            document.add_paragraph(&format!("p{index}"));
+        }
+        document
+    }
+
+    fn body_texts(document: &Document) -> Vec<String> {
+        document.paragraphs().iter().map(|p| p.text()).collect()
+    }
+
+    /// Two disjoint units: the first keeps its length, the last loses its
+    /// block. The report tells both, and the undo puts both back.
     #[test]
-    #[cfg(debug_assertions)]
-    fn only_a_declaration_the_root_makes_is_dropped() {
-        let xml = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:p xmlns:w="urn:w" xmlns:r="urn:other" xmlns:x="urn:x" w:rsidR="1"/></w:document>"#;
+    fn several_body_block_units_report_and_undo_each() {
+        let mut document = five_paragraphs();
+        let texts = body_texts(&document);
+        let units = [
+            EditUnit::BodyBlocks { slot: 1, count: 1 },
+            EditUnit::BodyBlocks { slot: 3, count: 1 },
+        ];
+        document.hold_edit_undo();
+        document
+            .edit_in_place(&units, |document| {
+                let content = &mut document.document.body.content;
+                content[1] = content[0].clone();
+                content.remove(3);
+                document.invalidate_layout();
+                Ok(())
+            })
+            .unwrap();
+        let undo = document
+            .take_edit_undo()
+            .expect("the edit changed the body");
+        assert_eq!(body_texts(&document), ["p0", "p0", "p2", "p4"]);
+        let report = undo.report();
         assert_eq!(
-            String::from_utf8(without_repeated_namespaces(xml)).unwrap(),
-            r#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:p xmlns:r="urn:other" xmlns:x="urn:x" w:rsidR="1"/></w:document>"#
+            report.body_blocks,
+            [
+                BodyBlocksChange {
+                    slot: 1,
+                    removed: 1,
+                    inserted: 1
+                },
+                BodyBlocksChange {
+                    slot: 3,
+                    removed: 1,
+                    inserted: 0
+                },
+            ]
         );
+        assert_eq!(report.body, None);
+        assert!(report.units.iter().all(|(_, changed)| *changed));
+        document.undo_edit(undo);
+        assert_eq!(body_texts(&document), texts);
+    }
+
+    /// A unit the edit left alone is reported unchanged, the other changed.
+    #[test]
+    fn an_untouched_body_block_unit_is_reported_unchanged() {
+        let mut document = five_paragraphs();
+        let units = [
+            EditUnit::BodyBlocks { slot: 0, count: 1 },
+            EditUnit::BodyBlocks { slot: 2, count: 2 },
+        ];
+        document.hold_edit_undo();
+        document
+            .edit_in_place(&units, |document| {
+                let content = &mut document.document.body.content;
+                content.insert(4, content[0].clone());
+                document.invalidate_layout();
+                Ok(())
+            })
+            .unwrap();
+        let undo = document
+            .take_edit_undo()
+            .expect("the edit changed the body");
+        let report = undo.report();
+        assert_eq!(
+            report.body_blocks,
+            [BodyBlocksChange {
+                slot: 2,
+                removed: 2,
+                inserted: 3
+            }]
+        );
+        assert_eq!(
+            report.units,
+            [(units[0].clone(), false), (units[1].clone(), true)]
+        );
+        document.undo_edit(undo);
+        assert_eq!(body_texts(&document), ["p0", "p1", "p2", "p3", "p4"]);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "body block units are disjoint and in slot order")]
+    fn overlapping_body_block_units_are_refused() {
+        let mut document = five_paragraphs();
+        let units = [
+            EditUnit::BodyBlocks { slot: 1, count: 2 },
+            EditUnit::BodyBlocks { slot: 2, count: 1 },
+        ];
+        let _ = document.edit_in_place(&units, |_| Ok(()));
+    }
+
+    /// An insertion unit before a replaced block at the same slot: only the
+    /// unit that changed is reported changed.
+    #[test]
+    fn two_units_at_one_slot_report_their_own_change() {
+        let mut document = five_paragraphs();
+        let units = [
+            EditUnit::BodyBlocks { slot: 3, count: 0 },
+            EditUnit::BodyBlocks { slot: 3, count: 1 },
+        ];
+        document.hold_edit_undo();
+        document
+            .edit_in_place(&units, |document| {
+                let content = &mut document.document.body.content;
+                content[3] = content[0].clone();
+                document.invalidate_layout();
+                Ok(())
+            })
+            .unwrap();
+        let undo = document
+            .take_edit_undo()
+            .expect("the edit changed the body");
+        assert_eq!(
+            undo.report().units,
+            [(units[0].clone(), false), (units[1].clone(), true)]
+        );
+        document.undo_edit(undo);
+        assert_eq!(body_texts(&document), ["p0", "p1", "p2", "p3", "p4"]);
+    }
+
+    /// A unit before the last that changes its number of blocks breaks the
+    /// contract: the debug undo oracle refuses the edit.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn a_unit_before_the_last_that_changes_its_count_is_refused() {
+        let mut document = five_paragraphs();
+        let units = [
+            EditUnit::BodyBlocks { slot: 1, count: 1 },
+            EditUnit::BodyBlocks { slot: 3, count: 1 },
+        ];
+        let _ = document.edit_in_place(&units, |document| {
+            let content = &mut document.document.body.content;
+            content.insert(1, content[0].clone());
+            document.invalidate_layout();
+            Ok(())
+        });
     }
 }

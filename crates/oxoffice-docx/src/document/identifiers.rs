@@ -9,6 +9,10 @@ pub(super) enum IdentifierDefinition {
     Comment(i32),
     AbstractNumbering(u32),
     NumberingInstance(u32),
+    /// The `w:val` of a `w:id` child of a `w:sdtPr`.
+    ContentControl(i32),
+    /// The `w:id` of a `w:permStart`.
+    Permission(i32),
 }
 
 /// What an in-place edit added to the identifier registry and the package
@@ -46,6 +50,8 @@ enum Reservation {
         id: i32,
         authored: bool,
     },
+    ContentControlId(i32),
+    PermissionId(i32),
     /// The override stored under `stored`, and the case variants it
     /// replaced with their content types.
     PackageOverride {
@@ -391,6 +397,12 @@ impl Document {
                         identifiers.authored_comment_ids.remove(&id);
                     }
                 }
+                Reservation::ContentControlId(id) => {
+                    identifiers.content_control_ids.remove(&id);
+                }
+                Reservation::PermissionId(id) => {
+                    identifiers.permission_ids.remove(&id);
+                }
                 Reservation::PackageOverride { stored, replaced } => {
                     let overrides = &mut self.package.content_types.overrides;
                     overrides.remove(&stored);
@@ -470,6 +482,8 @@ impl DocumentIdentifiers {
             repeated_drawing_ids: HashMap::new(),
             abstract_numbering_ids: HashSet::new(),
             numbering_instance_ids: HashSet::new(),
+            content_control_ids: HashSet::new(),
+            permission_ids: HashSet::new(),
             part_names: package
                 .parts
                 .keys()
@@ -528,10 +542,7 @@ impl DocumentIdentifiers {
             identity_parts
                 .entry(part_name_identity(&main_part))
                 .or_default()
-                .extend([
-                    IdentifierXmlCategory::Bookmark,
-                    IdentifierXmlCategory::Drawing,
-                ]);
+                .extend(STORY_CATEGORIES);
             if let Some(relationships) = package.get_part_rels(&main_part) {
                 for relationship in &relationships.items {
                     let categories: &[IdentifierXmlCategory] = match relationship.rel_type.as_str()
@@ -539,8 +550,10 @@ impl DocumentIdentifiers {
                         rel_types::HEADER
                         | rel_types::FOOTER
                         | rel_types::FOOTNOTES
-                        | rel_types::ENDNOTES
-                        | rel_types::GLOSSARY_DOCUMENT => &[
+                        | rel_types::ENDNOTES => &STORY_CATEGORIES,
+                        // The glossary is no story: its controls and
+                        // permission ranges take no id a story's would.
+                        rel_types::GLOSSARY_DOCUMENT => &[
                             IdentifierXmlCategory::Bookmark,
                             IdentifierXmlCategory::Drawing,
                         ],
@@ -548,6 +561,8 @@ impl DocumentIdentifiers {
                             IdentifierXmlCategory::Bookmark,
                             IdentifierXmlCategory::Comment,
                             IdentifierXmlCategory::Drawing,
+                            IdentifierXmlCategory::ContentControl,
+                            IdentifierXmlCategory::Permission,
                         ],
                         rel_types::NUMBERING => &[
                             IdentifierXmlCategory::AbstractNumbering,
@@ -709,6 +724,14 @@ impl DocumentIdentifiers {
                     "numbering instance",
                 )?;
             }
+            // Producers repeat both, and the calls that take a new one
+            // only need it free: a repetition is no error.
+            IdentifierDefinition::ContentControl(value) => {
+                self.content_control_ids.insert(value);
+            }
+            IdentifierDefinition::Permission(value) => {
+                self.permission_ids.insert(value);
+            }
         }
         Ok(())
     }
@@ -720,12 +743,18 @@ impl DocumentIdentifiers {
     ) -> Result<()> {
         let mut reader = NsReader::from_reader(xml);
         let mut buffer = Vec::new();
+        // Per open element, whether it is a `w:sdtPr`: a control's id is
+        // the `w:id` child of one.
+        let mut open_sdt_properties = Vec::<bool>::new();
         loop {
             let (namespace, event) = match reader.read_resolved_event_into(&mut buffer) {
                 Ok(value) => value,
                 Err(error) => return Err(Error::Other(error.to_string())),
             };
             match event {
+                Event::End(_) => {
+                    open_sdt_properties.pop();
+                }
                 Event::Start(ref element) | Event::Empty(ref element) => {
                     let local = element.local_name();
                     let is_drawing = matches!(
@@ -748,9 +777,19 @@ impl DocumentIdentifiers {
                         Some(IdentifierXmlCategory::AbstractNumbering)
                     } else if is_word && local.as_ref() == b"num" {
                         Some(IdentifierXmlCategory::NumberingInstance)
+                    } else if is_word && local.as_ref() == b"permStart" {
+                        Some(IdentifierXmlCategory::Permission)
+                    } else if is_word
+                        && local.as_ref() == b"id"
+                        && open_sdt_properties.last() == Some(&true)
+                    {
+                        Some(IdentifierXmlCategory::ContentControl)
                     } else {
                         None
                     };
+                    if matches!(event, Event::Start(_)) {
+                        open_sdt_properties.push(is_word && local.as_ref() == b"sdtPr");
+                    }
                     if let Some(category) = category.filter(|value| categories.contains(value))
                         && let Some(definition) = Self::scan_xml_id(&reader, element, category)?
                     {
@@ -776,7 +815,9 @@ impl DocumentIdentifiers {
                 IdentifierXmlCategory::Drawing => {
                     matches!(namespace, ResolveResult::Unbound) && local.as_ref() == b"id"
                 }
-                IdentifierXmlCategory::Bookmark | IdentifierXmlCategory::Comment => {
+                IdentifierXmlCategory::Bookmark
+                | IdentifierXmlCategory::Comment
+                | IdentifierXmlCategory::Permission => {
                     matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == WORD_NAMESPACE.as_bytes())
                         && local.as_ref() == b"id"
                 }
@@ -787,6 +828,10 @@ impl DocumentIdentifiers {
                 IdentifierXmlCategory::NumberingInstance => {
                     matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == WORD_NAMESPACE.as_bytes())
                         && local.as_ref() == b"numId"
+                }
+                IdentifierXmlCategory::ContentControl => {
+                    matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == WORD_NAMESPACE.as_bytes())
+                        && local.as_ref() == b"val"
                 }
             };
             if !accepted {
@@ -826,6 +871,17 @@ impl DocumentIdentifiers {
                     })?;
                     IdentifierDefinition::NumberingInstance(value)
                 }
+                // An id that is no number takes no number a new control or
+                // range could take: it is left out, as the calls that add
+                // one always did.
+                IdentifierXmlCategory::ContentControl => match value.parse::<i32>() {
+                    Ok(value) => IdentifierDefinition::ContentControl(value),
+                    Err(_) => return Ok(None),
+                },
+                IdentifierXmlCategory::Permission => match value.parse::<i32>() {
+                    Ok(value) => IdentifierDefinition::Permission(value),
+                    Err(_) => return Ok(None),
+                },
             };
             return Ok(Some(definition));
         }
@@ -984,6 +1040,27 @@ impl DocumentIdentifiers {
     pub(super) fn reserve_numbering_instance_id(&mut self) -> Result<u32> {
         let id = reserve_u32(&mut self.numbering_instance_ids, 1, "numbering instance")?;
         self.record(|| Reservation::NumberingInstanceId(id));
+        Ok(id)
+    }
+
+    /// The smallest content control id from 1 no story holds, held until
+    /// the next reopen and given back by the undo of an in-place edit.
+    pub(crate) fn reserve_content_control_id(&mut self) -> Result<i32> {
+        let id = reserve_lowest_i32(&mut self.content_control_ids, 1, "content control")?;
+        self.record(|| Reservation::ContentControlId(id));
+        Ok(id)
+    }
+
+    /// The id [`Self::reserve_permission_id`] would reserve now.
+    pub(crate) fn lowest_free_permission_id(&self) -> Option<i32> {
+        (0..=i32::MAX).find(|id| !self.permission_ids.contains(id))
+    }
+
+    /// The smallest permission range id from 0 no story holds, held until
+    /// the next reopen and given back by the undo of an in-place edit.
+    pub(crate) fn reserve_permission_id(&mut self) -> Result<i32> {
+        let id = reserve_lowest_i32(&mut self.permission_ids, 0, "permission range")?;
+        self.record(|| Reservation::PermissionId(id));
         Ok(id)
     }
 
@@ -1515,7 +1592,17 @@ pub(super) enum IdentifierXmlCategory {
     Comment,
     AbstractNumbering,
     NumberingInstance,
+    ContentControl,
+    Permission,
 }
+
+/// What the scan reads in the main part, a header, a footer and the notes.
+pub(super) const STORY_CATEGORIES: [IdentifierXmlCategory; 4] = [
+    IdentifierXmlCategory::Bookmark,
+    IdentifierXmlCategory::Drawing,
+    IdentifierXmlCategory::ContentControl,
+    IdentifierXmlCategory::Permission,
+];
 
 pub(super) fn reserve_lowest_i32(
     occupied: &mut HashSet<i32>,
@@ -1614,5 +1701,142 @@ pub(super) fn relationship_owner_identity(owner: &str) -> String {
         "/".to_owned()
     } else {
         part_name_identity(owner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A document whose body and header hold content controls and
+    /// permission ranges: control ids 1 and 3 and one that is no number in
+    /// the body, 2 in the header; permission ids 0 and 2 in the body, 1 in
+    /// the header.
+    fn document() -> Document {
+        let mut document = Document::new();
+        document.set_header("header");
+        let bytes = document.to_bytes().expect("a new document saves");
+        let mut package =
+            OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("the package opens");
+        let main = package.main_document_part().expect("a main document part");
+        let xml = String::from_utf8(package.get_part(&main).expect("main part").to_vec())
+            .expect("the main part is UTF-8");
+        let start = xml.find("<w:body>").expect("a body") + "<w:body>".len();
+        let body = concat!(
+            r#"<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent><w:p/></w:sdtContent></w:sdt>"#,
+            r#"<w:p><w:permStart w:id="0" w:edGrp="everyone"/><w:sdt><w:sdtPr><w:id w:val="3"/></w:sdtPr>"#,
+            r#"<w:sdtContent><w:r><w:t>inline</w:t></w:r></w:sdtContent></w:sdt><w:permEnd w:id="0"/></w:p>"#,
+            r#"<w:sdt><w:sdtPr><w:id w:val="none"/></w:sdtPr><w:sdtContent><w:p/></w:sdtContent></w:sdt>"#,
+            r#"<w:p><w:permStart w:id="2" w:ed="someone"/><w:r><w:t>x</w:t></w:r><w:permEnd w:id="2"/></w:p>"#,
+        );
+        package.set_part(
+            &main,
+            format!("{}{body}{}", &xml[..start], &xml[start..]).into_bytes(),
+        );
+        let header = package
+            .parts
+            .keys()
+            .find(|name| name.contains("header"))
+            .expect("a header part")
+            .clone();
+        let xml = String::from_utf8(package.get_part(&header).expect("header").to_vec())
+            .expect("the header is UTF-8");
+        let end = xml.rfind("</w:hdr>").expect("a header root");
+        let added = concat!(
+            r#"<w:p><w:permStart w:id="1" w:edGrp="everyone"/><w:sdt><w:sdtPr><w:id w:val="2"/></w:sdtPr>"#,
+            r#"<w:sdtContent><w:r><w:t>h</w:t></w:r></w:sdtContent></w:sdt><w:permEnd w:id="1"/></w:p>"#,
+        );
+        package.set_part(
+            &header,
+            format!("{}{added}{}", &xml[..end], &xml[end..]).into_bytes(),
+        );
+        let mut out = std::io::Cursor::new(Vec::new());
+        package.write_to(&mut out).expect("the package writes");
+        Document::from_bytes(&out.into_inner()).expect("the document opens")
+    }
+
+    #[test]
+    fn open_reads_the_control_and_permission_ids_of_the_body_and_a_header() {
+        let document = document();
+        assert_eq!(
+            document.identifiers.content_control_ids,
+            HashSet::from([1, 2, 3])
+        );
+        assert_eq!(
+            document.identifiers.permission_ids,
+            HashSet::from([0, 1, 2])
+        );
+    }
+
+    #[test]
+    fn a_reservation_takes_the_smallest_free_id() {
+        let mut document = document();
+        assert_eq!(
+            document.identifiers.reserve_content_control_id().unwrap(),
+            4
+        );
+        assert_eq!(
+            document.identifiers.reserve_content_control_id().unwrap(),
+            5
+        );
+        assert_eq!(document.identifiers.reserve_permission_id().unwrap(), 3);
+        let mut empty = Document::new();
+        assert_eq!(empty.identifiers.reserve_content_control_id().unwrap(), 1);
+        assert_eq!(empty.identifiers.reserve_permission_id().unwrap(), 0);
+    }
+
+    #[test]
+    fn a_refused_in_place_edit_gives_its_control_and_permission_ids_back() {
+        let mut document = document();
+        let before = document.identifiers.clone();
+        let result: Result<()> = document.edit_in_place(&[], |document| {
+            assert_eq!(document.identifiers.reserve_content_control_id()?, 4);
+            assert_eq!(document.identifiers.reserve_permission_id()?, 3);
+            Err(Error::Other("refused".to_owned()))
+        });
+        assert!(result.is_err());
+        assert_eq!(document.identifiers, before);
+        assert_eq!(
+            document.identifiers.reserve_content_control_id().unwrap(),
+            4
+        );
+        assert_eq!(document.identifiers.reserve_permission_id().unwrap(), 3);
+    }
+
+    #[test]
+    fn a_new_control_takes_the_smallest_id_the_registry_holds_free() {
+        let mut document = document();
+        let story = document
+            .stories()
+            .unwrap()
+            .into_iter()
+            .find(|story| story.kind() == StoryKind::Body)
+            .expect("a body story");
+        let index = document
+            .story_items(&story)
+            .unwrap()
+            .iter()
+            .position(|item| item.kind() == StoryItemKind::Paragraph)
+            .expect("a body paragraph");
+        let destination = ContentLocation::new(story, StoryItemKind::Paragraph, vec![index]);
+        document
+            .insert_content_control(
+                &destination,
+                crate::content_control::ContentControlSpec {
+                    placement: crate::content_control::ContentControlPlacement::Block,
+                    kind: oxoffice_docx_oxml::content_control::SdtType::RichText,
+                    tag: Some("new".to_owned()),
+                    alias: None,
+                    lock: None,
+                    appearance: None,
+                    placeholder: None,
+                },
+            )
+            .expect("a control is inserted");
+        assert!(document.identifiers.content_control_ids.contains(&4));
+        assert_eq!(
+            document.identifiers.reserve_content_control_id().unwrap(),
+            5
+        );
     }
 }

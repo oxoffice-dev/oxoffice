@@ -189,7 +189,7 @@ use drawing_xml::{
 };
 pub(crate) use identifiers::part_name_identity;
 use identifiers::{
-    IdentifierDefinition, IdentifierXmlCategory, frame_drawings_are_absent,
+    IdentifierDefinition, IdentifierXmlCategory, STORY_CATEGORIES, frame_drawings_are_absent,
     identifier_xml_is_well_formed, read_child_canonical_facts, relationship_owner_identity,
     reserve_u32, reserve_u32_or_lowest_free, scan_identifier_definitions,
     split_relationship_ids_at_head,
@@ -620,6 +620,11 @@ pub(crate) struct DocumentIdentifiers {
     repeated_drawing_ids: HashMap<String, HashMap<u32, usize>>,
     abstract_numbering_ids: HashSet<u32>,
     numbering_instance_ids: HashSet<u32>,
+    /// The `w:sdt` ids of every story, read at open and reserved since: a
+    /// control an in-place edit removes keeps its id until the next reopen.
+    content_control_ids: HashSet<i32>,
+    /// The `w:permStart` ids of every story, held as the control ids are.
+    permission_ids: HashSet<i32>,
     part_names: HashSet<String>,
     content_type_defaults: HashSet<String>,
     content_type_overrides: HashSet<String>,

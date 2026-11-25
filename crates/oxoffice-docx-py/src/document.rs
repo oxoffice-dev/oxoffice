@@ -87,6 +87,7 @@ use styles::{StyleLineSpacingArg, style_id_from_name};
 use templates::{template_render_pyerr, template_value};
 
 mod block_edits;
+mod block_edits_in_place;
 mod body_splice;
 mod inventory_matches;
 mod owner_anchors;

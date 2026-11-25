@@ -526,6 +526,40 @@ impl PyDocument {
             .cast::<PyStoryRunRange>()
             .map_err(|_| PyTypeError::new_err("range must be a StoryRunRange"))?;
         let range = range.borrow();
+        let in_place = (
+            self.in_place_location(py, &range.start.item)?,
+            self.in_place_location(py, &range.end.item)?,
+        );
+        if let (Some(start), Some(end)) = in_place
+            && start == end
+            && let Some(block) = self.story_item_block(py, &start)?
+        {
+            let in_place = oxoffice_docx::StoryRunRange {
+                start: oxoffice_docx::StoryRunPosition {
+                    location: start,
+                    run_index: range.start.run_index,
+                },
+                end: oxoffice_docx::StoryRunPosition {
+                    location: end,
+                    run_index: range.end.run_index,
+                },
+            };
+            if let Some(id) = self.publish_blocks_edited_in_place(
+                py,
+                "Document.add_story_permission_range",
+                super::paragraph_in_place::BlockRetention::EditedParagraphKeepsItsOwner,
+                |document| {
+                    document.add_story_permission_range_in_block(
+                        editor.as_deref(),
+                        group.as_deref(),
+                        &in_place,
+                        block,
+                    )
+                },
+            )? {
+                return Ok(id.into_pyobject(py)?.unbind());
+            }
+        }
         let start = oxoffice_docx::StoryRunPosition {
             location: self.native_location(py, &range.start.item)?,
             run_index: range.start.run_index,
@@ -535,13 +569,10 @@ impl PyDocument {
             run_index: range.end.run_index,
         };
         drop(range);
+        let native = oxoffice_docx::StoryRunRange { start, end };
         let mut candidate = self.inner.clone_for_staging();
         let id = candidate
-            .add_story_permission_range(
-                editor.as_deref(),
-                group.as_deref(),
-                oxoffice_docx::StoryRunRange { start, end },
-            )
+            .add_story_permission_range(editor.as_deref(), group.as_deref(), native)
             .map_err(|error| docx_to_pyerr(py, error))?;
         let id = id.into_pyobject(py)?.unbind();
         self.publish_api_candidate(py, candidate, "Document.add_story_permission_range")?;
@@ -693,12 +724,31 @@ impl PyDocument {
         let definition = definition.cast::<PyLegacyFormFieldDefinition>()?.borrow();
         let position = position.cast::<PyStoryRunPosition>()?.borrow();
         let field = definition.field();
-        let mut candidate = self.inner.clone_for_staging();
-        let location = self.native_location(py, &position.item)?;
+        if let Some(location) = self.in_place_location(py, &position.item)?
+            && let Some(block) = self.story_item_block(py, &location)?
+        {
+            let in_place = oxoffice_docx::StoryRunPosition {
+                location,
+                run_index: position.run_index,
+            };
+            let in_block = field.clone();
+            if self
+                .publish_blocks_edited_in_place(
+                    py,
+                    "Document.insert_legacy_form_field",
+                    super::paragraph_in_place::BlockRetention::EditedParagraphKeepsItsOwner,
+                    |document| document.insert_field_in_block(&in_place, block, in_block),
+                )?
+                .is_some()
+            {
+                return Ok(());
+            }
+        }
         let native = oxoffice_docx::StoryRunPosition {
-            location,
+            location: self.native_location(py, &position.item)?,
             run_index: position.run_index,
         };
+        let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.insert_field(&native, field))
             .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.insert_legacy_form_field")?;
@@ -3523,8 +3573,21 @@ impl PyDocument {
         item: PyRef<'_, PyStoryItem>,
         text: &str,
     ) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
+        if let Some(location) = self.in_place_location(py, &item)?
+            && let Some(block) = self.story_item_block(py, &location)?
+            && self
+                .publish_blocks_edited_in_place(
+                    py,
+                    "Document.set_story_text",
+                    super::paragraph_in_place::BlockRetention::EditedParagraphKeepsItsOwner,
+                    |document| document.set_story_text_in_block(&location, block, text),
+                )?
+                .is_some()
+        {
+            return Ok(());
+        }
         let location = self.native_location(py, &item)?;
+        let mut candidate = self.inner.clone_for_staging();
         py.detach(|| candidate.set_story_text(&location, text))
             .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = self.prepare_word_revision(

@@ -187,7 +187,7 @@ impl Document {
                 location,
                 run_index,
             };
-            self.assert_in_place_matches_staged(before, &result, |staged| {
+            self.assert_in_place_matches_staged_declarations_aside(before, &result, |staged| {
                 staged.create_note_at_staged(kind, &position, text)
             });
         }

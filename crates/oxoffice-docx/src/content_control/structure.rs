@@ -1,4 +1,4 @@
-//! Locating a control or its parent in a story part, fresh control ids, publishing a candidate, and removing or unwrapping a control.
+//! Locating a control or its parent in a story part, publishing a candidate, and removing or unwrapping a control.
 
 use super::*;
 
@@ -9,20 +9,6 @@ impl Document {
             .map_err(control_fault)?;
         self.commit_staged_mutation(reopened);
         Ok(())
-    }
-
-    pub(super) fn smallest_content_control_id(&self) -> Result<i32> {
-        let mut used = HashSet::new();
-        for xml in self.owned_story_parts()? {
-            collect_control_ids(&xml, &mut used)?;
-        }
-        let mut id = 1i32;
-        while used.contains(&id) {
-            id = id
-                .checked_add(1)
-                .ok_or_else(|| Error::Other("content control ids are exhausted".to_owned()))?;
-        }
-        Ok(id)
     }
 }
 
@@ -194,31 +180,6 @@ pub(super) fn control_item(
     document
         .copy_indexed_story_item(location, location.index_path())
         .map_err(control_fault)
-}
-
-fn collect_control_ids(xml: &[u8], used: &mut HashSet<i32>) -> Result<()> {
-    let elems = index_elements(xml)?;
-    for elem in &elems {
-        if !(elem.word && elem.local == b"id") {
-            continue;
-        }
-        let Some(parent) = elem
-            .parent
-            .and_then(|id| elems.iter().find(|item| item.id == id))
-        else {
-            continue;
-        };
-        if !(parent.word && parent.local == b"sdtPr") {
-            continue;
-        }
-        if let Some(value) = &elem.val
-            && let Ok(id) = value.parse::<i32>()
-            && id > 0
-        {
-            used.insert(id);
-        }
-    }
-    Ok(())
 }
 
 fn sdt_content_bytes(xml: &[u8], sdt_range: &Range<usize>) -> Result<Vec<u8>> {
