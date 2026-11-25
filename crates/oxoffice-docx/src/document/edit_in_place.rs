@@ -34,6 +34,12 @@ pub enum EditUnit {
     /// An edit may name several, disjoint and in slot order: then only the
     /// last may change its number of blocks, each other one keeps it.
     BodyBlocks { slot: usize, count: usize },
+    /// The section properties of the body's last section (`w:body/w:sectPr`),
+    /// copied whole: they do not grow with the body. A section that a
+    /// paragraph ends keeps its properties in that paragraph, which a
+    /// `BodyBlocks` unit covers. The relationships its header and footer
+    /// references name are the part and reservation journals'.
+    BodySection,
 }
 
 /// What an edit did to the direct body blocks of its `BodyBlocks` unit: the
@@ -155,6 +161,8 @@ pub struct EditUndo {
     comments: Option<CommentsCopy>,
     styles: Option<StylesCopy>,
     settings: Option<SettingsCopy>,
+    /// The body's last section properties, for a `BodySection` unit.
+    section: Option<Option<CT_SectPr>>,
     /// One copy per `BodyBlocks` unit, in slot order.
     body: Vec<BodyBlocksCopy>,
     /// The endnotes part's bytes before the edit, for its no-op answer.
@@ -210,6 +218,7 @@ impl Document {
             comments: None,
             styles: None,
             settings: None,
+            section: None,
             body: Vec::new(),
             endnotes: None,
             scalars: ScalarCopy {
@@ -261,6 +270,9 @@ impl Document {
                     });
                 }
                 EditUnit::Parts => {}
+                EditUnit::BodySection => {
+                    undo.section = Some(self.document.body.sect_pr.clone());
+                }
                 EditUnit::BodyBlocks { slot, count } => {
                     let content = &self.document.body.content;
                     let end = (*slot + *count).min(content.len());
@@ -290,6 +302,7 @@ impl Document {
             comments,
             styles,
             settings,
+            section,
             body,
             scalars,
             parts,
@@ -347,6 +360,9 @@ impl Document {
         let ranges = body_ranges(&body, self.document.body.content.len());
         for (copy, range) in body.into_iter().zip(ranges).rev() {
             self.document.body.content.splice(range, copy.blocks);
+        }
+        if let Some(section) = section {
+            self.document.body.sect_pr = section;
         }
         self.invalidate_layout();
         if let Some(unsavable) = unsavable {
@@ -409,6 +425,10 @@ impl Document {
                                 || copy.part_name != self.settings_part_name
                         }),
                         EditUnit::Parts => self.package.part_journal_changed(&undo.parts),
+                        EditUnit::BodySection => undo
+                            .section
+                            .as_ref()
+                            .is_some_and(|before| *before != self.document.body.sect_pr),
                         EditUnit::BodyBlocks { .. } => body_changed.next().unwrap_or(false),
                     };
                     (unit.clone(), changed)
@@ -572,6 +592,7 @@ impl EditUndo {
             comments,
             styles,
             settings,
+            section,
             body,
             endnotes,
             parts,
@@ -588,6 +609,7 @@ impl EditUndo {
         self.comments = self.comments.take().or(comments);
         self.styles = self.styles.take().or(styles);
         self.settings = self.settings.take().or(settings);
+        self.section = self.section.take().or(section);
         debug_assert!(
             self.body.is_empty() || body.is_empty(),
             "two held edits name body blocks"
@@ -1031,6 +1053,46 @@ mod tests {
         assert!(report.units.iter().all(|(_, changed)| *changed));
         document.undo_edit(undo);
         assert_eq!(body_texts(&document), texts);
+    }
+
+    /// The body's last section properties: a change is reported and undone,
+    /// and a refusal puts them back.
+    #[test]
+    fn the_body_section_unit_reports_and_undoes_its_change() {
+        let mut document = Document::new();
+        let section = document.document.body.sect_pr.clone();
+        let width = section.as_ref().and_then(|section| section.page_width);
+        let widen = |document: &mut Document| {
+            let section = document
+                .document
+                .body
+                .sect_pr
+                .get_or_insert_with(oxoffice_docx_oxml::CT_SectPr::default_letter);
+            section.page_width = Some(Twips(width.map_or(12_240, |width| width.0 + 720)));
+            document.invalidate_layout();
+        };
+        let error = document
+            .edit_in_place(&[EditUnit::BodySection], |document| {
+                widen(document);
+                Err::<(), _>(Error::Other("refused".into()))
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "refused");
+        assert_eq!(document.document.body.sect_pr, section);
+        document.hold_edit_undo();
+        document
+            .edit_in_place(&[EditUnit::BodySection], |document| {
+                widen(document);
+                Ok(())
+            })
+            .unwrap();
+        let undo = document
+            .take_edit_undo()
+            .expect("the edit changed the section");
+        assert_eq!(undo.report().units, [(EditUnit::BodySection, true)]);
+        assert_ne!(document.document.body.sect_pr, section);
+        document.undo_edit(undo);
+        assert_eq!(document.document.body.sect_pr, section);
     }
 
     /// A unit the edit left alone is reported unchanged, the other changed.
