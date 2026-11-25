@@ -115,14 +115,18 @@ fn a_paragraph_that_ends_a_section_is_not_removed_in_place() {
     doc.add_paragraph("three");
     let mut doc = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
     let before = doc.to_bytes().unwrap();
-    let ending = (0..doc.content_count())
-        .find(|slot| {
+    let refused: Vec<usize> = (0..doc.content_count())
+        .filter(|slot| {
             doc.remove_body_blocks_in_place(*slot, slot + 1)
                 .unwrap()
                 .map(|removed| doc.restore_body_blocks(removed).unwrap())
                 .is_none()
         })
-        .expect("the paragraph that ends the first section is refused");
+        .collect();
+    // Only the paragraph that ends the first section is refused.
+    let [ending] = refused[..] else {
+        panic!("one refused slot, got {refused:?}");
+    };
     assert!(ending < doc.content_count() - 1);
     assert_eq!(doc.to_bytes().unwrap(), before);
 }

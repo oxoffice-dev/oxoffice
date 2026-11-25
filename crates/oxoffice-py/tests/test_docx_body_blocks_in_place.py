@@ -375,9 +375,9 @@ def test_a_paragraph_holding_a_text_box_is_removed_with_every_other_box_kept(cal
     box, cell = text_box_paragraph(doc, "box 2"), doc.tables[0].cell(0, 0).paragraphs[0]
     CALLS[call](doc, slot(doc, doc.paragraphs[1]))
     assert [item.text for item in doc.story_items if item.story.kind == "text_box"] == ["box 2"]
-    # Where a text box moves the cell stories, the whole route retires every handle; else they are kept.
-    assert outcome(lambda: box.text) in ("box 2", STALE)
-    assert outcome(lambda: cell.text) in ("cell", STALE)
+    # A block holding a text box keeps the whole route, which retires every handle.
+    assert outcome(lambda: box.text) == STALE
+    assert outcome(lambda: cell.text) == STALE
     assert texts(reopened(doc)) == texts(doc)
 
 
@@ -396,7 +396,8 @@ def test_a_table_before_another_one_is_removed_where_a_text_box_holds_cell_stori
     second = doc.tables[1].cell(0, 0).paragraphs[0]
     CALLS[call](doc, slot(doc, doc.tables[0]))
     assert [table.cell(0, 0).text for table in doc.tables] == ["second cell"]
-    assert outcome(lambda: second.text) in ("second cell", STALE)
+    # Cell stories a text box holds are not anchored to their items: the whole route, which retires every handle.
+    assert outcome(lambda: second.text) == STALE
     assert texts(reopened(doc)) == texts(doc)
 
 
@@ -412,3 +413,28 @@ def test_a_body_a_typed_edit_cannot_save_takes_the_staged_route(call, tmp_path, 
         monkeypatch,
     )
     assert [result[:2] for result in results[:1]] == [result[:2] for result in results[1:]]
+
+
+def nested_body_items(doc):
+    """Body story items inside a direct body block, which name the slot of the block that holds them, one per kind:
+    a drawing in its paragraph, and a content control nested in a block that is one."""
+    seen, nested = set(), {}
+    for item in doc.story_items:
+        if item.story.kind != "body" or item.direct_body_index is None:
+            continue
+        if item.direct_body_index in seen:
+            nested.setdefault(item.kind, item)
+        seen.add(item.direct_body_index)
+    return nested
+
+
+@pytest.mark.skipif(not debug_build(), reason="a debug build takes the staged route on request")
+@pytest.mark.parametrize("kind", ["drawing", "content_control"])
+def test_popping_an_item_inside_a_block_takes_what_the_staged_route_takes(body, kind, monkeypatch):
+    assert kind in nested_body_items(oxdocx.Document.from_bytes(body))
+    local, staged = staged_and_local(
+        lambda: oxdocx.Document.from_bytes(body),
+        lambda doc: doc.pop_content(nested_body_items(doc)[kind]),
+        monkeypatch,
+    )
+    assert local[:2] == staged[:2]

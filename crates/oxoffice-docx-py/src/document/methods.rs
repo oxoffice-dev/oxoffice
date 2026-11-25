@@ -5080,9 +5080,15 @@ impl PyDocument {
         // owners publishes it; any other item, or a refusal, stages.
         let location = if let Ok(item) = index.cast::<PyStoryItem>() {
             let location = slf.borrow(py).native_location(py, &item.borrow())?;
-            let slot = item.borrow().direct_body_index.filter(|_| {
+            // Only the item that is the block at its slot: a field, a
+            // drawing or a paragraph inside a block control names the slot
+            // of the block that holds it.
+            let slot = item.borrow().direct_body_index.filter(|slot| {
                 location.story().kind() == oxoffice_docx::StoryKind::Body
                     && location.index_path().len() == 1
+                    && slf
+                        .borrow(py)
+                        .is_body_block_item(*slot, location.index_path()[0])
             });
             if let Some(slot) = slot
                 && let Some(fragment) =

@@ -719,6 +719,17 @@ impl PyDocument {
     /// fragment, or `None` with the document and every handle as they were
     /// for the staged route. `location` is the slot's body story item, which
     /// debug builds use to compare the fragment with the staged one.
+    /// Whether body story item `index` is the direct body block at `slot`,
+    /// read from the body item records (false when they are not ready).
+    pub(super) fn is_body_block_item(&self, slot: usize, index: usize) -> bool {
+        self.indexes.items.ready()
+            && self
+                .indexes
+                .items
+                .at_slot(slot)
+                .is_some_and(|item| item.index() == index)
+    }
+
     pub(super) fn pop_body_block_local(
         &mut self,
         py: Python<'_>,
