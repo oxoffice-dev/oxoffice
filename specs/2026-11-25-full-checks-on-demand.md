@@ -54,7 +54,15 @@ removed, the report job keyed on `inputs.report` alone; every mention in
 `ci.yml`, `release.yml`, the test helpers, `docs/DEVELOPMENT.md` and
 `docs/RELEASE.md`. Checked with `actionlint`; a renamed workflow can only
 be dispatched once it is on `main`, so the first run is the one after the
-merge, on `main` with `report=true`. The dated specs keep their wording.
+merge, on `main` with `report=true`. The dated specs keep their wording;
+the CI spec of 2026-11-22 gets a line that links here.
+
+After the merge, in this order: merge #654 (the fix of #653), rename the
+label on GitHub (`gh label edit ci-nightly --name ci-full-checks
+--description "The full checks failed on main"`), so that #653 and the
+closed issues keep it, then dispatch `full-checks.yml` on `main` with
+`report=true`. A failing run before the rename would create the new label
+and a second issue; a green one would leave #653 open.
 
 ## Links
 

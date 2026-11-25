@@ -169,7 +169,7 @@ jobs:
               gh label create ci-full-checks --color B60205 --description "The full checks failed on main" --force
               gh issue create --title "Full checks failing" --label ci-full-checks --label "area: ci" \
                 --label "S2 wrong result" \
-                --body "$(printf '%s\n\nSeen with: the %s run of full-checks.yml on main. Closed by the next green run.\n' "$body" "$GITHUB_EVENT_NAME")"
+                --body "$(printf '%s\n\nSeen with: the %s run of full-checks.yml on main. Closed by the next green run on main with report=true.\n' "$body" "$GITHUB_EVENT_NAME")"
             fi
             echo "::error::full checks failed: $(tr '\n' ' ' <<< "$failed")"
           elif [ -n "$issue" ]; then

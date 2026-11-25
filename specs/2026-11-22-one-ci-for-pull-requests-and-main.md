@@ -51,6 +51,9 @@ and `OXOFFICE_WORKFLOWS=full`; every scaling call on the three platforms.
 A failure opens or comments one issue labelled `ci-nightly`; the next green
 run closes it. Its jobs restore main's caches (shared keys) and save none:
 the debug test builds start from scratch, which nobody waits for.
+Amended 2026-11-25: the full sets run on demand, without a schedule, as
+`full-checks.yml`, label `ci-full-checks`; see
+[full checks on demand](2026-11-25-full-checks-on-demand.md).
 
 Every push, drafts and stacked pull requests included, now runs a macOS job.
 The night of 2026-11-21 queued on the 5 macOS jobs the organization could
