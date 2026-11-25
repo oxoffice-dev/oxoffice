@@ -307,3 +307,108 @@ def test_a_picture_popped_in_place_and_inserted_again_keeps_unique_drawing_ids(b
     ids = re.findall(r'<wp:docPr id="(\d+)"', xml)
     assert ids and len(ids) == len(set(ids))
     assert texts(reopened(doc)) == texts(doc)
+
+
+def staged_and_local(make, edit, monkeypatch):
+    """What `edit` returns or raises and what the document then saves, on the route in place and on the staged
+    route, which a debug build takes on request."""
+    results = []
+    for staged in (False, True):
+        if staged:
+            monkeypatch.setenv("OXOFFICE_DEBUG_STAGED_BODY_REMOVAL", "1")
+        doc = make()
+        try:
+            returned = edit(doc)
+        except oxdocx.DocxError as error:
+            returned = f"raised {error}"
+        try:
+            saved = doc.to_bytes()
+        except oxdocx.DocxError as error:
+            saved = f"save raised {error}"
+        results.append((repr(returned) if not hasattr(returned, "kind") else "fragment", saved, doc))
+    monkeypatch.delenv("OXOFFICE_DEBUG_STAGED_BODY_REMOVAL")
+    return results
+
+
+BOOKMARKED = {
+    # The bookmark start before the paragraph whose end it holds goes with it, and so does the end after it.
+    "owned around": '<w:bookmarkStart w:id="1" w:name="a"/>' + "{p}" + '<w:bookmarkEnd w:id="1"/>',
+    # Between the paragraph and the start it owns, a start whose bookmark ends further on stays: the markers that go
+    # are not one range, and the staged route takes them.
+    "split by a start that stays": '<w:bookmarkStart w:id="2" w:name="b"/><w:bookmarkStart w:id="3" w:name="c"/>'
+    + "{p}"
+    + '<w:bookmarkEnd w:id="3"/>',
+}
+
+
+@pytest.mark.skipif(not debug_build(), reason="a debug build takes the staged route on request")
+@pytest.mark.parametrize("shape", list(BOOKMARKED))
+@pytest.mark.parametrize("call", list(CALLS))
+def test_bookmark_markers_go_with_their_block_as_the_staged_route_takes_them(call, shape, monkeypatch):
+    from test_docx_block_handles import document, p
+
+    xml = p("first", " run") + BOOKMARKED[shape].format(p=p("marked", " run")) + p("later", " run")
+    if shape == "split by a start that stays":
+        xml += p('<w:bookmarkEnd w:id="2"/>', "end")
+    results = staged_and_local(
+        lambda: document(xml, ids=True),
+        lambda doc: CALLS[call](doc, slot(doc, doc.paragraphs[1])),
+        monkeypatch,
+    )
+    (local, local_bytes, doc), (staged, staged_bytes, _) = results
+    assert (local, local_bytes) == (staged, staged_bytes)
+    assert texts(reopened(doc)) == texts(doc)
+
+
+@pytest.mark.parametrize("call", list(CALLS))
+def test_a_paragraph_holding_a_text_box_is_removed_with_every_other_box_kept(call):
+    from test_docx_block_handles import document, p, table, text_box, text_box_paragraph
+
+    doc = document(
+        p("first", " run")
+        + p("one", text_box("box 1"))
+        + p("two", text_box("box 2"))
+        + table(p("cell"))
+        + p("end", " x"),
+        ids=True,
+    )
+    box, cell = text_box_paragraph(doc, "box 2"), doc.tables[0].cell(0, 0).paragraphs[0]
+    CALLS[call](doc, slot(doc, doc.paragraphs[1]))
+    assert [item.text for item in doc.story_items if item.story.kind == "text_box"] == ["box 2"]
+    # Where a text box moves the cell stories, the whole route retires every handle; else they are kept.
+    assert outcome(lambda: box.text) in ("box 2", STALE)
+    assert outcome(lambda: cell.text) in ("cell", STALE)
+    assert texts(reopened(doc)) == texts(doc)
+
+
+@pytest.mark.parametrize("call", list(CALLS))
+def test_a_table_before_another_one_is_removed_where_a_text_box_holds_cell_stories_unanchored(call):
+    from test_docx_block_handles import document, p, table, text_box
+
+    doc = document(
+        p("box holder", text_box("in box"))
+        + table(p("first cell"))
+        + p("between", " run")
+        + table(p("second cell"))
+        + p("end", " x"),
+        ids=True,
+    )
+    second = doc.tables[1].cell(0, 0).paragraphs[0]
+    CALLS[call](doc, slot(doc, doc.tables[0]))
+    assert [table.cell(0, 0).text for table in doc.tables] == ["second cell"]
+    assert outcome(lambda: second.text) in ("second cell", STALE)
+    assert texts(reopened(doc)) == texts(doc)
+
+
+@pytest.mark.skipif(not debug_build(), reason="a debug build takes the staged route on request")
+@pytest.mark.parametrize("call", list(CALLS))
+def test_a_body_a_typed_edit_cannot_save_takes_the_staged_route(call, tmp_path, monkeypatch):
+    from builders import body_namespace_docx
+
+    data = body_namespace_docx(tmp_path / "namespaced.docx").read_bytes()
+    results = staged_and_local(
+        lambda: oxdocx.Document.from_bytes(data),
+        lambda doc: CALLS[call](doc, 0),
+        monkeypatch,
+    )
+    assert [result[:2] for result in results[:1]] == [result[:2] for result in results[1:]]

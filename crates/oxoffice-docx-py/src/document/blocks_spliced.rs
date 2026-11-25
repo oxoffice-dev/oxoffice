@@ -318,9 +318,12 @@ impl PyDocument {
         }
         let first = self.first_item_of_slot(slot, removed, &old)?;
         // The old items hold exactly the records of the old blocks.
-        if items.records_between(first, first + old.items) != old.records.len() {
-            return None;
-        }
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            items.records_between(first, first + old.items),
+            old.records.len(),
+            "records of the old blocks"
+        );
         let (paragraphs, tables, cells) = items.before(first);
         let bases = BlockBases {
             first,
@@ -332,13 +335,8 @@ impl PyDocument {
         };
         // The old owners, found by their routes.
         let mut old_keys = Vec::with_capacity(old.addresses.len());
-        let mut seen = std::collections::HashSet::with_capacity(old.addresses.len());
         for address in &old.addresses {
-            let key = indexes.find(&self.owners, &bases.address(address).location)?;
-            if !seen.insert(key) {
-                return None;
-            }
-            old_keys.push(key);
+            old_keys.push(indexes.find(&self.owners, &bases.address(address).location)?);
         }
         // The projections take one range each.
         let paragraph = self.inner.paragraph_count_before_content(slot);

@@ -956,6 +956,7 @@ impl WordBodyItems {
     }
 
     /// How many records the body story items `first..end` have.
+    #[cfg(debug_assertions)]
     pub(super) fn records_between(&self, first: usize, end: usize) -> usize {
         self.position(end) - self.position(first)
     }
