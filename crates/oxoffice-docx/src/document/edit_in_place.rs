@@ -155,6 +155,12 @@ impl EditUndo {
     pub fn report(&self) -> &EditReport {
         &self.report
     }
+
+    /// The direct body blocks the `BodyBlocks` unit copied before the edit,
+    /// from its slot on.
+    pub fn previous_body_blocks(&self) -> Option<&[oxoffice_docx_oxml::document::BodyContent]> {
+        self.body.as_ref().map(|copy| copy.blocks.as_slice())
+    }
 }
 
 /// The in-place edit open on a document and the undo its caller holds. A
@@ -607,9 +613,63 @@ impl Document {
     /// document as it was.
     pub(crate) fn assert_in_place_matches_staged<T: PartialEq + std::fmt::Debug>(
         &self,
+        before: Self,
+        result: &Result<T>,
+        staged: impl FnOnce(&mut Self) -> Result<T>,
+    ) {
+        self.assert_in_place_matches_staged_by(before, result, staged, |live, staged| {
+            assert_eq!(
+                live, staged,
+                "in-place edit saves other bytes than the staged edit"
+            );
+        });
+    }
+
+    /// [`Self::assert_in_place_matches_staged`] for an in-place edit that
+    /// writes its element from the model while the staged route writes it
+    /// from a fragment that declares its namespaces again: the two packages
+    /// hold the same parts, and the same bytes once the namespace
+    /// declarations are set aside.
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_in_place_matches_staged_declarations_aside<
+        T: PartialEq + std::fmt::Debug,
+    >(
+        &self,
+        before: Self,
+        result: &Result<T>,
+        staged: impl FnOnce(&mut Self) -> Result<T>,
+    ) {
+        self.assert_in_place_matches_staged_by(before, result, staged, |live, staged| {
+            let parts = |saved: &std::result::Result<Vec<u8>, String>| {
+                saved.as_ref().map_err(String::clone).map(|bytes| {
+                    let package =
+                        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes))
+                            .expect("a saved package reopens");
+                    let mut parts = package
+                        .parts
+                        .iter()
+                        .map(|(name, bytes)| (name.clone(), without_namespace_declarations(bytes)))
+                        .collect::<Vec<_>>();
+                    parts.sort();
+                    parts
+                })
+            };
+            assert!(
+                parts(live) == parts(staged),
+                "in-place edit saves other parts than the staged edit, namespace declarations aside"
+            );
+        });
+    }
+
+    fn assert_in_place_matches_staged_by<T: PartialEq + std::fmt::Debug>(
+        &self,
         mut before: Self,
         result: &Result<T>,
         staged: impl FnOnce(&mut Self) -> Result<T>,
+        same_saves: impl FnOnce(
+            &std::result::Result<Vec<u8>, String>,
+            &std::result::Result<Vec<u8>, String>,
+        ),
     ) {
         let unchanged = before
             .clone_for_staging()
@@ -623,11 +683,7 @@ impl Document {
         match (result, &staged_result) {
             (Ok(direct), Ok(staged_value)) => {
                 assert_eq!(direct, staged_value, "in-place edit answered otherwise");
-                assert_eq!(
-                    live,
-                    before.to_bytes().map_err(|e| e.to_string()),
-                    "in-place edit saves other bytes than the staged edit"
-                );
+                same_saves(&live, &before.to_bytes().map_err(|e| e.to_string()));
                 assert_eq!(
                     self.package_signatures_invalidated, before.package_signatures_invalidated,
                     "in-place edit invalidates signatures otherwise than the staged edit"
@@ -655,6 +711,39 @@ impl Document {
             (Err(direct), Ok(_)) => panic!("in-place edit refused with {direct}"),
         }
     }
+}
+
+/// `xml` without its namespace declarations (` xmlns="..."`,
+/// ` xmlns:p="..."`); other bytes as they are.
+#[cfg(debug_assertions)]
+fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(at) = rest
+        .windows(7)
+        .position(|window| window == b" xmlns=" || window == b" xmlns:")
+    {
+        out.extend_from_slice(&rest[..at]);
+        let after = &rest[at + 1..];
+        let value = after
+            .iter()
+            .position(|byte| *byte == b'"')
+            .and_then(|open| {
+                after[open + 1..]
+                    .iter()
+                    .position(|byte| *byte == b'"')
+                    .map(|close| open + 1 + close + 1)
+            });
+        match value {
+            Some(end) => rest = &after[end..],
+            None => {
+                out.extend_from_slice(&rest[at..]);
+                return out;
+            }
+        }
+    }
+    out.extend_from_slice(rest);
+    out
 }
 
 #[cfg(test)]

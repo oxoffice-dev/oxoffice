@@ -152,6 +152,54 @@ impl Document {
         set_story_source_xml(self, &part_name, xml)
     }
 
+    /// The direct body paragraph a story location names, as a copy, when the
+    /// location is a paragraph of the main part's body that is itself the
+    /// direct body block `block` names: the in-place routes edit that copy
+    /// and swap it in, as the paragraph edits do. A body that cannot be saved
+    /// after a typed edit is not asked about: its save reports it, as the
+    /// staged route does.
+    pub(crate) fn direct_body_paragraph_at(
+        &self,
+        location: &ContentLocation,
+        block: crate::ControlBlock,
+    ) -> Option<CT_P> {
+        let story = &location.story;
+        if story.kind != StoryKind::Body
+            || story.owner_index != 0
+            || block.owner_index != 0
+            || block.item_index != 0
+            || location.index_path.len() != 1
+            || location.item_kind != StoryItemKind::Paragraph
+            || story.part_name != self.doc_part_name
+        {
+            return None;
+        }
+        match self.document.body.content.get(block.slot)? {
+            BodyContent::Paragraph(paragraph) => Some((**paragraph).clone()),
+            _ => None,
+        }
+    }
+
+    /// [`Self::insert_story_run_staged`] on a direct body paragraph
+    /// ([`Self::direct_body_paragraph_at`]), swapped in place under a
+    /// `BodyBlocks` unit: `Some(changed)`. `None`, changing nothing, for any
+    /// other location.
+    pub(crate) fn insert_story_run_in_block(
+        &mut self,
+        position: &crate::StoryRunPosition,
+        block: crate::ControlBlock,
+        run: CT_R,
+    ) -> Result<Option<bool>> {
+        let Some(mut paragraph) = self.direct_body_paragraph_at(&position.location, block) else {
+            return Ok(None);
+        };
+        paragraph
+            .insert_accepted_run(position.run_index, run)
+            .map_err(|error| Error::Other(format!("field insertion boundary: {error}")))?;
+        self.replace_body_block_in_place(block.slot, BodyContent::Paragraph(Box::new(paragraph)))
+            .map(Some)
+    }
+
     pub(crate) fn anchor_story_range(
         &mut self,
         range: &crate::comments::StoryRunRange,
@@ -303,6 +351,46 @@ impl Document {
             _ => updated,
         };
         set_story_source_xml(self, &part_name, updated)
+    }
+
+    /// The direct body paragraph that holds the range
+    /// ([`Self::direct_body_paragraph_at`]), with the range anchored as
+    /// [`Self::anchor_story_range`] anchors it, for a range whose two ends
+    /// sit in that paragraph; the caller swaps it in. `None` for any other
+    /// range. Comment anchors, which also move a reference run, are not
+    /// taken.
+    pub(crate) fn story_range_anchored_block(
+        &self,
+        range: &crate::comments::StoryRunRange,
+        block: crate::ControlBlock,
+        anchor: RangeAnchor<'_>,
+        label: &str,
+    ) -> Result<Option<BodyContent>> {
+        if matches!(anchor, RangeAnchor::Comment(_)) || range.end.location != range.start.location {
+            return Ok(None);
+        }
+        let Some(mut paragraph) = self.direct_body_paragraph_at(&range.start.location, block)
+        else {
+            return Ok(None);
+        };
+        let (start_run, end_run) = (range.start.run_index, range.end.run_index);
+        let count = paragraph.accepted_run_paths().len();
+        for (boundary, index) in [("start", start_run), ("end", end_run)] {
+            if index > count {
+                return Err(Error::Other(format!(
+                    "{label} range {boundary} run index {index} exceeds paragraph run count {count}"
+                )));
+            }
+        }
+        if start_run > end_run {
+            return Err(Error::Other(format!(
+                "{label} range start must not follow its end"
+            )));
+        }
+        paragraph
+            .anchor_accepted_range(Some(start_run), Some(end_run), anchor)
+            .map_err(|error| Error::Other(format!("{label} range cannot be anchored: {error}")))?;
+        Ok(Some(BodyContent::Paragraph(Box::new(paragraph))))
     }
 
     /// Stage a comment move using physical source edits, then bind the surviving
@@ -897,14 +985,6 @@ impl Document {
 impl Document {
     pub(crate) fn location_is_end(location: &ContentLocation) -> bool {
         location.is_end
-    }
-
-    pub(crate) fn owned_story_parts(&self) -> Result<Vec<Vec<u8>>> {
-        Ok(self
-            .story_sources()?
-            .into_iter()
-            .map(|source| source.xml.into_owned())
-            .collect())
     }
 
     pub(crate) fn copy_indexed_story_item(

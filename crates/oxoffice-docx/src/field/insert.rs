@@ -141,6 +141,53 @@ impl Document {
         Ok(())
     }
 
+    /// [`Self::insert_field`] on a paragraph of the main part's body, its
+    /// table cells or text boxes, written in the direct body block that holds
+    /// it (`block`, found by the caller) and swapped in place under a
+    /// `BodyBlocks` unit: `Some(changed)`. `None`, changing nothing, sends the
+    /// caller to [`Self::insert_field`].
+    #[doc(hidden)]
+    pub fn insert_field_in_block(
+        &mut self,
+        position: &crate::StoryRunPosition,
+        block: crate::ControlBlock,
+        field: Field,
+    ) -> Result<Option<bool>> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = field
+            .validate_for_attachment()
+            .map_err(|error| Error::Other(error.to_string()))
+            .and_then(|()| {
+                let mut run = CT_R::new("");
+                run.content = vec![RunContent::Field(field.clone())];
+                self.insert_story_run_in_block(position, block, run)
+            });
+        #[cfg(debug_assertions)]
+        match &result {
+            Ok(None) => assert!(
+                self.clone_for_staging().to_bytes().ok()
+                    == before.clone_for_staging().to_bytes().ok(),
+                "a field insertion left to the staged route changed the document"
+            ),
+            _ => self.assert_in_place_matches_staged_declarations_aside(
+                before,
+                &result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|error| Error::Other(error.to_string())),
+                |staged| {
+                    let position = crate::StoryRunPosition {
+                        location: staged.fingerprinted(&position.location),
+                        run_index: position.run_index,
+                    };
+                    staged.insert_field(&position, field)
+                },
+            ),
+        }
+        result
+    }
+
     /// Insert a caption and allocate separate whole, label and number targets.
     pub fn insert_caption(
         &mut self,

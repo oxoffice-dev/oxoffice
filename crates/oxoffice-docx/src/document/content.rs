@@ -1043,6 +1043,8 @@ pub(crate) struct BodyBlockItem {
     pub(crate) tail: usize,
     /// The item, in `xml`.
     pub(crate) item: Range<usize>,
+    /// The item as the story scan read it, in `xml`.
+    pub(super) span: StoryItemSpan,
 }
 
 impl BodyBlockItem {
@@ -1122,12 +1124,13 @@ impl Document {
         {
             return Ok(None);
         }
-        let item = item.full.clone();
+        let span = item.clone();
         Ok(Some(BodyBlockItem {
             head,
             tail: tail.len(),
+            item: span.full.clone(),
             xml,
-            item,
+            span,
         }))
     }
 
@@ -1150,6 +1153,18 @@ impl Document {
         slot: usize,
         block: BodyContent,
     ) -> Result<bool> {
+        self.replace_body_block_in_place_with(slot, block, |_| Ok(()))
+    }
+
+    /// [`Self::replace_body_block_in_place`], running `also` in the same
+    /// edit after the swap (an id reservation the block writes): a failure
+    /// of `also` undoes the swap.
+    pub(crate) fn replace_body_block_in_place_with(
+        &mut self,
+        slot: usize,
+        block: BodyContent,
+        also: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<bool> {
         if self.document.body.content.get(slot) == Some(&block) {
             return Ok(false);
         }
@@ -1160,7 +1175,7 @@ impl Document {
         self.edit_in_place(&[EditUnit::BodyBlocks { slot, count: 1 }], |document| {
             document.document.body.content[slot] = block;
             document.invalidate_layout();
-            Ok(())
+            also(document)
         })?;
         let changed = self.take_last_edit_changed();
         if changed {

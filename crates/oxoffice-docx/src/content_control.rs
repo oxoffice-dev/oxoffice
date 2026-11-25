@@ -104,6 +104,7 @@ use type_change::{
 };
 use values::{placeholder_style_ids, story_controls};
 
+pub(crate) use in_place::declares_only_word_extensions;
 pub use in_place::{ContentControlEdit, ControlBlock};
 
 /// Read-only view of one structured document tag in document order.
@@ -440,9 +441,11 @@ impl Document {
         reject_control_text("content-control tag", spec.tag.as_deref())?;
         reject_control_text("content-control alias", spec.alias.as_deref())?;
         let kind_name = plain_or_rich(spec.kind)?;
-        let id = self.smallest_content_control_id()?;
-        let shell = control_shell(&spec, id, kind_name)?;
         let mut candidate = self.clone_for_staging();
+        // Reserved on the candidate, whose registry a success commits and a
+        // refusal drops with it.
+        let id = candidate.identifiers.reserve_content_control_id()?;
+        let shell = control_shell(&spec, id, kind_name)?;
         candidate.flush_to_package()?;
         match spec.placement {
             ContentControlPlacement::Block | ContentControlPlacement::Paragraph => {
@@ -735,7 +738,7 @@ impl Document {
                 }
                 RepeatingContent::AlreadyItem => {}
                 RepeatingContent::Wrap => {
-                    let id = candidate.smallest_content_control_id()?;
+                    let id = candidate.identifiers.reserve_content_control_id()?;
                     (xml, range) = wrap_repeating_item(&xml, &range, id)?;
                 }
             },

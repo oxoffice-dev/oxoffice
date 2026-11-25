@@ -815,6 +815,22 @@ impl DocumentIdentifiers {
                 .map(ToString::to_string)
                 .collect(),
         );
+        unreserved(
+            "content control ids",
+            reopened
+                .content_control_ids
+                .difference(&self.content_control_ids)
+                .map(ToString::to_string)
+                .collect(),
+        );
+        unreserved(
+            "permission ids",
+            reopened
+                .permission_ids
+                .difference(&self.permission_ids)
+                .map(ToString::to_string)
+                .collect(),
+        );
     }
 }
 

@@ -213,6 +213,119 @@ impl Document {
         Ok(())
     }
 
+    /// [`Self::set_story_text`] on an item of the main part's body, its table
+    /// cells or text boxes, written in the direct body block that holds it
+    /// (`block`, found by the caller) and swapped in place under a
+    /// `BodyBlocks` unit: `Some(changed)`. `None`, changing nothing, when the
+    /// block does not hold that item, a save of the body is known to fail,
+    /// or the edited block does not read back as it writes: the caller then
+    /// takes [`Self::set_story_text`].
+    #[doc(hidden)]
+    pub fn set_story_text_in_block(
+        &mut self,
+        location: &ContentLocation,
+        block: crate::ControlBlock,
+        value: &str,
+    ) -> Result<Option<bool>> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.set_story_text_in_block_unchecked(location, block, value);
+        #[cfg(debug_assertions)]
+        match &result {
+            Ok(None) => assert!(
+                self.clone_for_staging().to_bytes().ok()
+                    == before.clone_for_staging().to_bytes().ok(),
+                "a story text edit left to the staged route changed the document"
+            ),
+            _ => self.assert_in_place_matches_staged(
+                before,
+                &result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|error| Error::Other(error.to_string())),
+                |staged| {
+                    let location = staged.fingerprinted(location);
+                    staged.set_story_text(&location, value)
+                },
+            ),
+        }
+        result
+    }
+
+    fn set_story_text_in_block_unchecked(
+        &mut self,
+        location: &ContentLocation,
+        block: crate::ControlBlock,
+        value: &str,
+    ) -> Result<Option<bool>> {
+        let story = &location.story;
+        let placed = match story.kind {
+            StoryKind::Body => story.owner_index == 0 && block.owner_index == 0,
+            StoryKind::TableCell | StoryKind::TextBox => true,
+            _ => false,
+        };
+        if !placed
+            || location.index_path.len() != 1
+            || location.item_kind == StoryItemKind::PreservedNode
+            || story.part_name != self.doc_part_name
+        {
+            return Ok(None);
+        }
+        // A character XML cannot carry fails the staged route's save, with
+        // its own error.
+        if oxoffice_core::xml::reject_non_xml_characters("story text", value).is_err() {
+            return Ok(None);
+        }
+        let Some(source) = self.body_block_item(
+            block.slot,
+            (story.kind, block.owner_index),
+            block.item_index,
+            location.item_kind,
+        )?
+        else {
+            return Ok(None);
+        };
+        let item = &source.span;
+        let updated = replace_story_item_text(&source.xml, item, value)?;
+        let original_len = source.xml.len();
+        let new_item_end = (item.full.end + updated.len())
+            .checked_sub(original_len)
+            .ok_or_else(|| {
+                Error::Other("story text replacement underflowed its item range".to_owned())
+            })?;
+        let updated = remove_newly_empty_hyperlinks(
+            &source.xml,
+            item.full.clone(),
+            &updated,
+            item.full.start..new_item_end,
+        )?;
+        // The head and the tail are written before the block and are not
+        // the item's: an edit that changed them is not one of this block.
+        if updated.len() < source.head.len() + source.tail
+            || updated[..source.head.len()] != source.head[..]
+            || updated[updated.len() - source.tail..] != *source.tail_bytes()
+        {
+            return Ok(None);
+        }
+        let Some(parsed) =
+            Self::reparse_body_block(&source.head, source.tail_bytes(), source.block_of(&updated))
+        else {
+            return Ok(None);
+        };
+        // `body_block_item` answered that the body saves after a typed edit;
+        // a text that declares no other namespace keeps that answer, which
+        // would otherwise be asked again over the whole main part.
+        let same_declarations = crate::content_control::declares_only_word_extensions(
+            source.block_of(&source.xml),
+            source.block_of(&updated),
+        );
+        let changed = self.replace_body_block_in_place(block.slot, parsed)?;
+        if changed && same_declarations {
+            self.keep_body_savable_after_swap();
+        }
+        Ok(Some(changed))
+    }
+
     /// Point one story hyperlink at an external URL.
     ///
     /// `link_index` indexes [`Self::story_links`] for `story`. An anchor
