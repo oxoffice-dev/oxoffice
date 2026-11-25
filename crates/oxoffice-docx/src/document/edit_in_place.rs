@@ -849,7 +849,9 @@ impl Document {
     /// writes its element from the model while the staged route writes it
     /// from a fragment that declares its namespaces again: the two packages
     /// hold the same parts, and the same bytes once the namespace
-    /// declarations are set aside.
+    /// declarations, and the whitespace a producer writes between the XML
+    /// declaration and the root element (which an in-place edit keeps and a
+    /// staged copy drops), are set aside.
     #[cfg(debug_assertions)]
     pub(crate) fn assert_in_place_matches_staged_declarations_aside<
         T: PartialEq + std::fmt::Debug,
@@ -868,7 +870,14 @@ impl Document {
                     let mut parts = package
                         .parts
                         .iter()
-                        .map(|(name, bytes)| (name.clone(), without_namespace_declarations(bytes)))
+                        .map(|(name, bytes)| {
+                            (
+                                name.clone(),
+                                without_namespace_declarations(&without_declaration_whitespace(
+                                    bytes,
+                                )),
+                            )
+                        })
                         .collect::<Vec<_>>();
                     parts.sort();
                     parts
@@ -931,6 +940,29 @@ impl Document {
             (Err(direct), Ok(_)) => panic!("in-place edit refused with {direct}"),
         }
     }
+}
+
+/// `xml` without the whitespace between its XML declaration and the
+/// element after it: a producer writes a newline there, which an edit in
+/// place keeps with the rest of the part's bytes while a part written from
+/// a staged copy does not.
+#[cfg(debug_assertions)]
+fn without_declaration_whitespace(xml: &[u8]) -> Vec<u8> {
+    let Some(end) = xml
+        .strip_prefix(b"<?xml".as_slice())
+        .and_then(|rest| rest.windows(2).position(|pair| pair == b"?>"))
+        .map(|at| at + b"<?xml".len() + 2)
+    else {
+        return xml.to_vec();
+    };
+    let after = xml[end..]
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(xml.len() - end);
+    let mut out = Vec::with_capacity(xml.len());
+    out.extend_from_slice(&xml[..end]);
+    out.extend_from_slice(&xml[end + after..]);
+    out
 }
 
 /// `xml` without the namespace declarations of its tags (` xmlns="..."`,

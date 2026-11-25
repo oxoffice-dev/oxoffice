@@ -651,11 +651,15 @@ mod tests {
         document.clone_for_staging().to_bytes().unwrap()
     }
 
-    /// The parts a save writes, without their namespace declarations: the
-    /// staged splice declares the part's namespaces again on the paragraph
-    /// it writes, the model on the root alone.
+    /// The parts a save writes, without their namespace declarations and
+    /// without the whitespace between the XML declaration and the root
+    /// element: the staged splice declares the part's namespaces again on
+    /// the paragraph it writes, the model on the root alone, and a part
+    /// written from a staged copy drops the newline a producer writes after
+    /// the XML declaration, which an edit in place keeps.
     fn saved_parts(document: &Document) -> Vec<(String, String)> {
         let declaration = regex::Regex::new(r#" xmlns(:[A-Za-z_][\w.-]*)?="[^"]*""#).unwrap();
+        let after_declaration = regex::Regex::new(r"\?>\s+<").unwrap();
         let package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(saved(document)))
             .expect("a saved package reopens");
         let mut parts = package
@@ -663,9 +667,10 @@ mod tests {
             .iter()
             .map(|(name, bytes)| {
                 let text = String::from_utf8_lossy(bytes);
+                let text = declaration.replace_all(&text, "");
                 (
                     name.clone(),
-                    declaration.replace_all(&text, "").into_owned(),
+                    after_declaration.replace(&text, "?><").into_owned(),
                 )
             })
             .collect::<Vec<_>>();
@@ -1086,5 +1091,38 @@ mod tests {
                 .is_err()
         );
         assert_eq!(saved(&document), before);
+    }
+
+    /// The debug oracle of the route runs here: without the whitespace of
+    /// the XML declaration set aside it fails, since a file Word wrote
+    /// carries a newline there that an edit in place keeps and a part
+    /// written from a staged copy drops.
+    #[test]
+    fn a_paragraph_xml_replacement_in_place_saves_what_the_staged_route_saves_on_a_word_file() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/corpus/files/word/report.docx"
+        );
+        let mut document = Document::open(path).expect("the Word report opens");
+        let slot = (0..document.content_count())
+            .find(|slot| {
+                document
+                    .direct_body_paragraph_xml(*slot)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|xml| String::from_utf8_lossy(&xml).contains("<w:t"))
+            })
+            .expect("the report has a direct body paragraph with text");
+        let mut staged = document.clone_for_staging();
+        let (location, block) = block_at(&document, slot);
+        let xml = paragraph_xml_with(&document, slot, "<w:t", "<w:t xml:space=\"preserve\"");
+        assert_eq!(
+            document
+                .replace_paragraph_xml_in_block(&location, block, &xml)
+                .unwrap(),
+            Some(true)
+        );
+        staged.replace_paragraph_xml(&location, &xml).unwrap();
+        assert_eq!(saved_parts(&document), saved_parts(&staged));
     }
 }
