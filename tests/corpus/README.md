@@ -73,6 +73,10 @@ OXOFFICE_GOOGLE_TOKEN=$(gcloud auth print-access-token) python3 tests/corpus/gen
 python3 tests/corpus/generate/google_docs.py --plan review fill document.json
 ```
 
+Author names are replaced after export: Google writes the Drive account's
+name on every suggestion, and the files carry `Corpus Author` instead
+(`neutral_authors`, which changes those attributes only).
+
 What Google writes from them, and the `google/` copies do not hold:
 suggestions as `w:ins` and `w:del` whose runs carry a `w:rPrChange`, a
 style suggestion as `w:pPrChange` with a paragraph mark `w:rPrChange`, two

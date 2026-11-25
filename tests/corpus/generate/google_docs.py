@@ -37,6 +37,7 @@ Standard library only, Python 3.11 or later.
 import io
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -49,7 +50,10 @@ import manifest
 
 OUT = Path(__file__).resolve().parent.parent / "files" / "google-docs"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-PRODUCER = "Google Docs (written through the Docs API)"
+PRODUCER = "Google Docs (written through the Docs API, author names neutral)"
+# Google writes the Drive account's name as the author of every suggestion;
+# the files carry this one instead (see neutral_authors).
+NEUTRAL_AUTHOR = "Corpus Author"
 
 # ---- The review: written in Google Docs ----
 
@@ -378,6 +382,33 @@ def _create(token: str, name: str, folder: str, source: bytes | None) -> str:
     return json.loads(data)["id"]
 
 
+def neutral_authors(path: Path, account: str) -> int:
+    """Write NEUTRAL_AUTHOR in place of the account's name in every `w:author`
+    of the package at `path`, and "CA" in the `w:initials` of the same
+    element (a comment), and return how many tags it changed. Every other
+    byte of each part is kept; the parts without the name keep their bytes."""
+    escaped = account.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    tag = re.compile(rb'<[^<>]*\bw:author="' + re.escape(escaped.encode()) + rb'"[^<>]*>')
+
+    def neutral(match: re.Match) -> bytes:
+        written = match.group(0).replace(f'w:author="{escaped}"'.encode(), f'w:author="{NEUTRAL_AUTHOR}"'.encode())
+        return re.sub(rb'\bw:initials="[^"]*"', b'w:initials="CA"', written)
+
+    with zipfile.ZipFile(path) as package:
+        infos = package.infolist()
+        parts = {info.filename: package.read(info) for info in infos}
+    changed = 0
+    for name, data in parts.items():
+        if name.endswith(".xml"):
+            parts[name], count = tag.subn(neutral, data)
+            changed += count
+    if changed:
+        with zipfile.ZipFile(path, "w") as package:
+            for info in infos:
+                package.writestr(info, parts[info.filename])
+    return changed
+
+
 def write(family: str, token: str, folder: str) -> Path:
     upload = UPLOADED.get(family)
     document_id = _create(token, family, folder, upload() if upload else None)
@@ -394,6 +425,8 @@ def write(family: str, token: str, folder: str) -> Path:
     OUT.mkdir(exist_ok=True)
     path = OUT / f"{family}.docx"
     path.write_bytes(exported)
+    account = _json("GET", "https://www.googleapis.com/drive/v3/about?fields=user", token)["user"]["displayName"]
+    neutral_authors(path, account)
     return path
 
 

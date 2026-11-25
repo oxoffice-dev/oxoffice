@@ -208,14 +208,14 @@ features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "conne
 
 [[file]]
 path = "google-docs/comments.docx"
-producer = "Google Docs (written through the Docs API)"
-size = 11726
+producer = "Google Docs (written through the Docs API, author names neutral)"
+size = 11516
 features = ["headings", "table", "comment", "tracked-changes", "format-change", "bookmark", "hyperlink", "rsid", "paraId"]
 
 [[file]]
 path = "google-docs/review.docx"
-producer = "Google Docs (written through the Docs API)"
-size = 11006
+producer = "Google Docs (written through the Docs API, author names neutral)"
+size = 10813
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "footnote", "tracked-changes", "format-change", "header-footer", "bookmark", "hyperlink", "rsid", "paraId"]
 
 [[file]]
