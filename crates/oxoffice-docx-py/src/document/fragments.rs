@@ -63,14 +63,14 @@ impl PyContentLocation {
         document: &PyDocument,
     ) -> PyResult<oxoffice_docx::ContentLocation> {
         let story = document.native_story(py, &self.story)?;
-        if self.is_end {
-            Ok(oxoffice_docx::ContentLocation::end(story))
-        } else {
-            Ok(oxoffice_docx::ContentLocation::new(
+        match (self.is_end, self.index_path.as_slice()) {
+            (true, [control]) => Ok(oxoffice_docx::ContentLocation::control_end(story, *control)),
+            (true, _) => Ok(oxoffice_docx::ContentLocation::end(story)),
+            (false, _) => Ok(oxoffice_docx::ContentLocation::new(
                 story,
                 story_item_kind_from_name(&self.kind)?,
                 self.index_path.clone(),
-            ))
+            )),
         }
     }
 }
@@ -95,6 +95,23 @@ impl PyContentLocation {
             is_end: true,
         }
     }
+    /// The boundary after the last child of the content of the block
+    /// content control that is story item `control_index` of `story`.
+    #[staticmethod]
+    fn control_end(story: PyRef<'_, PyStory>, control_index: usize) -> Self {
+        Self {
+            story: story.clone(),
+            kind: "content_control".into(),
+            index_path: vec![control_index],
+            is_end: true,
+        }
+    }
+    /// Whether this location is an end: of its story or of a control's
+    /// content.
+    #[getter]
+    fn is_end(&self) -> bool {
+        self.is_end
+    }
     #[getter]
     fn story(&self) -> PyStory {
         self.story.clone()
@@ -108,19 +125,110 @@ impl PyContentLocation {
         PyTuple::new(py, &self.index_path)
     }
 }
+impl PyDocument {
+    /// Insert a paragraph of `text` before the paragraph at `location`, one
+    /// that is no direct body paragraph: in a block content control at any
+    /// depth, a table cell, a header, footer, note, comment or text box.
+    /// `segments` are the path of that paragraph's handle; the new paragraph
+    /// takes its place in that order.
+    pub(crate) fn insert_paragraph_at(
+        slf: Py<Self>,
+        py: Python<'_>,
+        location: &crate::paragraph::ParagraphLocation,
+        segments: smallvec::SmallVec<[PathSeg; 5]>,
+        text: &str,
+        style: Option<&str>,
+    ) -> PyResult<Py<PyParagraph>> {
+        let mut document = slf.borrow_mut(py);
+        let style = style
+            .map(|value| {
+                style_id_of_type(&document.inner, value, oxoffice_docx::StyleType::Paragraph)
+            })
+            .transpose()?;
+        document.refuse_non_xml_paragraph_text(py, text)?;
+        let native = location
+            .native(&document.inner)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let mut inserted = oxoffice_docx::Document::detached_text_paragraph(text);
+        if let Some(style) = &style {
+            oxoffice_docx::Paragraph::detached(&mut inserted).set_style(style);
+        }
+        let fragment = oxoffice_docx::ContentFragment::paragraph(inserted)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let mut candidate = document.inner.clone_for_staging();
+        let at = candidate
+            .block_insertion_location(&native)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        candidate
+            .insert_content(&native, fragment)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let prepared = document.prepare_word_revision(
+            py,
+            &candidate,
+            "Paragraph.insert_paragraph_before",
+            crate::document::WordPublication::Conservative,
+        )?;
+        let paragraph = match location {
+            // In the body or a cell, the new paragraph takes the place of
+            // the one it goes before.
+            crate::paragraph::ParagraphLocation::Body(_)
+            | crate::paragraph::ParagraphLocation::Cell { .. } => {
+                let path = document
+                    .revisions
+                    .capture_prepared(&prepared.revision, segments)
+                    .map_err(revision_to_pyerr)?;
+                PyParagraph::new(slf.clone_ref(py), path)
+                    .bind_prepared(py, &document, &prepared, &candidate, None)?
+            }
+            crate::paragraph::ParagraphLocation::Related(_) => {
+                let story = candidate
+                    .stories()
+                    .map_err(|error| docx_to_pyerr(py, error))?
+                    .into_iter()
+                    .find(|story| {
+                        story.kind() == at.story().kind()
+                            && story.part_name() == at.story().part_name()
+                            && story.owner_index() == at.story().owner_index()
+                    })
+                    .ok_or_else(|| PyValueError::new_err("the paragraph's story disappeared"))?;
+                let at = oxoffice_docx::ContentLocation::new(
+                    story,
+                    oxoffice_docx::StoryItemKind::Paragraph,
+                    at.index_path().to_vec(),
+                );
+                let path = document
+                    .revisions
+                    .capture_prepared(
+                        &prepared.revision,
+                        smallvec![PathSeg::Para(at.index_path()[0])],
+                    )
+                    .map_err(revision_to_pyerr)?;
+                PyParagraph::for_story(slf.clone_ref(py), path, at)
+                    .bind_prepared(py, &document, &prepared, &candidate, None)?
+            }
+        };
+        let result = Py::new(py, paragraph)?;
+        document.commit_word_revision(prepared)?;
+        document.install_inner(candidate);
+        Ok(result)
+    }
+}
+
 #[pymethods]
 impl PyDocumentFragment {
     #[staticmethod]
     #[pyo3(signature = (document, start, end, *, include_final_section_properties=false))]
     fn from_range(
         py: Python<'_>,
-        document: PyRef<'_, PyDocument>,
-        start: PyRef<'_, PyContentLocation>,
-        end: PyRef<'_, PyContentLocation>,
+        document: &Bound<'_, PyDocument>,
+        start: &Bound<'_, PyAny>,
+        end: &Bound<'_, PyAny>,
         include_final_section_properties: bool,
     ) -> PyResult<Self> {
-        let start = start.native(py, &document)?;
-        let end = end.native(py, &document)?;
+        let owner = document.clone().unbind();
+        let start = PyDocument::location_argument(&owner, py, start, "start")?;
+        let end = PyDocument::location_argument(&owner, py, end, "end")?;
+        let document = document.borrow();
         oxoffice_docx::DocumentFragment::from_range(
             &document.inner,
             &start,

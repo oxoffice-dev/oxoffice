@@ -53,6 +53,12 @@ pub(super) fn checked_heading_level(value: &Bound<'_, PyAny>) -> PyResult<i64> {
     value.extract()
 }
 
+/// What `find_content_index` says of a block that is no direct body child.
+const NO_BODY_INDEX_ROUTE: &str = "and has no body index: pass the paragraph or table itself (or its ContentLocation) to clone_content, move_content, pop_content or insert_content";
+
+/// What a location says of a table written directly in a block control.
+const TABLE_IN_CONTROL: &str = "a table written directly in a block content control has no location (limitation docx-block-control-table-location, #660): copy, move or remove it with its control, or in a DocumentFragment.from_range between the blocks around it";
+
 impl PyDocument {
     pub(super) fn direct_content_index(
         slf: &Py<Self>,
@@ -69,18 +75,26 @@ impl PyDocument {
             }
             let paragraph_index = match paragraph.validate(py)? {
                 crate::paragraph::ParagraphLocation::Body(index) => index,
-                crate::paragraph::ParagraphLocation::Cell { .. }
-                | crate::paragraph::ParagraphLocation::Related(_) => {
-                    return Err(PyValueError::new_err(
-                        "content handle is not a direct body child",
-                    ));
+                crate::paragraph::ParagraphLocation::Cell { .. } => {
+                    return Err(PyValueError::new_err(format!(
+                        "the paragraph is in a table cell {NO_BODY_INDEX_ROUTE}"
+                    )));
+                }
+                crate::paragraph::ParagraphLocation::Related(_) => {
+                    return Err(PyValueError::new_err(format!(
+                        "the paragraph is in a header, footer, note, comment or text box {NO_BODY_INDEX_ROUTE}"
+                    )));
                 }
             };
             return slf
                 .borrow(py)
                 .inner
                 .content_index_of_paragraph(paragraph_index)
-                .ok_or_else(|| PyValueError::new_err("content handle is not a direct body child"));
+                .ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "the paragraph is inside a block content control {NO_BODY_INDEX_ROUTE}"
+                    ))
+                });
         }
         if let Ok(table) = content.cast::<PyTable>() {
             let table = table.borrow();
@@ -89,10 +103,70 @@ impl PyDocument {
                     "content handle belongs to a different document",
                 ));
             }
-            return table.direct_body_index(py);
+            return table
+                .direct_body_index(py)
+                .map_err(|_| match table.in_block_control(py) {
+                    Ok(true) => PyValueError::new_err(TABLE_IN_CONTROL),
+                    _ => PyValueError::new_err(format!(
+                        "the table is not a direct body child {NO_BODY_INDEX_ROUTE}"
+                    )),
+                });
         }
         Err(PyTypeError::new_err(format!(
             "{argument} must be a Paragraph or Table handle"
+        )))
+    }
+
+    /// The block location a location argument names: a `ContentLocation`;
+    /// a `StoryItem`, its location; a `Paragraph` or `Table` handle, the
+    /// location of that block in its story, at any depth of block content
+    /// controls; an int, a direct body index whose item count is the body's
+    /// end; a `Story`, its end.
+    pub(crate) fn location_argument(
+        slf: &Py<Self>,
+        py: Python<'_>,
+        value: &Bound<'_, PyAny>,
+        argument: &str,
+    ) -> PyResult<oxoffice_docx::ContentLocation> {
+        if let Ok(location) = value.cast::<PyContentLocation>() {
+            return location.borrow().native(py, &slf.borrow(py));
+        }
+        if let Ok(item) = value.cast::<PyStoryItem>() {
+            return slf.borrow(py).native_location(py, &item.borrow());
+        }
+        if let Ok(story) = value.cast::<PyStory>() {
+            let story = slf.borrow(py).native_story(py, &story.borrow())?;
+            return Ok(oxoffice_docx::ContentLocation::end(story));
+        }
+        if let Ok(paragraph) = value.cast::<PyParagraph>() {
+            let paragraph = paragraph.borrow();
+            if !paragraph.belongs_to(py, slf) {
+                return Err(PyValueError::new_err(
+                    "content handle belongs to a different document",
+                ));
+            }
+            let location = paragraph.validate(py)?;
+            return location
+                .native(&slf.borrow(py).inner)
+                .map_err(|error| docx_to_pyerr(py, error));
+        }
+        if let Ok(table) = value.cast::<PyTable>() {
+            let table = table.borrow();
+            if !table.belongs_to(py, slf) {
+                return Err(PyValueError::new_err(
+                    "content handle belongs to a different document",
+                ));
+            }
+            if table.in_block_control(py)? {
+                return Err(PyValueError::new_err(TABLE_IN_CONTROL));
+            }
+            return table.block_location(py);
+        }
+        if !value.is_instance_of::<PyBool>() && value.is_instance_of::<pyo3::types::PyInt>() {
+            return slf.borrow(py).body_location(py, value.extract::<usize>()?);
+        }
+        Err(PyTypeError::new_err(format!(
+            "{argument} must be an int, a Paragraph or Table, a StoryItem, a Story or a ContentLocation"
         )))
     }
 }

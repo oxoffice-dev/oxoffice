@@ -1154,14 +1154,15 @@ impl PyDocument {
     }
     #[pyo3(signature = (destination, fragment, *, policy=None))]
     fn import_fragment(
-        &mut self,
+        slf: Py<Self>,
         py: Python<'_>,
-        destination: PyRef<'_, PyContentLocation>,
+        destination: &Bound<'_, PyAny>,
         fragment: PyRef<'_, PyDocumentFragment>,
         policy: Option<PyRef<'_, PyFragmentConflictPolicy>>,
     ) -> PyResult<()> {
-        let destination = destination.native(py, self)?;
-        let mut candidate = self.inner.clone_for_staging();
+        let destination = Self::location_argument(&slf, py, destination, "destination")?;
+        let mut document = slf.borrow_mut(py);
+        let mut candidate = document.inner.clone_for_staging();
         candidate
             .import_fragment(
                 &destination,
@@ -1169,7 +1170,7 @@ impl PyDocument {
                 policy.map(|p| p.inner).unwrap_or_default(),
             )
             .map_err(|e| docx_to_pyerr(py, e))?;
-        self.publish_api_candidate(py, candidate, "Document.import_fragment")
+        document.publish_api_candidate(py, candidate, "Document.import_fragment")
     }
     #[pyo3(signature = (other, *, at, policy=None))]
     fn insert_document(
@@ -5195,8 +5196,14 @@ impl PyDocument {
                 return Py::new(py, PyContentFragment { inner: fragment });
             }
             location
+        } else if index.is_instance_of::<PyBool>() || !index.is_instance_of::<pyo3::types::PyInt>()
+        {
+            Self::location_argument(&slf, py, index, "index")?
         } else {
-            let index = body_index_argument(index, "index must be an int or a StoryItem")?;
+            let index = body_index_argument(
+                index,
+                "index must be an int, a Paragraph or Table, a StoryItem or a ContentLocation",
+            )?;
             if index < slf.borrow(py).inner.content_count()
                 && let Some(fragment) = slf.borrow_mut(py).pop_body_block_local(py, index, None)?
             {
@@ -5231,18 +5238,9 @@ impl PyDocument {
         destination: &Bound<'_, PyAny>,
         fragment: PyRef<'_, PyContentFragment>,
     ) -> PyResult<()> {
-        // A story item names the boundary before it, and a story its end.
-        let location = if let Ok(item) = destination.cast::<PyStoryItem>() {
-            slf.borrow(py).native_location(py, &item.borrow())?
-        } else if let Ok(story) = destination.cast::<PyStory>() {
-            oxoffice_docx::ContentLocation::end(slf.borrow(py).native_story(py, &story.borrow())?)
-        } else {
-            let destination = body_index_argument(
-                destination,
-                "destination must be an int, a StoryItem or a Story",
-            )?;
-            slf.borrow(py).body_location(py, destination)?
-        };
+        // A story item or a handle names the boundary before its block, a
+        // story its end.
+        let location = Self::location_argument(&slf, py, destination, "destination")?;
         let fragment = fragment.inner.clone();
         let mut document = slf.borrow_mut(py);
         let mut candidate = document.inner.clone_for_staging();
@@ -5266,17 +5264,8 @@ impl PyDocument {
         source: &Bound<'_, PyAny>,
         destination: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let source_index = Self::direct_content_index(&slf, py, source, "source")?;
-        let destination = destination
-            .extract::<usize>()
-            .map_err(|_| PyTypeError::new_err("destination must be a direct body index integer"))?;
-        let (source, destination) = {
-            let document = slf.borrow(py);
-            let mut locations = document.body_locations(py, &[source_index, destination])?;
-            let destination = locations.pop().expect("two requested body locations");
-            let source = locations.pop().expect("two requested body locations");
-            (source, destination)
-        };
+        let source = Self::location_argument(&slf, py, source, "source")?;
+        let destination = Self::location_argument(&slf, py, destination, "destination")?;
         let mut document = slf.borrow_mut(py);
         let mut candidate = document.inner.clone_for_staging();
         candidate
@@ -5299,17 +5288,8 @@ impl PyDocument {
         source: &Bound<'_, PyAny>,
         destination: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let source_index = Self::direct_content_index(&slf, py, source, "source")?;
-        let destination = destination
-            .extract::<usize>()
-            .map_err(|_| PyTypeError::new_err("destination must be a direct body index integer"))?;
-        let (source, destination) = {
-            let document = slf.borrow(py);
-            let mut locations = document.body_locations(py, &[source_index, destination])?;
-            let destination = locations.pop().expect("two requested body locations");
-            let source = locations.pop().expect("two requested body locations");
-            (source, destination)
-        };
+        let source = Self::location_argument(&slf, py, source, "source")?;
+        let destination = Self::location_argument(&slf, py, destination, "destination")?;
         let mut document = slf.borrow_mut(py);
         let mut candidate = document.inner.clone_for_staging();
         candidate
