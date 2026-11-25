@@ -163,3 +163,10 @@ check = "dropped"
 pages = [0]
 finding = "3 diagnostics"
 by_design = "the render tests use the bundled fonts only, whose Chinese, Japanese and Korean faces are subsets; the default render draws this text with a system font"
+
+[[known]]
+file = "google-docs/review.docx"
+check = "text"
+pages = [0]
+finding = "2 words"
+by_design = "a suggested join deletes the mark of the paragraph \"Suggested join: this paragraph\": the final view draws it on one line with the next, \"paragraphends\", as Word and Google Docs show it"

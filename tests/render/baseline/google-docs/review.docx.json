@@ -1,0 +1,11 @@
+{
+  "file": "google-docs/review.docx",
+  "reason": "new corpus files written in Google Docs",
+  "resources": "e5e2316c4de948f064831951e60ec3cb02d631feb96a7245330600ab44ea2972",
+  "outline_and_tags": "e15c86bdfb99a654acd91fa1f97dd345e79f37639d3dfc5b42eca345fa491f21",
+  "catalog": "68b0dcbc5d41ef8e5db56f51d7b9ed661b7a2c315e1410f2ed14f173cfbc539f",
+  "pages": [
+    {"page": 1, "pixels": "7bae46bc132c013d0e31d9145449105be277b6696c6384beb5c3d7f5b1038d0c", "content": "3872fd5fc73c2193dd36896d2dd2db5387ae9c451cec818679643e70420b740c", "annotations": "214d29b0887f4996cc81bdd4eb3ef77b0c541ae49198d3ac19c6277359f8bbf2", "dictionary": "e7bec2a88171e0910f4b5e066d662a704fa4a5fe0f756cb45ab74685c07bcb1c"},
+    {"page": 2, "pixels": "bf0c27818646b27b6253bad094ccfdc705da2d035eb8bbb00a20f6028c6533c4", "content": "8c213598ee25333b7298641e8e9da782aba16d219be909503eb4761d50704ee5", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "52677ae045ae98f3f07a142227660abadce0b7d29c953ed746047ed5d485b326"}
+  ]
+}
