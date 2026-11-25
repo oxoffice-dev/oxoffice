@@ -21,6 +21,17 @@ impl Document {
     /// before it calls this.
     #[doc(hidden)]
     pub fn keep_body_savable_after_typed_insert(&mut self, slot: usize, savable_before: bool) {
+        self.keep_body_savable_after_typed_edits(slot..slot + 1, savable_before);
+    }
+
+    /// [`Self::keep_body_savable_after_typed_insert`] for the typed edits of
+    /// the blocks at `slots`: the answer is kept when no block of them holds
+    /// an element named like a nested namespace owner.
+    pub(crate) fn keep_body_savable_after_typed_edits(
+        &mut self,
+        slots: impl IntoIterator<Item = usize>,
+        savable_before: bool,
+    ) {
         if !savable_before || self.unsavable_body_edit_cache.get().is_some() {
             return;
         }
@@ -30,19 +41,29 @@ impl Document {
         let Some(owners) = kept.nested_namespace_owners() else {
             return;
         };
-        let Some(block) = self.document.body.content.get(slot) else {
-            return;
-        };
-        let Ok(xml) = self.document.body_item_xml(block) else {
-            return;
-        };
         let names = owners
             .iter()
             .map(|owner| owner.local_name.as_bytes())
             .collect::<HashSet<_>>();
-        if !xml_holds_element_named(&xml, &names) {
-            self.unsavable_body_edit_cache = OnceLock::from(None);
+        for slot in slots {
+            let Some(block) = self.document.body.content.get(slot) else {
+                return;
+            };
+            let Ok(xml) = self.document.body_item_xml(block) else {
+                return;
+            };
+            if xml_holds_element_named(&xml, &names) {
+                return;
+            }
         }
+        self.unsavable_body_edit_cache = OnceLock::from(None);
+    }
+
+    /// Whether typed edits of this body are known to save, without
+    /// computing it: the `savable_before` of
+    /// [`Self::keep_body_savable_after_typed_edits`].
+    pub(crate) fn body_known_savable(&self) -> bool {
+        self.unsavable_body_edit_cache.get() == Some(&None)
     }
 
     /// [`Self::invalidate_layout`] after an edit that leaves the main part
@@ -1174,6 +1195,86 @@ impl Document {
             xml,
             tail: tail.len(),
         }))
+    }
+
+    /// The direct body block at `slot` after `edit`, a byte edit of the
+    /// part [`Self::body_block_part`] writes that keeps its head and tail,
+    /// at the cost of that block. `None` when the block cannot be written
+    /// alone, the edit changed the head or the tail, or the edited block
+    /// does not read back as it writes.
+    pub(crate) fn body_block_after_byte_edit(
+        &self,
+        slot: usize,
+        edit: impl FnOnce(&[u8]) -> Result<Vec<u8>>,
+    ) -> Result<Option<BodyContent>> {
+        let Some(alone) = self.body_block_part(slot)? else {
+            return Ok(None);
+        };
+        let edited = edit(&alone.xml)?;
+        let tail = alone.tail_bytes();
+        if edited.len() < alone.head.len() + tail.len()
+            || !edited.starts_with(&alone.head)
+            || !edited.ends_with(tail)
+        {
+            return Ok(None);
+        }
+        Ok(Self::reparse_body_block(
+            &alone.head,
+            tail,
+            alone.block_of(&edited),
+        ))
+    }
+
+    /// Run `edit` in place on `units` (which cover `blocks`), then put each
+    /// block of `blocks` at its slot in the body, in the same edit: the
+    /// blocks an edit made with [`Self::body_block_after_byte_edit`]. A body
+    /// known to save keeps that answer when the new blocks hold no nested
+    /// namespace owner, as after a typed insert.
+    pub(crate) fn edit_in_place_with_body_blocks<T>(
+        &mut self,
+        units: &[EditUnit],
+        blocks: Vec<(usize, BodyContent)>,
+        edit: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let savable_before = self.unsavable_body_edit_cache.get() == Some(&None);
+        let slots = blocks.iter().map(|(slot, _)| *slot).collect::<Vec<_>>();
+        // A block that writes as the block the opening read at its slot (an
+        // inverse edit: a comment added, then removed) takes that block
+        // back, so that a save keeps the producer's part when the whole body
+        // reads as opened, as the staged route's restore does.
+        let blocks = match self.kept_main_part() {
+            Some(kept) => {
+                let opened = kept.main_document().map(|document| &document.body.content);
+                let mut restored = Vec::with_capacity(blocks.len());
+                for (slot, block) in blocks {
+                    let block = match opened
+                        .filter(|opened| opened.len() == self.document.body.content.len())
+                    {
+                        Some(opened)
+                            if self.document.body_item_xml(&block)?
+                                == self.document.body_item_xml(&opened[slot])? =>
+                        {
+                            opened[slot].clone()
+                        }
+                        _ => block,
+                    };
+                    restored.push((slot, block));
+                }
+                restored
+            }
+            None => blocks,
+        };
+        let value = self.edit_in_place(units, |document| {
+            let value = edit(document)?;
+            for (slot, block) in blocks {
+                document.document.body.content[slot] = block;
+            }
+            document.invalidate_layout();
+            Ok(value)
+        })?;
+        // Every edited block is checked before the answer is kept.
+        self.keep_body_savable_after_typed_edits(slots, savable_before);
+        Ok(value)
     }
 
     /// The block `child` reads as between `head` and `tail`, when it writes
