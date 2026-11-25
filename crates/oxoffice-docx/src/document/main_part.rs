@@ -972,6 +972,7 @@ impl MainPartBlocks {
         &self,
         xml: &[u8],
         existing: &[u8],
+        previous: Option<&MainPartBlocks>,
     ) -> Option<(Vec<u8>, Self)> {
         if self.part.as_deref().map(Vec::as_slice) != Some(xml) || self.head.is_empty() {
             return None;
@@ -1014,16 +1015,54 @@ impl MainPartBlocks {
         // does: the proofs that start from it hold for these bytes too.
         let shell =
             CT_Document::from_xml(&[head.as_slice(), self.tail.as_slice()].concat()).ok()?;
-        let written_shell = self.frame.get()?.as_ref()?;
-        if !shell.body.content.is_empty() || shell.to_xml().ok()? != written_shell.to_xml().ok()? {
-            return None;
-        }
+        // A written frame that does not prove leaves this one unproved too,
+        // with the producer's root kept all the same.
+        let frame = match self.frame.get() {
+            Some(Some(written)) => {
+                if !shell.body.content.is_empty()
+                    || shell.to_xml().ok()? != written.to_xml().ok()?
+                {
+                    return None;
+                }
+                std::sync::OnceLock::from(Some(shell))
+            }
+            _ => std::sync::OnceLock::new(),
+        };
         // A different frame gets new pieces: the pieces' proofs are keyed by
-        // the frame they were read under.
+        // the frame they were read under. The pieces of the previous record
+        // under this same frame carry over where their bytes did not change
+        // (the runs before and after the edit), so their proofs are kept.
+        let carried = previous
+            .filter(|previous| previous.head == head && previous.tail == self.tail)
+            .map(|previous| previous.blocks.as_slice())
+            .unwrap_or(&[]);
+        let same = |old: &Arc<BodyBlockScan>, new: &Arc<BodyBlockScan>| old.bytes == new.bytes;
+        let prefix = carried
+            .iter()
+            .zip(self.blocks.iter())
+            .take_while(|(old, new)| same(old, new))
+            .count();
+        let room = self.blocks.len().min(carried.len()) - prefix;
+        let suffix = carried
+            .iter()
+            .rev()
+            .zip(self.blocks.iter().rev())
+            .take(room)
+            .take_while(|(old, new)| same(old, new))
+            .count();
         let blocks = self
             .blocks
             .iter()
-            .map(BodyBlockScan::fresh_context_piece)
+            .enumerate()
+            .map(|(index, block)| {
+                if index < prefix {
+                    Arc::clone(&carried[index])
+                } else if index >= self.blocks.len() - suffix {
+                    Arc::clone(&carried[carried.len() - (self.blocks.len() - index)])
+                } else {
+                    block.fresh_context_piece()
+                }
+            })
             .collect();
         let record = Self {
             head,
@@ -1031,7 +1070,7 @@ impl MainPartBlocks {
             tail: self.tail.clone(),
             blocks: Arc::new(blocks),
             part: Some(Arc::new(part.clone())),
-            frame: std::sync::OnceLock::from(Some(shell)),
+            frame,
             nested_namespace_owners: std::sync::OnceLock::new(),
             identifier_frame: std::sync::OnceLock::new(),
             canonical_frame: std::sync::OnceLock::new(),
@@ -3184,6 +3223,7 @@ mod producer_root_tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/corpus/files/word/report.docx");
         let mut doc = Document::open(path).unwrap();
+        let mut previous: Option<Vec<Arc<BodyBlockScan>>> = None;
         for text in ["first", " second"] {
             doc.paragraph_mut(0).unwrap().add_run(text);
             doc.flush_document_to_package().unwrap();
@@ -3208,6 +3248,17 @@ mod producer_root_tests {
                     .is_some()
             );
             assert!(record.retained_nested_owners(&saved).is_some());
+            // New pieces under the producer's root, not the written record's.
+            assert!(!Arc::ptr_eq(&record.blocks[1], &canonical.blocks[1]));
+            // The blocks the second edit left alone keep the first flush's
+            // pieces, with their proofs.
+            if let Some(previous) = &previous {
+                assert!(!Arc::ptr_eq(&record.blocks[0], &previous[0]));
+                for index in 1..previous.len() {
+                    assert!(Arc::ptr_eq(&record.blocks[index], &previous[index]));
+                }
+            }
+            previous = Some(record.blocks.as_ref().clone());
         }
     }
 }

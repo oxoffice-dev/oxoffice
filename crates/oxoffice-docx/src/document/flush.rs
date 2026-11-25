@@ -700,6 +700,9 @@ impl Document {
                     "cannot serialize a modified document with a shadowed `{prefix}` namespace"
                 )));
             }
+            // The previous flush's record, whose pieces under a kept producer
+            // root carry over where the body did not change.
+            let previous_record = self.main_part_blocks.clone();
             let serialized = match template.as_deref_mut() {
                 Some(template) => self.main_part_xml_in(Some(template))?,
                 None => self.main_part_xml()?,
@@ -720,9 +723,11 @@ impl Document {
             // stays when the two roots differ in anything else.
             let producer_root = if template.is_none() && replayed == serialized {
                 kept_xml.as_deref().and_then(|existing| {
-                    self.main_part_blocks
-                        .as_ref()?
-                        .with_producer_root(&serialized, existing)
+                    self.main_part_blocks.as_ref()?.with_producer_root(
+                        &serialized,
+                        existing,
+                        previous_record.as_ref(),
+                    )
                 })
             } else {
                 None
