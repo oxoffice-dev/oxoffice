@@ -5,7 +5,7 @@ use super::*;
 /// The pair of a [`Document::try_replace_all_expected`] batch whose count
 /// differed from the count its caller expected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("pair {index}: expected {expected} replacement(s) of \"{placeholder}\", found {found}")]
+#[error("pair {index}: expected {expected} replacement(s) of \"{placeholder}\", found {found}{}", out_of_reach(*.unreached))]
 pub struct ReplacementCountMismatch {
     /// Zero-based position of the pair in the batch.
     pub index: usize,
@@ -15,6 +15,21 @@ pub struct ReplacementCountMismatch {
     pub expected: usize,
     /// The count the pair found once the pairs before it had run.
     pub found: usize,
+    /// The occurrences a reader sees in the item a replacement scoped to one
+    /// paragraph, table or control searched, beyond those it found: text it
+    /// cannot reach, such as a field's result. Zero for a document-wide pair.
+    pub unreached: usize,
+}
+
+/// How a count mismatch names the occurrences out of reach, if any.
+pub(crate) fn out_of_reach(unreached: usize) -> String {
+    if unreached == 0 {
+        String::new()
+    } else {
+        format!(
+            ", and {unreached} it cannot reach (in a field result, or across the edge of a content control or tracked change)"
+        )
+    }
 }
 
 enum ScopedReplacementTarget<'a> {
@@ -335,6 +350,11 @@ impl Document {
         expected: Option<usize>,
         literal_input: &Cell<bool>,
     ) -> Result<std::result::Result<Option<(Self, usize)>, ReplacementCountMismatch>> {
+        let searched = match &target {
+            ScopedReplacementTarget::CheckedItem(location)
+            | ScopedReplacementTarget::Item(location) => Some((*location).clone()),
+            _ => None,
+        };
         let (story, path, paragraph) = match target {
             ScopedReplacementTarget::CheckedItem(location) => {
                 (location.story.clone(), Some(location.clone()), None)
@@ -569,11 +589,32 @@ impl Document {
         if let Some(expected) = expected
             && count != expected
         {
+            // What a reader sees of the placeholder in the item, beyond what
+            // the replacement found there.
+            let unreached = searched.map_or(0, |location| {
+                candidate.story_paragraphs().map_or(0, |paragraphs| {
+                    paragraphs
+                        .iter()
+                        .filter(|paragraph| {
+                            paragraph.location.story.part_name == location.story.part_name
+                                && paragraph.location.story.owner_index
+                                    == location.story.owner_index
+                                && paragraph
+                                    .location
+                                    .index_path
+                                    .starts_with(&location.index_path)
+                        })
+                        .map(|paragraph| paragraph.text.matches(placeholder).count())
+                        .sum::<usize>()
+                        .saturating_sub(count)
+                })
+            });
             return Ok(Err(ReplacementCountMismatch {
                 index: 0,
                 placeholder: placeholder.into(),
                 expected,
                 found: count,
+                unreached,
             }));
         }
         if count == 0 {
@@ -752,6 +793,7 @@ impl Document {
                     placeholder: placeholder.to_owned(),
                     expected,
                     found,
+                    unreached: 0,
                 }));
             }
             counts.push(found);
@@ -782,6 +824,7 @@ impl Document {
                     placeholder: placeholder.to_owned(),
                     expected,
                     found,
+                    unreached: 0,
                 }));
             }
             counts.push(found);
@@ -948,6 +991,7 @@ impl Document {
                     placeholder: pairs[index].0.to_owned(),
                     expected: *expected,
                     found,
+                    unreached: 0,
                 }));
             }
             counts.push(found);

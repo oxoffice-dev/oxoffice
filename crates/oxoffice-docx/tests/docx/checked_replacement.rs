@@ -159,3 +159,26 @@ fn a_paragraph_edited_through_its_location_is_written_back_without_declarations_
         }
     }
 }
+
+#[test]
+fn a_replacement_in_one_paragraph_names_the_text_it_cannot_reach() {
+    // The letter's country is a merge field's result: the paragraph shows
+    // it, the replacement does not reach it, and says so.
+    let doc = crate::support::corpus_doc("word/letter.docx");
+    let paragraph = doc
+        .story_paragraphs()
+        .unwrap()
+        .into_iter()
+        .find(|paragraph| paragraph.text.contains("Country"))
+        .expect("a paragraph shows the merge field");
+    let mut doc = crate::support::corpus_doc("word/letter.docx");
+    let mismatch = doc
+        .try_replace_text_at(&paragraph.location, "Country", "Nation", Some(1))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!((mismatch.found, mismatch.unreached), (0, 1));
+    assert!(
+        mismatch.to_string().contains("1 it cannot reach"),
+        "{mismatch}"
+    );
+}
