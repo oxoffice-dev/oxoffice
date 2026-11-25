@@ -132,22 +132,6 @@ debug_assertions = true
 # broke: these go with their class.
 
 [[known]]
-input = "word/contract.docx"
-writing = "other-prefixes"
-operation = "compare"
-issue = 658
-message = "comparison acceptance does not reproduce the edited stories"
-debug_assertions = false
-
-[[known]]
-input = "google/contract.docx"
-writing = "other-prefixes"
-operation = "compare"
-issue = 658
-message = "comparison acceptance does not reproduce the edited stories"
-debug_assertions = false
-
-[[known]]
 input = "word/manual.docx"
 writing = "other-prefixes"
 operation = "compare"

@@ -1629,7 +1629,7 @@ fn an_edited_cell_paragraph_writes_its_conditional_formatting_once_under_any_pre
         // WordprocessingML as `ox0`, as a generated writer names it.
         rewrite_package(&bytes, Writing::OtherPrefixes)
             .expect("rewrites")
-            .bytes,
+            .0,
     ] {
         let mut doc = Document::from_bytes(&bytes).expect("opens");
         let paragraphs = doc.story_paragraphs().expect("reads");

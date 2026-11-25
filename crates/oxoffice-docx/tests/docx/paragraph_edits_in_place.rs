@@ -307,7 +307,7 @@ fn an_edited_paragraph_binds_every_prefix_it_writes_when_the_document_names_them
     // generated writer names them: no `w` or `r` binding left in the part.
     let bytes = rewrite_package(&bytes, Writing::OtherPrefixes)
         .expect("rewrites")
-        .bytes;
+        .0;
     let mut doc = Document::from_bytes(&bytes).expect("opens");
     let paragraphs = doc.story_paragraphs().expect("reads");
     let edited = paragraphs
@@ -404,7 +404,7 @@ fn an_edit_after_another_keeps_twin_paragraphs_apart_when_the_document_names_wor
     // paragraph but for that declaration.
     let bytes = rewrite_package(&bytes, Writing::OtherPrefixes)
         .expect("rewrites")
-        .bytes;
+        .0;
     let mut doc = Document::from_bytes(&bytes).expect("opens");
     for (word, replacement) in [("Northwind", "NORTHWIND"), ("challenged", "CHALLENGED")] {
         let paragraphs = doc.story_paragraphs().expect("reads");

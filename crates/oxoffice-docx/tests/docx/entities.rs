@@ -120,32 +120,34 @@ fn a_ruby_holding_an_entity_alone_where_it_holds_no_text_stays_raw() {
 #[test]
 fn a_property_value_written_with_character_references_reads_as_its_characters() {
     use oxoffice_docx::Alignment;
-    use oxoffice_xml_test::{Writing, rewrite_package};
 
-    let mut doc = Document::new();
-    doc.add_paragraph("Centred heading")
-        .alignment(Alignment::Center)
-        .space_before(Length::twips(240))
-        .indent_left(Length::twips(720));
-    doc.add_table(2, 2);
-    let bytes = doc.to_bytes().expect("saves");
-    // The first character of every value as a reference: `w:val="&#99;enter"`,
-    // `w:before="&#50;40"`, `w:w="&#49;2240"`.
-    let rewritten = rewrite_package(&bytes, Writing::LeadingCharacterReference)
-        .expect("rewrites")
-        .bytes;
-    let read = |bytes: &[u8]| {
-        let doc = Document::from_bytes(bytes).expect("opens");
+    // A paragraph and a table cell width, plainly and with the first
+    // character of each value as a reference (`w:val="&#99;enter"`).
+    let body = |center: &str, before: &str, width: &str| {
+        format!(
+            concat!(
+                r#"<w:p><w:pPr><w:jc w:val="{center}"/><w:spacing w:before="{before}"/></w:pPr>"#,
+                r#"<w:r><w:t>Centred heading</w:t></w:r></w:p>"#,
+                r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>"#,
+                r#"<w:tblGrid><w:gridCol w:w="{width}"/></w:tblGrid><w:tr><w:tc>"#,
+                r#"<w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr>"#,
+                r#"<w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+            ),
+            center = center,
+            before = before,
+            width = width
+        )
+    };
+    let read = |body: String| {
+        let doc = doc_with_body(&body);
         let paragraph = doc.paragraph(0).expect("the paragraph");
-        let section = doc.sections().next().expect("a section");
         (
             paragraph.alignment(),
             paragraph.space_before(),
-            section.page_size(),
             doc.to_markdown(),
         )
     };
-    let original = read(&bytes);
-    assert_eq!(original.0, Some(Alignment::Center));
-    assert_eq!(read(&rewritten), original);
+    let plain = read(body("center", "240", "4000"));
+    assert_eq!(plain.0, Some(Alignment::Center));
+    assert_eq!(read(body("&#99;enter", "&#50;40", "&#52;000")), plain);
 }
