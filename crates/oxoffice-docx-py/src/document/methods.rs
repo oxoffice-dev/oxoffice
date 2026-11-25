@@ -1245,6 +1245,19 @@ impl PyDocument {
         relationship_id: &str,
         data: &[u8],
     ) -> PyResult<()> {
+        // The body story of the main part is always there: it needs no
+        // story listing, which writes the whole main part. No content
+        // moves, so live handles stay valid.
+        if story.kind == story_kind_name(oxoffice_docx::StoryKind::Body)
+            && story.owner_index == 0
+            && story.part_name == self.inner.body_item_context().part_name()
+        {
+            self.validate_owned_story(py, &story)?;
+            return self
+                .inner
+                .replace_image_for_body_story(relationship_id, data)
+                .map_err(|error| docx_to_pyerr(py, error));
+        }
         let story = self.native_story(py, &story)?;
         self.inner
             .replace_image_for_story(&story, relationship_id, data)
@@ -1365,10 +1378,60 @@ impl PyDocument {
             "Document.set_picture_size(height)",
             crate::LengthUnit::Emu,
         )?;
+        let (width, height) = (
+            oxoffice_docx::Length::emu(width),
+            oxoffice_docx::Length::emu(height),
+        );
+        // A picture of a direct body paragraph: its block is edited in place
+        // and published by the block replacement, which keeps the paragraph
+        // and every other handle, and retires the paragraph's runs. This
+        // handle and every picture read before hold the old size: they go
+        // stale, as after the staged route.
+        if let Some(block) = self.story_item_block(py, &picture.inner.location)? {
+            let occurrence = picture.inner.clone();
+            if self
+                .publish_blocks_edited_in_place(
+                    py,
+                    "Document.set_picture_size",
+                    super::paragraph_in_place::BlockRetention::EditedParagraphKeepsItsOwner,
+                    |document| {
+                        document.set_picture_size_in_block(&occurrence, block, width, height)
+                    },
+                )?
+                .is_some()
+            {
+                return Ok(());
+            }
+        }
+        // A picture the in-place route read carries its story without the
+        // fingerprint the staged route compares: the revision check above
+        // says it is the story's occurrence now.
+        let mut occurrence = picture.inner.clone();
+        let story = occurrence.location.story().clone();
+        if story
+            == oxoffice_docx::StoryId::new(story.kind(), story.part_name(), story.owner_index())
+            && let Some(current) = self
+                .inner
+                .stories()
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .into_iter()
+                .find(|candidate| {
+                    candidate.kind() == story.kind()
+                        && candidate.part_name() == story.part_name()
+                        && candidate.owner_index() == story.owner_index()
+                })
+        {
+            occurrence.location = oxoffice_docx::ContentLocation::new(
+                current,
+                occurrence.location.item_kind(),
+                occurrence.location.index_path().to_vec(),
+            );
+        }
+        let (width, height) = (width.to_emu(), height.to_emu());
         let mut candidate = self.inner.clone_for_staging();
         candidate
             .set_picture_size_at(
-                &picture.inner,
+                &occurrence,
                 oxoffice_docx::Length::emu(width),
                 oxoffice_docx::Length::emu(height),
             )
@@ -1404,15 +1467,16 @@ impl PyDocument {
             "Document.set_picture_sizes_for_relationship(height)",
             crate::LengthUnit::Emu,
         )?;
-        // No content moves, so live handles stay valid.
-        py.detach(|| {
-            self.inner.set_picture_size(
+        // No content moves, so live handles stay valid. In place, the blocks
+        // that show the relationship are edited alone and their pieces read
+        // again.
+        self.edit_blocks_keeping_owners(py, |document| {
+            document.set_picture_size(
                 relationship_id,
                 oxoffice_docx::Length::emu(width),
                 oxoffice_docx::Length::emu(height),
             )
         })
-        .map_err(|error| docx_to_pyerr(py, error))
     }
 
     /// Split runs so that `span`, from `Paragraph.find_text`, covers whole
@@ -3059,6 +3123,16 @@ impl PyDocument {
             ));
         };
         let mut document = slf.borrow_mut(py);
+        // A chart no other element names is edited in its part alone: no
+        // element of the body changes, so every handle stays.
+        if document
+            .inner
+            .set_unshared_chart_legend(index, visible, position, overlay)
+            .map_err(|e| docx_to_pyerr(py, e))?
+            .is_some()
+        {
+            return Ok(());
+        }
         let location = document
             .paragraph_route(&ParagraphLocation::Body(index), None)
             .map_err(|e| docx_to_pyerr(py, e))?;
@@ -3471,6 +3545,19 @@ impl PyDocument {
         hyperlink: PyRef<'_, PyHyperlink>,
         url: &str,
     ) -> PyResult<()> {
+        // A link of the main part's body whose relationship no other
+        // element names is retargeted in place, found in its body block: no
+        // story is listed, which writes the whole main part.
+        if let Some((location, local, index)) = self.hyperlink_owner(py, &hyperlink)?
+            && let Some(block) = self.story_item_block(py, &location)?
+            && self
+                .inner
+                .set_hyperlink_url_in_block(&location, block, local, index, url)
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .is_some()
+        {
+            return Ok(());
+        }
         let (story, link_index) = self.native_hyperlink(py, &hyperlink)?;
         // No content moves, so live handles stay valid.
         py.detach(|| self.inner.set_hyperlink_url(&story, link_index, url))

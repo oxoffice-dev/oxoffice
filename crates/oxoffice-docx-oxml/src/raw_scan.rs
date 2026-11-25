@@ -8,6 +8,7 @@
 
 use crate::content_control::{CT_Sdt, SdtContent};
 use crate::document::{BodyContent, CT_Body};
+use crate::drawing::CT_Drawing;
 use crate::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
 use crate::text::{CT_P, CT_R, RunContent};
 
@@ -26,8 +27,21 @@ pub(crate) fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
     }
 }
 
-fn extras_contain<T>(extras: &[(T, Vec<u8>)], needle: &[u8]) -> bool {
-    extras.iter().any(|(_, raw)| bytes_contain(raw, needle))
+/// What a walk asks of each piece: whether a piece kept as raw XML holds
+/// `needle`, or whether `drawing` says a typed drawing answers.
+struct Probe<'a> {
+    needle: &'a [u8],
+    drawing: &'a dyn Fn(&CT_Drawing) -> bool,
+}
+
+impl Probe<'_> {
+    fn raw(&self, raw: &[u8]) -> bool {
+        bytes_contain(raw, self.needle)
+    }
+
+    fn extras<T>(&self, extras: &[(T, Vec<u8>)]) -> bool {
+        extras.iter().any(|(_, raw)| self.raw(raw))
+    }
 }
 
 impl CT_Body {
@@ -37,88 +51,165 @@ impl CT_Body {
     /// these pieces; a `false` here says no such piece names `needle`.
     #[doc(hidden)]
     pub fn raw_xml_contains(&self, needle: &[u8]) -> bool {
-        self.content.iter().any(|block| match block {
-            BodyContent::Paragraph(paragraph) => paragraph_contains(paragraph, needle),
-            BodyContent::Table(table) => table_contains(table, needle),
-            BodyContent::ContentControl(sdt) => sdt_contains(sdt, needle),
-            BodyContent::RawXml(raw) => bytes_contain(raw, needle),
-        })
+        self.content
+            .iter()
+            .any(|block| block.raw_xml_contains(needle))
     }
 }
 
-fn paragraph_contains(paragraph: &CT_P, needle: &[u8]) -> bool {
-    extras_contain(&paragraph.extra_xml, needle)
-        || paragraph.runs.iter().any(|run| run_contains(run, needle))
+impl BodyContent {
+    /// Whether a piece of this block kept as raw XML holds `needle`, as
+    /// [`CT_Body::raw_xml_contains`] asks of every block.
+    #[doc(hidden)]
+    pub fn raw_xml_contains(&self, needle: &[u8]) -> bool {
+        block_contains(
+            self,
+            &Probe {
+                needle,
+                drawing: &|_| false,
+            },
+        )
+    }
+
+    /// Whether this block may show the relationship `id`: a typed drawing
+    /// of its tree names it (`r:embed` or `r:link`), or a piece kept as raw
+    /// XML, a drawing's source included, holds its bytes. `false` says no
+    /// drawing of the block shows it; `true` may be a piece that names it
+    /// otherwise.
+    #[doc(hidden)]
+    pub fn may_show_relationship(&self, id: &str) -> bool {
+        let names = |embed: &str, link: Option<&str>| embed == id || link == Some(id);
+        block_contains(
+            self,
+            &Probe {
+                needle: id.as_bytes(),
+                drawing: &|drawing| {
+                    drawing
+                        .inline
+                        .as_ref()
+                        .is_some_and(|inline| names(&inline.embed_id, inline.link_id.as_deref()))
+                        || drawing.anchor.as_ref().is_some_and(|anchor| {
+                            names(&anchor.embed_id, anchor.link_id.as_deref())
+                        })
+                },
+            },
+        )
+    }
+}
+
+impl BodyContent {
+    /// Whether a typed inline drawing of this block still waits for the
+    /// drawing id a save gives it ([`crate::drawing::CT_Inline::doc_pr_id_unallocated`]).
+    #[doc(hidden)]
+    pub fn holds_unallocated_drawing_id(&self) -> bool {
+        block_contains(
+            self,
+            &Probe {
+                needle: b"",
+                drawing: &|drawing| {
+                    drawing
+                        .inline
+                        .as_ref()
+                        .is_some_and(|inline| inline.doc_pr_id_unallocated)
+                },
+            },
+        )
+    }
+}
+
+fn block_contains(block: &BodyContent, probe: &Probe<'_>) -> bool {
+    match block {
+        BodyContent::Paragraph(paragraph) => paragraph_contains(paragraph, probe),
+        BodyContent::Table(table) => table_contains(table, probe),
+        BodyContent::ContentControl(sdt) => sdt_contains(sdt, probe),
+        BodyContent::RawXml(raw) => probe.raw(raw),
+    }
+}
+
+fn paragraph_contains(paragraph: &CT_P, probe: &Probe<'_>) -> bool {
+    probe.extras(&paragraph.extra_xml)
+        || paragraph.runs.iter().any(|run| run_contains(run, probe))
         || paragraph
             .content_controls
             .iter()
-            .any(|(_, _, _, sdt)| sdt_contains(sdt, needle))
+            .any(|(_, _, _, sdt)| sdt_contains(sdt, probe))
         || paragraph
             .revisions
             .iter()
-            .any(|(_, _, revision)| revision.raw_xml_contains(needle))
+            .any(|(_, _, revision)| revision.raw_xml_contains(probe.needle))
+        || paragraph.rubies.iter().any(|ruby| {
+            ruby.raw_xml.iter().any(|raw| probe.raw(raw))
+                || ruby.ruby_text.iter().any(|run| run_contains(run, probe))
+        })
 }
 
-fn run_contains(run: &CT_R, needle: &[u8]) -> bool {
-    run.extra_xml.iter().any(|raw| bytes_contain(raw, needle))
+fn drawing_contains(drawing: &CT_Drawing, probe: &Probe<'_>) -> bool {
+    (probe.drawing)(drawing)
+        || drawing
+            .inline
+            .as_ref()
+            .and_then(|inline| inline.raw_xml.as_deref())
+            .is_some_and(|raw| probe.raw(raw))
+        || drawing
+            .anchor
+            .as_ref()
+            .and_then(|anchor| anchor.raw_xml.as_deref())
+            .is_some_and(|raw| probe.raw(raw))
+}
+
+fn run_contains(run: &CT_R, probe: &Probe<'_>) -> bool {
+    run.extra_xml.iter().any(|raw| probe.raw(raw))
+        || run
+            .alt_drawings
+            .iter()
+            .any(|drawing| drawing_contains(drawing, probe))
         || run.content.iter().any(|content| match content {
-            RunContent::Drawing(drawing) => {
-                drawing
-                    .inline
-                    .as_ref()
-                    .and_then(|inline| inline.raw_xml.as_deref())
-                    .is_some_and(|raw| bytes_contain(raw, needle))
-                    || drawing
-                        .anchor
-                        .as_ref()
-                        .and_then(|anchor| anchor.raw_xml.as_deref())
-                        .is_some_and(|raw| bytes_contain(raw, needle))
-            }
+            RunContent::Drawing(drawing) => drawing_contains(drawing, probe),
             _ => false,
         })
 }
 
-fn table_contains(table: &CT_Tbl, needle: &[u8]) -> bool {
-    extras_contain(&table.extra_xml, needle)
+fn table_contains(table: &CT_Tbl, probe: &Probe<'_>) -> bool {
+    probe.extras(&table.extra_xml)
         || table
             .content_controls
             .iter()
-            .any(|(_, _, sdt)| sdt_contains(sdt, needle))
-        || table.rows.iter().any(|row| row_contains(row, needle))
+            .any(|(_, _, sdt)| sdt_contains(sdt, probe))
+        || table.rows.iter().any(|row| row_contains(row, probe))
 }
 
-fn row_contains(row: &CT_Row, needle: &[u8]) -> bool {
-    extras_contain(&row.extra_xml, needle)
+fn row_contains(row: &CT_Row, probe: &Probe<'_>) -> bool {
+    probe.extras(&row.extra_xml)
         || row
             .content_controls
             .iter()
-            .any(|(_, _, sdt)| sdt_contains(sdt, needle))
-        || row.cells.iter().any(|cell| cell_contains(cell, needle))
+            .any(|(_, _, sdt)| sdt_contains(sdt, probe))
+        || row.cells.iter().any(|cell| cell_contains(cell, probe))
 }
 
-fn cell_contains(cell: &CT_Tc, needle: &[u8]) -> bool {
-    extras_contain(&cell.extra_xml, needle)
+fn cell_contains(cell: &CT_Tc, probe: &Probe<'_>) -> bool {
+    probe.extras(&cell.extra_xml)
         || cell.content.iter().any(|content| match content {
-            CellContent::Paragraph(paragraph) => paragraph_contains(paragraph, needle),
-            CellContent::Table(table) => table_contains(table, needle),
-            CellContent::ContentControl(sdt) => sdt_contains(sdt, needle),
+            CellContent::Paragraph(paragraph) => paragraph_contains(paragraph, probe),
+            CellContent::Table(table) => table_contains(table, probe),
+            CellContent::ContentControl(sdt) => sdt_contains(sdt, probe),
         })
 }
 
-fn sdt_contains(sdt: &CT_Sdt, needle: &[u8]) -> bool {
+fn sdt_contains(sdt: &CT_Sdt, probe: &Probe<'_>) -> bool {
     sdt.retained_resource_run_xml()
-        .any(|(_, raw)| bytes_contain(raw, needle))
+        .any(|(_, raw)| probe.raw(raw))
         || sdt
             .revisions
             .iter()
-            .any(|(_, revision)| revision.raw_xml_contains(needle))
+            .any(|(_, revision)| revision.raw_xml_contains(probe.needle))
         || sdt.content.iter().any(|content| match content {
-            SdtContent::Paragraph(paragraph) => paragraph_contains(paragraph, needle),
-            SdtContent::Table(table) => table_contains(table, needle),
-            SdtContent::Row(row) => row_contains(row, needle),
-            SdtContent::Cell(cell) => cell_contains(cell, needle),
-            SdtContent::Run(run) => run_contains(run, needle),
-            SdtContent::ContentControl(nested) => sdt_contains(nested, needle),
-            SdtContent::RawXml(raw) => bytes_contain(raw, needle),
+            SdtContent::Paragraph(paragraph) => paragraph_contains(paragraph, probe),
+            SdtContent::Table(table) => table_contains(table, probe),
+            SdtContent::Row(row) => row_contains(row, probe),
+            SdtContent::Cell(cell) => cell_contains(cell, probe),
+            SdtContent::Run(run) => run_contains(run, probe),
+            SdtContent::ContentControl(nested) => sdt_contains(nested, probe),
+            SdtContent::RawXml(raw) => probe.raw(raw),
         })
 }

@@ -29,6 +29,46 @@ impl PyDocument {
             })
     }
 
+    /// The checked physical owner of a captured `Hyperlink` record: the
+    /// story item that holds its link, the link's index among that item's
+    /// links and among its story's. `None` for a constructed record.
+    pub(super) fn hyperlink_owner(
+        &self,
+        py: Python<'_>,
+        hyperlink: &PyHyperlink,
+    ) -> PyResult<Option<(oxoffice_docx::ContentLocation, usize, usize)>> {
+        let Some((path, state)) = &hyperlink.owner else {
+            return Ok(None);
+        };
+        if !path.belongs_to(&self.revisions) {
+            return Err(PyValueError::new_err(
+                "hyperlink belongs to a different document",
+            ));
+        }
+        path.validate_scopes(
+            &self.revisions,
+            "hyperlink",
+            "re-fetch it with document.hyperlinks.",
+        )
+        .map_err(|error| crate::stale_to_pyerr(py, error))?;
+        let owner = self
+            .owners
+            .iter()
+            .find(|owner| owner.owner.same_state(state))
+            .ok_or_else(|| {
+                PyValueError::new_err("hyperlink physical owner is no longer current")
+            })?;
+        let WordOwnerLocation::Hyperlink(location, local) = &*owner.location() else {
+            return Err(PyValueError::new_err(
+                "hyperlink physical owner has the wrong kind",
+            ));
+        };
+        let index = owner
+            .projection_ordinal()
+            .ok_or_else(|| PyValueError::new_err("hyperlink source position is absent"))?;
+        Ok(Some((location.clone(), *local, index)))
+    }
+
     /// The live story of a `Hyperlink` record and the position of its link.
     ///
     /// A captured snapshot resolves through its current checked physical owner
@@ -39,30 +79,7 @@ impl PyDocument {
         py: Python<'_>,
         hyperlink: &PyHyperlink,
     ) -> PyResult<(oxoffice_docx::StoryId, usize)> {
-        if let Some((path, state)) = &hyperlink.owner {
-            if !path.belongs_to(&self.revisions) {
-                return Err(PyValueError::new_err(
-                    "hyperlink belongs to a different document",
-                ));
-            }
-            path.validate_scopes(
-                &self.revisions,
-                "hyperlink",
-                "re-fetch it with document.hyperlinks.",
-            )
-            .map_err(|error| crate::stale_to_pyerr(py, error))?;
-            let owner = self
-                .owners
-                .iter()
-                .find(|owner| owner.owner.same_state(state))
-                .ok_or_else(|| {
-                    PyValueError::new_err("hyperlink physical owner is no longer current")
-                })?;
-            let WordOwnerLocation::Hyperlink(location, _) = &*owner.location() else {
-                return Err(PyValueError::new_err(
-                    "hyperlink physical owner has the wrong kind",
-                ));
-            };
+        if let Some((location, _, index)) = self.hyperlink_owner(py, hyperlink)? {
             let story = self
                 .inner
                 .stories()
@@ -72,9 +89,6 @@ impl PyDocument {
                 .ok_or_else(|| {
                     PyValueError::new_err("hyperlink story owner is no longer current")
                 })?;
-            let index = owner
-                .projection_ordinal()
-                .ok_or_else(|| PyValueError::new_err("hyperlink source position is absent"))?;
             return Ok((story, index));
         }
         let story = self.native_story(py, &hyperlink.story)?;

@@ -45,6 +45,33 @@ impl Document {
         }
     }
 
+    /// Whether `block` holds an element named like a nested namespace owner
+    /// the body keeps from its source (an element of the source that
+    /// declares its own namespaces). A typed edit of such a block can leave
+    /// the writer unable to replay that owner's declarations, which a save
+    /// refuses: the in-place routes that rewrite an existing block leave it
+    /// to the staged route, which writes the part's bytes. `false` when the
+    /// main part is no longer as it was read: no owner is kept then.
+    pub(crate) fn block_holds_nested_namespace_owner(&self, block: &BodyContent) -> Result<bool> {
+        let Some(kept) = self.kept_main_part() else {
+            return Ok(false);
+        };
+        let Some(owners) = kept.nested_namespace_owners() else {
+            return Ok(true);
+        };
+        if owners.is_empty() {
+            return Ok(false);
+        }
+        let names = owners
+            .iter()
+            .map(|owner| owner.local_name.as_bytes())
+            .collect::<HashSet<_>>();
+        Ok(xml_holds_element_named(
+            &self.document.body_item_xml(block)?,
+            &names,
+        ))
+    }
+
     /// [`Self::invalidate_layout`] after an edit that leaves the main part
     /// and the body alone (a settings or package part edit): what a save of
     /// the body answers stays.
@@ -1071,7 +1098,7 @@ impl Document {
     pub(crate) fn body_block_item(
         &self,
         slot: usize,
-        (kind, owner): (StoryKind, usize),
+        owner: (StoryKind, usize),
         index: usize,
         item_kind: StoryItemKind,
     ) -> Result<Option<BodyBlockItem>> {
@@ -1081,6 +1108,59 @@ impl Document {
         if self.unsavable_body_edit().is_some() {
             return Ok(None);
         }
+        self.framed_body_block_item(slot, owner, index, item_kind)
+    }
+
+    /// [`Self::body_block_item`] without asking whether a save of the body
+    /// is known to fail: for a caller that asked before its edit and reads
+    /// the block it edits.
+    pub(crate) fn framed_body_block_item(
+        &self,
+        slot: usize,
+        (kind, owner): (StoryKind, usize),
+        index: usize,
+        item_kind: StoryItemKind,
+    ) -> Result<Option<BodyBlockItem>> {
+        let Some((head, xml, tail)) = self.framed_body_block(slot)? else {
+            return Ok(None);
+        };
+        let block_span = head.len()..xml.len() - tail;
+        let owners = scan_story_owners(&xml, StoryKind::Body)?;
+        let Some(owner) = owners
+            .iter()
+            .find(|candidate| candidate.kind == kind && candidate.owner_index == owner)
+        else {
+            return Ok(None);
+        };
+        let items = scan_story_items(&xml, owner, None)?;
+        let Some(item) = items.get(index) else {
+            return Ok(None);
+        };
+        if item.kind != item_kind
+            || item.full.start < block_span.start
+            || item.full.end > block_span.end
+        {
+            return Ok(None);
+        }
+        let span = item.clone();
+        Ok(Some(BodyBlockItem {
+            head,
+            tail,
+            item: span.full.clone(),
+            xml,
+            span,
+        }))
+    }
+
+    /// The direct body block at `slot` written alone under the root and the
+    /// final section of the main part, at the cost of that block: the bytes
+    /// before the block, the whole, and the length of the bytes after it.
+    /// `None` for a slot out of range.
+    #[allow(clippy::type_complexity)] // The head, the whole and the tail's length.
+    pub(crate) fn framed_body_block(
+        &self,
+        slot: usize,
+    ) -> Result<Option<(Vec<u8>, Vec<u8>, usize)>> {
         let Some(block) = self.document.body.content.get(slot) else {
             return Ok(None);
         };
@@ -1106,32 +1186,7 @@ impl Document {
         // The declaration a save adds to the root when the block uses w14.
         declare_w14_on_part_root(&mut xml)?;
         let head = xml[..head.len() + xml.len() - written].to_vec();
-        let block_span = head.len()..xml.len() - tail.len();
-        let owners = scan_story_owners(&xml, StoryKind::Body)?;
-        let Some(owner) = owners
-            .iter()
-            .find(|candidate| candidate.kind == kind && candidate.owner_index == owner)
-        else {
-            return Ok(None);
-        };
-        let items = scan_story_items(&xml, owner, None)?;
-        let Some(item) = items.get(index) else {
-            return Ok(None);
-        };
-        if item.kind != item_kind
-            || item.full.start < block_span.start
-            || item.full.end > block_span.end
-        {
-            return Ok(None);
-        }
-        let span = item.clone();
-        Ok(Some(BodyBlockItem {
-            head,
-            tail: tail.len(),
-            item: span.full.clone(),
-            xml,
-            span,
-        }))
+        Ok(Some((head, xml, tail.len())))
     }
 
     /// The block `child` reads as between `head` and `tail`, when it writes

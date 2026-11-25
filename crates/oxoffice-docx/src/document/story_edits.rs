@@ -346,6 +346,108 @@ impl Document {
         self.edit_story_hyperlink(story, link_index, Some(url))
     }
 
+    /// [`Self::set_hyperlink_url`] on the link `link` of the story item at
+    /// `location`, an item of the main part's body held by the direct body
+    /// block `block` (found by the caller), when its relationship is an
+    /// external hyperlink that no other element names and the link has no
+    /// anchor: the relationship is retargeted in place under
+    /// `EditUnit::Parts`, and no XML changes. The link is read from its
+    /// block written alone, and whether another element names its
+    /// relationship from a walk of what the main part writes, so nothing is
+    /// serialized beyond the block. `story_link` is the link's index among
+    /// its story's ([`Self::story_links`]), for the debug oracle. `None`,
+    /// changing nothing, for every other case: the caller takes
+    /// [`Self::set_hyperlink_url`].
+    #[doc(hidden)]
+    pub fn set_hyperlink_url_in_block(
+        &mut self,
+        location: &ContentLocation,
+        block: crate::ControlBlock,
+        link: usize,
+        story_link: usize,
+        url: &str,
+    ) -> Result<Option<()>> {
+        // Read by the debug oracle alone.
+        #[cfg(not(debug_assertions))]
+        let _ = story_link;
+        let story = &location.story;
+        if story.kind != StoryKind::Body
+            || story.owner_index != 0
+            || block.owner_index != 0
+            || story.part_name != self.doc_part_name
+            || location.index_path.len() != 1
+            // A target the relationships part cannot carry fails the staged
+            // route's save, with its own error.
+            || oxoffice_core::xml::reject_non_xml_characters("hyperlink URL", url).is_err()
+        {
+            return Ok(None);
+        }
+        let Some(item) = self.framed_body_block_item(
+            block.slot,
+            (StoryKind::Body, 0),
+            block.item_index,
+            location.item_kind,
+        )?
+        else {
+            return Ok(None);
+        };
+        // The links of the block's items, each paired with the smallest
+        // item that holds it, as the story's links are.
+        let owners = scan_story_owners(&item.xml, StoryKind::Body)?;
+        let Some(owner) = owners
+            .iter()
+            .find(|owner| owner.kind == StoryKind::Body && owner.owner_index == 0)
+        else {
+            return Ok(None);
+        };
+        let items = scan_story_items(&item.xml, owner, None)?;
+        let scopes =
+            story_namespace_scopes_at(&item.xml, items.iter().map(|item| item.scan.start))?;
+        let Some((_, found)) = ordered_story_link_spans(&item.xml, story, items, &scopes)?
+            .into_iter()
+            .filter(|(holder, _)| holder.index_path == [block.item_index])
+            .nth(link)
+        else {
+            return Ok(None);
+        };
+        let Some(relationship_id) = found.rel_id.filter(|_| found.anchor.is_none()) else {
+            return Ok(None);
+        };
+        let external_hyperlink = self
+            .package
+            .get_part_rels(&self.doc_part_name)
+            .and_then(|relationships| relationships.get_by_id(&relationship_id))
+            .is_some_and(|relationship| {
+                relationship.rel_type == rel_types::HYPERLINK
+                    && relationship.target_mode.as_deref() == Some("External")
+            });
+        if !external_hyperlink || self.main_part_relationship_references(&relationship_id) != 1 {
+            return Ok(None);
+        }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let part = self.doc_part_name.clone();
+        let result = self.edit_in_place(&[EditUnit::Parts], |document| {
+            document
+                .package
+                .set_relationship_target(&part, &relationship_id, url);
+            Ok(())
+        });
+        // The staged route runs on the document as a save reopens it: a
+        // copy of the live document keeps relationships its save prunes (a
+        // link an earlier in-place edit removed), which the staged route
+        // writes back, while this edit leaves them to the save. It writes
+        // the main part again from the story's XML, whose elements declare
+        // the namespaces they use again: those declarations are set aside.
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged_declarations_aside(before, &result, |staged| {
+            *staged = Document::from_bytes(&staged.to_bytes()?)?;
+            let story = staged.fingerprinted(location).story;
+            staged.set_hyperlink_url(&story, story_link, url)
+        });
+        result.map(Some)
+    }
+
     /// Remove one story hyperlink and keep its content in place.
     ///
     /// `link_index` indexes [`Self::story_links`] for `story`. The runs keep

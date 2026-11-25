@@ -77,7 +77,15 @@ impl Document {
             .paragraph_story_location(paragraph)?
             .ok_or_else(|| Error::Other("chart paragraph is absent".into()))?;
         let xml = self.paragraph_element_xml(&location)?;
-        let references = word_chart_references(&xml)?
+        let (reference, part) = self.chart_reference_target(&xml)?;
+        Ok((location, xml, reference, part))
+    }
+
+    /// The one owned chart reference of the paragraph `xml` and the chart
+    /// part it names, checked: its relationship, the part's content type
+    /// and the parts the chart relates to.
+    fn chart_reference_target(&self, xml: &[u8]) -> Result<(WordChartReference, String)> {
+        let references = word_chart_references(xml)?
             .into_iter()
             .filter(|reference| reference.owned)
             .collect::<Vec<_>>();
@@ -125,7 +133,7 @@ impl Document {
                 }
             }
         }
-        Ok((location, xml, reference.clone(), part))
+        Ok((reference.clone(), part))
     }
 
     /// Owned chart snapshots in direct main-body paragraph and occurrence order.
@@ -201,6 +209,107 @@ impl Document {
 
     /// Atomically edit one chart legend, isolating any shared ChartML part.
     pub fn set_chart_legend(
+        &mut self,
+        paragraph: usize,
+        visible: Option<bool>,
+        position: Option<oxoffice_chart::LegendPosition>,
+        overlay: Option<bool>,
+    ) -> Result<()> {
+        if self
+            .set_unshared_chart_legend(paragraph, visible, position, overlay)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.set_chart_legend_staged(paragraph, visible, position, overlay)
+    }
+
+    /// [`Self::set_chart_legend`] on a chart no other element or
+    /// relationship names, in place: only its chart part changes, under
+    /// `EditUnit::Parts`, so no handle changes. The chart is found in the
+    /// paragraph's direct body block, written alone, and whether another
+    /// element names its relationship by a walk of what the main part
+    /// writes, not a serialization. `None`, changing nothing, for a shared
+    /// chart, a paragraph that is not one direct body block, any refusal
+    /// or a body a save is known to refuse: the caller takes the staged
+    /// route, which isolates a shared chart and reports the refusal.
+    #[doc(hidden)]
+    pub fn set_unshared_chart_legend(
+        &mut self,
+        paragraph: usize,
+        visible: Option<bool>,
+        position: Option<oxoffice_chart::LegendPosition>,
+        overlay: Option<bool>,
+    ) -> Result<Option<()>> {
+        let Some(slot) = self.content_index_of_paragraph(paragraph) else {
+            return Ok(None);
+        };
+        let Some(block) =
+            self.framed_body_block_item(slot, (StoryKind::Body, 0), 0, StoryItemKind::Paragraph)?
+        else {
+            return Ok(None);
+        };
+        let scope = story_namespace_scope_at(&block.xml, block.item.start)?;
+        let xml = close_content_fragment_namespaces(&block.xml[block.item.clone()], &scope)?;
+        let Ok((reference, part)) = self.chart_reference_target(&xml) else {
+            return Ok(None);
+        };
+        let Some(source) = self.package.get_part(&part) else {
+            return Ok(None);
+        };
+        let Ok(updated) = oxoffice_chart::set_chart_legend(source, visible, position, overlay)
+        else {
+            return Ok(None);
+        };
+        if updated == source {
+            return Ok(Some(()));
+        }
+        let shared = self.main_part_relationship_references(&reference.relationship_id) != 1
+            || self
+                .package
+                .part_rels
+                .iter()
+                .flat_map(|(owner, rels)| rels.items.iter().map(move |r| (owner, r)))
+                .filter(|(owner, r)| {
+                    relationship_is_internal(r)
+                        && OpcPackage::resolve_rel_target(owner, &r.target)
+                            .eq_ignore_ascii_case(&part)
+                })
+                .count()
+                > 1;
+        if shared {
+            return Ok(None);
+        }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(&[EditUnit::Parts], |document| {
+            document.package.set_part(&part, updated);
+            Ok(())
+        });
+        #[cfg(debug_assertions)]
+        {
+            assert_eq!(
+                before
+                    .paragraph_story_location(paragraph)
+                    .and_then(|location| {
+                        location
+                            .ok_or_else(|| Error::Other("chart paragraph is absent".into()))
+                            .and_then(|location| before.paragraph_element_xml(&location))
+                    })
+                    .ok(),
+                Some(xml),
+                "the chart paragraph's block reads otherwise than its story"
+            );
+            self.assert_in_place_matches_staged(before, &result, |staged| {
+                staged.set_chart_legend_staged(paragraph, visible, position, overlay)
+            });
+        }
+        result.map(Some)
+    }
+
+    /// The staged route of [`Self::set_chart_legend`]: a shared chart is
+    /// isolated in a copy of its part, with a relationship of its own.
+    fn set_chart_legend_staged(
         &mut self,
         paragraph: usize,
         visible: Option<bool>,
@@ -647,6 +756,36 @@ impl Document {
                 "relationship owner {owner} has no image relationship {rel_id}"
             )));
         }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.set_picture_size_in_blocks(rel_id, cx, cy);
+        #[cfg(debug_assertions)]
+        match &result {
+            Ok(None) => assert!(
+                self.clone_for_staging().to_bytes().ok()
+                    == before.clone_for_staging().to_bytes().ok(),
+                "a picture resize left to the staged route changed the document"
+            ),
+            _ => self.assert_in_place_matches_staged(before, &result, |staged| {
+                staged.set_picture_size_staged(rel_id, cx, cy).map(Some)
+            }),
+        }
+        match result? {
+            Some(resized) => Ok(resized),
+            None => self.set_picture_size_staged(rel_id, cx, cy),
+        }
+    }
+
+    /// The staged route of [`Self::set_picture_size`]: the whole main part
+    /// written, resized and read again. Its debug oracle, and the route of a
+    /// relationship shown outside the body or in many blocks.
+    pub(super) fn set_picture_size_staged(
+        &mut self,
+        rel_id: &str,
+        cx: i64,
+        cy: i64,
+    ) -> Result<usize> {
+        let owner = self.doc_part_name.clone();
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
         let (updated, resized) =

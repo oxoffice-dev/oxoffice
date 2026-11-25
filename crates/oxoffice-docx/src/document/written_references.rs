@@ -43,6 +43,22 @@ fn raw_attribute_values(
     attribute: &[u8],
     found: &mut dyn FnMut(&str) -> bool,
 ) -> bool {
+    raw_attributes(
+        xml,
+        &|element| elements.contains(&element),
+        &|name| name == attribute,
+        found,
+    )
+}
+
+/// [`raw_attribute_values`] for the elements whose local name `element`
+/// accepts and the attributes whose local name `attribute` accepts.
+fn raw_attributes(
+    xml: &[u8],
+    element: &dyn Fn(&[u8]) -> bool,
+    attribute: &dyn Fn(&[u8]) -> bool,
+    found: &mut dyn FnMut(&str) -> bool,
+) -> bool {
     let mut at = 0;
     while let Some(offset) = xml[at..].iter().position(|byte| *byte == b'<') {
         let start = at + offset + 1;
@@ -74,13 +90,13 @@ fn raw_attribute_values(
             .iter()
             .position(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'>'))
             .map_or(xml.len(), |end| start + end);
-        if !elements.contains(&local_name(&xml[start..name_end])) {
+        if !element(local_name(&xml[start..name_end])) {
             continue;
         }
         let mut cursor = name_end;
         while let Some((name, value, next)) = next_attribute(xml, cursor) {
             cursor = next;
-            if local_name(name) != attribute {
+            if !attribute(local_name(name)) {
                 continue;
             }
             let value = String::from_utf8_lossy(value);
@@ -214,6 +230,82 @@ impl WrittenVisitor for ReferenceSearch<'_> {
     }
 }
 
+/// How many times the written content names the relationship `id`: the
+/// typed relationship ids (a hyperlink, a picture or chart drawing, a
+/// header or footer reference of a section) and, in raw fragments, every
+/// attribute whose value is `id`, whatever its name. A count, never less
+/// than the references the serialized part holds; it may hold more (a
+/// hyperlink kept as raw bytes is counted typed and raw, an attribute of
+/// another kind that happens to hold the same value), which only sends a
+/// caller to its staged route.
+struct RelationshipSearch<'a> {
+    id: &'a str,
+    count: usize,
+}
+
+impl RelationshipSearch<'_> {
+    fn section(&mut self, section: &CT_SectPr) {
+        self.count += section
+            .header_refs
+            .iter()
+            .chain(&section.footer_refs)
+            .filter(|reference| reference.rel_id == self.id)
+            .count();
+    }
+}
+
+impl WrittenVisitor for RelationshipSearch<'_> {
+    fn raw(&mut self, xml: &[u8]) {
+        let id = self.id;
+        let mut count = 0;
+        raw_attributes(xml, &|_| true, &|_| true, &mut |value| {
+            count += usize::from(value == id);
+            false
+        });
+        self.count += count;
+    }
+
+    fn paragraph(&mut self, paragraph: &CT_P) {
+        self.count += paragraph
+            .hyperlinks
+            .iter()
+            .filter(|hyperlink| hyperlink.rel_id.as_deref() == Some(self.id))
+            .count();
+    }
+
+    fn paragraph_properties(&mut self, properties: &CT_PPr) {
+        if let Some(section) = &properties.sect_pr {
+            self.section(section);
+        }
+    }
+
+    fn run(&mut self, run: &CT_R) {
+        for content in &run.content {
+            let RunContent::Drawing(drawing) = content else {
+                continue;
+            };
+            // A drawing kept as raw bytes is handed to `raw`.
+            let typed = drawing
+                .inline
+                .iter()
+                .filter(|inline| inline.raw_xml.is_none())
+                .map(|inline| (&inline.embed_id, &inline.link_id, &inline.chart_rel_id))
+                .chain(
+                    drawing
+                        .anchor
+                        .iter()
+                        .filter(|anchor| anchor.raw_xml.is_none())
+                        .map(|anchor| (&anchor.embed_id, &anchor.link_id, &anchor.chart_rel_id)),
+                );
+            for (embed, link, chart) in typed {
+                self.count += usize::from(embed == self.id)
+                    + usize::from(link.as_deref() == Some(self.id))
+                    + usize::from(chart.as_deref() == Some(self.id));
+            }
+        }
+    }
+}
+
 /// Each block's hit, with how many references its typed owners hold.
 fn search_slots(
     document: &Document,
@@ -259,6 +351,31 @@ impl Document {
             );
         }
         search.found
+    }
+
+    /// How many times the main part names its relationship `id`, by a walk
+    /// of what it writes instead of a serialization: never less than the
+    /// serialized part holds, so a count of 1 for an id an element is known
+    /// to name means no other element names it.
+    pub(crate) fn main_part_relationship_references(&self, id: &str) -> usize {
+        let mut search = RelationshipSearch { id, count: 0 };
+        for block in &self.document.body.content {
+            block.visit_written(&mut search);
+        }
+        self.document.visit_written_outside_body(&mut search);
+        if let Some(section) = &self.document.body.sect_pr {
+            search.section(section);
+        }
+        #[cfg(debug_assertions)]
+        if let Ok(xml) = self.document.to_xml() {
+            let serialized = serialized_relationship_references(&xml, id);
+            assert!(
+                search.count >= serialized,
+                "the written-fragment walk counts {} references to relationship '{id}', the serialized main part {serialized}",
+                search.count
+            );
+        }
+        search.count
     }
 
     /// The body blocks that hold a reference to the note `id` of `kind`
@@ -410,6 +527,33 @@ fn word_attribute_offsets(
             _ => {}
         }
         buffer.clear();
+    }
+}
+
+/// How many attributes of the relationships namespace hold `id` in `xml`.
+#[cfg(debug_assertions)]
+fn serialized_relationship_references(xml: &[u8], id: &str) -> usize {
+    use quick_xml::events::Event;
+    use quick_xml::name::{Namespace, ResolveResult};
+    let mut reader = NsReader::from_reader(xml);
+    let mut count = 0;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element) | Event::Empty(element)) => {
+                for attribute in element.attributes().flatten() {
+                    let (namespace, _) = reader.resolver().resolve_attribute(attribute.key);
+                    if matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == drawing_ns::R.as_bytes())
+                        && attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .is_ok_and(|value| value.as_ref() == id)
+                    {
+                        count += 1;
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => return count,
+            _ => {}
+        }
     }
 }
 

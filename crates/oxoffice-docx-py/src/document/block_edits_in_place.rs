@@ -220,4 +220,73 @@ impl PyDocument {
             }
         }
     }
+
+    /// Run `edit`, a facade edit that may change direct body blocks in place
+    /// without changing any owner they hold (the extents of their pictures),
+    /// and refresh the pieces of the blocks it changed. Nothing is
+    /// published: every handle stays, as no element a handle names changed.
+    /// A piece that did not hold the block before the edit stays as it is:
+    /// the next publication reads that block again.
+    pub(crate) fn edit_blocks_keeping_owners<T: Send>(
+        &mut self,
+        py: Python<'_>,
+        edit: impl FnOnce(&mut oxoffice_docx::Document) -> oxoffice_docx::Result<T> + Send,
+    ) -> PyResult<T> {
+        self.ensure_word_authority(py)?;
+        self.inner.hold_edit_undo();
+        let held = HeldUndo {
+            document: &mut self.inner,
+            armed: true,
+        };
+        let (result, held) = py.detach(move || {
+            let result = edit(held.document);
+            (result, held)
+        });
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                drop(held);
+                return Err(docx_to_pyerr(py, error));
+            }
+        };
+        let Some(undo) = held.take() else {
+            return Ok(value);
+        };
+        let context = self.inner.body_item_context();
+        let mut refreshed = Vec::new();
+        if let Some(pieces) = self.pieces.as_ref()
+            && pieces.context.as_ref() == Some(&context)
+            && pieces.blocks.len() == self.inner.body_children().len()
+        {
+            for (slot, previous) in undo.previous_body_block_units() {
+                let ([previous], Some(piece), Some(block)) = (
+                    previous,
+                    pieces.blocks.get(slot),
+                    self.inner.body_children().get(slot),
+                ) else {
+                    continue;
+                };
+                if !aligned_block(piece, previous) || piece.block.as_ref() == block {
+                    continue;
+                }
+                if let Ok(Some(owners)) = word_block_owners(&self.inner, block) {
+                    refreshed.push((
+                        slot,
+                        std::sync::Arc::new(WordBlockPiece {
+                            block: std::sync::Arc::new(block.clone()),
+                            owners: Some(owners),
+                        }),
+                    ));
+                }
+            }
+        }
+        if let Some(pieces) = self.pieces.as_mut() {
+            for (slot, piece) in refreshed {
+                pieces.blocks[slot] = piece;
+            }
+        }
+        #[cfg(debug_assertions)]
+        self.assert_word_inventory_rebuilds(false);
+        Ok(value)
+    }
 }

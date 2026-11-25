@@ -225,6 +225,16 @@ impl EditUndo {
             _ => None,
         }
     }
+
+    /// The slot and the direct body blocks each `BodyBlocks` unit copied
+    /// before the edit, in slot order.
+    pub fn previous_body_block_units(
+        &self,
+    ) -> impl Iterator<Item = (usize, &[oxoffice_docx_oxml::document::BodyContent])> {
+        self.body
+            .iter()
+            .map(|copy| (copy.slot, copy.blocks.as_slice()))
+    }
 }
 
 /// The in-place edit open on a document and the undo its caller holds. A
