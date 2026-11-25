@@ -2490,23 +2490,65 @@ fn a_cut_picture_comes_back_after_its_other_occurrence_goes() {
 
 /// `doc` with each body picture as the result of an `INCLUDEPICTURE` field.
 fn as_included_pictures(doc: Document) -> Document {
+    as_included_first_pictures(doc, usize::MAX)
+}
+
+/// `doc` with its first `count` pictures shown as the results of
+/// INCLUDEPICTURE fields, the others left plain.
+fn as_included_first_pictures(doc: Document, count: usize) -> Document {
     let mut doc = doc;
     let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
     let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
     let xml = xml
-        .replace(
+        .replacen(
             "<w:p><w:r><w:drawing>",
             r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> INCLUDEPICTURE "logo.png" \* MERGEFORMAT </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:drawing>"#,
+            count,
         )
-        .replace(
+        .replacen(
             "</w:drawing></w:r></w:p>",
             r#"</w:drawing></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+            count,
         );
     assert!(xml.contains("INCLUDEPICTURE"), "{xml}");
     package.set_part("/word/document.xml", xml.into_bytes());
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).unwrap();
     Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+#[test]
+fn a_picture_shown_by_a_field_result_is_resized_with_the_plain_ones() {
+    // The first picture is the result of an INCLUDEPICTURE field, the second
+    // a plain drawing of the same image: a resize by relationship reaches both.
+    let mut doc = as_included_first_pictures(
+        pictures_document(
+            Placement::Body,
+            &[("r:embed", "rIdShared"), ("r:embed", "rIdShared")],
+            &[("rIdShared", PictureTarget::Media("one.png", 40))],
+        ),
+        1,
+    );
+    assert_eq!(
+        doc.set_picture_size("rIdShared", Length::emu(182_880), Length::emu(91_440))
+            .unwrap(),
+        2
+    );
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    assert!(xml.contains("INCLUDEPICTURE"), "{xml}");
+    assert_eq!(xml.matches(r#"cx="182880""#).count(), 2, "{xml}");
+    // Only field results: the walk still finds them.
+    let mut doc = as_included_pictures(pictures_document(
+        Placement::Body,
+        &[("r:embed", "rIdShared")],
+        &[("rIdShared", PictureTarget::Media("one.png", 40))],
+    ));
+    assert_eq!(
+        doc.set_picture_size("rIdShared", Length::emu(182_880), Length::emu(91_440))
+            .unwrap(),
+        1
+    );
 }
 
 #[test]

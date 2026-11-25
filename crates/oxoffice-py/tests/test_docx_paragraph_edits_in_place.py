@@ -183,16 +183,17 @@ def test_a_publication_that_fails_after_the_swap_puts_the_paragraph_back(body, c
 
 
 # A field a run adds reads in place as part of that run's text, where the reopened save reads its result as a run
-# of its own. A staged set_hyperlink_url reopened the document and hid it; the URL is now set in place.
-FIELD_READS_OTHERWISE = [
-    pytest.param(call, marks=pytest.mark.xfail(strict=True, reason="oxoffice-dev/oxoffice#651: an added field's "
-                                               "result reads otherwise after a reopen")) if call in ("Run.add_field", "Run.add_legacy_form_field")
-    else call
-    for call in EDITS
-]
+# of its own. A staged set_hyperlink_url reopened the document and hid it; the URL is now set in place. Only the
+# reopened read is set aside for these calls (test_an_added_field_reads_the_same_after_a_reopen).
+FIELD_READS_OTHERWISE = ("Run.add_field", "Run.add_legacy_form_field")
 
 
-@pytest.mark.parametrize("call", FIELD_READS_OTHERWISE)
+def reads_the_same_after_a_reopen(doc, call):
+    if call not in FIELD_READS_OTHERWISE:
+        assert texts(reopened(doc)) == texts(doc)
+
+
+@pytest.mark.parametrize("call", list(EDITS))
 def test_a_field_added_before_a_later_hyperlink_retires_that_hyperlink_only(body, call):
     doc = oxdocx.Document.from_bytes(body)
     doc.paragraphs[EDITED - 1].add_hyperlink("earlier link", "https://example.com/earlier")
@@ -208,7 +209,7 @@ def test_a_field_added_before_a_later_hyperlink_retires_that_hyperlink_only(body
 
     assert moved(links["earlier link"]) == ["earlier link"]
     assert outcome(lambda: moved(links["later link"])) == (STALE if adds_items else ["later link"])
-    assert texts(reopened(doc)) == texts(doc)
+    reads_the_same_after_a_reopen(doc, call)
 
 
 def test_reads_stay_in_document_order_after_removals_that_moved_owners(body):
@@ -240,7 +241,7 @@ def test_reads_stay_in_document_order_after_removals_that_moved_owners(body):
     assert texts(reopened(doc)) == texts(doc)
 
 
-@pytest.mark.parametrize("call", FIELD_READS_OTHERWISE)
+@pytest.mark.parametrize("call", list(EDITS))
 def test_an_edit_of_a_paragraph_that_holds_a_hyperlink_retires_that_hyperlink(body, call):
     doc = oxdocx.Document.from_bytes(body)
     doc.paragraphs[EDITED - 1].add_hyperlink("earlier link", "https://example.com/earlier")
@@ -257,6 +258,16 @@ def test_an_edit_of_a_paragraph_that_holds_a_hyperlink_retires_that_hyperlink(bo
     assert outcome(lambda: moved(links["own link"])) == STALE
     assert moved(links["earlier link"]) == ["earlier link"]
     assert after.text == doc.paragraphs[EDITED + 1].runs[0].text
+    reads_the_same_after_a_reopen(doc, call)
+
+
+@pytest.mark.xfail(strict=True, reason="oxoffice-dev/oxoffice#651: an added field's result reads otherwise after a reopen")
+@pytest.mark.parametrize("linked", [EDITED + 5, EDITED])
+@pytest.mark.parametrize("call", FIELD_READS_OTHERWISE)
+def test_an_added_field_reads_the_same_after_a_reopen(body, call, linked):
+    doc = oxdocx.Document.from_bytes(body)
+    doc.paragraphs[linked].add_hyperlink("link", "https://example.com/link")
+    EDITS[call][0](doc, doc.paragraphs[EDITED])
     assert texts(reopened(doc)) == texts(doc)
 
 

@@ -269,6 +269,13 @@ impl PyDocument {
                 if !aligned_block(piece, previous) || piece.block.as_ref() == block {
                     continue;
                 }
+                // The edit refuses a block that reads back with other runs:
+                // a kept handle names the owner it named.
+                debug_assert_eq!(
+                    piece.block.owner_shape(),
+                    block.owner_shape(),
+                    "an edit keeping the owners changed the owners of block {slot}"
+                );
                 if let Ok(Some(owners)) = word_block_owners(&self.inner, block) {
                     refreshed.push((
                         slot,

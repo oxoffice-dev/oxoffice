@@ -1403,30 +1403,7 @@ impl PyDocument {
                 return Ok(());
             }
         }
-        // A picture the in-place route read carries its story without the
-        // fingerprint the staged route compares: the revision check above
-        // says it is the story's occurrence now.
-        let mut occurrence = picture.inner.clone();
-        let story = occurrence.location.story().clone();
-        if story
-            == oxoffice_docx::StoryId::new(story.kind(), story.part_name(), story.owner_index())
-            && let Some(current) = self
-                .inner
-                .stories()
-                .map_err(|error| docx_to_pyerr(py, error))?
-                .into_iter()
-                .find(|candidate| {
-                    candidate.kind() == story.kind()
-                        && candidate.part_name() == story.part_name()
-                        && candidate.owner_index() == story.owner_index()
-                })
-        {
-            occurrence.location = oxoffice_docx::ContentLocation::new(
-                current,
-                occurrence.location.item_kind(),
-                occurrence.location.index_path().to_vec(),
-            );
-        }
+        let occurrence = self.current_picture_occurrence(py, &picture.inner)?;
         let (width, height) = (width.to_emu(), height.to_emu());
         let mut candidate = self.inner.clone_for_staging();
         candidate
@@ -3713,14 +3690,22 @@ impl PyDocument {
                             "Re-fetch it with document.pictures().",
                         )
                         .map_err(|error| crate::stale_to_pyerr(py, error))?;
+                    // A picture an in-place route returned has no story
+                    // fingerprint: read at this revision, it is the story's
+                    // occurrence now.
+                    let occurrence = if picture.binding.revision == self.revisions.current() {
+                        self.current_picture_occurrence(py, &picture.inner)?
+                    } else {
+                        picture.inner.clone()
+                    };
                     let current = self
                         .inner
                         .pictures()
                         .map_err(|error| docx_to_pyerr(py, error))?;
-                    if !current.contains(&picture.inner) {
+                    if !current.contains(&occurrence) {
                         return Err(PyValueError::new_err("picture placement source changed"));
                     }
-                    return Ok(picture.inner.location.clone());
+                    return Ok(occurrence.location);
                 }
                 Err(PyTypeError::new_err("after must be a StoryItem or Picture"))
             })

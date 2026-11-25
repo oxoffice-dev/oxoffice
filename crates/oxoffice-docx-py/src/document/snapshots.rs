@@ -3,6 +3,41 @@
 use super::*;
 
 impl PyDocument {
+    /// `picture` as the staged routes compare it: a picture an in-place
+    /// route returned carries its story without the fingerprint (a read of
+    /// the whole main part), so its story is looked up by kind, part name
+    /// and owner index among the stories as they are now. The caller checked
+    /// the handle's revision: it names the story's occurrence now. A
+    /// fingerprinted picture is returned as it is.
+    pub(super) fn current_picture_occurrence(
+        &self,
+        py: Python<'_>,
+        picture: &oxoffice_docx::PictureOccurrence,
+    ) -> PyResult<oxoffice_docx::PictureOccurrence> {
+        let mut occurrence = picture.clone();
+        let story = occurrence.location.story().clone();
+        if story
+            == oxoffice_docx::StoryId::new(story.kind(), story.part_name(), story.owner_index())
+            && let Some(current) = self
+                .inner
+                .stories()
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .into_iter()
+                .find(|candidate| {
+                    candidate.kind() == story.kind()
+                        && candidate.part_name() == story.part_name()
+                        && candidate.owner_index() == story.owner_index()
+                })
+        {
+            occurrence.location = oxoffice_docx::ContentLocation::new(
+                current,
+                occurrence.location.item_kind(),
+                occurrence.location.index_path().to_vec(),
+            );
+        }
+        Ok(occurrence)
+    }
+
     /// The live native owner that a `Story` snapshot names.
     ///
     /// A snapshot carries no fingerprint, so it resolves by kind, part name

@@ -340,7 +340,8 @@ impl Document {
     /// resized as the staged route resizes the whole part. `None`, changing
     /// nothing, for a relationship the page background names, more blocks,
     /// a body whose save is known to fail, or a block that does not read
-    /// back as it writes. The caller checked the size and the relationship.
+    /// back as it writes or reads back with other runs. The caller checked
+    /// the size and the relationship.
     pub(super) fn set_picture_size_in_blocks(
         &mut self,
         rel_id: &str,
@@ -399,6 +400,13 @@ impl Document {
             else {
                 return Ok(None);
             };
+            // Nothing is published: a block that reads back with other
+            // runs (a run edited live that a read splits otherwise) would
+            // give a kept handle another owner. The staged route retires
+            // them all.
+            if block.owner_shape() != self.document.body.content[slot].owner_shape() {
+                return Ok(None);
+            }
             resized += count;
             resized_blocks.push((slot, block));
         }

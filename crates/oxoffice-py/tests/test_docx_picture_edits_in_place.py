@@ -9,6 +9,8 @@ and keeps every handle. A refused call leaves the bytes and every handle as they
 header take the staged route and read the same after a reopen."""
 
 import io
+import re
+import zipfile
 
 import docx
 import pytest
@@ -255,3 +257,90 @@ def test_a_refused_relationship_resize_leaves_the_bytes_and_every_handle_unchang
         assert doc.to_bytes() == before
     assert kept[1][0].text == doc.paragraphs[EDITED].runs[0].text
     check_neighbours_kept(doc, kept)
+
+
+def test_a_run_picture_places_a_document_picture_after_it(body):
+    # The picture the in-place route returns carries no story fingerprint; it still names the occurrence.
+    doc = oxdocx.Document.from_bytes(body)
+    picture = doc.paragraphs[EDITED].runs[0].add_picture(noise_png(8, 3), "a.png", Inches(1), Inches(1))
+    placed = doc.add_picture(noise_png(8, 4), "b.png", Inches(1), Inches(1), after=picture)
+    assert placed.bytes == noise_png(8, 4)
+    again = reopened(doc)
+    shown = [p.bytes for p in again.pictures() if p.bytes in (noise_png(8, 3), noise_png(8, 4))]
+    assert shown == [noise_png(8, 3), noise_png(8, 4)]
+
+
+def field_result_pictures(shared):
+    """A body whose first picture is the result of an INCLUDEPICTURE field, and, with `shared`, a plain picture of
+    the same image relationship after it."""
+    doc = oxdocx.Document()
+    doc.add_paragraph("before")
+    doc.add_picture(noise_png(8, 5), "f.png", Inches(1), Inches(1))
+    doc.add_paragraph("after")
+    source = io.BytesIO(doc.to_bytes())
+    with zipfile.ZipFile(source) as package:
+        parts = {name: package.read(name) for name in package.namelist()}
+    xml = parts["word/document.xml"].decode()
+    match = re.search(r"<w:p\b(?:(?!<w:p\b).)*?<w:drawing>.*?</w:p>", xml, re.S)
+    plain = match.group(0)
+    run = re.search(r"<w:r\b(?:(?!<w:r\b).)*?<w:drawing>.*?</w:drawing>.*?</w:r>", plain, re.S).group(0)
+    field = plain.replace(run, (
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> INCLUDEPICTURE "f.png" \\* MERGEFORMAT </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>' + run + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+    ))
+    copy = re.sub(r'(<wp:docPr id=")(\d+)', lambda m: m.group(1) + str(int(m.group(2)) + 100), plain)
+    parts["word/document.xml"] = xml.replace(plain, field + (copy if shared else "")).encode()
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as package:
+        for name, data in parts.items():
+            package.writestr(name, data)
+    return oxdocx.Document.from_bytes(out.getvalue())
+
+
+def saved_extents(doc):
+    """The relationship each saved body drawing shows, with its extent, in document order."""
+    with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as package:
+        xml = package.read("word/document.xml").decode()
+    assert "INCLUDEPICTURE" in xml
+    drawings = re.findall(r"<w:drawing>.*?</w:drawing>", xml, re.S)
+    return [(re.search(r'r:embed="([^"]+)"', drawing).group(1),
+             tuple(int(value) for value in re.search(r'<wp:extent cx="(\d+)" cy="(\d+)"', drawing).groups()))
+            for drawing in drawings]
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_a_relationship_resize_reaches_a_picture_shown_by_a_field_result(shared):
+    # Document.pictures() does not list a field result's picture; the resize by relationship still reaches it.
+    doc = field_result_pictures(shared)
+    shown = saved_extents(doc)
+    assert len(shown) == (2 if shared else 1) and len({relationship for relationship, _ in shown}) == 1
+    relationship = shown[0][0]
+    assert doc.set_picture_sizes_for_relationship(relationship, Inches(2), Inches(1)) == len(shown)
+    resized = [(relationship, (Inches(2), Inches(1)))] * len(shown)
+    assert saved_extents(doc) == resized
+    assert saved_extents(reopened(doc)) == resized
+
+
+def resize_after_an_added_field(body):
+    doc = oxdocx.Document.from_bytes(body)
+    picture = doc.paragraphs[EDITED].runs[0].add_picture(noise_png(8, 6), "s.png", Inches(1), Inches(1))
+    doc.paragraphs[EDITED].runs[0].add_field("PAGE", "1")
+    runs = list(doc.paragraphs[EDITED].runs)
+    before = [run.text for run in runs]
+    assert doc.set_picture_sizes_for_relationship(picture.relationship_id, Inches(2), Inches(1)) == 1
+    assert sizes(doc, picture.relationship_id) == [(Inches(2), Inches(1))]
+    return runs, before
+
+
+def test_a_block_that_reads_back_with_other_runs_is_not_resized_in_place(body):
+    # The added field reads back from the block's bytes as other runs (#651): the block takes the staged route. A
+    # debug build checks that a block resized in place keeps the runs a kept handle names.
+    resize_after_an_added_field(body)
+
+
+@pytest.mark.xfail(strict=True, reason="oxoffice-dev/oxoffice#651: an added field's result reads otherwise after a "
+                                       "read of the part, which the staged resize makes while keeping the handles")
+def test_a_relationship_resize_after_an_added_field_keeps_the_runs_it_names(body):
+    runs, before = resize_after_an_added_field(body)
+    assert [run.text for run in runs] == before
