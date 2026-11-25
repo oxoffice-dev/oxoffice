@@ -1,6 +1,6 @@
 ---
 date: 2026-11-25
-status: draft
+status: accepted
 scope: docx, python
 ---
 
@@ -87,6 +87,8 @@ Rules the resolver applies, for every operation:
 - **A control keeps a block.** Removing or moving out the only paragraph, table or control of a block control is
   refused: the route is to remove the control itself (`remove_content_control`, or `remove_content_at` on the
   control). oxoffice opens an empty `w:sdtContent`; whether Word does is not checked, so we do not write one.
+- **A typed control keeps one block.** A plain text, date, drop-down list, combo box, picture or check box control
+  that holds a block takes no other (decision 3 below).
 - **A block cannot move into itself** (a control into its own content).
 - **A range stays in one container**: `from_range` takes a start and an end of the same container; a range ending
   after a control's last paragraph ends at `control_end`.
@@ -164,11 +166,12 @@ break an exhaustive match).
 | an end as a source or a range start | name the block |
 | a block into a repeating section's own content | `control_end` of an item, `repeat_content_control` |
 | the only block of a control removed or moved out | `remove_content_control` |
+| a second block into a typed control | set the control's value, or remove or unwrap the control |
 | a range across containers | `control_end(story, c)` or the control `[c]` |
 | a move to another story | `clone_content` then `remove_content_at` |
 | a section-inclusive fragment elsewhere than the body | a direct body location or `end(body)` |
 | Python `find_content_index` of a block outside the body's direct children | the handle itself to the location calls |
-| a table written directly in a block control, as a location | the limitation `docx-block-control-table-location` |
+| a table written directly in a block control, as a location | the limitation `docx-block-control-table-location` (#660) |
 
 The kind check of `[i]` (`KindMismatch`) and the refusals about the content itself (comment anchors, relationships,
 a section-owning paragraph) are not about the location and keep their messages.
@@ -176,8 +179,7 @@ a section-owning paragraph) are not about the location and keep their messages.
 **Limitation** `crates/oxoffice-cli/limitations/docx-block-control-table-location.json`: a table written directly
 in a block content control has no location, so it cannot be copied, moved or removed alone; workaround: copy, move
 or remove it with its control, or within a fragment range between the blocks around it (`from_range` from the
-paragraph before it to the next block or `control_end`, then `import_fragment`). Its issue is the one follow-up
-issue of this work (see the questions).
+paragraph before it to the next block or `control_end`, then `import_fragment`). Its issue is #660.
 
 ### Acceptance: a table of contents entry added by hand
 
@@ -193,12 +195,10 @@ ends at `control_end`.
 
 - A location for a table (or another non-paragraph block) written directly in a block control: the limitation
   above. `[c, k]` of kind table would need the element operations on tables to take it too.
-- A rule for typed controls (plain text, date, drop-down, combo box, picture, check box), whose value Word keeps in
-  one paragraph: the fragment route accepts a second block in them today and the resolver keeps that.
 - Location forms for the direct body index calls (`insert_paragraph`, `insert_table`...), and a CLI command.
 - Keeping Python handles across an insertion inside a control (the body splice handles only direct body blocks).
 - A clone of a paragraph that holds only part of a complex field (a TOC entry holding the field's begin or end) is
-  accepted today at story level and duplicates that part; not a location question, and not changed here.
+  accepted today at story level and duplicates that part; not a location question, and not changed here (#661).
 - Blocks inside `w:customXml`: the facade does not list them as paragraphs.
 
 ## Plan
@@ -213,14 +213,16 @@ Two pull requests, stacked, each with its tests:
      operation (insert, import, HTML insert, clone source and destination, move source and destination, remove,
      range start and end, caption insert) by shape (`[i]` in the body; `[c, k]` and `control_end` of a body
      control; `[c, k]`, `control_end` and `[i]` of a control nested in it; `end(body)`; `(c, n)`; a cell
-     paragraph and a control in a cell; a header paragraph and a control in it; a footnote paragraph). Each cell
+     paragraph and a control in a cell; a header paragraph and a control in it; a footnote, a text box and a comment
+     paragraph; a typed control). Each cell
      either works (the story's paragraphs as expected, the document saved, reopened with the same story
      paragraphs, and saved again to the same bytes) or is refused with a message containing its route. The
      refused cells are listed, so a gap shows in the test.
    - `a_toc_entry_is_added_after_the_last_one_by_cloning_it` (Word and Google thesis).
    - `the_last_paragraph_of_a_block_control_is_copied_up_to_its_end`,
      `a_paragraph_is_appended_at_the_end_of_a_block_control_and_the_story_end_stays_after_it`,
-     `a_block_control_keeps_one_block`, `a_repeating_section_takes_blocks_only_in_its_items`,
+     `a_block_control_keeps_one_block`, `a_typed_control_takes_no_second_block`,
+     `a_repeating_section_takes_blocks_only_in_its_items`,
      `bookmark_markers_inside_a_block_control_go_with_their_paragraph`,
      `a_caption_inserted_in_a_block_control_returns_its_paragraph_location`.
 2. **`feat(python): every block location form in every location argument`** (Closes #657). The converter,
@@ -234,18 +236,24 @@ Checks: `cargo fmt`, clippy on `oxoffice-docx` and `oxoffice-docx-py` (all targe
 (`fragment_import`, `content_controls`, `fields_and_toc`, `pictures`, `story_paragraphs`), the Python tests above
 and the fragment, story and content control tests after `maturin develop`, and the issue's repro.
 
-## Open questions
+## Decisions of the review (2026-11-25)
 
-1. One pull request or the two above. Two keep each review to one layer; one keeps the feature whole in a single
-   merge.
-2. The issue of the limitation: a new issue for tables in block controls (the one follow-up of this work), or #657
-   kept open with that leftover (`Refs #657` on both pull requests).
-3. Typed controls: refuse a second block in a plain text, date, list, picture or check box control? Needs a Word
-   check; not done here.
-4. The clone of a paragraph holding part of a complex field: a separate issue (story level, not a location)?
+1. Two stacked pull requests, as planned: the Rust one says `Refs #657`, the Python one `Closes #657`.
+2. The limitation `docx-block-control-table-location` has its own issue, #660: a table inside a control is not a
+   story item (`story_scan.rs`), and giving it an `[i]` would shift the later indices.
+3. **Typed controls refuse a second block.** An insertion into a plain text, date, drop-down list, combo box,
+   picture or check box block control that already holds a block is refused, for the reason the empty
+   `w:sdtContent` is: Word is not checked, so we never write what it may reject. The message names the route (set
+   the control's value, or remove or unwrap the control). This makes the fragment route stricter than today
+   (`import_fragment` took it): a behaviour change, said in the pull request. Rich text, unconstrained, gallery
+   (TOC, bibliography), group and repeating section item controls are unchanged.
+4. The clone of a paragraph holding part of a complex field is #661, out of this work. The TOC test clones an entry
+   that holds only whole fields, never the first entry or the field-end paragraph.
+5. The matrix has a text box paragraph row (`w:txbxContent` is its own nested owner in `scan_story_items`) and a
+   comment paragraph row.
 
 ## Links
 
-- Issue #657; related #433, #622, #466.
+- Issue #657; related #433, #622, #466; limitation #660; partial field clones #661.
 - [Compare adds, removes and moves block content controls whole](2026-11-23-compare-block-content-controls.md).
 - [Cut and pasted content keeps its bookmarks whole and its ids unique](2026-11-22-cut-content-keeps-its-bookmarks-and-ids.md).
