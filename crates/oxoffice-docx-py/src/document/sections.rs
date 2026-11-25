@@ -430,10 +430,10 @@ impl PySectionHandle {
             crate::LengthUnit::HalfPoints,
         )?;
         let mut document = self.document.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        candidate
-            .set_drawingml_text_watermark_for(
-                self.index,
+        let index = self.index;
+        document.edit_story_parts(py, "SectionHandle.set_text_watermark", |document| {
+            document.set_drawingml_text_watermark_for(
+                index,
                 variant,
                 text,
                 oxoffice_docx::TextWatermarkOptions {
@@ -446,22 +446,13 @@ impl PySectionHandle {
                 },
                 oxoffice_docx::Length::emu(font_size),
             )
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "SectionHandle.set_text_watermark",
-            crate::document::WordPublication::Conservative,
-        )?;
-        let (next, next_owner) = document.capture_prepared_owner(
-            &prepared,
+        })?;
+        let (next, next_owner) = document.capture_owner(
             &WordOwnerLocation::Section(self.index),
             smallvec![],
             WordView::Owner,
             None,
         )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
         self.path = next;
         self.owner = next_owner;
         Ok(())
@@ -502,10 +493,10 @@ impl PySectionHandle {
             crate::LengthUnit::Emu,
         )?;
         let mut document = self.document.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        candidate
-            .set_drawingml_image_watermark_for(
-                self.index,
+        let index = self.index;
+        document.edit_story_parts(py, "SectionHandle.set_image_watermark", |document| {
+            document.set_drawingml_image_watermark_for(
+                index,
                 variant,
                 data,
                 filename,
@@ -516,22 +507,13 @@ impl PySectionHandle {
                     opacity,
                 },
             )
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "SectionHandle.set_image_watermark",
-            crate::document::WordPublication::Conservative,
-        )?;
-        let (next, next_owner) = document.capture_prepared_owner(
-            &prepared,
+        })?;
+        let (next, next_owner) = document.capture_owner(
             &WordOwnerLocation::Section(self.index),
             smallvec![],
             WordView::Owner,
             None,
         )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
         self.path = next;
         self.owner = next_owner;
         Ok(())
@@ -551,25 +533,16 @@ impl PySectionHandle {
             }
         };
         let mut document = self.document.borrow_mut(py);
-        let mut candidate = document.inner.clone_for_staging();
-        candidate
-            .remove_drawingml_watermark_for(self.index, variant)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = document.prepare_word_revision(
-            py,
-            &candidate,
-            "SectionHandle.remove_watermark",
-            crate::document::WordPublication::Conservative,
-        )?;
-        let (next, next_owner) = document.capture_prepared_owner(
-            &prepared,
+        let index = self.index;
+        document.edit_story_parts(py, "SectionHandle.remove_watermark", |document| {
+            document.remove_drawingml_watermark_for(index, variant)
+        })?;
+        let (next, next_owner) = document.capture_owner(
             &WordOwnerLocation::Section(self.index),
             smallvec![],
             WordView::Owner,
             None,
         )?;
-        document.commit_word_revision(prepared)?;
-        document.install_inner(candidate);
         self.path = next;
         self.owner = next_owner;
         Ok(())

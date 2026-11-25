@@ -34,12 +34,19 @@ pub enum EditUnit {
     /// An edit may name several, disjoint and in slot order: then only the
     /// last may change its number of blocks, each other one keeps it.
     BodyBlocks { slot: usize, count: usize },
-    /// The section properties of the body's last section (`w:body/w:sectPr`),
-    /// copied whole: they do not grow with the body. A section that a
-    /// paragraph ends keeps its properties in that paragraph, which a
-    /// `BodyBlocks` unit covers. The relationships its header and footer
-    /// references name are the part and reservation journals'.
-    BodySection,
+    /// The font table model, its part name and its dirty flag.
+    FontTable,
+    /// The section properties (`w:sectPr`) of section `index`, in document
+    /// order: the one in a body paragraph's properties for an earlier
+    /// section, the body's final one for the last. Only that `CT_SectPr`
+    /// is copied; the paragraph that holds it keeps every other property,
+    /// and no body block is added or removed. An index past the
+    /// paragraph-held sections names the final one, absent or not.
+    SectionProperties { index: usize },
+    /// The main document's page background (`w:background`, with the
+    /// foreign background children kept beside it): only that element is
+    /// copied, never the body.
+    Background,
 }
 
 /// What an edit did to the direct body blocks of its `BodyBlocks` unit: the
@@ -129,6 +136,35 @@ fn body_ranges(copies: &[BodyBlocksCopy], length: usize) -> Vec<std::ops::Range<
 }
 
 #[derive(Clone, Debug)]
+struct FontTableCopy {
+    font_table: Option<FontTable>,
+    part_name: Option<String>,
+    dirty: bool,
+}
+
+/// Where a section's properties live in the body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SectionOwner {
+    /// In the properties of the paragraph at this body slot.
+    Paragraph(usize),
+    /// The body's final section properties.
+    Final,
+}
+
+#[derive(Clone, Debug)]
+struct SectionCopy {
+    index: usize,
+    owner: SectionOwner,
+    properties: Option<CT_SectPr>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct BackgroundCopy {
+    xml: Option<Vec<u8>>,
+    extra: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug)]
 struct SettingsCopy {
     settings: Option<CT_Settings>,
     part_name: Option<String>,
@@ -161,12 +197,13 @@ pub struct EditUndo {
     comments: Option<CommentsCopy>,
     styles: Option<StylesCopy>,
     settings: Option<SettingsCopy>,
-    /// The body's last section properties, for a `BodySection` unit.
-    section: Option<Option<CT_SectPr>>,
     /// One copy per `BodyBlocks` unit, in slot order.
     body: Vec<BodyBlocksCopy>,
     /// The endnotes part's bytes before the edit, for its no-op answer.
     endnotes: Option<Option<Vec<u8>>>,
+    font_table: Option<FontTableCopy>,
+    sections: Vec<SectionCopy>,
+    background: Option<BackgroundCopy>,
     scalars: ScalarCopy,
     parts: oxoffice_opc::PartJournal,
     reservations: ReservationJournal,
@@ -218,9 +255,11 @@ impl Document {
             comments: None,
             styles: None,
             settings: None,
-            section: None,
             body: Vec::new(),
             endnotes: None,
+            font_table: None,
+            sections: Vec::new(),
+            background: None,
             scalars: ScalarCopy {
                 embedded_invalidated_signatures: self.embedded_invalidated_signatures.clone(),
                 freed_relationships: self.freed_relationships.clone(),
@@ -270,9 +309,24 @@ impl Document {
                     });
                 }
                 EditUnit::Parts => {}
-                EditUnit::BodySection => {
-                    undo.section = Some(self.document.body.sect_pr.clone());
+                EditUnit::FontTable => {
+                    undo.font_table = Some(FontTableCopy {
+                        font_table: self.font_table.clone(),
+                        part_name: self.font_table_part_name.clone(),
+                        dirty: self.font_table_dirty,
+                    });
                 }
+                EditUnit::SectionProperties { index } => {
+                    if undo.sections.iter().all(|copy| copy.index != *index) {
+                        let owner = self.section_owner(*index);
+                        undo.sections.push(SectionCopy {
+                            index: *index,
+                            owner,
+                            properties: self.section_properties_at(owner).cloned(),
+                        });
+                    }
+                }
+                EditUnit::Background => undo.background = Some(self.background_copy()),
                 EditUnit::BodyBlocks { slot, count } => {
                     let content = &self.document.body.content;
                     let end = (*slot + *count).min(content.len());
@@ -302,8 +356,10 @@ impl Document {
             comments,
             styles,
             settings,
-            section,
             body,
+            font_table,
+            sections,
+            background,
             scalars,
             parts,
             reservations,
@@ -347,6 +403,18 @@ impl Document {
             self.settings_part_name = copy.part_name;
             self.settings_owned = copy.owned;
         }
+        if let Some(copy) = font_table {
+            self.font_table = copy.font_table;
+            self.font_table_part_name = copy.part_name;
+            self.font_table_dirty = copy.dirty;
+        }
+        for copy in sections.into_iter().rev() {
+            self.restore_section_properties(copy.owner, copy.properties);
+        }
+        if let Some(copy) = background {
+            self.document.background_xml = copy.xml;
+            self.document.background_extra_xml = copy.extra;
+        }
         self.embedded_invalidated_signatures = scalars.embedded_invalidated_signatures;
         self.freed_relationships = scalars.freed_relationships;
         self.package_signatures_invalidated = scalars.package_signatures_invalidated;
@@ -360,9 +428,6 @@ impl Document {
         let ranges = body_ranges(&body, self.document.body.content.len());
         for (copy, range) in body.into_iter().zip(ranges).rev() {
             self.document.body.content.splice(range, copy.blocks);
-        }
-        if let Some(section) = section {
-            self.document.body.sect_pr = section;
         }
         self.invalidate_layout();
         if let Some(unsavable) = unsavable {
@@ -425,10 +490,21 @@ impl Document {
                                 || copy.part_name != self.settings_part_name
                         }),
                         EditUnit::Parts => self.package.part_journal_changed(&undo.parts),
-                        EditUnit::BodySection => undo
-                            .section
+                        EditUnit::FontTable => undo.font_table.as_ref().is_some_and(|copy| {
+                            copy.font_table != self.font_table
+                                || copy.part_name != self.font_table_part_name
+                        }),
+                        EditUnit::SectionProperties { index } => undo
+                            .sections
+                            .iter()
+                            .find(|copy| copy.index == *index)
+                            .is_some_and(|copy| {
+                                copy.properties.as_ref() != self.section_properties_at(copy.owner)
+                            }),
+                        EditUnit::Background => undo
+                            .background
                             .as_ref()
-                            .is_some_and(|before| *before != self.document.body.sect_pr),
+                            .is_some_and(|copy| *copy != self.background_copy()),
                         EditUnit::BodyBlocks { .. } => body_changed.next().unwrap_or(false),
                     };
                     (unit.clone(), changed)
@@ -439,6 +515,69 @@ impl Document {
                 _ => None,
             },
             body_blocks,
+        }
+    }
+
+    /// Where the properties of section `index` live: the paragraph that
+    /// holds the `index`-th paragraph-held section properties, else the
+    /// body's final ones. It walks the body blocks, comparing each, without
+    /// copying any.
+    fn section_owner(&self, index: usize) -> SectionOwner {
+        self.document
+            .body
+            .content
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| {
+                matches!(
+                    block,
+                    BodyContent::Paragraph(paragraph)
+                        if paragraph
+                            .properties
+                            .as_ref()
+                            .is_some_and(|properties| properties.sect_pr.is_some())
+                )
+            })
+            .nth(index)
+            .map_or(SectionOwner::Final, |(slot, _)| {
+                SectionOwner::Paragraph(slot)
+            })
+    }
+
+    fn section_properties_at(&self, owner: SectionOwner) -> Option<&CT_SectPr> {
+        match owner {
+            SectionOwner::Final => self.document.body.sect_pr.as_ref(),
+            SectionOwner::Paragraph(slot) => match self.document.body.content.get(slot) {
+                Some(BodyContent::Paragraph(paragraph)) => paragraph
+                    .properties
+                    .as_ref()
+                    .and_then(|properties| properties.sect_pr.as_ref()),
+                _ => None,
+            },
+        }
+    }
+
+    fn restore_section_properties(&mut self, owner: SectionOwner, properties: Option<CT_SectPr>) {
+        if self.section_properties_at(owner) == properties.as_ref() {
+            return;
+        }
+        match owner {
+            SectionOwner::Final => self.document.body.sect_pr = properties,
+            SectionOwner::Paragraph(slot) => {
+                if let Some(BodyContent::Paragraph(paragraph)) =
+                    self.document.body.content.get_mut(slot)
+                {
+                    paragraph.properties.get_or_insert_default().sect_pr = properties;
+                }
+            }
+        }
+    }
+
+    /// The page background of the main document, as a unit copies it.
+    fn background_copy(&self) -> BackgroundCopy {
+        BackgroundCopy {
+            xml: self.document.background_xml.clone(),
+            extra: self.document.background_extra_xml.clone(),
         }
     }
 
@@ -592,9 +731,11 @@ impl EditUndo {
             comments,
             styles,
             settings,
-            section,
             body,
             endnotes,
+            font_table,
+            sections,
+            background,
             parts,
             reservations,
             report,
@@ -609,7 +750,13 @@ impl EditUndo {
         self.comments = self.comments.take().or(comments);
         self.styles = self.styles.take().or(styles);
         self.settings = self.settings.take().or(settings);
-        self.section = self.section.take().or(section);
+        self.font_table = self.font_table.take().or(font_table);
+        self.background = self.background.take().or(background);
+        for copy in sections {
+            if self.sections.iter().all(|known| known.index != copy.index) {
+                self.sections.push(copy);
+            }
+        }
         debug_assert!(
             self.body.is_empty() || body.is_empty(),
             "two held edits name body blocks"
@@ -663,7 +810,12 @@ impl Document {
                 && *restored.styles == *before.styles
                 && restored.settings == before.settings
                 && restored.settings_part_name == before.settings_part_name
-                && restored.settings_owned == before.settings_owned,
+                && restored.settings_owned == before.settings_owned
+                && restored.font_table == before.font_table
+                && restored.font_table_part_name == before.font_table_part_name
+                && restored.document.body.sect_pr == before.document.body.sect_pr
+                && restored.document.background_xml == before.document.background_xml
+                && restored.document.background_extra_xml == before.document.background_extra_xml,
             "an in-place edit changed a model outside its units ({:?})",
             undo.units
         );
@@ -1053,46 +1205,6 @@ mod tests {
         assert!(report.units.iter().all(|(_, changed)| *changed));
         document.undo_edit(undo);
         assert_eq!(body_texts(&document), texts);
-    }
-
-    /// The body's last section properties: a change is reported and undone,
-    /// and a refusal puts them back.
-    #[test]
-    fn the_body_section_unit_reports_and_undoes_its_change() {
-        let mut document = Document::new();
-        let section = document.document.body.sect_pr.clone();
-        let width = section.as_ref().and_then(|section| section.page_width);
-        let widen = |document: &mut Document| {
-            let section = document
-                .document
-                .body
-                .sect_pr
-                .get_or_insert_with(oxoffice_docx_oxml::CT_SectPr::default_letter);
-            section.page_width = Some(Twips(width.map_or(12_240, |width| width.0 + 720)));
-            document.invalidate_layout();
-        };
-        let error = document
-            .edit_in_place(&[EditUnit::BodySection], |document| {
-                widen(document);
-                Err::<(), _>(Error::Other("refused".into()))
-            })
-            .unwrap_err();
-        assert_eq!(error.to_string(), "refused");
-        assert_eq!(document.document.body.sect_pr, section);
-        document.hold_edit_undo();
-        document
-            .edit_in_place(&[EditUnit::BodySection], |document| {
-                widen(document);
-                Ok(())
-            })
-            .unwrap();
-        let undo = document
-            .take_edit_undo()
-            .expect("the edit changed the section");
-        assert_eq!(undo.report().units, [(EditUnit::BodySection, true)]);
-        assert_ne!(document.document.body.sect_pr, section);
-        document.undo_edit(undo);
-        assert_eq!(document.document.body.sect_pr, section);
     }
 
     /// A unit the edit left alone is reported unchanged, the other changed.

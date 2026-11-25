@@ -600,7 +600,6 @@ impl Document {
             // signature covers, as the staged comparison found.
             if document.package.get_part(&part_name) != Some(obfuscated.as_slice()) {
                 document.package.set_part(&part_name, obfuscated.clone());
-                document.identifiers.record_written_to_package();
             }
             document.add_override_journaled(&part_name, EMBEDDED_FONT_CONTENT_TYPE);
             document
@@ -736,67 +735,29 @@ impl Document {
     /// Apply `edit`, a font-table edit, in place, without staging the whole
     /// document.
     ///
-    /// `edit` first makes every check and reservation that can fail: the
-    /// font-table part, the settings part, part names and relationship ids,
-    /// on a copy of the font-table model; then it installs the model and
-    /// writes the package, which cannot fail. The registry journals what the
-    /// reservations add to it and to the package graph, and a refusal, or a
-    /// panic before the install, removes it again, so a refused edit leaves
-    /// the document as it was. A panic after the package bytes changed
-    /// (only through an `expect` that holds) cannot be undone and is
-    /// resumed as it is. A success leaves what [`Self::commit_staged_mutation`] leaves for
-    /// a staged clone: the derived layout is dropped and a signed package
-    /// records a package mutation. Debug builds run the edit on a clone too,
-    /// compare, and check that a refusal changed nothing. `edit` is `Fn` for
-    /// that second run.
+    /// `edit` runs on the live document under [`Self::edit_in_place`], which
+    /// copies the font table model and the settings (`EditUnit::FontTable`,
+    /// `EditUnit::Settings`), journals the package parts, relationships and
+    /// content type overrides it writes or removes (`EditUnit::Parts`) and
+    /// the reservations it makes. A refusal, or the unwind of a panic at any
+    /// point of `edit`, after the package bytes changed too, puts them all
+    /// back, so a refused edit leaves the document as it was. A success
+    /// leaves what [`Self::commit_staged_mutation`] leaves for a staged
+    /// clone: the derived layout is dropped and a signed package records a
+    /// package mutation. Debug builds run the edit on a clone too, compare,
+    /// and check that a refusal changed nothing. `edit` is `Fn` for that
+    /// second run.
     fn edit_font_table(&mut self, edit: impl Fn(&mut Self) -> Result<()>) -> Result<()> {
         #[cfg(debug_assertions)]
         let before = self.clone_for_staging();
-        let names = (
-            self.font_table_part_name.clone(),
-            self.settings_part_name.clone(),
-            self.settings_owned,
+        let result = self.edit_in_place(
+            &[
+                crate::EditUnit::FontTable,
+                crate::EditUnit::Settings,
+                crate::EditUnit::Parts,
+            ],
+            |document| edit(document),
         );
-        self.identifiers.open_journal();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit(self)));
-        let journal = self.identifiers.close_journal();
-        let refused = |document: &mut Self, journal| {
-            document.undo_reservations(journal);
-            (
-                document.font_table_part_name,
-                document.settings_part_name,
-                document.settings_owned,
-            ) = names.clone();
-        };
-        let result = match result {
-            Err(panic) => {
-                if !journal.changed_package_bytes() {
-                    refused(self, journal);
-                }
-                std::panic::resume_unwind(panic)
-            }
-            Ok(Err(error)) => {
-                refused(self, journal);
-                Err(error)
-            }
-            Ok(Ok(())) => {
-                let signed = self.package.package_rels.items.iter().any(|relationship| {
-                    relationship.rel_type == rel_types::DIGITAL_SIGNATURE_ORIGIN
-                });
-                #[cfg(debug_assertions)]
-                assert_eq!(
-                    signed && journal.changed_package(),
-                    crate::embedded::synchronized_package_mutation_invalidates_signature(
-                        &before.package,
-                        &self.package,
-                    ),
-                    "the font-table journal tells another package change"
-                );
-                self.package_signatures_invalidated |= signed && journal.changed_package();
-                self.invalidate_layout();
-                Ok(())
-            }
-        };
         #[cfg(debug_assertions)]
         self.assert_font_table_edit_matches_staged(before, &edit, &result);
         result
@@ -937,6 +898,8 @@ impl Document {
         }) {
             return;
         }
+        // The open in-place edit puts the font table's relationships back.
+        self.package.record_part_rels(&owner);
         if let Some(relationships) = self.package.get_part_rels_mut(&owner) {
             relationships.items.retain(|relationship| {
                 relationship.id != reference.relationship_id
@@ -946,11 +909,10 @@ impl Document {
         }
         self.identifiers
             .retire_authored_story_relationships(&owner, vec![reference.relationship_id.clone()]);
-        self.identifiers.record_removed_from_package();
         if self.internal_relationships_to(target) == 0 {
             self.package.remove_part(target);
             self.package.remove_part_rels(target);
-            self.package.content_types.remove_override(target);
+            self.package.remove_content_type_override(target);
             self.identifiers.retire_authored_part(target);
         }
     }
@@ -1155,4 +1117,88 @@ fn font_table_reads_back(table: &FontTable) -> Result<()> {
                 "the edited font table would not read back: {error}"
             ))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::headers_footers::tests::state;
+    use super::*;
+
+    /// A font-table edit that installed a new record, wrote and removed
+    /// package parts and changed the settings, then panicked: the package
+    /// bytes had changed when it did.
+    fn install_then_panic(document: &mut Document) {
+        let _ = document.edit_font_table(|document| {
+            let mut table = document.reserve_font_table_part()?;
+            table.add_font("Panic Sans".to_owned());
+            document.install_font_table(table);
+            document
+                .package
+                .set_part("/word/fonts/font9.odttf", b"face".to_vec());
+            document.add_override_journaled("/word/fonts/font9.odttf", EMBEDDED_FONT_CONTENT_TYPE);
+            let settings = document.settings_part_name.clone().expect("settings");
+            document.package.remove_part(&settings);
+            document.package.remove_content_type_override(&settings);
+            document
+                .settings
+                .get_or_insert_with(CT_Settings::new)
+                .set_embed_true_type_fonts(Some(true))?;
+            panic!("the font-table edit panicked after its install");
+        });
+    }
+
+    #[test]
+    fn a_panic_after_a_font_table_install_is_undone() {
+        let mut document = Document::new();
+        document.add_paragraph("body");
+        let before = state(&document);
+        let fonts = document.font_table.clone();
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            install_then_panic(&mut document)
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(state(&document), before);
+        assert_eq!(document.font_table, fonts);
+        assert!(
+            document
+                .package
+                .get_part("/word/fonts/font9.odttf")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_refused_font_table_edit_leaves_the_document_as_it_was() {
+        let mut document = Document::new();
+        document.add_paragraph("body");
+        let before = state(&document);
+        let error = document
+            .edit_font_table(|document| {
+                let mut table = document.reserve_font_table_part()?;
+                table.add_font("Refused Sans".to_owned());
+                document.install_font_table(table);
+                document
+                    .package
+                    .set_part("/word/fonts/font9.odttf", b"face".to_vec());
+                Err(Error::Other("refused".into()))
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "refused");
+        assert_eq!(state(&document), before);
+    }
+
+    #[test]
+    fn a_font_set_in_place_saves_what_a_reopen_saves() {
+        let mut document = Document::new();
+        document.add_paragraph("body");
+        let mut font = FontDefinition::new("In Place Sans");
+        font.family = Some("swiss".to_owned());
+        document.set_font(font).unwrap();
+        let saved = document.to_bytes().unwrap();
+        let mut reopened = Document::from_bytes(&saved).unwrap();
+        assert_eq!(reopened.to_bytes().unwrap(), saved);
+        assert!(document.remove_font("In Place Sans").unwrap().is_some());
+        assert!(reopened.remove_font("In Place Sans").unwrap().is_some());
+        assert_eq!(document.to_bytes().unwrap(), reopened.to_bytes().unwrap());
+    }
 }

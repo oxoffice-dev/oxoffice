@@ -84,6 +84,45 @@ enum Reservation {
         id: String,
         next_id: u32,
     },
+    /// A drawing id (`wp:docPr/@id`) reserved.
+    DrawingId(u32),
+    /// A bookmark id reserved.
+    BookmarkId(i32),
+    /// A story part whose authored mark changed: `held` says whether it was
+    /// marked before.
+    AuthoredStoryPart {
+        name: String,
+        held: bool,
+    },
+    /// A preserved part name an edit released.
+    ReleasedPreservedPartName(String),
+    /// A preserved relationship id of `owner` an edit released.
+    ReleasedPreservedRelationship {
+        owner: String,
+        id: String,
+    },
+    /// An authored content type default an edit removed from the package
+    /// (`package`, with the stored extensions) and the registry.
+    RemovedContentTypeDefault {
+        extension: String,
+        package: Vec<(String, String)>,
+        held: bool,
+    },
+    /// The relationship id sets of `owner` an edit replaced, as they were.
+    StoryRelationshipSets {
+        owner: String,
+        occupied: Option<HashSet<String>>,
+        authored: Option<HashSet<String>>,
+    },
+    /// A content type default an edit declared: the extension the package
+    /// stored, if the edit added it, and whether the registry held and
+    /// authored the lowered extension before.
+    AddedContentTypeDefault {
+        stored: Option<String>,
+        lowered: String,
+        held: bool,
+        authored: bool,
+    },
 }
 
 impl ReservationJournal {
@@ -117,6 +156,11 @@ impl ReservationJournal {
                     Reservation::PackageOverride { .. }
                         | Reservation::PackageRelationships(_)
                         | Reservation::PackageRelationship { .. }
+                        | Reservation::RemovedContentTypeDefault { .. }
+                        | Reservation::AddedContentTypeDefault {
+                            stored: Some(_),
+                            ..
+                        }
                 )
             })
     }
@@ -213,6 +257,128 @@ impl DocumentIdentifiers {
             self.record(|| Reservation::NumberingInstanceId(id));
         }
     }
+
+    /// Run `reserve`, which may add drawing ids to the occupied set (above
+    /// its maximum, as [`reserve_u32`] does), and journal the ids it added,
+    /// whether it succeeds or not.
+    pub(super) fn reserve_drawing_ids<R>(
+        &mut self,
+        reserve: impl FnOnce(&mut HashSet<u32>) -> Result<R>,
+    ) -> Result<R> {
+        if self.journal.0.is_none() {
+            return reserve(&mut self.drawing_ids);
+        }
+        let ceiling = self.drawing_ids.iter().copied().max();
+        let result = reserve(&mut self.drawing_ids);
+        let added = self
+            .drawing_ids
+            .iter()
+            .copied()
+            .filter(|id| ceiling.is_none_or(|ceiling| *id > ceiling))
+            .collect::<Vec<_>>();
+        for id in added {
+            self.record(|| Reservation::DrawingId(id));
+        }
+        result
+    }
+
+    /// Mark `part_name` as a story part this document authored.
+    pub(super) fn author_story_part(&mut self, part_name: &str) {
+        if self.authored_story_parts.insert(part_name.to_owned()) {
+            self.record(|| Reservation::AuthoredStoryPart {
+                name: part_name.to_owned(),
+                held: false,
+            });
+        }
+    }
+
+    /// Drop the authored mark of `part_name`.
+    pub(super) fn release_story_part(&mut self, part_name: &str) {
+        if self.authored_story_parts.remove(part_name) {
+            self.record(|| Reservation::AuthoredStoryPart {
+                name: part_name.to_owned(),
+                held: true,
+            });
+        }
+    }
+
+    /// Drop the preserved mark of the part name `identity`.
+    pub(super) fn release_preserved_part_name(&mut self, identity: &str) {
+        if self.preserved_part_names.remove(identity) {
+            self.record(|| Reservation::ReleasedPreservedPartName(identity.to_owned()));
+        }
+    }
+
+    /// Drop the preserved mark of relationship `id` of `owner_identity`.
+    pub(super) fn release_preserved_relationship(&mut self, owner_identity: &str, id: &str) {
+        if self
+            .preserved_relationship_ids
+            .get_mut(owner_identity)
+            .is_some_and(|preserved| preserved.remove(id))
+        {
+            self.record(|| Reservation::ReleasedPreservedRelationship {
+                owner: owner_identity.to_owned(),
+                id: id.to_owned(),
+            });
+        }
+    }
+
+    /// Replace the relationship ids of the story part `owner_identity` with
+    /// `ids`, all authored, as a copied story part holds them.
+    pub(super) fn replace_story_relationship_sets(
+        &mut self,
+        owner_identity: &str,
+        ids: HashSet<String>,
+    ) {
+        let occupied = self
+            .relationship_ids
+            .insert(owner_identity.to_owned(), ids.clone());
+        let authored = if ids.is_empty() {
+            self.authored_story_relationship_ids
+                .get(owner_identity)
+                .cloned()
+        } else {
+            self.authored_story_relationship_ids
+                .insert(owner_identity.to_owned(), ids)
+        };
+        self.record(|| Reservation::StoryRelationshipSets {
+            owner: owner_identity.to_owned(),
+            occupied,
+            authored,
+        });
+    }
+
+    /// Make `ids` the relationship ids authored in `owner_identity`'s story
+    /// relationships (none when empty), recorded in the open journal.
+    pub(super) fn set_authored_story_relationships(
+        &mut self,
+        owner_identity: &str,
+        ids: HashSet<String>,
+    ) {
+        let before = self
+            .authored_story_relationship_ids
+            .get(owner_identity)
+            .cloned();
+        let after = (!ids.is_empty()).then_some(ids);
+        if before == after {
+            return;
+        }
+        let occupied = self.relationship_ids.get(owner_identity).cloned();
+        self.record(|| Reservation::StoryRelationshipSets {
+            owner: owner_identity.to_owned(),
+            occupied,
+            authored: before,
+        });
+        match after {
+            Some(ids) => {
+                self.authored_story_relationship_ids
+                    .insert(owner_identity.to_owned(), ids);
+            }
+            None => {
+                self.authored_story_relationship_ids.remove(owner_identity);
+            }
+        }
+    }
 }
 
 impl Document {
@@ -250,6 +416,65 @@ impl Document {
             self.identifiers
                 .record(|| Reservation::PackageOverride { stored, replaced });
         }
+    }
+
+    /// Declare `content_type` as the default of `extension` in the package
+    /// when it has none, and as an authored default in the registry,
+    /// recorded in the open journal.
+    pub(crate) fn add_content_type_default_journaled(
+        &mut self,
+        extension: &str,
+        content_type: &str,
+    ) {
+        let added = !self.package.content_types.contains_default(extension);
+        self.package
+            .content_types
+            .add_default(extension, content_type);
+        let lowered = extension.to_ascii_lowercase();
+        let held = self.identifiers.content_type_defaults.contains(&lowered);
+        let authored = self
+            .identifiers
+            .authored_content_type_defaults
+            .contains(&lowered);
+        self.identifiers.register_content_type_default(extension);
+        if added || !held || !authored {
+            self.identifiers
+                .record(|| Reservation::AddedContentTypeDefault {
+                    stored: added.then(|| extension.to_owned()),
+                    lowered,
+                    held,
+                    authored,
+                });
+        }
+    }
+
+    /// Remove the content type default of `extension` this document
+    /// authored, from the package and the registry, recorded in the open
+    /// journal. Nothing when the registry did not author it.
+    pub(crate) fn remove_authored_content_type_default(&mut self, extension: &str) {
+        if !self
+            .identifiers
+            .authored_content_type_defaults
+            .remove(extension)
+        {
+            return;
+        }
+        let package = self
+            .package
+            .content_types
+            .defaults
+            .iter()
+            .filter(|(candidate, _)| candidate.eq_ignore_ascii_case(extension))
+            .map(|(candidate, value)| (candidate.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        self.package.content_types.remove_default(extension);
+        let held = self.identifiers.content_type_defaults.remove(extension);
+        self.identifiers
+            .record(|| Reservation::RemovedContentTypeDefault {
+                extension: extension.to_owned(),
+                package,
+                held,
+            });
     }
 
     /// Add relationship `id` to `owner`'s part, or to the package when
@@ -448,6 +673,74 @@ impl Document {
                             sets.entry(owner.clone()).or_default().extend(ids);
                         }
                     }
+                }
+                Reservation::DrawingId(id) => {
+                    identifiers.drawing_ids.remove(&id);
+                }
+                Reservation::BookmarkId(id) => {
+                    identifiers.bookmark_ids.remove(&id);
+                }
+                Reservation::AuthoredStoryPart { name, held } => {
+                    if held {
+                        identifiers.authored_story_parts.insert(name);
+                    } else {
+                        identifiers.authored_story_parts.remove(&name);
+                    }
+                }
+                Reservation::ReleasedPreservedPartName(identity) => {
+                    identifiers.preserved_part_names.insert(identity);
+                }
+                Reservation::ReleasedPreservedRelationship { owner, id } => {
+                    identifiers
+                        .preserved_relationship_ids
+                        .entry(owner)
+                        .or_default()
+                        .insert(id);
+                }
+                Reservation::RemovedContentTypeDefault {
+                    extension,
+                    package,
+                    held,
+                } => {
+                    self.package.content_types.defaults.extend(package);
+                    identifiers
+                        .authored_content_type_defaults
+                        .insert(extension.clone());
+                    if held {
+                        identifiers.content_type_defaults.insert(extension);
+                    }
+                }
+                Reservation::AddedContentTypeDefault {
+                    stored,
+                    lowered,
+                    held,
+                    authored,
+                } => {
+                    if let Some(stored) = stored {
+                        self.package.content_types.defaults.remove(&stored);
+                    }
+                    if !held {
+                        identifiers.content_type_defaults.remove(&lowered);
+                    }
+                    if !authored {
+                        identifiers.authored_content_type_defaults.remove(&lowered);
+                    }
+                }
+                Reservation::StoryRelationshipSets {
+                    owner,
+                    occupied,
+                    authored,
+                } => {
+                    match occupied {
+                        Some(ids) => identifiers.relationship_ids.insert(owner.clone(), ids),
+                        None => identifiers.relationship_ids.remove(&owner),
+                    };
+                    match authored {
+                        Some(ids) => identifiers
+                            .authored_story_relationship_ids
+                            .insert(owner, ids),
+                        None => identifiers.authored_story_relationship_ids.remove(&owner),
+                    };
                 }
                 Reservation::PackageRelationship { owner, id, next_id } => {
                     let relationships = match &owner {
@@ -956,19 +1249,30 @@ impl DocumentIdentifiers {
     /// Take ids that content about to be written keeps, so that no fresh id
     /// reserved for the same content repeats one.
     pub(crate) fn hold_kept_ids(&mut self, bookmark_ids: &[i32], drawing_ids: &[u32]) {
-        self.bookmark_ids.extend(bookmark_ids);
-        self.drawing_ids.extend(drawing_ids);
+        for &id in bookmark_ids {
+            if self.bookmark_ids.insert(id) {
+                self.record(|| Reservation::BookmarkId(id));
+            }
+        }
+        for &id in drawing_ids {
+            if self.drawing_ids.insert(id) {
+                self.record(|| Reservation::DrawingId(id));
+            }
+        }
     }
 
     pub(crate) fn reserve_bookmark_id(&mut self) -> Result<i32> {
-        reserve_lowest_i32(&mut self.bookmark_ids, 0, "bookmark")
+        let id = reserve_lowest_i32(&mut self.bookmark_ids, 0, "bookmark")?;
+        self.record(|| Reservation::BookmarkId(id));
+        Ok(id)
     }
 
     pub(crate) fn reserve_preferred_bookmark_id(&mut self, preferred: i32) -> Result<i32> {
         if preferred >= 0 && self.bookmark_ids.insert(preferred) {
+            self.record(|| Reservation::BookmarkId(preferred));
             Ok(preferred)
         } else {
-            reserve_lowest_i32(&mut self.bookmark_ids, 0, "bookmark")
+            self.reserve_bookmark_id()
         }
     }
 
@@ -993,7 +1297,9 @@ impl DocumentIdentifiers {
     }
 
     pub(crate) fn reserve_drawing_id(&mut self) -> Result<u32> {
-        reserve_u32(&mut self.drawing_ids, 1, "drawing")
+        let id = reserve_u32(&mut self.drawing_ids, 1, "drawing")?;
+        self.record(|| Reservation::DrawingId(id));
+        Ok(id)
     }
 
     /// Edits giving every `wp:docPr` of `xml` a drawing id reserved here, by
@@ -1025,7 +1331,8 @@ impl DocumentIdentifiers {
         let offset = wrapped.len();
         wrapped.extend_from_slice(xml);
         wrapped.extend_from_slice(b"</oxoffice-scope>");
-        Ok(authored_doc_pr_edits(&wrapped, &mut self.drawing_ids)?
+        Ok(self
+            .reserve_drawing_ids(|occupied| authored_doc_pr_edits(&wrapped, occupied))?
             .into_iter()
             .map(|(start, end, replacement)| (start - offset, end - offset, replacement))
             .collect())

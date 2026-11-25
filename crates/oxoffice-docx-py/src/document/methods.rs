@@ -2318,35 +2318,23 @@ impl PyDocument {
     }
 
     fn set_page_color(&mut self, py: Python<'_>, color: &str) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        // The page background and the settings, in place: no handle reads
+        // them, so the edit publishes nothing and every handle stays.
+        self.inner
             .set_page_color(color)
             .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.set_page_color",
-            crate::document::WordPublication::Conservative,
-        )?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
+        #[cfg(debug_assertions)]
+        if self.snapshot_scope.is_some() {
+            self.assert_word_inventory_rebuilds(false);
+        }
         Ok(())
     }
 
     /// Author the existing native VML compatibility watermark.
     fn set_text_watermark(&mut self, py: Python<'_>, text: &str) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
-            .set_text_watermark(text)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.set_text_watermark",
-            crate::document::WordPublication::Conservative,
-        )?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
+        self.edit_story_parts(py, "Document.set_text_watermark", |document| {
+            document.set_text_watermark(text)
+        })?;
         Ok(())
     }
 
@@ -2369,23 +2357,14 @@ impl PyDocument {
             "Document.set_image_watermark(height)",
             crate::LengthUnit::Emu,
         )?;
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
-            .set_image_watermark(
+        self.edit_story_parts(py, "Document.set_image_watermark", |document| {
+            document.set_image_watermark(
                 data,
                 filename,
                 oxoffice_docx::Length::emu(width),
                 oxoffice_docx::Length::emu(height),
             )
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.set_image_watermark",
-            crate::document::WordPublication::Conservative,
-        )?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
+        })?;
         Ok(())
     }
 
@@ -3370,8 +3349,10 @@ impl PyDocument {
         PyTuple::new(py, snapshots)
     }
 
-    // The section story operations publish a reopened package, so each one
-    // advances the revision once, even when the variant already had a story.
+    // The section story operations edit the live document and publish the
+    // story parts they add or retire and the sections that show another
+    // story (`edit_story_parts`); a call that changes nothing publishes
+    // nothing.
     fn create_section_story(
         &mut self,
         py: Python<'_>,
@@ -3380,22 +3361,14 @@ impl PyDocument {
         variant: &str,
     ) -> PyResult<Py<PyStory>> {
         let (kind, variant) = self.section_story_target(section_index, kind, variant)?;
-        let mut candidate = self.inner.clone_for_staging();
-        let story = py
-            .detach(|| candidate.create_section_story(section_index, kind, variant))
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.create_section_story",
-            crate::document::WordPublication::Conservative,
-        )?;
+        self.ensure_word_authority(py)?;
+        let (story, _) =
+            self.edit_story_parts(py, "Document.create_section_story", |document| {
+                document.create_section_story(section_index, kind, variant)
+            })?;
         let mut snapshot = story_snapshot(&story);
-        snapshot.binding = Some(self.capture_prepared_snapshot(&prepared, smallvec![])?);
-        let result = Py::new(py, snapshot)?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
-        Ok(result)
+        snapshot.binding = Some(self.capture_snapshot(smallvec![])?);
+        Py::new(py, snapshot)
     }
 
     fn link_section_story(
@@ -3408,22 +3381,13 @@ impl PyDocument {
     ) -> PyResult<Py<PyStory>> {
         let (kind, variant) = self.section_story_target(section_index, kind, variant)?;
         let story = self.native_story(py, &story)?;
-        let mut candidate = self.inner.clone_for_staging();
-        let linked = py
-            .detach(|| candidate.link_section_story(section_index, kind, variant, &story))
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.link_section_story",
-            crate::document::WordPublication::Conservative,
-        )?;
+        self.ensure_word_authority(py)?;
+        let (linked, _) = self.edit_story_parts(py, "Document.link_section_story", |document| {
+            document.link_section_story(section_index, kind, variant, &story)
+        })?;
         let mut snapshot = story_snapshot(&linked);
-        snapshot.binding = Some(self.capture_prepared_snapshot(&prepared, smallvec![])?);
-        let result = Py::new(py, snapshot)?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
-        Ok(result)
+        snapshot.binding = Some(self.capture_snapshot(smallvec![])?);
+        Py::new(py, snapshot)
     }
 
     fn unlink_section_story(
@@ -3434,22 +3398,14 @@ impl PyDocument {
         variant: &str,
     ) -> PyResult<Py<PyStory>> {
         let (kind, variant) = self.section_story_target(section_index, kind, variant)?;
-        let mut candidate = self.inner.clone_for_staging();
-        let story = py
-            .detach(|| candidate.unlink_section_story(section_index, kind, variant))
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.unlink_section_story",
-            crate::document::WordPublication::Conservative,
-        )?;
+        self.ensure_word_authority(py)?;
+        let (story, _) =
+            self.edit_story_parts(py, "Document.unlink_section_story", |document| {
+                document.unlink_section_story(section_index, kind, variant)
+            })?;
         let mut snapshot = story_snapshot(&story);
-        snapshot.binding = Some(self.capture_prepared_snapshot(&prepared, smallvec![])?);
-        let result = Py::new(py, snapshot)?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
-        Ok(result)
+        snapshot.binding = Some(self.capture_snapshot(smallvec![])?);
+        Py::new(py, snapshot)
     }
 
     #[getter]
@@ -3555,32 +3511,18 @@ impl PyDocument {
     }
 
     fn set_header(&mut self, py: Python<'_>, text: &str) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
-        py.detach(|| candidate.try_set_header(text))
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.set_header",
-            crate::document::WordPublication::Conservative,
-        )?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
+        // In place: the header or footer part it writes or adds is spliced.
+        self.edit_story_parts(py, "Document.set_header", |document| {
+            document.try_set_header(text)
+        })?;
         Ok(())
     }
 
     fn set_footer(&mut self, py: Python<'_>, text: &str) -> PyResult<()> {
-        let mut candidate = self.inner.clone_for_staging();
-        py.detach(|| candidate.try_set_footer(text))
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        let prepared = self.prepare_word_revision(
-            py,
-            &candidate,
-            "Document.set_footer",
-            crate::document::WordPublication::Conservative,
-        )?;
-        self.commit_word_revision(prepared)?;
-        self.install_inner(candidate);
+        // In place: the header or footer part it writes or adds is spliced.
+        self.edit_story_parts(py, "Document.set_footer", |document| {
+            document.try_set_footer(text)
+        })?;
         Ok(())
     }
 
