@@ -4798,6 +4798,34 @@ fn last_owner_is_self_closing(xml: &str, local: &str) -> bool {
 }
 
 #[test]
+fn a_changed_paragraph_holding_an_empty_revision_is_compared() {
+    // An empty insertion or deletion marks nothing: it holds no change the
+    // comparison could alter, so the paragraph around it is compared.
+    for empty in [
+        r#"<w:ins w:id="5" w:author="Earlier" w:date="2026-01-01T00:00:00Z"/>"#,
+        r#"<w:del w:id="5" w:author="Earlier" w:date="2026-01-01T00:00:00Z"></w:del>"#,
+    ] {
+        let version = |word: &str| {
+            doc_with_body(&format!(
+                r#"<w:p><w:r><w:t xml:space="preserve">Alpha {word} </w:t></w:r>{empty}<w:r><w:t>gamma.</w:t></w:r></w:p>{}"#,
+                plain("Tail.")
+            ))
+        };
+        let mut doc = redline(version("beta"), &version("delta"));
+        assert_eq!(
+            story_texts(&accepted(&mut doc)),
+            story_texts(&version("delta")),
+            "{empty}"
+        );
+        assert_eq!(
+            story_texts(&rejected(&mut doc)),
+            story_texts(&version("beta")),
+            "{empty}"
+        );
+    }
+}
+
+#[test]
 fn an_empty_text_box_comment_or_note_written_self_closing_is_compared_around() {
     const EMPTY_BOX: &str = concat!(
         r#"<w:r><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="box" style="width:120pt;height:40pt">"#,

@@ -680,6 +680,25 @@ pub(super) fn story_document(
     CT_Document::from_xml(&xml).map_err(Into::into)
 }
 
+/// Whether a revision element holds nothing: written self-closing, or with
+/// only white space between its tags. It marks no content, so it holds no
+/// change a comparison could alter.
+fn empty_revision(element: &[u8]) -> bool {
+    let Some(open_end) = element.iter().position(|byte| *byte == b'>') else {
+        return false;
+    };
+    if element[..open_end].ends_with(b"/") {
+        return true;
+    }
+    let Some(close_start) = element.iter().rposition(|byte| *byte == b'<') else {
+        return false;
+    };
+    close_start > open_end
+        && element[open_end + 1..close_start]
+            .iter()
+            .all(u8::is_ascii_whitespace)
+}
+
 impl HeldRevisions {
     /// Find the owners of story content `inner`, split by `spans`, that hold
     /// a modeled revision. A revision outside every owner is in the section
@@ -702,6 +721,9 @@ impl HeldRevisions {
             section_source: None,
         };
         for (range, _) in crate::revision::modeled_revision_spans(&xml)? {
+            if empty_revision(&xml[range.clone()]) {
+                continue;
+            }
             // The spans are in document order and do not overlap.
             let start = range.start.saturating_sub(offset);
             let index = spans.partition_point(|span| span.end <= start);
