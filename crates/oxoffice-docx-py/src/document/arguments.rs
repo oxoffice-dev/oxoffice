@@ -57,7 +57,7 @@ pub(super) fn checked_heading_level(value: &Bound<'_, PyAny>) -> PyResult<i64> {
 const NO_BODY_INDEX_ROUTE: &str = "and has no body index: pass the paragraph or table itself (or its ContentLocation) to clone_content, move_content, pop_content or insert_content";
 
 /// What a location says of a table written directly in a block control.
-const TABLE_IN_CONTROL: &str = "a table written directly in a block content control has no location (limitation docx-block-control-table-location, #660): copy, move or remove it with its control, or in a DocumentFragment.from_range between the blocks around it";
+const TABLE_IN_CONTROL: &str = "a table written directly in a block content control has no location (limitation docx-block-control-table-location, #660): copy, move or remove it with its control, or copy it in a DocumentFragment.from_range from the paragraph before it ((control, k)) to the paragraph after it or to ContentLocation.control_end(story, control)";
 
 impl PyDocument {
     pub(super) fn direct_content_index(
