@@ -254,7 +254,7 @@ impl Document {
     /// `location` with the fingerprint of the story it names now, which the
     /// staged route checks.
     #[cfg(debug_assertions)]
-    fn fingerprinted(&self, location: &ContentLocation) -> ContentLocation {
+    pub(crate) fn fingerprinted(&self, location: &ContentLocation) -> ContentLocation {
         let story = location.story();
         let found = self.stories().ok().and_then(|stories| {
             stories.into_iter().find(|candidate| {
@@ -292,7 +292,7 @@ impl Document {
 
 /// Whether `updated` declares the namespaces `original` declares, in the
 /// same order, plus at most the standard `w14` and `w15` bindings.
-fn declares_only_word_extensions(original: &[u8], updated: &[u8]) -> bool {
+pub(crate) fn declares_only_word_extensions(original: &[u8], updated: &[u8]) -> bool {
     let standard = [
         format!("xmlns:w14=\"{W14_NS}\""),
         format!("xmlns:w15=\"{W15_NS}\""),

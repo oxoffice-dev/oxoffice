@@ -891,36 +891,11 @@ impl Document {
         group: Option<&str>,
         range: StoryRunRange,
     ) -> Result<i32> {
-        if editor.is_some() == group.is_some()
-            || editor.is_some_and(str::is_empty)
-            || group.is_some_and(str::is_empty)
-        {
-            return Err(Error::Other(
-                "permission range needs one editor or group".to_owned(),
-            ));
-        }
-        oxoffice_core::xml::reject_non_xml_characters(
-            "permission editor",
-            editor.unwrap_or_default(),
-        )?;
-        oxoffice_core::xml::reject_non_xml_characters(
-            "permission group",
-            group.unwrap_or_default(),
-        )?;
-        let (ranges, across) = self.story_range_inventory()?;
-        let occupied = ranges
-            .iter()
-            .map(StoryRangeRef::kind)
-            .chain(&across)
-            .filter_map(|kind| match kind {
-                StoryRangeKind::Permission { id, .. } => Some(*id),
-                _ => None,
-            })
-            .collect::<HashSet<_>>();
-        let id = (0..=i32::MAX)
-            .find(|candidate| !occupied.contains(candidate))
-            .ok_or_else(|| Error::Other("permission range identifiers are exhausted".to_owned()))?;
+        check_permission_holder(editor, group)?;
         let mut candidate = self.clone_for_staging();
+        // Reserved on the candidate, whose registry a success commits and a
+        // refusal drops with it.
+        let id = candidate.identifiers.reserve_permission_id()?;
         candidate.anchor_story_range(
             &range,
             RangeAnchor::Permission { id, editor, group },
@@ -931,6 +906,86 @@ impl Document {
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(id)
+    }
+
+    /// [`Self::add_story_permission_range`] for a range whose two ends sit
+    /// in one direct body paragraph of the main part
+    /// (`direct_body_paragraph_at`, `block` found by the caller),
+    /// swapped in place under a `BodyBlocks` unit, the id reserved from the
+    /// registry in the same edit: `Some(id)`. The markers of other
+    /// paragraphs and stories are not read: a document whose markers do not
+    /// pair keeps them as they are, and the range added pairs. `None`,
+    /// changing nothing, sends the caller to
+    /// [`Self::add_story_permission_range`].
+    #[doc(hidden)]
+    pub fn add_story_permission_range_in_block(
+        &mut self,
+        editor: Option<&str>,
+        group: Option<&str>,
+        range: &StoryRunRange,
+        block: crate::ControlBlock,
+    ) -> Result<Option<i32>> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result =
+            self.add_story_permission_range_in_block_unchecked(editor, group, range, block);
+        #[cfg(debug_assertions)]
+        match &result {
+            Ok(None) => assert!(
+                self.clone_for_staging().to_bytes().ok()
+                    == before.clone_for_staging().to_bytes().ok(),
+                "a permission range left to the staged route changed the document"
+            ),
+            // The staged route refuses a document whose range markers did not
+            // pair before the call, in any story; this route reads and writes
+            // the markers of its paragraph alone, a pair of a fresh id.
+            Ok(Some(_)) if before.story_ranges().is_err() => {}
+            _ => self.assert_in_place_matches_staged_declarations_aside(
+                before,
+                &result
+                    .as_ref()
+                    .map(|id| id.unwrap_or_default())
+                    .map_err(|error| Error::Other(error.to_string())),
+                |staged| {
+                    let mut range = range.clone();
+                    range.start.location = staged.fingerprinted(&range.start.location);
+                    range.end.location = staged.fingerprinted(&range.end.location);
+                    staged.add_story_permission_range(editor, group, range)
+                },
+            ),
+        }
+        result
+    }
+
+    fn add_story_permission_range_in_block_unchecked(
+        &mut self,
+        editor: Option<&str>,
+        group: Option<&str>,
+        range: &StoryRunRange,
+        block: crate::ControlBlock,
+    ) -> Result<Option<i32>> {
+        check_permission_holder(editor, group)?;
+        let Some(id) = self.identifiers.lowest_free_permission_id() else {
+            return Ok(None);
+        };
+        let Some(anchored) = self.story_range_anchored_block(
+            range,
+            block,
+            RangeAnchor::Permission { id, editor, group },
+            "permission",
+        )?
+        else {
+            return Ok(None);
+        };
+        self.replace_body_block_in_place_with(block.slot, anchored, |document| {
+            let reserved = document.identifiers.reserve_permission_id()?;
+            debug_assert_eq!(
+                reserved, id,
+                "the permission id written is the one reserved"
+            );
+            Ok(())
+        })?;
+        Ok(Some(id))
     }
 
     /// Add a spelling (`spell`) or grammar (`gram`) proofing range.
@@ -4742,4 +4797,19 @@ impl Document {
         self.invalidate_layout();
         Ok(())
     }
+}
+
+/// A permission range names exactly one editor or editor group, of XML text.
+fn check_permission_holder(editor: Option<&str>, group: Option<&str>) -> Result<()> {
+    if editor.is_some() == group.is_some()
+        || editor.is_some_and(str::is_empty)
+        || group.is_some_and(str::is_empty)
+    {
+        return Err(Error::Other(
+            "permission range needs one editor or group".to_owned(),
+        ));
+    }
+    oxoffice_core::xml::reject_non_xml_characters("permission editor", editor.unwrap_or_default())?;
+    oxoffice_core::xml::reject_non_xml_characters("permission group", group.unwrap_or_default())?;
+    Ok(())
 }
