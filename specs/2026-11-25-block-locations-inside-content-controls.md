@@ -82,14 +82,19 @@ location-taking block operation calls it and nothing else to read a location:
 Rules the resolver applies, for every operation:
 
 - **Block controls only.** A control in a paragraph, around rows or around cells names no block container. A
-  repeating section's content holds only its items: a block goes into an item (`control_end(story, item)`), an
-  item is added with `repeat_content_control`.
+  repeating section's content holds only its items, and an item stays directly in a repeating section's content:
+  a copy, move or import of an item anywhere else is refused (as `clone_content_control` refuses it), a block that
+  is no item goes into an item (`control_end(story, item)`), an item is added with `repeat_content_control`.
 - **A container keeps a block.** Removing or moving out the only paragraph, table or control of a block control is
   refused: the route is to remove the control itself (`remove_content_control`, or `remove_content_at` on the
   control). oxoffice opens an empty `w:sdtContent`; whether Word does is not checked, so we do not write one. The
   same holds for the only block of a header, footer, note, comment or text box, whose schema asks for one block
-  (a comment refused it already; the others were left empty): remove the note, comment or header itself. The body
-  may be empty, and a cell keeps a paragraph as before.
+  (a comment refused it already; the others were left empty): the route is to insert the new content first, or
+  remove the note or comment, or unwrap a control (`unwrap_content_control`). A table cell keeps a direct
+  paragraph, for a removal or a move out of it, the removal of a control holding its only paragraph included (as
+  `remove_content_control` refused it). The body may be empty. **Behaviour change**: `remove_content_control` of a
+  direct block control that is the only block of a header, footer, note, comment or text box is refused too (it
+  left the story empty); `unwrap_content_control` keeps its content.
 - **A typed control keeps one block.** A plain text, date, drop-down list, combo box, picture or check box control
   that holds a block takes no other (decision 3 below).
 - **A block cannot move into itself** (a control into its own content).
@@ -229,28 +234,25 @@ and #661, in two commits:
    limitation file; `docs/ARCHITECTURE.md` (a model convention: the four shapes and the resolver). Tests in a new
    area module `tests/docx/block_locations.rs`:
    - `every_block_operation_takes_every_location_shape_or_names_the_working_route`: a table-driven matrix,
-     operation (insert, import, HTML insert, clone source and destination, move source and destination, remove,
-     range start and end, caption insert) by shape (`[i]` in the body; `[c, k]` and `control_end` of a body
-     control; `[c, k]`, `control_end` and `[i]` of a control nested in it; `end(body)`; `(c, n)`; a cell
-     paragraph and a control in a cell; a header paragraph and a control in it; a footnote, a text box and a
-     comment paragraph; a typed control). Each cell either works (the story's paragraphs as expected, the document
-     saved, reopened with the same story paragraphs, and saved again to the same bytes) or is refused with a
-     message containing its route. The refused cells are listed, so a gap shows in the test.
-   - `a_toc_entry_is_added_after_the_last_one_by_cloning_it` (Word and Google thesis).
-   - `a_copy_never_leaves_a_complex_field_unbalanced`: at body level and inside a block control; the TOC's first
-     entry and field-end paragraph refused by clone, move and range; a middle and the last entry accepted.
-   - `the_last_paragraph_of_a_block_control_is_copied_up_to_its_end`,
-     `a_paragraph_is_appended_at_the_end_of_a_block_control_and_the_story_end_stays_after_it`,
-     `a_paragraph_is_cloned_into_and_moved_out_of_a_block_control`,
-     `bookmark_markers_inside_a_block_control_go_with_their_paragraph`,
-     `a_typed_control_takes_no_second_block`; a control keeping its block, the repeating section and the caption's
-     returned location are cells of the matrix.
+     operation (insert, import, HTML insert, caption and picture inserts with their returned locations, clone
+     source and destination, move source and destination, remove, range start and end) by shape (`[i]`, `[c, k]`
+     and the end of controls one, two and three levels deep; the body's end; `(c, n)`; a cell paragraph, a control
+     in a cell, a control holding its cell's only paragraph; a control that is its header's only block; a
+     footnote, a text box and a comment paragraph; a plain text control; a repeating section, its items and its
+     own `[c, 0]`; an empty control; an inline control; a table in a control). Each cell either works (the story's
+     paragraphs as expected, the document saved, reopened with the same story paragraphs, and saved again to the
+     same bytes) or is refused with a message containing its route; at a block control, the content control call
+     of the same operation agrees. The refused cells are listed, so a gap shows in the test.
+   - Short tests where a cell cannot say it: ranges and their routes in the issue's body, the XML order at a
+     control's end, bookmark markers, every typed control, the TOC acceptance, whole fields, the order of a table
+     of authorities' categories, the limitation's workaround.
 2. **Python.** The converter, `ContentLocation.control_end` and `is_end`, `insert_paragraph_before` on every
    paragraph, the `find_content_index` refusal, stubs and docstrings. Tests in
-   `crates/oxoffice-py/tests/test_docx_block_locations.py`: the matrix of the Python calls
-   (`insert_paragraph_before`, `clone_content` from and to, `move_content`, `pop_content`, `import_fragment`) by
-   shape, each in one of the argument forms; the issue's six lines; `insert_paragraph_before` on every paragraph;
-   the `find_content_index` refusals; each argument form once; the TOC case.
+   `crates/oxoffice-py/tests/test_docx_block_locations.py`, what the binding owns (the Rust matrix checks the
+   semantics): each argument form once, the refusals and their exceptions, `insert_paragraph_before` in every
+   story, the issue's six lines, the TOC acceptance. Python lists no Paragraph handle for a paragraph of a control
+   in a header, footer, note or comment (`HeaderFooter.paragraphs` lists the story's own paragraphs, as
+   python-docx does): the location calls reach it.
 
 Checks: `cargo fmt`, clippy on `oxoffice-docx` and `oxoffice-docx-py` (all targets, all features, warnings denied),
 `cargo test -p oxoffice-docx --test docx block_locations` and the modules the resolver's callers touch
@@ -273,6 +275,11 @@ and the fragment, story and content control tests after `maturin develop`, and t
    keep complex fields whole").
 5. The matrix has a text box paragraph row (`w:txbxContent` is its own nested owner in `scan_story_items`) and a
    comment paragraph row.
+6. Independent review (2026-11-25): an item stays in its section; a move destination column; the cell keeps a
+   paragraph for `remove_content_at` too; a move into an empty control writes it open; refusals name routes that
+   work (a section's `[c, 0]`, a story range ending in a control, the limitation's workaround). The maintainer
+   asked for fewer test lines: one Rust matrix with the cases as rows and columns, and Python tests of the
+   binding only.
 
 ## Links
 

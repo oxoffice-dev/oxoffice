@@ -289,10 +289,27 @@ impl DocumentFragment {
             };
             let end_hint = match start_slot.control {
                 Some(control) => format!(
-                    "; a range to the end of that control's content ends at \
+                    "; a range in that control's content ends at one of its blocks or at \
                      control_end(story, {control})"
                 ),
-                None => String::new(),
+                None => {
+                    // The block of the story that holds the end.
+                    let holder = scan_story_items(&source_xml, &owner, None)?
+                        .iter()
+                        .position(|item| {
+                            item.direct_owner_child
+                                && item.full.start <= end_slot.owner.full.start
+                                && end_slot.owner.full.end <= item.full.end
+                        });
+                    match holder {
+                        Some(holder) => format!(
+                            "; a range of the story ends at a block of the story: at the control \
+                             that holds that end ([{holder}]) to stop before it, or at the block \
+                             after it"
+                        ),
+                        None => String::new(),
+                    }
+                }
             };
             return Err(Error::Other(format!(
                 "document fragment range splits block ownership: it starts in {} and ends in {}, \

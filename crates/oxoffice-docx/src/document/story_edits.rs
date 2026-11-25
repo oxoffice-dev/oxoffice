@@ -714,7 +714,8 @@ impl Document {
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
         let slot = resolve_block_location(&source_xml, &owner, destination)?;
-        let (boundary, _) = slot.insertion(&source_xml)?;
+        let content = close_content_fragment_namespaces(&fragment.xml, &fragment.namespace_scope)?;
+        let (boundary, _) = slot.insertion(&source_xml, &content)?;
         reject_section_owning_content_fragment(&fragment)?;
         let mut fragment = fragment;
         freshen_taken_content_fragment_identities(self, &mut fragment)?;
@@ -746,7 +747,8 @@ impl Document {
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
         let slot = resolve_block_location(&source_xml, &owner, destination)?;
-        let (boundary, _) = slot.insertion(&source_xml)?;
+        let content = close_content_fragment_namespaces(&fragment.xml, &fragment.namespace_scope)?;
+        let (boundary, _) = slot.insertion(&source_xml, &content)?;
         reject_section_owning_content_fragment(&fragment)?;
         // The same fragment can be inserted twice: what the document already
         // holds takes a fresh identity (bookmark ids and names, control and
@@ -806,7 +808,8 @@ impl Document {
         let part_name = source.part_name.clone();
         let mut source_xml = source.xml.into_owned();
         let slot = resolve_block_location(&source_xml, &owner, destination)?;
-        let (boundary, direct_index) = slot.insertion(&source_xml)?;
+        // HTML projects paragraphs and tables, never a repeating section item.
+        let (boundary, direct_index) = slot.insertion(&source_xml, b"<w:p/>")?;
         // Inside a block control the fragment is written as XML: the
         // modeled routes splice the story owner's own children.
         let in_control = slot.control.is_some();
@@ -911,7 +914,7 @@ impl Document {
         let part_name = source.part_name.clone();
         let mut source_xml = source.xml.into_owned();
         let slot = resolve_block_location(&source_xml, &owner, destination)?;
-        let (mut boundary, _) = slot.insertion(&source_xml)?;
+        let (mut boundary, _) = slot.leading_boundary(&source_xml)?;
         let mut owner = slot.owner.clone();
         if fragment.include_final_section_properties
             && (destination.story.kind != StoryKind::Body || slot.control.is_some())
@@ -929,6 +932,7 @@ impl Document {
             false,
             &mut Vec::new(),
         )?;
+        slot.check_takes(&imported_xml)?;
         // Companion closure may append notes or comment threads to the same
         // physical part that owns the destination. Refresh that part before
         // inserting, so publishing the selected owner cannot discard them.
@@ -941,7 +945,7 @@ impl Document {
                 candidate.fragment_story_source_owner_and_owners(&destination.story)?;
             source_xml = updated_source.xml.into_owned();
             let slot = resolve_block_location(&source_xml, &updated_owner, destination)?;
-            boundary = slot.insertion(&source_xml)?.0;
+            boundary = slot.leading_boundary(&source_xml)?.0;
             owner = slot.owner;
         }
         insert_story_fragment(&mut source_xml, &owner, boundary, imported_xml)?;
@@ -979,22 +983,6 @@ impl Document {
         let closed =
             close_content_fragment_namespaces(&source_xml[item.full.clone()], &namespace_scope)?;
         Self::refuse_commented_fragment(&closed)?;
-        if owner.kind == StoryKind::TableCell
-            && slot.control.is_none()
-            && item.kind == StoryItemKind::Paragraph
-            && slot
-                .items
-                .iter()
-                .filter(|candidate| candidate.kind == StoryItemKind::Paragraph)
-                .count()
-                == 1
-        {
-            return Err(Error::Other(
-                "cannot remove the final required table-cell paragraph: a cell ends with a \
-                 paragraph, so clear its text, or remove its row"
-                    .to_owned(),
-            ));
-        }
         let mut fragment = ContentFragment {
             kind: item.kind,
             xml: source_xml[item.full.clone()].to_vec(),
@@ -1105,7 +1093,8 @@ impl Document {
         let destination_xml = destination_source.xml.into_owned();
         let destination_slot =
             resolve_block_location(&destination_xml, &destination_owner, destination)?;
-        let (boundary, _) = destination_slot.insertion(&destination_xml)?;
+        let content = close_content_fragment_namespaces(&fragment.xml, &fragment.namespace_scope)?;
+        let (boundary, _) = destination_slot.insertion(&destination_xml, &content)?;
         copy_shown_notes(&mut candidate, &mut fragment)?;
         freshen_content_fragment_identities(&mut candidate, &mut fragment)?;
         let fragment_xml =
@@ -1194,7 +1183,10 @@ impl Document {
                 ));
             }
             source_slot.check_leaves_a_block()?;
-            destination_slot.check_takes_block()?;
+            destination_slot.check_takes(&close_content_fragment_namespaces(
+                &fragment.xml,
+                &fragment.namespace_scope,
+            )?)?;
         }
         refuse_partial_complex_field(
             &source_xml,
@@ -1221,11 +1213,25 @@ impl Document {
         let adjusted_boundary = boundary.checked_sub(removed_before).ok_or_else(|| {
             Error::Other("content move destination underflowed after removal".to_owned())
         })?;
+        // The destination container, where it lies once the moved bytes are
+        // out: an empty `w:sdtContent` is written open around them.
+        let shifted = |at: usize| {
+            at - removed
+                .iter()
+                .filter(|range| range.end <= at)
+                .map(|range| range.len())
+                .sum::<usize>()
+        };
+        let container = StoryOwnerSpan {
+            full: shifted(destination_slot.owner.full.start)
+                ..shifted(destination_slot.owner.full.end),
+            ..destination_slot.owner.clone()
+        };
         let mut updated = source_xml;
         for range in removed.into_iter().rev() {
             updated.drain(range);
         }
-        updated.splice(adjusted_boundary..adjusted_boundary, moved);
+        insert_story_fragment(&mut updated, &container, adjusted_boundary, moved)?;
         set_story_source_xml(&mut candidate, &part_name, updated)?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);

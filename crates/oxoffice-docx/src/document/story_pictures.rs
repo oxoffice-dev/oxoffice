@@ -329,7 +329,7 @@ impl Document {
                 let slot = resolve_block_location(&source_xml, &story_owner, after)?;
                 let item = slot.block()?.clone();
                 if slot.control.is_some() {
-                    slot.check_takes_block()?;
+                    slot.check_takes(b"<w:p/>")?;
                     nested_path =
                         Some(slot.paragraph_path_at(&source_xml, &story_owner, item.full.end)?);
                     insert_owner = slot.owner.clone();

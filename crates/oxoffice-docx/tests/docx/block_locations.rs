@@ -3,7 +3,6 @@
 //! content controls too, and a refusal names the route that works.
 
 use std::io::Cursor;
-use std::ops::Range;
 use std::sync::OnceLock;
 
 use oxoffice_docx::{
@@ -13,9 +12,20 @@ use oxoffice_docx::{
 use oxoffice_docx_oxml::text::CT_P;
 use oxoffice_opc::OpcPackage;
 
-use crate::support::{corpus_doc, doc_with_body, map_in_parallel, reopen, text_box_run};
+use crate::support::{
+    corpus_doc, doc_with_body, map_in_parallel, package_parts, reopen, text_box_run,
+};
 
 const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+
+/// A one-pixel PNG.
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+    0x42, 0x60, 0x82,
+];
 
 fn p(text: &str) -> String {
     format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>")
@@ -27,83 +37,86 @@ fn sdt(tag: &str, properties: &str, content: &str) -> String {
     )
 }
 
-/// A body with a block control holding a nested one, a table whose cell holds
-/// a control, a text box, a plain text control, a repeating section, an
-/// inline control; a header holding a control, a footnote and a comment.
-fn fixture_bytes() -> &'static [u8] {
+fn table(cell: &str) -> String {
+    format!(
+        "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc><w:tcPr>\
+         <w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>{cell}</w:tc></w:tr></w:tbl>"
+    )
+}
+
+fn item(tag: &str, text: &str) -> String {
+    let properties = format!("<w15:repeatingSectionItem xmlns:w15=\"{W15}\"/>");
+    sdt(tag, &properties, &p(text))
+}
+
+/// Every container a location can name: block controls three levels deep,
+/// a cell holding a control and one whose only paragraph is in a control, a
+/// text box, a plain text control, a repeating section, an empty control, an
+/// inline control; a header whose only block is a control; a footnote and a
+/// comment.
+fn fixture() -> Document {
     static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
-    BYTES.get_or_init(|| {
-        let body = [
+    let bytes =
+        BYTES.get_or_init(|| {
+            let inner = [p("Inner 1"), sdt("deep", "", &p("Deep 1"))].concat();
+            let section = format!("<w15:repeatingSection xmlns:w15=\"{W15}\"/>");
+            let body = [
             p("Before"),
-            sdt(
-                "box",
-                "",
-                &[p("Box 1"), sdt("inner", "", &p("Inner 1")), p("Box 2")].concat(),
-            ),
+            sdt("box", "", &[p("Box 1"), sdt("inner", "", &inner), p("Box 2")].concat()),
             p("After"),
-            format!(
-                "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid><w:tr><w:tc>\
-                 <w:tcPr><w:tcW w:w=\"4000\" w:type=\"dxa\"/></w:tcPr>{}{}{}</w:tc></w:tr></w:tbl>",
-                p("Cell"),
-                sdt("cellbox", "", &p("Cell box 1")),
-                p("Cell end"),
-            ),
-            format!(
-                "<w:p><w:r><w:t>Holder</w:t></w:r>{}</w:p>",
-                text_box_run(7, &p("Text box"))
-            ),
+            table(&[p("Cell"), sdt("cellbox", "", &p("Cell box 1")), p("Cell end")].concat()),
+            table(&sdt("onlybox", "", &p("Only"))),
+            format!("<w:p><w:r><w:t>Holder</w:t></w:r>{}</w:p>", text_box_run(7, &p("Text box"))),
             sdt("typed", "<w:text/>", &p("Plain")),
-            sdt(
-                "section",
-                &format!("<w15:repeatingSection xmlns:w15=\"{W15}\"/>"),
-                &sdt(
-                    "item",
-                    &format!("<w15:repeatingSectionItem xmlns:w15=\"{W15}\"/>"),
-                    &p("Item 1"),
-                ),
-            ),
+            sdt("section", &section, &[item("item", "Item 1"), item("item2", "Item 2")].concat()),
+            "<w:sdt><w:sdtPr><w:tag w:val=\"empty\"/></w:sdtPr><w:sdtContent/></w:sdt>".to_owned(),
             "<w:p><w:r><w:t>Tail</w:t></w:r><w:sdt><w:sdtPr><w:tag w:val=\"inline\"/></w:sdtPr>\
              <w:sdtContent><w:r><w:t>!</w:t></w:r></w:sdtContent></w:sdt></w:p>"
                 .to_owned(),
         ]
         .concat();
-        let mut doc = doc_with_body(&body);
-        let tail = paragraph(&doc, "Tail!");
-        doc.create_footnote(&tail, "Note").expect("footnote");
-        let first_run = RunPosition {
-            body_index: 0,
-            run_index: 0,
-        };
-        let range = RunRange {
-            start: first_run,
-            end: RunPosition {
+            let mut doc = doc_with_body(&body);
+            doc.create_footnote(&location(&doc, "p:Tail!"), "Note")
+                .expect("footnote");
+            let start = RunPosition {
+                body_index: 0,
+                run_index: 0,
+            };
+            let end = RunPosition {
                 run_index: 1,
-                ..first_run
-            },
-        };
-        doc.add_comment(range, "Ada", None, "Remark")
-            .expect("comment");
-        doc.set_header("Head");
-        let header = story(&doc, StoryKind::Header).part_name().to_owned();
-        let bytes = doc.to_bytes().expect("fixture saves");
-        let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
-        let xml = String::from_utf8(package.get_part(&header).expect("header").to_vec())
-            .expect("header is UTF-8");
-        let xml = xml.replace(
-            "</w:hdr>",
-            &format!("{}</w:hdr>", sdt("headbox", "", &p("Head box 1"))),
-        );
-        package.set_part(&header, xml.into_bytes());
-        let mut out = Cursor::new(Vec::new());
-        package.write_to(&mut out).expect("package writes");
-        let bytes = out.into_inner();
-        Document::from_bytes(&bytes).expect("fixture reopens");
-        bytes
-    })
+                ..start
+            };
+            doc.add_comment(RunRange { start, end }, "Ada", None, "Remark")
+                .expect("comment");
+            doc.set_header("Head");
+            with_header(
+                doc,
+                &sdt("headbox", "", &[p("Head box 1"), p("Head box 2")].concat()),
+            )
+        });
+    Document::from_bytes(bytes).expect("fixture opens")
 }
 
-fn fixture() -> Document {
-    Document::from_bytes(fixture_bytes()).expect("fixture opens")
+/// `doc` saved with the content of its header replaced by `content`.
+fn with_header(mut doc: Document, content: &str) -> Vec<u8> {
+    let header = story(&doc, StoryKind::Header).part_name().to_owned();
+    let bytes = doc.to_bytes().expect("saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
+    let xml = String::from_utf8(package.get_part(&header).expect("header").to_vec()).unwrap();
+    let start = xml
+        .find("<w:p>")
+        .or_else(|| xml.find("<w:p "))
+        .expect("a paragraph");
+    let end = xml.rfind("</w:hdr>").expect("the header's end");
+    package.set_part(
+        &header,
+        format!("{}{content}{}", &xml[..start], &xml[end..]).into_bytes(),
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).expect("package writes");
+    let bytes = out.into_inner();
+    Document::from_bytes(&bytes).expect("reopens");
+    bytes
 }
 
 fn story(doc: &Document, kind: StoryKind) -> StoryId {
@@ -112,6 +125,10 @@ fn story(doc: &Document, kind: StoryKind) -> StoryId {
         .into_iter()
         .find(|story| story.kind() == kind)
         .unwrap_or_else(|| panic!("a {kind:?} story"))
+}
+
+fn body(doc: &Document) -> StoryId {
+    story(doc, StoryKind::Body)
 }
 
 fn same_story(left: &StoryId, right: &StoryId) -> bool {
@@ -126,21 +143,12 @@ fn texts_of(doc: &Document, story: &StoryId) -> Vec<String> {
         .expect("story paragraphs")
         .into_iter()
         .filter(|paragraph| same_story(paragraph.location.story(), story))
-        .map(|paragraph| paragraph.text)
+        .map(|paragraph| paragraph.text.trim().to_owned())
         .collect()
 }
 
-/// The location of the one story paragraph whose text is `text`.
-fn paragraph(doc: &Document, text: &str) -> ContentLocation {
-    let found = doc
-        .story_paragraphs()
-        .expect("story paragraphs")
-        .into_iter()
-        .filter(|paragraph| paragraph.text == text)
-        .map(|paragraph| paragraph.location)
-        .collect::<Vec<_>>();
-    assert_eq!(found.len(), 1, "one paragraph {text:?}");
-    found.into_iter().next().unwrap()
+fn body_texts(doc: &Document) -> Vec<String> {
+    texts_of(doc, &body(doc))
 }
 
 /// The story and item index of the content control tagged `tag`.
@@ -150,12 +158,11 @@ fn control_index(doc: &Document, tag: &str) -> (StoryId, usize) {
         .expect("story items")
         .into_iter()
         .find(|item| {
+            let xml = String::from_utf8_lossy(item.xml());
             item.location().item_kind() == StoryItemKind::ContentControl
-                && String::from_utf8_lossy(item.xml())
+                && xml
                     .find("<w:tag ")
-                    .is_some_and(|at| {
-                        String::from_utf8_lossy(item.xml())[at..].starts_with(&needle)
-                    })
+                    .is_some_and(|at| xml[at..].starts_with(&needle))
         })
         .map(|item| {
             (
@@ -166,19 +173,67 @@ fn control_index(doc: &Document, tag: &str) -> (StoryId, usize) {
         .unwrap_or_else(|| panic!("control {tag}"))
 }
 
-fn control(doc: &Document, tag: &str) -> ContentLocation {
-    let (story, index) = control_index(doc, tag);
-    ContentLocation::new(story, StoryItemKind::ContentControl, vec![index])
-}
-
-fn control_end(doc: &Document, tag: &str) -> ContentLocation {
-    let (story, index) = control_index(doc, tag);
-    ContentLocation::control_end(story, index)
-}
-
-fn control_paragraph(doc: &Document, tag: &str, k: usize) -> ContentLocation {
-    let (story, index) = control_index(doc, tag);
-    ContentLocation::new(story, StoryItemKind::Paragraph, vec![index, k])
+/// The location `spec` names: `p:TEXT` the story paragraph whose text is
+/// TEXT; `c:TAG` the control tagged TAG, `c:TAG/K` its paragraph K, `t:TAG/K`
+/// its table K, `e:TAG` its end; `end@TEXT` the end of the story holding
+/// paragraph TEXT; `after:TEXT` the story item after paragraph TEXT.
+fn location(doc: &Document, spec: &str) -> ContentLocation {
+    let (kind, rest) = spec.split_once(':').unwrap_or((spec, ""));
+    let paragraph = |text: &str| {
+        let found = doc
+            .story_paragraphs()
+            .expect("story paragraphs")
+            .into_iter()
+            .filter(|paragraph| paragraph.text.trim() == text)
+            .map(|paragraph| paragraph.location)
+            .collect::<Vec<_>>();
+        assert_eq!(found.len(), 1, "one paragraph {text:?}");
+        found.into_iter().next().unwrap()
+    };
+    match kind {
+        "p" => paragraph(rest),
+        "e" => {
+            let (story, index) = control_index(doc, rest);
+            ContentLocation::control_end(story, index)
+        }
+        "c" | "t" => {
+            let (tag, k) = rest
+                .split_once('/')
+                .map_or((rest, None), |(t, k)| (t, k.parse().ok()));
+            let (story, index) = control_index(doc, tag);
+            match (kind, k) {
+                ("c", None) => {
+                    ContentLocation::new(story, StoryItemKind::ContentControl, vec![index])
+                }
+                ("c", Some(k)) => {
+                    ContentLocation::new(story, StoryItemKind::Paragraph, vec![index, k])
+                }
+                (_, k) => {
+                    ContentLocation::new(story, StoryItemKind::Table, vec![index, k.unwrap()])
+                }
+            }
+        }
+        "after" => {
+            let at = paragraph(rest);
+            let next = at.index_path()[0] + 1;
+            let kind = doc
+                .story_item_snapshots()
+                .expect("story items")
+                .into_iter()
+                .find(|item| {
+                    same_story(item.location().story(), at.story())
+                        && item.location().index_path() == [next]
+                })
+                .expect("an item after it")
+                .location()
+                .item_kind();
+            ContentLocation::new(at.story().clone(), kind, vec![next])
+        }
+        _ => {
+            let text = spec.strip_prefix("end@").expect("a location spec");
+            ContentLocation::end(paragraph(text).story().clone())
+        }
+    }
 }
 
 fn new_paragraph(text: &str) -> ContentFragment {
@@ -187,538 +242,322 @@ fn new_paragraph(text: &str) -> ContentFragment {
     ContentFragment::paragraph(paragraph).expect("paragraph fragment")
 }
 
-type Locate = fn(&Document) -> ContentLocation;
-
-/// One location shape and what the operations do with it.
-struct Shape {
-    name: &'static str,
-    at: Locate,
-    /// The story whose paragraphs an operation at the shape changes.
-    story: fn(&Document) -> StoryId,
-    /// Where a paragraph inserted at the shape lands among those paragraphs.
-    insert_at: usize,
-    /// The paragraphs of the block the shape names; `None` at an end.
-    block: Option<Range<usize>>,
-    /// The block before it in its container, and its paragraphs.
-    previous: Option<(Locate, Range<usize>)>,
-    /// The boundary after the block in its container.
-    next: Option<Locate>,
-    /// The operations refused at the shape, each with a part of its message.
-    refused: &'static [(Op, &'static str)],
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Op {
     Insert,
     Import,
     Html,
     Caption,
+    Picture,
     CloneFrom,
     CloneTo,
     Move,
+    MoveTo,
     Remove,
     RangeFrom,
     RangeTo,
+    /// Every operation, in a row's refusals.
+    All,
 }
 
-const OPS: [Op; 10] = [
+const OPS: [Op; 12] = [
     Op::Insert,
     Op::Import,
     Op::Html,
     Op::Caption,
+    Op::Picture,
     Op::CloneFrom,
     Op::CloneTo,
     Op::Move,
+    Op::MoveTo,
     Op::Remove,
     Op::RangeFrom,
     Op::RangeTo,
 ];
 
+type Refusals = &'static [(Op, &'static str)];
+
 const END: &str = "an end is a boundary between blocks";
 const ONLY: &str = "only block of content control";
-const HTML: &str = "from_html";
 const TYPED: &str = "set the control's value";
-const SECTION: &str = "repeat_content_control";
-const SOURCES_AT_AN_END: [(Op, &str); 4] = [
+const SECTION: &str = "whose content holds only its items";
+const ITEM: &str = "a repeating section item stays directly in the content of a repeating section";
+const HTML: &str = "from_html";
+const ENDS: Refusals = &[
     (Op::CloneFrom, END),
     (Op::Move, END),
     (Op::Remove, END),
     (Op::RangeFrom, END),
+    (Op::Picture, END),
 ];
-const PAST: &str = "control_end(story, ";
-const INLINE: &str = "inside a paragraph and holds no block";
-const TABLE: &str = "#660";
-const NOT_A_BLOCK: &str = "not a block";
+const INSERTS: [Op; 7] = [
+    Op::Insert,
+    Op::Import,
+    Op::Html,
+    Op::Caption,
+    Op::Picture,
+    Op::CloneTo,
+    Op::MoveTo,
+];
 
-fn all(message: &'static str) -> &'static [(Op, &'static str)] {
-    Box::leak(
-        OPS.iter()
-            .map(|op| (*op, message))
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    )
-}
+/// One location shape: its name, its location, the story whose paragraphs an
+/// operation there changes, where an inserted paragraph lands among them, the
+/// paragraphs of the block it names, the block before it in its container
+/// and its paragraphs, the boundary after the block, and the operations
+/// refused there with a part of each message.
+type Shape = (
+    &'static str,
+    &'static str,
+    &'static str,
+    usize,
+    Option<(usize, usize)>,
+    Option<(&'static str, usize, usize)>,
+    Option<&'static str>,
+    Refusals,
+);
 
-fn body(doc: &Document) -> StoryId {
-    story(doc, StoryKind::Body)
-}
-
-fn cell(doc: &Document) -> StoryId {
-    story(doc, StoryKind::TableCell)
-}
-
-fn header(doc: &Document) -> StoryId {
-    story(doc, StoryKind::Header)
-}
-
+#[rustfmt::skip]
 fn shapes() -> Vec<Shape> {
-    // Body paragraphs: Before, Box 1, Inner 1, Box 2, After, Holder, Plain,
-    // Item 1, Tail!
+    let refusals = |ops: &[Op], message: &'static str, more: &[(Op, &'static str)]| -> Refusals {
+        Box::leak(ops.iter().map(|op| (*op, message)).chain(more.iter().copied()).collect::<Vec<_>>().into_boxed_slice())
+    };
+    let only: Refusals = &[(Op::Move, ONLY), (Op::Remove, ONLY)];
+    let typed = refusals(&INSERTS, TYPED, only);
+    let item = refusals(&INSERTS, SECTION, &[(Op::CloneFrom, ITEM), (Op::Move, ITEM), (Op::RangeFrom, ITEM), (Op::RangeTo, ITEM)]);
+    let section_end = refusals(&INSERTS[..4], SECTION, &[(Op::CloneTo, SECTION), (Op::MoveTo, SECTION), (Op::RangeTo, ITEM)]);
+    let section_end = refusals(&[], "", &[section_end, ENDS].concat());
+    // Body paragraphs: Before, Box 1, Inner 1, Deep 1, Box 2, After, Holder, Plain, Item 1, Item 2, Tail!.
     vec![
-        Shape {
-            name: "a body paragraph [i]",
-            at: |doc| paragraph(doc, "After"),
-            story: body,
-            insert_at: 4,
-            block: Some(4..5),
-            previous: Some((|doc| control(doc, "box"), 1..4)),
-            next: Some(|doc| {
-                let (story, _) = control_index(doc, "box");
-                let after = paragraph(doc, "After").index_path()[0];
-                ContentLocation::new(story, StoryItemKind::Table, vec![after + 1])
-            }),
-            refused: &[],
-        },
-        Shape {
-            name: "a paragraph [c, k] of a body control",
-            at: |doc| control_paragraph(doc, "box", 1),
-            story: body,
-            insert_at: 3,
-            block: Some(3..4),
-            previous: Some((|doc| control(doc, "inner"), 2..3)),
-            next: Some(|doc| control_end(doc, "box")),
-            refused: &[],
-        },
-        Shape {
-            name: "the end of a body control",
-            at: |doc| control_end(doc, "box"),
-            story: body,
-            insert_at: 4,
-            block: None,
-            previous: Some((|doc| control_paragraph(doc, "box", 1), 3..4)),
-            next: None,
-            refused: &SOURCES_AT_AN_END,
-        },
-        Shape {
-            name: "a paragraph [c, k] of a nested control",
-            at: |doc| control_paragraph(doc, "inner", 0),
-            story: body,
-            insert_at: 2,
-            block: Some(2..3),
-            previous: None,
-            next: Some(|doc| control_end(doc, "inner")),
-            refused: &[(Op::Move, ONLY), (Op::Remove, ONLY)],
-        },
-        Shape {
-            name: "the end of a nested control",
-            at: |doc| control_end(doc, "inner"),
-            story: body,
-            insert_at: 3,
-            block: None,
-            previous: Some((|doc| control_paragraph(doc, "inner", 0), 2..3)),
-            next: None,
-            refused: &SOURCES_AT_AN_END,
-        },
-        Shape {
-            name: "a nested block control [i]",
-            at: |doc| control(doc, "inner"),
-            story: body,
-            insert_at: 2,
-            block: Some(2..3),
-            previous: Some((|doc| control_paragraph(doc, "box", 0), 1..2)),
-            next: Some(|doc| control_paragraph(doc, "box", 1)),
-            refused: &[],
-        },
-        Shape {
-            name: "the end of the body",
-            at: |doc| ContentLocation::end(body(doc)),
-            story: body,
-            insert_at: 9,
-            block: None,
-            previous: Some((|doc| paragraph(doc, "Tail!"), 8..9)),
-            next: None,
-            refused: &SOURCES_AT_AN_END,
-        },
-        Shape {
-            name: "[c, n] past a control's paragraphs",
-            at: |doc| control_paragraph(doc, "box", 2),
-            story: body,
-            insert_at: 0,
-            block: None,
-            previous: None,
-            next: None,
-            refused: all(PAST),
-        },
-        Shape {
-            name: "a cell paragraph [i]",
-            at: |doc| paragraph(doc, "Cell"),
-            story: cell,
-            insert_at: 0,
-            block: Some(0..1),
-            previous: None,
-            next: Some(|doc| control(doc, "cellbox")),
-            refused: &[],
-        },
-        Shape {
-            name: "a paragraph of a control in a cell",
-            at: |doc| control_paragraph(doc, "cellbox", 0),
-            story: cell,
-            insert_at: 1,
-            block: Some(1..2),
-            previous: None,
-            next: Some(|doc| control_end(doc, "cellbox")),
-            refused: &[(Op::Move, ONLY), (Op::Remove, ONLY)],
-        },
-        Shape {
-            name: "the end of a control in a cell",
-            at: |doc| control_end(doc, "cellbox"),
-            story: cell,
-            insert_at: 2,
-            block: None,
-            previous: Some((|doc| control_paragraph(doc, "cellbox", 0), 1..2)),
-            next: None,
-            refused: &SOURCES_AT_AN_END,
-        },
-        Shape {
-            name: "a header paragraph [i]",
-            at: |doc| paragraph(doc, "Head"),
-            story: header,
-            insert_at: 0,
-            block: Some(0..1),
-            previous: None,
-            next: Some(|doc| control(doc, "headbox")),
-            refused: &[],
-        },
-        Shape {
-            name: "a paragraph of a control in a header",
-            at: |doc| control_paragraph(doc, "headbox", 0),
-            story: header,
-            insert_at: 1,
-            block: Some(1..2),
-            previous: None,
-            next: Some(|doc| control_end(doc, "headbox")),
-            refused: &[(Op::Move, ONLY), (Op::Remove, ONLY)],
-        },
-        Shape {
-            name: "the end of a control in a header",
-            at: |doc| control_end(doc, "headbox"),
-            story: header,
-            insert_at: 2,
-            block: None,
-            previous: Some((|doc| control_paragraph(doc, "headbox", 0), 1..2)),
-            next: None,
-            refused: &SOURCES_AT_AN_END,
-        },
-        Shape {
-            name: "a footnote paragraph [i]",
-            at: |doc| note_paragraph(doc),
-            story: |doc| story(doc, StoryKind::Footnote),
-            insert_at: 0,
-            block: Some(0..1),
-            previous: None,
-            next: Some(|doc| ContentLocation::end(story(doc, StoryKind::Footnote))),
-            refused: &[(Op::Html, HTML), (Op::Remove, "only block of its note")],
-        },
-        Shape {
-            name: "a text box paragraph [i]",
-            at: |doc| paragraph(doc, "Text box"),
-            story: |doc| story(doc, StoryKind::TextBox),
-            insert_at: 0,
-            block: Some(0..1),
-            previous: None,
-            next: Some(|doc| ContentLocation::end(story(doc, StoryKind::TextBox))),
-            refused: &[(Op::Html, HTML), (Op::Remove, "only block of its text box")],
-        },
-        Shape {
-            name: "a comment paragraph [i]",
-            at: |doc| paragraph(doc, "Remark"),
-            story: |doc| story(doc, StoryKind::Comment),
-            insert_at: 0,
-            block: Some(0..1),
-            previous: None,
-            next: Some(|doc| ContentLocation::end(story(doc, StoryKind::Comment))),
-            refused: &[(Op::Html, HTML), (Op::Remove, "only block of its comment")],
-        },
-        Shape {
-            name: "the paragraph of a plain text control",
-            at: |doc| control_paragraph(doc, "typed", 0),
-            story: body,
-            insert_at: 6,
-            block: Some(6..7),
-            previous: None,
-            next: Some(|doc| control_end(doc, "typed")),
-            refused: &[
-                (Op::Insert, TYPED),
-                (Op::Import, TYPED),
-                (Op::Html, TYPED),
-                (Op::Caption, TYPED),
-                (Op::CloneTo, TYPED),
-                (Op::Move, ONLY),
-                (Op::Remove, ONLY),
-            ],
-        },
-        Shape {
-            name: "the end of a repeating section",
-            at: |doc| control_end(doc, "section"),
-            story: body,
-            insert_at: 8,
-            block: None,
-            previous: Some((|doc| control(doc, "item"), 7..8)),
-            next: None,
-            refused: &[
-                (Op::Insert, SECTION),
-                (Op::Import, SECTION),
-                (Op::Html, SECTION),
-                (Op::Caption, SECTION),
-                (Op::CloneTo, SECTION),
-                (Op::CloneFrom, END),
-                (Op::Move, END),
-                (Op::Remove, END),
-                (Op::RangeFrom, END),
-            ],
-        },
-        Shape {
-            name: "the end of a repeating section item",
-            at: |doc| control_end(doc, "item"),
-            story: body,
-            insert_at: 8,
-            block: None,
-            previous: Some((|doc| control_paragraph(doc, "item", 0), 7..8)),
-            next: None,
-            refused: &SOURCES_AT_AN_END,
-        },
-        Shape {
-            name: "[c, k] of an inline control",
-            at: |doc| control_paragraph(doc, "inline", 0),
-            story: body,
-            insert_at: 0,
-            block: None,
-            previous: None,
-            next: None,
-            refused: all(INLINE),
-        },
-        Shape {
-            name: "an inline control [i]",
-            at: |doc| control(doc, "inline"),
-            story: body,
-            insert_at: 0,
-            block: None,
-            previous: None,
-            next: None,
-            refused: all(NOT_A_BLOCK),
-        },
-        Shape {
-            name: "a table [c, k] in a block control",
-            at: |doc| {
-                let (story, index) = control_index(doc, "box");
-                ContentLocation::new(story, StoryItemKind::Table, vec![index, 0])
-            },
-            story: body,
-            insert_at: 0,
-            block: None,
-            previous: None,
-            next: None,
-            refused: all(TABLE),
-        },
+        ("a body paragraph [i]", "p:After", "body", 5, Some((5, 6)), Some(("c:box", 1, 5)), Some("after:After"), &[]),
+        ("a paragraph [c, k] of a body control", "c:box/1", "body", 4, Some((4, 5)), Some(("c:inner", 2, 4)), Some("e:box"), &[]),
+        ("the end of a body control", "e:box", "body", 5, None, Some(("c:box/1", 4, 5)), None, ENDS),
+        ("a paragraph [c, k] of a nested control", "c:inner/0", "body", 2, Some((2, 3)), None, Some("c:deep"), &[]),
+        ("a nested block control [i]", "c:inner", "body", 2, Some((2, 4)), Some(("c:box/0", 1, 2)), Some("c:box/1"), &[]),
+        ("the end of a nested control", "e:inner", "body", 4, None, Some(("c:deep", 3, 4)), None, ENDS),
+        ("a control three levels deep [i]", "c:deep", "body", 3, Some((3, 4)), Some(("c:inner/0", 2, 3)), Some("e:inner"), &[]),
+        ("a paragraph of a control three levels deep", "c:deep/0", "body", 3, Some((3, 4)), None, Some("e:deep"), only),
+        ("the end of a control three levels deep", "e:deep", "body", 4, None, Some(("c:deep/0", 3, 4)), None, ENDS),
+        ("the end of the body", "end@Before", "body", 11, None, Some(("p:Tail!", 10, 11)), None, ENDS),
+        ("[c, n] past a control's paragraphs", "c:box/2", "body", 0, None, None, None, &[(Op::All, "control_end(story, ")]),
+        ("a cell paragraph [i]", "p:Cell", "@Cell", 0, Some((0, 1)), None, Some("c:cellbox"), &[]),
+        ("a paragraph of a control in a cell", "c:cellbox/0", "@Cell", 1, Some((1, 2)), None, Some("e:cellbox"), only),
+        ("the end of a control in a cell", "e:cellbox", "@Cell", 2, None, Some(("c:cellbox/0", 1, 2)), None, ENDS),
+        ("a control holding its cell's only paragraph", "c:onlybox", "@Only", 0, Some((0, 1)), None, Some("end@Only"), &[(Op::Remove, "only paragraph of its table cell"), (Op::MoveTo, ONLY)]),
+        ("a control that is its header's only block", "c:headbox", "@Head box 1", 0, Some((0, 2)), None, Some("end@Head box 1"), &[(Op::Remove, "only block of its header")]),
+        ("a paragraph of a header control", "c:headbox/0", "@Head box 1", 0, Some((0, 1)), None, Some("c:headbox/1"), &[]),
+        ("the end of a header control", "e:headbox", "@Head box 1", 2, None, Some(("c:headbox/1", 1, 2)), None, ENDS),
+        ("a footnote paragraph [i]", "p:Note", "@Note", 0, Some((0, 1)), None, Some("end@Note"), &[(Op::Html, HTML), (Op::Remove, "only block of its footnote")]),
+        ("a text box paragraph [i]", "p:Text box", "@Text box", 0, Some((0, 1)), None, Some("end@Text box"), &[(Op::Html, HTML), (Op::Remove, "only block of its text box")]),
+        ("a comment paragraph [i]", "p:Remark", "@Remark", 0, Some((0, 1)), None, Some("end@Remark"), &[(Op::Html, HTML), (Op::Remove, "only block of its comment")]),
+        ("the paragraph of a plain text control", "c:typed/0", "body", 7, Some((7, 8)), None, Some("e:typed"), typed),
+        ("a repeating section item [i]", "c:item2", "body", 9, Some((9, 10)), Some(("c:item", 8, 9)), Some("e:section"), item),
+        ("the end of a repeating section", "e:section", "body", 10, None, Some(("c:item2", 9, 10)), None, section_end),
+        ("[c, 0] of a repeating section", "c:section/0", "body", 0, None, None, None, &[(Op::All, "name a paragraph of an item")]),
+        ("the end of a repeating section item", "e:item", "body", 9, None, Some(("c:item/0", 8, 9)), None, ENDS),
+        ("the end of an empty control", "e:empty", "body", 10, None, None, None, ENDS),
+        ("[c, k] of an inline control", "c:inline/0", "body", 0, None, None, None, &[(Op::All, "inside a paragraph and holds no block")]),
+        ("an inline control [i]", "c:inline", "body", 0, None, None, None, &[(Op::All, "not a block")]),
+        ("a table [c, k] in a block control", "t:box/0", "body", 0, None, None, None, &[(Op::All, "#660")]),
     ]
 }
 
-fn note_paragraph(doc: &Document) -> ContentLocation {
-    let note = story(doc, StoryKind::Footnote);
-    doc.story_paragraphs()
-        .expect("story paragraphs")
-        .into_iter()
-        .find(|paragraph| same_story(paragraph.location.story(), &note))
-        .expect("a footnote paragraph")
-        .location
-}
-
-/// The fragment of the body's first paragraph, `Before`.
-fn before_fragment(doc: &Document) -> DocumentFragment {
-    let start = paragraph(doc, "Before");
-    let end = control(doc, "box");
-    DocumentFragment::from_range(doc, &start, &end, false).expect("fragment of Before")
-}
-
-/// Run `op` at `shape` on a fresh document. `None` when the operation does
-/// not apply to the shape: a range from a block that has no next boundary in
-/// its container, or to one with no block before it. A range at a shape
-/// refused everywhere starts and ends at the shape.
+/// Run `op` at `shape` on `doc`. `None` when it does not apply: a range
+/// from a block with no boundary after it in its container, or to one with
+/// no block before it. A range at a shape refused everywhere starts and ends
+/// at the shape. For a control, the content control call of the same
+/// operation is run on a copy and must agree.
 fn run(op: Op, shape: &Shape, doc: &mut Document, refused: bool) -> Option<Result<(), String>> {
-    let at = (shape.at)(doc);
-    let story = (shape.story)(doc);
+    let at = location(doc, shape.1);
+    let story = story_of(doc, shape.2);
+    let end = ContentLocation::end(story.clone());
+    // A block control: the content control call must agree.
+    let control = at.item_kind() == StoryItemKind::ContentControl && shape.4.is_some();
+    let twin = |call: &dyn Fn(&mut Document) -> oxoffice_docx::Result<()>| {
+        control.then(|| {
+            let mut twin = doc.clone_for_staging();
+            call(&mut twin)
+                .ok()
+                .map(|()| texts_of(&twin, &refreshed(&twin, &story)))
+        })
+    };
+    let twin = match op {
+        Op::CloneFrom => twin(&|d| d.clone_content_control(&at, &end)),
+        Op::Move => twin(&|d| d.move_content_control(&at, &end)),
+        Op::Remove => twin(&|d| d.remove_content_control(&at)),
+        _ => None,
+    };
     let result = match op {
         Op::Insert => doc.insert_content(&at, new_paragraph("New")),
         Op::Import => {
-            let fragment = before_fragment(doc);
+            let start = location(doc, "p:Before");
+            let fragment =
+                DocumentFragment::from_range(doc, &start, &location(doc, "c:box"), false)
+                    .expect("the fragment of Before");
             doc.import_fragment(&at, &fragment, FragmentConflictPolicy::default())
         }
         Op::Html => doc
             .insert_html_fragment(&at, "<p>Html</p>", &[])
             .map(|_| ()),
-        Op::Caption => {
-            let options = CaptionOptions {
-                text: "Cap".into(),
-                ..CaptionOptions::default()
+        Op::Caption | Op::Picture => {
+            let inserted = if op == Op::Caption {
+                let options = CaptionOptions {
+                    text: "Cap".into(),
+                    ..CaptionOptions::default()
+                };
+                doc.insert_caption(&at, &options)
+                    .map(|target| target.paragraph)
+            } else {
+                doc.insert_picture_to_story(&story, Some(&at), PNG, "p.png", None, None)
             };
-            match doc.insert_caption(&at, &options) {
-                Ok(target) => {
-                    // The location returned is the caption's.
-                    let read = doc
-                        .story_paragraphs()
-                        .expect("story paragraphs")
-                        .into_iter()
-                        .find(|paragraph| {
-                            same_story(paragraph.location.story(), target.paragraph.story())
-                                && paragraph.location.index_path() == target.paragraph.index_path()
-                        })
-                        .map(|paragraph| paragraph.text);
-                    if !read.as_deref().is_some_and(|text| text.ends_with("Cap")) {
-                        return Some(Err(format!(
-                            "the caption location {:?} reads {read:?}",
-                            target.paragraph.index_path()
-                        )));
-                    }
-                    Ok(())
-                }
-                Err(error) => Err(error),
-            }
+            // The location returned reads the paragraph inserted.
+            inserted.map(|location| {
+                let xml = doc
+                    .paragraph_element_xml(&location)
+                    .expect("the location reads");
+                let xml = String::from_utf8_lossy(&xml);
+                assert!(
+                    xml.contains("Cap") || xml.contains("<w:drawing"),
+                    "{}: {xml}",
+                    shape.0
+                );
+            })
         }
-        Op::CloneFrom => doc.clone_content(&at, &ContentLocation::end(story)),
-        Op::CloneTo => {
-            let source = paragraph(doc, "Before");
-            doc.clone_content(&source, &at)
+        Op::CloneFrom => doc.clone_content(&at, &end),
+        Op::CloneTo => doc.clone_content(&location(doc, "p:Before"), &at),
+        Op::Move => doc.move_content(&at, &end),
+        Op::MoveTo => {
+            let first = doc
+                .story_paragraphs()
+                .expect("story paragraphs")
+                .into_iter()
+                .find(|paragraph| same_story(paragraph.location.story(), &story))
+                .expect("a paragraph of the story");
+            doc.move_content(&first.location, &at)
         }
-        Op::Move => doc.move_content(&at, &ContentLocation::end(story)),
         Op::Remove => doc.remove_content_at(&at).map(|_| ()),
-        Op::RangeFrom => {
-            let next = match shape.next {
-                Some(next) => next(doc),
-                None if refused => at.clone(),
-                None => return None,
+        Op::RangeFrom | Op::RangeTo => {
+            let other = match (op, shape.6, shape.5) {
+                (Op::RangeFrom, Some(next), _) | (Op::RangeTo, _, Some((next, _, _))) => {
+                    location(doc, next)
+                }
+                _ if refused => at.clone(),
+                _ => return None,
             };
-            DocumentFragment::from_range(doc, &at, &next, false).and_then(|fragment| {
-                let end = ContentLocation::end((shape.story)(doc));
+            let (start, stop) = if op == Op::RangeFrom {
+                (&at, &other)
+            } else {
+                (&other, &at)
+            };
+            DocumentFragment::from_range(doc, start, stop, false).and_then(|fragment| {
                 doc.import_fragment(&end, &fragment, FragmentConflictPolicy::default())
             })
         }
-        Op::RangeTo => {
-            let previous = match &shape.previous {
-                Some((previous, _)) => previous(doc),
-                None if refused => at.clone(),
-                None => return None,
-            };
-            DocumentFragment::from_range(doc, &previous, &at, false).and_then(|fragment| {
-                let end = ContentLocation::end((shape.story)(doc));
-                doc.import_fragment(&end, &fragment, FragmentConflictPolicy::default())
-            })
-        }
+        Op::All => unreachable!(),
     };
+    if let Some(twin) = twin {
+        let ours = result
+            .as_ref()
+            .ok()
+            .map(|()| texts_of(doc, &refreshed(doc, &story)));
+        if twin != ours {
+            return Some(Err(format!(
+                "the content control call disagrees: {twin:?} and {ours:?}"
+            )));
+        }
+    }
     Some(result.map_err(|error| error.to_string()))
+}
+
+/// `story` in `doc` after an edit, which changed its fingerprint.
+fn refreshed(doc: &Document, story: &StoryId) -> StoryId {
+    doc.stories()
+        .expect("stories")
+        .into_iter()
+        .find(|candidate| same_story(candidate, story))
+        .expect("the story")
+}
+
+fn story_of(doc: &Document, spec: &str) -> StoryId {
+    match spec.strip_prefix('@') {
+        Some(text) => location(doc, &format!("p:{text}")).story().clone(),
+        None => body(doc),
+    }
 }
 
 /// The story's paragraphs `op` at `shape` leaves.
 fn expected(op: Op, shape: &Shape, before: &[String]) -> Vec<String> {
     let mut after = before.to_vec();
-    let block = || before[shape.block.clone().expect("a block")].to_vec();
-    let mut insert = |text: &str| after.insert(shape.insert_at, text.to_owned());
+    let block = shape.4.map(|(start, end)| start..end).unwrap_or(0..0);
+    let at = shape.3;
     match op {
-        Op::Insert => insert("New"),
-        Op::Import | Op::CloneTo => insert("Before"),
-        Op::Html => insert("Html"),
-        Op::Caption => {
-            // The caption's text depends on its number's result.
-            let text = String::new();
-            insert(&text);
-        }
-        Op::CloneFrom | Op::RangeFrom => after.extend(block()),
+        Op::Insert => after.insert(at, "New".into()),
+        Op::Import | Op::CloneTo => after.insert(at, "Before".into()),
+        Op::Html => after.insert(at, "Html".into()),
+        Op::Caption => after.insert(at, String::new()),
+        Op::Picture => after.insert(block.end, String::new()),
+        Op::CloneFrom | Op::RangeFrom => after.extend(before[block].to_vec()),
         Op::Move => {
-            let range = shape.block.clone().expect("a block");
-            after.drain(range);
-            after.extend(block());
+            after.drain(block.clone());
+            after.extend(before[block].to_vec());
+        }
+        Op::MoveTo => {
+            let first = after.remove(0);
+            after.insert(at.saturating_sub(1), first);
         }
         Op::Remove => {
-            after.drain(shape.block.clone().expect("a block"));
+            after.drain(block);
         }
         Op::RangeTo => {
-            let (_, range) = shape.previous.as_ref().expect("a previous block");
-            after.extend(before[range.clone()].to_vec());
+            let (_, start, end) = shape.5.expect("a block before");
+            after.extend(before[start..end].to_vec());
         }
+        Op::All => unreachable!(),
     }
     after
 }
 
-/// The outcome of one cell, for the summary.
-enum Cell {
-    Works,
-    Refused,
-    NotApplicable,
-}
-
-fn check(op: Op, shape: &Shape) -> Result<Cell, String> {
+fn check(op: Op, shape: &Shape) -> Result<bool, String> {
     let mut doc = fixture();
-    let story = (shape.story)(&doc);
+    let story = story_of(&doc, shape.2);
     let before = texts_of(&doc, &story);
     let refusal = shape
-        .refused
+        .7
         .iter()
-        .find(|(refused, _)| *refused == op)
+        .find(|(refused, _)| *refused == op || *refused == Op::All)
         .map(|(_, message)| *message);
     let Some(result) = run(op, shape, &mut doc, refusal.is_some()) else {
-        return Ok(Cell::NotApplicable);
+        return Ok(false);
     };
+    let story = refreshed(&doc, &story);
     match (result, refusal) {
-        (Err(error), Some(message)) => {
-            if !error.contains(message) {
-                return Err(format!(
-                    "refused with {error:?}, which does not name {message:?}"
-                ));
-            }
-            let story = (shape.story)(&doc);
-            if texts_of(&doc, &story) != before {
-                return Err("a refusal changed the story".to_owned());
-            }
-            Ok(Cell::Refused)
-        }
-        (Err(error), None) => Err(format!("refused: {error}")),
+        (Err(error), Some(message)) if error.contains(message) => (texts_of(&doc, &story)
+            == before)
+            .then_some(true)
+            .ok_or_else(|| "a refusal changed the story".to_owned()),
+        (Err(error), _) => Err(format!("refused: {error}")),
         (Ok(()), Some(message)) => Err(format!("works, expected a refusal naming {message:?}")),
         (Ok(()), None) => {
-            let story = (shape.story)(&doc);
             let mut want = expected(op, shape, &before);
             let got = texts_of(&doc, &story);
-            if op == Op::Caption
-                && let Some(text) = got.get(shape.insert_at)
-                && text.ends_with("Cap")
-            {
-                want[shape.insert_at] = text.clone();
+            if op == Op::Caption && got.get(shape.3).is_some_and(|text| text.ends_with("Cap")) {
+                want[shape.3] = got[shape.3].clone();
             }
             if got != want {
                 return Err(format!("paragraphs {got:?}, expected {want:?}"));
             }
             let saved = doc.to_bytes().map_err(|error| format!("save: {error}"))?;
-            let mut reopened =
-                Document::from_bytes(&saved).map_err(|error| format!("reopen: {error}"))?;
-            let story = (shape.story)(&reopened);
-            if texts_of(&reopened, &story) != want {
+            let mut reopened = Document::from_bytes(&saved).map_err(|e| format!("reopen: {e}"))?;
+            if texts_of(&reopened, &refreshed(&reopened, &story)) != want {
                 return Err("the reopened document reads other paragraphs".to_owned());
             }
-            let again = reopened
+            if reopened
                 .to_bytes()
-                .map_err(|error| format!("second save: {error}"))?;
-            if again != saved {
+                .map_err(|e| format!("second save: {e}"))?
+                != saved
+            {
                 return Err("the second save writes other bytes".to_owned());
             }
-            Ok(Cell::Works)
+            Ok(true)
         }
     }
 }
@@ -731,20 +570,26 @@ fn every_block_operation_takes_every_location_shape_or_names_the_working_route()
         .flat_map(|shape| OPS.iter().map(move |op| (*op, shape)))
         .collect::<Vec<_>>();
     let outcomes = map_in_parallel(&cells, |(op, shape)| check(*op, shape));
-    let (mut works, mut refused, mut skipped) = (0, 0, 0);
-    let mut failures = Vec::new();
+    let (mut done, mut skipped, mut failures) = (0, 0, Vec::new());
     for ((op, shape), outcome) in cells.iter().zip(outcomes) {
         match outcome {
-            Some(Ok(Cell::Works)) => works += 1,
-            Some(Ok(Cell::Refused)) => refused += 1,
-            Some(Ok(Cell::NotApplicable)) => skipped += 1,
-            Some(Err(failure)) => failures.push(format!("{op:?} at {}: {failure}", shape.name)),
-            None => failures.push(format!("{op:?} at {}: panicked", shape.name)),
+            Some(Ok(true)) => done += 1,
+            Some(Ok(false)) => skipped += 1,
+            Some(Err(failure)) => failures.push(format!("{op:?} at {}: {failure}", shape.0)),
+            None => failures.push(format!("{op:?} at {}: panicked", shape.0)),
         }
     }
+    let refused = shapes
+        .iter()
+        .flat_map(|shape| {
+            OPS.iter()
+                .filter(move |op| shape.7.iter().any(|(r, _)| r == *op || *r == Op::All))
+        })
+        .count();
     println!(
-        "{} cells: {works} work, {refused} refused with their route, {skipped} not applicable",
-        cells.len()
+        "{} cells: {} work, {refused} refused with their route, {skipped} not applicable",
+        cells.len(),
+        done - refused
     );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
@@ -752,90 +597,92 @@ fn every_block_operation_takes_every_location_shape_or_names_the_working_route()
 /// The issue's body: one paragraph, a block control of two, one paragraph.
 const ISSUE_BODY: &str = "<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:sdt><w:sdtPr><w:tag w:val=\"box\"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Inside 1</w:t></w:r></w:p><w:p><w:r><w:t>Inside 2</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p><w:r><w:t>After</w:t></w:r></w:p>";
 
-fn body_texts(doc: &Document) -> Vec<String> {
-    texts_of(doc, &body(doc))
+fn refusal<T>(result: oxoffice_docx::Result<T>) -> String {
+    result.map(|_| ()).expect_err("refused").to_string()
 }
 
 #[test]
-fn the_last_paragraph_of_a_block_control_is_copied_up_to_its_end() {
+fn a_range_in_a_block_control_ends_at_its_end_and_names_the_route() {
     let mut doc = doc_with_body(ISSUE_BODY);
-    let error = DocumentFragment::from_range(
-        &doc,
-        &control_paragraph(&doc, "box", 1),
-        &control_paragraph(&doc, "box", 2),
-        false,
-    )
-    .map(|_| ())
-    .expect_err("[c, n] is past the control's paragraphs")
-    .to_string();
-    assert!(error.contains("control_end(story, 1)"), "{error}");
-    let error = DocumentFragment::from_range(
-        &doc,
-        &control_paragraph(&doc, "box", 1),
-        &paragraph(&doc, "After"),
-        false,
-    )
-    .map(|_| ())
-    .expect_err("a range across containers")
-    .to_string();
-    assert!(error.contains("control_end(story, 1)"), "{error}");
-    let fragment = DocumentFragment::from_range(
-        &doc,
-        &control_paragraph(&doc, "box", 1),
-        &control_end(&doc, "box"),
-        false,
-    )
-    .expect("the last paragraph up to the control's end");
-    let at = control_end(&doc, "box");
+    let range = |doc: &Document, start: &str, end: &str| {
+        DocumentFragment::from_range(doc, &location(doc, start), &location(doc, end), false)
+    };
+    let routes = [
+        (
+            refusal(range(&doc, "c:box/1", "c:box/2")),
+            "control_end(story, 1)",
+        ),
+        (
+            refusal(range(&doc, "c:box/1", "p:After")),
+            "control_end(story, 1)",
+        ),
+        (
+            refusal(range(&doc, "p:Before", "c:box/1")),
+            "the control that holds that end ([1])",
+        ),
+        (
+            refusal(
+                doc.clone_for_staging()
+                    .move_content(&location(&doc, "c:box"), &location(&doc, "e:box")),
+            ),
+            "cannot move into itself",
+        ),
+    ];
+    for (error, route) in routes {
+        assert!(error.contains(route), "{error}");
+    }
+    // The routes work.
+    range(&doc, "p:Before", "c:box").expect("up to the control");
+    let fragment = range(&doc, "c:box/1", "e:box").expect("the last paragraph to the end");
+    let at = location(&doc, "e:box");
     doc.import_fragment(&at, &fragment, FragmentConflictPolicy::default())
-        .expect("imported at the control's end");
+        .expect("imported");
     assert_eq!(
-        body_texts(&doc),
+        body_texts(&reopen(&mut doc)),
         ["Before", "Inside 1", "Inside 2", "Inside 2", "After"]
     );
-    assert_eq!(
-        control_paragraph(&doc, "box", 2).index_path(),
-        paragraph(&doc, "After")
-            .index_path()
-            .first()
-            .map(|_| [1, 2])
-            .unwrap()
-    );
-    let reopened = reopen(&mut doc);
-    assert_eq!(
-        body_texts(&reopened),
-        ["Before", "Inside 1", "Inside 2", "Inside 2", "After"]
-    );
+    // A fragment with the final section properties goes only to the body.
+    let start = location(&doc, "p:Before");
+    let whole = DocumentFragment::from_range(&doc, &start, &ContentLocation::end(body(&doc)), true)
+        .expect("the body with its section");
+    let at = location(&doc, "e:box");
+    let error = refusal(doc.import_fragment(&at, &whole, FragmentConflictPolicy::default()));
+    assert!(error.contains("at end(body)"), "{error}");
+    let start = location(&doc, "c:box/0");
+    let error = refusal(DocumentFragment::from_range(
+        &doc,
+        &start,
+        &location(&doc, "e:box"),
+        true,
+    ));
+    assert!(error.contains("main-body boundary"), "{error}");
+    // An item is copied within its section.
+    let mut doc = fixture();
+    doc.clone_content(&location(&doc, "c:item"), &location(&doc, "e:section"))
+        .expect("an item copied to its section's end");
+    assert_eq!(&body_texts(&doc)[8..11], ["Item 1", "Item 2", "Item 1"]);
 }
 
 #[test]
-fn a_paragraph_is_appended_at_the_end_of_a_block_control_and_the_story_end_stays_after_it() {
-    // The body ends with the control, before its section properties.
-    let mut doc = doc_with_body(
-        "<w:p><w:r><w:t>Before</w:t></w:r></w:p><w:sdt><w:sdtPr><w:tag w:val=\"box\"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Inside</w:t></w:r></w:p><w:bookmarkStart w:id=\"5\" w:name=\"around\"/><w:p><w:r><w:t>Marked</w:t></w:r></w:p><w:bookmarkEnd w:id=\"5\"/></w:sdtContent></w:sdt>",
-    );
-    let at = control_end(&doc, "box");
-    assert!(at.is_end());
-    assert_eq!(at.index_path(), control(&doc, "box").index_path());
+fn the_end_of_a_block_control_is_inside_it_and_the_story_end_after_it() {
+    // The body ends with the control, whose last paragraph a bookmark spans.
+    let mut doc = doc_with_body(&sdt(
+        "box",
+        "",
+        &format!(
+            "{}<w:bookmarkStart w:id=\"5\" w:name=\"around\"/>{}<w:bookmarkEnd w:id=\"5\"/>",
+            p("Inside"),
+            p("Marked")
+        ),
+    ));
+    let at = location(&doc, "e:box");
     doc.insert_content(&at, new_paragraph("In the control"))
-        .expect("inserted at the control's end");
+        .expect("at the control's end");
     let end = ContentLocation::end(body(&doc));
     doc.insert_content(&end, new_paragraph("After the control"))
-        .expect("inserted at the body's end");
-    let mut reopened = reopen(&mut doc);
-    assert_eq!(
-        body_texts(&reopened),
-        [
-            "Before",
-            "Inside",
-            "Marked",
-            "In the control",
-            "After the control"
-        ]
-    );
-    let bytes = reopened.to_bytes().expect("saves");
-    let xml = crate::support::package_parts(&bytes)["word/document.xml"].clone();
-    let xml = String::from_utf8(xml).expect("UTF-8");
+        .expect("at the body's end");
+    let bytes = reopen(&mut doc).to_bytes().expect("saves");
+    let xml = String::from_utf8(package_parts(&bytes)["word/document.xml"].clone()).unwrap();
     let order = [
         "Marked",
         "<w:bookmarkEnd w:id=\"5\"/>",
@@ -852,78 +699,34 @@ fn a_paragraph_is_appended_at_the_end_of_a_block_control_and_the_story_end_stays
 }
 
 #[test]
-fn a_paragraph_is_cloned_into_and_moved_out_of_a_block_control() {
-    let mut doc = doc_with_body(ISSUE_BODY);
-    let source = paragraph(&doc, "Inside 2");
-    let destination = control_paragraph(&doc, "box", 1);
-    doc.clone_content(&source, &destination)
-        .expect("cloned before itself, in the control");
-    assert_eq!(
-        body_texts(&doc),
-        ["Before", "Inside 1", "Inside 2", "Inside 2", "After"]
-    );
-    let source = control_paragraph(&doc, "box", 0);
-    let destination = paragraph(&doc, "After");
-    doc.move_content(&source, &destination)
-        .expect("moved out of the control");
-    let source = paragraph(&doc, "Before");
-    let destination = control_end(&doc, "box");
-    doc.move_content(&source, &destination)
-        .expect("moved into the control");
-    assert_eq!(
-        body_texts(&doc),
-        ["Inside 2", "Inside 2", "Before", "Inside 1", "After"]
-    );
-    assert_eq!(
-        paragraph(&doc, "Before").index_path(),
-        control_paragraph(&doc, "box", 2).index_path()
-    );
-    let error = doc
-        .move_content(&control(&doc, "box"), &control_end(&doc, "box"))
-        .map(|_| ())
-        .expect_err("a control into itself")
-        .to_string();
-    assert!(error.contains("cannot move into itself"), "{error}");
-    let reopened = reopen(&mut doc);
-    assert_eq!(
-        body_texts(&reopened),
-        ["Inside 2", "Inside 2", "Before", "Inside 1", "After"]
-    );
-}
-
-#[test]
 fn bookmark_markers_inside_a_block_control_go_with_their_paragraph() {
-    let mut doc = doc_with_body(
-        "<w:sdt><w:sdtPr><w:tag w:val=\"box\"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>One</w:t></w:r></w:p><w:bookmarkStart w:id=\"3\" w:name=\"heading\"/><w:p><w:r><w:t>Two</w:t></w:r></w:p><w:bookmarkEnd w:id=\"3\"/></w:sdtContent></w:sdt><w:p><w:r><w:t>After</w:t></w:r></w:p>",
+    let marked = format!(
+        "{}<w:bookmarkStart w:id=\"3\" w:name=\"heading\"/>{}<w:bookmarkEnd w:id=\"3\"/>",
+        p("One"),
+        p("Two")
     );
-    let marked = control_paragraph(&doc, "box", 1);
-    doc.clone_content(&marked, &control_end(&doc, "box"))
-        .expect("cloned with its bookmark");
-    let names = |doc: &Document| -> Vec<String> {
+    let mut doc = doc_with_body(&format!("{}{}", sdt("box", "", &marked), p("After")));
+    let names = |doc: &Document| {
         let bytes = doc.clone_for_staging().to_bytes().expect("saves");
-        let xml =
-            String::from_utf8(crate::support::package_parts(&bytes)["word/document.xml"].clone())
-                .expect("UTF-8");
+        let xml = String::from_utf8(package_parts(&bytes)["word/document.xml"].clone()).unwrap();
         xml.match_indices("w:name=\"")
             .map(|(at, _)| xml[at + 8..].split('"').next().unwrap().to_owned())
-            .collect()
+            .collect::<Vec<_>>()
     };
+    doc.clone_content(&location(&doc, "c:box/1"), &location(&doc, "e:box"))
+        .expect("cloned with its bookmark");
     let cloned = names(&doc);
-    assert_eq!(cloned.len(), 2, "{cloned:?}");
-    assert_ne!(cloned[0], cloned[1], "the copy's bookmark has its own name");
-    // An insertion before the marked paragraph goes before its bookmark
-    // start, and its removal takes the bookmark with it.
-    doc.insert_content(&control_paragraph(&doc, "box", 1), new_paragraph("New"))
+    assert!(cloned.len() == 2 && cloned[0] != cloned[1], "{cloned:?}");
+    // An insertion goes before the bookmark start; a removal takes it.
+    doc.insert_content(&location(&doc, "c:box/1"), new_paragraph("New"))
         .expect("inserted");
-    let removed = doc
-        .remove_content_at(&control_paragraph(&doc, "box", 2))
+    doc.remove_content_at(&location(&doc, "c:box/2"))
         .expect("removed");
     assert_eq!(
         names(&doc).len(),
         1,
         "the removed paragraph took its bookmark"
     );
-    drop(removed);
     assert_eq!(body_texts(&doc), ["One", "New", "Two", "After"]);
 }
 
@@ -945,34 +748,32 @@ fn a_typed_control_takes_no_second_block() {
         ("untyped", String::new(), true),
         ("group", "<w:group/>".to_owned(), true),
     ] {
-        let body = format!(
-            "{}<w:p><w:r><w:t>After</w:t></w:r></w:p>",
-            sdt("typed", &properties, &p("Value"))
-        );
-        let mut doc = doc_with_body(&body);
-        let at = control_end(&doc, "typed");
-        let result = doc.insert_content(&at, new_paragraph("Second"));
-        assert_eq!(result.is_ok(), takes, "{kind}: {result:?}");
-        if let Err(error) = result {
-            let error = error.to_string();
-            assert!(
-                error.contains(&format!("is a {kind} control")) && error.contains(TYPED),
+        let mut doc = doc_with_body(&format!(
+            "{}{}",
+            sdt("typed", &properties, &p("Value")),
+            p("After")
+        ));
+        let result = doc.insert_content(&location(&doc, "e:typed"), new_paragraph("Second"));
+        match result {
+            Ok(()) => assert!(takes, "{kind}"),
+            Err(error) => assert!(
+                !takes && error.to_string().contains(&format!("is a {kind} control")),
                 "{error}"
-            );
+            ),
         }
     }
 }
 
-/// The paragraphs of the table of contents control of a corpus thesis, its
-/// story item index and its XML.
+/// The table of contents control of a corpus thesis: its story item index,
+/// its paragraphs' texts and its XML.
 fn toc(doc: &Document) -> (usize, Vec<String>, String) {
     let item = doc
         .story_item_snapshots()
         .expect("story items")
         .into_iter()
         .find(|item| {
-            item.location().item_kind() == StoryItemKind::ContentControl
-                && String::from_utf8_lossy(item.xml()).contains("Table of Contents")
+            String::from_utf8_lossy(item.xml()).contains("Table of Contents")
+                && item.location().item_kind() == StoryItemKind::ContentControl
         })
         .expect("a table of contents control");
     let index = item.location().index_path()[0];
@@ -1003,10 +804,18 @@ fn a_toc_entry_is_added_after_the_last_one_by_cloning_it() {
         let mut doc = corpus_doc(file);
         let (control, texts, xml) = toc(&doc);
         let n = texts.len();
-        let last_entry = texts[n - 2].clone();
-        let field_ends = xml.matches("w:fldCharType=\"end\"").count();
-        let begins = xml.matches("w:fldCharType=\"begin\"").count();
-        // Before the paragraph that ends the TOC field.
+        let count =
+            |xml: &str, kind: &str| xml.matches(&format!("w:fldCharType=\"{kind}\"")).count();
+        // The first entry begins the TOC field and the last paragraph ends it.
+        let first = usize::from(file.starts_with("word"));
+        for k in [first, n - 1] {
+            let error = refusal(doc.clone_content(
+                &toc_paragraph(&doc, control, k),
+                &toc_paragraph(&doc, control, n - 1),
+            ));
+            assert!(error.contains("of a complex field"), "{file} {k}: {error}");
+        }
+        // Before the paragraph that ends the field.
         doc.clone_content(
             &toc_paragraph(&doc, control, n - 2),
             &toc_paragraph(&doc, control, n - 1),
@@ -1014,19 +823,15 @@ fn a_toc_entry_is_added_after_the_last_one_by_cloning_it() {
         .unwrap_or_else(|error| panic!("{file}: {error}"));
         let mut reopened = reopen(&mut doc);
         let (_, after, xml_after) = toc(&reopened);
-        assert_eq!(after.len(), n + 1, "{file}");
-        assert_eq!(after[n - 1], last_entry, "{file}: the copy");
-        assert_eq!(&after[..n - 1], &texts[..n - 1], "{file}");
-        assert_eq!(after[n], texts[n - 1], "{file}: the field end stays last");
-        // The copy holds whole fields: as many begins as ends were added.
-        let added_begins = xml_after.matches("w:fldCharType=\"begin\"").count() - begins;
-        let added_ends = xml_after.matches("w:fldCharType=\"end\"").count() - field_ends;
-        assert_eq!(added_begins, added_ends, "{file}");
+        assert_eq!(after, [&texts[..n - 1], &texts[n - 2..]].concat(), "{file}");
+        assert_eq!(
+            count(&xml_after, "begin") - count(&xml, "begin"),
+            count(&xml_after, "end") - count(&xml, "end")
+        );
         // The copy drops its paragraph identity, and every identity stays unique.
         let bytes = reopened.to_bytes().expect("saves");
         let document =
-            String::from_utf8(crate::support::package_parts(&bytes)["word/document.xml"].clone())
-                .expect("UTF-8");
+            String::from_utf8(package_parts(&bytes)["word/document.xml"].clone()).unwrap();
         let ids = document
             .match_indices("w14:paraId=\"")
             .map(|(at, _)| &document[at + 12..at + 20])
@@ -1041,76 +846,111 @@ fn a_copy_never_leaves_a_complex_field_unbalanced() {
     // A field begun in "Entry 1" and ended in "Entry 2", at story level and
     // inside a block control.
     let field = "<w:p><w:r><w:fldChar w:fldCharType=\"begin\"/></w:r><w:r><w:instrText> TOC \\o </w:instrText></w:r><w:r><w:fldChar w:fldCharType=\"separate\"/></w:r><w:r><w:t>Entry 1</w:t></w:r></w:p><w:p><w:r><w:t>Entry 2</w:t></w:r><w:r><w:fldChar w:fldCharType=\"end\"/></w:r></w:p>";
-    for xml in [
-        format!("{field}<w:p><w:r><w:t>Tail</w:t></w:r></w:p>"),
-        format!(
-            "{}<w:p><w:r><w:t>Tail</w:t></w:r></w:p>",
-            sdt("box", "", field)
-        ),
+    for (xml, after_end) in [
+        (field.to_owned(), "p:Tail"),
+        (sdt("box", "", field), "e:box"),
     ] {
-        let mut doc = doc_with_body(&xml);
-        let begin = paragraph(&doc, "Entry 1");
-        let end = paragraph(&doc, "Entry 2");
-        let tail = paragraph(&doc, "Tail");
+        let mut doc = doc_with_body(&format!("{xml}{}", p("Tail")));
         let before = body_texts(&doc);
-        for (location, held) in [(&begin, "the begin"), (&end, "the end")] {
-            let error = doc
-                .clone_content(location, &tail)
-                .map(|_| ())
-                .expect_err("a clone of part of a field")
-                .to_string();
-            assert!(
-                error.contains(&format!("holds {held} of a complex field"))
-                    && error.contains("from_range"),
-                "{error}"
-            );
-            let error = doc
-                .move_content(location, &ContentLocation::end(body(&doc)))
-                .map(|_| ())
-                .expect_err("a move of part of a field")
-                .to_string();
-            assert!(error.contains(&format!("holds {held}")), "{error}");
+        let end = ContentLocation::end(body(&doc));
+        for (entry, held) in [("p:Entry 1", "the begin"), ("p:Entry 2", "the end")] {
+            let at = location(&doc, entry);
+            let clone = refusal(doc.clone_content(&at, &location(&doc, "p:Tail")));
+            let moved = refusal(doc.move_content(&at, &end));
+            for error in [clone, moved] {
+                assert!(
+                    error.contains(&format!("holds {held} of a complex field"))
+                        && error.contains("from_range"),
+                    "{error}"
+                );
+            }
         }
-        // After "Entry 2": the control's end, or "Tail".
-        let whole_end = if end.index_path().len() == 2 {
-            control_end(&doc, "box")
-        } else {
-            tail.clone()
+        let range = |doc: &Document, start: &str| {
+            DocumentFragment::from_range(
+                doc,
+                &location(doc, start),
+                &location(doc, after_end),
+                false,
+            )
         };
-        let error = DocumentFragment::from_range(&doc, &end, &whole_end, false)
-            .map(|_| ())
-            .expect_err("a range of part of a field")
-            .to_string();
-        assert!(error.contains("the range holds the end"), "{error}");
+        assert!(refusal(range(&doc, "p:Entry 2")).contains("the range holds the end"));
         assert_eq!(body_texts(&doc), before, "the refusals change nothing");
-        // The whole field is copied.
-        let fragment =
-            DocumentFragment::from_range(&doc, &begin, &whole_end, false).expect("the whole field");
+        let fragment = range(&doc, "p:Entry 1").expect("the whole field");
+        doc.import_fragment(&end, &fragment, FragmentConflictPolicy::default())
+            .expect("imported");
+        assert_eq!(
+            body_texts(&reopen(&mut doc)),
+            ["Entry 1", "Entry 2", "Tail", "Entry 1", "Entry 2"]
+        );
+    }
+}
+
+#[test]
+fn a_table_of_authorities_in_a_block_control_keeps_its_categories_in_order() {
+    let ta = |category: u8| {
+        format!(
+            r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TA \l "Case {category}" \s "C{category}" \c {category} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        )
+    };
+    let mut doc = doc_with_body(&format!(
+        "<w:p>{}{}</w:p>{}",
+        ta(1),
+        ta(2),
+        sdt("box", "", &[p("Inside 1"), p("Inside 2")].concat())
+    ));
+    let at = location(&doc, "c:box/1");
+    let first = doc
+        .insert_table_of_authorities(&at, &oxoffice_docx::TableOfAuthoritiesOptions::default())
+        .expect("inserted in the control");
+    assert_eq!(first.index_path(), at.index_path());
+    let bytes = doc.to_bytes().expect("saves");
+    let xml = String::from_utf8(package_parts(&bytes)["word/document.xml"].clone()).unwrap();
+    let order = ["Inside 1", r"TOA \c 1", r"TOA \c 2", "Inside 2"]
+        .map(|needle| xml.find(needle).unwrap_or_else(|| panic!("{needle}")));
+    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+}
+
+#[test]
+fn a_table_in_a_block_control_is_copied_as_its_limitation_says() {
+    let mut doc = doc_with_body(&format!(
+        "{}{}",
+        sdt(
+            "box",
+            "",
+            &[p("Above"), table(&p("Boxed")), p("Below")].concat()
+        ),
+        p("After")
+    ));
+    let error = refusal(doc.clone_content(
+        &location(&doc, "t:box/0"),
+        &ContentLocation::end(body(&doc)),
+    ));
+    assert!(
+        error.contains("#660") && error.contains("control_end(story, control)"),
+        "{error}"
+    );
+    // From the paragraph before it to the paragraph after it, or to the
+    // control's end; and with its whole control.
+    for end in ["c:box/1", "e:box"] {
+        let fragment = DocumentFragment::from_range(
+            &doc,
+            &location(&doc, "c:box/0"),
+            &location(&doc, end),
+            false,
+        )
+        .expect("the workaround's range");
         doc.import_fragment(
             &ContentLocation::end(body(&doc)),
             &fragment,
             FragmentConflictPolicy::default(),
         )
         .expect("imported");
-        assert_eq!(
-            body_texts(&reopen(&mut doc)),
-            ["Entry 1", "Entry 2", "Tail", "Entry 1", "Entry 2"]
-        );
     }
-    // In a table of contents, the first entry (which begins the field) and
-    // the paragraph that ends it are refused; any other entry is copied.
-    let mut doc = corpus_doc("word/thesis.docx");
-    let (control, texts, _) = toc(&doc);
-    let n = texts.len();
-    let destination = toc_paragraph(&doc, control, n - 1);
-    for k in [1, n - 1] {
-        let error = doc
-            .clone_content(&toc_paragraph(&doc, control, k), &destination)
-            .err()
-            .unwrap_or_else(|| panic!("entry {k} holds part of the TOC field"))
-            .to_string();
-        assert!(error.contains("of a complex field"), "{error}");
-    }
-    doc.clone_content(&toc_paragraph(&doc, control, n / 2), &destination)
-        .expect("a middle entry");
+    doc.clone_content(&location(&doc, "c:box"), &ContentLocation::end(body(&doc)))
+        .expect("the whole control");
+    assert_eq!(
+        reopen(&mut doc).tables().len(),
+        4,
+        "the table and its three copies"
+    );
 }

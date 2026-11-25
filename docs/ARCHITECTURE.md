@@ -146,9 +146,10 @@ CLI where it makes sense and Python everywhere.
   control's `w:sdtContent`, and the bookmark rule above applies among the
   container's children. A container keeps a block (a block control, a
   header, footer, note, comment or text box; a cell keeps a paragraph), a
-  repeating section takes blocks only in its items, a plain text, date,
-  list, picture or check box control takes no second block, and a copy
-  holds whole complex fields. A refusal names the route that works.
+  repeating section takes blocks only in its items and its items stay in
+  it, a plain text, date, list, picture or check box control takes no
+  second block, and a copy holds whole complex fields. A refusal names the
+  route that works.
 - `thiserror` for errors, never `anyhow`.
 - Edition 2024, MSRV and toolchain pinned in `rust-toolchain.toml`.
 

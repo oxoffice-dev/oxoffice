@@ -331,8 +331,9 @@ pub(super) fn resolve_block_location(
                     return Err(refused(
                         "a table written directly in a block content control has no location \
                          (limitation docx-block-control-table-location, #660): copy, move or \
-                         remove it with its control, or in a from_range between the blocks \
-                         around it"
+                         remove it with its control, or copy it in a from_range from the \
+                         paragraph before it ([control, k]) to the paragraph after it or to \
+                         control_end(story, control)"
                             .to_owned(),
                     ));
                 }
@@ -346,14 +347,22 @@ pub(super) fn resolve_block_location(
             }
             let item = block_control_item(&story_items, *control, path)?;
             let paragraphs = scan_story_control_paragraphs(xml, item)?;
-            let span = paragraphs.get(*paragraph).ok_or_else(|| {
-                refused(format!(
+            let Some(span) = paragraphs.get(*paragraph) else {
+                if block_control_container(xml, story, item)?.1 == ContainerTakes::Items {
+                    return Err(refused(format!(
+                        "content control {control} is a repeating section, which holds its \
+                         items and no paragraph: name a paragraph of an item ([item, k]) or an \
+                         item's end (control_end(story, item)), or add an item with \
+                         repeat_content_control"
+                    )));
+                }
+                return Err(refused(format!(
                     "content control {control} has {} paragraphs, so [{control}, {paragraph}] is \
                      past them: the location after its last block is control_end(story, \
                      {control})",
                     paragraphs.len()
-                ))
-            })?;
+                )));
+            };
             control_slot(*control, Some(span))
         }
         _ => Err(refused(format!(
@@ -391,63 +400,97 @@ impl BlockSlot {
         })
     }
 
-    /// Refuse a block the container does not take.
-    pub(super) fn check_takes_block(&self) -> Result<()> {
+    /// Refuse writing `content`, the closed XML of the blocks an operation
+    /// writes, where the container does not take it: a repeating section
+    /// takes its items only, and an item goes nowhere else; a typed control
+    /// that holds a block takes no other.
+    pub(super) fn check_takes(&self, content: &[u8]) -> Result<()> {
         let control = self.control.unwrap_or_default();
+        let (items, others) = block_kinds(content)?;
         match self.takes {
-            ContainerTakes::Blocks => Ok(()),
-            ContainerTakes::Items => Err(refused(format!(
+            ContainerTakes::Items if others > 0 => Err(refused(format!(
                 "content control {control} is a repeating section, whose content holds only its \
                  items: add an item with repeat_content_control, or put the block in an item \
                  (control_end(story, item))"
             ))),
+            ContainerTakes::Items => Ok(()),
+            _ if items > 0 => Err(refused(
+                "a repeating section item stays directly in the content of a repeating section: \
+                 copy or move it before another item or to control_end(story, section), or add \
+                 one with repeat_content_control"
+                    .to_owned(),
+            )),
             ContainerTakes::OneBlock(kind) if self.items.iter().any(is_block) => {
                 Err(refused(format!(
                     "content control {control} is a {kind} control, which holds its value in one \
                      block: set the control's value, or remove or unwrap the control"
                 )))
             }
-            ContainerTakes::OneBlock(_) => Ok(()),
+            ContainerTakes::Blocks | ContainerTakes::OneBlock(_) => Ok(()),
         }
     }
 
-    /// [`Self::leading_boundary`] for an insertion: refused where the
-    /// container takes no block.
-    pub(super) fn insertion(&self, xml: &[u8]) -> Result<(usize, usize)> {
-        self.check_takes_block()?;
+    /// [`Self::leading_boundary`] for an insertion of `content`: refused
+    /// where the container does not take it ([`Self::check_takes`]).
+    pub(super) fn insertion(&self, xml: &[u8], content: &[u8]) -> Result<(usize, usize)> {
+        self.check_takes(content)?;
         self.leading_boundary(xml)
     }
 
-    /// Refuse taking the block named out of its container when it is the
-    /// container's only block and the container needs one: a block control,
-    /// and a header, footer, note, comment or text box, whose schema asks
-    /// for a block. The body may be empty, and a cell has its own rule.
+    /// Refuse taking the block named out of its container when the
+    /// container needs it: the only block of a block control, or of a
+    /// header, footer, note, comment or text box, whose schema asks for one;
+    /// the only direct paragraph of a table cell, which ends with one. The
+    /// body may be empty.
     pub(super) fn check_leaves_a_block(&self) -> Result<()> {
-        let others = self
+        let others = |keep: fn(&StoryItemSpan) -> bool| {
+            self.items
+                .iter()
+                .enumerate()
+                .any(|(index, item)| index != self.index && keep(item))
+        };
+        let control_block = self
             .items
-            .iter()
-            .enumerate()
-            .any(|(index, item)| index != self.index && is_block(item));
-        if others {
+            .get(self.index)
+            .is_some_and(|item| item.kind == StoryItemKind::ContentControl);
+        let unwrap = if control_block {
+            ", or unwrap the control (unwrap_content_control), which keeps its content"
+        } else {
+            ""
+        };
+        if let Some(control) = self.control {
+            if others(is_block) {
+                return Ok(());
+            }
+            return Err(refused(format!(
+                "this is the only block of content control {control}: remove the control itself \
+                 (remove_content_control), or insert its new content first{unwrap}"
+            )));
+        }
+        if self.owner.kind == StoryKind::TableCell {
+            if others(|item| item.kind == StoryItemKind::Paragraph) {
+                return Ok(());
+            }
+            return Err(refused(format!(
+                "this is the only paragraph of its table cell, which ends with one: clear its \
+                 text, or remove its row{unwrap}"
+            )));
+        }
+        if others(is_block) {
             return Ok(());
         }
-        let what = match (self.control, self.owner.kind) {
-            (Some(control), _) => {
-                return Err(refused(format!(
-                    "this is the only block of content control {control}: remove the control \
-                     itself (remove_content_control), or insert its new content first"
-                )));
-            }
-            (None, StoryKind::Header) => "header",
-            (None, StoryKind::Footer) => "footer",
-            (None, StoryKind::Footnote | StoryKind::Endnote) => "note",
-            (None, StoryKind::Comment) => "comment",
-            (None, StoryKind::TextBox) => "text box",
-            (None, _) => return Ok(()),
+        let (what, route) = match self.owner.kind {
+            StoryKind::Header => ("header", ""),
+            StoryKind::Footer => ("footer", ""),
+            StoryKind::Footnote => ("footnote", ", or remove the footnote (remove_footnote)"),
+            StoryKind::Endnote => ("endnote", ", or delete the endnote with its reference"),
+            StoryKind::Comment => ("comment", ", or remove the comment (remove_comment)"),
+            StoryKind::TextBox => ("text box", ", or clear its text"),
+            _ => return Ok(()),
         };
         Err(refused(format!(
-            "this is the only block of its {what}, which holds at least one: remove the {what} \
-             itself, or insert its new content first"
+            "this is the only block of its {what}, which holds at least one: insert its new \
+             content before removing this block{route}{unwrap}"
         )))
     }
 
@@ -479,6 +522,66 @@ impl BlockSlot {
             }
         }
     }
+}
+
+/// How many repeating section items and how many other blocks the closed
+/// XML `content` holds at its top level.
+fn block_kinds(content: &[u8]) -> Result<(usize, usize)> {
+    const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
+    let mut wrapped =
+        format!("<root xmlns:w=\"{WORD_NAMESPACE}\" xmlns:w15=\"{W15}\">").into_bytes();
+    wrapped.extend_from_slice(content);
+    wrapped.extend_from_slice(b"</root>");
+    let mut reader = NsReader::from_reader(wrapped.as_slice());
+    let mut buffer = Vec::new();
+    let (mut items, mut others) = (0, 0);
+    // Open elements; the top-level control being read and whether its
+    // properties name it an item.
+    let mut depth = 0usize;
+    let mut control: Option<bool> = None;
+    loop {
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("block content scan failed: {error}")))?;
+        let word = word_element(&namespace);
+        let w15 = matches!(&namespace, ResolveResult::Bound(uri) if uri.as_ref() == W15.as_bytes());
+        match event {
+            Event::Start(ref element) | Event::Empty(ref element) => {
+                let local = element.local_name();
+                let empty = matches!(event, Event::Empty(_));
+                if depth == 1 && word && matches!(local.as_ref(), b"p" | b"tbl") {
+                    others += 1;
+                } else if depth == 1 && word && local.as_ref() == b"sdt" {
+                    if empty {
+                        others += 1;
+                    } else {
+                        control = Some(false);
+                    }
+                } else if depth == 3 && w15 && local.as_ref() == b"repeatingSectionItem" {
+                    control = control.map(|_| true);
+                }
+                if !empty {
+                    depth += 1;
+                }
+            }
+            Event::End(_) => {
+                depth -= 1;
+                if depth == 1
+                    && let Some(item) = control.take()
+                {
+                    if item {
+                        items += 1;
+                    } else {
+                        others += 1;
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok((items, others))
 }
 
 fn is_block(item: &StoryItemSpan) -> bool {
@@ -563,7 +666,7 @@ impl Document {
         let (source, owner) = self.story_source_and_owner(&destination.story)?;
         let xml = source.xml.as_ref();
         let slot = resolve_block_location(xml, &owner, destination)?;
-        let (boundary, _) = slot.insertion(xml)?;
+        let (boundary, _) = slot.insertion(xml, b"<w:p/>")?;
         Ok(ContentLocation::new(
             destination.story.clone(),
             StoryItemKind::Paragraph,
