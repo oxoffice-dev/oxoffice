@@ -75,6 +75,10 @@ fn an_element_is_found_by_its_name_at_any_depth_and_the_root_after_the_prolog() 
         r#"<mc:Choice Requires="wps"><x/></mc:Choice >"#
     );
     assert_eq!(find_element(xml, "mc:Fallback").unwrap(), None);
+    // A byte order mark counts in the ranges.
+    let marked = "\u{feff}<r><x/></r>";
+    assert_eq!(find_element(marked, "x").unwrap().unwrap().range(), 6..10);
+    assert_eq!(root_element_span(marked).unwrap().content, 6..10);
     let root = root_element_span(xml).unwrap();
     assert_eq!(
         &xml[root.content.clone()],
@@ -144,8 +148,9 @@ const SEARCHES: [&str; 12] = [
 /// Searches for an end tag as text that are allowed, by file and literal:
 /// they read HTML or XHTML this library writes itself, or the corpus in a
 /// test-support crate, never a document's XML.
-const ALLOWED: [(&str, &str); 4] = [
+const ALLOWED: [(&str, &str); 5] = [
     ("crates/oxoffice-docx/src/epub.rs", "</li>"),
+    ("crates/oxoffice-docx/src/epub.rs", "</li>\\n"),
     ("crates/oxoffice-docx/src/html.rs", "</a>"),
     ("crates/oxoffice-docx-cli/src/commands.rs", "</body>"),
     ("crates/oxoffice-render-test/src/xml.rs", "</{name}>"),
@@ -171,11 +176,68 @@ fn end_tag_literal(text: &str) -> Option<String> {
     Some(format!("</{}", &literal[..end]))
 }
 
-/// Each search for an end tag as text in `source`, before its tests (a
-/// `#[cfg(test)]` module, at the end of a file by convention): its line and
-/// the literal searched, directly or through a variable bound to it.
+/// `source` with each `#[cfg(test)]` item blanked, its lines kept.
+fn without_test_items(source: &str) -> String {
+    let mut code = source.to_owned();
+    while let Some(at) = code.find("#[cfg(test)]") {
+        // The item ends at a `;` before any `{`, or at the brace closing it.
+        let rest = &code[at..];
+        let end = match (rest.find(';'), rest.find('{')) {
+            (Some(semicolon), brace) if brace.is_none_or(|brace| semicolon < brace) => {
+                semicolon + 1
+            }
+            (_, Some(brace)) => {
+                let mut depth = 0;
+                let closing = rest[brace..].char_indices().find(|&(_, c)| {
+                    depth += match c {
+                        '{' => 1,
+                        '}' => -1,
+                        _ => 0,
+                    };
+                    depth == 0
+                });
+                closing.map_or(rest.len(), |(i, _)| brace + i + 1)
+            }
+            _ => rest.len(),
+        };
+        let blank: String = rest[..end]
+            .chars()
+            .map(|c| if c == '\n' { c } else { ' ' })
+            .collect();
+        code.replace_range(at..at + end, &blank);
+    }
+    code
+}
+
+/// The free function called with the argument that starts at `at`, if any:
+/// the name before the unclosed `(` it is in, not a method, macro or
+/// constructor.
+fn callee(code: &str, at: usize) -> Option<&str> {
+    let mut depth = 0;
+    let open = code[..at].char_indices().rev().find(|&(_, c)| {
+        depth += match c {
+            ')' => 1,
+            '(' => -1,
+            _ => 0,
+        };
+        depth < 0
+    })?;
+    let before = &code[..open.0];
+    let name = &before[before
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+        .len()..];
+    let free = !before[..before.len() - name.len()].ends_with(['.', '!', ':'])
+        && name.starts_with(|c: char| c.is_lowercase());
+    free.then_some(name)
+}
+
+/// Each search for an end tag as text in `source`, but in its
+/// `#[cfg(test)]` items: its line and the literal or variable searched.
+/// Searched are a literal starting `</` (or a `format!` of one), a variable
+/// bound to one, a variable named for an end tag (`close`, `closing`,
+/// `end_tag`), and such a literal handed to a function of ours.
 fn end_tag_searches(source: &str) -> Vec<(usize, String)> {
-    let code = source.split("#[cfg(test)]").next().unwrap_or(source);
+    let code = without_test_items(source);
     let line_of = |at: usize| code[..at].matches('\n').count() + 1;
     let mut found = Vec::new();
     // Variables bound to an end tag: `let close = format!("</{name}>");`.
@@ -193,34 +255,42 @@ fn end_tag_searches(source: &str) -> Vec<(usize, String)> {
             variables.push((name, literal));
         }
     }
+    let identifier = |text: &str| -> String {
+        let text = text.trim_start().trim_start_matches('&').trim_start();
+        text.chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect()
+    };
     for method in SEARCHES {
         let call = format!(".{method}(");
         for (at, _) in code.match_indices(&call) {
             let argument = &code[at + call.len()..];
-            let literal = end_tag_literal(argument).or_else(|| {
-                let argument = argument.trim_start().trim_start_matches('&').trim_start();
-                variables.iter().find_map(|(name, literal)| {
-                    argument
-                        .strip_prefix(name.as_str())
-                        .filter(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
-                        .map(|_| literal.clone())
+            let name = identifier(argument);
+            let literal = end_tag_literal(argument)
+                .or_else(|| {
+                    variables
+                        .iter()
+                        .find(|(bound, _)| *bound == name)
+                        .map(|(_, l)| l.clone())
                 })
-            });
-            // `windows(b"</p:sld>".len())` and the like.
-            let literal = literal.or_else(|| {
-                (method == "windows")
-                    .then(|| end_tag_literal(argument))
-                    .flatten()
-            });
+                .or_else(|| {
+                    ["close", "closing", "end_tag"]
+                        .contains(&name.as_str())
+                        .then_some(name)
+                });
             if let Some(literal) = literal {
                 found.push((line_of(at), literal));
             }
         }
     }
-    // `window == b"</p:sld>"`.
-    for (at, _) in code.match_indices("== ") {
-        if let Some(literal) = end_tag_literal(&code[at + 3..]) {
-            found.push((line_of(at), literal));
+    // `window == b"</p:sld>"`, and `inject_before_close(xml, "</w:pPr>", ..)`.
+    for (at, _) in code.match_indices("\"</") {
+        let start = code[..at].trim_end_matches(['b', 'r', '#']).len();
+        let before = code[..start].trim_end().trim_end_matches('&').trim_end();
+        let handed =
+            (before.ends_with('(') || before.ends_with(',')) && callee(&code, start).is_some();
+        if before.ends_with("==") || handed {
+            found.extend(end_tag_literal(&code[start..]).map(|literal| (line_of(at), literal)));
         }
     }
     found.sort();
@@ -249,12 +319,15 @@ fn the_check_finds_an_end_tag_searched_as_text() {
         "let e = xml.strip_suffix(b\"</w:body>\");\n",
         "let f = xml.find(\"<w:p\");\n",
         "#[cfg(test)]\nmod tests { fn t() { xml.rfind(\"</w:p>\"); } }\n",
+        "let (_, closing) = paragraph_shell(xml)?;\nlet g = xml.rfind(&closing);\n",
+        "let h = inject_before_close(&xml, \"</w:pPr>\", &change)?;\n",
+        "out.push_str(\"</w:p>\");\nlet i = Some(\"</w:p>\");\n",
     );
     let lines: Vec<usize> = end_tag_searches(source)
         .into_iter()
         .map(|(line, _)| line)
         .collect();
-    assert_eq!(lines, [1, 3, 5, 6, 7]);
+    assert_eq!(lines, [1, 3, 5, 6, 7, 12, 13]);
 }
 
 // An end tag found by searching for its text misses `</w:p >` and an element

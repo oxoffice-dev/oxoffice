@@ -973,11 +973,11 @@ impl CT_SdtPr {
                             (properties.control_type, properties.slots.last())
                         {
                             let raw = capture_element(reader, &child)?;
-                            let open = [b"<".as_slice(), &*child, b">"].concat();
-                            let close = [b"</".as_slice(), child.name().as_ref(), b">"].concat();
-                            let children = raw
-                                .strip_prefix(open.as_slice())
-                                .and_then(|rest| rest.strip_suffix(close.as_slice()))
+                            let element = std::str::from_utf8(&raw)
+                                .ok()
+                                .and_then(|raw| oxoffice_core::xml_element::element_span(raw).ok());
+                            let children = element
+                                .map(|element| &raw[element.content])
                                 .ok_or_else(|| {
                                     OxmlError::MissingElement(format!(
                                         "{} end",

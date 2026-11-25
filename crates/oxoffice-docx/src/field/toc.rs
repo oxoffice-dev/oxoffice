@@ -2274,10 +2274,12 @@ fn entry_boundary_toc_edits(
         );
     let mut entries = Vec::new();
     let mut offset = 0;
-    for close in byte_match_offsets(generated, b"</w:p>") {
-        let next = close + b"</w:p>".len();
-        entries.push(&generated[offset..next]);
-        offset = next;
+    while let Some(span) = std::str::from_utf8(&generated[offset..])
+        .ok()
+        .and_then(|rest| oxoffice_core::xml_element::element_span(rest).ok())
+    {
+        entries.push(&generated[offset..offset + span.range().end]);
+        offset += span.range().end;
     }
     if offset != generated.len() {
         return Ok(None);
@@ -2337,9 +2339,13 @@ fn entry_boundary_toc_edits(
         replacement.extend_from_slice(format!("</{}>", begin.name).as_bytes());
     }
     for (index, entry) in entries.iter().enumerate() {
-        let properties_end = find_bytes(entry, b"</w:pPr>").ok_or_else(|| {
+        let properties = std::str::from_utf8(entry)
+            .ok()
+            .and_then(|entry| oxoffice_core::xml_element::find_element(entry, "w:pPr").ok())
+            .flatten();
+        let properties_end = properties.map(|span| span.range().end).ok_or_else(|| {
             Error::Other("generated TOC entry has no paragraph properties".to_owned())
-        })? + b"</w:pPr>".len();
+        })?;
         let generated_properties = &entry[b"<w:p>".len()..properties_end];
         let first_reused = index == 0 && merge_begin;
         let last_reused = !single && index + 1 == entries.len() && merge_end;

@@ -62,6 +62,9 @@ fn position(reader: &Reader<&[u8]>) -> usize {
 /// The element `xml` starts with: `xml` must start with its start tag, and
 /// may go on after its end.
 pub fn element_span(xml: &str) -> Result<ElementSpan> {
+    if let Some(rest) = xml.strip_prefix('\u{feff}') {
+        return element_span(rest).map(|span| span.shifted(3));
+    }
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     reader.config_mut().check_end_names = false;
@@ -111,6 +114,9 @@ pub fn element_span(xml: &str) -> Result<ElementSpan> {
 /// The root element of a part, after its XML declaration, comments,
 /// processing instructions and whitespace, its ranges in `xml`.
 pub fn root_element_span(xml: &str) -> Result<ElementSpan> {
+    if let Some(rest) = xml.strip_prefix('\u{feff}') {
+        return root_element_span(rest).map(|span| span.shifted(3));
+    }
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     loop {
@@ -129,6 +135,9 @@ pub fn root_element_span(xml: &str) -> Result<ElementSpan> {
 /// The first element of `xml`, at any depth, whose qualified name is `name`
 /// as written, its ranges in `xml`.
 pub fn find_element(xml: &str, name: &str) -> Result<Option<ElementSpan>> {
+    if let Some(rest) = xml.strip_prefix('\u{feff}') {
+        return Ok(find_element(rest, name)?.map(|span| span.shifted(3)));
+    }
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     reader.config_mut().check_end_names = false;
