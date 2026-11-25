@@ -364,6 +364,43 @@ impl Field {
 }
 
 impl Field {
+    /// Whether a piece this field holds answers: `raw` is asked of its
+    /// stored source and of a pending ordered result, `run` of every result
+    /// run it keeps (a new field's, a simple field's, the typed and parsed
+    /// ones), and nested result fields are asked the same. A walk that must
+    /// not miss what a field result shows (an `INCLUDEPICTURE` result) asks
+    /// here.
+    pub(crate) fn any_held_piece(
+        &self,
+        raw: &dyn Fn(&[u8]) -> bool,
+        run: &dyn Fn(&CT_R) -> bool,
+    ) -> bool {
+        let source = match self.source.as_ref() {
+            FieldSource::Parsed { raw_xml, .. } => raw(raw_xml),
+            FieldSource::New { cached_runs, .. } => cached_runs.iter().flatten().any(run),
+        };
+        source
+            || self
+                .ordered_result
+                .as_ref()
+                .is_some_and(|ordered| raw(&ordered.normalized_xml))
+            || [
+                &self.simple_cached_runs,
+                &self.typed_cached_runs,
+                &self.parsed_cached_runs,
+            ]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(run)
+            || self
+                .cached_fields
+                .iter()
+                .any(|(_, nested)| nested.any_held_piece(raw, run))
+    }
+}
+
+impl Field {
     /// The direct formatting of the run that opens this field, read from its
     /// source. A field that stores no result, such as a legacy checkbox
     /// saved by Word, draws with it.
