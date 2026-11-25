@@ -461,7 +461,7 @@ impl CT_LineProperties {
                         .push(boundary, capture_empty_element(&element)?);
                 }
                 Event::Start(element) if is_fill(element.name().as_ref()) => {
-                    line.fill = Some(Fill::from_element(reader, &element)?);
+                    line.fill = Some(Fill::from_element_in(reader, &element, namespaces)?);
                     boundary = 1;
                 }
                 Event::Empty(element) if is_fill(element.name().as_ref()) => {

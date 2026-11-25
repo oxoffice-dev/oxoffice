@@ -487,7 +487,7 @@ impl CT_ShapeProperties {
                 self.preset_geometry = Some(CT_PresetGeometry2D::from_xml(raw)?);
             }
             name if is_fill(name) && self.fill.is_none() => {
-                self.fill = Some(Fill::from_xml(raw)?);
+                self.fill = Some(Fill::from_xml_with_inherited_namespaces(raw, namespaces)?);
             }
             b"ln" if self.line.is_none() => {
                 self.line = Some(CT_LineProperties::from_xml_with_inherited_namespaces(

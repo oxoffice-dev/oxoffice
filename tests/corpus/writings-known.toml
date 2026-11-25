@@ -89,20 +89,6 @@ message = "gives another result"
 # a:alphaModFix under another prefix is kept raw, its opacity unread
 # (oxoffice-drawing fill.rs:724-745).
 
-[[known]]
-input = "google/deck.pptx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "alphaModFix"
-
-[[known]]
-input = "google/pitch.pptx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "alphaModFix"
-
 # D4: a document whose root binds the default namespace refuses every edit
 # (document/namespaces.rs:219-229): limitation docx-default-namespace, #663.
 

@@ -96,6 +96,17 @@ pub enum Fill {
 impl Fill {
     /// Parses one complete fill element with any namespace prefix.
     pub fn from_xml(xml: &[u8]) -> Result<Self> {
+        Self::from_xml_with_inherited_namespaces(xml, &[])
+    }
+
+    /// Parses one complete fill element whose ancestors bind `inherited`
+    /// (prefix and namespace, the empty prefix for the default namespace),
+    /// so that a name under a prefix declared above the fill is read in its
+    /// namespace.
+    pub fn from_xml_with_inherited_namespaces(
+        xml: &[u8],
+        inherited: &[(String, String)],
+    ) -> Result<Self> {
         let mut reader = Reader::from_reader(xml);
         let mut buffer = Vec::new();
         loop {
@@ -103,7 +114,9 @@ impl Fill {
                 .read_event_into(&mut buffer)
                 .map_err(OxmlError::from)?
             {
-                Event::Start(element) => return Self::from_element(&mut reader, &element),
+                Event::Start(element) => {
+                    return Self::from_element_in(&mut reader, &element, inherited);
+                }
                 Event::Empty(element) => return Self::from_empty_element(&element),
                 Event::Eof => {
                     return Err(FillError::Xml(OxmlError::MissingElement(
@@ -118,13 +131,24 @@ impl Fill {
 
     /// Parses a fill after the caller has consumed its start event.
     pub fn from_element(reader: &mut Reader<&[u8]>, start: &BytesStart<'_>) -> Result<Self> {
+        Self::from_element_in(reader, start, &[])
+    }
+
+    /// [`Self::from_element`] for a fill whose ancestors bind `inherited`.
+    pub fn from_element_in(
+        reader: &mut Reader<&[u8]>,
+        start: &BytesStart<'_>,
+        inherited: &[(String, String)],
+    ) -> Result<Self> {
         reject_conflicting_a_prefix(start)?;
         match local_name(start.name().as_ref()) {
             b"noFill" => Ok(Self::NoFill(NoFill::from_element(reader, start)?)),
             b"solidFill" => Ok(Self::Solid(SolidFill::from_element(reader, start)?)),
             b"gradFill" => Ok(Self::Gradient(GradientFill::from_element(reader, start)?)),
             b"pattFill" => Ok(Self::Pattern(PatternFill::from_element(reader, start)?)),
-            b"blipFill" => Ok(Self::Blip(BlipFill::from_element(reader, start)?)),
+            b"blipFill" => Ok(Self::Blip(BlipFill::from_element_in(
+                reader, start, inherited,
+            )?)),
             _ => Err(unexpected(start)),
         }
     }
@@ -638,6 +662,7 @@ impl Blip {
         reader: &mut Reader<&[u8]>,
         start: &BytesStart<'_>,
         ancestor: &BytesStart<'_>,
+        inherited: &[(String, String)],
     ) -> Result<Self> {
         let mut blip = Self::from_start(start);
         let mut buffer = Vec::new();
@@ -649,7 +674,7 @@ impl Blip {
             {
                 Event::Start(element)
                     if blip.alpha_modulation_fix.is_none()
-                        && is_drawingml_alpha_mod_fix(&element, start, ancestor)? =>
+                        && is_drawingml_alpha_mod_fix(&element, start, ancestor, inherited)? =>
                 {
                     let (amount, raw_attributes) = parse_alpha_modulation_fix(&element)?;
                     read_empty_effect_body(reader, &element)?;
@@ -659,7 +684,7 @@ impl Blip {
                 }
                 Event::Empty(element)
                     if blip.alpha_modulation_fix.is_none()
-                        && is_drawingml_alpha_mod_fix(&element, start, ancestor)? =>
+                        && is_drawingml_alpha_mod_fix(&element, start, ancestor, inherited)? =>
                 {
                     let (amount, raw_attributes) = parse_alpha_modulation_fix(&element)?;
                     blip.alpha_modulation_fix = Some(amount);
@@ -720,10 +745,15 @@ impl Blip {
     }
 }
 
+/// Whether `element`, in `parent` in `ancestor` under the `inherited`
+/// bindings, is DrawingML's `alphaModFix`: its prefix bound to the DrawingML
+/// namespace by the nearest declaration, or `a` with no declaration at all
+/// (a fragment read without its ancestors).
 fn is_drawingml_alpha_mod_fix(
     element: &BytesStart<'_>,
     parent: &BytesStart<'_>,
     ancestor: &BytesStart<'_>,
+    inherited: &[(String, String)],
 ) -> Result<bool> {
     if !matches_local_name(element.name().as_ref(), b"alphaModFix") {
         return Ok(false);
@@ -736,7 +766,15 @@ fn is_drawingml_alpha_mod_fix(
         .filter(|prefix| prefix.len() != qualified.len());
     let binding = namespace_binding(element, prefix)?
         .or(namespace_binding(parent, prefix)?)
-        .or(namespace_binding(ancestor, prefix)?);
+        .or(namespace_binding(ancestor, prefix)?)
+        .or_else(|| {
+            let prefix = prefix.unwrap_or_default();
+            inherited
+                .iter()
+                .rev()
+                .find(|(bound, _)| bound.as_bytes() == prefix)
+                .map(|(_, namespace)| namespace.clone())
+        });
     if prefix == Some(b"a") && binding.as_deref().is_some_and(|uri| uri != A_NS) {
         return Err(OxmlError::InvalidValue(
             "xmlns:a conflicts with the fixed DrawingML writer namespace".to_owned(),
@@ -858,6 +896,17 @@ pub struct BlipFill {
 impl BlipFill {
     /// Parses one complete picture-fill element with any namespace prefix.
     pub fn from_xml(xml: &[u8]) -> Result<Self> {
+        Self::from_xml_with_inherited_namespaces(xml, &[])
+    }
+
+    /// Parses one complete picture-fill element whose ancestors bind
+    /// `inherited` (prefix and namespace, the empty prefix for the default
+    /// namespace), so that a name under a prefix declared above the fill,
+    /// such as a slide's own prefix for DrawingML, is read in its namespace.
+    pub fn from_xml_with_inherited_namespaces(
+        xml: &[u8],
+        inherited: &[(String, String)],
+    ) -> Result<Self> {
         let mut reader = Reader::from_reader(xml);
         let mut buffer = Vec::new();
         loop {
@@ -868,7 +917,7 @@ impl BlipFill {
                 Event::Start(element)
                     if matches_local_name(element.name().as_ref(), b"blipFill") =>
                 {
-                    return Self::from_element(&mut reader, &element);
+                    return Self::from_element_in(&mut reader, &element, inherited);
                 }
                 Event::Empty(element)
                     if matches_local_name(element.name().as_ref(), b"blipFill") =>
@@ -895,7 +944,11 @@ impl BlipFill {
         })
     }
 
-    fn from_element(reader: &mut Reader<&[u8]>, start: &BytesStart<'_>) -> Result<Self> {
+    fn from_element_in(
+        reader: &mut Reader<&[u8]>,
+        start: &BytesStart<'_>,
+        inherited: &[(String, String)],
+    ) -> Result<Self> {
         let mut fill = Self::from_start(start)?;
         let mut buffer = Vec::new();
         let mut boundary = 0;
@@ -906,7 +959,7 @@ impl BlipFill {
             {
                 Event::Start(element) if matches_local_name(element.name().as_ref(), b"blip") => {
                     reject_conflicting_a_prefix(&element)?;
-                    fill.blip = Some(Blip::from_element(reader, &element, start)?);
+                    fill.blip = Some(Blip::from_element(reader, &element, start, inherited)?);
                     boundary = 1;
                 }
                 Event::Empty(element) if matches_local_name(element.name().as_ref(), b"blip") => {
@@ -1486,4 +1539,47 @@ fn write_end<W: Write>(writer: &mut Writer<W>, name: &str) -> Result<()> {
         .write_event(Event::End(BytesEnd::new(name)))
         .map_err(OxmlError::from)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A picture fill under `prefix`, bound to DrawingML above the fill,
+    /// with a fixed opacity of 40 %.
+    fn picture_fill(prefix: &str) -> String {
+        format!(
+            r#"<{prefix}:blipFill><{prefix}:blip r:embed="rId3"><{prefix}:alphaModFix amt="40000"/></{prefix}:blip></{prefix}:blipFill>"#
+        )
+    }
+
+    #[test]
+    fn a_picture_opacity_is_read_under_a_prefix_an_ancestor_binds_to_drawingml() {
+        let scope = [
+            ("ox2".to_owned(), A_NS.to_owned()),
+            ("r".to_owned(), R_NS.to_owned()),
+        ];
+        for prefix in ["a", "ox2"] {
+            let fill = BlipFill::from_xml_with_inherited_namespaces(
+                picture_fill(prefix).as_bytes(),
+                &scope,
+            )
+            .expect("parses");
+            let blip = fill.blip.expect("a blip");
+            assert_eq!(
+                blip.alpha_modulation_fix,
+                Some(Percent1000(40_000)),
+                "{prefix}"
+            );
+            assert!(blip.raw_children.is_empty(), "{prefix}");
+        }
+        // Bound to another namespace, the element is not DrawingML's: kept.
+        let foreign = [("ox2".to_owned(), "urn:example".to_owned())];
+        let fill =
+            BlipFill::from_xml_with_inherited_namespaces(picture_fill("ox2").as_bytes(), &foreign)
+                .expect("parses");
+        let blip = fill.blip.expect("a blip");
+        assert_eq!(blip.alpha_modulation_fix, None);
+        assert!(!blip.raw_children.is_empty());
+    }
 }
