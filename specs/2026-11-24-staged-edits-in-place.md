@@ -321,6 +321,31 @@ form operations (#7).
   edit (a store, a mail-merge package) keeps it too.
   The seven setters cost 3.5 to 4.4 ms at 25, 100 and 400 paragraphs.
 
+### S1c-1: notes and comments with a body reference (amended 2026-11-25)
+
+`add_footnote`, `add_endnote` and `add_comment` on one direct body
+paragraph edit in place over `BodyBlocks { slot, count: 1 }`, the notes or
+comments model, `Styles` (a missing reference style joins the open edit,
+no nested commit) and `Parts`. The facade inserts the typed reference run
+in the paragraph (`create_note_in_body_slot`; `add_comment_with_date` over
+its start..end slots) and appends the note or comment last in its part;
+the comment id is reserved in the journal. Both note routes refuse text
+XML 1.0 cannot carry up front (the staged route refused it at reopen).
+
+The binding publishes both halves in one step
+(`publish_body_paragraph_and_story`): the paragraph's block replacement
+and the story splice of the new entry are both checked before either
+commits, since each half alone sees the other's change unpublished; the
+debug inventory check runs once after both. The edited paragraph keeps its
+owner, its run handles go (the paragraph retention); every other handle is
+kept. A first note or comment (its part is born), a table cell, block
+control or text box location, a range over two paragraphs, a non-body
+story (`StoryRunRange`) and any half answering the whole route undo the
+edit and keep today's route. The debug oracle compares saved parts in a
+normal form (`oracle_normal_form`): namespace declarations repeating the
+root's (same prefix and URI) are dropped, as the staged byte splice
+re-declares them.
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.
