@@ -760,7 +760,7 @@ pub(super) fn hyperlink_shells(paragraph: &CT_P, options: &ComparisonOptions) ->
                 link.anchor,
                 link.tooltip,
                 link.doc_location,
-                link.extra_attributes,
+                super::signatures::link_attributes(link),
                 hyperlink_raw_boundaries(paragraph, link, options),
                 link.preserved_raw_before,
             )

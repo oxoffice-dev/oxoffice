@@ -936,9 +936,10 @@ pub(super) fn restore_whole_hyperlinks(
         }
         let mut opening = String::from("<w:hyperlink");
         for (name, carried) in &witness.opening {
-            // The link's own name, whatever its prefix; the field carries it
-            // under the writer's.
+            // The link's attribute under the prefixes the restored
+            // `w:hyperlink` binds, whatever the prefix its input wrote.
             let key = match name.rsplit(':').next() {
+                _ if name.starts_with("xmlns") => name.clone(),
                 Some("id") => "r:id".to_owned(),
                 Some(local) => format!("w:{local}"),
                 None => name.clone(),
@@ -952,7 +953,7 @@ pub(super) fn restore_whole_hyperlinks(
                     ))
                 })?;
             opening.push_str(&format!(
-                r#" {name}="{}""#,
+                r#" {key}="{}""#,
                 oxoffice_core::xml::escape_attribute_value(&value)
             ));
         }

@@ -505,6 +505,20 @@ pub(super) fn body_signature_with_options(
     }
 }
 
+/// A link's kept attributes by local name: an input may write `w:history`
+/// under another prefix (`ox0:history`), and it is the same attribute.
+pub(super) fn link_attributes(link: &oxoffice_docx_oxml::text::HyperlinkSpan) -> Vec<(&str, &str)> {
+    link.extra_attributes
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.rsplit(':').next().unwrap_or(name.as_str()),
+                value.as_str(),
+            )
+        })
+        .collect()
+}
+
 pub(super) fn paragraph_signature_with_options(
     paragraph: &CT_P,
     options: &ComparisonOptions,
@@ -521,7 +535,7 @@ pub(super) fn paragraph_signature_with_options(
                 &link.anchor,
                 &link.tooltip,
                 &link.doc_location,
-                &link.extra_attributes,
+                link_attributes(link),
                 hyperlink_raw_boundaries(paragraph, link, options),
                 link.preserved_raw_before,
                 policy_run_boundary(paragraph, link.run_start, options),
