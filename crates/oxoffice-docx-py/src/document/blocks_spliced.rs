@@ -221,6 +221,9 @@ pub(crate) struct BlocksSplice {
     /// The facade paragraph index of the slot.
     paragraph: usize,
     pieces: Vec<WordBlockOwners>,
+    /// The states that retire and the scopes born, the snapshot scope aside.
+    pub(super) retired: Vec<RevisionState>,
+    pub(super) births: Vec<RevisionScope>,
 }
 
 #[cfg(debug_assertions)]
@@ -326,7 +329,18 @@ impl PyDocument {
             .addresses
             .iter()
             .map(|address| bases.address(address))
-            .collect();
+            .collect::<Vec<WordOwnerAddress>>();
+        // The old owners retire, the new ones are born.
+        let mut retired = Vec::new();
+        retired.try_reserve(old_keys.len() * 3).ok()?;
+        for key in &old_keys {
+            retired.extend(self.owners[*key].scope_states().cloned());
+        }
+        let mut births = Vec::new();
+        births.try_reserve(born.len() * 3).ok()?;
+        for address in &born {
+            births.extend_from_slice(address.location.scopes());
+        }
         Some(BlocksSplice {
             slot,
             removed,
@@ -338,6 +352,8 @@ impl PyDocument {
             born,
             paragraph,
             pieces: new_owners,
+            retired,
+            births,
         })
     }
 
@@ -382,42 +398,11 @@ impl PyDocument {
     /// Commit `plan`: retire the old owners and the snapshot, replace the
     /// records of the old items, splice the projections, remove the old
     /// owners by swap and append the new ones, then the pieces.
-    pub(super) fn commit_blocks_splice(
-        &mut self,
-        plan: BlocksSplice,
-        operation: &'static str,
-    ) -> PyResult<()> {
+    /// Reserve what [`Self::apply_blocks_splice`] adds, so that nothing
+    /// fails once the revision commits.
+    pub(super) fn reserve_blocks_splice(&mut self, plan: &BlocksSplice) -> PyResult<()> {
         let fail =
             |_| pyo3::exceptions::PyMemoryError::new_err("Word block splice allocation failed");
-        let mut retired = Vec::new();
-        retired
-            .try_reserve(plan.old_keys.len() * 3 + 1)
-            .map_err(fail)?;
-        for key in &plan.old_keys {
-            retired.extend(self.owners[*key].scope_states().cloned());
-        }
-        retired.push(
-            self.snapshot_scope
-                .as_ref()
-                .expect("active Word authority")
-                .clone(),
-        );
-        let mut births = Vec::new();
-        births.try_reserve(plan.born.len() * 3 + 1).map_err(fail)?;
-        for address in &plan.born {
-            births.extend_from_slice(address.location.scopes());
-        }
-        births.push(RevisionScope::Text);
-        let revision = self
-            .revisions
-            .prepare_scopes(operation, &retired, &births)
-            .map_err(revision_to_pyerr)?;
-        let states = (0..births.len() - 1)
-            .map(|born| revision.born(born).expect("prepared owner birth"))
-            .collect::<Vec<_>>();
-        let snapshot_scope = revision
-            .born(births.len() - 1)
-            .expect("prepared snapshot birth");
         let added = plan.born.len();
         self.owners.try_reserve(added).map_err(fail)?;
         self.indexes
@@ -446,22 +431,14 @@ impl PyDocument {
             .cell_paragraphs
             .try_reserve(plan.new.tables.len())
             .map_err(fail)?;
-        // Debug builds can fail or panic here on request, so that tests see
-        // the old blocks put back.
-        #[cfg(debug_assertions)]
-        match std::env::var("OXOFFICE_DEBUG_FAIL_BLOCK_SPLICE").as_deref() {
-            Ok("error") => {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "block splice failed on request",
-                ));
-            }
-            Ok("panic") => panic!("block splice panicked on request"),
-            _ => {}
-        }
-        self.revisions
-            .commit_scopes(revision)
-            .map_err(revision_to_pyerr)?;
-        // The commit: nothing below fails.
+        Ok(())
+    }
+
+    /// Install `plan` after its revision committed, under `states` (the
+    /// births of `plan.births`, in order): replace the records of the old
+    /// items, splice the projections, remove the old owners by swap and
+    /// append the new ones, then the pieces. Nothing here fails.
+    pub(super) fn apply_blocks_splice(&mut self, plan: BlocksSplice, states: &[RevisionState]) {
         let BlocksSplice {
             slot,
             removed,
@@ -473,6 +450,7 @@ impl PyDocument {
             born,
             paragraph,
             pieces,
+            ..
         } = plan;
         let indexes = &mut self.indexes;
         indexes.items.replace(
@@ -533,14 +511,12 @@ impl PyDocument {
             self.indexes.index_owner(self.owners.len(), &owner);
             self.owners.push(owner);
         }
-        self.snapshot_scope = Some(snapshot_scope);
         self.pieces.as_mut().expect("active pieces").splice_blocks(
             &self.inner,
             slot,
             removed,
             pieces,
         );
-        Ok(())
     }
 
     /// Under debug assertions, before a splice commits: the old owners found
