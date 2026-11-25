@@ -265,6 +265,14 @@ impl Document {
             reservations,
             ..
         } = undo;
+        // The part journal first, then the reservation journal, which
+        // removes by id or by name. So the reservation journal records no
+        // add the part journal undoes: a relationship added to an owner the
+        // part journal recorded whole, or whose id it removed one by one
+        // (the owner is then recorded whole), is left to the part journal's
+        // copy (`cover_relationship_add`); an override removed through the
+        // part journal is never added again in the same call (checked in
+        // debug builds by `add_override_journaled`).
         self.package.undo_part_journal(parts);
         // The part journal put back the bytes the edit wrote or removed.
         let mut reservations = reservations;
@@ -456,7 +464,15 @@ impl Document {
         }
         document.in_place.last_changed = undo.report.changed();
         if undo.report.changed() {
-            document.invalidate_layout();
+            if undo
+                .units
+                .iter()
+                .all(|unit| matches!(unit, EditUnit::Settings | EditUnit::Parts))
+            {
+                document.invalidate_layout_keeping_body_answer();
+            } else {
+                document.invalidate_layout();
+            }
         }
         #[cfg(debug_assertions)]
         document.assert_undo_restores(before, &undo);
@@ -624,6 +640,13 @@ impl Document {
                     "a refused in-place edit changed the document"
                 );
             }
+            // A document that could not be saved before the edit (a typed
+            // edit of a body that cannot be saved after one) fails the staged
+            // route at its save. An edit that leaves the body alone is made
+            // in place and leaves that error to the save, as a section edit
+            // does: the save still reports it.
+            (Ok(_), Err(staged_error))
+                if unchanged.is_err() && live == Err(staged_error.to_string()) => {}
             (Ok(direct), Err(staged_error)) => {
                 panic!("in-place edit {direct:?} hid the staged error {staged_error}")
             }
@@ -685,6 +708,54 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(document.identifiers, identifiers);
         assert_eq!(document.clone_for_staging().to_bytes().unwrap(), before);
+    }
+
+    /// The relationships of the main part, as their ids, types and targets.
+    fn main_relationships(document: &Document) -> Option<Vec<oxoffice_opc::Relationship>> {
+        document
+            .package
+            .get_part_rels(&document.doc_part_name)
+            .map(|relationships| relationships.items.clone())
+    }
+
+    #[test]
+    fn a_refusal_puts_back_relationships_removed_whole_then_created_again() {
+        let mut document = Document::new();
+        let owner = document.doc_part_name.clone();
+        let before = main_relationships(&document);
+        assert!(before.as_ref().is_some_and(|items| !items.is_empty()));
+        let result: Result<()> = document.edit_in_place(&[EditUnit::Parts], |document| {
+            document.package.remove_part_rels(&owner);
+            assert!(document.package.part_journal_records_rels(&owner));
+            document.add_relationship_journaled(Some(&owner), "rId90", "urn:test", "a.xml");
+            document.add_external_relationship_journaled(
+                &owner,
+                "rId91",
+                "urn:test",
+                "https://example.com",
+            );
+            Err(Error::Other("refused".to_owned()))
+        });
+        assert!(result.is_err());
+        assert_eq!(main_relationships(&document), before);
+    }
+
+    #[test]
+    fn a_refusal_puts_back_a_relationship_removed_then_added_again_with_its_id() {
+        let mut document = Document::new();
+        let owner = document.doc_part_name.clone();
+        let before = main_relationships(&document);
+        let first = before.as_ref().unwrap()[0].clone();
+        let result: Result<()> = document.edit_in_place(&[EditUnit::Parts], |document| {
+            let removed = document
+                .package
+                .remove_relationships_where(&owner, |item| item.id == first.id);
+            assert_eq!(removed, std::slice::from_ref(&first));
+            document.add_relationship_journaled(Some(&owner), &first.id, "urn:test", "b.xml");
+            Err(Error::Other("refused".to_owned()))
+        });
+        assert!(result.is_err());
+        assert_eq!(main_relationships(&document), before);
     }
 
     #[test]

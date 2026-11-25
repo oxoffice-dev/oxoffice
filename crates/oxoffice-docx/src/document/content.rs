@@ -45,6 +45,27 @@ impl Document {
         }
     }
 
+    /// [`Self::invalidate_layout`] after an edit that leaves the main part
+    /// and the body alone (a settings or package part edit): what a save of
+    /// the body answers stays.
+    pub(crate) fn invalidate_layout_keeping_body_answer(&mut self) {
+        let kept = self.unsavable_body_edit_cache.get().cloned();
+        self.invalidate_layout();
+        if let Some(kept) = kept {
+            self.unsavable_body_edit_cache = OnceLock::from(kept);
+        }
+    }
+
+    /// Record that typed edits of this body can still be saved after a block
+    /// swap whose caller proved it changes no namespace declaration and no
+    /// namespace owner, when they could before it. The caller asked
+    /// [`Self::unsavable_body_edit`] before the swap.
+    pub(crate) fn keep_body_savable_after_swap(&mut self) {
+        if self.unsavable_body_edit_cache.get().is_none() {
+            self.unsavable_body_edit_cache = OnceLock::from(None);
+        }
+    }
+
     /// The error a save of this body would return after a typed edit, when the
     /// retained nested owners cannot be replayed or a serializer prefix is
     /// shadowed. `None` is not a general proof that the document is savable.
@@ -1052,7 +1073,10 @@ impl Document {
         index: usize,
         item_kind: StoryItemKind,
     ) -> Result<Option<BodyBlockItem>> {
-        if matches!(self.unsavable_body_edit_cache.get(), Some(Some(_))) {
+        // Computed once after an invalidation: an empty cache is no answer,
+        // and the swap keeps a savable answer
+        // (`keep_body_savable_after_typed_insert`).
+        if self.unsavable_body_edit().is_some() {
             return Ok(None);
         }
         let Some(block) = self.document.body.content.get(slot) else {

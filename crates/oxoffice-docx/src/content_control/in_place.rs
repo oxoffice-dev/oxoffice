@@ -229,6 +229,14 @@ impl Document {
         if updated.as_slice() == &xml[range.clone()] {
             return Ok(Some(false));
         }
+        // `body_block_item` answered that the body saves after a typed edit.
+        // A property edit that keeps the namespace declarations the control
+        // had, adding at most the standard w14 or w15 binding on the element
+        // it writes (`w15:appearance`), shadows no prefix and makes no owner
+        // the save cannot replay, so the answer holds after the swap, which
+        // would otherwise ask again over the whole main part at the next
+        // edit (debug builds check a kept answer against that).
+        let same_declarations = declares_only_word_extensions(&xml[range.clone()], &updated);
         let mut edited = xml.clone();
         edited.splice(range.clone(), updated);
         let Some(parsed) =
@@ -236,8 +244,11 @@ impl Document {
         else {
             return Ok(None);
         };
-        self.replace_body_block_in_place(block.slot, parsed)
-            .map(Some)
+        let changed = self.replace_body_block_in_place(block.slot, parsed)?;
+        if changed && same_declarations {
+            self.keep_body_savable_after_swap();
+        }
+        Ok(Some(changed))
     }
 
     /// `location` with the fingerprint of the story it names now, which the
@@ -277,6 +288,54 @@ impl Document {
             "the block route names another control than the staged route"
         );
     }
+}
+
+/// Whether `updated` declares the namespaces `original` declares, in the
+/// same order, plus at most the standard `w14` and `w15` bindings.
+fn declares_only_word_extensions(original: &[u8], updated: &[u8]) -> bool {
+    let standard = [
+        format!("xmlns:w14=\"{W14_NS}\""),
+        format!("xmlns:w15=\"{W15_NS}\""),
+    ];
+    let mut kept = namespace_declarations(original).into_iter().peekable();
+    for declaration in namespace_declarations(updated) {
+        if kept.peek() == Some(&declaration) {
+            kept.next();
+        } else if !standard
+            .iter()
+            .any(|binding| binding.as_bytes() == declaration)
+        {
+            return false;
+        }
+    }
+    kept.next().is_none()
+}
+
+/// The namespace declarations of `xml` (`xmlns` and `xmlns:p` attributes
+/// with their values), in order.
+fn namespace_declarations(xml: &[u8]) -> Vec<&[u8]> {
+    let mut declarations = Vec::new();
+    let mut at = 0;
+    while let Some(found) = xml[at..].windows(5).position(|window| window == b"xmlns") {
+        let start = at + found;
+        let Some(quote) = xml[start..]
+            .iter()
+            .position(|byte| matches!(byte, b'"' | b'\''))
+        else {
+            break;
+        };
+        let quote_at = start + quote;
+        let Some(close) = xml[quote_at + 1..]
+            .iter()
+            .position(|byte| *byte == xml[quote_at])
+        else {
+            break;
+        };
+        let end = quote_at + 1 + close + 1;
+        declarations.push(&xml[start..end]);
+        at = end;
+    }
+    declarations
 }
 
 #[cfg(test)]

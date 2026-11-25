@@ -20,6 +20,7 @@ pub mod numbering;
 mod paragraph_properties;
 pub mod placeholder;
 pub mod properties;
+mod raw_scan;
 pub mod revision;
 pub mod ruby;
 mod run_properties;

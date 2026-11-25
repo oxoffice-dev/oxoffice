@@ -150,7 +150,15 @@ pub fn doc_with_body(body: &str) -> Document {
 
 /// The bytes of [`doc_with_body`], for a body that may not open.
 pub fn docx_with_body(body: &str) -> Vec<u8> {
-    let bytes = Document::new().to_bytes().expect("new document saves");
+    with_body(
+        Document::new().to_bytes().expect("new document saves"),
+        body,
+    )
+}
+
+/// These document bytes with their body replaced by this raw `w:` XML,
+/// before the section properties.
+pub fn with_body(bytes: Vec<u8>, body: &str) -> Vec<u8> {
     let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
     let part = package.main_document_part().expect("main document part");
     let xml = String::from_utf8(package.get_part(&part).expect("main part").to_vec())

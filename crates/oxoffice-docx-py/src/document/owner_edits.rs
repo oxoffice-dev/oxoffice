@@ -2092,11 +2092,42 @@ impl PyDocument {
         operation: &'static str,
         edit: oxoffice_docx::ContentControlEdit,
     ) -> PyResult<()> {
+        /// Stops holding the edit undo however the edit ends; an edit that
+        /// panics leaves the document as it was.
+        struct Held<'a> {
+            document: &'a mut oxoffice_docx::Document,
+            armed: bool,
+        }
+        impl Drop for Held<'_> {
+            fn drop(&mut self) {
+                let undo = self.document.take_edit_undo();
+                if self.armed
+                    && let Some(undo) = undo
+                {
+                    self.document.undo_edit(undo);
+                }
+            }
+        }
+        impl Held<'_> {
+            fn take(mut self) -> Option<oxoffice_docx::EditUndo> {
+                self.armed = false;
+                self.document.take_edit_undo()
+            }
+        }
         if let Some((native, block)) = self.control_block(py, location)? {
             self.inner.hold_edit_undo();
-            let inner = &mut self.inner;
-            let result = py.detach(|| inner.edit_content_control_in_block(&native, block, &edit));
-            let undo = self.inner.take_edit_undo();
+            let held = Held {
+                document: &mut self.inner,
+                armed: true,
+            };
+            let edit = &edit;
+            let (result, held) = py.detach(move || {
+                let result = held
+                    .document
+                    .edit_content_control_in_block(&native, block, edit);
+                (result, held)
+            });
+            let undo = held.take();
             match result.map_err(|error| docx_to_pyerr(py, error))? {
                 None => {}
                 Some(changed) => {

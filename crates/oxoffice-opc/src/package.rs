@@ -12,7 +12,7 @@ use zip::write::SimpleFileOptions;
 
 use crate::content_types::ContentTypes;
 use crate::error::{OpcError, Result};
-use crate::relationship::{Relationships, rel_types};
+use crate::relationship::{Relationship, Relationships, rel_types};
 
 const EOCD_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
 const ZIP64_EOCD_LOCATOR_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x06, 0x07];
@@ -95,6 +95,12 @@ pub struct PartJournal {
     /// them, at the first record of that owner.
     relationships_written: std::collections::HashSet<String>,
     relationships_before: Vec<(String, Option<Relationships>)>,
+    /// The relationships removed one by one
+    /// ([`OpcPackage::remove_relationships_where`]), in removal order: the
+    /// stored owner, the position the item held when it was removed, and
+    /// the item. An owner whose relationships were recorded whole before
+    /// records no removal: the recorded copy puts it back.
+    relationships_removed: Vec<(String, usize, Relationship)>,
     /// The content type overrides removed, with their stored names.
     overrides_removed: Vec<(String, String)>,
 }
@@ -110,6 +116,22 @@ impl PartJournal {
         self.written.contains(part_name)
     }
 
+    /// Whether the relationship `id` of `owner` was removed one by one
+    /// ([`OpcPackage::remove_relationships_where`]).
+    pub fn removed_relationship(&self, owner: &str, id: &str) -> bool {
+        let identity = part_identity(owner);
+        self.relationships_removed
+            .iter()
+            .any(|(removed, _, item)| item.id == id && has_part_identity(removed, &identity))
+    }
+
+    /// Whether the content type override of `part_name` was removed.
+    pub fn removed_override(&self, part_name: &str) -> bool {
+        self.overrides_removed
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(part_name))
+    }
+
     /// Append `later`, a journal opened after this one closed: a part both
     /// wrote keeps this journal's earlier bytes.
     pub fn extend(&mut self, later: PartJournal) {
@@ -123,6 +145,16 @@ impl PartJournal {
                 self.relationships_before.push((owner, relationships));
             }
         }
+        // An owner this journal recorded whole was copied before `later`
+        // opened: the copy holds the items `later` removed one by one, so
+        // those removals are not undone again on top of it.
+        let whole = &self.relationships_written;
+        self.relationships_removed.extend(
+            later
+                .relationships_removed
+                .into_iter()
+                .filter(|(owner, _, _)| !whole.contains(owner)),
+        );
         self.overrides_removed.extend(later.overrides_removed);
     }
 }
@@ -143,6 +175,25 @@ impl OpcPackage {
     pub fn open_part_journal(&mut self) {
         debug_assert!(self.part_journal.0.is_none(), "a part journal is open");
         self.part_journal.0 = Some(PartJournal::default());
+    }
+
+    /// The journal open now, if any.
+    pub fn part_journal(&self) -> Option<&PartJournal> {
+        self.part_journal.0.as_ref()
+    }
+
+    /// Whether the open journal recorded the relationships of `owner` whole
+    /// ([`Self::record_part_rels`], [`Self::remove_part_rels`]): its undo
+    /// puts back that owner's relationships as they were, whatever the edit
+    /// added to them since, so another journal need not record those adds.
+    pub fn part_journal_records_rels(&self, owner: &str) -> bool {
+        self.part_journal.0.as_ref().is_some_and(|journal| {
+            let identity = part_identity(owner);
+            journal
+                .relationships_written
+                .iter()
+                .any(|recorded| has_part_identity(recorded, &identity))
+        })
     }
 
     /// Stop recording and return what was recorded.
@@ -169,6 +220,15 @@ impl OpcPackage {
                 self.part_rels.get(owner).map(|now| &now.items)
                     != before.as_ref().map(|before| &before.items)
             })
+            || journal
+                .relationships_removed
+                .iter()
+                .any(|(owner, _, item)| {
+                    !self
+                        .part_rels
+                        .get(owner)
+                        .is_some_and(|now| now.items.contains(item))
+                })
             || journal
                 .overrides_removed
                 .iter()
@@ -199,6 +259,14 @@ impl OpcPackage {
                 }
             }
         }
+        // After the copies: a removal is recorded one by one only before its
+        // owner is recorded whole, so the copy holds the relationships the
+        // removal left, and the removal goes back into them.
+        for (owner, index, item) in journal.relationships_removed.into_iter().rev() {
+            let relationships = self.part_rels.entry(owner).or_default();
+            let index = index.min(relationships.items.len());
+            relationships.items.insert(index, item);
+        }
         for (name, content_type) in journal.overrides_removed.into_iter().rev() {
             self.content_types.overrides.insert(name, content_type);
         }
@@ -218,6 +286,46 @@ impl OpcPackage {
                 .relationships_before
                 .push((key.clone(), self.part_rels.get(&key).cloned()));
         }
+    }
+
+    /// Remove the relationships of `part_name` that `remove` selects and
+    /// return them, in order. The open journal records each removed item
+    /// and its position, which an undo puts back, at the cost of the items
+    /// removed rather than of the owner's relationships; an owner already
+    /// recorded whole ([`Self::record_part_rels`]) records nothing more.
+    pub fn remove_relationships_where(
+        &mut self,
+        part_name: &str,
+        mut remove: impl FnMut(&Relationship) -> bool,
+    ) -> Vec<Relationship> {
+        let Some(key) = deterministic_part_key(&self.part_rels, part_name).cloned() else {
+            return Vec::new();
+        };
+        let mut journal = self
+            .part_journal
+            .0
+            .as_mut()
+            .filter(|journal| !journal.relationships_written.contains(&key));
+        let relationships = self
+            .part_rels
+            .get_mut(&key)
+            .expect("the owner key was just found");
+        let mut removed = Vec::new();
+        let mut index = 0;
+        while index < relationships.items.len() {
+            if !remove(&relationships.items[index]) {
+                index += 1;
+                continue;
+            }
+            let item = relationships.items.remove(index);
+            if let Some(journal) = journal.as_mut() {
+                journal
+                    .relationships_removed
+                    .push((key.clone(), index, item.clone()));
+            }
+            removed.push(item);
+        }
+        removed
     }
 
     /// Remove the content type overrides of `part_name` (every case

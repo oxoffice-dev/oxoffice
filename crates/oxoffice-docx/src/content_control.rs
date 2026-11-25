@@ -523,8 +523,9 @@ impl Document {
                         == oxoffice_opc::relationship::rel_types::DIGITAL_SIGNATURE_ORIGIN
                 });
                 self.package_signatures_invalidated |= signed && journal.changed_package();
-                // A bound control shows the store's value.
-                self.invalidate_layout();
+                // A bound control shows the store's value; the store leaves
+                // the main part alone.
+                self.invalidate_layout_keeping_body_answer();
                 Ok(item_id)
             }
         };
@@ -589,6 +590,14 @@ impl Document {
                 assert!(before.package.same_package_as(&self.package));
                 assert_eq!(before.identifiers, self.identifiers);
             }
+            // The staged route fails at the save of a document that could not
+            // be saved before (a typed edit of a body that cannot be saved
+            // after one); the in-place addition leaves that error to the save.
+            (Ok(_), Err(staged))
+                if before
+                    .clone_for_staging()
+                    .to_bytes()
+                    .is_err_and(|error| error.to_string() == staged.to_string()) => {}
             (Ok(_), Err(staged)) => panic!("the in-place store addition hid {staged}"),
             (Err(direct), Ok(_)) => panic!("the in-place store addition refused with {direct}"),
         }

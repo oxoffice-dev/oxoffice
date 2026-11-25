@@ -3,6 +3,8 @@ binding) lives in the control's own properties, which no handle names, so settin
 before the edit reads and edits the same element after it, inside the control too. The edit is made in place on the
 body block that holds the control, without saving the document: a refused edit, and an edit that changes nothing,
 leave the document as it was, byte for byte. A control of another story (a header) takes the staged route."""
+import zipfile
+
 import docx
 import pytest
 from docx.oxml import parse_xml
@@ -23,13 +25,19 @@ def sdt(tag, content):
 @pytest.fixture(scope="module")
 def saved(tmp_path_factory):
     """The document of test_docx_comment_edits, whose body holds a block control (probe0, before the paragraph "spot
-    0"), a control inside the eighth paragraph (inline) and one inside a cell of the first table (cell), and whose
-    first header holds a control (head)."""
+    0"), a control inside the eighth paragraph (inline), one inside a cell of the first table (cell) and one inside a
+    text box of the last paragraph (boxed), and whose first header holds a control (head)."""
     path = edit_cost_docx(tmp_path_factory.mktemp("controls") / "plain.docx", 12, probes=1)
     d = docx.Document(path)
     d.paragraphs[7]._p.append(sdt("inline", "<w:r><w:t>inline text</w:t></w:r>"))
     d.tables[0].cell(1, 1)._tc.insert(1, sdt("cell", "<w:p><w:r><w:t>cell control</w:t></w:r></w:p>"))
     d.sections[0].header._element.append(sdt("head", "<w:p><w:r><w:t>header control</w:t></w:r></w:p>"))
+    box = d.add_paragraph()._p
+    box.append(parse_xml(
+        f'<w:r {nsdecls("w")}><w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="box" '
+        'style="width:120pt;height:40pt"><v:textbox><w:txbxContent>'
+        '<w:sdt><w:sdtPr><w:tag w:val="boxed"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>boxed control</w:t></w:r>'
+        '</w:p></w:sdtContent></w:sdt></w:txbxContent></v:textbox></v:shape></w:pict></w:r>'))
     d.save(path)
     doc = oxdocx.Document.open(path)
     doc.add_comment_on_text(doc.paragraphs[5].runs[0].text, author="Reviewer", text="a remark")
@@ -57,6 +65,7 @@ def taken_with_controls(doc):
     more = {
         "inline control": (the_control(doc, "inline text"), lambda h: (h.tag, h.text)),
         "cell control": (the_control(doc, "cell control"), lambda h: (h.tag, h.text)),
+        "text box control": (the_control(doc, "boxed control"), lambda h: (h.tag, h.text)),
         "paragraph holding a control": (inline, lambda h: h.text),
         "run beside a control": (inline.runs[1], lambda h: h.text),
         "paragraph inside a control": (block, lambda h: h.text),
@@ -82,7 +91,7 @@ SETTERS = {
     "binding": (None, b'w:xpath="/data/v"'),  # call() binds to the store opened() adds
 }
 
-TAGS = ["probe0", "inline", "cell"]
+TAGS = ["probe0", "inline", "cell", "boxed"]
 
 
 class Bound:
@@ -184,3 +193,35 @@ def test_a_header_control_property_takes_the_staged_route(saved, setter):
     # Handles taken after the edit read and edit their element.
     doc.paragraphs[3].text = "edited paragraph"
     assert oxdocx.Document.from_bytes(doc.to_bytes()).paragraphs[3].text == "edited paragraph"
+
+
+@pytest.fixture(scope="module")
+def namespaced(tmp_path_factory):
+    """A paragraph and a block control (probe) in a body whose w:body element declares a namespace of its own: the
+    body saves as it was opened, and a typed edit of it cannot be saved."""
+    path = tmp_path_factory.mktemp("controls") / "namespaced.docx"
+    d = docx.Document()
+    d.add_paragraph("first")
+    d.element.body.insert(1, sdt("probe", "<w:p><w:r><w:t>inside</w:t></w:r></w:p>"))
+    d.save(path)
+    with zipfile.ZipFile(path) as z:
+        parts = {name: z.read(name) for name in z.namelist()}
+    parts["word/document.xml"] = parts["word/document.xml"].replace(
+        b"<w:body>", b'<w:body xmlns:x="urn:example:x">', 1)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+    return path
+
+
+@pytest.mark.parametrize("setter", sorted(set(SETTERS) - {"binding"}))
+def test_a_control_property_of_a_body_that_cannot_save_is_refused_after_another_edit(namespaced, setter):
+    """The edit of a paragraph forgets whether the body saves; the setter asks again and refuses as a save would,
+    leaving the control as it was."""
+    doc = oxdocx.Document.open(namespaced)
+    doc.paragraphs[0].text = "edited"
+    control = control_xml(doc, "probe")
+    for _ in range(2):
+        with pytest.raises(oxdocx.DocxError, match="shadowed `x` namespace"):
+            SETTERS[setter][0](doc, located(doc, "probe"))
+        assert control_xml(doc, "probe") == control

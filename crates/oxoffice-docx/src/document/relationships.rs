@@ -194,16 +194,9 @@ impl Document {
     ) -> Result<String> {
         oxoffice_core::xml::reject_non_xml_characters("external relationship target", target)?;
         let id = self.identifiers.reserve_relationship_id_checked(owner)?;
-        // An in-place edit puts the owner's relationships back.
-        self.package.record_part_rels(owner);
-        self.package.get_or_create_part_rels(owner).items.push(
-            oxoffice_opc::relationship::Relationship {
-                id: id.clone(),
-                rel_type: rel_type.to_owned(),
-                target: target.to_owned(),
-                target_mode: Some("External".to_owned()),
-            },
-        );
+        // An in-place edit takes the edge back through the reservation
+        // journal, without a copy of the owner's relationships.
+        self.add_external_relationship_journaled(owner, &id, rel_type, target);
         if owner != self.doc_part_name {
             self.identifiers.author_story_relationship(owner, &id);
         }

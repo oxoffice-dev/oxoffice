@@ -4,7 +4,7 @@ edit, and an edit that changes nothing, leave the document as it was, byte for b
 import pytest
 
 import oxoffice.docx as oxdocx
-from builders import edit_cost_docx
+from builders import body_namespace_docx, edit_cost_docx
 from test_docx_comment_edits import before, handles_taken, reads
 
 SOURCE = oxdocx.MailMergePackageSource
@@ -113,3 +113,17 @@ def test_protecting_a_form_keeps_every_handle(saved):
     with pytest.raises(oxdocx.DocxError):
         doc.protect_form([], oxdocx.DocumentProtection(mode="readOnly", enforcement=True))
     assert doc.document_protection.mode == "forms"
+
+
+def test_a_package_on_a_body_that_cannot_save_leaves_the_error_to_the_save(tmp_path):
+    """A package does not touch the body: after an edit of a body that cannot be saved after one, it is written and
+    removed in place, and the save reports the body, as it does after a section edit."""
+    doc = oxdocx.Document.open(body_namespace_docx(tmp_path / "namespaced.docx"))
+    doc.paragraphs[0].text = "edited"
+    doc.set_mail_merge_package(package("first"))
+    assert records(doc) == (("first",),)
+    doc.add_custom_xml_store(b"<data/>")
+    assert doc.remove_mail_merge_package() is True
+    assert doc.mail_merge_package() is None
+    with pytest.raises(oxdocx.DocxError, match="shadowed `x` namespace"):
+        doc.to_bytes()

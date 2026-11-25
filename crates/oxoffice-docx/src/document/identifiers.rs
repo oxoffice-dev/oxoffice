@@ -209,6 +209,14 @@ impl Document {
     ///
     /// [`ContentTypes::add_override`]: oxoffice_opc::ContentTypes::add_override
     pub(crate) fn add_override_journaled(&mut self, part_name: &str, content_type: &str) {
+        debug_assert!(
+            !self
+                .package
+                .part_journal()
+                .is_some_and(|journal| journal.removed_override(part_name)),
+            "an override removed through the part journal is added again through the \
+             reservation journal, whose undo would remove the one the part journal puts back"
+        );
         let overrides = &mut self.package.content_types.overrides;
         let replaced = overrides
             .iter()
@@ -242,10 +250,11 @@ impl Document {
         rel_type: &str,
         target: &str,
     ) {
+        let covered = owner.is_some_and(|owner| self.cover_relationship_add(owner, id));
         let relationships = match owner {
             None => &mut self.package.package_rels,
             Some(owner) => {
-                if self.package.get_part_rels(owner).is_none() {
+                if !covered && self.package.get_part_rels(owner).is_none() {
                     self.identifiers
                         .record(|| Reservation::PackageRelationships(owner.to_owned()));
                 }
@@ -258,12 +267,76 @@ impl Document {
         );
         let next_id = relationships.next_id();
         relationships.add_with_id(id, rel_type, target);
-        self.identifiers
-            .record(|| Reservation::PackageRelationship {
-                owner: owner.map(str::to_owned),
+        if !covered {
+            self.identifiers
+                .record(|| Reservation::PackageRelationship {
+                    owner: owner.map(str::to_owned),
+                    id: id.to_owned(),
+                    next_id,
+                });
+        }
+    }
+
+    /// Add the external relationship `id` to `owner`'s part, recorded in the
+    /// open journal at the cost of the edge, not of the owner's
+    /// relationships.
+    pub(crate) fn add_external_relationship_journaled(
+        &mut self,
+        owner: &str,
+        id: &str,
+        rel_type: &str,
+        target: &str,
+    ) {
+        let covered = self.cover_relationship_add(owner, id);
+        if !covered && self.package.get_part_rels(owner).is_none() {
+            self.identifiers
+                .record(|| Reservation::PackageRelationships(owner.to_owned()));
+        }
+        let relationships = self.package.get_or_create_part_rels(owner);
+        debug_assert!(
+            relationships.items.iter().all(|item| item.id != id),
+            "a reserved relationship id is already in the package"
+        );
+        let next_id = relationships.next_id();
+        relationships
+            .items
+            .push(oxoffice_opc::relationship::Relationship {
                 id: id.to_owned(),
-                next_id,
+                rel_type: rel_type.to_owned(),
+                target: target.to_owned(),
+                target_mode: Some("External".to_owned()),
             });
+        if !covered {
+            self.identifiers
+                .record(|| Reservation::PackageRelationship {
+                    owner: Some(owner.to_owned()),
+                    id: id.to_owned(),
+                    next_id,
+                });
+        }
+    }
+
+    /// Whether the part journal undoes the add of relationship `id` to
+    /// `owner`, so that the reservation journal records nothing of it.
+    ///
+    /// An undo runs the part journal first, then the reservation journal
+    /// (`undo_edit`), which removes by id and removes an owner's
+    /// relationships it created. When the part journal recorded the owner's
+    /// relationships whole, its copy puts them back as they were, and a
+    /// reservation undo after it would remove what the copy restored (the
+    /// owner's relationships, or an id the copy holds). When the part
+    /// journal removed `id` one by one, the reservation undo would remove
+    /// the item the part journal reinserts; the owner is then recorded whole
+    /// here, after that removal, and the copy covers the add.
+    fn cover_relationship_add(&mut self, owner: &str, id: &str) -> bool {
+        if self
+            .package
+            .part_journal()
+            .is_some_and(|journal| journal.removed_relationship(owner, id))
+        {
+            self.package.record_part_rels(owner);
+        }
+        self.package.part_journal_records_rels(owner)
     }
 
     /// Remove, latest first, what `journal` recorded, leaving the registry
