@@ -1301,6 +1301,14 @@ pub(super) fn namespace_owners_from_spans(
         declarations.retain(|(name, _)| used_prefixes.contains(namespace_prefix(name).as_str()));
         let snapshot =
             logical_owner_snapshot(&xml[span.start..span.end], &span.bindings, &declarations)?;
+        let peers = spans
+            .iter()
+            .filter(|candidate| candidate.local_name == span.local_name);
+        let ordinal = peers
+            .clone()
+            .filter(|candidate| candidate.start < span.start)
+            .count();
+        let peers = peers.count();
         let ambiguous_without_namespace = spans.iter().any(|candidate| {
             if candidate.start == span.start || candidate.local_name != span.local_name {
                 return false;
@@ -1382,6 +1390,8 @@ pub(super) fn namespace_owners_from_spans(
             ambiguous_without_namespace,
             same_marker_structural_alternate,
             same_namespace_structural_alternate,
+            ordinal,
+            peers,
         });
     }
     Ok(owners)

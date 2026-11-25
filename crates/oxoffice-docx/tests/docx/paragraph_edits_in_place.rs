@@ -383,3 +383,60 @@ fn an_edit_keeps_a_paragraph_that_declares_its_own_namespace_whatever_the_spacin
     );
     assert!(part.contains(r#"x:kind="a""#) && part.contains(r#"x:kind="b""#));
 }
+
+#[test]
+fn an_edit_after_another_keeps_twin_paragraphs_apart_when_the_document_names_word_otherwise() {
+    use oxoffice_docx::Alignment;
+    use oxoffice_xml_test::{Writing, rewrite_package};
+
+    let mut doc = Document::new();
+    for text in ["Northwind Logistics", "NORTHWIND Logistics"] {
+        doc.add_paragraph("")
+            .alignment(Alignment::Center)
+            .add_run(text)
+            .bold(true)
+            .color("FFFFFF");
+    }
+    doc.add_paragraph("The team was challenged by the schedule.");
+    let bytes = doc.to_bytes().expect("saves");
+    // WordprocessingML as `ox0`: an edited paragraph declares `w` for its
+    // own names, and the first edit makes it the twin of the second
+    // paragraph but for that declaration.
+    let bytes = rewrite_package(&bytes, Writing::OtherPrefixes)
+        .expect("rewrites")
+        .bytes;
+    let mut doc = Document::from_bytes(&bytes).expect("opens");
+    for (word, replacement) in [("Northwind", "NORTHWIND"), ("challenged", "CHALLENGED")] {
+        let paragraphs = doc.story_paragraphs().expect("reads");
+        let paragraph = paragraphs
+            .iter()
+            .find(|paragraph| paragraph.text.contains(word))
+            .expect("the paragraph");
+        assert_eq!(
+            doc.try_replace_text_at(&paragraph.location, word, replacement, Some(1))
+                .expect("edits"),
+            Ok(1),
+            "{word}"
+        );
+    }
+    let saved = doc.to_bytes().expect("saves");
+    let part = crate::support::package_parts(&saved)
+        .remove("word/document.xml")
+        .expect("main part");
+    oxoffice_xml_test::canonical(&part).expect("the part binds every prefix it uses");
+    let text = Document::from_bytes(&saved)
+        .expect("reopens")
+        .story_paragraphs()
+        .expect("reads")
+        .into_iter()
+        .map(|paragraph| paragraph.text)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        text,
+        [
+            "NORTHWIND Logistics",
+            "NORTHWIND Logistics",
+            "The team was CHALLENGED by the schedule."
+        ]
+    );
+}
