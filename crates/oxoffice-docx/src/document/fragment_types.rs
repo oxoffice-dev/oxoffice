@@ -245,7 +245,10 @@ impl DocumentFragment {
         self.include_final_section_properties
     }
 
-    /// Capture one non-empty, half-open range of direct story items.
+    /// Capture one non-empty, half-open range of blocks of one container:
+    /// the story, or the content of one block content control, whose end is
+    /// [`ContentLocation::control_end`]. A range holding only part of a
+    /// complex field is refused.
     ///
     /// `start` is included and `end` is excluded, each with the bookmark
     /// starts written just before a block belonging to that block: the range
@@ -271,33 +274,66 @@ impl DocumentFragment {
         }
         let (source, owner, _) = candidate.fragment_story_source_owner_and_owners(&start.story)?;
         let source_xml = source.xml.into_owned();
-        let (owner, _, mut start_index, item_count) =
-            fragment_content_boundary(&source_xml, &owner, start)?;
+        let start_slot = resolve_block_location(&source_xml, &owner, start)?;
+        start_slot.block()?;
+        let mut start_index = start_slot.index;
+        let item_count = start_slot.items.len();
         let (_, checked_owner, _) = candidate.fragment_story_source_owner_and_owners(&end.story)?;
         // The range ends before the bookmark starts that lead its end block.
-        let (end_owner, _, mut end_index, _) =
-            fragment_insertion_boundary(&source_xml, &checked_owner, end)?;
-        if owner.full != end_owner.full {
-            return Err(Error::Other(
-                "document fragment range splits block ownership".to_owned(),
-            ));
+        let end_slot = resolve_block_location(&source_xml, &checked_owner, end)?;
+        let (_, mut end_index) = end_slot.leading_boundary(&source_xml)?;
+        if start_slot.owner.full != end_slot.owner.full {
+            let container = |slot: &BlockSlot| match slot.control {
+                Some(control) => format!("the content of content control {control}"),
+                None => "the story".to_owned(),
+            };
+            let end_hint = match start_slot.control {
+                Some(control) => format!(
+                    "; a range in that control's content ends at one of its blocks or at \
+                     control_end(story, {control})"
+                ),
+                None => {
+                    // The block of the story that holds the end.
+                    let holder = scan_story_items(&source_xml, &owner, None)?
+                        .iter()
+                        .position(|item| {
+                            item.direct_owner_child
+                                && item.full.start <= end_slot.owner.full.start
+                                && end_slot.owner.full.end <= item.full.end
+                        });
+                    match holder {
+                        Some(holder) => format!(
+                            "; a range of the story ends at a block of the story: at the control \
+                             that holds that end ([{holder}]) to stop before it, or at the block \
+                             after it"
+                        ),
+                        None => String::new(),
+                    }
+                }
+            };
+            return Err(Error::Other(format!(
+                "document fragment range splits block ownership: it starts in {} and ends in {}, \
+                 and a range stays in one container{end_hint}",
+                container(&start_slot),
+                container(&end_slot),
+            )));
         }
         if start_index >= end_index {
             return Err(Error::Other(
                 "document fragment range must contain at least one direct body item".to_owned(),
             ));
         }
+        let nested = start_slot.control.is_some();
+        let owner = start_slot.owner;
         if include_final_section_properties
-            && (start.story.kind != StoryKind::Body
-                || start.index_path.len() != 1
-                || end_index != item_count)
+            && (start.story.kind != StoryKind::Body || nested || end_index != item_count)
         {
             return Err(Error::Other(
                 "section-inclusive document fragments must end at the main-body boundary"
                     .to_owned(),
             ));
         }
-        let items = direct_story_content_items(&source_xml, &owner)?;
+        let items = start_slot.items;
         // The range starts before the bookmark starts that lead its start
         // block when every one of them ends inside the range or just after
         // it, and then takes the bookmark ends written just after it that
@@ -321,6 +357,11 @@ impl DocumentFragment {
             let xml = close_content_fragment_namespaces(&source_xml[item.full.clone()], &scope)?;
             validate_fragment_block_item(&xml)?;
         }
+        let selected = items[start_index..end_index]
+            .iter()
+            .map(|item| item.full.clone())
+            .collect::<Vec<_>>();
+        refuse_partial_complex_field(&source_xml, &selected, "the range")?;
         let content_end = story_owner_content_end(&source_xml, &owner)?;
         let selected_start = items[start_index].full.start;
         let selected_end = if end_index == item_count {
@@ -330,8 +371,7 @@ impl DocumentFragment {
         };
         if start.story.kind == StoryKind::Body
             && start.story.part_name == candidate.doc_part_name
-            && start.index_path.len() == 1
-            && (end.is_end || end.index_path.len() == 1)
+            && !nested
         {
             let selected = source_xml[selected_start..selected_end].to_vec();
             let mut updated = source_xml;

@@ -849,22 +849,35 @@ impl PyParagraph {
         text: &str,
         style: Option<&str>,
     ) -> PyResult<Py<PyParagraph>> {
-        let ParagraphLocation::Body(index) = self.validate(py)? else {
-            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
-                "insert_paragraph_before supports direct body owners; use document.insert_paragraph(index, text) for body content or the related story authoring API",
-            ));
+        let location = self.validate(py)?;
+        // A direct body paragraph takes the body splice, which keeps the
+        // handles; any other inserts at its location.
+        let content = match location {
+            ParagraphLocation::Body(index) => self
+                .document
+                .borrow(py)
+                .inner
+                .content_index_of_paragraph(index),
+            _ => None,
         };
-        let content = self
-            .document
-            .borrow(py)
-            .inner
-            .content_index_of_paragraph(index)
-            .ok_or_else(|| {
-                pyo3::exceptions::PyNotImplementedError::new_err(
-                    "use document.insert_paragraph with a direct body content index",
-                )
-            })?;
-        PyDocument::insert_paragraph(self.document.clone_ref(py), py, content, text, style)
+        if let Some(content) = content {
+            return PyDocument::insert_paragraph(
+                self.document.clone_ref(py),
+                py,
+                content,
+                text,
+                style,
+            );
+        }
+        let segments = self.current_path(&self.document.borrow(py)).segs;
+        PyDocument::insert_paragraph_at(
+            self.document.clone_ref(py),
+            py,
+            &location,
+            segments,
+            text,
+            style,
+        )
     }
 
     pub(crate) fn replace_xml(&self, py: Python<'_>, xml: &str) -> PyResult<()> {

@@ -602,6 +602,32 @@ impl PyTable {
             .read(&self.document.borrow(py).inner, read)
             .map_err(|error| docx_to_pyerr(py, error))
     }
+    /// Whether this is a body table written in a block content control,
+    /// which has no location (limitation docx-block-control-table-location).
+    pub(crate) fn in_block_control(&self, py: Python<'_>) -> PyResult<bool> {
+        let index = self.validate(py)?;
+        let related = self.current_related(py)?;
+        Ok(related.is_none()
+            && self
+                .document
+                .borrow(py)
+                .inner
+                .content_index_of_table(index)
+                .is_none())
+    }
+
+    /// The block location of this table in its story.
+    pub(crate) fn block_location(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<oxoffice_docx::ContentLocation> {
+        let index = self.validate(py)?;
+        let related = self.current_related(py)?;
+        TableLocation::new(index, &related)
+            .native(&self.document.borrow(py).inner)
+            .map_err(|error| docx_to_pyerr(py, error))
+    }
+
     pub(crate) fn direct_body_index(&self, py: Python<'_>) -> PyResult<usize> {
         let index = self.validate(py)?;
         let document = self.document.borrow(py);

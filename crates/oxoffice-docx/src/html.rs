@@ -64,7 +64,9 @@ pub struct HtmlImageResource<'a> {
 pub struct HtmlFragmentInsertResult {
     /// Refreshed destination identity valid for the mutated document.
     pub story: StoryId,
-    /// Half-open range of inserted direct children in the destination story.
+    /// Half-open range of inserted direct children in the destination's
+    /// container: the story, or the content of the block content control a
+    /// location inside one names.
     pub direct_range: Range<usize>,
     /// Ordered location-aware diagnostics for dropped or approximated input.
     pub diagnostics: Vec<HtmlDiagnostic>,

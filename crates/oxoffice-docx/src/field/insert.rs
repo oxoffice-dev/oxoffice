@@ -265,11 +265,7 @@ impl Document {
                 )
                 .map_err(|error| Error::Other(format!("caption target: {error}")))?;
         }
-        let index = destination
-            .index_path()
-            .first()
-            .copied()
-            .unwrap_or(candidate.story_items(destination.story())?.len());
+        let inserted = candidate.block_insertion_location(destination)?;
         candidate.insert_content(destination, crate::ContentFragment::paragraph(paragraph)?)?;
         let story = candidate
             .stories()?
@@ -284,7 +280,7 @@ impl Document {
             paragraph: crate::ContentLocation::new(
                 story,
                 crate::StoryItemKind::Paragraph,
-                vec![index],
+                inserted.index_path().to_vec(),
             ),
             entire_caption: allocated[0].clone(),
             label_and_number: allocated[1].clone(),

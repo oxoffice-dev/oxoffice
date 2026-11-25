@@ -37,6 +37,10 @@ class _SignatureReport(_TypedDict):
 
 _Path = str | _os.PathLike[str]
 _RevisionView = _Literal["accepted", "tracked"]
+# A block location: a ContentLocation; a StoryItem, its location; a Paragraph or Table handle, the location of that block
+# in its story, at any depth of block content controls; an int, a direct body index whose item count is the body's end;
+# a Story, its end.
+_Location = int | Paragraph | Table | StoryItem | Story | ContentLocation
 _RevisionStyle = _Literal["plain", "legal"]
 _BorderStyle = _Literal[
     "none", "single", "thick", "double", "dotted", "dashed", "dotDash", "wave"
@@ -1724,7 +1728,7 @@ class Document:
     @property
     def hyperlinks(self) -> tuple[Hyperlink, ...]: ...
     def insert_document(self, other: Document, *, at: int, policy: FragmentConflictPolicy | None = None) -> None: ...
-    def import_fragment(self, destination: ContentLocation, fragment: DocumentFragment, *, policy: FragmentConflictPolicy | None = None) -> None: ...
+    def import_fragment(self, destination: _Location, fragment: DocumentFragment, *, policy: FragmentConflictPolicy | None = None) -> None: ...
     def validate_form(self, rules: _Sequence[FormFieldRule]) -> tuple[FormValidationIssue, ...]: ...
     def fill_form(self, rules: _Sequence[FormFieldRule], assignments: _Sequence[FormFieldAssignment]) -> tuple[int, ...]: ...
     def reset_form(self, rules: _Sequence[FormFieldRule]) -> tuple[int, ...]: ...
@@ -1975,7 +1979,9 @@ class Document:
         that close a bookmark started inside it; all count in the result.
         """
     @_overload
-    def find_content_index(self, content: Paragraph | Table) -> int: ...
+    def find_content_index(self, content: Paragraph | Table) -> int:
+        """The direct body index of a direct body block. Any other block (in a block content control, a cell, another
+        story) has none: pass the handle itself to the location calls."""
     @_overload
     def find_content_index(self, content: str) -> int: ...
     def find_content_indices(self, text: str) -> tuple[int, ...]: ...
@@ -1991,8 +1997,8 @@ class Document:
         A bookmark start written between blocks belongs to the block after it (Google Docs writes a
         heading's bookmark so): the table goes before those starts, at the index of the first one.
         """
-    def pop_content(self, index: int | StoryItem) -> ContentFragment:
-        """Remove the direct body item at ``index`` and return it as a fragment.
+    def pop_content(self, index: _Location) -> ContentFragment:
+        """Remove the block at ``index`` (a direct body index, or any location form) and return it as a fragment.
 
         A bookmark start written between blocks belongs to the block after it (Google Docs writes a
         heading's bookmark so): the starts just before the item whose bookmark ends inside it, or in
@@ -2000,7 +2006,7 @@ class Document:
         ends, in the fragment. ``insert_content`` writes them back around the item.
         """
     def insert_content(
-        self, destination: int | StoryItem | Story, fragment: ContentFragment
+        self, destination: _Location, fragment: ContentFragment
     ) -> None:
         """Insert a fragment, with the bookmark markers it carries.
 
@@ -2011,8 +2017,12 @@ class Document:
         start, whose end it does not hold, keeps its id: inserted where that bookmark is whole, it is
         refused and changes nothing.
         """
-    def clone_content(self, source: Paragraph | Table, destination: int) -> None: ...
-    def move_content(self, source: Paragraph | Table, destination: int) -> None: ...
+    def clone_content(self, source: _Location, destination: _Location) -> None:
+        """Copy the block at `source` before the block at `destination`, or at an end. A block holding only part of a
+        complex field is refused."""
+    def move_content(self, source: _Location, destination: _Location) -> None:
+        """Move the block at `source` within its story, into or out of a block content control too. A block holding
+        only part of a complex field is refused, and so is the only block of a control, header, note or text box."""
 
     def add_heading(self, text: str = "", level: int = 1) -> Paragraph: ...
     def add_page_break(self) -> Paragraph: ...
@@ -2034,7 +2044,10 @@ class Paragraph:
     def _p(self) -> _Never: ...
     @property
     def _element(self) -> _Never: ...
-    def insert_paragraph_before(self, text: str = "", style: str | None = None) -> Paragraph: ...
+    def insert_paragraph_before(self, text: str = "", style: str | None = None) -> Paragraph:
+        """Insert a paragraph before this one, wherever it is: the body, a block content control at any depth, a table
+        cell, a header, footer, note, comment or text box. A direct body paragraph keeps the other handles; elsewhere
+        they are re-fetched, as after `Document.insert_content`."""
     @property
     def element(self) -> Paragraph: ...
     @property
@@ -2782,9 +2795,19 @@ class FragmentConflictPolicy:
 
 @_final
 class ContentLocation:
+    """Where a block operation reads or writes: `(i,)`, story item `i` (a direct child of the story, or a block content
+    control written in another block control); `(c, k)`, paragraph `k` of block content control `c`; `end(story)`, after
+    the story's last block; `control_end(story, c)`, after the last child of control `c`'s content."""
     def __new__(cls, story: Story, item_kind: str, index_path: _Sequence[int]) -> ContentLocation: ...
     @staticmethod
     def end(story: Story) -> ContentLocation: ...
+    @staticmethod
+    def control_end(story: Story, control_index: int) -> ContentLocation:
+        """The boundary after the last child of the content of the block content control that is story item
+        `control_index`. `(control_index, n)`, past its `n` paragraphs, names nothing."""
+    @property
+    def is_end(self) -> bool:
+        """Whether this location is an end: of its story, or of a block content control's content."""
     @property
     def story(self) -> Story: ...
     @property
@@ -2796,7 +2819,9 @@ class ContentLocation:
 class DocumentFragment:
     def __new__(cls, *, _private: _Never) -> DocumentFragment: ...
     @staticmethod
-    def from_range(document: Document, start: ContentLocation, end: ContentLocation, *, include_final_section_properties: bool = False) -> DocumentFragment: ...
+    def from_range(document: Document, start: _Location, end: _Location, *, include_final_section_properties: bool = False) -> DocumentFragment:
+        """The blocks from `start` to `end`, excluded, in one container (the story, or the content of one block control:
+        end a range there at `ContentLocation.control_end`). A range holding only part of a complex field is refused."""
 
 @_final
 class LegacyFormField:

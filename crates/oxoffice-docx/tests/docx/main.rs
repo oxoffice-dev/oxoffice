@@ -4,6 +4,7 @@
 mod attribute_strings;
 mod bibliography;
 mod bibliography_authoring;
+mod block_locations;
 mod body_blocks_in_place;
 mod body_savability;
 mod checked_replacement;

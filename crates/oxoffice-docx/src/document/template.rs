@@ -319,7 +319,7 @@ impl Document {
             .next()
             .ok_or_else(|| Error::Other("template cell owner disappeared".into()))?;
         let destination = ContentLocation::end(program.story);
-        let (boundary, _, _) = validated_content_boundary(source.as_bytes(), &owner, &destination)?;
+        let boundary = resolve_block_location(source.as_bytes(), &owner, &destination)?.boundary;
         Ok(operation.compose_sources(&[
             (Some(&source), 0..boundary, &[]),
             (None, 0..0, b"<w:p/>"),
@@ -581,7 +581,7 @@ impl Document {
             .next()
             .ok_or_else(|| Error::Other("template cell owner disappeared".into()))?;
         let destination = ContentLocation::end(program.story);
-        let (boundary, _, _) = validated_content_boundary(raw, &owner, &destination)?;
+        let boundary = resolve_block_location(raw, &owner, &destination)?.boundary;
         insert_story_fragment(raw, &owner, boundary, b"<w:p/>".to_vec())
     }
 
