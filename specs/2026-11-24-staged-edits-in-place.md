@@ -320,6 +320,60 @@ form operations (#7).
   or `w15` binding keeps it across the swap, and a settings or package part
   edit (a store, a mail-merge package) keeps it too.
   The seven setters cost 3.5 to 4.4 ms at 25, 100 and 400 paragraphs.
+- **Control and permission ids come from the registry.** A new content
+  control takes the smallest free `w:id` of an `sdt`, a new permission
+  range the smallest free `w:id` of a `permStart`, as today; today both
+  read every story to find it. The identifier registry holds the `sdt` ids
+  and the permission ids of every story, read at open with the other ids,
+  and reserves a new one through the reservation journal (#600): a refusal
+  gives it back. A control or a range an in-place edit removes keeps its
+  id held until the next reopen, as a removed bookmark does, so a later
+  call can take a larger id than the staged route would: an id is unique,
+  never meaningful. The coverage oracle (`assert_covers`) checks both sets:
+  an id the reopened document holds and the registry does not is a missing
+  reservation. The staged route, kept as the debug oracle, is given the id
+  the registry reserved.
+- **Structural control calls edit their blocks.** `insert_content_control`,
+  `remove_content_control`, `unwrap_content_control`,
+  `move_content_control`, `clone_content_control` and
+  `repeat_content_control` on a control of the body edit the direct body
+  blocks they change under a `BodyBlocks { slot, count }` unit: an insert
+  between blocks is 0 -> 1, inside a paragraph or a cell 1 -> 1, a removal
+  1 -> 0, an unwrap 1 -> N, a move the span from the first to the last
+  slot it changes (its cost grows with the distance moved, not with the
+  body), a clone 0 -> 1, a repeat 1 -> 1 (the block that holds the repeating
+  section). The binding publishes the change with the block splice of the
+  BLK lane (`publish_body_blocks_replaced`, N -> M with control blocks),
+  never a second splice: the owners of the new blocks are born, those of
+  the removed ones retire, every other handle stays. A clone or a repeat
+  freshens the ids of what it copies from the registry, not from a scan of
+  the document. A removal takes the comment threads and the notes only the
+  removed blocks reference: their references are read from those blocks,
+  and the notes and comments parts are edited under their units. A control
+  outside the body, a shape the splice answers `WholeRoute` for, and a
+  block that does not read back the same keep today's route.
+- **Paragraph calls edit their paragraph.** `set_story_text` and
+  `insert_legacy_form_field` on a body paragraph, and
+  `add_story_permission_range` whose two ends sit in body paragraphs, edit
+  those paragraphs (one, or the two ends of a range) and publish them with
+  the same splice; a body paragraph holding no table, text box or hyperlink
+  is the one-paragraph publication main already has (B2). Other stories
+  keep today's route.
+- **Form operations read the controls they change (#7).** `fill_form` and
+  `reset_form` resolve their targets from the typed controls of the body
+  (a tag) and the order of the legacy fields of a story (a part and an
+  ordinal), without serializing a story; they read the state of the
+  targeted controls only, plan as today, and write each changed control in
+  its direct body block, one `BodyBlocks` unit per block, inside one edit;
+  a bound control also writes its custom XML item under the `Parts` unit.
+  The checks that need every control (a target named twice, two targets
+  that nest) look at the targets only. A target inside a raw piece (a text
+  box kept as source, a raw block) or in another story keeps today's
+  route; a header or footer control is published by the story splice of
+  #634 (one header part), so the call does not read the body. The binding
+  publishes the changed blocks as above. Measured at 25 and 1,000
+  paragraphs, in the body and in a header; the limitation
+  `docx-form-cost` goes with the fix.
 
 ### What we do not do
 
