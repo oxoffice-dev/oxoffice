@@ -2273,11 +2273,11 @@ fn entry_boundary_toc_edits(
             toc_fragment_scan(&xml[end.content_start..span.result_end], &end.namespaces)?.has_run,
         );
     let mut entries = Vec::new();
+    let Ok(generated_text) = std::str::from_utf8(generated) else {
+        return Ok(None);
+    };
     let mut offset = 0;
-    while let Some(span) = std::str::from_utf8(&generated[offset..])
-        .ok()
-        .and_then(|rest| oxoffice_core::xml_element::element_span(rest).ok())
-    {
+    while let Ok(span) = oxoffice_core::xml_element::element_span(&generated_text[offset..]) {
         entries.push(&generated[offset..offset + span.range().end]);
         offset += span.range().end;
     }

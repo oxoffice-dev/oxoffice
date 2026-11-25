@@ -276,6 +276,7 @@ fn the_canonical_form_tells_apart_two_parts_that_say_different_things() {
     for (left, right) in [
         (r#"<w:b w:val="1"/>"#, r#"<w:b w:val="0"/>"#),
         ("<w:t>a</w:t>", "<w:t>a </w:t>"),
+        ("<w:t> </w:t>", "<w:t></w:t>"),
         (
             r#"<w:r xml:space="preserve"><w:t/> </w:r>"#,
             r#"<w:r xml:space="preserve"><w:t/></w:r>"#,
