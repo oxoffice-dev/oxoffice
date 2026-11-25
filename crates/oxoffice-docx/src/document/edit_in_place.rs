@@ -713,36 +713,43 @@ impl Document {
     }
 }
 
-/// `xml` without its namespace declarations (` xmlns="..."`,
-/// ` xmlns:p="..."`); other bytes as they are.
+/// `xml` without the namespace declarations of its tags (` xmlns="..."`,
+/// ` xmlns:p="..."` inside `<...>`); text and other bytes as they are. A
+/// prefix bound again to another namespace is not told apart: the oracle
+/// that uses this compares what both routes wrote from one model.
 #[cfg(debug_assertions)]
 fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(xml.len());
-    let mut rest = xml;
-    while let Some(at) = rest
-        .windows(7)
-        .position(|window| window == b" xmlns=" || window == b" xmlns:")
-    {
-        out.extend_from_slice(&rest[..at]);
-        let after = &rest[at + 1..];
-        let value = after
-            .iter()
-            .position(|byte| *byte == b'"')
-            .and_then(|open| {
-                after[open + 1..]
-                    .iter()
-                    .position(|byte| *byte == b'"')
-                    .map(|close| open + 1 + close + 1)
-            });
-        match value {
-            Some(end) => rest = &after[end..],
-            None => {
-                out.extend_from_slice(&rest[at..]);
-                return out;
+    let mut in_tag = false;
+    let mut quote = None;
+    let mut at = 0;
+    while at < xml.len() {
+        let byte = xml[at];
+        match quote {
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None if in_tag && (byte == b'"' || byte == b'\'') => quote = Some(byte),
+            None if in_tag && byte == b'>' => in_tag = false,
+            None if byte == b'<' => in_tag = true,
+            None if in_tag
+                && (xml[at..].starts_with(b" xmlns=") || xml[at..].starts_with(b" xmlns:")) =>
+            {
+                // Skip the attribute: its name, `=` and its quoted value.
+                let Some(open) = xml[at..].iter().position(|b| *b == b'"' || *b == b'\'') else {
+                    break;
+                };
+                let delimiter = xml[at + open];
+                let Some(close) = xml[at + open + 1..].iter().position(|b| *b == delimiter) else {
+                    break;
+                };
+                at += open + 1 + close + 1;
+                continue;
             }
+            None => {}
         }
+        out.push(byte);
+        at += 1;
     }
-    out.extend_from_slice(rest);
     out
 }
 

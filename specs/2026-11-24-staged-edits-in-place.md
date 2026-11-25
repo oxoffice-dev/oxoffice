@@ -353,12 +353,18 @@ form operations (#7).
   outside the body, a shape the splice answers `WholeRoute` for, and a
   block that does not read back the same keep today's route.
 - **Paragraph calls edit their paragraph.** `set_story_text` and
-  `insert_legacy_form_field` on a body paragraph, and
-  `add_story_permission_range` whose two ends sit in body paragraphs, edit
-  those paragraphs (one, or the two ends of a range) and publish them with
-  the same splice; a body paragraph holding no table, text box or hyperlink
-  is the one-paragraph publication main already has (B2). Other stories
-  keep today's route.
+  `insert_legacy_form_field` on a direct body paragraph, and
+  `add_story_permission_range` whose two ends sit in one direct body
+  paragraph, edit that paragraph and publish it with the same splice, as
+  the one-paragraph publication main already has (B2): the paragraph's
+  handle stays and its runs retire. The location of the item is checked
+  without listing the stories (`Document::stories` reads the whole main
+  part for the fingerprints the staged route checks). A permission range
+  reads and writes the markers of its paragraph alone, a pair of a fresh
+  id: a document whose markers do not pair elsewhere keeps them, where the
+  staged route refuses it. A range across two paragraphs, a paragraph of a
+  cell, a text box or another story keep today's route until the splice
+  takes their shapes.
 - **Form operations read the controls they change (#7).** `fill_form` and
   `reset_form` resolve their targets from the typed controls of the body
   (a tag) and the order of the legacy fields of a story (a part and an

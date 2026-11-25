@@ -6,6 +6,9 @@ was swapped in, leave the document's bytes and every handle as they were. A para
 table cell) takes the staged route and reads the same. A permission range takes the smallest free id, and a refused
 one gives it back."""
 
+import io
+import zipfile
+
 import pytest
 
 import oxoffice.docx as oxdocx
@@ -50,11 +53,14 @@ MARKERS = {
 
 
 def body_xml(doc):
-    import io
-    import zipfile
-
     with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as package:
         return package.read("word/document.xml")
+
+
+def marker_count(doc, marker):
+    """How many times `marker` occurs in the XML parts of the saved document."""
+    with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as package:
+        return sum(package.read(name).count(marker) for name in package.namelist() if name.endswith(".xml"))
 
 
 @pytest.mark.parametrize("call", list(CALLS))
@@ -134,9 +140,12 @@ def test_a_story_paragraph_publication_that_fails_after_the_swap_puts_the_paragr
     assert "on request" in str(raised.value)
     monkeypatch.delenv("OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE")
     check_unchanged(doc, before, handles)
+    if call == "Document.add_story_permission_range":
+        # The id the failed call reserved was given back.
+        assert CALLS[call](doc, item(doc, doc.paragraphs[EDITED])) == 0
 
 
-def test_permission_ranges_take_the_smallest_free_id_and_a_refused_one_gives_it_back(body):
+def test_permission_ranges_take_the_smallest_free_id_and_a_refused_call_takes_none(body):
     doc = oxdocx.Document.from_bytes(body)
     first = doc.add_story_permission_range(one_paragraph_range(item(doc, doc.paragraphs[EDITED])), editor="Clerk")
     with pytest.raises((oxdocx.DocxError, ValueError)):
@@ -157,6 +166,7 @@ def test_a_story_paragraph_call_on_a_header_or_a_cell_reads_the_same_after_a_reo
     targets = [it for it in doc.story_items if it.kind == "paragraph" and it.story.kind in ("header", "table_cell")]
     header = next(it for it in targets if it.story.kind == "header")
     cell = next(it for it in targets if it.story.kind == "table_cell")
+    markers = marker_count(doc, MARKERS[call])
     for it in (header, cell):
         # A fresh item: the first call may retire the second's handle.
         fresh = next(candidate for candidate in doc.story_items
@@ -164,3 +174,27 @@ def test_a_story_paragraph_call_on_a_header_or_a_cell_reads_the_same_after_a_reo
                      and candidate.text == it.text)
         CALLS[call](doc, fresh)
     assert texts(reopened(doc)) == texts(doc)
+    assert marker_count(doc, MARKERS[call]) == markers + 2
+
+
+def with_unpaired_header_marker(source):
+    """`source` with a permission end of no start in its header's first paragraph."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(source)) as package, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as copy:
+        for name in package.namelist():
+            data = package.read(name)
+            if name.startswith("word/header") and name.endswith(".xml"):
+                data = data.replace(b"</w:p>", b'<w:permEnd w:id="77"/></w:p>', 1)
+            copy.writestr(name, data)
+    return out.getvalue()
+
+
+def test_a_permission_range_in_a_body_paragraph_leaves_an_unpaired_marker_elsewhere_as_it_is(body):
+    # The range reads and writes the markers of its paragraph alone: the header's unpaired end stays, the range pairs.
+    doc = oxdocx.Document.from_bytes(with_unpaired_header_marker(body))
+    assert marker_count(doc, b'<w:permEnd w:id="77"/>') == 1
+    rid = doc.add_story_permission_range(one_paragraph_range(item(doc, doc.paragraphs[EDITED])), editor="Clerk")
+    xml = body_xml(doc)
+    assert xml.count(f'<w:permStart w:id="{rid}"'.encode()) == 1
+    assert xml.count(f'<w:permEnd w:id="{rid}"/>'.encode()) == 1
+    assert marker_count(doc, b'<w:permEnd w:id="77"/>') == 1

@@ -909,10 +909,12 @@ impl Document {
     }
 
     /// [`Self::add_story_permission_range`] for a range whose two ends sit
-    /// in one paragraph of the main part's body, its table cells or text
-    /// boxes, written in the direct body block that holds it (`block`, found
-    /// by the caller) and swapped in place under a `BodyBlocks` unit, the id
-    /// reserved from the registry in the same edit: `Some(id)`. `None`,
+    /// in one direct body paragraph of the main part
+    /// (`direct_body_paragraph_at`, `block` found by the caller),
+    /// swapped in place under a `BodyBlocks` unit, the id reserved from the
+    /// registry in the same edit: `Some(id)`. The markers of other
+    /// paragraphs and stories are not read: a document whose markers do not
+    /// pair keeps them as they are, and the range added pairs. `None`,
     /// changing nothing, sends the caller to
     /// [`Self::add_story_permission_range`].
     #[doc(hidden)]
@@ -934,6 +936,10 @@ impl Document {
                     == before.clone_for_staging().to_bytes().ok(),
                 "a permission range left to the staged route changed the document"
             ),
+            // The staged route refuses a document whose range markers did not
+            // pair before the call, in any story; this route reads and writes
+            // the markers of its paragraph alone, a pair of a fresh id.
+            Ok(Some(_)) if before.story_ranges().is_err() => {}
             _ => self.assert_in_place_matches_staged_declarations_aside(
                 before,
                 &result

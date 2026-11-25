@@ -141,10 +141,9 @@ impl Document {
         Ok(())
     }
 
-    /// [`Self::insert_field`] on a paragraph of the main part's body, its
-    /// table cells or text boxes, written in the direct body block that holds
-    /// it (`block`, found by the caller) and swapped in place under a
-    /// `BodyBlocks` unit: `Some(changed)`. `None`, changing nothing, sends the
+    /// [`Self::insert_field`] on a direct body paragraph of the main part
+    /// (`direct_body_paragraph_at`, `block` found by the caller),
+    /// swapped in place under a `BodyBlocks` unit: `Some(changed)`. `None`, changing nothing, sends the
     /// caller to [`Self::insert_field`].
     #[doc(hidden)]
     pub fn insert_field_in_block(
