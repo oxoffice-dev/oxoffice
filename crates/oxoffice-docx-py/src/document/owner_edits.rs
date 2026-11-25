@@ -151,6 +151,24 @@ impl PyDocument {
         while end < self.owners.len() && self.owners[end].parent == Some(selected) {
             end += 1;
         }
+        // A removal by swap may have moved an owner of the paragraph's item
+        // before it: its runs must all follow it, and its item holds no link.
+        let runs = self
+            .indexes
+            .runs_by_parent
+            .get(&selected)
+            .map_or(0, Vec::len);
+        let item = match &*self.owners[selected].location() {
+            WordOwnerLocation::Paragraph(location) => location.index_path().first().copied(),
+            _ => None,
+        };
+        if runs != end - selected - 1
+            || item
+                .and_then(|item| self.indexes.items.at(item))
+                .is_some_and(|item| item.links() != 0)
+        {
+            return Ok(None);
+        }
         for owner in &self.owners[end..] {
             let independent_run = matches!(owner.route_shape(), WordOwnerLocation::Run(..))
                 && owner.parent.is_some_and(|parent| parent < selected);

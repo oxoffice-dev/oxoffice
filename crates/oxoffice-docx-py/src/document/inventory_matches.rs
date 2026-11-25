@@ -320,6 +320,23 @@ pub(super) fn property_owner_key(addresses: &[WordOwnerAddress], index: usize) -
     }
 }
 
+/// The place of an owner among owners of one kind, story kind and part:
+/// its story's ordinal, then its route in the story.
+fn document_order(location: &WordOwnerLocation) -> (usize, Vec<usize>) {
+    match location {
+        WordOwnerLocation::Paragraph(route)
+        | WordOwnerLocation::Table(route)
+        | WordOwnerLocation::Run(route, _)
+        | WordOwnerLocation::Hyperlink(route, _) => {
+            (route.story().owner_index(), route.index_path().to_vec())
+        }
+        WordOwnerLocation::Cell { table, story, .. } => {
+            (story.owner_index(), table.index_path().to_vec())
+        }
+        WordOwnerLocation::Section(index) => (*index, Vec::new()),
+    }
+}
+
 pub(super) fn relocated_property_owners(
     old: &[WordOwner],
     new_addresses: &[WordOwnerAddress],
@@ -333,7 +350,7 @@ pub(super) fn relocated_property_owners(
     // which cell or table holds it, and the inventory is not in walk order
     // once a splice or a local edit appended owners: an owner with a parent
     // takes an old owner of the parent it matched, so that owners keyed alike
-    // in two cells never swap. Owners without a parent keep their order.
+    // in two cells never swap. Owners alike under one parent pair in document order.
     let mut buckets: HashMap<(PropertyOwnerKey, Option<usize>), Vec<usize>> = HashMap::new();
     for index in 0..old_addresses.len() {
         buckets
@@ -343,6 +360,12 @@ pub(super) fn relocated_property_owners(
             ))
             .or_default()
             .push(index);
+    }
+    // Owners keyed alike under one parent pair in document order, which the
+    // owner keys no longer give once a removal moved an owner into a freed
+    // key: by story ordinal, then by route.
+    for bucket in buckets.values_mut() {
+        bucket.sort_by_cached_key(|index| document_order(&old_addresses[*index].location));
     }
     let mut cursors: HashMap<(PropertyOwnerKey, Option<usize>), usize> = HashMap::new();
     let mut matched = Vec::with_capacity(new_addresses.len());

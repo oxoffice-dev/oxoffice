@@ -30,6 +30,8 @@ pub(crate) struct BodyItem {
     cells: AtomicUsize,
     /// How many of each the item holds.
     counts: (usize, usize, usize),
+    /// The body story hyperlink owners of the item.
+    links: usize,
 }
 
 impl BodyItem {
@@ -38,6 +40,7 @@ impl BodyItem {
         slot: Option<usize>,
         before: (usize, usize, usize),
         counts: (usize, usize, usize),
+        links: usize,
         previous_slot: usize,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -49,6 +52,7 @@ impl BodyItem {
             tables: AtomicUsize::new(before.1),
             cells: AtomicUsize::new(before.2),
             counts,
+            links,
         })
     }
 
@@ -66,6 +70,11 @@ impl BodyItem {
     /// holds.
     pub(super) fn counts(&self) -> (usize, usize, usize) {
         self.counts
+    }
+
+    /// The body story hyperlink owners the item holds.
+    pub(super) fn links(&self) -> usize {
+        self.links
     }
 
     fn paragraphs(&self) -> usize {
@@ -91,27 +100,30 @@ impl BodyItem {
         self.cells.fetch_add(by.cells as usize, Relaxed);
     }
 
+    /// The record's numbers, to compare with a record derived from a walk:
+    /// index, slot, the bases before it, its counts and its links.
     #[cfg(debug_assertions)]
-    fn facts(
-        &self,
-    ) -> (
-        usize,
-        Option<usize>,
-        usize,
-        usize,
-        usize,
-        (usize, usize, usize),
-    ) {
+    fn facts(&self) -> RecordFacts {
         (
             self.index(),
             self.has_slot.then(|| self.slot()),
-            self.paragraphs(),
-            self.tables(),
-            self.cells(),
+            (self.paragraphs(), self.tables(), self.cells()),
             self.counts,
+            self.links,
         )
     }
 }
+
+/// The numbers of a record: index, slot, the bases before it, its counts
+/// and its links.
+#[cfg(debug_assertions)]
+type RecordFacts = (
+    usize,
+    Option<usize>,
+    (usize, usize, usize),
+    (usize, usize, usize),
+    usize,
+);
 
 /// What a body splice inserts (positive) or removes before the records after it.
 #[derive(Clone, Copy, Default)]
@@ -398,6 +410,7 @@ impl WordBodyItems {
             paragraphs: Span,
             tables: Span,
             cells: Span,
+            links: usize,
         }
         let mut items = Vec::<Facts>::new();
         for address in addresses {
@@ -421,6 +434,7 @@ impl WordBodyItems {
                     facts.paragraphs.add(address.projection_ordinal?)
                 }
                 WordOwnerLocation::Table(_) => facts.tables.add(address.projection_ordinal?),
+                WordOwnerLocation::Hyperlink(..) => facts.links += 1,
                 _ => {}
             }
             if matches!(
@@ -539,6 +553,7 @@ impl WordBodyItems {
                 facts.slot,
                 (paragraphs, tables, cells),
                 counts,
+                facts.links,
                 last_slot,
             ));
             paragraphs += counts.0;
@@ -689,8 +704,10 @@ impl WordBodyItems {
         for item in &self.items[at..] {
             item.shift(shift);
         }
-        self.items
-            .insert(at, BodyItem::new(index, Some(slot), before, counts, slot));
+        self.items.insert(
+            at,
+            BodyItem::new(index, Some(slot), before, counts, 0, slot),
+        );
         self.totals.0 += counts.0;
         self.totals.1 += counts.1;
         self.totals.2 += counts.2;
@@ -720,6 +737,40 @@ impl WordBodyItems {
         self.totals.0 -= counts.0;
         self.totals.1 -= counts.1;
         self.totals.2 -= counts.2;
+    }
+
+    /// Whether a record lies strictly between body story items `first` and
+    /// `end`.
+    #[cfg(debug_assertions)]
+    pub(super) fn any_between(&self, first: usize, end: usize) -> bool {
+        self.items
+            .get(self.position(first.saturating_add(1)))
+            .is_some_and(|item| item.index() < end)
+    }
+
+    /// Whether an item after body story item `index` holds a body story
+    /// hyperlink. Integer work on the records after it, as a splice moves
+    /// them.
+    pub(super) fn links_after(&self, index: usize) -> bool {
+        self.items[self.position(index.saturating_add(1))..]
+            .iter()
+            .any(|item| item.links != 0)
+    }
+
+    /// Move the records after body story item `index` by `items` body story
+    /// items: an edit of the block at `index` changed how many it holds,
+    /// and nothing else they count.
+    pub(super) fn shift_after(&mut self, index: usize, items: isize) {
+        if items == 0 {
+            return;
+        }
+        let shift = BodyShift {
+            items,
+            ..BodyShift::default()
+        };
+        for item in &self.items[self.position(index.saturating_add(1))..] {
+            item.shift(shift);
+        }
     }
 
     /// Under debug assertions, check the records against those derived from

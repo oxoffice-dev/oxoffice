@@ -146,6 +146,7 @@ mod toc;
 use fonts::valid_authored_sfnt;
 pub use render::ContentMeasurement;
 
+mod block_edits_in_place;
 mod body;
 mod content;
 #[cfg(debug_assertions)]
@@ -252,6 +253,9 @@ mod story_xml;
 mod template_programs;
 mod text_boxes;
 mod walkers;
+mod written_references;
+#[doc(hidden)]
+pub use written_references::SlotHit;
 
 use edited_paragraph::{admit_edited_paragraph, edited_paragraph_ancestor_context};
 use fragment_checks::{

@@ -394,7 +394,7 @@ impl Document {
     }
 
     /// [`Self::edit_numbering_journaled`], keeping the edit.
-    fn edit_numbering<T: Clone + PartialEq + std::fmt::Debug>(
+    pub(super) fn edit_numbering<T: Clone + PartialEq + std::fmt::Debug>(
         &mut self,
         edit: impl Fn(&mut Self) -> Result<T>,
     ) -> Result<T> {
@@ -1361,7 +1361,7 @@ impl Document {
     /// The numbering graph without the content: definitions, instances and
     /// the styles linked to them. It reads the numbering and styles models,
     /// not the stories.
-    fn validate_numbering_model(&self) -> Result<()> {
+    pub(super) fn validate_numbering_model(&self) -> Result<()> {
         let numbering = self.numbering.as_ref();
         let Some(numbering) = numbering else {
             for style in &self.styles.styles {

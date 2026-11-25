@@ -50,6 +50,9 @@ pub(crate) use source::{
 };
 pub use source::{ScopedWordOperation, ScopedWordSource, close_content_fragment_namespaces};
 
+#[doc(hidden)]
+pub use crate::text::WrittenVisitor;
+
 /// Content that can appear in a document body (paragraphs and tables).
 ///
 /// Each child is boxed. A direct-body removal then shifts pointers instead of

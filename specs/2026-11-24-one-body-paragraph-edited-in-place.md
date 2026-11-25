@@ -57,7 +57,10 @@ pays. The rule of which handles are kept and which retire does not change
    exit that is not a success (a returned refusal, an error, a panic) drops
    the guard, which puts the old paragraph back, as the drop guard of the
    root spec's decision 1 replays a journal. Nothing of the inventory
-   changes before the commit, which cannot fail. An
+   changes before the revision commit. That commit can still return an
+   error, before it changes anything: the guard then puts the paragraph
+   back. Once it succeeds, the inventory updates that follow cannot fail,
+   their room reserved beforehand. An
    edit that fails or panics leaves the document untouched. A paragraph that
    is not a direct body child (inside a block content control, a cell, a
    header) returns `Ok(None)` before `edit` runs: the caller keeps its
@@ -69,11 +72,17 @@ pays. The rule of which handles are kept and which retire does not change
    staged route, and joins the #600 journal when it moves here.
 2. **The binding replaces the block's owners.** After the facade swap, the
    binding reads the new block alone (`word_block_owners`), and a block
-   replacement splice publishes it:
+   replacement splice publishes it (`publish_body_blocks_replaced`, a
+   general entry point for direct body blocks replaced in place, which takes
+   one paragraph replaced by one in this step and answers "whole route" for
+   any other shape):
    - the paragraph's owner keeps its key, its owner and properties states,
-     and takes the new block's facts; its descendants (runs, hyperlinks,
-     inline content) retire; the owners of the new block below the
-     paragraph are born and appended, as a splice appends;
+     and takes the new block's facts; its runs retire; the owners of the
+     new block below the paragraph are born and appended, as a splice
+     appends. A paragraph that holds a hyperlink, before or after the edit,
+     takes the whole route: a hyperlink has no parent, its projection
+     ordinal counts the links of the whole story, and the edits of this
+     step rarely meet one;
    - the old owners are found from the paragraph's owner through the
      parent maps, never by a walk of the inventory;
    - the body item records after the block move by the change in body
@@ -95,7 +104,15 @@ pays. The rule of which handles are kept and which retire does not change
    the inventory.
    Order: since #617 the owner vector is not in walk order after a splice
    (a splice appends the owners it inserts), and no read takes document
-   order from it. The paragraph and table lists, ordinals and walks read
+   order from it, with two exceptions B2 found and fixed: a property edit
+   that keeps every owner (`relocated_property_owners`) paired the owners
+   keyed alike under one parent (the paragraphs of one cell, text box and
+   note paragraphs, which have no parent) by key order, and now pairs them
+   in document order (story ordinal, then route); and the removal of the
+   last body paragraph took the paragraph's runs as the owners right after
+   it, and now checks that they are all of its runs and that its item holds
+   no hyperlink. The whole-inventory matcher keeps the smallest key when
+   several old owners match one route, which no test meets. The paragraph and table lists, ordinals and walks read
    the story order from the projections (`body_paragraphs`, `body_tables`,
    `cell_paragraphs`, `direct_body_paragraphs`) and the `*_by_parent` lists,
    which hold keys in story order; the pieces are per body block. The swap
@@ -106,21 +123,31 @@ pays. The rule of which handles are kept and which retire does not change
    order is meant to hold (the projections, the parent lists). B2 checks
    that no read iterates the owner vector for an order, and tests reads in
    document order after a removal that swapped: `Document.paragraphs`,
-   `Document.tables`, a cell's paragraphs, the runs of a paragraph,
-   `iter_inner_content`, texts and order equal to a reopened copy. Every splice that removes owners uses it, so
+   `Document.tables`, a cell's paragraphs, the runs of a paragraph, the
+   body story items (the Python API has no `iter_inner_content`), texts and
+   order equal to a reopened copy. The commit of a removal splice also
+   drops the removed slots from `direct_body_paragraphs` before the swap, as
+   the records after them moved. Every splice that removes owners uses it, so
    `Document.remove_content`, `remove_content_range` and `pop_content` can
    become local in a later pull request, which lets the removal splice take
    paragraphs Word saved.
 4. **What keeps today's route**: the cases of decision 3 of the one-block
    spec (blocks outside the body, blocks holding a text box before or after
-   the edit, paragraphs in block content controls, section breaks, unaligned
-   pieces), plus an inventory whose body item records are not anchored
-   (#617), and the hyperlink case of point 2.
+   the edit, paragraphs in block content controls, unaligned pieces), plus
+   an inventory whose body item records are not anchored (#617), and the
+   hyperlink cases of point 2. A paragraph that ends a section takes the
+   in-place route: these edits keep the paragraph's properties, so its
+   section break does not move, and its section owners keep their index.
 5. **Oracles.** Debug builds keep a copy of the document from before the
    edit, and after each block replacement check every kept owner
    (`assert_kept_owners_name_their_elements`), rebuild the inventory from the
    whole document and compare (`assert_word_inventory_rebuilds`, unordered),
-   and compare the block's read with the whole-part read (as 1b-iii-a does).
+   and compare the block's read with the whole-part read (as 1b-iii-a does);
+   they also check that the owners kept and retired are those the whole
+   route keeps and retires (`block_retention` over a walk). Debug builds
+   can fail or panic the publication after the swap on request
+   (`OXOFFICE_DEBUG_FAIL_PARAGRAPH_SPLICE`), so that tests see the old
+   paragraph put back.
 
 What stays guaranteed: a handle either finds its element or raises, never
 another element; a failed edit, a refused publication or a no-op leaves the
@@ -157,6 +184,31 @@ paragraphs, Python tests of kept and retired handles, refusals and failures afte
 swap that leave the document bytes and every handle unchanged (on a body
 Word saved), reads in document order after a removal that swapped, and a
 mutation check of each guard.
+
+## Outcome (B2)
+
+As decided, with the corrections written into the decisions above: a
+paragraph holding a hyperlink takes the whole route, a paragraph ending a
+section takes the in-place route, and two reads that took an order from
+owner keys were fixed. When the splice answers "whole route" after the
+edit ran (a field added before a later hyperlink), the old paragraph goes
+back and the call takes its staged route, which runs the edit again; the
+blocks known to need the whole route are refused before the edit runs.
+
+`scaling` wheels of main (e473ce26) and of B2 on Linux, the body of
+`test_docx_scaling.py`, fastest of 9 calls:
+
+| Call | 25 ¶ | 100 ¶ | 400 ¶ |
+| --- | --- | --- | --- |
+| `Paragraph.text` | 4.26 -> 0.86 ms | 8.97 -> 0.87 ms | 28.95 -> 0.87 ms |
+| `Paragraph.add_run` | 4.25 -> 0.91 ms | 9.03 -> 0.91 ms | 29.55 -> 0.91 ms |
+| `Paragraph.add_equation` | 4.59 -> 1.10 ms | 9.28 -> 1.11 ms | 29.65 -> 1.11 ms |
+| `Run.remove` | 4.38 -> 0.99 ms | 9.20 -> 0.99 ms | 29.22 -> 0.99 ms |
+| `Run.add_field` | 5.57 -> 1.70 ms | 10.84 -> 1.71 ms | 32.10 -> 1.70 ms |
+| `Run.add_legacy_form_field` | 7.18 -> 3.03 ms | 13.04 -> 3.03 ms | 34.40 -> 3.01 ms |
+| `Document.split_run` | 4.52 -> 1.05 ms | 9.33 -> 1.05 ms | 29.54 -> 1.05 ms |
+
+The seven calls leave `GROWING`.
 
 ## Links
 

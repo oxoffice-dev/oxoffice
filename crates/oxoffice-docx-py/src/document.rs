@@ -93,6 +93,7 @@ mod owner_anchors;
 mod owner_facts;
 mod owner_locations;
 mod owner_pieces;
+mod paragraph_in_place;
 mod publication;
 
 pub(crate) use block_edits::BlockShift;
