@@ -14,7 +14,7 @@ impl PyDocument {
     ) -> PyResult<oxoffice_docx::StoryId> {
         self.validate_owned_story(py, story)?;
         self.inner
-            .stories()
+            .stories_in_part(&story.part_name)
             .map_err(|error| docx_to_pyerr(py, error))?
             .into_iter()
             .find(|candidate| story_snapshot(candidate) == *story)

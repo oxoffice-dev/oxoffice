@@ -15,7 +15,6 @@ pub(crate) enum WordPublication {
     /// removed owners retire, the inserted ones are born, and every other
     /// owner keeps its states at its moved route, which its handles follow.
     BodySplice,
-    HeaderFooterAppend(usize),
     ParagraphText(oxoffice_docx::ContentLocation),
     ParagraphAppend(oxoffice_docx::ContentLocation),
     TableGrid(oxoffice_docx::ContentLocation),
@@ -628,6 +627,466 @@ impl PyDocument {
             .as_mut()
             .expect("active pieces")
             .replace_part(part, piece);
+        #[cfg(debug_assertions)]
+        {
+            self.assert_word_inventory_rebuilds(false);
+            assert_kept_owners_name_their_elements(
+                (before, &old_owners),
+                (&self.inner, &self.owners),
+                None,
+            );
+        }
+        Ok(true)
+    }
+}
+
+/// What each section is and shows, in section order: its properties
+/// (`w:sectPr`), and for each header and footer variant the effective story
+/// (its kind, part and owner index, not its content fingerprint, which an
+/// edit of the part changes) and the section it comes from. `None` when a
+/// section's story cannot be resolved. It walks the section properties once
+/// per variant and section, without reading any story.
+pub(crate) type SectionStories = Vec<(
+    Option<oxoffice_docx_oxml::CT_SectPr>,
+    Vec<Option<(oxoffice_docx::StoryKind, String, usize, usize)>>,
+)>;
+
+pub(crate) fn section_stories(document: &oxoffice_docx::Document) -> Option<SectionStories> {
+    use oxoffice_docx::{HdrFtrType, HeaderFooterKind};
+    (0..document.section_count())
+        .map(|index| {
+            [HeaderFooterKind::Header, HeaderFooterKind::Footer]
+                .into_iter()
+                .flat_map(|kind| {
+                    [HdrFtrType::Default, HdrFtrType::First, HdrFtrType::Even]
+                        .map(|variant| (kind, variant))
+                })
+                .map(|(kind, variant)| {
+                    let story = document.section_story(index, kind, variant).ok()?;
+                    Some(story.map(|story| {
+                        let id = story.story();
+                        (
+                            id.kind(),
+                            id.part_name().to_owned(),
+                            id.owner_index(),
+                            story.source_section(),
+                        )
+                    }))
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|stories| {
+                    let properties = document
+                        .section(index)
+                        .map(|section| section.properties().clone());
+                    (properties, stories)
+                })
+        })
+        .collect()
+}
+
+/// How an edit of header and footer parts was published.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StoryPartsPublication {
+    /// Nothing a handle names changed: every handle stays.
+    Nothing,
+    /// The owners of the changed, added and removed story parts, and the
+    /// section owners' content views whose stories changed.
+    Spliced,
+    /// The whole inventory, every handle retired.
+    Whole,
+}
+
+impl PyDocument {
+    /// Run `edit`, a header, footer, watermark or section story edit, on
+    /// the live document, and publish what it changed (decision 4 of
+    /// `specs/2026-11-24-staged-edits-in-place.md`):
+    ///
+    /// - no change: nothing, every handle kept;
+    /// - a header or footer part changed, added or no longer referenced:
+    ///   the owners of that part retire, those read from the part alone
+    ///   are born ([`Self::splice_story_parts`]), every other owner and the
+    ///   document epoch stay;
+    /// - a section that shows another story than before: its section
+    ///   owner's content view retires (the header and footer handles of
+    ///   that section and what they returned), its owner view stays.
+    ///
+    /// A refused edit, or a refused publication, leaves the document and
+    /// every handle as they were. A document whose header and footer edits
+    /// take the staged route, or whose story parts the pieces do not hold,
+    /// is edited on a copy and publishes the whole inventory, as before.
+    pub(crate) fn edit_story_parts<T: Send>(
+        &mut self,
+        py: Python<'_>,
+        operation: &'static str,
+        edit: impl FnOnce(&mut oxoffice_docx::Document) -> oxoffice_docx::Result<T> + Send,
+    ) -> PyResult<(T, StoryPartsPublication)> {
+        if self.snapshot_scope.is_none() {
+            // No Word authority: no owner and no handle to publish to.
+            let inner = &mut self.inner;
+            let value = py
+                .detach(|| edit(inner))
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            return Ok((value, StoryPartsPublication::Nothing));
+        }
+        let sections = section_stories(&self.inner);
+        let parts_known = self.pieces.as_ref().is_some_and(|pieces| {
+            self.inner.story_part_sources().is_ok_and(|sources| {
+                sources
+                    .iter()
+                    .map(|(kind, name, _)| (*kind, name.as_str()))
+                    .eq(pieces.part_sources().map(|(kind, name, _)| (kind, name)))
+            })
+        });
+        let (Some(sections), true, false) = (
+            sections,
+            parts_known,
+            self.inner.header_footer_edits_are_staged(),
+        ) else {
+            let mut candidate = self.inner.clone_for_staging();
+            let value = py
+                .detach(|| edit(&mut candidate))
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            let prepared = self.prepare_word_revision(
+                py,
+                &candidate,
+                operation,
+                WordPublication::Conservative,
+            )?;
+            self.commit_word_revision(prepared)?;
+            self.install_inner(candidate);
+            return Ok((value, StoryPartsPublication::Whole));
+        };
+        #[cfg(debug_assertions)]
+        let before = self.inner.clone_for_staging();
+        self.inner.hold_edit_undo();
+        let inner = &mut self.inner;
+        let result = py.detach(|| edit(inner));
+        let undo = self.inner.take_edit_undo();
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                if let Some(undo) = undo {
+                    self.inner.undo_edit(undo);
+                }
+                return Err(docx_to_pyerr(py, error));
+            }
+        };
+        // No in-place edit ran (the call found nothing to do), or it
+        // changed nothing: no publication.
+        let Some(undo) = undo.filter(|undo| undo.report().changed()) else {
+            #[cfg(debug_assertions)]
+            self.assert_word_inventory_rebuilds(false);
+            return Ok((value, StoryPartsPublication::Nothing));
+        };
+        let published = self
+            .splice_story_parts(
+                py,
+                operation,
+                &sections,
+                #[cfg(debug_assertions)]
+                &before,
+            )
+            .and_then(|spliced| {
+                if spliced {
+                    return Ok(StoryPartsPublication::Spliced);
+                }
+                let candidate = self.inner.clone_for_staging();
+                let prepared = self.prepare_word_revision(
+                    py,
+                    &candidate,
+                    operation,
+                    WordPublication::Conservative,
+                )?;
+                self.commit_word_revision(prepared)?;
+                self.install_inner(candidate);
+                Ok(StoryPartsPublication::Whole)
+            });
+        match published {
+            Ok(publication) => Ok((value, publication)),
+            Err(error) => {
+                self.inner.undo_edit(undo);
+                Err(error)
+            }
+        }
+    }
+
+    /// Publish an in-place edit of header and footer parts and of what each
+    /// section shows, at the cost of those parts: the owners of each story
+    /// part whose bytes changed, or that the document no longer relates,
+    /// retire; the owners of each changed or added part, read from that
+    /// part alone, are born; each section that shows another story than in
+    /// `sections` (taken before the edit) gets a new content view; every
+    /// other owner and the document epoch stay.
+    ///
+    /// Answers `false`, publishing nothing, when a part cannot be read alone
+    /// or the inventory does not hold the owners the pieces say a part has:
+    /// the caller then publishes the whole inventory.
+    pub(crate) fn splice_story_parts(
+        &mut self,
+        py: Python<'_>,
+        operation: &'static str,
+        sections: &SectionStories,
+        #[cfg(debug_assertions)] before: &oxoffice_docx::Document,
+    ) -> PyResult<bool> {
+        let Some(after) = section_stories(&self.inner) else {
+            return Ok(false);
+        };
+        if after.len() != sections.len() {
+            return Ok(false);
+        }
+        let Some(pieces) = self.pieces.as_ref() else {
+            return Ok(false);
+        };
+        let sources = self
+            .inner
+            .story_part_sources()
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let old_parts = pieces
+            .part_sources()
+            .map(|(kind, name, xml)| (kind, name.to_owned(), xml))
+            .collect::<Vec<_>>();
+        // The parts whose owners retire, with how many the pieces hold.
+        let mut retiring = Vec::<String>::new();
+        let mut retiring_count = 0;
+        let mut next_parts = Vec::with_capacity(sources.len());
+        let mut born_parts = Vec::new();
+        let mut kept = vec![false; old_parts.len()];
+        for (kind, name, xml) in &sources {
+            let old = old_parts
+                .iter()
+                .position(|(old_kind, old_name, _)| old_kind == kind && old_name == name);
+            if let Some(index) = old {
+                kept[index] = true;
+                if old_parts[index].2 == xml.as_ref() {
+                    next_parts.push(pieces.part_piece(index));
+                    continue;
+                }
+                let Some((_, addresses)) = pieces.part_owner_addresses(name) else {
+                    return Ok(false);
+                };
+                retiring_count += addresses.len();
+                retiring.push(name.clone());
+            }
+            let Some((piece, addresses)) = WordPieces::read_part(&self.inner, *kind, name, xml)
+            else {
+                return Ok(false);
+            };
+            next_parts.push(piece);
+            born_parts.push(addresses);
+        }
+        for (index, (_, name, _)) in old_parts.iter().enumerate() {
+            if kept[index] {
+                continue;
+            }
+            let Some((_, addresses)) = pieces.part_owner_addresses(name) else {
+                return Ok(false);
+            };
+            retiring_count += addresses.len();
+            retiring.push(name.clone());
+        }
+        drop(old_parts);
+        // A section whose properties changed (a header reference) is another
+        // element: its owner retires with its content view. One that shows
+        // other stories through an earlier section retires its content view.
+        let changed_sections = sections
+            .iter()
+            .zip(&after)
+            .enumerate()
+            .filter(|(_, (before, after))| before != after)
+            .map(|(index, (before, after))| (index, before.0 != after.0))
+            .collect::<Vec<_>>();
+        if retiring.is_empty() && born_parts.is_empty() && changed_sections.is_empty() {
+            // The edit changed no story part and no section's stories: no
+            // owner changed.
+            #[cfg(debug_assertions)]
+            self.assert_word_inventory_rebuilds(false);
+            return Ok(true);
+        }
+        let keys = (0..self.owners.len())
+            .filter(|&key| {
+                owner_root_story(&self.owners, key)
+                    .is_some_and(|story| retiring.iter().any(|name| name == story.part_name()))
+            })
+            .collect::<Vec<_>>();
+        if keys.len() != retiring_count {
+            return Ok(false);
+        }
+        // The direct body paragraphs that hold the properties of the
+        // sections before the last one, in section order: one whose section
+        // properties changed is another element too, and retires (its runs
+        // keep their states, which only a handle taken through it names).
+        let holders = self
+            .inner
+            .body_children()
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| {
+                matches!(
+                    block,
+                    oxoffice_docx_oxml::BodyContent::Paragraph(paragraph)
+                        if paragraph
+                            .properties
+                            .as_ref()
+                            .is_some_and(|properties| properties.sect_pr.is_some())
+                )
+            })
+            .map(|(slot, _)| slot)
+            .collect::<Vec<_>>();
+        // Each renewed owner: its key, and whether all its states renew
+        // (else its content view alone), in birth order.
+        let mut renewed = Vec::with_capacity(2 * changed_sections.len());
+        let mut held = Vec::new();
+        for &(index, properties) in &changed_sections {
+            let Some(key) = self
+                .indexes
+                .find(&self.owners, &WordOwnerLocation::Section(index))
+            else {
+                return Ok(false);
+            };
+            if self.owners[key].content.is_none() {
+                return Ok(false);
+            }
+            renewed.push((key, properties));
+            if properties && let Some(&slot) = holders.get(index) {
+                let Some(key) = self.indexes.direct_body_paragraph(slot) else {
+                    return Ok(false);
+                };
+                renewed.push((key, true));
+                held.push(slot);
+            }
+        }
+        let renewed_locations = renewed
+            .iter()
+            .map(|&(key, all)| (self.owners[key].location().into_owned(), all))
+            .collect::<Vec<_>>();
+        let section_states = renewed
+            .iter()
+            .flat_map(|&(key, all)| {
+                let owner = &self.owners[key];
+                if all {
+                    owner.states()
+                } else {
+                    owner.content.iter().cloned().collect()
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut retired = keys
+            .iter()
+            .flat_map(|&key| self.owners[key].states())
+            .chain(section_states)
+            .collect::<Vec<_>>();
+        retired.push(
+            self.snapshot_scope
+                .as_ref()
+                .expect("active Word authority")
+                .clone(),
+        );
+        let mut births = born_parts
+            .iter()
+            .flatten()
+            .flat_map(|address| address.location.scopes().iter().copied())
+            .collect::<Vec<_>>();
+        for &(key, all) in &renewed {
+            if all {
+                births.extend_from_slice(self.owners[key].location().scopes());
+            } else {
+                births.push(RevisionScope::Text);
+            }
+        }
+        births.push(RevisionScope::Text);
+        let revision = self
+            .revisions
+            .prepare_local_scopes(operation, &retired, &births)
+            .map_err(revision_to_pyerr)?;
+        let states = (0..births.len())
+            .map(|index| revision.born(index).expect("prepared owner birth"))
+            .collect::<Vec<_>>();
+        #[cfg(debug_assertions)]
+        let old_owners = self.owners.clone();
+        self.revisions
+            .commit_scopes(revision)
+            .map_err(revision_to_pyerr)?;
+        // The born owners take the keys of the retired ones, then keys after
+        // every current one; a parent is in its child's part. Parts that
+        // lost owners compact the inventory.
+        let count = born_parts.iter().map(Vec::len).sum::<usize>();
+        let mut free = keys.clone();
+        if count < keys.len() {
+            self.remove_owners(&keys);
+            free.clear();
+        } else {
+            for &key in &keys {
+                self.indexes.unindex_owner(key, &self.owners[key]);
+            }
+        }
+        let mut slots = free.into_iter().chain(self.owners.len()..);
+        let mut offset = 0;
+        for addresses in born_parts {
+            let key_of = addresses
+                .iter()
+                .map(|_| slots.next().expect("a key"))
+                .collect::<Vec<_>>();
+            for (index, mut address) in addresses.into_iter().enumerate() {
+                let scopes = &states[offset..offset + address.location.scopes().len()];
+                offset += scopes.len();
+                address.parent = address.parent.map(|parent| key_of[parent]);
+                let owner = WordOwner::new(address, scopes, &self.indexes.items);
+                let key = key_of[index];
+                self.indexes.index_owner(key, &owner);
+                if key < self.owners.len() {
+                    self.owners[key] = owner;
+                } else {
+                    debug_assert_eq!(key, self.owners.len(), "born keys follow the owners");
+                    self.owners.push(owner);
+                }
+            }
+        }
+        // The renewed owners are found again: a compaction moved their keys.
+        for (location, all) in renewed_locations {
+            let key = self
+                .indexes
+                .find(&self.owners, &location)
+                .expect("a renewed owner stays");
+            let mut next = || {
+                let state = states[offset].clone();
+                offset += 1;
+                state
+            };
+            let owner = &mut self.owners[key];
+            if !all {
+                owner.content = Some(next());
+                continue;
+            }
+            // Its route, parent and children stay: only the index by
+            // owner state follows.
+            let previous = owner.owner.generation();
+            owner.owner = next();
+            for state in [&mut owner.content, &mut owner.properties, &mut owner.grid] {
+                if state.is_some() {
+                    *state = Some(next());
+                }
+            }
+            let current = owner.owner.generation();
+            self.indexes.by_generation.remove(&previous);
+            self.indexes.by_generation.insert(current, key);
+        }
+        // The pieces of the holding paragraphs follow their new bytes.
+        for slot in held {
+            let blocks = self.inner.body_children();
+            if let Some(owners) = word_block_owners(&self.inner, &blocks[slot]).ok().flatten() {
+                self.pieces.as_mut().expect("active pieces").splice(
+                    &self.inner,
+                    slot,
+                    1,
+                    Some(owners),
+                );
+            }
+        }
+        self.snapshot_scope = Some(states.last().expect("snapshot birth").clone());
+        self.pieces
+            .as_mut()
+            .expect("active pieces")
+            .replace_parts(next_parts);
         #[cfg(debug_assertions)]
         {
             self.assert_word_inventory_rebuilds(false);

@@ -25,13 +25,7 @@ impl Document {
 
     /// Replace the header atomically, refusing unsafe comment removal.
     pub fn try_set_header(&mut self, text: &str) -> Result<()> {
-        let mut candidate = self.clone_for_staging();
-        candidate.invalidate_layout();
-        candidate.set_header_footer_part(text, true, HdrFtrType::Default)?;
-        candidate.reconcile_comment_removal(self)?;
-        candidate.clone_for_staging().prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.set_header_footer_text(text, true, HdrFtrType::Default)
     }
 
     /// Set the default footer text, as [`Self::set_header`] sets the header.
@@ -45,13 +39,7 @@ impl Document {
 
     /// Replace the footer atomically, refusing unsafe comment removal.
     pub fn try_set_footer(&mut self, text: &str) -> Result<()> {
-        let mut candidate = self.clone_for_staging();
-        candidate.invalidate_layout();
-        candidate.set_header_footer_part(text, false, HdrFtrType::Default)?;
-        candidate.reconcile_comment_removal(self)?;
-        candidate.clone_for_staging().prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.set_header_footer_text(text, false, HdrFtrType::Default)
     }
 
     /// Set the first-page header text, and give the last section a different
@@ -71,14 +59,7 @@ impl Document {
 
     /// Replace the first page header atomically, refusing unsafe comment removal.
     pub fn try_set_first_page_header(&mut self, text: &str) -> Result<()> {
-        let mut candidate = self.clone_for_staging();
-        candidate.invalidate_layout();
-        candidate.set_header_footer_part(text, true, HdrFtrType::First)?;
-        candidate.set_different_first_page(true);
-        candidate.reconcile_comment_removal(self)?;
-        candidate.clone_for_staging().prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        self.set_header_footer_text(text, true, HdrFtrType::First)
     }
 
     /// Set the first-page footer text.
@@ -92,14 +73,132 @@ impl Document {
 
     /// Replace the first page footer atomically, refusing unsafe comment removal.
     pub fn try_set_first_page_footer(&mut self, text: &str) -> Result<()> {
+        self.set_header_footer_text(text, false, HdrFtrType::First)
+    }
+
+    /// The text setters of headers and footers ([`Self::try_set_header`] and
+    /// its siblings), in place: the header or footer part, its
+    /// relationships and content type are journaled by the package
+    /// (`EditUnit::Parts`), the section properties they reference from are
+    /// copied (`EditUnit::SectionProperties` of the first and the final
+    /// section, the two a setter may write), and nothing is staged or
+    /// reopened. A document whose headers or footers hold comment markers
+    /// keeps the staged route, which removes the comments a replaced header
+    /// anchored.
+    fn set_header_footer_text(
+        &mut self,
+        text: &str,
+        is_header: bool,
+        hdr_type: HdrFtrType,
+    ) -> Result<()> {
+        if self.header_footer_stories_hold_comment_markers() {
+            return self.set_header_footer_text_staged(text, is_header, hdr_type);
+        }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let units = self.header_footer_setter_units();
+        let result = self.edit_in_place(&units, |document| {
+            let part_name = document.set_header_footer_part(text, is_header, hdr_type)?;
+            // The staged route's reopen refuses a character XML 1.0 cannot
+            // carry: the part it wrote is checked as that reopen reads it.
+            if let Some(xml) = document.package.get_part(&part_name) {
+                OpcPackage::reject_part_xml_characters(&part_name, xml)?;
+            }
+            if hdr_type == HdrFtrType::First {
+                document.set_different_first_page(true);
+            }
+            Ok(())
+        });
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            staged.set_header_footer_text_staged(text, is_header, hdr_type)
+        });
+        result
+    }
+
+    /// The staged route of [`Self::set_header_footer_text`]: a copy is
+    /// edited, its comments reconciled, checked by a save and reopen, and
+    /// committed. It is the debug oracle of the in-place route, and the
+    /// route of a document whose headers or footers hold comment markers.
+    fn set_header_footer_text_staged(
+        &mut self,
+        text: &str,
+        is_header: bool,
+        hdr_type: HdrFtrType,
+    ) -> Result<()> {
         let mut candidate = self.clone_for_staging();
         candidate.invalidate_layout();
-        candidate.set_header_footer_part(text, false, HdrFtrType::First)?;
-        candidate.set_different_first_page(true);
+        candidate.set_header_footer_part(text, is_header, hdr_type)?;
+        if hdr_type == HdrFtrType::First {
+            candidate.set_different_first_page(true);
+        }
         candidate.reconcile_comment_removal(self)?;
         candidate.clone_for_staging().prepare_and_reopen_staged()?;
         self.commit_staged_mutation(candidate);
         Ok(())
+    }
+
+    /// The units a document-level header or footer setter may change: the
+    /// parts, and the section properties of the first section and of the
+    /// final one (created when the body has none).
+    fn header_footer_setter_units(&self) -> Vec<crate::EditUnit> {
+        let final_index = self.section_count() - usize::from(self.document.body.sect_pr.is_some());
+        let mut units = vec![
+            crate::EditUnit::Parts,
+            crate::EditUnit::SectionProperties { index: 0 },
+        ];
+        if final_index != 0 {
+            units.push(crate::EditUnit::SectionProperties { index: final_index });
+        }
+        units
+    }
+
+    /// Whether `part_name` is a part the main part relates as a header or a
+    /// footer.
+    pub(super) fn is_header_footer_part(&self, part_name: &str) -> bool {
+        self.header_footer_part_names()
+            .any(|candidate| part_name_identity(&candidate) == part_name_identity(part_name))
+    }
+
+    /// The parts the main part relates as headers or footers.
+    fn header_footer_part_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.package
+            .get_part_rels(&self.doc_part_name)
+            .into_iter()
+            .flat_map(|relationships| &relationships.items)
+            .filter(|relationship| {
+                relationship_is_internal(relationship)
+                    && matches!(
+                        relationship.rel_type.as_str(),
+                        rel_types::HEADER | rel_types::FOOTER
+                    )
+            })
+            .map(|relationship| {
+                OpcPackage::resolve_rel_target(&self.doc_part_name, &relationship.target)
+            })
+    }
+
+    /// Whether the header, footer and section story edits of this document
+    /// take their staged route, which reopens the document, instead of
+    /// editing it in place: a caller that publishes what an in-place edit
+    /// changed publishes the whole document then. It reads the header and
+    /// footer parts alone.
+    #[doc(hidden)]
+    pub fn header_footer_edits_are_staged(&self) -> bool {
+        self.header_footer_stories_hold_comment_markers()
+    }
+
+    /// Whether a header or footer part holds a comment marker, or cannot be
+    /// read for one: an edit that replaces or drops a header or footer then
+    /// keeps the staged route, which removes the comments it anchored. It
+    /// reads the header and footer parts alone.
+    pub(super) fn header_footer_stories_hold_comment_markers(&self) -> bool {
+        self.header_footer_part_names().any(|part_name| {
+            self.package.get_part(&part_name).is_some_and(|xml| {
+                crate::comments::comment_source_markers(xml)
+                    .map_or(true, |markers| !markers.is_empty())
+            })
+        })
     }
 
     /// Get the default header text the last section shows, its own or the
@@ -158,10 +257,23 @@ impl Document {
 
     /// Set a Word-compatible text watermark in every active header variant.
     /// Text holding a character XML 1.0 cannot carry is refused.
+    ///
+    /// It edits the live document: the header parts, the headers it creates,
+    /// their relationships and content types through the part journal
+    /// (`EditUnit::Parts`), and the section properties that gain a header
+    /// reference (`EditUnit::SectionProperties`).
     pub fn set_text_watermark(&mut self, text: &str) -> Result<()> {
         oxoffice_core::xml::reject_non_xml_characters("watermark text", text)?;
-        let mut candidate = self.clone_for_staging();
-        candidate.apply_watermark(|_, _, _| {
+        let units = self.watermark_units();
+        self.section_story_edit(
+            &units,
+            |document| document.apply_text_watermark(text),
+            |staged| staged.set_text_watermark_staged(text),
+        )
+    }
+
+    fn apply_text_watermark(&mut self, text: &str) -> Result<()> {
+        self.apply_watermark(|_, _, _| {
             Ok((
                 VmlWatermark::Text {
                     text: text.to_owned(),
@@ -174,12 +286,74 @@ impl Document {
                 },
                 None,
             ))
-        })?;
+        })
+    }
+
+    /// The staged route of [`Self::set_text_watermark`], its debug oracle.
+    fn set_text_watermark_staged(&mut self, text: &str) -> Result<()> {
+        let mut candidate = self.clone_for_staging();
+        candidate.apply_text_watermark(text)?;
         self.commit_staged_mutation(candidate);
         Ok(())
     }
 
+    /// The units of a watermark of every active header: the parts, and the
+    /// section properties [`Self::ensure_watermark_header_inheritance`]
+    /// writes, those that gain a header reference and the final one, which
+    /// it creates when the body has none.
+    fn watermark_units(&self) -> Vec<crate::EditUnit> {
+        let (insertions, paragraph_sections) = self.watermark_header_insertions();
+        let mut units = vec![crate::EditUnit::Parts];
+        for (location, ordinal, _) in insertions {
+            let unit = crate::EditUnit::SectionProperties {
+                index: if location.is_some() {
+                    ordinal
+                } else {
+                    paragraph_sections
+                },
+            };
+            if !units.contains(&unit) {
+                units.push(unit);
+            }
+        }
+        let last = crate::EditUnit::SectionProperties {
+            index: paragraph_sections,
+        };
+        if !units.contains(&last) {
+            units.push(last);
+        }
+        units
+    }
+
+    /// The units of a watermark of one section's header variant: the parts,
+    /// the section's properties, and for an even header the settings, which
+    /// a nested [`Self::create_section_story`] may write.
+    fn watermark_story_units(section_index: usize, hdr_type: HdrFtrType) -> Vec<crate::EditUnit> {
+        let mut units = vec![
+            crate::EditUnit::Parts,
+            crate::EditUnit::SectionProperties {
+                index: section_index,
+            },
+        ];
+        if hdr_type == HdrFtrType::Even {
+            units.push(crate::EditUnit::Settings);
+        }
+        units
+    }
+
+    /// Refuse a character XML 1.0 cannot carry in `part_name`, as the
+    /// staged route's reopen reads it.
+    fn reject_written_part_characters(&self, part_name: &str) -> Result<()> {
+        if let Some(xml) = self.package.get_part(part_name) {
+            OpcPackage::reject_part_xml_characters(part_name, xml)?;
+        }
+        Ok(())
+    }
+
     /// Set the API-owned text watermark for one explicit section header variant.
+    ///
+    /// It edits the live document, as [`Self::create_section_story`] does,
+    /// and the header part through the part journal.
     pub fn set_text_watermark_for(
         &mut self,
         section_index: usize,
@@ -188,11 +362,52 @@ impl Document {
         options: TextWatermarkOptions,
     ) -> Result<()> {
         validate_text_watermark_options(&options)?;
+        if self.header_footer_stories_hold_comment_markers() {
+            return self.set_text_watermark_for_staged(section_index, hdr_type, text, options);
+        }
+        let staged_options = options.clone();
+        self.section_story_edit(
+            &Self::watermark_story_units(section_index, hdr_type),
+            |document| {
+                let part_name =
+                    document.write_text_watermark_for(section_index, hdr_type, text, options)?;
+                document.reject_written_part_characters(&part_name)
+            },
+            |staged| {
+                staged.set_text_watermark_for_staged(section_index, hdr_type, text, staged_options)
+            },
+        )
+    }
+
+    /// The staged route of [`Self::set_text_watermark_for`]: its debug
+    /// oracle, and its route when a header or footer holds comment markers.
+    fn set_text_watermark_for_staged(
+        &mut self,
+        section_index: usize,
+        hdr_type: HdrFtrType,
+        text: &str,
+        options: TextWatermarkOptions,
+    ) -> Result<()> {
         let mut candidate = self.clone_for_staging();
-        let story =
-            candidate.create_section_story(section_index, HeaderFooterKind::Header, hdr_type)?;
+        candidate.write_text_watermark_for(section_index, hdr_type, text, options)?;
+        candidate.invalidate_layout();
+        let reopened = candidate.prepare_and_reopen_staged()?;
+        self.commit_staged_mutation(reopened);
+        Ok(())
+    }
+
+    /// Write the text watermark of [`Self::set_text_watermark_for`] and
+    /// return the header part it wrote.
+    fn write_text_watermark_for(
+        &mut self,
+        section_index: usize,
+        hdr_type: HdrFtrType,
+        text: &str,
+        options: TextWatermarkOptions,
+    ) -> Result<String> {
+        let story = self.create_section_story(section_index, HeaderFooterKind::Header, hdr_type)?;
         let part_name = story.part_name.clone();
-        let xml = candidate
+        let xml = self
             .package
             .get_part(&part_name)
             .ok_or_else(|| Error::Other(format!("header part {part_name} is missing")))?
@@ -209,15 +424,16 @@ impl Document {
                 opacity: options.opacity,
             },
         )?;
-        candidate.package.set_part(&part_name, updated);
-        candidate.invalidate_layout();
-        let reopened = candidate.prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(reopened);
-        Ok(())
+        self.package.set_part(&part_name, updated);
+        Ok(part_name)
     }
 
     /// Set real DrawingML watermark text in one explicit header variant.
     /// Only unchanged API-owned DrawingML is replaced. Opaque edits refuse atomically.
+    ///
+    /// It edits the live document, as [`Self::create_section_story`] does,
+    /// and the header part, its relationships and the media an owned
+    /// watermark leaves through the part journal.
     pub fn set_drawingml_text_watermark_for(
         &mut self,
         section_index: usize,
@@ -238,18 +454,86 @@ impl Document {
                 "watermark font size requires positive half-points up to 1638 points".into(),
             ));
         }
-        let mut candidate = self.clone_for_staging();
-        let story =
-            match candidate.section_story(section_index, HeaderFooterKind::Header, hdr_type)? {
-                Some(story) => story.story,
-                None => candidate.create_section_story(
+        if self.header_footer_stories_hold_comment_markers() {
+            return self.set_drawingml_text_watermark_for_staged(
+                section_index,
+                hdr_type,
+                text,
+                options,
+                font_size,
+            );
+        }
+        let staged_options = options.clone();
+        self.section_story_edit(
+            &Self::watermark_story_units(section_index, hdr_type),
+            |document| {
+                let part_name = document.write_drawingml_text_watermark_for(
                     section_index,
-                    HeaderFooterKind::Header,
                     hdr_type,
-                )?,
-            };
-        candidate.flush_to_package()?;
-        let original = candidate
+                    text,
+                    options,
+                    font_size,
+                    false,
+                )?;
+                document.reject_written_part_characters(&part_name)
+            },
+            |staged| {
+                staged.set_drawingml_text_watermark_for_staged(
+                    section_index,
+                    hdr_type,
+                    text,
+                    staged_options,
+                    font_size,
+                )
+            },
+        )
+    }
+
+    /// The staged route of [`Self::set_drawingml_text_watermark_for`].
+    fn set_drawingml_text_watermark_for_staged(
+        &mut self,
+        section_index: usize,
+        hdr_type: HdrFtrType,
+        text: &str,
+        options: TextWatermarkOptions,
+        font_size: Length,
+    ) -> Result<()> {
+        let mut candidate = self.clone_for_staging();
+        candidate.write_drawingml_text_watermark_for(
+            section_index,
+            hdr_type,
+            text,
+            options,
+            font_size,
+            true,
+        )?;
+        candidate.invalidate_layout();
+        let reopened = candidate.prepare_and_reopen_staged()?;
+        self.commit_staged_mutation(reopened);
+        Ok(())
+    }
+
+    /// Write the watermark of [`Self::set_drawingml_text_watermark_for`],
+    /// after flushing the models when `flush` says so (the staged route),
+    /// and return the header part it wrote.
+    fn write_drawingml_text_watermark_for(
+        &mut self,
+        section_index: usize,
+        hdr_type: HdrFtrType,
+        text: &str,
+        options: TextWatermarkOptions,
+        font_size: Length,
+        flush: bool,
+    ) -> Result<String> {
+        let font_emu = font_size.to_emu();
+        let story = match self.section_story(section_index, HeaderFooterKind::Header, hdr_type)? {
+            Some(story) => story.story,
+            None => self.create_section_story(section_index, HeaderFooterKind::Header, hdr_type)?,
+        };
+        if flush {
+            self.flush_to_package()?;
+        }
+        let original = self
             .package
             .get_part(&story.part_name)
             .ok_or_else(|| Error::Other("watermark header source is missing".into()))?
@@ -257,7 +541,7 @@ impl Document {
         let owned = drawingml_watermark_span(&original)?;
         let drawing_id = match &owned {
             Some((_, id)) => *id,
-            None => candidate.identifiers.reserve_drawing_id()?,
+            None => self.identifiers.reserve_drawing_id()?,
         };
         let box_options = TextBoxOptions {
             width: options.width,
@@ -398,14 +682,8 @@ impl Document {
         if let Some((span, _)) = owned {
             let mut updated = original.clone();
             updated.splice(span.clone(), alternate);
-            candidate
-                .package
-                .set_part(&story.part_name, updated.clone());
-            candidate.prune_replaced_watermark_media(
-                &story.part_name,
-                &original[span],
-                &updated,
-            )?;
+            self.package.set_part(&story.part_name, updated.clone());
+            self.prune_replaced_watermark_media(&story.part_name, &original[span], &updated)?;
         } else {
             let mut paragraph = CT_P::new();
             paragraph.runs.push(CT_R {
@@ -415,15 +693,16 @@ impl Document {
                 extra_xml_positions: vec![0],
                 alt_drawings: vec![drawing],
             });
-            candidate.append_authored_paragraph_to_story(&story, paragraph)?;
+            self.append_authored_paragraph_to_story(&story, paragraph)?;
         }
-        candidate.invalidate_layout();
-        let reopened = candidate.prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(reopened);
-        Ok(())
+        Ok(story.part_name.clone())
     }
 
     /// Set a page-centered DrawingML image in the selected actual header owner.
+    ///
+    /// It edits the live document, as [`Self::create_section_story`] does,
+    /// and the header part, its relationships, the media part and its
+    /// content type through the part journal.
     pub fn set_drawingml_image_watermark_for(
         &mut self,
         section_index: usize,
@@ -445,18 +724,86 @@ impl Document {
         if oxoffice_media::probe(image_data).is_none() {
             return Err(Error::Other("watermark image bytes are unsupported".into()));
         }
-        let mut candidate = self.clone_for_staging();
-        let story =
-            match candidate.section_story(section_index, HeaderFooterKind::Header, hdr_type)? {
-                Some(story) => story.story,
-                None => candidate.create_section_story(
+        if self.header_footer_stories_hold_comment_markers() {
+            return self.set_drawingml_image_watermark_for_staged(
+                section_index,
+                hdr_type,
+                image_data,
+                image_filename,
+                options,
+            );
+        }
+        let staged_options = options.clone();
+        self.section_story_edit(
+            &Self::watermark_story_units(section_index, hdr_type),
+            |document| {
+                document
+                    .write_drawingml_image_watermark_for(
+                        section_index,
+                        hdr_type,
+                        image_data,
+                        image_filename,
+                        options,
+                        false,
+                    )
+                    .map(drop)
+            },
+            |staged| {
+                staged.set_drawingml_image_watermark_for_staged(
                     section_index,
-                    HeaderFooterKind::Header,
                     hdr_type,
-                )?,
-            };
-        candidate.flush_to_package()?;
-        let original = candidate
+                    image_data,
+                    image_filename,
+                    staged_options,
+                )
+            },
+        )
+    }
+
+    /// The staged route of [`Self::set_drawingml_image_watermark_for`].
+    fn set_drawingml_image_watermark_for_staged(
+        &mut self,
+        section_index: usize,
+        hdr_type: HdrFtrType,
+        image_data: &[u8],
+        image_filename: &str,
+        options: ImageWatermarkOptions,
+    ) -> Result<()> {
+        let mut candidate = self.clone_for_staging();
+        candidate.write_drawingml_image_watermark_for(
+            section_index,
+            hdr_type,
+            image_data,
+            image_filename,
+            options,
+            true,
+        )?;
+        candidate.invalidate_layout();
+        let reopened = candidate.prepare_and_reopen_staged()?;
+        self.commit_staged_mutation(reopened);
+        Ok(())
+    }
+
+    /// Write the watermark of [`Self::set_drawingml_image_watermark_for`],
+    /// after flushing the models when `flush` says so (the staged route),
+    /// and return the header part it wrote.
+    fn write_drawingml_image_watermark_for(
+        &mut self,
+        section_index: usize,
+        hdr_type: HdrFtrType,
+        image_data: &[u8],
+        image_filename: &str,
+        options: ImageWatermarkOptions,
+        flush: bool,
+    ) -> Result<String> {
+        let story = match self.section_story(section_index, HeaderFooterKind::Header, hdr_type)? {
+            Some(story) => story.story,
+            None => self.create_section_story(section_index, HeaderFooterKind::Header, hdr_type)?,
+        };
+        if flush {
+            self.flush_to_package()?;
+        }
+        let original = self
             .package
             .get_part(&story.part_name)
             .ok_or_else(|| Error::Other("watermark header source is missing".into()))?
@@ -464,7 +811,7 @@ impl Document {
         let owned = drawingml_watermark_span(&original)?;
         let id = match &owned {
             Some((_, id)) => *id,
-            None => candidate.identifiers.reserve_drawing_id()?,
+            None => self.identifiers.reserve_drawing_id()?,
         };
         // Retire only the already qualified API owner before allocating its
         // replacement, so that the replacement's ids are reserved against the
@@ -472,20 +819,16 @@ impl Document {
         if let Some((span, _)) = &owned {
             let mut without_owner = original.clone();
             without_owner.drain(span.clone());
-            candidate
-                .package
+            self.package
                 .set_part(&story.part_name, without_owner.clone());
-            candidate.prune_replaced_watermark_media(
+            self.prune_replaced_watermark_media(
                 &story.part_name,
                 &original[span.clone()],
                 &without_owner,
             )?;
         }
-        let relationship = candidate.add_image_relationship_checked(
-            &story.part_name,
-            image_data,
-            image_filename,
-        )?;
+        let relationship =
+            self.add_image_relationship_checked(&story.part_name, image_data, image_filename)?;
         let mut anchor = CT_Anchor::background(
             &relationship,
             options.width.to_emu(),
@@ -528,9 +871,7 @@ impl Document {
         if let Some((span, _)) = owned {
             let mut updated = original.clone();
             updated.splice(span.clone(), drawing.into_bytes());
-            candidate
-                .package
-                .set_part(&story.part_name, updated.clone());
+            self.package.set_part(&story.part_name, updated.clone());
         } else {
             let mut paragraph = CT_P::new();
             paragraph.runs.push(CT_R {
@@ -540,16 +881,39 @@ impl Document {
                 extra_xml_positions: vec![0],
                 alt_drawings: Vec::new(),
             });
-            candidate.append_authored_paragraph_to_story(&story, paragraph)?;
+            self.append_authored_paragraph_to_story(&story, paragraph)?;
         }
-        candidate.invalidate_layout();
-        let reopened = candidate.prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(reopened);
-        Ok(())
+        Ok(story.part_name.clone())
     }
 
     /// Remove only a source-qualified API watermark, keeping its surrounding content.
+    ///
+    /// It edits the live document: the header part, its relationships and
+    /// the media part nothing reaches any more, with its content type,
+    /// through the part journal (`EditUnit::Parts`).
     pub fn remove_drawingml_watermark_for(
+        &mut self,
+        section_index: usize,
+        hdr_type: HdrFtrType,
+    ) -> Result<()> {
+        let Some(story) = self.section_story(section_index, HeaderFooterKind::Header, hdr_type)?
+        else {
+            return Ok(());
+        };
+        let part_name = story.story.part_name.clone();
+        self.section_story_edit(
+            &[crate::EditUnit::Parts],
+            |document| {
+                document
+                    .remove_drawingml_watermark_from(&part_name)
+                    .map(drop)
+            },
+            |staged| staged.remove_drawingml_watermark_for_staged(section_index, hdr_type),
+        )
+    }
+
+    /// The staged route of [`Self::remove_drawingml_watermark_for`].
+    fn remove_drawingml_watermark_for_staged(
         &mut self,
         section_index: usize,
         hdr_type: HdrFtrType,
@@ -560,28 +924,31 @@ impl Document {
         };
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
-        let original = candidate
-            .package
-            .get_part(&story.story.part_name)
-            .ok_or_else(|| Error::Other("watermark header source is missing".into()))?
-            .to_vec();
-        let Some((span, _)) = drawingml_watermark_span(&original)? else {
+        if !candidate.remove_drawingml_watermark_from(&story.story.part_name)? {
             return Ok(());
-        };
-        let mut updated = original.clone();
-        updated.drain(span.clone());
-        candidate
-            .package
-            .set_part(&story.story.part_name, updated.clone());
-        candidate.prune_replaced_watermark_media(
-            &story.story.part_name,
-            &original[span],
-            &updated,
-        )?;
+        }
         candidate.invalidate_layout();
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(())
+    }
+
+    /// Remove the API watermark of header part `part_name` and the media
+    /// only it reached; whether it held one.
+    fn remove_drawingml_watermark_from(&mut self, part_name: &str) -> Result<bool> {
+        let original = self
+            .package
+            .get_part(part_name)
+            .ok_or_else(|| Error::Other("watermark header source is missing".into()))?
+            .to_vec();
+        let Some((span, _)) = drawingml_watermark_span(&original)? else {
+            return Ok(false);
+        };
+        let mut updated = original.clone();
+        updated.drain(span.clone());
+        self.package.set_part(part_name, updated.clone());
+        self.prune_replaced_watermark_media(part_name, &original[span], &updated)?;
+        Ok(true)
     }
 
     fn prune_replaced_watermark_media(
@@ -609,17 +976,12 @@ impl Document {
                     })
                 })
                 .map(|rel| OpcPackage::resolve_rel_target(part, &rel.target));
-            if let Some(preserved) = self
-                .identifiers
-                .preserved_relationship_ids
-                .get_mut(&relationship_owner_identity(part))
-            {
-                preserved.remove(&id);
-            }
+            // Journaled, so that an in-place edit holds them again.
+            self.identifiers
+                .release_preserved_relationship(&relationship_owner_identity(part), &id);
             if let Some(image_part) = image_part {
                 self.identifiers
-                    .preserved_part_names
-                    .remove(&part_name_identity(&image_part));
+                    .release_preserved_part_name(&part_name_identity(&image_part));
             }
         }
         self.prune_authored_story_relationships(part, &referenced);
@@ -627,6 +989,9 @@ impl Document {
     }
 
     /// Set an image watermark in every active header variant.
+    ///
+    /// It edits the live document, as [`Self::set_text_watermark`] does, and
+    /// stores the media part once, related from each header.
     pub fn set_image_watermark(
         &mut self,
         image_data: &[u8],
@@ -639,12 +1004,38 @@ impl Document {
                 "watermark image width and height must be positive".to_owned(),
             ));
         }
+        let units = self.watermark_units();
+        self.section_story_edit(
+            &units,
+            |document| document.apply_image_watermark(image_data, image_filename, width, height),
+            |staged| staged.set_image_watermark_staged(image_data, image_filename, width, height),
+        )
+    }
 
+    /// The staged route of [`Self::set_image_watermark`], its debug oracle.
+    fn set_image_watermark_staged(
+        &mut self,
+        image_data: &[u8],
+        image_filename: &str,
+        width: Length,
+        height: Length,
+    ) -> Result<()> {
         let mut candidate = self.clone_for_staging();
-        let image_target = candidate.store_image_part(image_data, image_filename);
-        let image_part_name =
-            OpcPackage::resolve_rel_target(&candidate.doc_part_name, &image_target);
-        candidate.apply_watermark(|package, identifiers, part_name| {
+        candidate.apply_image_watermark(image_data, image_filename, width, height)?;
+        self.commit_staged_mutation(candidate);
+        Ok(())
+    }
+
+    fn apply_image_watermark(
+        &mut self,
+        image_data: &[u8],
+        image_filename: &str,
+        width: Length,
+        height: Length,
+    ) -> Result<()> {
+        let image_target = self.store_image_part(image_data, image_filename);
+        let image_part_name = OpcPackage::resolve_rel_target(&self.doc_part_name, &image_target);
+        self.apply_watermark(|package, identifiers, part_name| {
             let target = relative_target(part_name, &image_part_name);
             let relationship_id = identifiers
                 .reserve_relationship_id_checked(part_name)
@@ -653,6 +1044,8 @@ impl Document {
                         "watermark relationship allocation failed for {part_name}: {error}"
                     ))
                 })?;
+            // An in-place edit puts the header's relationships back.
+            package.record_part_rels(part_name);
             package.get_or_create_part_rels(part_name).add_with_id(
                 &relationship_id,
                 rel_types::IMAGE,
@@ -668,9 +1061,7 @@ impl Document {
                 },
                 Some(relationship_id),
             ))
-        })?;
-        self.commit_staged_mutation(candidate);
-        Ok(())
+        })
     }
 
     fn apply_watermark(
@@ -730,20 +1121,18 @@ impl Document {
             self.prune_authored_story_relationships(&part_name, &referenced);
             self.package.set_part(&part_name, updated);
             if !fully_authored {
-                let authored = self
+                let owner = relationship_owner_identity(&part_name);
+                let mut authored = self
                     .identifiers
                     .authored_story_relationship_ids
-                    .entry(relationship_owner_identity(&part_name))
-                    .or_default();
+                    .get(&owner)
+                    .cloned()
+                    .unwrap_or_default();
                 authored.retain(|id| referenced.contains(id));
-                if let Some(id) = authored_relationship {
-                    authored.insert(id);
-                }
-                if authored.is_empty() {
-                    self.identifiers
-                        .authored_story_relationship_ids
-                        .remove(&relationship_owner_identity(&part_name));
-                }
+                authored.extend(authored_relationship);
+                // Journaled, so that an in-place edit puts the set back.
+                self.identifiers
+                    .set_authored_story_relationships(&owner, authored);
             }
         }
         self.invalidate_layout();
@@ -752,61 +1141,9 @@ impl Document {
 
     fn ensure_watermark_header_inheritance(&mut self) -> Result<()> {
         self.section_properties_mut();
-        let even_enabled = self.even_headers_enabled();
-        let internal_header_ids = self
-            .package
-            .get_part_rels(&self.doc_part_name)
-            .map(|relationships| {
-                relationships
-                    .items
-                    .iter()
-                    .filter(|relationship| {
-                        relationship.rel_type == rel_types::HEADER
-                            && relationship_is_internal(relationship)
-                    })
-                    .map(|relationship| relationship.id.clone())
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
-        let insertions = {
-            let mut effective = [false; 3];
-            let mut insertions = Vec::new();
-            let mut inspect = |location: Option<usize>, section: &CT_SectPr| {
-                for reference in &section.header_refs {
-                    if internal_header_ids.contains(&reference.rel_id) {
-                        effective[header_type_index(reference.hdr_ftr_type)] = true;
-                    }
-                }
-                for hdr_type in [HdrFtrType::Default, HdrFtrType::First, HdrFtrType::Even] {
-                    let active = match hdr_type {
-                        HdrFtrType::Default => true,
-                        HdrFtrType::First => section.title_pg.unwrap_or(false),
-                        HdrFtrType::Even => even_enabled,
-                    };
-                    let index = header_type_index(hdr_type);
-                    if active && !effective[index] {
-                        insertions.push((location, hdr_type));
-                        effective[index] = true;
-                    }
-                }
-            };
-            for (index, content) in self.document.body.content.iter().enumerate() {
-                if let BodyContent::Paragraph(paragraph) = content
-                    && let Some(section) = paragraph
-                        .properties
-                        .as_ref()
-                        .and_then(|properties| properties.sect_pr.as_ref())
-                {
-                    inspect(Some(index), section);
-                }
-            }
-            if let Some(section) = self.document.body.sect_pr.as_ref() {
-                inspect(None, section);
-            }
-            insertions
-        };
+        let (insertions, _) = self.watermark_header_insertions();
 
-        for (location, hdr_type) in insertions {
+        for (location, _, hdr_type) in insertions {
             let relationship_id = self.create_watermark_header_relationship(hdr_type)?;
             let reference = HdrFtrRef::new(hdr_type, relationship_id);
             match location {
@@ -844,6 +1181,69 @@ impl Document {
         Ok(())
     }
 
+    /// The header references [`Self::ensure_watermark_header_inheritance`]
+    /// adds so that every active header variant shows a header: the body
+    /// slot of the paragraph holding the section (none for the final one),
+    /// the section's ordinal among the paragraph-held sections, and the
+    /// variant; and the count of paragraph-held sections. A body without
+    /// final section properties is read as the default ones it creates.
+    fn watermark_header_insertions(&self) -> (Vec<(Option<usize>, usize, HdrFtrType)>, usize) {
+        let even_enabled = self.even_headers_enabled();
+        let internal_header_ids = self
+            .package
+            .get_part_rels(&self.doc_part_name)
+            .map(|relationships| {
+                relationships
+                    .items
+                    .iter()
+                    .filter(|relationship| {
+                        relationship.rel_type == rel_types::HEADER
+                            && relationship_is_internal(relationship)
+                    })
+                    .map(|relationship| relationship.id.clone())
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let mut effective = [false; 3];
+        let mut insertions = Vec::new();
+        let mut inspect = |location: Option<usize>, ordinal: usize, section: &CT_SectPr| {
+            for reference in &section.header_refs {
+                if internal_header_ids.contains(&reference.rel_id) {
+                    effective[header_type_index(reference.hdr_ftr_type)] = true;
+                }
+            }
+            for hdr_type in [HdrFtrType::Default, HdrFtrType::First, HdrFtrType::Even] {
+                let active = match hdr_type {
+                    HdrFtrType::Default => true,
+                    HdrFtrType::First => section.title_pg.unwrap_or(false),
+                    HdrFtrType::Even => even_enabled,
+                };
+                let index = header_type_index(hdr_type);
+                if active && !effective[index] {
+                    insertions.push((location, ordinal, hdr_type));
+                    effective[index] = true;
+                }
+            }
+        };
+        let mut ordinal = 0;
+        for (index, content) in self.document.body.content.iter().enumerate() {
+            if let BodyContent::Paragraph(paragraph) = content
+                && let Some(section) = paragraph
+                    .properties
+                    .as_ref()
+                    .and_then(|properties| properties.sect_pr.as_ref())
+            {
+                inspect(Some(index), ordinal, section);
+                ordinal += 1;
+            }
+        }
+        match self.document.body.sect_pr.as_ref() {
+            Some(section) => inspect(None, ordinal, section),
+            None => inspect(None, ordinal, &CT_SectPr::default_letter()),
+        }
+        (insertions, ordinal)
+    }
+
     fn create_watermark_header_relationship(&mut self, hdr_type: HdrFtrType) -> Result<String> {
         let part_name = self.identifiers.reserve_part_name(
             "/word",
@@ -859,14 +1259,12 @@ impl Document {
         )?;
         let empty_header = CT_HdrFtr::new().to_xml_header()?;
         self.package.set_part(&part_name, empty_header);
-        self.package.content_types.add_override(
+        self.add_override_journaled(
             &part_name,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
         );
         self.identifiers.register_content_type_override(&part_name);
-        self.identifiers
-            .authored_story_parts
-            .insert(part_name.clone());
+        self.identifiers.author_story_part(&part_name);
         let target = relative_target(&self.doc_part_name, &part_name);
         let owner = self.doc_part_name.clone();
         let id = self
@@ -877,9 +1275,7 @@ impl Document {
                     "watermark header relationship allocation failed: {error}"
                 ))
             })?;
-        self.package
-            .get_or_create_part_rels(&owner)
-            .add_with_id(&id, rel_types::HEADER, &target);
+        self.add_relationship_journaled(Some(&owner), &id, rel_types::HEADER, &target);
         Ok(id)
     }
 
@@ -1150,18 +1546,13 @@ impl Document {
         };
 
         self.package.set_part(&part_name, xml);
-        self.identifiers
-            .authored_story_parts
-            .insert(part_name.clone());
-        self.package
-            .content_types
-            .add_override(&part_name, content_type);
+        self.identifiers.author_story_part(&part_name);
+        self.add_override_journaled(&part_name, content_type);
         self.identifiers.register_content_type_override(&part_name);
         let (rel_id, install_relationship) = pending_relationship;
         if install_relationship {
-            self.package
-                .get_or_create_part_rels(&self.doc_part_name)
-                .add_with_id(&rel_id, rel_type, &rel_target);
+            let owner = self.doc_part_name.clone();
+            self.add_relationship_journaled(Some(&owner), &rel_id, rel_type, &rel_target);
         }
 
         let sect = if section + 1 < self.section_count() {
@@ -1196,6 +1587,22 @@ impl Document {
             .get(&relationship_owner_identity(part_name))
             .cloned()
             .unwrap_or_default();
+        // Empty relationships go too.
+        let prunes = self
+            .package
+            .get_part_rels(part_name)
+            .is_some_and(|relationships| {
+                relationships.items.is_empty()
+                    || relationships.items.iter().any(|relationship| {
+                        !preserved.contains(&relationship.id)
+                            && !referenced.contains(&relationship.id)
+                    })
+            });
+        if !prunes {
+            return;
+        }
+        // An in-place edit puts the owner's relationships back.
+        self.package.record_part_rels(part_name);
         let Some(relationships) = self.package.get_part_rels_mut(part_name) else {
             return;
         };
@@ -1230,6 +1637,21 @@ impl Document {
         referenced_before: &HashSet<String>,
         referenced_after: &HashSet<String>,
     ) {
+        let releases = self
+            .package
+            .get_part_rels(owner)
+            .is_some_and(|relationships| {
+                relationships.items.iter().any(|relationship| {
+                    is_content_relationship(&relationship.rel_type)
+                        && referenced_before.contains(&relationship.id)
+                        && !referenced_after.contains(&relationship.id)
+                })
+            });
+        if !releases {
+            return;
+        }
+        // An in-place edit puts the owner's relationships back.
+        self.package.record_part_rels(owner);
         let Some(relationships) = self.package.get_part_rels_mut(owner) else {
             return;
         };
@@ -1249,14 +1671,10 @@ impl Document {
         if relationships.items.is_empty() {
             self.package.remove_part_rels(owner);
         }
-        if let Some(preserved) = self
-            .identifiers
-            .preserved_relationship_ids
-            .get_mut(&relationship_owner_identity(owner))
-        {
-            for relationship in &removed {
-                preserved.remove(&relationship.id);
-            }
+        let owner_identity = relationship_owner_identity(owner);
+        for relationship in &removed {
+            self.identifiers
+                .release_preserved_relationship(&owner_identity, &relationship.id);
         }
         self.identifiers.retire_authored_story_relationships(
             owner,
@@ -1267,8 +1685,7 @@ impl Document {
             .filter(|relationship| relationship_is_internal(relationship))
         {
             self.identifiers
-                .preserved_part_names
-                .remove(&part_name_identity(&OpcPackage::resolve_rel_target(
+                .release_preserved_part_name(&part_name_identity(&OpcPackage::resolve_rel_target(
                     owner,
                     &relationship.target,
                 )));
@@ -1311,14 +1728,13 @@ impl Document {
                 {
                     let child = OpcPackage::resolve_rel_target(&candidate, &child.target);
                     self.identifiers
-                        .preserved_part_names
-                        .remove(&part_name_identity(&child));
+                        .release_preserved_part_name(&part_name_identity(&child));
                     pending.push(child);
                 }
             }
             self.package.remove_part(&candidate);
             self.package.remove_part_rels(&candidate);
-            self.package.content_types.remove_override(&candidate);
+            self.package.remove_content_type_override(&candidate);
             self.identifiers.retire_authored_part(&candidate);
             let Some((_, extension)) = candidate.rsplit_once('.') else {
                 continue;
@@ -1329,14 +1745,8 @@ impl Document {
                         .rsplit_once('.')
                         .is_some_and(|(_, candidate)| candidate == extension)
             });
-            if !default_is_used
-                && self
-                    .identifiers
-                    .authored_content_type_defaults
-                    .remove(extension)
-            {
-                self.package.content_types.remove_default(extension);
-                self.identifiers.content_type_defaults.remove(extension);
+            if !default_is_used {
+                self.remove_authored_content_type_default(extension);
             }
         }
     }
@@ -1356,7 +1766,7 @@ impl Document {
         text: &str,
         is_header: bool,
         hdr_type: HdrFtrType,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let mut hdr_ftr = CT_HdrFtr::new();
         let mut p = CT_P::new();
         if !text.is_empty() {
@@ -1367,8 +1777,7 @@ impl Document {
         let xml = Self::serialize_hdr_ftr(&hdr_ftr, is_header)?;
         let (part_name, section) = self.reserve_hdr_ftr_target(is_header, hdr_type)?;
         self.clear_authored_story_relationships(&part_name);
-        self.install_hdr_ftr_target(part_name, section, xml, is_header, hdr_type)?;
-        Ok(())
+        self.install_hdr_ftr_target(part_name, section, xml, is_header, hdr_type)
     }
 
     /// Where a document-level header or footer setter writes: the part, and
@@ -1455,9 +1864,7 @@ impl Document {
     ) -> Result<String> {
         let Some(section) = section else {
             self.package.set_part(&part_name, xml);
-            self.identifiers
-                .authored_story_parts
-                .insert(part_name.clone());
+            self.identifiers.author_story_part(&part_name);
             return Ok(part_name);
         };
         self.install_hdr_ftr_part(part_name, section, xml, is_header, hdr_type)
@@ -1512,7 +1919,9 @@ impl Document {
         let xml = remap_xml_relationship_ids(&xml, &relationship_remap)?;
         // The given drawings take their ids now, as a cloned section story
         // does: the save keeps every id it finds.
-        let xml = rewrite_authored_doc_pr_ids(&xml, &mut self.identifiers.drawing_ids)?;
+        let xml = self
+            .identifiers
+            .reserve_drawing_ids(|occupied| rewrite_authored_doc_pr_ids(&xml, occupied))?;
         let part_name =
             self.install_hdr_ftr_target(part_name, section, xml, is_header, hdr_type)?;
 
@@ -1906,4 +2315,399 @@ pub(crate) fn is_content_relationship(rel_type: &str) -> bool {
         "/aFChunk",
     ];
     CONTENT.iter().any(|suffix| rel_type.ends_with(suffix))
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+
+    /// A valid one-pixel PNG.
+    pub(in crate::document) const PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    /// What a refused edit must leave as it was: the saved bytes, the
+    /// identifier registry and the package graph.
+    pub(in crate::document) fn state(document: &Document) -> (Vec<u8>, DocumentIdentifiers) {
+        (
+            document.clone_for_staging().to_bytes().unwrap(),
+            document.identifiers.clone(),
+        )
+    }
+
+    /// Two sections, the first with a header holding a picture.
+    pub(in crate::document) fn with_header_picture() -> Document {
+        let mut document = Document::new();
+        document.add_paragraph("first section");
+        document.insert_section(1).unwrap();
+        document.add_paragraph("second section");
+        document.set_header_image(PNG, "p.png", Length::inches(1.0), Length::inches(1.0));
+        document
+    }
+
+    fn media_parts(document: &Document) -> usize {
+        document
+            .package
+            .parts
+            .keys()
+            .filter(|name| name.contains("/media/"))
+            .count()
+    }
+
+    /// A header replacement that removed the replaced header's picture and
+    /// wrote the section properties, then refused or panicked.
+    fn replace_headers_then(document: &mut Document, panic: bool) -> Result<()> {
+        let units = document.header_footer_setter_units();
+        document.edit_in_place(&units, |document| {
+            document.set_header_footer_part("new", true, HdrFtrType::Default)?;
+            document.set_header_footer_part("first", false, HdrFtrType::First)?;
+            document.set_different_first_page(true);
+            assert_eq!(media_parts(document), 0, "the picture went with its header");
+            if panic {
+                panic!("the header edit panicked");
+            }
+            Err(Error::Other("refused".into()))
+        })
+    }
+
+    #[test]
+    fn a_refused_header_replacement_leaves_the_document_as_it_was() {
+        let mut document = with_header_picture();
+        assert_eq!(media_parts(&document), 1);
+        let before = state(&document);
+        let error = replace_headers_then(&mut document, false).unwrap_err();
+        assert_eq!(error.to_string(), "refused");
+        assert_eq!(state(&document), before);
+        assert_eq!(media_parts(&document), 1);
+    }
+
+    #[test]
+    fn a_panic_in_a_header_replacement_leaves_the_document_as_it_was() {
+        let mut document = with_header_picture();
+        let before = state(&document);
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            replace_headers_then(&mut document, true)
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(state(&document), before);
+    }
+
+    #[test]
+    fn a_header_or_footer_set_in_place_saves_what_the_staged_route_saves() {
+        for (is_header, hdr_type) in [
+            (true, HdrFtrType::Default),
+            (false, HdrFtrType::Default),
+            (true, HdrFtrType::First),
+            (false, HdrFtrType::First),
+        ] {
+            let mut document = with_header_picture();
+            let mut staged = document.clone_for_staging();
+            document
+                .set_header_footer_text("in place", is_header, hdr_type)
+                .unwrap();
+            staged
+                .set_header_footer_text_staged("in place", is_header, hdr_type)
+                .unwrap();
+            assert_eq!(
+                document.to_bytes().unwrap(),
+                staged.to_bytes().unwrap(),
+                "{is_header} {hdr_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_header_setter_refused_up_front_leaves_the_document_as_it_was() {
+        let mut document = with_header_picture();
+        let before = state(&document);
+        assert!(document.try_set_header("bad \u{1}").is_err());
+        assert_eq!(state(&document), before);
+    }
+
+    fn header_story(document: &Document) -> StoryId {
+        document
+            .stories()
+            .unwrap()
+            .into_iter()
+            .find(|story| story.kind() == StoryKind::Header)
+            .expect("a header")
+    }
+
+    fn paragraph(text: &str) -> crate::ContentFragment {
+        let mut paragraph = CT_P::new();
+        paragraph.add_run(text);
+        crate::ContentFragment::paragraph(paragraph).unwrap()
+    }
+
+    #[test]
+    fn content_inserted_in_a_header_saves_what_the_staged_route_saves() {
+        let mut document = with_header_picture();
+        let mut staged = document.clone_for_staging();
+        let destination = ContentLocation::end(header_story(&document));
+        document
+            .insert_content(&destination, paragraph("added"))
+            .unwrap();
+        staged
+            .insert_content_staged(&destination, paragraph("added"))
+            .unwrap();
+        assert_eq!(document.to_bytes().unwrap(), staged.to_bytes().unwrap());
+        assert!(
+            document
+                .header_text()
+                .is_some_and(|text| text.contains("added"))
+        );
+    }
+
+    #[test]
+    fn a_refused_insertion_in_a_header_leaves_the_document_as_it_was() {
+        let mut document = with_header_picture();
+        let before = state(&document);
+        let destination = ContentLocation::end(header_story(&document));
+        let error = document
+            .edit_in_place(&[crate::EditUnit::Parts], |document| {
+                document.insert_related_story_content(&destination, paragraph("added"), false)?;
+                Err::<(), _>(Error::Other("refused".into()))
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "refused");
+        assert_eq!(state(&document), before);
+    }
+
+    /// Two sections, no header, no picture: a watermark creates the headers
+    /// and the content type of its picture.
+    fn without_headers() -> Document {
+        let mut document = Document::new();
+        document.add_paragraph("first section");
+        document.insert_section(1).unwrap();
+        document.add_paragraph("second section");
+        document
+    }
+
+    /// A watermark of every header, a picture then text that replaces it
+    /// (dropping the picture), then a refusal or a panic.
+    fn watermark_every_header_then(document: &mut Document, panic: bool) -> Result<()> {
+        let units = document.watermark_units();
+        document.edit_in_place(&units, |document| {
+            document.apply_image_watermark(
+                PNG,
+                "w.png",
+                Length::inches(1.0),
+                Length::inches(1.0),
+            )?;
+            document.apply_text_watermark("DRAFT")?;
+            assert!(document.header_footer_part_names().count() > 0);
+            if panic {
+                panic!("the watermark edit panicked");
+            }
+            Err(Error::Other("refused".into()))
+        })
+    }
+
+    #[test]
+    fn a_refused_watermark_of_every_header_leaves_the_document_as_it_was() {
+        for mut document in [without_headers(), with_header_picture()] {
+            let before = state(&document);
+            let media = media_parts(&document);
+            let error = watermark_every_header_then(&mut document, false).unwrap_err();
+            assert_eq!(error.to_string(), "refused");
+            assert_eq!(state(&document), before);
+            assert_eq!(media_parts(&document), media);
+        }
+    }
+
+    #[test]
+    fn a_panic_in_a_watermark_of_every_header_leaves_the_document_as_it_was() {
+        for mut document in [without_headers(), with_header_picture()] {
+            let before = state(&document);
+            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                watermark_every_header_then(&mut document, true)
+            }));
+            assert!(unwound.is_err());
+            assert_eq!(state(&document), before);
+        }
+    }
+
+    #[test]
+    fn a_watermark_of_every_header_set_in_place_saves_what_the_staged_route_saves() {
+        for mut document in [without_headers(), with_header_picture()] {
+            let mut staged = document.clone_for_staging();
+            document
+                .set_image_watermark(PNG, "w.png", Length::inches(2.0), Length::inches(1.0))
+                .unwrap();
+            staged
+                .set_image_watermark_staged(PNG, "w.png", Length::inches(2.0), Length::inches(1.0))
+                .unwrap();
+            assert_eq!(document.to_bytes().unwrap(), staged.to_bytes().unwrap());
+            document.set_text_watermark("DRAFT").unwrap();
+            staged.set_text_watermark_staged("DRAFT").unwrap();
+            assert_eq!(document.to_bytes().unwrap(), staged.to_bytes().unwrap());
+            assert!(document.header_footer_part_names().count() > 0);
+        }
+    }
+
+    fn image_options() -> ImageWatermarkOptions {
+        ImageWatermarkOptions {
+            width: Length::inches(2.0),
+            height: Length::inches(1.0),
+            rotation_degrees: 0.0,
+            opacity: 0.4,
+        }
+    }
+
+    #[test]
+    fn a_drawingml_watermark_set_in_place_saves_what_the_staged_route_saves() {
+        // The even header of the second section does not exist: the call
+        // creates it and turns even headers on in the settings.
+        for (section, hdr_type) in [(0, HdrFtrType::Default), (1, HdrFtrType::Even)] {
+            let mut document = without_headers();
+            let mut staged = document.clone_for_staging();
+            document
+                .set_drawingml_text_watermark_for(
+                    section,
+                    hdr_type,
+                    "DRAFT",
+                    TextWatermarkOptions::default(),
+                    Length::pt(40.0),
+                )
+                .unwrap();
+            staged
+                .set_drawingml_text_watermark_for_staged(
+                    section,
+                    hdr_type,
+                    "DRAFT",
+                    TextWatermarkOptions::default(),
+                    Length::pt(40.0),
+                )
+                .unwrap();
+            assert_eq!(document.to_bytes().unwrap(), staged.to_bytes().unwrap());
+            document
+                .set_drawingml_image_watermark_for(section, hdr_type, PNG, "w.png", image_options())
+                .unwrap();
+            staged
+                .set_drawingml_image_watermark_for_staged(
+                    section,
+                    hdr_type,
+                    PNG,
+                    "w.png",
+                    image_options(),
+                )
+                .unwrap();
+            assert_eq!(document.to_bytes().unwrap(), staged.to_bytes().unwrap());
+            document
+                .set_text_watermark_for(section, hdr_type, "VML", TextWatermarkOptions::default())
+                .unwrap();
+            staged
+                .set_text_watermark_for_staged(
+                    section,
+                    hdr_type,
+                    "VML",
+                    TextWatermarkOptions::default(),
+                )
+                .unwrap();
+            assert_eq!(document.to_bytes().unwrap(), staged.to_bytes().unwrap());
+        }
+    }
+
+    #[test]
+    fn a_drawingml_watermark_removed_in_place_saves_what_the_staged_route_saves() {
+        let mut document = without_headers();
+        document
+            .set_drawingml_image_watermark_for(
+                1,
+                HdrFtrType::Default,
+                PNG,
+                "w.png",
+                image_options(),
+            )
+            .unwrap();
+        assert_eq!(media_parts(&document), 1);
+        let mut staged = document.clone_for_staging();
+        document
+            .remove_drawingml_watermark_for(1, HdrFtrType::Default)
+            .unwrap();
+        staged
+            .remove_drawingml_watermark_for_staged(1, HdrFtrType::Default)
+            .unwrap();
+        assert_eq!(document.to_bytes().unwrap(), staged.to_bytes().unwrap());
+        assert_eq!(media_parts(&document), 0, "the watermark's media went");
+    }
+
+    /// A watermark removal that dropped the picture, its relationship and
+    /// its content type, then refused or panicked.
+    fn remove_watermark_then(document: &mut Document, panic: bool) -> Result<()> {
+        let part_name = document
+            .section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)?
+            .expect("a watermark header")
+            .story
+            .part_name;
+        document.edit_in_place(&[crate::EditUnit::Parts], |document| {
+            assert!(document.remove_drawingml_watermark_from(&part_name)?);
+            assert_eq!(media_parts(document), 0);
+            if panic {
+                panic!("the watermark removal panicked");
+            }
+            Err(Error::Other("refused".into()))
+        })
+    }
+
+    #[test]
+    fn a_refused_watermark_removal_puts_its_media_back() {
+        let mut document = without_headers();
+        document
+            .set_drawingml_image_watermark_for(
+                1,
+                HdrFtrType::Default,
+                PNG,
+                "w.png",
+                image_options(),
+            )
+            .unwrap();
+        let before = state(&document);
+        let error = remove_watermark_then(&mut document, false).unwrap_err();
+        assert_eq!(error.to_string(), "refused");
+        assert_eq!(state(&document), before);
+        assert_eq!(media_parts(&document), 1);
+    }
+
+    #[test]
+    fn a_panic_in_a_watermark_removal_puts_its_media_back() {
+        let mut document = without_headers();
+        document
+            .set_drawingml_image_watermark_for(
+                1,
+                HdrFtrType::Default,
+                PNG,
+                "w.png",
+                image_options(),
+            )
+            .unwrap();
+        let before = state(&document);
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            remove_watermark_then(&mut document, true)
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(state(&document), before);
+    }
+
+    #[test]
+    fn a_section_watermark_refused_after_creating_its_header_leaves_the_document_as_it_was() {
+        let mut document = without_headers();
+        let before = state(&document);
+        // The header is created, then the text it cannot carry is refused.
+        assert!(
+            document
+                .set_text_watermark_for(
+                    1,
+                    HdrFtrType::First,
+                    "bad \u{1}",
+                    TextWatermarkOptions::default(),
+                )
+                .is_err()
+        );
+        assert_eq!(state(&document), before);
+    }
 }
