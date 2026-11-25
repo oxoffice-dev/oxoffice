@@ -860,6 +860,21 @@ impl Document {
         self.validate_internal_relationship_in_checked_story(story, relationship_id, expected_type)
     }
 
+    /// [`Self::validate_internal_relationship_for_story`], without reading
+    /// the story again when the caller already `checked` it.
+    pub(super) fn validate_internal_relationship_for_checked_story(
+        &self,
+        checked: bool,
+        story: &StoryId,
+        relationship_id: &str,
+        expected_type: &str,
+    ) -> Result<String> {
+        if !checked {
+            self.story_source_and_owner(story)?;
+        }
+        self.validate_internal_relationship_in_checked_story(story, relationship_id, expected_type)
+    }
+
     // The caller must have checked this owner against the current immutable
     // source. Relationship policy stays shared with the public checked entry.
     fn validate_internal_relationship_in_checked_story(

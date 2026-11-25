@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum IdentifierDefinition {
     Drawing(u32),
     Bookmark(i32),

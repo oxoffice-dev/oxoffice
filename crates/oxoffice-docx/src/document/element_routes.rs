@@ -9,6 +9,29 @@ fn direct_body_paragraph_slot(location: &ContentLocation) -> Option<usize> {
     location.index_path().first().copied()
 }
 
+/// The section properties the paragraphs of body XML `xml` own, in order.
+pub(super) fn paragraph_owned_section_profiles(xml: &[u8]) -> Result<Vec<CT_SectPr>> {
+    let mut wrapped = format!(r#"<w:document xmlns:w="{WORD_NAMESPACE}"><w:body>"#).into_bytes();
+    wrapped.extend_from_slice(xml);
+    wrapped.extend_from_slice(b"</w:body></w:document>");
+    // Checked paragraph XML writes canonical `w14:paraId` without a local
+    // declaration. The wrapper root has to bind that prefix before the
+    // section-profile parse, or the attribute is unbound.
+    declare_w14_on_part_root(&mut wrapped)?;
+    let document = CT_Document::from_xml(&wrapped)?;
+    let mut profiles = Vec::new();
+    visit_body_paragraphs(&document.body.content, false, &mut |paragraph| {
+        if let Some(section) = paragraph
+            .properties
+            .as_ref()
+            .and_then(|properties| properties.sect_pr.as_ref())
+        {
+            profiles.push(section.clone());
+        }
+    });
+    Ok(profiles)
+}
+
 impl Document {
     /// Replace the visible text of one checked story item atomically.
     /// Replace one checked story item in its actual package owner.
@@ -122,29 +145,9 @@ impl Document {
         let scope = story_namespace_scope_at(&source.xml, item.full.start)?;
         let original = close_content_fragment_namespaces(&source.xml[item.full.clone()], &scope)?;
         let incoming = close_content_fragment_namespaces(&fragment.xml, &fragment.namespace_scope)?;
-        let profiles = |xml: &[u8]| -> Result<Vec<CT_SectPr>> {
-            let mut wrapped =
-                format!(r#"<w:document xmlns:w="{WORD_NAMESPACE}"><w:body>"#).into_bytes();
-            wrapped.extend_from_slice(xml);
-            wrapped.extend_from_slice(b"</w:body></w:document>");
-            // Checked paragraph XML writes canonical `w14:paraId` without a
-            // local declaration. The wrapper root has to bind that prefix
-            // before the section-profile parse, or the attribute is unbound.
-            declare_w14_on_part_root(&mut wrapped)?;
-            let document = CT_Document::from_xml(&wrapped)?;
-            let mut profiles = Vec::new();
-            visit_body_paragraphs(&document.body.content, false, &mut |paragraph| {
-                if let Some(section) = paragraph
-                    .properties
-                    .as_ref()
-                    .and_then(|properties| properties.sect_pr.as_ref())
-                {
-                    profiles.push(section.clone());
-                }
-            });
-            Ok(profiles)
-        };
-        if profiles(&original)? != profiles(&incoming)? {
+        if paragraph_owned_section_profiles(&original)?
+            != paragraph_owned_section_profiles(&incoming)?
+        {
             return Err(Error::Other("element XML changed or introduced paragraph-owned section properties are unsupported, use the checked section owner".into()));
         }
         let mut xml = source.xml.into_owned();
@@ -855,14 +858,13 @@ impl Document {
         Ok(())
     }
 
-    /// Replace an existing physical section owner through a closed candidate.
-    #[doc(hidden)]
-    pub fn replace_section_properties_xml(&mut self, index: usize, xml: &str) -> Result<()> {
-        self.validate_model_resource_limits()?;
-        let current = self
-            .section(index)
-            .ok_or_else(|| Error::Other("element XML section owner is absent".into()))?;
-        let replacement = CT_SectPr::from_xml_fragment_checked(xml.as_bytes())?;
+    /// The checks of the header and footer references of `replacement`, a
+    /// section's new properties: one reference per type and kind, each to a
+    /// header or footer part this document holds.
+    pub(super) fn validate_section_replacement_references(
+        &self,
+        replacement: &CT_SectPr,
+    ) -> Result<()> {
         for (references, kind) in [
             (&replacement.header_refs, HeaderFooterKind::Header),
             (&replacement.footer_refs, HeaderFooterKind::Footer),
@@ -893,6 +895,31 @@ impl Document {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Replace an existing physical section owner: the paragraph that owns
+    /// it or the body's last section properties, edited in place
+    /// ([`Self::replace_section_properties_xml_in_place`]).
+    #[doc(hidden)]
+    pub fn replace_section_properties_xml(&mut self, index: usize, xml: &str) -> Result<()> {
+        self.replace_section_properties_xml_in_place(index, xml)
+            .map(|_| ())
+    }
+
+    /// [`Self::replace_section_properties_xml`] through a closed candidate,
+    /// staged and reopened: the debug oracle of the in-place route.
+    pub(super) fn replace_section_properties_xml_staged(
+        &mut self,
+        index: usize,
+        xml: &str,
+    ) -> Result<()> {
+        self.validate_model_resource_limits()?;
+        let current = self
+            .section(index)
+            .ok_or_else(|| Error::Other("element XML section owner is absent".into()))?;
+        let replacement = CT_SectPr::from_xml_fragment_checked(xml.as_bytes())?;
+        self.validate_section_replacement_references(&replacement)?;
         let mut bytes = Vec::new();
         current.properties().to_xml(&mut Writer::new(&mut bytes))?;
         let scope = BTreeMap::from([

@@ -1075,13 +1075,37 @@ pub(super) fn validate_element_owner_relationships(
     story: &StoryId,
     root: WordXmlOwner<'_>,
 ) -> Result<()> {
+    validate_element_owner_relationships_with(document, story, root, false)
+}
+
+/// [`validate_element_owner_relationships`] in a story the caller knows
+/// exists (the body of the main part): the relationships are checked in the
+/// story's part without reading the story again.
+pub(super) fn validate_element_owner_relationships_in_checked_story(
+    document: &Document,
+    story: &StoryId,
+    root: WordXmlOwner<'_>,
+) -> Result<()> {
+    validate_element_owner_relationships_with(document, story, root, true)
+}
+
+fn validate_element_owner_relationships_with(
+    document: &Document,
+    story: &StoryId,
+    root: WordXmlOwner<'_>,
+    checked: bool,
+) -> Result<()> {
     let mut pending = vec![root];
     while let Some(owner) = pending.pop() {
         match owner {
             WordXmlOwner::Paragraph(paragraph) => {
                 for hyperlink in &paragraph.hyperlinks {
                     if let Some(id) = &hyperlink.rel_id {
-                        document.hyperlink_url_for_story(story, id)?;
+                        if checked {
+                            document.hyperlink_url_for_validated_story(story, id)?;
+                        } else {
+                            document.hyperlink_url_for_story(story, id)?;
+                        }
                     }
                 }
                 pending.extend(paragraph.runs.iter().map(WordXmlOwner::Run));
@@ -1118,10 +1142,11 @@ pub(super) fn validate_element_owner_relationships(
                                 instruction.switches,
                             )?;
                             if let Some(owner) = field.cached_result_owner_projection()? {
-                                validate_element_owner_relationships(
+                                validate_element_owner_relationships_with(
                                     document,
                                     story,
                                     WordXmlOwner::Paragraph(&owner),
+                                    checked,
                                 )?;
                             } else if let Some(runs) = field.cached_result_runs() {
                                 pending.extend(runs.iter().map(WordXmlOwner::Run));
@@ -1171,7 +1196,8 @@ pub(super) fn validate_element_owner_relationships(
                             if let Some((embed, link, chart)) = relationships {
                                 if !embed.is_empty() {
                                     let target = document
-                                        .validate_internal_relationship_for_story(
+                                        .validate_internal_relationship_for_checked_story(
+                                            checked,
                                             story,
                                             embed,
                                             rel_types::IMAGE,
@@ -1204,7 +1230,8 @@ pub(super) fn validate_element_owner_relationships(
                                 }
                                 if let Some(id) = chart {
                                     let target = document
-                                        .validate_internal_relationship_for_story(
+                                        .validate_internal_relationship_for_checked_story(
+                                            checked,
                                             story,
                                             id,
                                             rel_types::CHART,

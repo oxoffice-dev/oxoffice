@@ -348,6 +348,7 @@ mod canonicalize;
 #[cfg(debug_assertions)]
 use canonicalize::IdentifierSummary;
 mod element_routes;
+mod element_routes_in_place;
 mod flush;
 mod fragment_sources;
 mod main_source;
