@@ -206,6 +206,14 @@ What S1a builds differs from decision 1 in how the units are kept:
   change (the styles of a nested `add_style`). Debug builds assert that
   the nested call's units are among the open call's, and the open call's
   undo oracle proves nothing else was written.
+- **Body blocks are copied run by run** (amended 2026-11-25). An edit may
+  name `EditUnit::BodyBlocks` several times, disjoint and in slot order,
+  for blocks far apart (a comment range's start and end, a heading and its
+  link paragraph): each run is copied alone, so the edit does not copy the
+  blocks between them. Every unit but the last keeps its number of blocks,
+  and the last takes the body's change of length; the debug undo oracle
+  refuses an edit that breaks this. The report gives each changed unit
+  (`EditReport::body_blocks`).
 - The debug oracle of each converted facade call runs the staged route on
   a copy (`assert_in_place_matches_staged`) and applies the undo to a
   copy of the edited document (`assert_undo_restores`).

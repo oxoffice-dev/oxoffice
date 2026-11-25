@@ -332,7 +332,8 @@ impl Document {
             Some(copy) => copy.unsavable.clone(),
             None => self.unsavable_body_edit_cache.get().cloned(),
         };
-        // The last unit first: the units before it kept their lengths.
+        // Each unit's range is where its copy goes back: the units before
+        // the last kept their lengths, so no splice moves another's range.
         let ranges = body_ranges(&body, self.document.body.content.len());
         for (copy, range) in body.into_iter().zip(ranges).rev() {
             self.document.body.content.splice(range, copy.blocks);
@@ -347,17 +348,27 @@ impl Document {
     fn report_changes(&self, undo: &EditUndo) -> EditReport {
         let content = &self.document.body.content;
         let ranges = body_ranges(&undo.body, content.len());
+        // One flag per copy, in unit order: two units may start at one slot
+        // (an insertion before a replaced block).
+        let changed: Vec<bool> = undo
+            .body
+            .iter()
+            .zip(&ranges)
+            .map(|(copy, range)| content.get(range.clone()) != Some(&copy.blocks[..]))
+            .collect();
         let body_blocks: Vec<BodyBlocksChange> = undo
             .body
             .iter()
             .zip(&ranges)
-            .filter(|(copy, range)| content.get((*range).clone()) != Some(&copy.blocks[..]))
-            .map(|(copy, range)| BodyBlocksChange {
+            .zip(&changed)
+            .filter(|(_, changed)| **changed)
+            .map(|((copy, range), _)| BodyBlocksChange {
                 slot: copy.slot,
                 removed: copy.blocks.len(),
                 inserted: range.len(),
             })
             .collect();
+        let mut body_changed = changed.into_iter();
         EditReport {
             units: undo
                 .units
@@ -388,9 +399,7 @@ impl Document {
                                 || copy.part_name != self.settings_part_name
                         }),
                         EditUnit::Parts => self.package.part_journal_changed(&undo.parts),
-                        EditUnit::BodyBlocks { slot, .. } => {
-                            body_blocks.iter().any(|change| change.slot == *slot)
-                        }
+                        EditUnit::BodyBlocks { .. } => body_changed.next().unwrap_or(false),
                     };
                     (unit.clone(), changed)
                 })
@@ -925,5 +934,53 @@ mod tests {
             EditUnit::BodyBlocks { slot: 2, count: 1 },
         ];
         let _ = document.edit_in_place(&units, |_| Ok(()));
+    }
+
+    /// An insertion unit before a replaced block at the same slot: only the
+    /// unit that changed is reported changed.
+    #[test]
+    fn two_units_at_one_slot_report_their_own_change() {
+        let mut document = five_paragraphs();
+        let units = [
+            EditUnit::BodyBlocks { slot: 3, count: 0 },
+            EditUnit::BodyBlocks { slot: 3, count: 1 },
+        ];
+        document.hold_edit_undo();
+        document
+            .edit_in_place(&units, |document| {
+                let content = &mut document.document.body.content;
+                content[3] = content[0].clone();
+                document.invalidate_layout();
+                Ok(())
+            })
+            .unwrap();
+        let undo = document
+            .take_edit_undo()
+            .expect("the edit changed the body");
+        assert_eq!(
+            undo.report().units,
+            [(units[0].clone(), false), (units[1].clone(), true)]
+        );
+        document.undo_edit(undo);
+        assert_eq!(body_texts(&document), ["p0", "p1", "p2", "p3", "p4"]);
+    }
+
+    /// A unit before the last that changes its number of blocks breaks the
+    /// contract: the debug undo oracle refuses the edit.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic]
+    fn a_unit_before_the_last_that_changes_its_count_is_refused() {
+        let mut document = five_paragraphs();
+        let units = [
+            EditUnit::BodyBlocks { slot: 1, count: 1 },
+            EditUnit::BodyBlocks { slot: 3, count: 1 },
+        ];
+        let _ = document.edit_in_place(&units, |document| {
+            let content = &mut document.document.body.content;
+            content.insert(1, content[0].clone());
+            document.invalidate_layout();
+            Ok(())
+        });
     }
 }
