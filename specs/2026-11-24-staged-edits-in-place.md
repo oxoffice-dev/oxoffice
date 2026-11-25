@@ -442,6 +442,46 @@ trusted. A table cell, a header or footer, a block content control, a
 text box, a hyperlink or a story item the caller built keep today's
 route; `insert_citation_after_text` (a text search) too.
 
+### XML: element and text replacements in a body paragraph (amended 2026-11-25)
+
+`Run.text`, `Paragraph.replace_xml`, `Run.replace_xml`,
+`SectionHandle.replace_xml`, `Paragraph.replace_text` and
+`Document.replace_text_at` change one direct body paragraph, or one
+section's properties.
+
+- **The block is edited alone.** The facade writes the target paragraph
+  by itself, edits it (the element splice, or the scoped text operation
+  of `replace_scoped_candidate` on that paragraph's XML), reads it back,
+  and swaps it in under `BodyBlocks { slot, 1 }`. Nothing is flushed, the
+  main part is not read, no copy is saved or reopened. The checks and
+  refusals are the staged route's, in its order, before the swap. The
+  `mc:AlternateContent` twin the staged route pairs belongs to a text-box
+  story, never to the body, so the body route has none.
+- **The body's last section properties are a unit**, `BodySection`: they
+  are copied whole, as they do not grow with the body. A section that a
+  paragraph ends is its paragraph's `BodyBlocks`. The header and footer
+  relationships a section names are the journals': the replacement only
+  names existing ones. `insert_section` and `remove_section` use the same
+  unit.
+- **What keeps the staged route**: any other story (cell, content
+  control, text box, header, footer, note, comment), and a replacement
+  that changes the paragraph's comment or bookmark marks, drops a note
+  reference, or writes a drawing, bookmark, content control or permission
+  id the old paragraph did not hold: those need `remove_unreferenced_notes`,
+  `reconcile_comment_removal` and the identity check, which read the whole
+  main part. Cells and tables follow once the table is a block of the
+  splice.
+- **The binding publishes the block** with `publish_body_blocks_replaced`:
+  `Run.text` keeps the owners of the paragraph and of every run (its run
+  paths do not change); the XML replacements keep the owner the staged
+  publication keeps (the replaced element's) and the text replacements
+  publish as `Paragraph.text` does. A last-section replacement changes no
+  block: its section owner keeps its key and takes the new properties,
+  every other owner is kept, and a change in the header or footer
+  references takes the whole route.
+- Oracles: each in-place route runs the staged route on a copy in debug
+  builds and compares the saved parts.
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.
