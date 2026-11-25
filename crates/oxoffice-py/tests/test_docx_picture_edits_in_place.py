@@ -333,14 +333,8 @@ def resize_after_an_added_field(body):
     return runs, before
 
 
-def test_a_block_that_reads_back_with_other_runs_is_not_resized_in_place(body):
-    # The added field reads back from the block's bytes as other runs (#651): the block takes the staged route. A
-    # debug build checks that a block resized in place keeps the runs a kept handle names.
-    resize_after_an_added_field(body)
-
-
-@pytest.mark.xfail(strict=True, reason="oxoffice-dev/oxoffice#651: an added field's result reads otherwise after a "
-                                       "read of the part, which the staged resize makes while keeping the handles")
 def test_a_relationship_resize_after_an_added_field_keeps_the_runs_it_names(body):
+    # The added field reads in place as its own runs, as the block's bytes read back; a debug build checks that a
+    # block resized in place keeps the runs a kept handle names.
     runs, before = resize_after_an_added_field(body)
     assert [run.text for run in runs] == before

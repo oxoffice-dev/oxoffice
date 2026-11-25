@@ -58,6 +58,35 @@ impl Document {
         Ok(edited)
     }
 
+    /// Replace each direct body block at `slot..slot + count` that an edit
+    /// in place built with the block a reopen of the saved document reads
+    /// ([`Self::reread_body_block`]), so that reads after the edit see what
+    /// a save writes (a field added to a run reads as its own runs, as the
+    /// reader splits it). Costs those blocks alone. Returns whether a block
+    /// changed. An error, or a range out of the body, changes nothing.
+    #[doc(hidden)]
+    pub fn reread_body_blocks_in_place(&mut self, slot: usize, count: usize) -> Result<bool> {
+        let blocks = slot
+            .checked_add(count)
+            .and_then(|end| self.document.body.content.get(slot..end))
+            .ok_or_else(|| Error::Other("body block range out of range".to_owned()))?;
+        let mut reread = Vec::new();
+        for (offset, block) in blocks.iter().enumerate() {
+            let read = self.reread_body_block(block)?;
+            if read != *block {
+                reread.push((slot + offset, read));
+            }
+        }
+        if reread.is_empty() {
+            return Ok(false);
+        }
+        for (slot, block) in reread {
+            self.document.body.content[slot] = block;
+        }
+        self.invalidate_layout();
+        Ok(true)
+    }
+
     /// Put `block` in direct body slot `slot` in place of the block there,
     /// which is returned: the undo of an edit in place that the caller's
     /// publication refused, or a copy of the document as it was before one.

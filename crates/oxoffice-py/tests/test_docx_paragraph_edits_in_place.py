@@ -5,7 +5,8 @@ retire; every other paragraph, run, table, cell and section keeps reading and ed
 leaves the paragraph as it was keeps every handle; one that is refused, or whose publication fails after the
 paragraph was swapped in, leaves the document's bytes and every handle as they were. A field added before a later
 hyperlink retires that hyperlink, as the item count of the body changes. Reads stay in document order after the
-owners of an edit were removed by moving others into their keys."""
+owners of an edit were removed by moving others into their keys. Every read after an edit in place, and every run
+handle taken after it, is what a reopen of the saved file reads (a field added to a run reads as its own runs)."""
 
 import pytest
 
@@ -67,6 +68,43 @@ def texts(doc):
 
 def reopened(doc):
     return oxdocx.Document.from_bytes(doc.to_bytes())
+
+
+def cite(doc, para):
+    doc.insert_citation(oxdocx.StoryRunPosition(paragraph=para, run_index=1), ["Smith20"], locale=1033)
+
+
+# Every call that edits a direct body paragraph in place, those of EDITS and the others.
+READ_BACK = {
+    **{call: edit for call, (edit, _) in EDITS.items()},
+    "Document.insert_citation": cite,
+    "Document.isolate_span": lambda doc, para: doc.isolate_span(para.find_text(para.runs[1].text[1:])),
+}
+
+
+@pytest.mark.parametrize("call", list(READ_BACK))
+def test_an_edit_in_place_reads_as_the_saved_file_reads(body, call):
+    doc = oxdocx.Document.from_bytes(body)
+    doc.add_bibliography_source(
+        oxdocx.BibliographySource("Smith20", "book", fields=[("title", "A history"), ("year", "2020")])
+    )
+    READ_BACK[call](doc, doc.paragraphs[EDITED])
+    again = reopened(doc)
+    assert texts(doc) == texts(again)
+    # A run handle taken after the call names the run the saved file has.
+    doc.paragraphs[EDITED].runs[-1].text = "last"
+    again.paragraphs[EDITED].runs[-1].text = "last"
+    assert texts(doc) == texts(again) == texts(reopened(doc))
+
+
+@pytest.mark.parametrize("call", ["Run.add_field", "Run.add_legacy_form_field"])
+def test_a_field_added_in_a_new_document_reads_as_its_own_runs(call):
+    doc = oxdocx.Document()
+    for index in range(3):
+        doc.add_paragraph(f"para {index}")
+    EDITS[call][0](doc, doc.paragraphs[1])
+    assert texts(doc) == texts(reopened(doc))
+    assert len(doc.paragraphs[1].runs) > 1
 
 
 @pytest.mark.parametrize("call", list(EDITS))
@@ -182,15 +220,12 @@ def test_a_publication_that_fails_after_the_swap_puts_the_paragraph_back(body, c
     check_unchanged(doc, before, handles)
 
 
-# A field a run adds reads in place as part of that run's text, where the reopened save reads its result as a run
-# of its own. A staged set_hyperlink_url reopened the document and hid it; the URL is now set in place. Only the
-# reopened read is set aside for these calls (test_an_added_field_reads_the_same_after_a_reopen).
-FIELD_READS_OTHERWISE = ("Run.add_field", "Run.add_legacy_form_field")
+# The calls that add a field, whose result the reader splits into a run of its own.
+FIELD_CALLS = ("Run.add_field", "Run.add_legacy_form_field")
 
 
 def reads_the_same_after_a_reopen(doc, call):
-    if call not in FIELD_READS_OTHERWISE:
-        assert texts(reopened(doc)) == texts(doc)
+    assert texts(reopened(doc)) == texts(doc), call
 
 
 @pytest.mark.parametrize("call", list(EDITS))
@@ -261,9 +296,8 @@ def test_an_edit_of_a_paragraph_that_holds_a_hyperlink_retires_that_hyperlink(bo
     reads_the_same_after_a_reopen(doc, call)
 
 
-@pytest.mark.xfail(strict=True, reason="oxoffice-dev/oxoffice#651: an added field's result reads otherwise after a reopen")
 @pytest.mark.parametrize("linked", [EDITED + 5, EDITED])
-@pytest.mark.parametrize("call", FIELD_READS_OTHERWISE)
+@pytest.mark.parametrize("call", FIELD_CALLS)
 def test_an_added_field_reads_the_same_after_a_reopen(body, call, linked):
     doc = oxdocx.Document.from_bytes(body)
     doc.paragraphs[linked].add_hyperlink("link", "https://example.com/link")
