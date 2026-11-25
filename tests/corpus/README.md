@@ -19,7 +19,8 @@ for the tests that read real documents (round trips, edits, performance). See
   (headings, lists, links to headings, chips, a footnote, a header and a
   footer, a table, a page break, then suggestions) and `comments` (a source
   with comments in every anchor shape, converted, then suggestions over
-  them). See [Written in Google Docs](#written-in-google-docs).
+  them), and `toc` and `reply`, made from them by hand in the browser. See
+  [Written in Google Docs](#written-in-google-docs).
 - [`manifest.toml`](manifest.toml): one entry per file, written by
   [`generate/manifest.py`](generate/manifest.py) from the files themselves:
   producer, size, and the features found in the XML. Only `known_failure`
@@ -91,28 +92,31 @@ link to a heading as `w:hyperlink w:anchor` to it; a person chip as a
 What the Docs API cannot write: comments and replies (the `comments` family
 uploads its comments in a converted source; the API has no request for them,
 and the Drive comments API needs a client of its own), a table of contents,
-bookmarks, equations, drop-down chips. None of these files holds the empty
-inline controls tagged `goog_rdk_<n>` written `<w:sdtContent/>` that
-documents edited in the browser carry (#656): suggestions, a person and a
-date chip, links to headings, comments in a run, across cells, rows, a
-table's edge or a link's edge do not make Google write them, nor do the
-`google/` copies' converted comments and Word contents. Two candidates are
-left, made by hand in the browser:
+bookmarks, equations, drop-down chips. Two files were made by hand in the
+browser from the generated ones, then exported; the generator cannot write
+them again:
 
-- A reply written in Google Docs to a Word comment: upload
-  `files/word/contract.docx` to Drive, open it with Google Docs, reply to one
-  comment, then File, Download, .docx to `files/google-docs/reply.docx`.
-- A table of contents inserted in Google Docs: open the `review` document
-  (or any document with headings), Insert, Table of contents, With page
-  numbers, then download it as .docx to `files/google-docs/toc.docx`.
+- `toc.docx`: the review with a table of contents inserted in Google Docs (a
+  block control of the "Table of Contents" gallery) and a drop-down chip (an
+  inline control with a `w:dropDownList`);
+- `reply.docx`: the comments with a reply written in Google Docs to one of
+  them (`w15:paraIdParent` in `commentsExtended.xml`).
 
-Then, from `tests/corpus/generate`:
-`python3 -c 'import manifest, os; manifest.update({("google-docs", "docx"): "Google Docs (edited in the browser)"}, since=min(os.path.getmtime(f"../files/google-docs/{n}.docx") for n in ("reply", "toc")))'`.
+None of these files holds the empty inline controls tagged `goog_rdk_<n>`
+written `<w:sdtContent/>` that documents edited in the browser carry
+(#656): suggestions, person and date chips, a drop-down chip, links to
+headings, a table of contents inserted in Google Docs, a reply written there,
+and comments in a run, across cells, rows, a table's edge or a link's edge
+do not make Google write them, nor do the `google/` copies' converted
+comments and Word contents. What does is unknown, so that shape is tested on
+synthetic documents.
 
 A table of contents inserted by Word (its own building block, not the field
 of a source) needs Word on a Mac: open a source with headings, References,
 Table of Contents, Automatic Table 1, save as .docx under `files/word/`,
-close the document, quit Word, then give it Word's version as above
-(`{("word", "docx"): "Microsoft Word for Mac <version>"}`). Scripted, the same is
+close the document, quit Word, then give it Word's version, from
+`tests/corpus/generate`:
+`python3 -c 'import manifest, os; manifest.update({("word", "docx"): "Microsoft Word for Mac <version>"}, since=os.path.getmtime("../files/word/<file>.docx"))'`.
+Scripted, the same is
 `make new table of contents at active document with properties {text object:(create range active document start 0 end 0), use heading styles:true, upper heading level:1, lower heading level:3}`
 in Word's AppleScript, not tried yet.
