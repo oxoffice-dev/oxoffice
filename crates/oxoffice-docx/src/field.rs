@@ -103,7 +103,7 @@ pub use mail_merge::{
 };
 use mail_merge::{merge_referenced_header_footer_parts, resolve_mergefield_text};
 use merge_package::{
-    MERGE_DATA_NS, MERGE_STORE_DOC_VAR, MergeRegion, RecipientClass, classify_recipients,
+    MERGE_STORE_DOC_VAR, MergeRegion, RecipientClass, add_merge_store, classify_recipients,
     clear_mail_merge_markup, decode_merge_table, decode_recipients, embedded_mappings_are_faithful,
     encode_merge_table, identity_mappings, inspect_merge_xml, install_merge_source_graph,
     install_recipient_part, mail_merge_has_modeled_value, merge_configuration_recognized,

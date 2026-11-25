@@ -152,9 +152,7 @@ impl Document {
         target: &str,
     ) -> Result<String> {
         let id = self.identifiers.reserve_relationship_id_checked(owner)?;
-        self.package
-            .get_or_create_part_rels(owner)
-            .add_with_id(&id, rel_type, target);
+        self.add_relationship_journaled(Some(owner), &id, rel_type, target);
         Ok(id)
     }
 
@@ -170,11 +168,7 @@ impl Document {
             &relative_target(owner, target_part),
         )?;
         if owner != self.doc_part_name {
-            self.identifiers
-                .authored_story_relationship_ids
-                .entry(relationship_owner_identity(owner))
-                .or_default()
-                .insert(id.clone());
+            self.identifiers.author_story_relationship(owner, &id);
         }
         Ok(id)
     }
@@ -200,20 +194,11 @@ impl Document {
     ) -> Result<String> {
         oxoffice_core::xml::reject_non_xml_characters("external relationship target", target)?;
         let id = self.identifiers.reserve_relationship_id_checked(owner)?;
-        self.package.get_or_create_part_rels(owner).items.push(
-            oxoffice_opc::relationship::Relationship {
-                id: id.clone(),
-                rel_type: rel_type.to_owned(),
-                target: target.to_owned(),
-                target_mode: Some("External".to_owned()),
-            },
-        );
+        // An in-place edit takes the edge back through the reservation
+        // journal, without a copy of the owner's relationships.
+        self.add_external_relationship_journaled(owner, &id, rel_type, target);
         if owner != self.doc_part_name {
-            self.identifiers
-                .authored_story_relationship_ids
-                .entry(relationship_owner_identity(owner))
-                .or_default()
-                .insert(id.clone());
+            self.identifiers.author_story_relationship(owner, &id);
         }
         Ok(id)
     }

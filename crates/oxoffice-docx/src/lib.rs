@@ -62,13 +62,14 @@ pub use comparison::{
     ComparisonDiagnostic, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
 };
 pub use content_control::{
-    ContentControlAppearance, ContentControlLock, ContentControlPlacement, ContentControlRef,
-    ContentControlSpec, ContentControlTypePayload, FormFieldAssignment, FormFieldRule,
-    FormFieldTarget, FormFieldValue, FormResetValue, FormValidationIssue,
+    ContentControlAppearance, ContentControlEdit, ContentControlLock, ContentControlPlacement,
+    ContentControlRef, ContentControlSpec, ContentControlTypePayload, ControlBlock,
+    FormFieldAssignment, FormFieldRule, FormFieldTarget, FormFieldValue, FormResetValue,
+    FormValidationIssue,
 };
 pub use document::{
-    AccessibilityIssue, BodyContentRef, BodyItemContext, BodyItemOwners, BodyItemRef,
-    ContentFragment, ContentLocation, ContentMeasurement, Document, DocumentFragment,
+    AccessibilityIssue, BodyBlocksChange, BodyContentRef, BodyItemContext, BodyItemOwners,
+    BodyItemRef, ContentFragment, ContentLocation, ContentMeasurement, Document, DocumentFragment,
     DrawingHorizontalAlignment, DrawingHorizontalRelativeFrom, DrawingVerticalAlignment,
     DrawingVerticalRelativeFrom, DrawingWrap, EditReport, EditUndo, EditUnit, ElementExtent,
     EmbeddedFont, EmbeddedFontKind, FontDefinition, FontEmbeddingLicense, FragmentConflictPolicy,

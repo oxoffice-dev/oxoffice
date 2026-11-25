@@ -25,7 +25,9 @@ use oxoffice_opc::OpcPackage;
 use oxoffice_opc::relationship::rel_types;
 use serde_json::json;
 
-use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen, texts};
+use crate::support::{
+    corpus_doc, corpus_root, doc_with, doc_with_body, reopen, text_box_run, texts, with_body,
+};
 
 const MAIN_DOCUMENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";
@@ -1443,6 +1445,67 @@ fn a_package_with_field_mappings_and_recipients_survives_a_save() {
             record(&[("FirstName", "Bob"), ("City", "Nice")])
         ]
     );
+}
+
+/// The custom XML part that holds the merge store, and its bytes.
+fn merge_store(doc: &Document) -> (String, String) {
+    doc.part_names()
+        .unwrap()
+        .into_iter()
+        .filter(|name| name.contains("customXml/item") && !name.contains("Props"))
+        .map(|name| {
+            let xml = doc.part_xml(&name).unwrap();
+            (name, xml)
+        })
+        .find(|(_, xml)| xml.contains("first"))
+        .expect("the store of the first package")
+}
+
+#[test]
+fn a_merge_store_bound_from_a_text_box_is_neither_overwritten_nor_removed() {
+    let one = |value: &str| MailMergePackageOptions {
+        settings: package_settings(),
+        source: MailMergePackageSource::Embedded {
+            columns: vec!["name".to_owned()],
+            records: vec![vec![value.to_owned()]],
+        },
+        mappings: Vec::new(),
+        recipients: Vec::new(),
+    };
+    let mut doc = Document::new();
+    doc.set_mail_merge_package(one("first")).unwrap();
+    let store = doc
+        .document_variable("rdocx.mailMerge.storeItemId")
+        .expect("the store id")
+        .to_owned();
+    // A control in a text box binds the store: the text box is kept as raw
+    // XML in its run, out of the typed controls' reach.
+    let control = format!(
+        r#"<w:sdt><w:sdtPr><w:tag w:val="bound"/><w:dataBinding w:xpath="/*[1]" w:storeItemID="{store}"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>bound</w:t></w:r></w:p></w:sdtContent></w:sdt>"#
+    );
+    let bytes = with_body(
+        doc.to_bytes().unwrap(),
+        &format!("<w:p>{}</w:p>", text_box_run(1, &control)),
+    );
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    let (part, first) = merge_store(&doc);
+
+    // The second package takes a store of its own.
+    doc.set_mail_merge_package(one("second")).unwrap();
+    assert_eq!(doc.part_xml(&part).unwrap(), first);
+    let package = doc.mail_merge_package().unwrap().expect("the package");
+    assert_eq!(
+        package.source,
+        MailMergePackageSource::Embedded {
+            columns: vec!["name".to_owned()],
+            records: vec![vec!["second".to_owned()]],
+        }
+    );
+    // Removing the package keeps the store the text box binds.
+    assert!(doc.remove_mail_merge_package().unwrap());
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.part_xml(&part).unwrap(), first);
+    assert_eq!(doc.mail_merge_package().unwrap(), None);
 }
 
 // ---- Building blocks ----

@@ -2097,6 +2097,205 @@ impl PyDocument {
         self.publish_api_candidate(py, candidate, operation)
     }
 
+    /// Make a property edit of a content control (tag, alias, lock,
+    /// appearance, placeholder, type, data binding) on the direct body block
+    /// that holds it, when the inventory places the control in one, and
+    /// publish that block alone: the control and every element around it
+    /// stay, so every handle stays. Any other control, and an edit the facade
+    /// leaves to its staged route, takes [`Self::edit_content_control`].
+    pub(super) fn edit_content_control_property(
+        &mut self,
+        py: Python<'_>,
+        location: &PyContentLocation,
+        operation: &'static str,
+        edit: oxoffice_docx::ContentControlEdit,
+    ) -> PyResult<()> {
+        /// Stops holding the edit undo however the edit ends; an edit that
+        /// panics leaves the document as it was.
+        struct Held<'a> {
+            document: &'a mut oxoffice_docx::Document,
+            armed: bool,
+        }
+        impl Drop for Held<'_> {
+            fn drop(&mut self) {
+                let undo = self.document.take_edit_undo();
+                if self.armed
+                    && let Some(undo) = undo
+                {
+                    self.document.undo_edit(undo);
+                }
+            }
+        }
+        impl Held<'_> {
+            fn take(mut self) -> Option<oxoffice_docx::EditUndo> {
+                self.armed = false;
+                self.document.take_edit_undo()
+            }
+        }
+        if let Some((native, block)) = self.control_block(py, location)? {
+            self.inner.hold_edit_undo();
+            let held = Held {
+                document: &mut self.inner,
+                armed: true,
+            };
+            let edit = &edit;
+            let (result, held) = py.detach(move || {
+                let result = held
+                    .document
+                    .edit_content_control_in_block(&native, block, edit);
+                (result, held)
+            });
+            let undo = held.take();
+            match result.map_err(|error| docx_to_pyerr(py, error))? {
+                None => {}
+                Some(changed) => {
+                    if !changed || self.follow_control_property_edit(block.slot) {
+                        #[cfg(debug_assertions)]
+                        if self.snapshot_scope.is_some() {
+                            self.assert_word_inventory_rebuilds(false);
+                        }
+                        return Ok(());
+                    }
+                    // The block reads other owners than it held: put it back
+                    // and publish the staged route's document.
+                    if let Some(undo) = undo {
+                        self.inner.undo_edit(undo);
+                    }
+                }
+            }
+        }
+        self.edit_content_control(py, location, operation, move |document, location| {
+            document.edit_content_control(location, edit)
+        })
+    }
+
+    /// The facade location of the content control at `location` and the
+    /// place of the control in its direct body block, from the pieces of
+    /// the inventory, without reading the stories; `None` when the control
+    /// is not in the main part's body, its table cells or text boxes, or the
+    /// pieces do not tell.
+    fn control_block(
+        &mut self,
+        py: Python<'_>,
+        location: &PyContentLocation,
+    ) -> PyResult<Option<(oxoffice_docx::ContentLocation, oxoffice_docx::ControlBlock)>> {
+        use oxoffice_docx::StoryKind;
+        if location.is_end
+            || location.kind != story_item_kind_name(oxoffice_docx::StoryItemKind::ContentControl)
+            || location.index_path.len() != 1
+        {
+            return Ok(None);
+        }
+        let story = &location.story;
+        let Some(kind) = [StoryKind::Body, StoryKind::TableCell, StoryKind::TextBox]
+            .into_iter()
+            .find(|kind| story_kind_name(*kind) == story.kind)
+        else {
+            return Ok(None);
+        };
+        if kind == StoryKind::Body && story.owner_index != 0 {
+            return Ok(None);
+        }
+        self.validate_owned_story(py, story)?;
+        self.ensure_word_authority(py)?;
+        let Some(pieces) = self.pieces.as_ref() else {
+            return Ok(None);
+        };
+        let context = self.inner.body_item_context();
+        if pieces.context.as_ref() != Some(&context)
+            || pieces.blocks.len() != self.inner.body_children().len()
+            || story.part_name != context.part_name()
+        {
+            return Ok(None);
+        }
+        // A body control is counted among the body's items, a control of a
+        // cell or a text box by its story among the block's stories.
+        let index = location.index_path[0];
+        let target = if kind == StoryKind::Body {
+            index
+        } else {
+            story.owner_index
+        };
+        let mut base = 0;
+        for (slot, piece) in pieces.blocks.iter().enumerate() {
+            let Some(owners) = piece.owners.as_ref() else {
+                return Ok(None);
+            };
+            let count = match kind {
+                StoryKind::Body => owners.body_items,
+                StoryKind::TableCell => owners.cell_stories,
+                _ => owners.text_boxes,
+            };
+            if target < base + count {
+                let local = target - base;
+                let block = if kind == StoryKind::Body {
+                    oxoffice_docx::ControlBlock {
+                        slot,
+                        owner_index: 0,
+                        item_index: local,
+                    }
+                } else {
+                    oxoffice_docx::ControlBlock {
+                        slot,
+                        owner_index: local,
+                        item_index: index,
+                    }
+                };
+                let native = oxoffice_docx::ContentLocation::new(
+                    oxoffice_docx::StoryId::new(kind, story.part_name.clone(), story.owner_index),
+                    oxoffice_docx::StoryItemKind::ContentControl,
+                    location.index_path.clone(),
+                );
+                return Ok(Some((native, block)));
+            }
+            base += count;
+        }
+        Ok(None)
+    }
+
+    /// Read the owners of the direct body block at `slot` again after a
+    /// property edit of a control inside it, and keep them in its piece;
+    /// false, changing nothing, when the block now holds other stories,
+    /// items, paragraphs, tables or links than it held.
+    fn follow_control_property_edit(&mut self, slot: usize) -> bool {
+        let Some(live) = self.inner.body_children().get(slot) else {
+            return false;
+        };
+        let Ok(Some(owners)) = word_block_owners(&self.inner, live) else {
+            return false;
+        };
+        let Some(pieces) = &mut self.pieces else {
+            return false;
+        };
+        if pieces.context.as_ref() != Some(&self.inner.body_item_context())
+            || pieces.blocks.len() != self.inner.body_children().len()
+        {
+            return false;
+        }
+        let Some(held) = pieces.blocks[slot].owners.as_ref() else {
+            return false;
+        };
+        let shape = |owners: &WordBlockOwners| {
+            (
+                owners.body_items,
+                owners.cell_stories,
+                owners.text_boxes,
+                owners.tables,
+                owners.paragraphs.clone(),
+                owners.relationships.clone(),
+                owners.facts.links.len(),
+            )
+        };
+        if shape(held) != shape(&owners) {
+            return false;
+        }
+        pieces.blocks[slot] = std::sync::Arc::new(WordBlockPiece {
+            block: std::sync::Arc::new(live.clone()),
+            owners: Some(owners),
+        });
+        true
+    }
+
     pub(super) fn publish_api_candidate(
         &mut self,
         py: Python<'_>,

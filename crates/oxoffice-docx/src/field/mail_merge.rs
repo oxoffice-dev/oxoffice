@@ -126,6 +126,59 @@ pub struct MailMergePreparedData {
     pub records: Vec<BTreeMap<String, String>>,
     pub diagnostics: Vec<MailMergePackageDiagnostic>,
 }
+/// Write the mail-merge package of `options` on `document`, the edit of
+/// [`Document::set_mail_merge_package`] after its checks.
+fn write_mail_merge_package(
+    candidate: &mut Document,
+    options: &MailMergePackageOptions,
+    embedded_xml: Option<&[u8]>,
+) -> Result<()> {
+    if let Some(xml) = embedded_xml {
+        let existing = candidate.merge_store_doc_var()?;
+        if let Some(item_id) = existing {
+            let part = crate::content_control::resolve_custom_xml_part(
+                &candidate.package,
+                &candidate.doc_part_name,
+                &item_id,
+            )?;
+            require_merge_store_schema(&candidate.package, &part)?;
+            let current = candidate.package.get_part(&part).unwrap_or_default();
+            if current != xml {
+                if merge_store_has_other_owner(candidate, &part, &item_id)? {
+                    let new_id = add_merge_store(candidate, xml)?;
+                    candidate.set_document_variable(MERGE_STORE_DOC_VAR, &new_id)?;
+                } else {
+                    candidate.package.set_part(&part, xml.to_vec());
+                }
+            }
+        } else if candidate.merge_settings_recognized()
+            && !candidate.settings_declare_external_merge_source()?
+        {
+            return Err(Error::Other(
+                "mail-merge package source is missing".to_owned(),
+            ));
+        } else {
+            let item_id = add_merge_store(candidate, xml)?;
+            candidate.set_document_variable(MERGE_STORE_DOC_VAR, &item_id)?;
+        }
+    }
+    candidate.set_mail_merge_settings(options.settings.clone())?;
+    if embedded_xml.is_none() {
+        release_owned_merge_store(candidate)?;
+    }
+    let recipient_id = install_recipient_part(candidate, &options.recipients)?;
+    install_merge_source_graph(candidate, options, recipient_id.as_deref())?;
+    Ok(())
+}
+
+/// Remove the mail-merge package of `document`, the edit of
+/// [`Document::remove_mail_merge_package`] after its checks.
+fn clear_mail_merge_package(candidate: &mut Document) -> Result<()> {
+    release_owned_recipient(candidate)?;
+    release_owned_merge_store(candidate)?;
+    clear_mail_merge_markup(candidate)
+}
+
 impl Document {
     /// Write one mail-merge package.
     ///
@@ -145,42 +198,29 @@ impl Document {
         };
         self.validate_existing_merge_ownership()?;
         recipient_part_census(&self.package)?;
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(
+            &[crate::EditUnit::Settings, crate::EditUnit::Parts],
+            |document| write_mail_merge_package(document, &options, embedded_xml.as_deref()),
+        );
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            staged.set_mail_merge_package_on_a_copy(&options, embedded_xml.as_deref())
+        });
+        result
+    }
+
+    /// The staged route of [`Self::set_mail_merge_package`], the debug
+    /// oracle of its in-place edit.
+    #[cfg(debug_assertions)]
+    fn set_mail_merge_package_on_a_copy(
+        &mut self,
+        options: &MailMergePackageOptions,
+        embedded_xml: Option<&[u8]>,
+    ) -> Result<()> {
         let mut candidate = self.clone_for_staging();
-        if let Some(xml) = embedded_xml.as_deref() {
-            let existing = candidate.merge_store_doc_var()?;
-            if let Some(item_id) = existing {
-                let part = crate::content_control::resolve_custom_xml_part(
-                    &candidate.package,
-                    &candidate.doc_part_name,
-                    &item_id,
-                )?;
-                require_merge_store_schema(&candidate.package, &part)?;
-                let current = candidate.package.get_part(&part).unwrap_or_default();
-                if current != xml {
-                    if merge_store_has_other_owner(&candidate, &part, &item_id)? {
-                        let new_id = candidate.add_custom_xml_store(xml, &[MERGE_DATA_NS])?;
-                        candidate.set_document_variable(MERGE_STORE_DOC_VAR, &new_id)?;
-                    } else {
-                        candidate.package.set_part(&part, xml.to_vec());
-                    }
-                }
-            } else if candidate.merge_settings_recognized()
-                && !candidate.settings_declare_external_merge_source()?
-            {
-                return Err(Error::Other(
-                    "mail-merge package source is missing".to_owned(),
-                ));
-            } else {
-                let item_id = candidate.add_custom_xml_store(xml, &[MERGE_DATA_NS])?;
-                candidate.set_document_variable(MERGE_STORE_DOC_VAR, &item_id)?;
-            }
-        }
-        candidate.set_mail_merge_settings(options.settings.clone())?;
-        if embedded_xml.is_none() {
-            release_owned_merge_store(&mut candidate)?;
-        }
-        let recipient_id = install_recipient_part(&mut candidate, &options.recipients)?;
-        install_merge_source_graph(&mut candidate, &options, recipient_id.as_deref())?;
+        write_mail_merge_package(&mut candidate, options, embedded_xml)?;
         let mut reopened = candidate.prepare_and_reopen_staged()?;
         reopened.invalidate_layout();
         let mut baseline = self.clone_for_staging();
@@ -216,10 +256,27 @@ impl Document {
         if self.read_merge_view()?.is_none() {
             return Ok(false);
         }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self
+            .edit_in_place(
+                &[crate::EditUnit::Settings, crate::EditUnit::Parts],
+                clear_mail_merge_package,
+            )
+            .map(|()| self.take_last_edit_changed());
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            staged.remove_mail_merge_package_on_a_copy()
+        });
+        result
+    }
+
+    /// The staged route of [`Self::remove_mail_merge_package`], the debug
+    /// oracle of its in-place edit.
+    #[cfg(debug_assertions)]
+    fn remove_mail_merge_package_on_a_copy(&mut self) -> Result<bool> {
         let mut candidate = self.clone_for_staging();
-        release_owned_recipient(&mut candidate)?;
-        release_owned_merge_store(&mut candidate)?;
-        clear_mail_merge_markup(&mut candidate)?;
+        clear_mail_merge_package(&mut candidate)?;
         let mut reopened = candidate.prepare_and_reopen_staged()?;
         reopened.invalidate_layout();
         let mut baseline = self.clone_for_staging();
