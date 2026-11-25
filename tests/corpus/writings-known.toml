@@ -16,56 +16,56 @@
 input = "*.docx"
 writing = "empty-with-end-tag"
 operation = "accept xml"
-issue = 658
+issue = 664
 message = "reads otherwise"
 
 [[known]]
 input = "*.docx"
 writing = "empty-with-end-tag"
 operation = "compare"
-issue = 658
+issue = 664
 message = "gives another result"
 
 [[known]]
 input = "*.docx"
 writing = "empty-with-end-tag"
 operation = "compare xml"
-issue = 658
+issue = 664
 message = "reads otherwise"
 
 [[known]]
 input = "*.docx"
 writing = "empty-with-end-tag"
 operation = "edit"
-issue = 658
+issue = 664
 message = "gives another result"
 
 [[known]]
 input = "*.docx"
 writing = "empty-with-end-tag"
 operation = "edit xml"
-issue = 658
+issue = 664
 message = "reads otherwise"
 
 [[known]]
 input = "*.docx"
 writing = "empty-with-end-tag"
 operation = "markdown"
-issue = 658
+issue = 664
 message = "gives another result"
 
 [[known]]
 input = "*.docx"
 writing = "empty-with-end-tag"
 operation = "save"
-issue = 658
+issue = 664
 message = "gives another result"
 
 [[known]]
 input = "*.docx"
 writing = "empty-with-end-tag"
 operation = "text"
-issue = 658
+issue = 664
 message = "gives another result"
 
 # B: an attribute value is parsed from its raw bytes, its references
@@ -174,13 +174,6 @@ message = "nested namespace owner after mutation"
 
 [[known]]
 input = "word/manual.docx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "reads otherwise"
-
-[[known]]
-input = "word/thesis.docx"
 writing = "other-prefixes"
 operation = "edit xml"
 issue = 658

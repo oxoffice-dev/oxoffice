@@ -6,7 +6,7 @@
 
 use oxoffice_docx::{Document, StoryKind, StoryParagraph, validate_document_bytes};
 use oxoffice_xml_test::harness::{Input, Outcome, attempt, check_writings};
-use oxoffice_xml_test::{Writing, rewrite_package};
+use oxoffice_xml_test::{Writing, canonical, package_parts, rewrite_package, write_package};
 
 use crate::support::{
     corpus_files, corpus_root, doc_with_body, docx_with_body, every_copy, small_thesis,
@@ -233,23 +233,103 @@ fn assert_compares(bytes: &[u8], edited: &[u8], what: &str) {
 }
 
 // A link of a paragraph added or removed whole becomes a HYPERLINK field; its
-// attributes are read with the prefixes the document binds (`ox0:history`).
+// attributes are read with the prefixes the document binds (`ox0:history`),
+// and restored under those its element binds.
 #[test]
 fn a_linked_paragraph_added_or_removed_whole_compares_under_other_prefixes() {
-    let body = |link: &str| {
+    let body = |link: &str, other_prefixes: bool| {
         let document = docx_with_body(&format!(
-            r#"<w:p><w:r><w:t>Before.</w:t></w:r></w:p>{link}<w:p><w:bookmarkStart w:id="0" w:name="Target"/><w:r><w:t>Target.</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#
+            r#"<w:p><w:r><w:t>Before.</w:t></w:r></w:p>{link}<w:p><w:r><w:t>After.</w:t></w:r></w:p>"#
         ));
-        rewrite_package(&document, Writing::OtherPrefixes)
-            .unwrap()
-            .0
+        match other_prefixes {
+            true => {
+                rewrite_package(&document, Writing::OtherPrefixes)
+                    .unwrap()
+                    .0
+            }
+            false => document,
+        }
     };
-    let (with, without) = (
-        body(
-            r#"<w:p><w:hyperlink w:anchor="Target" w:history="1"><w:r><w:t>See the target.</w:t></w:r></w:hyperlink></w:p>"#,
+    let link = r#"<w:p><w:hyperlink w:anchor="Target" w:history="1"><w:r><w:t>See the target.</w:t></w:r></w:hyperlink></w:p>"#;
+    // (original, edited): both under other prefixes, or the link added in
+    // a copy written with them to one written with `w`.
+    let (other, plain) = (true, false);
+    for (from, to) in [
+        ((other, ""), (other, link)),
+        ((other, link), (other, "")),
+        ((plain, ""), (other, link)),
+    ] {
+        assert_compares(
+            &body(from.1, from.0),
+            &body(to.1, to.0),
+            &format!("{from:?} {to:?}"),
+        );
+    }
+}
+
+// The canonical form proves a rewrite says the same only if it tells apart
+// what does not; and a rewrite that would change what a part says is refused.
+#[test]
+fn the_canonical_form_tells_apart_two_parts_that_say_different_things() {
+    let w = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+    let mc = r#"xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006""#;
+    for (left, right) in [
+        (r#"<w:b w:val="1"/>"#, r#"<w:b w:val="0"/>"#),
+        ("<w:t>a</w:t>", "<w:t>a </w:t>"),
+        (
+            r#"<w:r xml:space="preserve"><w:t/> </w:r>"#,
+            r#"<w:r xml:space="preserve"><w:t/></w:r>"#,
         ),
-        body(""),
+        (r#"<a:x xmlns:a="urn:1"/>"#, r#"<a:x xmlns:a="urn:2"/>"#),
+        ("<p><a/><b/></p>", "<p><b/><a/></p>"),
+        (
+            r#"<r xmlns:x="urn:1" mc:Ignorable="x"/>"#,
+            r#"<r xmlns:x="urn:2" mc:Ignorable="x"/>"#,
+        ),
+    ] {
+        let read = |xml: &str| canonical(format!("<root {w} {mc}>{xml}</root>").as_bytes());
+        assert_ne!(read(left), read(right), "{left} {right}");
+    }
+    // A compatibility list naming a main prefix cannot follow its renaming.
+    let parts = package_parts(&docx_with_body("<w:p/>"))
+        .unwrap()
+        .into_iter()
+        .map(|(name, data)| {
+            let data = match name == "word/document.xml" {
+                true => String::from_utf8(data).unwrap().replacen(
+                    "<w:body>",
+                    r#"<w:body mc:Ignorable="w">"#,
+                    1,
+                ),
+                false => return (name, data),
+            };
+            (name, data.into_bytes())
+        });
+    let refused = rewrite_package(
+        &write_package(&parts.collect::<Vec<_>>()),
+        Writing::OtherPrefixes,
     );
-    assert_compares(&with, &without, "removed");
-    assert_compares(&without, &with, "added");
+    assert!(refused.is_err_and(|error| error.contains("names a renamed prefix")));
+}
+
+// A table paragraph's `w:cnfStyle` is kept as written: written again in
+// another attribute order it is no change, with another region it is one.
+#[test]
+fn a_kept_table_paragraph_property_counts_only_when_what_it_says_changes() {
+    let cell = |cnf: &str, text: &str| {
+        docx_with_body(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:cnfStyle {cnf}/></w:pPr><w:r><w:t>{text} totals.</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        ))
+    };
+    let original = cell(r#"w:val="100000000000" w:firstRow="1""#, "Quarterly");
+    for (edited, same) in [
+        (r#"w:firstRow="1" w:val="100000000000""#, true),
+        (r#"w:val="100000000000" w:firstRow="0""#, false),
+    ] {
+        let found =
+            open(&original)
+                .unwrap()
+                .compare(&open(&cell(edited, "Yearly")).unwrap(), AUTHOR, DATE);
+        assert_eq!(found.unwrap().is_empty(), same, "{edited}");
+    }
 }

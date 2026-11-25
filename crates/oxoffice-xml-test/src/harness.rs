@@ -144,15 +144,20 @@ fn differences(original: &Outcome, rewritten: &Outcome) -> Vec<(String, String)>
         let Some(got) = rewritten.saved.get(step) else {
             continue;
         };
-        let differs = expected
-            .iter()
-            .find_map(|(part, read)| match (read, got.get(part)) {
-                (_, None) => Some(format!("{part} is not written")),
-                (Ok(expected), Some(Ok(got))) => first_difference(expected, got)
-                    .map(|at| format!("{part} reads otherwise, {at}")),
-                (Ok(_), Some(Err(error))) => Some(format!("{part} is no XML: {error}")),
-                (Err(_), _) => None,
-            });
+        // Every part either save wrote.
+        let parts: BTreeSet<&String> = expected.keys().chain(got.keys()).collect();
+        let differs =
+            parts
+                .into_iter()
+                .find_map(|part| match (expected.get(part), got.get(part)) {
+                    (Some(expected), Some(got)) if expected == got => None,
+                    (Some(Ok(expected)), Some(Ok(got))) => first_difference(expected, got)
+                        .map(|at| format!("{part} reads otherwise, {at}")),
+                    (_, None) => Some(format!("{part} is not written")),
+                    (None, _) => Some(format!("{part} is written by this writing only")),
+                    (_, Some(Err(error))) => Some(format!("{part} is no XML: {error}")),
+                    (Some(Err(error)), _) => Some(format!("{part} was no XML: {error}")),
+                });
         found.extend(differs.map(|message| (format!("{step} xml"), shorten(&message))));
     }
     found
@@ -265,11 +270,17 @@ pub fn check_writings(known: &Path, inputs: Vec<Input>, full: bool, run: &Operat
     }
     for (entry, _) in known.iter().zip(&matched).filter(|(_, matched)| !**matched) {
         let ran = inputs.iter().any(|(name, _)| names(entry, name));
+        // An entry of this kind of input that the full run never takes.
+        let kind = |name: &str| name.rsplit('.').next().unwrap_or_default().to_owned();
+        let ours = inputs
+            .iter()
+            .any(|(name, _)| kind(name) == kind(&entry["input"]));
         if (ran && (full || !entry["input"].starts_with('*')))
+            || (full && ours && !ran)
             || !Writing::ALL.iter().any(|w| w.name() == entry["writing"])
         {
             unexpected.push(format!(
-                "{} {} {}: no longer happens, remove its entry (#{})",
+                "{} {} {}: does not happen, remove its entry (#{})",
                 entry["input"], entry["writing"], entry["operation"], entry["issue"]
             ));
         }

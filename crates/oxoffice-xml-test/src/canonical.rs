@@ -1,8 +1,9 @@
 //! The canonical form of a part: what its XML says, whatever the writing.
 //! One line per element start and end, its name expanded to
 //! `{namespace}local`, its attributes sorted by expanded name without
-//! namespace declarations and with references resolved; one line per text,
-//! references resolved. An empty-element tag reads as a start and an end tag; text of
+//! namespace declarations and with references resolved (as are the prefixes
+//! the markup compatibility lists name); one line per text, references
+//! resolved. An empty-element tag reads as a start and an end tag; text of
 //! whitespace only, outside `xml:space="preserve"`, in an element holding
 //! elements is no line (element-only content in these vocabularies). Read
 //! with quick-xml's own attribute reader, independently of the rewrites and
@@ -101,8 +102,31 @@ fn start(
         true,
     )?;
     let mut expanded = Vec::new();
-    for (key, value) in attributes {
+    let mc = "{http://schemas.openxmlformats.org/markup-compatibility/2006}";
+    for (key, mut value) in attributes {
         let key = expand(open, &key, false)?;
+        // A markup compatibility list names namespaces by their prefixes.
+        let lists = [
+            "Ignorable",
+            "MustUnderstand",
+            "ProcessContent",
+            "PreserveElements",
+        ];
+        let listed = key
+            .strip_prefix(mc)
+            .is_some_and(|local| lists.contains(&local))
+            || (key == "Requires" && name == format!("{mc}Choice"));
+        if listed {
+            let tokens = value
+                .split_ascii_whitespace()
+                .map(|token| match token.split_once(':') {
+                    Some(_) => expand(open, token, true),
+                    None => resolve(open, token)
+                        .map(|uri| format!("{{{uri}}}"))
+                        .ok_or(token.to_owned()),
+                });
+            value = tokens.collect::<Result<Vec<_>, _>>()?.join(" ");
+        }
         expanded.push((key, value));
     }
     expanded.sort();

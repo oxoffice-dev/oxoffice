@@ -4,6 +4,8 @@
 mod charts;
 mod corpus;
 mod embedded;
+// Lint runs this binary without `render` too: the writings run once.
+#[cfg(feature = "render")]
 mod equivalent_writings;
 mod fonts;
 mod notes_and_comments;

@@ -223,7 +223,7 @@ taken out. Decided:
 
 ## Links
 
-- #658, #656, #413, #659, #663
+- #658, #656, #413, #659, #663, #664
 - [The test suite from scratch](2026-11-20-test-suite-from-scratch.md),
   [Corpus at scale](2026-11-21-corpus-at-scale-and-behaviour-tests.md),
   [Consumer workflows](2026-11-21-consumer-workflows.md)
