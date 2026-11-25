@@ -681,8 +681,12 @@ pub(super) fn story_document(
 }
 
 /// Whether a revision element holds nothing: written self-closing, or with
-/// only white space between its tags. It marks no content, so it holds no
-/// change a comparison could alter.
+/// only white space between its tags. An empty `w:ins` or `w:del` in a
+/// paragraph marks nothing; a self-closing one in `w:pPr/w:rPr` or
+/// `w:trPr` marks its paragraph's mark or its row, which an edit of the
+/// text leaves as written. Either way the owner's text compares; an edit
+/// that changes the mark itself is still refused, by the check that every
+/// existing revision is kept.
 fn empty_revision(element: &[u8]) -> bool {
     let Some(open_end) = element.iter().position(|byte| *byte == b'>') else {
         return false;

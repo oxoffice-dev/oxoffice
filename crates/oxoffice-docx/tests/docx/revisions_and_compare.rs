@@ -4799,30 +4799,63 @@ fn last_owner_is_self_closing(xml: &str, local: &str) -> bool {
 
 #[test]
 fn a_changed_paragraph_holding_an_empty_revision_is_compared() {
-    // An empty insertion or deletion marks nothing: it holds no change the
-    // comparison could alter, so the paragraph around it is compared.
-    for empty in [
-        r#"<w:ins w:id="5" w:author="Earlier" w:date="2026-01-01T00:00:00Z"/>"#,
-        r#"<w:del w:id="5" w:author="Earlier" w:date="2026-01-01T00:00:00Z"></w:del>"#,
+    // An empty insertion or deletion marks nothing, and a tracked paragraph
+    // mark is left as it was by an edit of the text: the paragraph compares,
+    // and the earlier revision stays and resolves with the new ones.
+    let mark = r#"<w:ins w:id="5" w:author="Earlier" w:date="2026-01-01T00:00:00Z"/>"#;
+    for (properties, inside) in [
+        ("", mark),
+        (
+            "",
+            r#"<w:del w:id="5" w:author="Earlier" w:date="2026-01-01T00:00:00Z"></w:del>"#,
+        ),
+        (&*format!("<w:pPr><w:rPr>{mark}</w:rPr></w:pPr>"), ""),
     ] {
         let version = |word: &str| {
             doc_with_body(&format!(
-                r#"<w:p><w:r><w:t xml:space="preserve">Alpha {word} </w:t></w:r>{empty}<w:r><w:t>gamma.</w:t></w:r></w:p>{}"#,
+                r#"<w:p>{properties}<w:r><w:t xml:space="preserve">Alpha {word} </w:t></w:r>{inside}<w:r><w:t>gamma.</w:t></w:r></w:p>{}"#,
                 plain("Tail.")
             ))
         };
         let mut doc = redline(version("beta"), &version("delta"));
+        assert!(
+            main_part_xml(&mut doc).contains(r#"w:id="5""#),
+            "{properties}{inside}"
+        );
         assert_eq!(
             story_texts(&accepted(&mut doc)),
-            story_texts(&version("delta")),
-            "{empty}"
+            story_texts(&accepted(&mut version("delta"))),
+            "{properties}{inside}"
         );
         assert_eq!(
             story_texts(&rejected(&mut doc)),
-            story_texts(&version("beta")),
-            "{empty}"
+            story_texts(&rejected(&mut version("beta"))),
+            "{properties}{inside}"
         );
     }
+}
+
+#[test]
+fn an_edit_inside_a_text_box_is_refused_until_it_can_be_tracked_inside() {
+    // Word's text box, a DrawingML choice and a VML fallback: replaced whole,
+    // its deleted copy would keep its text as inserted text (#666). An edit
+    // beside the box compares.
+    let version = |inside: &str, tail: &str| {
+        doc_with_body(&format!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{}</w:p>{}"#,
+            crate::support::text_box_run(7, &format!("<w:p><w:r><w:t>{inside}</w:t></w:r></w:p>")),
+            plain(tail)
+        ))
+    };
+    let error = version("Inside the box", "Tail.")
+        .compare(&version("Within the box", "Tail."), AUTHOR, DATE)
+        .unwrap_err();
+    assert!(error.to_string().contains("inside a text box"), "{error}");
+    let edited = version("Inside the box", "Tails.");
+    let mut doc = redline(version("Inside the box", "Tail."), &edited);
+    let report = doc.validate().unwrap();
+    assert!(report.is_valid(), "{:?}", report.findings);
+    assert_eq!(story_texts(&accepted(&mut doc)), story_texts(&edited));
 }
 
 #[test]

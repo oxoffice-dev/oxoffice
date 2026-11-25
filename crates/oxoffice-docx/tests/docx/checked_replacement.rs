@@ -179,4 +179,72 @@ fn a_replacement_in_one_paragraph_names_the_text_it_cannot_reach() {
         mismatch.to_string().contains("1 it cannot reach"),
         "{mismatch}"
     );
+    // A cell's text is no part of the first body paragraph, though both
+    // stories are numbered 0 of their kind.
+    let mut doc = crate::support::doc_with_body(concat!(
+        "<w:p><w:r><w:t>Hello there.</w:t></w:r></w:p>",
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Target cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        "<w:p/>"
+    ));
+    let location = doc.story_paragraphs().unwrap()[0].location.clone();
+    let mismatch = doc
+        .try_replace_text_at(&location, "Target", "Goal", Some(1))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!((mismatch.found, mismatch.unreached), (0, 0));
+}
+
+#[test]
+fn every_route_that_writes_an_item_back_declares_no_namespace_in_it() {
+    // A run added and a word replaced in a text box, written twice (its
+    // choice and its fallback), and a field inserted at a run: no edited
+    // paragraph declares what the part binds.
+    let body = format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{}</w:p><w:p><w:r><w:t>Plain words.</w:t></w:r></w:p>"#,
+        crate::support::text_box_run(7, "<w:p><w:r><w:t>Inside the box</w:t></w:r></w:p>")
+    );
+    let at = |doc: &Document, text: &str| {
+        doc.story_paragraphs()
+            .unwrap()
+            .into_iter()
+            .find(|paragraph| paragraph.text == text)
+            .unwrap()
+            .location
+    };
+    type Edit = fn(&mut Document, oxoffice_docx::ContentLocation, oxoffice_docx::ContentLocation);
+    let routes: [(&str, Edit); 3] = [
+        ("run added in a text box", |doc, boxed, _| {
+            doc.edit_story_paragraph(&boxed, |paragraph| {
+                paragraph.add_run(" Zephyr.");
+                Ok(())
+            })
+            .unwrap();
+        }),
+        ("word replaced in a text box", |doc, boxed, _| {
+            assert_eq!(
+                doc.try_replace_text_at(&boxed, "Inside", "Within", Some(1))
+                    .unwrap(),
+                Ok(1)
+            );
+        }),
+        ("field inserted", |doc, _, plain| {
+            let position = oxoffice_docx::StoryRunPosition {
+                location: plain,
+                run_index: 1,
+            };
+            doc.insert_field(&position, oxoffice_docx::Field::new("PAGE", "1"))
+                .unwrap();
+        }),
+    ];
+    let declaring = routes
+        .into_iter()
+        .filter(|(_, edit)| {
+            let mut doc = crate::support::doc_with_body(&body);
+            let (boxed, plain) = (at(&doc, "Inside the box"), at(&doc, "Plain words."));
+            edit(&mut doc, boxed, plain);
+            package_part(&doc.to_bytes().unwrap(), "/word/document.xml").contains("<w:p xmlns")
+        })
+        .map(|(route, _)| route)
+        .collect::<Vec<_>>();
+    assert!(declaring.is_empty(), "{declaring:?}");
 }

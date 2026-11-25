@@ -15,9 +15,10 @@ pub struct ReplacementCountMismatch {
     pub expected: usize,
     /// The count the pair found once the pairs before it had run.
     pub found: usize,
-    /// The occurrences a reader sees in the item a replacement scoped to one
-    /// paragraph, table or control searched, beyond those it found: text it
-    /// cannot reach, such as a field's result. Zero for a document-wide pair.
+    /// The occurrences a reader sees in the paragraph or block control a
+    /// scoped replacement searched, beyond those it found: text it cannot
+    /// reach, such as a field's result. Zero for a table, a cell and a
+    /// document-wide pair.
     pub unreached: usize,
 }
 
@@ -591,24 +592,28 @@ impl Document {
         {
             // What a reader sees of the placeholder in the item, beyond what
             // the replacement found there.
-            let unreached = searched.map_or(0, |location| {
-                candidate.story_paragraphs().map_or(0, |paragraphs| {
-                    paragraphs
-                        .iter()
-                        .filter(|paragraph| {
-                            paragraph.location.story.part_name == location.story.part_name
-                                && paragraph.location.story.owner_index
-                                    == location.story.owner_index
-                                && paragraph
-                                    .location
-                                    .index_path
-                                    .starts_with(&location.index_path)
-                        })
-                        .map(|paragraph| paragraph.text.matches(placeholder).count())
-                        .sum::<usize>()
-                        .saturating_sub(count)
-                })
-            });
+            let unreached = searched
+                .filter(|location| location.item_kind != StoryItemKind::Table)
+                .map_or(0, |location| {
+                    candidate.story_paragraphs().map_or(0, |paragraphs| {
+                        paragraphs
+                            .iter()
+                            .filter(|paragraph| {
+                                paragraph.location.story.kind == location.story.kind
+                                    && paragraph.location.story.part_name
+                                        == location.story.part_name
+                                    && paragraph.location.story.owner_index
+                                        == location.story.owner_index
+                                    && paragraph
+                                        .location
+                                        .index_path
+                                        .starts_with(&location.index_path)
+                            })
+                            .map(|paragraph| paragraph.text.matches(placeholder).count())
+                            .sum::<usize>()
+                            .saturating_sub(count)
+                    })
+                });
             return Ok(Err(ReplacementCountMismatch {
                 index: 0,
                 placeholder: placeholder.into(),

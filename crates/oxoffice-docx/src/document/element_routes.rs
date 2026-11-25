@@ -153,8 +153,6 @@ impl Document {
         let replacement = content_fragment_for_insertion(&candidate, &location.story, &fragment)?;
 
         let replacement = close_content_fragment_namespaces(&replacement, &scope)?;
-        let replacement =
-            without_inherited_root_declarations(&xml[item.full.clone()], replacement, &scope);
 
         // Replaced main-part content takes the notes only it referenced.
         let before = (part_name == candidate.doc_part_name).then(|| xml.clone());
