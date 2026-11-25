@@ -266,23 +266,31 @@ impl PyDocument {
         let Some(undo) = held.take() else {
             return Ok(Some(edited.counts));
         };
+        // One story publication at most: a second one that failed could not
+        // put back the handles of the first.
+        if edited.stories.len() > 1 {
+            self.inner.undo_edit(undo);
+            return Ok(None);
+        }
         let slots = undo
             .report()
             .body_blocks
             .iter()
             .map(|change| change.slot)
             .collect::<Vec<_>>();
-        let kept = if slots.is_empty() {
-            None
-        } else {
+        if !slots.is_empty() {
             match self.blocks_keeping_owners(&slots) {
-                Some(kept) => Some(kept),
+                // The blocks are kept before a story is published: a story
+                // publication reads the whole inventory (and checks it in
+                // debug builds), so the body's owners must already read what
+                // the blocks hold.
+                Some(kept) => self.keep_block_owners(kept),
                 None => {
                     self.inner.undo_edit(undo);
                     return Ok(None);
                 }
             }
-        };
+        }
         for story in &edited.stories {
             let published = self
                 .splice_story_owners(
@@ -306,12 +314,13 @@ impl PyDocument {
                     self.commit_story_revision(prepared)
                 });
             if let Err(error) = published {
+                // The blocks are already kept, so the inventory holds what
+                // the undone edit wrote: read it again from the document the
+                // undo put back.
                 self.inner.undo_edit(undo);
+                self.ensure_word_authority(py)?;
                 return Err(error);
             }
-        }
-        if let Some(kept) = kept {
-            self.keep_block_owners(kept);
         }
         #[cfg(debug_assertions)]
         if self.snapshot_scope.is_some() {
@@ -384,6 +393,12 @@ impl PyDocument {
                 return None;
             }
             for (old, new) in old.iter().zip(new) {
+                // Every owner keeps its route and its parent: a run that left
+                // a tracked change around it has another path, and its
+                // handle would name a run no longer there.
+                if !old.location.same_route(&new.location) || old.parent != new.parent {
+                    return None;
+                }
                 match (&old.read_facts, new.read_facts, &new.location) {
                     (WordReadFacts::None, WordReadFacts::None, _) => {}
                     (WordReadFacts::Table(was), WordReadFacts::Table(is), _) if *was == is => {}
@@ -396,8 +411,8 @@ impl PyDocument {
                     ) => {
                         let placed =
                             WordOwnerLocation::Paragraph(placed_route(local, &body, before));
-                        let key = self.indexes.find(&self.owners, &placed)?;
-                        texts.push((key, is));
+                        self.indexes.find(&self.owners, &placed)?;
+                        texts.push((placed, is));
                     }
                     _ => return None,
                 }
@@ -406,10 +421,19 @@ impl PyDocument {
         Some(KeptBlocks { read, texts })
     }
 
-    /// Keep what [`Self::blocks_keeping_owners`] read.
+    /// Keep what [`Self::blocks_keeping_owners`] read. The paragraph owners
+    /// are found by their routes now: a story publication made since then
+    /// may have renumbered the owner keys.
     fn keep_block_owners(&mut self, KeptBlocks { read, texts }: KeptBlocks) {
-        for (key, text) in texts {
-            self.owners[key].read_facts = WordReadFacts::Paragraph(text);
+        for (location, text) in texts {
+            let key = self.indexes.find(&self.owners, &location);
+            debug_assert!(
+                key.is_some(),
+                "a kept paragraph owner is found by its route"
+            );
+            if let Some(key) = key {
+                self.owners[key].read_facts = WordReadFacts::Paragraph(text);
+            }
         }
         let Some(pieces) = &mut self.pieces else {
             return;
@@ -425,8 +449,8 @@ impl PyDocument {
 
 /// The owners of edited blocks read again, kept in their pieces by
 /// [`PyDocument::keep_block_owners`], and the texts their paragraph owners
-/// read now, by owner key.
+/// read now, by route.
 struct KeptBlocks {
     read: Vec<(usize, oxoffice_docx_oxml::BodyContent, WordBlockOwners)>,
-    texts: Vec<(usize, String)>,
+    texts: Vec<(WordOwnerLocation, String)>,
 }

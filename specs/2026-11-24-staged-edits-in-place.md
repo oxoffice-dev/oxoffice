@@ -405,7 +405,9 @@ form operations (#7).
   links are those it held (the paragraphs it holds read their new text),
   and reads a changed header or footer part again alone (#634's story
   splice); a block of another shape undoes the edit and takes today's
-  route. A tag a note or a comment names (parts the document models) and a
+  route. A call that changes a body block and a header or footer part at
+  once keeps today's route: a story publication keeps the owners of every
+  other story, which a body block edit of the same call would contradict. A tag a note or a comment names (parts the document models) and a
   legacy field target keep today's route: a legacy field is addressed by
   its ordinal in its part, which counts every field of the part, and
   `set_legacy_form_field_value` stages the document. The staged route

@@ -177,6 +177,13 @@ impl Document {
                 written.push((name, root, edited));
             }
         }
+        // One story publication reads the whole inventory and keeps the
+        // owners of every other story, so a call that changes a body block
+        // and a header or footer part at once keeps today's route, which
+        // publishes both together.
+        if !swaps.is_empty() && !written.is_empty() {
+            return Ok(None);
+        }
         let bindings = apply_binding_groups(self, &self.doc_part_name, &plan.bindings)?;
         if swaps.is_empty() && bindings.is_empty() && written.is_empty() {
             return Ok(Some(FormEdit {
@@ -221,7 +228,7 @@ impl Document {
             // The kept answer of one typed insert reads that block alone; for
             // several blocks it holds only when no block changed a namespace
             // declaration.
-            if let [slot] = slots.as_slice() {
+            if let ([slot], true) = (slots.as_slice(), same_declarations) {
                 // `body_block_part` answered that the body saved before the edit.
                 self.keep_body_savable_after_typed_insert(*slot, true);
             }

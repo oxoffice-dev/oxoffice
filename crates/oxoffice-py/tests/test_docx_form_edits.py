@@ -1,16 +1,18 @@
 """docx: fill_form and reset_form read the controls they name, and write each changed control in the body block that
 holds it, in place, in one edit: a call that names controls of several blocks writes those blocks alone. A value
 written inside a control keeps every handle, the paragraphs and runs inside the control too, which then read the
-value. A refused call, and a call that changes nothing, leave the document as it was, byte for byte. A control of
-another story (a header) and a legacy form field take the staged route."""
+value. A header or footer control is written in its part, whose handles are read again from that part alone. A refused
+call, and a call that changes nothing, leave the document as it was, byte for byte. A control of a note or a comment, a
+legacy form field, and a call naming a body control and a header control at once take the staged route."""
 import io
 import zipfile
 
+import docx
 import pytest
 
 import oxoffice.docx as oxdocx
 from test_docx_comment_edits import before, handles_taken, reads
-from test_docx_control_property_edits import control_xml, saved, store, taken_with_controls  # noqa: F401
+from test_docx_control_property_edits import control_xml, saved, sdt, store, taken_with_controls  # noqa: F401
 
 TAGS = ["probe0", "inline", "cell", "boxed"]
 
@@ -148,13 +150,56 @@ def test_a_bound_control_writes_its_store_in_the_same_call(saved):
     assert b">new value<" in control_xml(oxdocx.Document.from_bytes(data), "probe0")
 
 
-def test_a_header_control_takes_the_staged_route(saved):
+def test_a_header_control_is_written_in_its_part_and_keeps_every_other_handle(saved):
     doc = oxdocx.Document.open(saved)
+    taken = taken_with_controls(doc)
     assert fill(doc, "head") == (1,)
-    assert b">filled<" in control_xml(oxdocx.Document.from_bytes(doc.to_bytes()), "head")
-    # Handles taken after the call read and edit their element.
+    # The header paragraph handle is read again from its part.
+    others = {name: value for name, value in before(taken).items() if name != "header paragraph"}
+    assert {name: value for name, value in reads(taken).items() if name != "header paragraph"} == others
+    assert doc.section(0).header.paragraphs[0].text == taken["header paragraph"][2]
+    taken["paragraph"][0].text = "edited paragraph"
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert b">filled<" in control_xml(again, "head")
+    assert again.paragraphs[3].text == "edited paragraph"
+
+
+def test_one_call_naming_a_body_control_and_a_header_control_takes_the_staged_route(saved):
+    """Writing a body block and a header part at once keeps today's route, which publishes both together: both
+    controls are filled and the handles read their element."""
+    doc = oxdocx.Document.open(saved)
+    late = doc.add_paragraph("added late")
+    assert fill(doc, "probe0", "head") == (1, 1)
+    assert late.text == "added late"
     doc.paragraphs[3].text = "edited paragraph"
-    assert oxdocx.Document.from_bytes(doc.to_bytes()).paragraphs[3].text == "edited paragraph"
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert b">filled<" in control_xml(again, "probe0")
+    assert b">filled<" in control_xml(again, "head")
+    assert again.paragraphs[3].text == "edited paragraph"
+
+
+def test_a_control_holding_a_tracked_insertion_retires_the_handles_inside_it(tmp_path):
+    """The value replaces the tracked insertion, so the run inside the control has another path: the block keeps no
+    handle and the call takes the staged route, as the staged route retires them. The handles outside stay."""
+    d = docx.Document()
+    d.add_paragraph("first")
+    d.add_paragraph("second")
+    d.element.body.insert(1, sdt("tracked", '<w:p><w:ins w:id="990" w:author="Editor" w:date="2026-01-01T00:00:00Z">'
+                                            "<w:r><w:t>inserted</w:t></w:r></w:ins></w:p>"))
+    path = tmp_path / "tracked.docx"
+    d.save(path)
+    doc = oxdocx.Document.open(path)
+    outside = doc.paragraphs[0]
+    inside = next(p for p in doc.paragraphs if p.text == "inserted")
+    run = inside.runs[0]
+    fill(doc, "tracked")
+    assert outside.text == "first"
+    outside.text = "edited first"
+    with pytest.raises(Exception):
+        run.text = "stale"
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert b">filled<" in control_xml(again, "tracked")
+    assert again.paragraphs[0].text == "edited first"
 
 
 def test_a_footnote_control_takes_the_staged_route(saved):
