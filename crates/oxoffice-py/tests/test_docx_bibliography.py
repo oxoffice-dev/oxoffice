@@ -163,3 +163,43 @@ def test_a_listed_source_round_trips_and_a_replacement_names_its_missing_source(
     listed = {"tag": "Smith20", "kind": "book", "fields": [["title", "A history"], ["year", "2020"]]}
     doc.add_bibliography_source(oxdocx.BibliographySource(listed["tag"], listed["kind"], fields=listed["fields"]))
     assert doc.bibliography_sources()[0].supported.fields == (("title", "A history"), ("year", "2020"))
+
+
+def test_adding_and_replacing_a_source_keeps_every_handle_bound():
+    doc = document("First", "Second")
+    first, second = doc.paragraphs
+    run = second.runs[0]
+    guid = doc.add_bibliography_source(smith())
+    doc.add_bibliography_source(oxdocx.BibliographySource("Doe19", "book", fields=[("title", "Notes")]))
+    doc.replace_bibliography_source(oxdocx.BibliographySource("Smith20", "book", fields=[("title", "Another")]))
+    first.text = "First edited"
+    run.text = "Second edited"
+    back = reopened(doc)
+    assert [paragraph.text for paragraph in back.paragraphs] == ["First edited", "Second edited"]
+    assert [(source.tag, source.guid) for source in back.bibliography_sources()][0] == ("Smith20", guid)
+
+
+def test_a_replacement_that_changes_nothing_writes_nothing():
+    doc = document("Text")
+    doc.add_bibliography_source(smith())
+    paragraph = doc.paragraphs[0]
+    before = doc.to_bytes()
+    doc.replace_bibliography_source(smith())
+    assert doc.to_bytes() == before
+    paragraph.text = "Still bound"
+    assert reopened(doc).paragraphs[0].text == "Still bound"
+
+
+def test_a_refused_source_leaves_the_document_unchanged():
+    doc = document("Text")
+    paragraph = doc.paragraphs[0]
+    doc.add_bibliography_source(smith())
+    before = doc.to_bytes()
+    with pytest.raises(oxdocx.DocxError, match="source identity already exists"):
+        doc.add_bibliography_source(smith(guid="{11111111-2222-4333-8444-555555555555}"))
+    with pytest.raises(oxdocx.DocxError, match="source GUID cannot change"):
+        doc.replace_bibliography_source(smith(guid="{11111111-2222-4333-8444-555555555555}"))
+    assert doc.to_bytes() == before
+    assert [source.tag for source in doc.bibliography_sources()] == ["Smith20"]
+    paragraph.text = "Still bound"
+    assert reopened(doc).paragraphs[0].text == "Still bound"
