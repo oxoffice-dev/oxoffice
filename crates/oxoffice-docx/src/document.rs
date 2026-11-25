@@ -355,6 +355,8 @@ mod open_save;
 mod owner_snapshots;
 pub use owner_snapshots::resolved_xml_events;
 mod edit_in_place;
+#[cfg(debug_assertions)]
+pub(crate) use edit_in_place::without_namespace_declarations;
 mod relationships;
 mod staged_output;
 mod staging;

@@ -1422,8 +1422,11 @@ impl PyDocument {
     /// after the span stays out of those runs, so formatting them or setting
     /// their text leaves it alone.
     /// A paragraph of the body, a table cell, a header, a footer, a note or a
-    /// comment is accepted. A change stales the document's earlier handles,
-    /// the paragraphs of other spans included: find the next span after.
+    /// comment is accepted. In a paragraph of the body itself, the handles of
+    /// other paragraphs and the paragraph's own handle stay bound, and the
+    /// paragraph's runs are new. Elsewhere a change stales the document's
+    /// earlier handles, the paragraphs of other spans included: find the next
+    /// span after.
     fn isolate_span(
         slf: Py<Self>,
         py: Python<'_>,
@@ -1437,6 +1440,23 @@ impl PyDocument {
         }
         let location = paragraph.validate(py)?;
         let mut document = slf.borrow_mut(py);
+        let text_span = oxoffice_docx::TextSpan {
+            start: span.start,
+            end: span.end,
+        };
+        // A direct body paragraph is edited where it stands; a paragraph
+        // equal to what it was publishes nothing, as the staged route does
+        // when the run count stays.
+        if let ParagraphLocation::Body(index) = location
+            && let Some(runs) = document.edit_body_paragraph_in_place(
+                py,
+                index,
+                "Document.isolate_span",
+                |paragraph| paragraph.isolate_span(text_span),
+            )?
+        {
+            return Ok((runs.start, runs.end));
+        }
         let run_count = |document: &oxoffice_docx::Document| {
             location.read(document, |paragraph| paragraph.run_count())
         };
@@ -1444,10 +1464,7 @@ impl PyDocument {
         let mut candidate = document.inner.clone_for_staging();
         let runs = location
             .edit(&mut candidate, |paragraph| {
-                paragraph.isolate_span(oxoffice_docx::TextSpan {
-                    start: span.start,
-                    end: span.end,
-                })
+                paragraph.isolate_span(text_span)
             })
             .map_err(|error| docx_to_pyerr(py, error))?;
         if run_count(&candidate).map_err(|error| docx_to_pyerr(py, error))? != before {
@@ -3672,6 +3689,18 @@ impl PyDocument {
         py: Python<'_>,
     ) -> PyResult<i32> {
         let date = comment_date(date, undated)?;
+        if let Ok(range) = range.cast::<PyRunRange>()
+            && let Some(id) = self.add_body_comment_in_place(
+                py,
+                (*range.borrow()).into(),
+                author,
+                initials,
+                text,
+                date,
+            )?
+        {
+            return Ok(id);
+        }
         let mut candidate = self.inner.clone_for_staging();
         let id = if let Ok(range) = range.cast::<PyRunRange>() {
             candidate.add_comment_with_date((*range.borrow()).into(), author, initials, text, date)

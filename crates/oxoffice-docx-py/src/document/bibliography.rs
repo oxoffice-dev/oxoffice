@@ -634,6 +634,9 @@ impl PyDocument {
             .map_err(|_| PyTypeError::new_err("position must be a StoryRunPosition"))?
             .borrow();
         let options = citation_options(sources, locale)?;
+        if self.insert_citation_in_place(py, &position, &options)? {
+            return Ok(());
+        }
         let native = oxoffice_docx::StoryRunPosition {
             location: self.native_location(py, &position.item)?,
             run_index: position.run_index,
@@ -643,6 +646,86 @@ impl PyDocument {
             .insert_citation(&native, &options)
             .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.insert_citation")
+    }
+
+    /// `Document.insert_citation` at a position in a direct body paragraph,
+    /// edited where it stands and published alone: the paragraph keeps its
+    /// owner, its runs are born again, and every other handle stays. `false`
+    /// leaves the document and every handle as they were, and the caller
+    /// takes the staged route: a position the document did not list (its
+    /// direct body index unchecked), one outside a direct body paragraph (a
+    /// cell, a header, a note, a block content control), or a paragraph the
+    /// block replacement does not take. A refusal leaves them as they were
+    /// too. Debug builds check the outcome against the staged route.
+    fn insert_citation_in_place(
+        &mut self,
+        py: Python<'_>,
+        position: &PyStoryRunPosition,
+        options: &CitationOptions,
+    ) -> PyResult<bool> {
+        let item = &position.item;
+        // A listed item is bound to the snapshot scope, which every edit
+        // that moves a body item retires: once validated, its direct body
+        // index is current. A caller-built one may name any slot.
+        if item.binding.is_none()
+            || item.story.kind != "body"
+            || item.kind != "paragraph"
+            || item.index_path.len() != 1
+        {
+            return Ok(false);
+        }
+        let Some(slot) = item.direct_body_index else {
+            return Ok(false);
+        };
+        self.validate_owned_item(py, item)?;
+        self.ensure_word_authority(py)?;
+        // The slot's paragraph owner names the item's story position.
+        let names_item = self.indexes.direct_body_paragraph(slot).is_some_and(|key| {
+            match &*self.owners[key].location() {
+                WordOwnerLocation::Paragraph(location) => {
+                    location.index_path() == item.index_path.as_slice()
+                }
+                _ => false,
+            }
+        });
+        let Some(index) = names_item
+            .then(|| self.inner.paragraph_index_of_content(slot))
+            .flatten()
+        else {
+            return Ok(false);
+        };
+        // The staged route's position, read before the edit; a position it
+        // refuses must not be taken here.
+        #[cfg(debug_assertions)]
+        let before = (
+            self.inner.clone_for_staging(),
+            self.native_location(py, item)
+                .map_err(|error| error.to_string()),
+        );
+        let result =
+            self.edit_body_paragraph_in_place(py, index, "Document.insert_citation", |paragraph| {
+                paragraph.insert_citation(position.run_index, options)
+            });
+        #[cfg(debug_assertions)]
+        if !matches!(result, Ok(None)) {
+            let (document, location) = before;
+            let location = location.unwrap_or_else(|error| {
+                panic!("an in-place citation took a position the staged route refuses: {error}")
+            });
+            self.inner.assert_citation_matches_staged(
+                document,
+                &oxoffice_docx::StoryRunPosition {
+                    location,
+                    run_index: position.run_index,
+                },
+                options,
+                result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        Ok(result?.is_some())
     }
 
     pub(super) fn insert_citation_after_text_impl(

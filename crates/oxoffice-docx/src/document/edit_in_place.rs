@@ -938,7 +938,7 @@ impl Document {
 /// prefix bound again to another namespace is not told apart: the oracle
 /// that uses this compares what both routes wrote from one model.
 #[cfg(debug_assertions)]
-fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
+pub(crate) fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(xml.len());
     let mut in_tag = false;
     let mut quote = None;
@@ -1100,6 +1100,52 @@ mod tests {
         assert_eq!(state(&document), before);
         assert_eq!(document.identifiers, identifiers);
         assert!(!document.in_place.open);
+    }
+
+    /// The run "!" appended to the first body paragraph: typed on `live`,
+    /// by the staged byte splice (which repeats the root's namespace
+    /// declarations on the paragraph) with `staged_text` on the oracle's copy.
+    #[cfg(debug_assertions)]
+    fn check_appended_run(staged_text: &'static str) {
+        let mut document = Document::new();
+        document.add_paragraph("Alpha");
+        let before = document.clone_for_staging();
+        let location = before
+            .direct_body_item_location(0)
+            .unwrap()
+            .expect("the paragraph has a location");
+        let BodyContent::Paragraph(paragraph) = &mut document.document.body.content[0] else {
+            panic!("the first block is the paragraph");
+        };
+        paragraph
+            .insert_accepted_run(1, CT_R::new("!"))
+            .expect("the paragraph takes a run at its end");
+        document.assert_in_place_matches_staged_declarations_aside(before, &Ok(()), |staged| {
+            let mut candidate = staged.clone_for_staging();
+            candidate.insert_story_run_staged(
+                &crate::StoryRunPosition {
+                    location,
+                    run_index: 1,
+                },
+                CT_R::new(staged_text),
+            )?;
+            let reopened = candidate.prepare_and_reopen_staged()?;
+            staged.commit_staged_mutation(reopened);
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn the_oracle_takes_a_respliced_paragraph_for_the_same_paragraph() {
+        check_appended_run("!");
+    }
+
+    #[test]
+    #[should_panic(expected = "in-place edit saves other parts than the staged edit")]
+    #[cfg(debug_assertions)]
+    fn the_oracle_sees_a_difference_inside_a_respliced_paragraph() {
+        check_appended_run("?");
     }
 
     /// Five paragraphs, "p0" to "p4".
