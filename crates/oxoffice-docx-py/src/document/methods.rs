@@ -429,6 +429,13 @@ impl PyDocument {
     ) -> PyResult<Py<PyTuple>> {
         let rules = copied_rules(py, rules)?;
         let assignments = copied_assignments(py, assignments)?;
+        if let Some(counts) =
+            self.publish_form_edited_in_place(py, "Document.fill_form", |document| {
+                document.fill_form_in_blocks(&rules, &assignments)
+            })?
+        {
+            return Ok(PyTuple::new(py, counts)?.unbind());
+        }
         let mut candidate = self.inner.clone_for_staging();
         let counts = candidate
             .fill_form(&rules, &assignments)
@@ -445,6 +452,13 @@ impl PyDocument {
 
     fn reset_form(&mut self, py: Python<'_>, rules: &Bound<'_, PyAny>) -> PyResult<Py<PyTuple>> {
         let rules = copied_rules(py, rules)?;
+        if let Some(counts) =
+            self.publish_form_edited_in_place(py, "Document.reset_form", |document| {
+                document.reset_form_in_blocks(&rules)
+            })?
+        {
+            return Ok(PyTuple::new(py, counts)?.unbind());
+        }
         let mut candidate = self.inner.clone_for_staging();
         let counts = candidate
             .reset_form(&rules)

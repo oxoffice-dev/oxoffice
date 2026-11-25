@@ -1047,6 +1047,30 @@ pub(crate) struct BodyBlockItem {
     pub(super) span: StoryItemSpan,
 }
 
+/// One direct body block written alone between the head and the tail of the
+/// main part.
+pub(crate) struct BodyBlockPart {
+    /// The bytes before the block, through the body start tag.
+    pub(crate) head: Vec<u8>,
+    /// The head, the block and the tail.
+    pub(crate) xml: Vec<u8>,
+    /// The length of the bytes after the block, from the final section on.
+    pub(crate) tail: usize,
+}
+
+impl BodyBlockPart {
+    /// The block of `xml`, an edit of [`Self::xml`] that kept its head and
+    /// tail.
+    pub(crate) fn block_of<'a>(&self, xml: &'a [u8]) -> &'a [u8] {
+        &xml[self.head.len()..xml.len() - self.tail]
+    }
+
+    /// The tail of [`Self::xml`].
+    pub(crate) fn tail_bytes(&self) -> &[u8] {
+        &self.xml[self.xml.len() - self.tail..]
+    }
+}
+
 impl BodyBlockItem {
     /// The block of `xml`, an edit of [`Self::xml`] that kept its head and
     /// tail.
@@ -1078,6 +1102,45 @@ impl Document {
         // Computed once after an invalidation: an empty cache is no answer,
         // and the swap keeps a savable answer
         // (`keep_body_savable_after_typed_insert`).
+        let Some(BodyBlockPart { head, xml, tail }) = self.body_block_part(slot)? else {
+            return Ok(None);
+        };
+        let block_span = head.len()..xml.len() - tail;
+        let owners = scan_story_owners(&xml, StoryKind::Body)?;
+        let Some(owner) = owners
+            .iter()
+            .find(|candidate| candidate.kind == kind && candidate.owner_index == owner)
+        else {
+            return Ok(None);
+        };
+        let items = scan_story_items(&xml, owner, None)?;
+        let Some(item) = items.get(index) else {
+            return Ok(None);
+        };
+        if item.kind != item_kind
+            || item.full.start < block_span.start
+            || item.full.end > block_span.end
+        {
+            return Ok(None);
+        }
+        let span = item.clone();
+        Ok(Some(BodyBlockItem {
+            head,
+            tail,
+            item: span.full.clone(),
+            xml,
+            span,
+        }))
+    }
+
+    /// The direct body block at `slot` written alone under the root and the
+    /// final section of the main part, at the cost of that block. `None`
+    /// when the body has no such block or a save of the body is known to
+    /// fail, which the staged route reports.
+    pub(crate) fn body_block_part(&self, slot: usize) -> Result<Option<BodyBlockPart>> {
+        // Computed once after an invalidation: an empty cache is no answer,
+        // and the swap keeps a savable answer
+        // (`keep_body_savable_after_typed_insert`).
         if self.unsavable_body_edit().is_some() {
             return Ok(None);
         }
@@ -1106,31 +1169,10 @@ impl Document {
         // The declaration a save adds to the root when the block uses w14.
         declare_w14_on_part_root(&mut xml)?;
         let head = xml[..head.len() + xml.len() - written].to_vec();
-        let block_span = head.len()..xml.len() - tail.len();
-        let owners = scan_story_owners(&xml, StoryKind::Body)?;
-        let Some(owner) = owners
-            .iter()
-            .find(|candidate| candidate.kind == kind && candidate.owner_index == owner)
-        else {
-            return Ok(None);
-        };
-        let items = scan_story_items(&xml, owner, None)?;
-        let Some(item) = items.get(index) else {
-            return Ok(None);
-        };
-        if item.kind != item_kind
-            || item.full.start < block_span.start
-            || item.full.end > block_span.end
-        {
-            return Ok(None);
-        }
-        let span = item.clone();
-        Ok(Some(BodyBlockItem {
+        Ok(Some(BodyBlockPart {
             head,
-            tail: tail.len(),
-            item: span.full.clone(),
             xml,
-            span,
+            tail: tail.len(),
         }))
     }
 

@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 
+use oxoffice_docx_oxml::content_control::CT_SdtPr;
 use oxoffice_docx_oxml::document::WrittenVisitor;
 use oxoffice_docx_oxml::table::CT_TblPr;
 use oxoffice_docx_oxml::text::CommentRangeMarker;
@@ -37,7 +38,7 @@ const COMMENT_ELEMENTS: &[&[u8]] = &[
 /// is `attribute`, on each element start whose local name is one of
 /// `elements`, whatever their prefixes. A value that does not unescape is
 /// passed as written.
-fn raw_attribute_values(
+pub(crate) fn raw_attribute_values(
     xml: &[u8],
     elements: &[&[u8]],
     attribute: &[u8],
@@ -214,6 +215,35 @@ impl WrittenVisitor for ReferenceSearch<'_> {
     }
 }
 
+/// Whether a block holds a content control tagged with one of `tags`.
+struct TagSearch<'a> {
+    tags: &'a [String],
+    found: bool,
+}
+
+impl WrittenVisitor for TagSearch<'_> {
+    fn raw(&mut self, xml: &[u8]) {
+        let tags = self.tags;
+        if !self.found
+            && raw_attribute_values(xml, &[b"tag"], b"val", &mut |value| {
+                tags.iter().any(|tag| tag == value)
+            })
+        {
+            self.found = true;
+        }
+    }
+
+    fn control_properties(&mut self, properties: &CT_SdtPr) {
+        if properties
+            .tag
+            .as_ref()
+            .is_some_and(|tag| self.tags.contains(tag))
+        {
+            self.found = true;
+        }
+    }
+}
+
 /// Each block's hit, with how many references its typed owners hold.
 fn search_slots(
     document: &Document,
@@ -315,6 +345,40 @@ impl Document {
         #[cfg(debug_assertions)]
         self.assert_slots_match_serialized(&hits, COMMENT_ELEMENTS, &raw_id);
         hits.into_iter().map(|(hit, _)| hit).collect()
+    }
+
+    /// The body blocks that hold a content control whose tag is one of
+    /// `tags`, typed or in a raw fragment: a superset of the blocks whose
+    /// serialized bytes hold such a `w:tag` (a raw fragment is searched by
+    /// local name, whatever its prefix).
+    pub(crate) fn body_slots_with_control_tags(&self, tags: &[String]) -> Vec<usize> {
+        let slots = self
+            .document
+            .body
+            .content
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, block)| {
+                let mut search = TagSearch { tags, found: false };
+                block.visit_written(&mut search);
+                search.found.then_some(slot)
+            })
+            .collect::<Vec<_>>();
+        #[cfg(debug_assertions)]
+        if let Ok((xml, _content, children)) = self.document.to_xml_with_body_spans() {
+            let accepted = |value: &str| tags.iter().any(|tag| tag == value);
+            let offsets = word_attribute_offsets(&xml, &[b"tag"], b"val", &accepted)
+                .expect("the serialized main part reads");
+            for offset in offsets {
+                if let Some(slot) = children.iter().position(|range| range.contains(&offset)) {
+                    assert!(
+                        slots.contains(&slot),
+                        "the written-fragment walk misses the control tags of block {slot}"
+                    );
+                }
+            }
+        }
+        slots
     }
 
     /// Debug proof of a slot query: the blocks of the serialized main part

@@ -881,6 +881,53 @@ impl Document {
         });
     }
 
+    /// [`Self::assert_in_place_matches_staged`] against a staged route that
+    /// patches the producer's bytes of a main part no edit has written yet
+    /// (the form operations), where the in-place edit writes the main part
+    /// from the model, as every body edit does: the main parts are the same
+    /// once each is read and written again, and every other part is the
+    /// same bytes.
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_in_place_matches_staged_main_part_rewritten<
+        T: PartialEq + std::fmt::Debug,
+    >(
+        &self,
+        before: Self,
+        result: &Result<T>,
+        staged: impl FnOnce(&mut Self) -> Result<T>,
+    ) {
+        let main = self.doc_part_name.clone();
+        self.assert_in_place_matches_staged_by(before, result, staged, |live, staged| {
+            let parts = |saved: &std::result::Result<Vec<u8>, String>| {
+                saved.as_ref().map_err(String::clone).map(|bytes| {
+                    let package =
+                        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes))
+                            .expect("a saved package reopens");
+                    let mut parts = package
+                        .parts
+                        .iter()
+                        .map(|(name, bytes)| {
+                            if *name == main {
+                                let rewritten = CT_Document::from_xml(bytes)
+                                    .and_then(|document| document.to_xml())
+                                    .expect("a saved main part reads and writes");
+                                (name.clone(), rewritten)
+                            } else {
+                                (name.clone(), bytes.to_vec())
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    parts.sort();
+                    parts
+                })
+            };
+            assert!(
+                parts(live) == parts(staged),
+                "in-place edit saves other parts than the staged edit, main parts rewritten"
+            );
+        });
+    }
+
     fn assert_in_place_matches_staged_by<T: PartialEq + std::fmt::Debug>(
         &self,
         mut before: Self,
