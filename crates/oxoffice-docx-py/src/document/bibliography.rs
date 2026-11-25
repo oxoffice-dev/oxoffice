@@ -543,12 +543,11 @@ impl PyDocument {
         source: &Bound<'_, PyAny>,
     ) -> PyResult<String> {
         let source = source_argument(source)?;
-        let mut candidate = self.inner.clone_for_staging();
-        let guid = candidate
+        // The source collection is edited in place: no body content
+        // changes, so every handle stays bound.
+        self.inner
             .add_bibliography_source(&source)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        self.publish_api_candidate(py, candidate, "Document.add_bibliography_source")?;
-        Ok(guid)
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     pub(super) fn replace_bibliography_source_impl(
@@ -578,11 +577,10 @@ impl PyDocument {
                 refused(format!("source {:?}: the source has no GUID", source.tag))
             })?;
         }
-        let mut candidate = self.inner.clone_for_staging();
-        candidate
+        // In place, as add_bibliography_source.
+        self.inner
             .replace_bibliography_source(&source)
-            .map_err(|error| docx_to_pyerr(py, error))?;
-        self.publish_api_candidate(py, candidate, "Document.replace_bibliography_source")
+            .map_err(|error| docx_to_pyerr(py, error))
     }
 
     pub(super) fn remove_bibliography_source_impl(
