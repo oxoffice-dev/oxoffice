@@ -147,6 +147,7 @@ use fonts::valid_authored_sfnt;
 pub use render::ContentMeasurement;
 
 mod block_edits_in_place;
+pub use block_edits_in_place::RemovedBodyBlocks;
 mod body;
 mod content;
 #[cfg(debug_assertions)]

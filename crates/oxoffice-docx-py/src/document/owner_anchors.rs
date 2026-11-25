@@ -23,26 +23,44 @@ pub(crate) struct BodyItem {
     /// names it, the slot of the item before, so that slots stay in order.
     slot: AtomicUsize,
     has_slot: bool,
-    /// The body paragraph owners, the body table owners and the main-part
-    /// cell stories before the item.
+    /// The body paragraph owners, the body table owners, the main-part
+    /// cell stories and the body story hyperlink owners before the item.
     paragraphs: AtomicUsize,
     tables: AtomicUsize,
     cells: AtomicUsize,
+    link_base: AtomicUsize,
     /// How many of each the item holds.
     counts: (usize, usize, usize),
     /// The body story hyperlink owners of the item.
     links: usize,
+    /// The hyperlink owners of the item's main-part cell stories.
+    cell_links: usize,
+}
+
+/// The numbers of a record before it is placed: index, slot (when an owner
+/// names one), the bases before it (body paragraphs, body tables, cell
+/// stories, body links), its counts, its body links and its cell links.
+pub(super) struct RecordShape {
+    index: usize,
+    slot: Option<usize>,
+    previous_slot: usize,
+    before: (usize, usize, usize, usize),
+    counts: (usize, usize, usize),
+    links: usize,
+    cell_links: usize,
 }
 
 impl BodyItem {
-    fn new(
-        index: usize,
-        slot: Option<usize>,
-        before: (usize, usize, usize),
-        counts: (usize, usize, usize),
-        links: usize,
-        previous_slot: usize,
-    ) -> Arc<Self> {
+    fn new(shape: RecordShape) -> Arc<Self> {
+        let RecordShape {
+            index,
+            slot,
+            previous_slot,
+            before,
+            counts,
+            links,
+            cell_links,
+        } = shape;
         Arc::new(Self {
             key: ITEM_KEYS.fetch_add(1, Relaxed),
             index: AtomicUsize::new(index),
@@ -51,9 +69,29 @@ impl BodyItem {
             paragraphs: AtomicUsize::new(before.0),
             tables: AtomicUsize::new(before.1),
             cells: AtomicUsize::new(before.2),
+            link_base: AtomicUsize::new(before.3),
             counts,
             links,
+            cell_links,
         })
+    }
+
+    /// The record's numbers, to place a copy of it elsewhere.
+    fn shape(&self) -> RecordShape {
+        RecordShape {
+            index: self.index(),
+            slot: self.has_slot.then(|| self.slot()),
+            previous_slot: self.slot(),
+            before: (
+                self.paragraphs(),
+                self.tables(),
+                self.cells(),
+                self.link_base(),
+            ),
+            counts: self.counts,
+            links: self.links,
+            cell_links: self.cell_links,
+        }
     }
 
     /// The item's index among the body story items.
@@ -89,8 +127,13 @@ impl BodyItem {
         self.cells.load(Relaxed)
     }
 
+    fn link_base(&self) -> usize {
+        self.link_base.load(Relaxed)
+    }
+
     /// Move the record by a splice before it: items, slots, body paragraphs,
-    /// body tables and cell stories inserted (positive) or removed.
+    /// body tables, cell stories and body links inserted (positive) or
+    /// removed.
     fn shift(&self, by: BodyShift) {
         // Wrapping adds of a two's complement change.
         self.index.fetch_add(by.items as usize, Relaxed);
@@ -98,6 +141,7 @@ impl BodyItem {
         self.paragraphs.fetch_add(by.paragraphs as usize, Relaxed);
         self.tables.fetch_add(by.tables as usize, Relaxed);
         self.cells.fetch_add(by.cells as usize, Relaxed);
+        self.link_base.fetch_add(by.links as usize, Relaxed);
     }
 
     /// The record's numbers, to compare with a record derived from a walk:
@@ -107,9 +151,14 @@ impl BodyItem {
         (
             self.index(),
             self.has_slot.then(|| self.slot()),
-            (self.paragraphs(), self.tables(), self.cells()),
+            (
+                self.paragraphs(),
+                self.tables(),
+                self.cells(),
+                self.link_base(),
+            ),
             self.counts,
-            self.links,
+            (self.links, self.cell_links),
         )
     }
 }
@@ -120,9 +169,9 @@ impl BodyItem {
 type RecordFacts = (
     usize,
     Option<usize>,
+    (usize, usize, usize, usize),
     (usize, usize, usize),
-    (usize, usize, usize),
-    usize,
+    (usize, usize),
 );
 
 /// What a body splice inserts (positive) or removes before the records after it.
@@ -133,6 +182,7 @@ pub(super) struct BodyShift {
     pub(super) paragraphs: isize,
     pub(super) tables: isize,
     pub(super) cells: isize,
+    pub(super) links: isize,
 }
 
 /// The body item an owner or a projection route is stored relative to.
@@ -349,6 +399,10 @@ pub(super) struct WordBodyItems {
     ready: bool,
     /// Body paragraph owners, body table owners and main-part cell stories.
     totals: (usize, usize, usize),
+    /// Body story hyperlink owners.
+    links: usize,
+    /// A main-part cell story hyperlink whose item is not known.
+    cell_links_unplaced: bool,
 }
 
 impl WordBodyItems {
@@ -410,7 +464,8 @@ impl WordBodyItems {
             paragraphs: Span,
             tables: Span,
             cells: Span,
-            links: usize,
+            links: Span,
+            cell_links: usize,
         }
         let mut items = Vec::<Facts>::new();
         for address in addresses {
@@ -434,7 +489,11 @@ impl WordBodyItems {
                     facts.paragraphs.add(address.projection_ordinal?)
                 }
                 WordOwnerLocation::Table(_) => facts.tables.add(address.projection_ordinal?),
-                WordOwnerLocation::Hyperlink(..) => facts.links += 1,
+                WordOwnerLocation::Hyperlink(route, _)
+                    if route.story().kind() == oxoffice_docx::StoryKind::Body =>
+                {
+                    facts.links.add(address.projection_ordinal?)
+                }
                 _ => {}
             }
             if matches!(
@@ -523,9 +582,28 @@ impl WordBodyItems {
                 }
             }
         }
+        // The hyperlinks of main-part cell stories, by the item of their
+        // body table: those no item is known for make every later item
+        // count as holding one.
+        let mut cell_links_unplaced = false;
+        for address in addresses {
+            let WordOwnerLocation::Hyperlink(route, _) = &address.location else {
+                continue;
+            };
+            if !main_cell(route.story()) {
+                continue;
+            }
+            match cell_items
+                .get(&route.story().owner_index())
+                .and_then(|item| items.get_mut(*item))
+            {
+                Some(facts) if cells_anchored && facts.owned => facts.cell_links += 1,
+                _ => cell_links_unplaced = true,
+            }
+        }
         // The records, each base the count of what comes before.
         let mut records = Vec::with_capacity(items.len());
-        let (mut paragraphs, mut tables, mut cells) = (0, 0, 0);
+        let (mut paragraphs, mut tables, mut cells, mut links) = (0, 0, 0, 0);
         let mut last_slot = 0;
         for (index, facts) in items.into_iter().enumerate() {
             if !facts.owned {
@@ -537,7 +615,10 @@ impl WordBodyItems {
                 }
                 last_slot = slot;
             }
-            if !facts.paragraphs.follows(paragraphs) || !facts.tables.follows(tables) {
+            if !facts.paragraphs.follows(paragraphs)
+                || !facts.tables.follows(tables)
+                || !facts.links.follows(links)
+            {
                 return None;
             }
             if cells_anchored && !facts.cells.follows(cells) {
@@ -548,17 +629,19 @@ impl WordBodyItems {
                 facts.tables.count,
                 facts.cells.count,
             );
-            records.push(BodyItem::new(
+            records.push(BodyItem::new(RecordShape {
                 index,
-                facts.slot,
-                (paragraphs, tables, cells),
+                slot: facts.slot,
+                previous_slot: last_slot,
+                before: (paragraphs, tables, cells, links),
                 counts,
-                facts.links,
-                last_slot,
-            ));
+                links: facts.links.count,
+                cell_links: facts.cell_links,
+            }));
             paragraphs += counts.0;
             tables += counts.1;
             cells += counts.2;
+            links += facts.links.count;
         }
         if cells_anchored && cells != referenced.len() {
             cells_anchored = false;
@@ -569,6 +652,8 @@ impl WordBodyItems {
             cells: cells_anchored,
             ready: true,
             totals: (paragraphs, tables, cells),
+            links,
+            cell_links_unplaced,
         })
     }
 
@@ -629,6 +714,14 @@ impl WordBodyItems {
         match self.items.get(self.position(index)) {
             Some(item) => (item.paragraphs(), item.tables(), item.cells()),
             None => self.totals,
+        }
+    }
+
+    /// The body story hyperlink owners before body story item `index`.
+    pub(super) fn links_before(&self, index: usize) -> usize {
+        match self.items.get(self.position(index)) {
+            Some(item) => item.link_base(),
+            None => self.links,
         }
     }
 
@@ -694,19 +787,29 @@ impl WordBodyItems {
     pub(super) fn insert(&mut self, index: usize, slot: usize, counts: (usize, usize, usize)) {
         let at = self.position(index);
         let before = self.before(index);
+        let links = self.links_before(index);
         let shift = BodyShift {
             items: 1,
             slots: 1,
             paragraphs: counts.0 as isize,
             tables: counts.1 as isize,
             cells: counts.2 as isize,
+            links: 0,
         };
         for item in &self.items[at..] {
             item.shift(shift);
         }
         self.items.insert(
             at,
-            BodyItem::new(index, Some(slot), before, counts, 0, slot),
+            BodyItem::new(RecordShape {
+                index,
+                slot: Some(slot),
+                previous_slot: slot,
+                before: (before.0, before.1, before.2, links),
+                counts,
+                links: 0,
+                cell_links: 0,
+            }),
         );
         self.totals.0 += counts.0;
         self.totals.1 += counts.1;
@@ -719,10 +822,12 @@ impl WordBodyItems {
         let start = self.position(index);
         let end = self.position(index + count);
         let mut counts = (0, 0, 0);
+        let mut links = 0;
         for item in self.items.drain(start..end) {
             counts.0 += item.counts.0;
             counts.1 += item.counts.1;
             counts.2 += item.counts.2;
+            links += item.links;
         }
         let shift = BodyShift {
             items: -(count as isize),
@@ -730,6 +835,7 @@ impl WordBodyItems {
             paragraphs: -(counts.0 as isize),
             tables: -(counts.1 as isize),
             cells: -(counts.2 as isize),
+            links: -(links as isize),
         };
         for item in &self.items[start..] {
             item.shift(shift);
@@ -737,6 +843,122 @@ impl WordBodyItems {
         self.totals.0 -= counts.0;
         self.totals.1 -= counts.1;
         self.totals.2 -= counts.2;
+        self.links -= links;
+    }
+
+    /// Replace the records of the `old_items` body story items from item
+    /// `first`, in direct body slots `slot..slot + old_slots`, by `new`: the
+    /// records of `new_items` items in `new_slots` slots, derived from those
+    /// items alone (their indexes, slots and bases counted from 0). The
+    /// records after them move once by the change in items, slots, body
+    /// paragraphs, body tables, cell stories and body links. Integer work on
+    /// the records after the slot, as a splice moves them.
+    pub(super) fn replace(
+        &mut self,
+        (first, slot): (usize, usize),
+        (old_items, old_slots): (usize, usize),
+        new: &Self,
+        (new_items, new_slots): (usize, usize),
+    ) {
+        let start = self.position(first);
+        let end = self.position(first + old_items);
+        let (paragraphs, tables, cells) = self.before(first);
+        let links = self.links_before(first);
+        let mut old = (0, 0, 0, 0);
+        for item in self.items.drain(start..end) {
+            old.0 += item.counts.0;
+            old.1 += item.counts.1;
+            old.2 += item.counts.2;
+            old.3 += item.links;
+        }
+        let mut added = (0, 0, 0, 0);
+        let placed = new
+            .items
+            .iter()
+            .map(|item| {
+                let mut shape = item.shape();
+                if !self.cells {
+                    // Unanchored cell stories are counted by no record.
+                    shape.counts.2 = 0;
+                    shape.before.2 = 0;
+                }
+                shape.index += first;
+                shape.slot = shape.slot.map(|relative| relative + slot);
+                shape.previous_slot += slot;
+                shape.before = (
+                    shape.before.0 + paragraphs,
+                    shape.before.1 + tables,
+                    shape.before.2 + cells,
+                    shape.before.3 + links,
+                );
+                added.0 += shape.counts.0;
+                added.1 += shape.counts.1;
+                added.2 += shape.counts.2;
+                added.3 += shape.links;
+                BodyItem::new(shape)
+            })
+            .collect::<Vec<_>>();
+        let change = |new: usize, old: usize| new as isize - old as isize;
+        let shift = BodyShift {
+            items: change(new_items, old_items),
+            slots: change(new_slots, old_slots),
+            paragraphs: change(added.0, old.0),
+            tables: change(added.1, old.1),
+            cells: change(added.2, old.2),
+            links: change(added.3, old.3),
+        };
+        for item in &self.items[start..] {
+            item.shift(shift);
+        }
+        self.items.splice(start..start, placed);
+        self.totals.0 = self.totals.0 + added.0 - old.0;
+        self.totals.1 = self.totals.1 + added.1 - old.1;
+        self.totals.2 = self.totals.2 + added.2 - old.2;
+        self.links = self.links + added.3 - old.3;
+        self.cell_links_unplaced |= new.cell_links_unplaced;
+    }
+
+    /// The records of the items of some body blocks read alone, their
+    /// numbers counted from 0, when they agree with each other.
+    pub(super) fn of_blocks(addresses: &[WordOwnerAddress]) -> Option<Self> {
+        if addresses.is_empty() {
+            return Some(Self::default());
+        }
+        Self::derive_checked(addresses, &WordIndexProjections::default())
+    }
+
+    /// How many records there are.
+    pub(super) fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// The first record's index, slot and whether an owner names that slot.
+    pub(super) fn first_record(&self) -> Option<(usize, usize, bool)> {
+        self.items
+            .first()
+            .map(|item| (item.index(), item.slot(), item.has_slot))
+    }
+
+    /// The first record of direct body slot `slot` or a later one: its
+    /// index, slot and whether an owner names that slot.
+    pub(super) fn first_at_or_after_slot(&self, slot: usize) -> Option<(usize, usize, bool)> {
+        let at = self.items.partition_point(|item| item.slot() < slot);
+        self.items
+            .get(at)
+            .map(|item| (item.index(), item.slot(), item.has_slot))
+    }
+
+    /// The last record of a direct body slot before `slot`.
+    pub(super) fn last_before_slot(&self, slot: usize) -> Option<(usize, usize, bool)> {
+        let at = self.items.partition_point(|item| item.slot() < slot);
+        let item = self.items.get(at.checked_sub(1)?)?;
+        Some((item.index(), item.slot(), item.has_slot))
+    }
+
+    /// How many records the body story items `first..end` have.
+    #[cfg(debug_assertions)]
+    pub(super) fn records_between(&self, first: usize, end: usize) -> usize {
+        self.position(end) - self.position(first)
     }
 
     /// Whether a record lies strictly between body story items `first` and
@@ -748,13 +970,14 @@ impl WordBodyItems {
             .is_some_and(|item| item.index() < end)
     }
 
-    /// Whether an item after body story item `index` holds a body story
-    /// hyperlink. Integer work on the records after it, as a splice moves
-    /// them.
+    /// Whether an item after body story item `index` holds a hyperlink, in
+    /// the body story or in its cell stories. Integer work on the records
+    /// after it, as a splice moves them.
     pub(super) fn links_after(&self, index: usize) -> bool {
-        self.items[self.position(index.saturating_add(1))..]
-            .iter()
-            .any(|item| item.links != 0)
+        self.cell_links_unplaced
+            || self.items[self.position(index.saturating_add(1))..]
+                .iter()
+                .any(|item| item.links != 0 || item.cell_links != 0)
     }
 
     /// Move the records after body story item `index` by `items` body story
@@ -789,7 +1012,11 @@ impl WordBodyItems {
                 .collect::<Vec<_>>()
         };
         assert_eq!(facts(self), facts(rebuilt), "body item records");
-        assert_eq!(self.totals, rebuilt.totals, "body item totals");
+        assert_eq!(
+            (self.totals, self.links),
+            (rebuilt.totals, rebuilt.links),
+            "body item totals"
+        );
         if self.cells {
             assert!(rebuilt.cells, "spliced cell stories follow their items");
         }
@@ -851,6 +1078,11 @@ impl WordOwner {
                         if route.story().kind() == oxoffice_docx::StoryKind::Body =>
                     {
                         anchor.item.tables()
+                    }
+                    WordOwnerLocation::Hyperlink(route, _)
+                        if route.story().kind() == oxoffice_docx::StoryKind::Body =>
+                    {
+                        anchor.item.link_base()
                     }
                     _ => 0,
                 };
@@ -949,6 +1181,11 @@ impl WordOwner {
                 if route.story().kind() == oxoffice_docx::StoryKind::Body =>
             {
                 anchor.item.tables()
+            }
+            WordOwnerLocation::Hyperlink(route, _)
+                if route.story().kind() == oxoffice_docx::StoryKind::Body =>
+            {
+                anchor.item.link_base()
             }
             _ => 0,
         };
