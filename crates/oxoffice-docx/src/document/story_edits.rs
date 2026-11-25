@@ -519,7 +519,7 @@ impl Document {
                     crate::EditUnit::Endnotes,
                     crate::EditUnit::Comments,
                 ],
-                |document| document.insert_note_content(destination, fragment),
+                |document| document.insert_related_story_content(destination, fragment, true),
             );
             #[cfg(debug_assertions)]
             self.assert_in_place_matches_staged(before, &result, |staged| {
@@ -527,7 +527,46 @@ impl Document {
             });
             return result;
         }
+        if self.inserts_in_header_footer_part(destination, &fragment)? {
+            #[cfg(debug_assertions)]
+            let before = self.clone_for_staging();
+            #[cfg(debug_assertions)]
+            let staged_fragment = fragment.clone();
+            // The part journal undoes the header or footer part's bytes and
+            // answers the no-op.
+            let result = self.edit_in_place(&[crate::EditUnit::Parts], |document| {
+                document.insert_related_story_content(destination, fragment, false)?;
+                // The staged route's reopen refuses a character XML 1.0
+                // cannot carry: the part written is checked as it reads it.
+                let part = destination.story.part_name();
+                if let Some(xml) = document.package.get_part(part) {
+                    OpcPackage::reject_part_xml_characters(part, xml)?;
+                }
+                Ok(())
+            });
+            #[cfg(debug_assertions)]
+            self.assert_in_place_matches_staged(before, &result, |staged| {
+                staged.insert_content_staged(destination, staged_fragment)
+            });
+            return result;
+        }
         self.insert_content_staged(destination, fragment)
+    }
+
+    /// Whether [`Self::insert_content`] edits a header or footer part in
+    /// place: the destination is in a part the main part relates as a header
+    /// or footer, and the fragment holds no note reference (a shown note is
+    /// copied through the main part).
+    fn inserts_in_header_footer_part(
+        &self,
+        destination: &ContentLocation,
+        fragment: &ContentFragment,
+    ) -> Result<bool> {
+        let part = destination.story.part_name();
+        if part == self.doc_part_name || !self.is_header_footer_part(part) {
+            return Ok(false);
+        }
+        Ok(!fragment_holds_note_references(fragment)?)
     }
 
     /// Whether [`Self::insert_content`] edits in place: the destination is
@@ -552,16 +591,21 @@ impl Document {
         Ok(in_notes && !fragment_holds_note_references(fragment)?)
     }
 
-    /// [`Self::insert_content`] in a note part, on the live document: the
-    /// note part is rewritten, the body is neither serialized nor reopened.
-    fn insert_note_content(
+    /// [`Self::insert_content`] in a note, header or footer part, on the
+    /// live document: that part is rewritten, the body is neither serialized
+    /// nor reopened. `flush_notes` puts the typed notes not yet in their
+    /// part there first, which a note part needs.
+    pub(super) fn insert_related_story_content(
         &mut self,
         destination: &ContentLocation,
         fragment: ContentFragment,
+        flush_notes: bool,
     ) -> Result<()> {
         // Typed footnotes not yet in the part go there first, as the staged
         // route's flush puts them.
-        self.flush_dirty_related_story_models()?;
+        if flush_notes {
+            self.flush_dirty_related_story_models()?;
+        }
         let (source, owner) = self.story_source_and_owner(&destination.story)?;
         let part_name = source.part_name.clone();
         let source_xml = source.xml.into_owned();
@@ -586,7 +630,7 @@ impl Document {
 
     /// The staged route of [`Self::insert_content`]: a copy is edited, saved
     /// and reopened. It is the debug oracle of the in-place route.
-    fn insert_content_staged(
+    pub(super) fn insert_content_staged(
         &mut self,
         destination: &ContentLocation,
         fragment: ContentFragment,

@@ -418,6 +418,26 @@ impl WordPieces {
         self.parts[index] = piece;
     }
 
+    /// The related part pieces: each one's kind, part name and bytes.
+    pub(super) fn part_sources(
+        &self,
+    ) -> impl Iterator<Item = (oxoffice_docx::StoryKind, &str, &[u8])> {
+        self.parts
+            .iter()
+            .map(|piece| (piece.kind, piece.part_name.as_str(), piece.xml.as_slice()))
+    }
+
+    /// The related part piece at `index`.
+    pub(super) fn part_piece(&self, index: usize) -> std::sync::Arc<WordPartPiece> {
+        std::sync::Arc::clone(&self.parts[index])
+    }
+
+    /// Put `parts` in place of the related part pieces, in the order of the
+    /// document's related story parts.
+    pub(super) fn replace_parts(&mut self, parts: Vec<std::sync::Arc<WordPartPiece>>) {
+        self.parts = parts;
+    }
+
     /// Keep body pieces aligned with an in-place splice of `document`.
     ///
     /// `removed` pieces at `slot` go. `inserted` is the block now at `slot`.

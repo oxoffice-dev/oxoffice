@@ -1123,6 +1123,126 @@ fn visit_sdt_mut(control: &mut CT_Sdt, visitor: &mut impl FnMut(&mut CT_P)) {
     }
 }
 
+/// The header and footer relationship ids among `asked` that the typed
+/// section properties of `content` and `final_section` name.
+///
+/// None when XML kept verbatim might name one of them where the model does
+/// not show it: a block kept as raw XML, a raw child of a table, row, cell or
+/// section, whose bytes hold one of the ids or a character reference. The
+/// caller then scans the serialized story.
+pub(super) fn section_story_relationship_ids<'a>(
+    content: &[BodyContent],
+    final_section: Option<&CT_SectPr>,
+    asked: &'a HashSet<String>,
+) -> Option<HashSet<&'a str>> {
+    let mentions = |xml: &[u8]| {
+        contains_bytes(xml, b"&#") || asked.iter().any(|id| contains_bytes(xml, id.as_bytes()))
+    };
+    if content
+        .iter()
+        .any(|block| block_raw_mentions(block, &mentions))
+    {
+        return None;
+    }
+    let mut sections = Vec::new();
+    visit_body_paragraphs(content, false, &mut |paragraph| {
+        if let Some(section) = paragraph
+            .properties
+            .as_ref()
+            .and_then(|properties| properties.sect_pr.as_ref())
+        {
+            sections.push(section);
+        }
+    });
+    sections.extend(final_section);
+    let mut named = HashSet::new();
+    for section in sections {
+        if section.extra_xml.iter().any(|xml| mentions(xml)) {
+            return None;
+        }
+        named.extend(
+            section
+                .header_refs
+                .iter()
+                .chain(&section.footer_refs)
+                .filter_map(|reference| asked.get(&reference.rel_id))
+                .map(String::as_str),
+        );
+    }
+    Some(named)
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+type Mentions<'m> = dyn Fn(&[u8]) -> bool + 'm;
+
+fn extras_mention(raw: &[(usize, Vec<u8>)], mentions: &Mentions<'_>) -> bool {
+    raw.iter().any(|(_, xml)| mentions(xml))
+}
+
+fn block_raw_mentions(block: &BodyContent, mentions: &Mentions<'_>) -> bool {
+    match block {
+        BodyContent::Paragraph(paragraph) => paragraph_raw_mentions(paragraph, mentions),
+        BodyContent::Table(table) => table_raw_mentions(table, mentions),
+        BodyContent::ContentControl(control) => sdt_raw_mentions(control, mentions),
+        BodyContent::RawXml(xml) => mentions(xml),
+    }
+}
+
+fn paragraph_raw_mentions(paragraph: &CT_P, mentions: &Mentions<'_>) -> bool {
+    paragraph
+        .content_controls
+        .iter()
+        .any(|(_, _, _, control)| sdt_raw_mentions(control, mentions))
+}
+
+fn table_raw_mentions(table: &CT_Tbl, mentions: &Mentions<'_>) -> bool {
+    extras_mention(&table.extra_xml, mentions)
+        || table
+            .content_controls
+            .iter()
+            .any(|(_, _, control)| sdt_raw_mentions(control, mentions))
+        || table.rows.iter().any(|row| row_raw_mentions(row, mentions))
+}
+
+fn row_raw_mentions(row: &CT_Row, mentions: &Mentions<'_>) -> bool {
+    extras_mention(&row.extra_xml, mentions)
+        || row
+            .content_controls
+            .iter()
+            .any(|(_, _, control)| sdt_raw_mentions(control, mentions))
+        || row
+            .cells
+            .iter()
+            .any(|cell| cell_raw_mentions(cell, mentions))
+}
+
+fn cell_raw_mentions(cell: &CT_Tc, mentions: &Mentions<'_>) -> bool {
+    extras_mention(&cell.extra_xml, mentions)
+        || cell.content.iter().any(|item| match item {
+            CellContent::Paragraph(paragraph) => paragraph_raw_mentions(paragraph, mentions),
+            CellContent::Table(table) => table_raw_mentions(table, mentions),
+            CellContent::ContentControl(control) => sdt_raw_mentions(control, mentions),
+        })
+}
+
+fn sdt_raw_mentions(control: &CT_Sdt, mentions: &Mentions<'_>) -> bool {
+    control.content.iter().any(|item| match item {
+        SdtContent::Paragraph(paragraph) => paragraph_raw_mentions(paragraph, mentions),
+        SdtContent::Table(table) => table_raw_mentions(table, mentions),
+        SdtContent::Row(row) => row_raw_mentions(row, mentions),
+        SdtContent::Cell(cell) => cell_raw_mentions(cell, mentions),
+        SdtContent::Run(_) => false,
+        SdtContent::ContentControl(nested) => sdt_raw_mentions(nested, mentions),
+        SdtContent::RawXml(xml) => mentions(xml),
+    })
+}
+
 pub(super) fn collect_relationship_ids(content: &[BodyContent], output: &mut Vec<String>) {
     for item in content {
         match item {

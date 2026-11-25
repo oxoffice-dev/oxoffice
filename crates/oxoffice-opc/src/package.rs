@@ -1048,18 +1048,25 @@ impl OpcPackage {
 }
 
 impl OpcPackage {
-    /// Refuse a forbidden literal XML character, including in unchanged parts.
-    fn reject_written_xml_characters(&self, entry: &str, data: &[u8]) -> Result<()> {
+    /// Refuse the bytes of the XML part `part_name` when they hold a
+    /// character XML 1.0 cannot carry, with the error a read or a save of
+    /// that part gives.
+    pub fn reject_part_xml_characters(part_name: &str, data: &[u8]) -> Result<()> {
         let Some((code_point, line, column)) = first_invalid_xml_character(data) else {
             return Ok(());
         };
-        let name = entry.strip_prefix('/').unwrap_or(entry);
+        let name = part_name.strip_prefix('/').unwrap_or(part_name);
         Err(OpcError::InvalidXmlCharacter {
             part: format!("/{name}"),
             code_point,
             line,
             column,
         })
+    }
+
+    /// Refuse a forbidden literal XML character, including in unchanged parts.
+    fn reject_written_xml_characters(&self, entry: &str, data: &[u8]) -> Result<()> {
+        Self::reject_part_xml_characters(entry, data)
     }
 }
 

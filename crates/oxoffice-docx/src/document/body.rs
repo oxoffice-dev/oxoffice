@@ -55,33 +55,62 @@ impl Document {
     }
 
     /// Publish page color and the relationship-resolved display setting together.
+    ///
+    /// It edits the live document: the page background of the main document
+    /// (`EditUnit::Background`, that element alone) and the settings
+    /// (`EditUnit::Settings`), whose part and relationship it creates when
+    /// the document has none, through the part journal.
     pub fn set_page_color(&mut self, color: &str) -> Result<()> {
         if !is_rgb_hex(color) {
             return Err(Error::Other(
                 "page color must be six hexadecimal digits".to_owned(),
             ));
         }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(
+            &[crate::EditUnit::Settings, crate::EditUnit::Background],
+            |document| {
+                document.reserve_settings_part()?;
+                document.write_page_color(color)
+            },
+        );
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            staged.set_page_color_staged(color)
+        });
+        result
+    }
+
+    /// The staged route of [`Self::set_page_color`], its debug oracle.
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    fn set_page_color_staged(&mut self, color: &str) -> Result<()> {
         let mut candidate = self.settings_mutation_candidate()?;
-        if let Some(background) = candidate.document.background_xml.as_ref() {
-            let source = candidate
+        candidate.write_page_color(color)?;
+        candidate.invalidate_layout();
+        let reopened = candidate.prepare_and_reopen_staged()?;
+        self.commit_staged_mutation(reopened);
+        Ok(())
+    }
+
+    /// Write `color` as the page background and display it in the settings.
+    fn write_page_color(&mut self, color: &str) -> Result<()> {
+        if let Some(background) = self.document.background_xml.as_ref() {
+            let source = self
                 .package
-                .get_part(&candidate.doc_part_name)
+                .get_part(&self.doc_part_name)
                 .ok_or_else(|| Error::Other("main document part is missing".to_owned()))?;
             let scope = document_namespace_scopes(source)?
                 .root_declarations
                 .into_iter()
                 .collect();
-            candidate.document.background_xml =
+            self.document.background_xml =
                 Some(close_content_fragment_namespaces(background, &scope)?);
         }
-        candidate.document.set_background_color(color)?;
-        candidate
-            .settings
+        self.document.set_background_color(color)?;
+        self.settings
             .get_or_insert_with(CT_Settings::new)
             .set_display_background_shape(true)?;
-        candidate.invalidate_layout();
-        let reopened = candidate.prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(reopened);
         Ok(())
     }
 }
@@ -320,5 +349,74 @@ impl Document {
         *paragraph = candidate;
         self.invalidate_layout();
         Ok(boundary)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::headers_footers::tests::state;
+    use super::*;
+
+    /// A page colour written, then refused or panicked.
+    fn colour_then(document: &mut Document, panic: bool) -> Result<()> {
+        document.edit_in_place(
+            &[crate::EditUnit::Settings, crate::EditUnit::Background],
+            |document| {
+                document.reserve_settings_part()?;
+                document.write_page_color("FF0000")?;
+                assert!(document.has_document_background());
+                if panic {
+                    panic!("the page colour edit panicked");
+                }
+                Err(Error::Other("refused".into()))
+            },
+        )
+    }
+
+    #[test]
+    fn a_refused_page_colour_leaves_the_document_as_it_was() {
+        let mut fresh = Document::new();
+        let mut coloured = Document::new();
+        coloured.set_page_color("00FF00").unwrap();
+        for document in [&mut fresh, &mut coloured] {
+            let before = state(document);
+            let error = colour_then(document, false).unwrap_err();
+            assert_eq!(error.to_string(), "refused");
+            assert_eq!(state(document), before);
+        }
+        assert!(!fresh.has_document_background());
+    }
+
+    #[test]
+    fn a_panic_in_a_page_colour_edit_leaves_the_document_as_it_was() {
+        let mut document = Document::new();
+        document.set_page_color("00FF00").unwrap();
+        let before = state(&document);
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            colour_then(&mut document, true)
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(state(&document), before);
+    }
+
+    #[test]
+    fn a_page_colour_set_in_place_saves_what_the_staged_route_saves() {
+        let mut document = Document::new();
+        document.add_paragraph("body");
+        for colour in ["FF0000", "00ff00"] {
+            let mut staged = document.clone_for_staging();
+            document.set_page_color(colour).unwrap();
+            staged.set_page_color_staged(colour).unwrap();
+            assert_eq!(document.to_bytes().unwrap(), staged.to_bytes().unwrap());
+        }
+        assert!(document.has_document_background());
+    }
+
+    #[test]
+    fn a_page_colour_refused_up_front_leaves_the_document_as_it_was() {
+        let mut document = Document::new();
+        let before = state(&document);
+        assert!(document.set_page_color("red").is_err());
+        assert_eq!(state(&document), before);
     }
 }

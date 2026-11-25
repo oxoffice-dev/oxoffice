@@ -599,7 +599,6 @@ impl PyDocument {
                 .map_err(|error| docx_to_pyerr(py, error))?;
         }
         let selected = match &publication {
-            WordPublication::HeaderFooterAppend(index) => Some(WordOwnerLocation::Section(*index)),
             WordPublication::ParagraphText(location)
             | WordPublication::ParagraphAppend(location) => {
                 Some(WordOwnerLocation::Paragraph(location.clone()))
