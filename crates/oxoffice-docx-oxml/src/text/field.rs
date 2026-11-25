@@ -364,6 +364,13 @@ impl Field {
         Ok(())
     }
 
+    /// Whether the writer finds nothing to normalize in the stored ordered
+    /// result (true when there is none), as `write_field_with_result_properties`
+    /// decides before it writes an unchanged field's source.
+    pub(super) fn ordered_result_is_settled(&self) -> bool {
+        matches!(self.ordered_normalization_plan(), Ok(None))
+    }
+
     fn ordered_normalization_plan(&self) -> Result<Option<OrderedNormalizationPlan<'_>>> {
         let Some(stored) = &self.ordered_result else {
             return Ok(None);

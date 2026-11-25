@@ -58,7 +58,8 @@ pub use run::{
     hyperlink_revision_index,
 };
 use run::{
-    ParsedHyperlinkAttributes, RAW_COMMENT_REFERENCE_FLAG, run_xml_root, write_run_raw_source,
+    ParsedHyperlinkAttributes, RAW_COMMENT_REFERENCE_FLAG, retained_comment_reference_id,
+    run_xml_root, write_run_raw_source,
 };
 pub(crate) use run::{
     RunChildAction, RunChildPlan, SpecialRunValue, comment_reference_has_payload_attributes,
@@ -88,6 +89,10 @@ mod field_legacy_form;
 mod field_rewrite;
 mod field_simple;
 mod field_write;
+mod written;
+
+#[doc(hidden)]
+pub use written::WrittenVisitor;
 
 pub use field::FieldInstruction;
 use field::{FIELD_CACHE_VALIDATION_SCOPE, cached_run_display};

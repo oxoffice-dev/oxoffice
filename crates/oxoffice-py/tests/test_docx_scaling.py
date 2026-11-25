@@ -822,7 +822,7 @@ GROWING = {
     "Document.remove_comment", "Document.remove_content", "Document.remove_content_control",
     "Document.remove_content_range",
     "Document.remove_endnote", "Document.remove_footnote", "Document.remove_hyperlink",
-    "Document.remove_mail_merge_package", "Document.remove_section", "Document.remove_style",
+    "Document.remove_mail_merge_package", "Document.remove_section",
     "Document.repeat_content_control", "Document.replace_bibliography_source", "Document.replace_image",
     "Document.replace_image_for_story",
     "Document.replace_text_at", "Document.reply_to",

@@ -20,3 +20,7 @@ thiserror = { workspace = true }
 itoa = { workspace = true }
 regex = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# Reads the corpus documents in the written-walk test.
+zip = { workspace = true }

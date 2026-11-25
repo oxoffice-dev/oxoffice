@@ -2291,7 +2291,7 @@ fn close_comment_reference_source(raw: &[u8], prefixes: &[String]) -> Result<Vec
     raw_with_external_bindings(raw, &bindings)
 }
 
-fn retained_comment_reference_id(raw: &[u8]) -> Option<i32> {
+pub(super) fn retained_comment_reference_id(raw: &[u8]) -> Option<i32> {
     let mut reader = quick_xml::reader::NsReader::from_reader(raw);
     let (ns, event) = reader.read_resolved_event().ok()?;
     if !matches!(ns, ResolveResult::Bound(namespace) if namespace.as_ref() == crate::namespace::W_NS.as_bytes())
