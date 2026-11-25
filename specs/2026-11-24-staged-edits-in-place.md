@@ -521,12 +521,13 @@ section's properties.
   refusals are the staged route's, in its order, before the swap. The
   `mc:AlternateContent` twin the staged route pairs belongs to a text-box
   story, never to the body, so the body route has none.
-- **The body's last section properties are a unit**, `BodySection`: they
-  are copied whole, as they do not grow with the body. A section that a
-  paragraph ends is its paragraph's `BodyBlocks`. The header and footer
-  relationships a section names are the journals': the replacement only
-  names existing ones. `insert_section` and `remove_section` use the same
-  unit.
+- **A section replacement edits that section alone**, under the
+  `SectionProperties { index }` unit of S3 (only that `CT_SectPr` is
+  copied, whether a paragraph or the body holds it), and publishes as the
+  header and footer edits of S3 do (`edit_story_parts`): the section owner
+  keeps its key, and a change in the header or footer references retires
+  that section's content view. The replacement only names existing
+  relationships.
 - **What keeps the staged route**: any other story (cell, content
   control, text box, header, footer, note, comment), and a replacement
   that changes the paragraph's comment or bookmark marks, drops a note
@@ -539,10 +540,7 @@ section's properties.
   `Run.text` keeps the owners of the paragraph and of every run (its run
   paths do not change); the XML replacements keep the owner the staged
   publication keeps (the replaced element's) and the text replacements
-  publish as `Paragraph.text` does. A last-section replacement changes no
-  block: its section owner keeps its key and takes the new properties,
-  every other owner is kept, and a change in the header or footer
-  references takes the whole route.
+  publish as `Paragraph.text` does.
 - Oracles: each in-place route runs the staged route on a copy in debug
   builds and compares the saved parts.
 

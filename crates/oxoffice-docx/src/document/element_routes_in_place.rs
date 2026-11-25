@@ -6,7 +6,7 @@
 //! one direct body block it changes alone, between the head and the tail of
 //! the main part (`body_block_item`), reads it back and swaps it in under a
 //! `BodyBlocks { slot, count: 1 }` unit; the body's last section properties
-//! go under `BodySection`. Nothing is staged, saved or reopened. A location
+//! go under `SectionProperties { index }`. Nothing is staged, saved or reopened. A location
 //! the route does not take answers `Ok(None)` and changes nothing: the caller
 //! keeps today's staged route, which debug builds also run as the oracle of
 //! every other answer.
@@ -485,9 +485,8 @@ impl Document {
     }
 
     /// Replace the properties of section `index`, as
-    /// [`Self::replace_section_properties_xml`] does: the paragraph that owns
-    /// them is swapped in place under a `BodyBlocks { slot, count: 1 }`
-    /// unit, the body's last section properties under `BodySection`.
+    /// [`Self::replace_section_properties_xml`] does, under the
+    /// `SectionProperties { index }` unit: only that `CT_SectPr` is copied.
     /// `Some(changed)`; a refusal changes nothing. Finding the owner walks
     /// the typed body blocks, which `section` does too; nothing is written
     /// or read as XML but the section.
@@ -571,27 +570,16 @@ impl Document {
                 "element XML section geometry has nonpositive page size".into(),
             ));
         }
-        match owner {
-            Some(Some(slot)) => {
-                let BodyContent::Paragraph(paragraph) = &self.document.body.content[slot] else {
-                    unreachable!("the section owner is a paragraph");
-                };
-                let mut paragraph = paragraph.as_ref().clone();
-                if let Some(properties) = paragraph.properties.as_mut() {
-                    properties.sect_pr = Some(replacement);
-                }
-                self.replace_body_block_in_place(slot, BodyContent::Paragraph(Box::new(paragraph)))
-                    .map(Some)
-            }
-            _ => {
-                self.edit_in_place(&[EditUnit::BodySection], |document| {
-                    document.document.body.sect_pr = Some(replacement);
-                    document.invalidate_layout();
-                    Ok(())
-                })?;
-                Ok(Some(self.take_last_edit_changed()))
-            }
-        }
+        // Only that `CT_SectPr` changes: the paragraph that holds it keeps
+        // every other property, so its unit is the section's, not a block.
+        self.edit_in_place(&[EditUnit::SectionProperties { index }], |document| {
+            let section = document
+                .section_mut(index)
+                .ok_or_else(|| Error::Other("element XML section owner is absent".into()))?;
+            *section.inner = replacement;
+            Ok(())
+        })?;
+        Ok(Some(self.take_last_edit_changed()))
     }
 
     /// Debug proof of a block route whose answer was `result`: `Ok(None)`
@@ -942,7 +930,10 @@ mod tests {
         });
         assert_eq!(result.unwrap(), Some(true));
         let report = report.expect("the section changed in place");
-        assert_eq!(report.units, [(EditUnit::BodySection, true)]);
+        assert_eq!(
+            report.units,
+            [(EditUnit::SectionProperties { index: 0 }, true)]
+        );
         staged
             .replace_section_properties_xml_staged(0, &xml)
             .unwrap();
@@ -950,10 +941,11 @@ mod tests {
     }
 
     #[test]
-    fn a_paragraph_owned_section_is_replaced_in_its_paragraph_in_place() {
+    fn a_paragraph_owned_section_is_replaced_in_place() {
         let mut document = three_paragraphs();
         document.insert_section(0).unwrap();
-        let slot = document
+        // The first section is held by a paragraph.
+        document
             .document
             .body
             .content
@@ -969,7 +961,13 @@ mod tests {
             document.replace_section_properties_xml_in_place(0, &xml)
         });
         assert_eq!(result.unwrap(), Some(true));
-        one_paragraph_changed(report, slot);
+        // Only the section's properties are a unit: the block is not.
+        let report = report.expect("the edit changed the section");
+        assert_eq!(
+            report.units,
+            [(EditUnit::SectionProperties { index: 0 }, true)]
+        );
+        assert!(report.body_blocks.is_empty());
         staged
             .replace_section_properties_xml_staged(0, &xml)
             .unwrap();
