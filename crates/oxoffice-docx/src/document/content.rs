@@ -66,6 +66,33 @@ impl Document {
         self.unsavable_body_edit_cache.get() == Some(&None)
     }
 
+    /// Whether `block` holds an element named like a nested namespace owner
+    /// the body keeps from its source (an element of the source that
+    /// declares its own namespaces). A typed edit of such a block can leave
+    /// the writer unable to replay that owner's declarations, which a save
+    /// refuses: the in-place routes that rewrite an existing block leave it
+    /// to the staged route, which writes the part's bytes. `false` when the
+    /// main part is no longer as it was read: no owner is kept then.
+    pub(crate) fn block_holds_nested_namespace_owner(&self, block: &BodyContent) -> Result<bool> {
+        let Some(kept) = self.kept_main_part() else {
+            return Ok(false);
+        };
+        let Some(owners) = kept.nested_namespace_owners() else {
+            return Ok(true);
+        };
+        if owners.is_empty() {
+            return Ok(false);
+        }
+        let names = owners
+            .iter()
+            .map(|owner| owner.local_name.as_bytes())
+            .collect::<HashSet<_>>();
+        Ok(xml_holds_element_named(
+            &self.document.body_item_xml(block)?,
+            &names,
+        ))
+    }
+
     /// [`Self::invalidate_layout`] after an edit that leaves the main part
     /// and the body alone (a settings or package part edit): what a save of
     /// the body answers stays.
@@ -1116,14 +1143,30 @@ impl Document {
     pub(crate) fn body_block_item(
         &self,
         slot: usize,
-        (kind, owner): (StoryKind, usize),
+        owner: (StoryKind, usize),
         index: usize,
         item_kind: StoryItemKind,
     ) -> Result<Option<BodyBlockItem>> {
         // Computed once after an invalidation: an empty cache is no answer,
         // and the swap keeps a savable answer
         // (`keep_body_savable_after_typed_insert`).
-        let Some(BodyBlockPart { head, xml, tail }) = self.body_block_part(slot)? else {
+        if self.unsavable_body_edit().is_some() {
+            return Ok(None);
+        }
+        self.framed_body_block_item(slot, owner, index, item_kind)
+    }
+
+    /// [`Self::body_block_item`] without asking whether a save of the body
+    /// is known to fail: for a caller that asked before its edit and reads
+    /// the block it edits.
+    pub(crate) fn framed_body_block_item(
+        &self,
+        slot: usize,
+        (kind, owner): (StoryKind, usize),
+        index: usize,
+        item_kind: StoryItemKind,
+    ) -> Result<Option<BodyBlockItem>> {
+        let Some(BodyBlockPart { head, xml, tail }) = self.framed_body_block(slot)? else {
             return Ok(None);
         };
         let block_span = head.len()..xml.len() - tail;
@@ -1165,6 +1208,13 @@ impl Document {
         if self.unsavable_body_edit().is_some() {
             return Ok(None);
         }
+        self.framed_body_block(slot)
+    }
+
+    /// [`Self::body_block_part`] without asking whether a save of the body
+    /// is known to fail: for a caller that asked before its edit and reads
+    /// the block it edits. `None` for a slot out of range.
+    pub(crate) fn framed_body_block(&self, slot: usize) -> Result<Option<BodyBlockPart>> {
         let Some(block) = self.document.body.content.get(slot) else {
             return Ok(None);
         };

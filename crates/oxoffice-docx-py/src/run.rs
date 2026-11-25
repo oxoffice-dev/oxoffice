@@ -357,6 +357,52 @@ impl PyRun {
             crate::length_argument(height, "Run.add_picture(height)", crate::LengthUnit::Emu)?
                 .map(oxoffice_docx::Length::emu);
         let mut document = self.document.borrow_mut(py);
+        let options = options.map(|o| o.inner.clone());
+        // A run of a direct body paragraph: its block is edited in place and
+        // published by the block replacement, which keeps the paragraph and
+        // every other handle, and retires the paragraph's runs.
+        if let Some(owner) = self.owner.as_ref()
+            && let Some(slot) = document.typed_run_edit_slot(&location, owner)
+        {
+            let (route, _) = document.run_route(owner)?;
+            let story = route.story();
+            let position = oxoffice_docx::StoryRunPosition {
+                location: oxoffice_docx::ContentLocation::new(
+                    oxoffice_docx::StoryId::new(
+                        story.kind(),
+                        story.part_name(),
+                        story.owner_index(),
+                    ),
+                    route.item_kind(),
+                    route.index_path().to_vec(),
+                ),
+                run_index: index + 1,
+            };
+            let block = oxoffice_docx::ControlBlock {
+                slot,
+                owner_index: 0,
+                item_index: 0,
+            };
+            let in_block = options.clone();
+            if let Some(picture) = document.publish_blocks_edited_in_place(
+                py,
+                "Run.add_picture",
+                crate::document::BlockRetention::EditedParagraphKeepsItsOwner,
+                |document| {
+                    document.insert_picture_in_block(
+                        &position, block, &data, &filename, width, height, in_block,
+                    )
+                },
+            )? {
+                return Py::new(
+                    py,
+                    crate::document::PyPicture {
+                        inner: picture,
+                        binding: document.capture_snapshot(smallvec::smallvec![])?,
+                    },
+                );
+            }
+        }
         let position = oxoffice_docx::StoryRunPosition {
             location: location
                 .native(&document.inner)
@@ -365,14 +411,7 @@ impl PyRun {
         };
         let mut candidate = document.inner.clone_for_staging();
         let picture = candidate
-            .insert_picture_with_options_at(
-                &position,
-                &data,
-                &filename,
-                width,
-                height,
-                options.map(|o| o.inner.clone()),
-            )
+            .insert_picture_with_options_at(&position, &data, &filename, width, height, options)
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,

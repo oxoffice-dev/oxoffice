@@ -73,83 +73,13 @@ impl Document {
         height: Option<Length>,
         options: Option<PictureOptions>,
     ) -> Result<PictureOccurrence> {
-        let format = oxoffice_media::ImageFormat::sniff(image_data)
-            .ok_or_else(|| Error::Other("picture image bytes are unsupported".to_owned()))?;
-        if matches!(
-            format,
-            oxoffice_media::ImageFormat::Png
-                | oxoffice_media::ImageFormat::Jpeg
-                | oxoffice_media::ImageFormat::Gif
-                | oxoffice_media::ImageFormat::Bmp
-                | oxoffice_media::ImageFormat::Webp
-        ) && oxoffice_media::probe(image_data).is_none()
-        {
-            return Err(Error::Other(
-                "picture image bytes are unsupported".to_owned(),
-            ));
-        }
-        let (width, height) = match (width, height) {
-            (Some(width), Some(height)) if width.to_emu() > 0 && height.to_emu() > 0 => {
-                (width, height)
-            }
-            (None, None) => {
-                let size = oxoffice_media::probe(image_data)
-                    .and_then(|info| info.native_size(72.0))
-                    .ok_or_else(|| Error::UnavailableImageDimensions {
-                        filename: image_filename.to_owned(),
-                    })?;
-                (Length::emu(size.width_emu), Length::emu(size.height_emu))
-            }
-            _ => {
-                return Err(Error::Other(
-                    "picture dimensions require two positive lengths or neither".to_owned(),
-                ));
-            }
-        };
-        let mut options = options.unwrap_or(PictureOptions {
-            width,
-            height,
-            crop: None,
-            anchor: None,
-            name: None,
-            description: None,
-            title: None,
-            decorative: false,
-        });
-        options.width = width;
-        options.height = height;
-        validate_picture_options(&options)?;
+        let options =
+            checked_run_picture_options(image_data, image_filename, width, height, options)?;
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
         let snapshot = candidate.story_range_paragraph_snapshot(&position.location)?;
         let original_paragraph = CT_P::from_xml_fragment(snapshot.xml())?;
-        let original = original_paragraph.accepted_view();
-        if position.run_index > original.runs.len() {
-            return Err(Error::Other("picture run boundary is out of range".into()));
-        }
-        let ordinal = original
-            .runs
-            .iter()
-            .take(position.run_index)
-            .flat_map(|run| {
-                run.content
-                    .iter()
-                    .filter_map(|content| match content {
-                        RunContent::Drawing(drawing) => Some(drawing),
-                        _ => None,
-                    })
-                    .chain(run.alt_drawings.iter())
-            })
-            // The pictures `pictures()` lists: an embedded or a linked picture,
-            // not a chart.
-            .filter(|drawing| {
-                drawing.inline.as_ref().is_some_and(|i| {
-                    i.chart_rel_id.is_none() && (!i.embed_id.is_empty() || i.link_id.is_some())
-                }) || drawing.anchor.as_ref().is_some_and(|a| {
-                    a.chart_rel_id.is_none() && (!a.embed_id.is_empty() || a.link_id.is_some())
-                })
-            })
-            .count();
+        let ordinal = pictures_before_run(&original_paragraph, position.run_index)?;
         let relationship = candidate.add_image_relationship_checked(
             position.location.story.part_name(),
             image_data,
@@ -985,8 +915,6 @@ impl Document {
                         }
                         None => story_namespace_scope_at(&source.xml, span.start)?,
                     };
-                    let closed =
-                        close_content_fragment_namespaces(&source.xml[span.clone()], &scope)?;
                     let proof = (source.part_name == self.doc_part_name
                         && source.root_kind == StoryKind::Body)
                         .then(|| {
@@ -998,203 +926,14 @@ impl Document {
                     if proof.is_some() {
                         continue;
                     }
-                    let paragraph = CT_P::from_xml_fragment(&closed)?;
-                    let accepted = paragraph.accepted_view();
-                    let drawings = accepted.runs.iter().flat_map(|run| {
-                        run.content
-                            .iter()
-                            .filter_map(|content| match content {
-                                RunContent::Drawing(drawing) => Some(drawing),
-                                _ => None,
-                            })
-                            .chain(run.alt_drawings.iter())
-                    });
-                    let mut occurrences = Vec::new();
-                    let mut claimed = HashSet::new();
-                    for drawing in drawings {
-                        let (
-                            raw,
-                            embed,
-                            link,
-                            chart,
-                            _projected_width,
-                            _projected_height,
-                            name,
-                            description,
-                            title,
-                            decorative,
-                            anchored,
-                        ) = if let Some(inline) = &drawing.inline {
-                            (
-                                &inline.raw_xml,
-                                &inline.embed_id,
-                                &inline.link_id,
-                                &inline.chart_rel_id,
-                                inline.extent_cx.0,
-                                inline.extent_cy.0,
-                                &inline.name,
-                                &inline.description,
-                                &inline.title,
-                                inline.decorative,
-                                false,
-                            )
-                        } else if let Some(anchor) = &drawing.anchor {
-                            (
-                                &anchor.raw_xml,
-                                &anchor.embed_id,
-                                &anchor.link_id,
-                                &anchor.chart_rel_id,
-                                anchor.extent_cx.0,
-                                anchor.extent_cy.0,
-                                &anchor.name,
-                                &anchor.description,
-                                &anchor.title,
-                                anchor.decorative,
-                                true,
-                            )
-                        } else {
-                            continue;
-                        };
-                        if chart.is_some() || (embed.is_empty() && link.is_none()) {
-                            continue;
-                        }
-                        let raw = raw.as_ref().ok_or_else(|| {
-                            Error::Other("picture has no physical source identity".into())
-                        })?;
-                        if raw.is_empty() {
-                            return Err(Error::Other("picture source is empty".into()));
-                        }
-                        let Some((width, height)) = picture_source_extent(raw, &scope, anchored)?
-                        else {
-                            continue;
-                        };
-                        let matches = source.xml[span.clone()]
-                            .windows(raw.len())
-                            .enumerate()
-                            .filter(|(_, bytes)| *bytes == raw.as_slice())
-                            .map(|(offset, _)| span.start + offset)
-                            .collect::<Vec<_>>();
-                        // Physical copies that cannot be distinguished by the
-                        // admitted projection are not silently reinterpreted.
-                        let count = accepted
-                            .runs
-                            .iter()
-                            .flat_map(|run| {
-                                run.content
-                                    .iter()
-                                    .filter_map(|c| match c {
-                                        RunContent::Drawing(d) => Some(d),
-                                        _ => None,
-                                    })
-                                    .chain(run.alt_drawings.iter())
-                            })
-                            .filter(|d| {
-                                d.inline.as_ref().and_then(|i| i.raw_xml.as_ref()) == Some(raw)
-                                    || d.anchor.as_ref().and_then(|a| a.raw_xml.as_ref())
-                                        == Some(raw)
-                            })
-                            .count();
-                        if matches.len() != count {
-                            return Err(Error::Other(
-                                "picture has ambiguous alternate physical copies".into(),
-                            ));
-                        }
-                        let start = matches
-                            .into_iter()
-                            .find(|start| !claimed.contains(start))
-                            .ok_or_else(|| {
-                                Error::Other("picture source correspondence is missing".into())
-                            })?;
-                        claimed.insert(start);
-                        if width <= 0 || height <= 0 {
-                            return Err(Error::Other("picture extent must be positive".into()));
-                        }
-                        let relationship_id = link.as_deref().unwrap_or(embed);
-                        let (media_part_name, external_url, bytes, content_type) = if link.is_some()
-                        {
-                            let relationship = self
-                                .package
-                                .get_part_rels(&story.part_name)
-                                .and_then(|rels| rels.get_by_id(relationship_id))
-                                .ok_or_else(|| {
-                                    Error::Other("linked picture relationship is missing".into())
-                                })?;
-                            if relationship.rel_type != rel_types::IMAGE
-                                || relationship_is_internal(relationship)
-                            {
-                                return Err(Error::Other(
-                                    "linked picture must have an external image relationship"
-                                        .into(),
-                                ));
-                            }
-                            (
-                                None,
-                                Some(relationship.target.clone()),
-                                Vec::new(),
-                                String::new(),
-                            )
-                        } else {
-                            // This owner came from the current source above.
-                            // The immutable inventory cannot stale it between
-                            // drawings, so do not rebuild that source per image.
-                            let target = self.validate_internal_relationship_in_checked_story(
-                                story,
-                                embed,
-                                rel_types::IMAGE,
-                            )?;
-                            let target = self
-                                .package
-                                .parts
-                                .keys()
-                                .filter(|name| {
-                                    OpcPackage::resolve_rel_target("/", name)
-                                        .eq_ignore_ascii_case(&target)
-                                })
-                                .min()
-                                .cloned()
-                                .ok_or_else(|| {
-                                    Error::Other("picture media identity is missing".into())
-                                })?;
-                            let bytes = self
-                                .package
-                                .get_part(&target)
-                                .ok_or_else(|| Error::Other("picture media is missing".into()))?
-                                .to_vec();
-                            let content_type = self
-                                .package
-                                .content_types
-                                .content_type_for(&target)
-                                .filter(|kind| kind.starts_with("image/"))
-                                .ok_or_else(|| {
-                                    Error::Other("picture media content type is unsupported".into())
-                                })?
-                                .to_owned();
-                            (Some(target), None, bytes, content_type)
-                        };
-                        occurrences.push((
-                            start,
-                            PictureOccurrence {
-                                location: location.clone(),
-                                ordinal: 0,
-                                relationship_id: relationship_id.to_owned(),
-                                media_part_name,
-                                external_url,
-                                width,
-                                height,
-                                name: name.clone(),
-                                description: description.clone(),
-                                title: title.clone(),
-                                decorative,
-                                anchored,
-                                content_type,
-                                bytes,
-                                source: raw.clone(),
-                            },
-                        ));
-                    }
-                    occurrences.sort_by_key(|(start, _)| *start);
-                    for (ordinal, (start, mut picture)) in occurrences.into_iter().enumerate() {
-                        picture.ordinal = ordinal;
+                    let occurrences = self.paragraph_picture_occurrences(
+                        story,
+                        location,
+                        &source.xml,
+                        span.clone(),
+                        &scope,
+                    )?;
+                    for (start, picture) in occurrences {
                         if seen.insert((source.part_name.clone(), start)) {
                             result.push(picture);
                         }
@@ -1270,81 +1009,7 @@ impl Document {
         let offset = *matches
             .get(equal_before)
             .ok_or_else(|| Error::Other("picture physical source disappeared".into()))?;
-        let closed = close_content_fragment_namespaces(&picture.source, &scope)?;
-        let (resized, count) =
-            resize_story_pictures(&closed, &picture.relationship_id, width, height)?;
-        if count != 1 {
-            return Err(Error::Other(
-                "picture occurrence has unsupported nested representation".into(),
-            ));
-        }
-        // Namespace closure is projection-only. Numeric edits are transported
-        // back onto the exact physical owner without rewriting its bindings.
-        let (boundaries, _) = comment_namespace_source_boundaries(&picture.source, &closed)?
-            .ok_or_else(|| Error::Other("picture namespace closure changed source".into()))?;
-        let mut edits = Vec::new();
-        let mut before_reader = NsReader::from_reader(closed.as_slice());
-        let mut after_reader = NsReader::from_reader(resized.as_slice());
-        loop {
-            let start = before_reader.buffer_position() as usize;
-            let before = before_reader
-                .read_event()
-                .map_err(|e| Error::Other(e.to_string()))?;
-            let after = after_reader
-                .read_event()
-                .map_err(|e| Error::Other(e.to_string()))?;
-            if before != after {
-                let physical_start = boundaries
-                    .iter()
-                    .find_map(|(raw, closed)| (*closed == start).then_some(*raw))
-                    .ok_or_else(|| Error::Other("picture edit has no physical boundary".into()))?;
-                let end = before_reader.buffer_position() as usize;
-                let physical_end = boundaries
-                    .iter()
-                    .find_map(|(raw, closed)| (*closed == end).then_some(*raw))
-                    .ok_or_else(|| Error::Other("picture edit has no physical boundary".into()))?;
-                // Only numeric values change, the original element spelling
-                // and all other attributes remain byte-exact.
-                let Event::Empty(ref before_tag) = before else {
-                    return Err(Error::Other("picture extent source is unsupported".into()));
-                };
-                let Event::Empty(ref after_tag) = after else {
-                    return Err(Error::Other("picture extent source is unsupported".into()));
-                };
-                let mut tag = picture.source[physical_start..physical_end].to_vec();
-                let mut values = Vec::new();
-                for (a, b) in before_tag.attributes().zip(after_tag.attributes()) {
-                    let (a, b) = (
-                        a.map_err(|e| Error::Other(e.to_string()))?,
-                        b.map_err(|e| Error::Other(e.to_string()))?,
-                    );
-                    if a.key != b.key {
-                        return Err(Error::Other(
-                            "picture resize changed attribute ownership".into(),
-                        ));
-                    }
-                    if a.value != b.value {
-                        let (a_start, a_end) = story_attribute_value_span(&tag, a.key.as_ref())
-                            .ok_or_else(|| {
-                                Error::Other("picture extent attribute missing".into())
-                            })?;
-                        values.push((a_start..a_end, b.value.to_vec()));
-                    }
-                }
-                values.sort_by_key(|(range, _)| range.start);
-                for (range, value) in values.into_iter().rev() {
-                    tag.splice(range, value);
-                }
-                edits.push((physical_start..physical_end, tag));
-            }
-            if matches!(before, Event::Eof) {
-                break;
-            }
-        }
-        let mut raw = picture.source.clone();
-        for (range, value) in edits.into_iter().rev() {
-            raw.splice(range, value);
-        }
+        let raw = resized_picture_source(picture, &scope, width, height)?;
         let mut updated = source.xml.into_owned();
         updated.splice(
             span.start + offset..span.start + offset + picture.source.len(),
@@ -1380,7 +1045,170 @@ impl Document {
         self.replace_image_relationship(&story.part_name, relationship_id, image_data)
     }
 
+    /// [`Self::replace_image_for_story`] on the body story of the main
+    /// part, which is always there: no story is listed, which would write
+    /// the whole main part for the fingerprints the story check compares.
+    #[doc(hidden)]
+    pub fn replace_image_for_body_story(
+        &mut self,
+        relationship_id: &str,
+        image_data: &[u8],
+    ) -> Result<()> {
+        let story = StoryId::new(StoryKind::Body, self.doc_part_name.clone(), 0);
+        #[cfg(debug_assertions)]
+        if let Ok(stories) = self.stories() {
+            assert!(
+                stories.iter().any(|listed| listed.kind == StoryKind::Body
+                    && listed.part_name == story.part_name
+                    && listed.owner_index == 0),
+                "the main part lists no body story at owner index 0"
+            );
+        }
+        self.validate_internal_relationship_in_checked_story(
+            &story,
+            relationship_id,
+            rel_types::IMAGE,
+        )?;
+        self.replace_image_relationship(&story.part_name, relationship_id, image_data)
+    }
+
+    /// Replace the image the relationship `relationship_id` of `owner`
+    /// names, in place: the media part, the relationship target, the part
+    /// a new name leaves behind and the content types are package state,
+    /// written under `EditUnit::Parts` and the reservation journal. No body
+    /// or story XML changes, so the caller publishes nothing.
     pub(super) fn replace_image_relationship(
+        &mut self,
+        owner: &str,
+        relationship_id: &str,
+        image_data: &[u8],
+    ) -> Result<()> {
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(&[EditUnit::Parts], |document| {
+            document.replace_image_relationship_live(owner, relationship_id, image_data)
+        });
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            staged.replace_image_relationship_staged(owner, relationship_id, image_data)
+        });
+        result
+    }
+
+    /// The image relationship `relationship_id` of `owner`, the image
+    /// format of `image_data` and the part the relationship names now.
+    fn checked_image_relationship(
+        &self,
+        owner: &str,
+        relationship_id: &str,
+        image_data: &[u8],
+    ) -> Result<(oxoffice_media::ImageFormat, String)> {
+        let format = oxoffice_media::ImageFormat::sniff(image_data).ok_or_else(|| {
+            Error::Other("replacement bytes are not a supported image".to_owned())
+        })?;
+        let old_target = self
+            .package
+            .get_part_rels(owner)
+            .and_then(|relationships| relationships.get_by_id(relationship_id))
+            .filter(|relationship| {
+                relationship.rel_type == rel_types::IMAGE
+                    && relationship_is_internal(relationship)
+            })
+            .map(|relationship| OpcPackage::resolve_rel_target(owner, &relationship.target))
+            .ok_or_else(|| {
+                Error::Other(format!(
+                    "relationship owner {owner} has no internal image relationship {relationship_id}"
+                ))
+            })?;
+        if !self.package.contains_part(&old_target) {
+            return Err(Error::Other(format!(
+                "image relationship target {old_target} is missing"
+            )));
+        }
+        Ok((format, old_target))
+    }
+
+    /// How many internal relationships of the package, its own included,
+    /// name `part`: a compare per relationship, never a part read.
+    fn internal_references_to(&self, part: &str) -> usize {
+        std::iter::once(("/", &self.package.package_rels))
+            .chain(
+                self.package
+                    .part_rels
+                    .iter()
+                    .map(|(source, relationships)| (source.as_str(), relationships)),
+            )
+            .flat_map(|(source, relationships)| {
+                relationships
+                    .items
+                    .iter()
+                    .map(move |relationship| (source, relationship))
+            })
+            .filter(|(source, relationship)| {
+                relationship_is_internal(relationship)
+                    && OpcPackage::resolve_rel_target(source, &relationship.target) == part
+            })
+            .count()
+    }
+
+    /// [`Self::replace_image_relationship_staged`] on the live document,
+    /// each write journaled; left half-done on an error, which the open
+    /// in-place edit undoes.
+    fn replace_image_relationship_live(
+        &mut self,
+        owner: &str,
+        relationship_id: &str,
+        image_data: &[u8],
+    ) -> Result<()> {
+        let (format, old_target) =
+            self.checked_image_relationship(owner, relationship_id, image_data)?;
+        let compatible_extension = old_target
+            .rsplit_once('.')
+            .and_then(|(_, extension)| oxoffice_media::ImageFormat::from_extension(extension))
+            == Some(format);
+        let new_target = if self.internal_references_to(&old_target) == 1 && compatible_extension {
+            old_target.clone()
+        } else {
+            self.identifiers
+                .reserve_part_name("/word/media", "image", format.extension())?
+        };
+        if new_target != old_target
+            && !self.package.set_relationship_target(
+                owner,
+                relationship_id,
+                &relative_target(owner, &new_target),
+            )
+        {
+            return Err(Error::Other(format!(
+                "image relationship {relationship_id} disappeared during replacement"
+            )));
+        }
+        self.install_reserved_image_part(&new_target, image_data, format);
+        if new_target != old_target && self.internal_references_to(&old_target) == 0 {
+            self.package.remove_part(&old_target);
+            self.package.remove_part_rels(&old_target);
+            self.package.remove_content_type_override(&old_target);
+            self.identifiers.retire_authored_part(&old_target);
+            if let Some((_, extension)) = old_target.rsplit_once('.') {
+                let extension = extension.to_ascii_lowercase();
+                let default_is_used = self.package.parts.keys().any(|part_name| {
+                    !self.package.content_types.contains_override(part_name)
+                        && part_name.rsplit_once('.').is_some_and(|(_, candidate)| {
+                            candidate.eq_ignore_ascii_case(&extension)
+                        })
+                });
+                if !default_is_used {
+                    self.remove_authored_content_type_default(&extension);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The staged route of [`Self::replace_image_relationship`], kept as its
+    /// debug oracle.
+    #[cfg(debug_assertions)]
+    fn replace_image_relationship_staged(
         &mut self,
         owner: &str,
         relationship_id: &str,
@@ -1549,4 +1377,386 @@ impl Document {
         }
         Ok(relationship.target.clone())
     }
+}
+
+impl Document {
+    /// The pictures of the paragraph at `span` of a story part's `xml`, read
+    /// under `scope`, the namespaces in scope at the paragraph, at
+    /// `location` in `story`: each with the start of its physical source in
+    /// `xml`, in that order, numbered by it. [`Self::pictures`] reads every
+    /// paragraph of every story with it; the in-place routes read the one
+    /// paragraph of the body block they edit.
+    pub(super) fn paragraph_picture_occurrences(
+        &self,
+        story: &StoryId,
+        location: &ContentLocation,
+        xml: &[u8],
+        span: Range<usize>,
+        scope: &BTreeMap<String, String>,
+    ) -> Result<Vec<(usize, PictureOccurrence)>> {
+        let closed = close_content_fragment_namespaces(&xml[span.clone()], scope)?;
+        let paragraph = CT_P::from_xml_fragment(&closed)?;
+        let accepted = paragraph.accepted_view();
+        let drawings = accepted.runs.iter().flat_map(|run| {
+            run.content
+                .iter()
+                .filter_map(|content| match content {
+                    RunContent::Drawing(drawing) => Some(drawing),
+                    _ => None,
+                })
+                .chain(run.alt_drawings.iter())
+        });
+        let mut occurrences = Vec::new();
+        let mut claimed = HashSet::new();
+        for drawing in drawings {
+            let (
+                raw,
+                embed,
+                link,
+                chart,
+                _projected_width,
+                _projected_height,
+                name,
+                description,
+                title,
+                decorative,
+                anchored,
+            ) = if let Some(inline) = &drawing.inline {
+                (
+                    &inline.raw_xml,
+                    &inline.embed_id,
+                    &inline.link_id,
+                    &inline.chart_rel_id,
+                    inline.extent_cx.0,
+                    inline.extent_cy.0,
+                    &inline.name,
+                    &inline.description,
+                    &inline.title,
+                    inline.decorative,
+                    false,
+                )
+            } else if let Some(anchor) = &drawing.anchor {
+                (
+                    &anchor.raw_xml,
+                    &anchor.embed_id,
+                    &anchor.link_id,
+                    &anchor.chart_rel_id,
+                    anchor.extent_cx.0,
+                    anchor.extent_cy.0,
+                    &anchor.name,
+                    &anchor.description,
+                    &anchor.title,
+                    anchor.decorative,
+                    true,
+                )
+            } else {
+                continue;
+            };
+            if chart.is_some() || (embed.is_empty() && link.is_none()) {
+                continue;
+            }
+            let raw = raw
+                .as_ref()
+                .ok_or_else(|| Error::Other("picture has no physical source identity".into()))?;
+            if raw.is_empty() {
+                return Err(Error::Other("picture source is empty".into()));
+            }
+            let Some((width, height)) = picture_source_extent(raw, scope, anchored)? else {
+                continue;
+            };
+            let matches = xml[span.clone()]
+                .windows(raw.len())
+                .enumerate()
+                .filter(|(_, bytes)| *bytes == raw.as_slice())
+                .map(|(offset, _)| span.start + offset)
+                .collect::<Vec<_>>();
+            // Physical copies that cannot be distinguished by the
+            // admitted projection are not silently reinterpreted.
+            let count = accepted
+                .runs
+                .iter()
+                .flat_map(|run| {
+                    run.content
+                        .iter()
+                        .filter_map(|c| match c {
+                            RunContent::Drawing(d) => Some(d),
+                            _ => None,
+                        })
+                        .chain(run.alt_drawings.iter())
+                })
+                .filter(|d| {
+                    d.inline.as_ref().and_then(|i| i.raw_xml.as_ref()) == Some(raw)
+                        || d.anchor.as_ref().and_then(|a| a.raw_xml.as_ref()) == Some(raw)
+                })
+                .count();
+            if matches.len() != count {
+                return Err(Error::Other(
+                    "picture has ambiguous alternate physical copies".into(),
+                ));
+            }
+            let start = matches
+                .into_iter()
+                .find(|start| !claimed.contains(start))
+                .ok_or_else(|| Error::Other("picture source correspondence is missing".into()))?;
+            claimed.insert(start);
+            if width <= 0 || height <= 0 {
+                return Err(Error::Other("picture extent must be positive".into()));
+            }
+            let relationship_id = link.as_deref().unwrap_or(embed);
+            let (media_part_name, external_url, bytes, content_type) = if link.is_some() {
+                let relationship = self
+                    .package
+                    .get_part_rels(&story.part_name)
+                    .and_then(|rels| rels.get_by_id(relationship_id))
+                    .ok_or_else(|| Error::Other("linked picture relationship is missing".into()))?;
+                if relationship.rel_type != rel_types::IMAGE
+                    || relationship_is_internal(relationship)
+                {
+                    return Err(Error::Other(
+                        "linked picture must have an external image relationship".into(),
+                    ));
+                }
+                (
+                    None,
+                    Some(relationship.target.clone()),
+                    Vec::new(),
+                    String::new(),
+                )
+            } else {
+                // This owner came from the current source above.
+                // The immutable inventory cannot stale it between
+                // drawings, so do not rebuild that source per image.
+                let target = self.validate_internal_relationship_in_checked_story(
+                    story,
+                    embed,
+                    rel_types::IMAGE,
+                )?;
+                let target = self
+                    .package
+                    .parts
+                    .keys()
+                    .filter(|name| {
+                        OpcPackage::resolve_rel_target("/", name).eq_ignore_ascii_case(&target)
+                    })
+                    .min()
+                    .cloned()
+                    .ok_or_else(|| Error::Other("picture media identity is missing".into()))?;
+                let bytes = self
+                    .package
+                    .get_part(&target)
+                    .ok_or_else(|| Error::Other("picture media is missing".into()))?
+                    .to_vec();
+                let content_type = self
+                    .package
+                    .content_types
+                    .content_type_for(&target)
+                    .filter(|kind| kind.starts_with("image/"))
+                    .ok_or_else(|| {
+                        Error::Other("picture media content type is unsupported".into())
+                    })?
+                    .to_owned();
+                (Some(target), None, bytes, content_type)
+            };
+            occurrences.push((
+                start,
+                PictureOccurrence {
+                    location: location.clone(),
+                    ordinal: 0,
+                    relationship_id: relationship_id.to_owned(),
+                    media_part_name,
+                    external_url,
+                    width,
+                    height,
+                    name: name.clone(),
+                    description: description.clone(),
+                    title: title.clone(),
+                    decorative,
+                    anchored,
+                    content_type,
+                    bytes,
+                    source: raw.clone(),
+                },
+            ));
+        }
+        occurrences.sort_by_key(|(start, _)| *start);
+        for (ordinal, (_, picture)) in occurrences.iter_mut().enumerate() {
+            picture.ordinal = ordinal;
+        }
+        Ok(occurrences)
+    }
+}
+
+/// The physical source of `picture` with its extents set to `width` by
+/// `height` EMU, read under `scope`, the namespaces in scope at its
+/// paragraph: only the numeric values change, every other byte stays.
+pub(super) fn resized_picture_source(
+    picture: &PictureOccurrence,
+    scope: &BTreeMap<String, String>,
+    width: i64,
+    height: i64,
+) -> Result<Vec<u8>> {
+    let closed = close_content_fragment_namespaces(&picture.source, scope)?;
+    let (resized, count) = resize_story_pictures(&closed, &picture.relationship_id, width, height)?;
+    if count != 1 {
+        return Err(Error::Other(
+            "picture occurrence has unsupported nested representation".into(),
+        ));
+    }
+    // Namespace closure is projection-only. Numeric edits are transported
+    // back onto the exact physical owner without rewriting its bindings.
+    let (boundaries, _) = comment_namespace_source_boundaries(&picture.source, &closed)?
+        .ok_or_else(|| Error::Other("picture namespace closure changed source".into()))?;
+    let mut edits = Vec::new();
+    let mut before_reader = NsReader::from_reader(closed.as_slice());
+    let mut after_reader = NsReader::from_reader(resized.as_slice());
+    loop {
+        let start = before_reader.buffer_position() as usize;
+        let before = before_reader
+            .read_event()
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let after = after_reader
+            .read_event()
+            .map_err(|e| Error::Other(e.to_string()))?;
+        if before != after {
+            let physical_start = boundaries
+                .iter()
+                .find_map(|(raw, closed)| (*closed == start).then_some(*raw))
+                .ok_or_else(|| Error::Other("picture edit has no physical boundary".into()))?;
+            let end = before_reader.buffer_position() as usize;
+            let physical_end = boundaries
+                .iter()
+                .find_map(|(raw, closed)| (*closed == end).then_some(*raw))
+                .ok_or_else(|| Error::Other("picture edit has no physical boundary".into()))?;
+            // Only numeric values change, the original element spelling
+            // and all other attributes remain byte-exact.
+            let Event::Empty(ref before_tag) = before else {
+                return Err(Error::Other("picture extent source is unsupported".into()));
+            };
+            let Event::Empty(ref after_tag) = after else {
+                return Err(Error::Other("picture extent source is unsupported".into()));
+            };
+            let mut tag = picture.source[physical_start..physical_end].to_vec();
+            let mut values = Vec::new();
+            for (a, b) in before_tag.attributes().zip(after_tag.attributes()) {
+                let (a, b) = (
+                    a.map_err(|e| Error::Other(e.to_string()))?,
+                    b.map_err(|e| Error::Other(e.to_string()))?,
+                );
+                if a.key != b.key {
+                    return Err(Error::Other(
+                        "picture resize changed attribute ownership".into(),
+                    ));
+                }
+                if a.value != b.value {
+                    let (a_start, a_end) = story_attribute_value_span(&tag, a.key.as_ref())
+                        .ok_or_else(|| Error::Other("picture extent attribute missing".into()))?;
+                    values.push((a_start..a_end, b.value.to_vec()));
+                }
+            }
+            values.sort_by_key(|(range, _)| range.start);
+            for (range, value) in values.into_iter().rev() {
+                tag.splice(range, value);
+            }
+            edits.push((physical_start..physical_end, tag));
+        }
+        if matches!(before, Event::Eof) {
+            break;
+        }
+    }
+    let mut raw = picture.source.clone();
+    for (range, value) in edits.into_iter().rev() {
+        raw.splice(range, value);
+    }
+    Ok(raw)
+}
+
+/// The options of a picture inserted at a run boundary, checked as
+/// [`Document::insert_picture_with_options_at`] checks them: supported image
+/// bytes, and two positive lengths or neither (the native size at 72 DPI).
+pub(super) fn checked_run_picture_options(
+    image_data: &[u8],
+    image_filename: &str,
+    width: Option<Length>,
+    height: Option<Length>,
+    options: Option<PictureOptions>,
+) -> Result<PictureOptions> {
+    let format = oxoffice_media::ImageFormat::sniff(image_data)
+        .ok_or_else(|| Error::Other("picture image bytes are unsupported".to_owned()))?;
+    if matches!(
+        format,
+        oxoffice_media::ImageFormat::Png
+            | oxoffice_media::ImageFormat::Jpeg
+            | oxoffice_media::ImageFormat::Gif
+            | oxoffice_media::ImageFormat::Bmp
+            | oxoffice_media::ImageFormat::Webp
+    ) && oxoffice_media::probe(image_data).is_none()
+    {
+        return Err(Error::Other(
+            "picture image bytes are unsupported".to_owned(),
+        ));
+    }
+    let (width, height) = match (width, height) {
+        (Some(width), Some(height)) if width.to_emu() > 0 && height.to_emu() > 0 => (width, height),
+        (None, None) => {
+            let size = oxoffice_media::probe(image_data)
+                .and_then(|info| info.native_size(72.0))
+                .ok_or_else(|| Error::UnavailableImageDimensions {
+                    filename: image_filename.to_owned(),
+                })?;
+            (Length::emu(size.width_emu), Length::emu(size.height_emu))
+        }
+        _ => {
+            return Err(Error::Other(
+                "picture dimensions require two positive lengths or neither".to_owned(),
+            ));
+        }
+    };
+    let mut options = options.unwrap_or(PictureOptions {
+        width,
+        height,
+        crop: None,
+        anchor: None,
+        name: None,
+        description: None,
+        title: None,
+        decorative: false,
+    });
+    options.width = width;
+    options.height = height;
+    validate_picture_options(&options)?;
+    Ok(options)
+}
+
+/// The number of pictures [`Document::pictures`] lists in the runs of
+/// `paragraph` before run `run_index`: the ordinal of a picture inserted
+/// there. A run index past the runs is an error.
+pub(super) fn pictures_before_run(paragraph: &CT_P, run_index: usize) -> Result<usize> {
+    let original = paragraph.accepted_view();
+    if run_index > original.runs.len() {
+        return Err(Error::Other("picture run boundary is out of range".into()));
+    }
+    let ordinal = original
+        .runs
+        .iter()
+        .take(run_index)
+        .flat_map(|run| {
+            run.content
+                .iter()
+                .filter_map(|content| match content {
+                    RunContent::Drawing(drawing) => Some(drawing),
+                    _ => None,
+                })
+                .chain(run.alt_drawings.iter())
+        })
+        // The pictures `pictures()` lists: an embedded or a linked picture,
+        // not a chart.
+        .filter(|drawing| {
+            drawing.inline.as_ref().is_some_and(|i| {
+                i.chart_rel_id.is_none() && (!i.embed_id.is_empty() || i.link_id.is_some())
+            }) || drawing.anchor.as_ref().is_some_and(|a| {
+                a.chart_rel_id.is_none() && (!a.embed_id.is_empty() || a.link_id.is_some())
+            })
+        })
+        .count();
+    Ok(ordinal)
 }

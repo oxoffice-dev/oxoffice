@@ -103,6 +103,11 @@ pub struct PartJournal {
     relationships_removed: Vec<(String, usize, Relationship)>,
     /// The content type overrides removed, with their stored names.
     overrides_removed: Vec<(String, String)>,
+    /// The relationships retargeted one by one
+    /// ([`OpcPackage::set_relationship_target`]), in change order: the
+    /// stored owner, the relationship id and its target before. An owner
+    /// whose relationships were recorded whole before records no change.
+    relationships_retargeted: Vec<(String, String, String)>,
 }
 
 impl PartJournal {
@@ -156,6 +161,12 @@ impl PartJournal {
                 .filter(|(owner, _, _)| !whole.contains(owner)),
         );
         self.overrides_removed.extend(later.overrides_removed);
+        self.relationships_retargeted.extend(
+            later
+                .relationships_retargeted
+                .into_iter()
+                .filter(|(owner, _, _)| !whole.contains(owner)),
+        );
     }
 }
 
@@ -235,6 +246,15 @@ impl OpcPackage {
                 .any(|(name, content_type)| {
                     self.content_types.overrides.get(name) != Some(content_type)
                 })
+            || journal
+                .relationships_retargeted
+                .iter()
+                .any(|(owner, id, target)| {
+                    self.part_rels
+                        .get(owner)
+                        .and_then(|now| now.get_by_id(id))
+                        .is_none_or(|now| now.target != *target)
+                })
     }
 
     /// Put back, latest first, the bytes `journal` recorded.
@@ -270,6 +290,54 @@ impl OpcPackage {
         for (name, content_type) in journal.overrides_removed.into_iter().rev() {
             self.content_types.overrides.insert(name, content_type);
         }
+        // After the removals: a relationship retargeted then removed goes
+        // back with the target it had before the edit.
+        for (owner, id, target) in journal.relationships_retargeted.into_iter().rev() {
+            if let Some(relationship) = self
+                .part_rels
+                .get_mut(&owner)
+                .and_then(|relationships| relationships.items.iter_mut().find(|item| item.id == id))
+            {
+                relationship.target = target;
+            }
+        }
+    }
+
+    /// Point the relationship `id` of `part_name` at `target`, recording
+    /// its target before in the open journal, which an undo puts back, at
+    /// the cost of that one relationship rather than of the owner's
+    /// relationships; an owner already recorded whole
+    /// ([`Self::record_part_rels`]) records nothing more. Answers whether
+    /// the owner holds that relationship.
+    pub fn set_relationship_target(&mut self, part_name: &str, id: &str, target: &str) -> bool {
+        let Some(key) = deterministic_part_key(&self.part_rels, part_name).cloned() else {
+            return false;
+        };
+        let Some(relationship) = self
+            .part_rels
+            .get_mut(&key)
+            .and_then(|relationships| relationships.items.iter_mut().find(|item| item.id == id))
+        else {
+            return false;
+        };
+        // The first change of a relationship holds its target before the
+        // edit; a later one is undone by it.
+        if let Some(journal) = &mut self.part_journal.0
+            && !journal.relationships_written.contains(&key)
+            && !journal
+                .relationships_retargeted
+                .iter()
+                .any(|(owner, known, _)| *owner == key && known == id)
+        {
+            journal.relationships_retargeted.push((
+                key,
+                id.to_owned(),
+                std::mem::replace(&mut relationship.target, target.to_owned()),
+            ));
+        } else {
+            relationship.target = target.to_owned();
+        }
+        true
     }
 
     /// Record the relationships of `part_name` before an edit changes them

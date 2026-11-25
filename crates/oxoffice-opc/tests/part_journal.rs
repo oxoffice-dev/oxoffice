@@ -127,3 +127,60 @@ fn a_removal_journal_without_a_removal_changes_nothing() {
     package.undo_part_journal(journal);
     assert_eq!(ids(&package), ["rId1"]);
 }
+
+fn targets(package: &OpcPackage) -> Vec<String> {
+    package
+        .get_part_rels("/owner.xml")
+        .expect("the owner keeps its relationships")
+        .items
+        .iter()
+        .map(|item| item.target.clone())
+        .collect()
+}
+
+#[test]
+fn a_retargeted_relationship_gets_its_target_back_on_undo() {
+    let mut package = package_with_relationships(&["rId1", "rId2"]);
+    let before = package.clone();
+
+    package.open_part_journal();
+    assert!(package.set_relationship_target("/owner.xml", "rId2", "first.xml"));
+    assert!(package.set_relationship_target("/owner.xml", "rId2", "second.xml"));
+    assert!(!package.set_relationship_target("/owner.xml", "rId9", "absent.xml"));
+    assert!(!package.set_relationship_target("/absent.xml", "rId1", "absent.xml"));
+    assert_eq!(targets(&package), ["rId1.xml", "second.xml"]);
+    let journal = package.close_part_journal();
+    assert!(package.part_journal_changed(&journal));
+    // No part was written and the owner was not copied.
+    assert_eq!(journal.written_parts().count(), 0);
+
+    package.undo_part_journal(journal);
+    assert_eq!(targets(&package), ["rId1.xml", "rId2.xml"]);
+    assert!(package.same_package_as(&before));
+}
+
+#[test]
+fn a_retarget_back_to_the_same_target_changes_nothing() {
+    let mut package = package_with_relationships(&["rId1"]);
+    package.open_part_journal();
+    package.set_relationship_target("/owner.xml", "rId1", "other.xml");
+    package.set_relationship_target("/owner.xml", "rId1", "rId1.xml");
+    let journal = package.close_part_journal();
+    assert!(!package.part_journal_changed(&journal));
+}
+
+#[test]
+fn a_retargeted_then_removed_relationship_goes_back_with_its_first_target() {
+    let mut package = package_with_relationships(&["rId1", "rId2"]);
+    package.open_part_journal();
+    package.set_relationship_target("/owner.xml", "rId1", "moved.xml");
+    package.remove_relationships_where("/owner.xml", |item| item.id == "rId1");
+    // A copy of the whole owner after the retarget holds the new target:
+    // the retarget is still undone on top of it.
+    package.record_part_rels("/owner.xml");
+    package.set_relationship_target("/owner.xml", "rId2", "later.xml");
+    let journal = package.close_part_journal();
+    package.undo_part_journal(journal);
+    assert_eq!(ids(&package), ["rId1", "rId2"]);
+    assert_eq!(targets(&package), ["rId1.xml", "rId2.xml"]);
+}

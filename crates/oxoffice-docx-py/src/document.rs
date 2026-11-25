@@ -123,6 +123,7 @@ use owner_pieces::{
     plain_paragraph_owners, table_owners, validate_word_facts, word_block_owners,
     word_owner_addresses, word_owner_locations,
 };
+pub(crate) use paragraph_in_place::BlockRetention;
 pub(crate) use publication::WordPublication;
 use publication::{
     form_owner_certificates, modern_form_owner_certificates, signing_owner_certificates,

@@ -163,6 +163,16 @@ impl Document {
         location: &ContentLocation,
         block: crate::ControlBlock,
     ) -> Option<CT_P> {
+        self.direct_body_paragraph_ref(location, block).cloned()
+    }
+
+    /// The paragraph [`Self::direct_body_paragraph_at`] copies, without the
+    /// copy.
+    pub(crate) fn direct_body_paragraph_ref(
+        &self,
+        location: &ContentLocation,
+        block: crate::ControlBlock,
+    ) -> Option<&CT_P> {
         let story = &location.story;
         if story.kind != StoryKind::Body
             || story.owner_index != 0
@@ -175,7 +185,7 @@ impl Document {
             return None;
         }
         match self.document.body.content.get(block.slot)? {
-            BodyContent::Paragraph(paragraph) => Some((**paragraph).clone()),
+            BodyContent::Paragraph(paragraph) => Some(paragraph),
             _ => None,
         }
     }

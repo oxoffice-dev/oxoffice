@@ -150,7 +150,6 @@ mod block_edits_in_place;
 pub use block_edits_in_place::RemovedBodyBlocks;
 mod body;
 mod content;
-#[cfg(debug_assertions)]
 pub(crate) use content::BodyBlockItem;
 mod headers_footers;
 mod media;
@@ -356,6 +355,7 @@ mod open_save;
 mod owner_snapshots;
 pub use owner_snapshots::resolved_xml_events;
 mod edit_in_place;
+mod picture_edits_in_place;
 #[cfg(debug_assertions)]
 pub(crate) use edit_in_place::without_namespace_declarations;
 mod relationships;
