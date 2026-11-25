@@ -472,10 +472,11 @@ impl PyDocument {
     pub(crate) fn publish_block_edit(
         &mut self,
         py: Python<'_>,
-        candidate: oxoffice_docx::Document,
+        mut candidate: oxoffice_docx::Document,
         operation: &'static str,
         publication: WordPublication,
     ) -> PyResult<()> {
+        self.reread_edited_body_blocks(&mut candidate);
         let shift = self.block_shift(py, &candidate, &publication)?;
         if shift.as_ref().is_some_and(|shift| shift.unchanged) {
             return Ok(());
@@ -485,6 +486,41 @@ impl PyDocument {
         self.commit_word_revision(prepared)?;
         self.install_inner(candidate);
         Ok(())
+    }
+}
+
+impl PyDocument {
+    /// Put in place of each direct body block that `candidate`, this
+    /// document after a block edit, changed the block a reopen of the saved
+    /// file reads ([`oxoffice_docx::Document::reread_body_block`]), so that
+    /// reads after the edit are those of the saved file (a field added to a
+    /// run reads as its own runs). The staged route copied the body already;
+    /// finding the changed blocks costs no more. A block that does not read
+    /// back keeps its model, as before; a body whose block count changed is
+    /// left as it is.
+    fn reread_edited_body_blocks(&self, candidate: &mut oxoffice_docx::Document) {
+        let live = self.inner.body_children();
+        let edited = candidate.body_children();
+        if live.len() != edited.len() {
+            return;
+        }
+        let changed = live
+            .iter()
+            .zip(edited)
+            .enumerate()
+            .filter(|(_, (live, edited))| live != edited)
+            .map(|(slot, _)| slot)
+            .collect::<Vec<_>>();
+        for slot in changed {
+            let _ = candidate.reread_body_blocks_in_place(slot, 1);
+            #[cfg(debug_assertions)]
+            if let Ok(reread) = candidate.reread_body_block(&candidate.body_children()[slot]) {
+                assert!(
+                    candidate.body_children()[slot] == reread,
+                    "an edited block is what its own bytes read back as"
+                );
+            }
+        }
     }
 }
 

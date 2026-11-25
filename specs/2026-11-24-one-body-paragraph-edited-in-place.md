@@ -338,8 +338,13 @@ blocks. The model, the owners read from it and every read after the edit are
 then those of the saved file, for every call that publishes through a block
 replacement. A picture whose drawing id the save still allocates keeps that
 mark, which its bytes do not carry. A block that does not read back takes the
-whole route. Debug builds check after every block replacement that each new
-block equals the reread of its own bytes.
+whole route. The staged route of a block edit (`publish_block_edit`) no
+longer reopens either: it installs the edited copy. It now rereads the direct
+body blocks the copy changed the same way before it publishes, which costs no
+more than the copy it already made; so an in-place call that falls back to it
+(a field added before a later hyperlink) reads as the saved file too. Debug
+builds check after every block replacement and every staged block edit that
+each new block equals the reread of its own bytes.
 
 ## Links
 
