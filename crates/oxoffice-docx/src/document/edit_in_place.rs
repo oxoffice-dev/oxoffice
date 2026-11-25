@@ -646,7 +646,9 @@ impl Document {
             // in place and leaves that error to the save, as a section edit
             // does: the save still reports it.
             (Ok(_), Err(staged_error))
-                if unchanged.is_err() && live == Err(staged_error.to_string()) => {}
+                if unchanged.is_err()
+                    && live == unchanged
+                    && live == Err(staged_error.to_string()) => {}
             (Ok(direct), Err(staged_error)) => {
                 panic!("in-place edit {direct:?} hid the staged error {staged_error}")
             }

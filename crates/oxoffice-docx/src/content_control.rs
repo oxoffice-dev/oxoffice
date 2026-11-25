@@ -597,7 +597,11 @@ impl Document {
                 if before
                     .clone_for_staging()
                     .to_bytes()
-                    .is_err_and(|error| error.to_string() == staged.to_string()) => {}
+                    .is_err_and(|error| error.to_string() == staged.to_string())
+                    && self
+                        .clone_for_staging()
+                        .to_bytes()
+                        .is_err_and(|error| error.to_string() == staged.to_string()) => {}
             (Ok(_), Err(staged)) => panic!("the in-place store addition hid {staged}"),
             (Err(direct), Ok(_)) => panic!("the in-place store addition refused with {direct}"),
         }
