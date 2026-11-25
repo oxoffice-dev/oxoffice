@@ -116,3 +116,36 @@ fn a_ruby_holding_an_entity_alone_where_it_holds_no_text_stays_raw() {
         );
     }
 }
+
+#[test]
+fn a_property_value_written_with_character_references_reads_as_its_characters() {
+    use oxoffice_docx::Alignment;
+    use oxoffice_xml_test::{Writing, rewrite_package};
+
+    let mut doc = Document::new();
+    doc.add_paragraph("Centred heading")
+        .alignment(Alignment::Center)
+        .space_before(Length::twips(240))
+        .indent_left(Length::twips(720));
+    doc.add_table(2, 2);
+    let bytes = doc.to_bytes().expect("saves");
+    // The first character of every value as a reference: `w:val="&#99;enter"`,
+    // `w:before="&#50;40"`, `w:w="&#49;2240"`.
+    let rewritten = rewrite_package(&bytes, Writing::LeadingCharacterReference)
+        .expect("rewrites")
+        .bytes;
+    let read = |bytes: &[u8]| {
+        let doc = Document::from_bytes(bytes).expect("opens");
+        let paragraph = doc.paragraph(0).expect("the paragraph");
+        let section = doc.sections().next().expect("a section");
+        (
+            paragraph.alignment(),
+            paragraph.space_before(),
+            section.page_size(),
+            doc.to_markdown(),
+        )
+    };
+    let original = read(&bytes);
+    assert_eq!(original.0, Some(Alignment::Center));
+    assert_eq!(read(&rewritten), original);
+}

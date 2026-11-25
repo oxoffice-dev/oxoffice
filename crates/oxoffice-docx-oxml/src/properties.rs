@@ -87,7 +87,8 @@ impl CT_Shd {
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
-            let v = std::str::from_utf8(&attr.value)?;
+            let v = oxoffice_core::xml::attribute_text(&attr)?;
+            let v: &str = &v;
             let text =
                 || oxoffice_core::xml::attribute_text(&attr).map(std::borrow::Cow::into_owned);
             if matches_local_name(key, b"val") {
@@ -103,13 +104,16 @@ impl CT_Shd {
             } else if let Some(slot) = shd.theme_byte_slot(key) {
                 match parse_uchar_hex(v) {
                     Some(parsed) => *slot = Some(parsed),
-                    None => shd
-                        .extra_attributes
-                        .push((std::str::from_utf8(key)?.to_owned(), v.to_owned())),
+                    None => shd.extra_attributes.push((
+                        std::str::from_utf8(key)?.to_owned(),
+                        std::str::from_utf8(&attr.value)?.to_owned(),
+                    )),
                 }
             } else {
-                shd.extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), v.to_owned()));
+                shd.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attr.value)?.to_owned(),
+                ));
             }
         }
 
@@ -125,7 +129,8 @@ impl CT_Shd {
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
-            let v = std::str::from_utf8(&attr.value)?;
+            let v = oxoffice_core::xml::attribute_text(&attr)?;
+            let v: &str = &v;
             let text =
                 || oxoffice_core::xml::attribute_text(&attr).map(std::borrow::Cow::into_owned);
             if is_word_attribute(key, b"val", word_prefixes) {
@@ -141,13 +146,16 @@ impl CT_Shd {
             } else if let Some(slot) = shd.word_theme_byte_slot(key, word_prefixes) {
                 match parse_uchar_hex(v) {
                     Some(parsed) => *slot = Some(parsed),
-                    None => shd
-                        .extra_attributes
-                        .push((std::str::from_utf8(key)?.to_owned(), v.to_owned())),
+                    None => shd.extra_attributes.push((
+                        std::str::from_utf8(key)?.to_owned(),
+                        std::str::from_utf8(&attr.value)?.to_owned(),
+                    )),
                 }
             } else {
-                shd.extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), v.to_owned()));
+                shd.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attr.value)?.to_owned(),
+                ));
             }
         }
 
@@ -992,7 +1000,7 @@ fn residual_used_prefixes(
             // attribute.
             if key == b"Requires" {
                 named.extend(
-                    std::str::from_utf8(&attribute.value)?
+                    oxoffice_core::xml::attribute_text(&attribute)?
                         .split_whitespace()
                         .map(str::to_owned),
                 );

@@ -298,7 +298,8 @@ impl CT_FitText {
         for attribute in e.attributes() {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             if let Some(measurement) =
                 RunCompoundMeasurement::for_names(b"fitText", attribute.key.local_name().as_ref())
                     .filter(|_| {
@@ -314,9 +315,10 @@ impl CT_FitText {
                     RunCompoundMeasurement::EastAsianId(_) => unreachable!("fitText selector"),
                 }
             } else {
-                fit_text
-                    .extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+                fit_text.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attribute.value)?.to_owned(),
+                ));
             }
         }
         Ok(width_seen.then_some(fit_text))
@@ -354,7 +356,8 @@ impl CT_EastAsianLayout {
         for attribute in e.attributes() {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             if let Some(measurement) = RunCompoundMeasurement::for_names(
                 b"eastAsianLayout",
                 attribute.key.local_name().as_ref(),
@@ -376,9 +379,10 @@ impl CT_EastAsianLayout {
             } else if is_word_attribute(key, b"vertCompress", prefixes) {
                 layout.vert_compress = Some(parse_on_off(value));
             } else {
-                layout
-                    .extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+                layout.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attribute.value)?.to_owned(),
+                ));
             }
         }
         Ok(layout)
@@ -935,7 +939,7 @@ impl CT_RPr {
                         for attr in e.attributes() {
                             let attr = attr?;
                             let key = attr.key.as_ref();
-                            let v = std::str::from_utf8(&attr.value)?.to_string();
+                            let v = oxoffice_core::xml::attribute_text(&attr)?.into_owned();
                             if is_word_attribute(key, b"val", &prefixes) {
                                 rpr.color =
                                     Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());

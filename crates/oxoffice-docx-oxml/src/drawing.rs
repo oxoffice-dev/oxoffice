@@ -539,12 +539,13 @@ fn read_body_properties(element: &BytesStart<'_>, shape: &mut CT_Shape) {
             b"rIns" => &mut insets.right,
             b"bIns" => &mut insets.bottom,
             b"vert" => {
-                shape.vertical_text = attribute.value.as_ref() != b"horz";
+                shape.vertical_text = oxoffice_core::xml::attribute_text(&attribute)
+                    .map_or(true, |value| value != "horz");
                 continue;
             }
             _ => continue,
         };
-        if let Some(value) = std::str::from_utf8(&attribute.value)
+        if let Some(value) = oxoffice_core::xml::attribute_text(&attribute)
             .ok()
             .and_then(|value| value.parse().ok())
         {
@@ -738,7 +739,9 @@ fn parse_shape_props(raw: &[u8]) -> (Option<String>, Option<String>) {
                 } else if matches_local_name(local, b"prstGeom") {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"prst" {
-                            preset = std::str::from_utf8(&attr.value).ok().map(str::to_string);
+                            preset = oxoffice_core::xml::attribute_text(&attr)
+                                .ok()
+                                .map(std::borrow::Cow::into_owned);
                         }
                     }
                 } else if matches_local_name(local, b"srgbClr")
@@ -750,7 +753,9 @@ fn parse_shape_props(raw: &[u8]) -> (Option<String>, Option<String>) {
                     // up as a Start as well as an Empty.
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"val" {
-                            fill = std::str::from_utf8(&attr.value).ok().map(str::to_string);
+                            fill = oxoffice_core::xml::attribute_text(&attr)
+                                .ok()
+                                .map(std::borrow::Cow::into_owned);
                         }
                     }
                 }
@@ -761,7 +766,9 @@ fn parse_shape_props(raw: &[u8]) -> (Option<String>, Option<String>) {
                 if matches_local_name(local, b"prstGeom") {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"prst" {
-                            preset = std::str::from_utf8(&attr.value).ok().map(str::to_string);
+                            preset = oxoffice_core::xml::attribute_text(&attr)
+                                .ok()
+                                .map(std::borrow::Cow::into_owned);
                         }
                     }
                 } else if matches_local_name(local, b"srgbClr")
@@ -771,7 +778,9 @@ fn parse_shape_props(raw: &[u8]) -> (Option<String>, Option<String>) {
                 {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"val" {
-                            fill = std::str::from_utf8(&attr.value).ok().map(str::to_string);
+                            fill = oxoffice_core::xml::attribute_text(&attr)
+                                .ok()
+                                .map(std::borrow::Cow::into_owned);
                         }
                     }
                 }
@@ -1627,9 +1636,10 @@ impl CT_Inline {
                         is_word_text_box,
                     );
                     if matches_local_name(ename.as_ref(), b"graphicData") {
-                        word_shape_graphic = e
-                            .try_get_attribute("uri")?
-                            .is_some_and(|uri| uri.value.as_ref() == WORD_SHAPE_GRAPHIC_URI);
+                        word_shape_graphic = e.try_get_attribute("uri")?.is_some_and(|uri| {
+                            oxoffice_core::xml::attribute_text(&uri)
+                                .is_ok_and(|uri| uri.as_bytes() == WORD_SHAPE_GRAPHIC_URI)
+                        });
                     }
                     // A shape's `wps:bodyPr` follows its `wps:spPr`, which
                     // made the shape.
@@ -1987,7 +1997,7 @@ fn graphic_data_uri_is_chart(element: &BytesStart<'_>) -> Result<bool> {
     for attribute in element.attributes() {
         let attribute = attribute?;
         if attribute.key.as_ref() == b"uri" {
-            return Ok(attribute.value.as_ref() == drawing_ns::C.as_bytes());
+            return Ok(oxoffice_core::xml::attribute_text(&attribute)? == drawing_ns::C);
         }
     }
     Ok(false)
@@ -1997,7 +2007,7 @@ fn graphic_data_uri_is_picture(element: &BytesStart<'_>) -> Result<bool> {
     for attribute in element.attributes() {
         let attribute = attribute?;
         if attribute.key.as_ref() == b"uri" {
-            return Ok(attribute.value.as_ref() == drawing_ns::PIC.as_bytes());
+            return Ok(oxoffice_core::xml::attribute_text(&attribute)? == drawing_ns::PIC);
         }
     }
     Ok(false)
@@ -2243,7 +2253,7 @@ pub(crate) fn parse_source_rect(element: &BytesStart<'_>) -> Result<SourceRect> 
     let mut rect = SourceRect::default();
     for attribute in element.attributes() {
         let attribute = attribute?;
-        let value = std::str::from_utf8(&attribute.value)?.parse()?;
+        let value = oxoffice_core::xml::attribute_text(&attribute)?.parse()?;
         match attribute.key.as_ref() {
             b"l" => rect.left = value,
             b"t" => rect.top = value,
@@ -2306,7 +2316,8 @@ impl AnchorAttributes {
         };
         for attribute in start.attributes() {
             let attribute = attribute?;
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             match attribute.key.as_ref() {
                 b"behindDoc" => result.behind_doc = value == "1" || value == "true",
                 b"relativeHeight" => result.relative_height = value.parse().unwrap_or(0),
@@ -2332,7 +2343,8 @@ impl DrawingPositionReference {
         for attribute in start.attributes() {
             let attribute = attribute?;
             if attribute.key.as_ref() == b"relativeFrom" {
-                let value = std::str::from_utf8(&attribute.value)?;
+                let value = oxoffice_core::xml::attribute_text(&attribute)?;
+                let value: &str = &value;
                 selected = Some(if horizontal {
                     Self::Horizontal(ST_RelativeFromH::from_str(value))
                 } else {

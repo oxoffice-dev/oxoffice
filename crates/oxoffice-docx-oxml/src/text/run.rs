@@ -345,7 +345,8 @@ fn parse_symbol(e: &BytesStart<'_>, prefixes: &[String]) -> Result<Option<Specia
     for attribute in e.attributes() {
         let attribute = attribute?;
         let key = attribute.key.as_ref();
-        let value = std::str::from_utf8(&attribute.value)?;
+        let value = oxoffice_core::xml::attribute_text(&attribute)?;
+        let value: &str = &value;
         if is_word_attribute(key, b"font", prefixes) {
             font = Some(oxoffice_core::xml::attribute_text(&attribute)?.into_owned());
         } else if is_word_attribute(key, b"char", prefixes) {
@@ -377,7 +378,8 @@ fn parse_positional_tab(
     for attribute in e.attributes() {
         let attribute = attribute?;
         let key = attribute.key.as_ref();
-        let value = std::str::from_utf8(&attribute.value)?;
+        let value = oxoffice_core::xml::attribute_text(&attribute)?;
+        let value: &str = &value;
         if is_word_attribute(key, b"alignment", prefixes) {
             alignment = ST_PTabAlignment::from_str(value);
         } else if is_word_attribute(key, b"relativeTo", prefixes) {
@@ -1468,7 +1470,8 @@ impl CT_R {
                             a.ok()
                                 .map(|a| {
                                     a.key.as_ref() == b"xml:space"
-                                        && a.value.as_ref() == b"preserve"
+                                        && oxoffice_core::xml::attribute_text(&a)
+                                            .is_ok_and(|value| value == "preserve")
                                 })
                                 .unwrap_or(false)
                         });
@@ -1514,7 +1517,9 @@ impl CT_R {
                     } else if action == RunChildAction::DeletedText {
                         let preserve = e.attributes().any(|a| {
                             a.ok().is_some_and(|a| {
-                                a.key.as_ref() == b"xml:space" && a.value.as_ref() == b"preserve"
+                                a.key.as_ref() == b"xml:space"
+                                    && oxoffice_core::xml::attribute_text(&a)
+                                        .is_ok_and(|value| value == "preserve")
                             })
                         });
                         let encoded = reader.read_text(name)?;

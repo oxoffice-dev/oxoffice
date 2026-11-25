@@ -420,7 +420,9 @@ fn field_char(
         if !word_element(&namespace) || local_name.as_ref() != b"fldCharType" {
             continue;
         }
-        match attribute.value.as_ref() {
+        let value = oxoffice_core::xml::attribute_text(&attribute)
+            .map_err(|error| Error::Other(format!("story paragraph field scan failed: {error}")))?;
+        match value.as_bytes() {
             b"begin" => fields.push(false),
             b"separate" => {
                 if let Some(in_result) = fields.last_mut() {

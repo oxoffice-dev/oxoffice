@@ -3425,7 +3425,12 @@ impl CT_P {
                     .attributes()
                     .flatten()
                     .find(|attribute| matches_local_name(attribute.key.as_ref(), b"id"))
-                    .and_then(|attribute| std::str::from_utf8(&attribute.value).ok()?.parse().ok())
+                    .and_then(|attribute| {
+                        oxoffice_core::xml::attribute_text(&attribute)
+                            .ok()?
+                            .parse()
+                            .ok()
+                    })
                     == Some(id)
         };
         let mut reader = Reader::from_reader(xml.as_slice());

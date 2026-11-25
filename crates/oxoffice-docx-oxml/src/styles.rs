@@ -266,9 +266,10 @@ impl CT_Style {
             if is_word_attribute(key, b"styleId", word_prefixes) {
                 style_id = oxoffice_core::xml::attribute_text(&attr)?.into_owned();
             } else if is_word_attribute(key, b"type", word_prefixes) {
-                style_type = StyleType::from_str(std::str::from_utf8(&attr.value)?)?;
+                style_type = StyleType::from_str(&oxoffice_core::xml::attribute_text(&attr)?)?;
             } else if is_word_attribute(key, b"default", word_prefixes) {
-                is_default = ST_OnOff::parse(std::str::from_utf8(&attr.value)?) == Some(true);
+                is_default =
+                    ST_OnOff::parse(&oxoffice_core::xml::attribute_text(&attr)?) == Some(true);
             }
         }
 

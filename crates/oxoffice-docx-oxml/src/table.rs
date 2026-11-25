@@ -499,7 +499,8 @@ impl CT_TblCellMar {
         for attr in e.attributes() {
             let attr = attr?;
             if is_word_attribute(attr.key.as_ref(), b"w", word_prefixes) {
-                let value = std::str::from_utf8(&attr.value)?;
+                let value = oxoffice_core::xml::attribute_text(&attr)?;
+                let value: &str = &value;
                 let val = parse_margin_width(e.name().as_ref(), attr.key.as_ref(), value)?;
                 return Ok(val.map(Twips));
             }
@@ -651,7 +652,8 @@ impl CT_TblWidth {
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
-            let val = std::str::from_utf8(&attr.value)?;
+            let val = oxoffice_core::xml::attribute_text(&attr)?;
+            let val: &str = &val;
             if is_word_attribute(key, b"w", word_prefixes) {
                 (w, spelled_type) = parse_measurement_or_percent(e.name().as_ref(), key, val)?;
             } else if is_word_attribute(key, b"type", word_prefixes) {
@@ -872,7 +874,8 @@ impl CT_TblPPr {
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
-            let value = std::str::from_utf8(&attr.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attr)?;
+            let value: &str = &value;
             let measurement = || parse_twips_measure(e.name().as_ref(), key, value);
             if is_word_attribute(key, b"leftFromText", word_prefixes) {
                 position.left_from_text = Some(Twips(measurement()?));
@@ -1049,7 +1052,8 @@ impl CT_TblLook {
     pub fn from_xml_attrs(e: &BytesStart) -> Result<Self> {
         let mut look = CT_TblLook::default();
         for attr in e.attributes().flatten() {
-            let value = std::str::from_utf8(&attr.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attr)?;
+            let value: &str = &value;
             let key = attr.key.as_ref();
             if matches_local_name(key, b"val") {
                 look.val = Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
@@ -1073,7 +1077,8 @@ impl CT_TblLook {
     fn from_xml_attrs_with_prefixes(e: &BytesStart, word_prefixes: &[String]) -> Result<Self> {
         let mut look = CT_TblLook::default();
         for attr in e.attributes().flatten() {
-            let value = std::str::from_utf8(&attr.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attr)?;
+            let value: &str = &value;
             let key = attr.key.as_ref();
             if is_word_attribute(key, b"val", word_prefixes) {
                 look.val = Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
@@ -1588,7 +1593,8 @@ impl CT_TblGrid {
         for attr in element.attributes() {
             let attr = attr?;
             if is_word_attribute(attr.key.as_ref(), b"w", word_prefixes) {
-                let value = std::str::from_utf8(&attr.value)?;
+                let value = oxoffice_core::xml::attribute_text(&attr)?;
+                let value: &str = &value;
                 width = Twips(parse_twips_measure(
                     element.name().as_ref(),
                     attr.key.as_ref(),
@@ -2189,7 +2195,8 @@ fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) ->
     for attr in e.attributes() {
         let attr = attr?;
         let key = attr.key.as_ref();
-        let val = std::str::from_utf8(&attr.value)?;
+        let val = oxoffice_core::xml::attribute_text(&attr)?;
+        let val: &str = &val;
         if is_word_attribute(key, b"val", prefixes) {
             height = Some(Twips(parse_twips_measure(e.name().as_ref(), key, val)?));
         } else if is_word_attribute(key, b"hRule", prefixes) {
@@ -2261,7 +2268,8 @@ fn cnf_style_from_booleans(e: &BytesStart<'_>, prefixes: &[String]) -> Result<Op
         else {
             return Ok(None);
         };
-        let Some(on) = crate::shared::ST_OnOff::parse(std::str::from_utf8(&attribute.value)?)
+        let Some(on) =
+            crate::shared::ST_OnOff::parse(&oxoffice_core::xml::attribute_text(&attribute)?)
         else {
             return Ok(None);
         };
