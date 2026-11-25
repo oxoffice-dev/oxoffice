@@ -61,5 +61,6 @@ oxoffice-drawing.workspace = true
 oxoffice-layout.workspace = true
 oxoffice-pdf.workspace = true
 oxoffice-render-test.workspace = true
+oxoffice-xml-test.workspace = true
 oxoffice-pptx-layout.workspace = true
 oxoffice-pptx-render = { workspace = true, features = ["system-fonts"] }

@@ -13,6 +13,7 @@ members = [
     "crates/oxoffice-cli",
     "crates/oxoffice-py-support",
     "crates/oxoffice-render-test",
+    "crates/oxoffice-xml-test",
     "crates/oxoffice-docx",
     "crates/oxoffice-docx-oxml",
     "crates/oxoffice-docx-layout",
@@ -55,6 +56,7 @@ oxoffice-cli-support = { path = "crates/oxoffice-cli-support", version = "0.6.0"
 oxoffice-cli = { path = "crates/oxoffice-cli", version = "0.6.0", default-features = false }
 oxoffice-py-support = { path = "crates/oxoffice-py-support", version = "0.6.0" }
 oxoffice-render-test = { path = "crates/oxoffice-render-test", version = "0.6.0" }
+oxoffice-xml-test = { path = "crates/oxoffice-xml-test", version = "0.6.0" }
 oxoffice-docx = { path = "crates/oxoffice-docx", version = "0.6.0", default-features = false }
 oxoffice-docx-oxml = { path = "crates/oxoffice-docx-oxml", version = "0.6.0" }
 oxoffice-docx-layout = { path = "crates/oxoffice-docx-layout", version = "0.6.0", default-features = false }

@@ -4,6 +4,7 @@
 mod charts;
 mod corpus;
 mod embedded;
+mod equivalent_writings;
 mod fonts;
 mod notes_and_comments;
 mod pictures;

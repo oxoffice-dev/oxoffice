@@ -16,6 +16,7 @@ mod document_merging;
 mod element_extents;
 mod embedded;
 mod entities;
+mod equivalent_writings;
 mod fields_and_toc;
 mod fonts;
 mod fragment_import;
