@@ -1683,9 +1683,7 @@ impl MainPartBlocks {
         {
             return None;
         }
-        let mut categories = HashSet::new();
-        categories.insert(IdentifierXmlCategory::Bookmark);
-        categories.insert(IdentifierXmlCategory::Drawing);
+        let categories = STORY_CATEGORIES.into_iter().collect::<HashSet<_>>();
         let mut definitions = Vec::new();
         for block in self.blocks.iter() {
             definitions.extend(block.identifier_definitions(frame, &categories)?);
@@ -1706,9 +1704,7 @@ impl MainPartBlocks {
                 let gap = self.head.len()..self.head.len();
                 closed_word_body(shell, gap)?;
                 let scopes = document_namespace_scopes(shell).ok()?;
-                let mut categories = HashSet::new();
-                categories.insert(IdentifierXmlCategory::Bookmark);
-                categories.insert(IdentifierXmlCategory::Drawing);
+                let categories = STORY_CATEGORIES.into_iter().collect::<HashSet<_>>();
                 let definitions = scan_identifier_definitions(shell, &categories)?;
                 Some(FrameIdentifierProof {
                     root_declarations: scopes.root_declarations,

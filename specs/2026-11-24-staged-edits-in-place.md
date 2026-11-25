@@ -206,6 +206,14 @@ What S1a builds differs from decision 1 in how the units are kept:
   change (the styles of a nested `add_style`). Debug builds assert that
   the nested call's units are among the open call's, and the open call's
   undo oracle proves nothing else was written.
+- **Body blocks are copied run by run** (amended 2026-11-25). An edit may
+  name `EditUnit::BodyBlocks` several times, disjoint and in slot order,
+  for blocks far apart (a comment range's start and end, a heading and its
+  link paragraph): each run is copied alone, so the edit does not copy the
+  blocks between them. Every unit but the last keeps its number of blocks,
+  and the last takes the body's change of length; the debug undo oracle
+  refuses an edit that breaks this. The report gives each changed unit
+  (`EditReport::body_blocks`).
 - The debug oracle of each converted facade call runs the staged route on
   a copy (`assert_in_place_matches_staged`) and applies the undo to a
   copy of the edited document (`assert_undo_restores`).
@@ -320,6 +328,81 @@ form operations (#7).
   or `w15` binding keeps it across the swap, and a settings or package part
   edit (a store, a mail-merge package) keeps it too.
   The seven setters cost 3.5 to 4.4 ms at 25, 100 and 400 paragraphs.
+- **Control and permission ids come from the registry.** A new content
+  control takes the smallest free `w:id` of an `sdt`, a new permission
+  range the smallest free `w:id` of a `permStart`, as today; today both
+  read every story to find it. The identifier registry holds the `sdt` ids
+  and the permission ids of every story, read at open with the other ids,
+  and reserves a new one through the reservation journal (#600): a refusal
+  gives it back. A control or a range an in-place edit removes keeps its
+  id held until the next reopen, as a removed bookmark does, so a later
+  call can take a larger id than the staged route would: an id is unique,
+  never meaningful. The coverage oracle (`assert_covers`) checks both sets:
+  an id the reopened document holds and the registry does not is a missing
+  reservation. The staged route, kept as the debug oracle, is given the id
+  the registry reserved.
+- **Structural control calls edit their blocks.** `insert_content_control`,
+  `remove_content_control`, `unwrap_content_control`,
+  `move_content_control`, `clone_content_control` and
+  `repeat_content_control` on a control of the body edit the direct body
+  blocks they change under a `BodyBlocks { slot, count }` unit: an insert
+  between blocks is 0 -> 1, inside a paragraph or a cell 1 -> 1, a removal
+  1 -> 0, an unwrap 1 -> N, a move the span from the first to the last
+  slot it changes (its cost grows with the distance moved, not with the
+  body), a clone 0 -> 1, a repeat 1 -> 1 (the block that holds the repeating
+  section). The binding publishes the change with the block splice of the
+  BLK lane (`publish_body_blocks_replaced`, N -> M with control blocks),
+  never a second splice: the owners of the new blocks are born, those of
+  the removed ones retire, every other handle stays. A clone or a repeat
+  freshens the ids of what it copies from the registry, not from a scan of
+  the document. A removal takes the comment threads and the notes only the
+  removed blocks reference: their references are read from those blocks,
+  and the notes and comments parts are edited under their units. A control
+  outside the body, a shape the splice answers `WholeRoute` for, and a
+  block that does not read back the same keep today's route.
+- **Paragraph calls edit their paragraph.** `set_story_text` and
+  `insert_legacy_form_field` on a direct body paragraph, and
+  `add_story_permission_range` whose two ends sit in one direct body
+  paragraph, edit that paragraph and publish it with the same splice, as
+  the one-paragraph publication main already has (B2): the paragraph's
+  handle stays and its runs retire. The location of the item is checked
+  without listing the stories (`Document::stories` reads the whole main
+  part for the fingerprints the staged route checks). A permission range
+  reads and writes the markers of its paragraph alone, a pair of a fresh
+  id: a document whose markers do not pair elsewhere keeps them, where the
+  staged route refuses it. A range across two paragraphs, a paragraph of a
+  cell, a text box or another story keep today's route until the splice
+  takes their shapes.
+- **Form operations read the controls they change (#7).** `fill_form` and
+  `reset_form` resolve their targets from the typed controls of the body
+  (a tag) and the order of the legacy fields of a story (a part and an
+  ordinal), without serializing a story; they read the state of the
+  targeted controls only, plan as today, and write each changed control in
+  its direct body block, one `BodyBlocks` unit per block, inside one edit;
+  a bound control also writes its custom XML item under the `Parts` unit.
+  The checks that need every control (a target named twice, two targets
+  that nest) look at the targets only. A target inside a raw piece (a text
+  box kept as source, a raw block) or in another story keeps today's
+  route; a header or footer control is published by the story splice of
+  #634 (one header part), so the call does not read the body. The binding
+  publishes the changed blocks as above. Measured at 25 and 1,000
+  paragraphs, in the body and in a header; the limitation
+  `docx-form-cost` goes with the fix.
+
+### S2c: bibliography sources (amended 2026-11-25)
+
+- `add_bibliography_source` and `replace_bibliography_source` edit the
+  source collection's custom XML part on the live document under
+  `EditUnit::Parts`: the collection is read from the package (no body
+  serialization), created through the journaled custom XML store helpers
+  when absent, and the checks of the staged publication (the collection
+  reads back with unique identities) run on the live part. A replacement
+  that changes nothing writes nothing.
+- The binding publishes nothing: no body content changes, every handle
+  stays bound (as `add_custom_xml_store`). The staged route stays the
+  debug oracle.
+- `remove_bibliography_source` keeps its staged route: it reads every
+  citation field of the document to refuse removing a cited source.
 
 ### What we do not do
 
