@@ -496,6 +496,10 @@ paragraphs publish through the BLK lane's block replacement.
   runs retire, every other handle stays (the staged route retired them
   all). A run of a cell, a text box, a header or another story, and a
   body whose save is known to fail, keep the staged route.
+  Amended 2026-11-25: the call still grows with the body (x4.3 to x4.4 at 16N on
+  Linux, macOS and Windows alike, Full checks run 45604597209, 12.0 ms
+  against 53.3 on Linux), so it is back in `GROWING` until the part that
+  grows is found.
 - **`Document.set_picture_size` on a picture of a direct body paragraph**
   finds the picture in its block alone (the binding finds the block from
   its pieces, `story_item_block`), writes its extents in that block's bytes

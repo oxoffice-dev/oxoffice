@@ -824,9 +824,9 @@ GROWING = {
     "Document.reject_revision_id", "Document.remove_content_control", "Document.remove_hyperlink",
     "Document.remove_section", "Document.repeat_content_control", "Document.replace_text_at", "Document.reply_to",
     "Document.unwrap_content_control", "Paragraph.add_hyperlink", "Paragraph.add_internal_hyperlink",
-    "Paragraph.replace_text", "Paragraph.replace_xml", "Run.replace_xml", "Run.text", "SectionHandle.replace_xml",
-    "Table.add_row", "Table.clone_row", "Table.delete_column", "Table.insert_column", "Table.remove_row",
-    "Table.replace_xml", "Table.set_cell_grid_span",
+    "Paragraph.replace_text", "Paragraph.replace_xml", "Run.add_picture", "Run.replace_xml", "Run.text",
+    "SectionHandle.replace_xml", "Table.add_row", "Table.clone_row", "Table.delete_column", "Table.insert_column",
+    "Table.remove_row", "Table.replace_xml", "Table.set_cell_grid_span",
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 
