@@ -2068,6 +2068,18 @@ impl PyDocument {
             return Err(PyTypeError::new_err("note id must be a non-bool integer"));
         }
         let id = id.extract::<i32>()?;
+        let kind = if endnote {
+            oxoffice_docx::StoryKind::Endnote
+        } else {
+            oxoffice_docx::StoryKind::Footnote
+        };
+        if self.remove_stories_in_place(py, "Document.remove_note", |document| {
+            Ok(document
+                .remove_note_in_place(kind, id)?
+                .map(|story| vec![story]))
+        })? {
+            return Ok(());
+        }
         let mut candidate = self.inner.clone_for_staging();
         if endnote {
             candidate.remove_endnote(id)
@@ -2531,6 +2543,99 @@ impl PyDocument {
         let published = held
             .document
             .publish_body_paragraph_and_story(py, slot, previous, &story, operation)?;
+        if published != paragraph_in_place::BlocksPublication::Published {
+            return Ok(false);
+        }
+        held.undo = None;
+        Ok(true)
+    }
+
+    /// Make `remove`, a facade removal of stories in place (a note, or a
+    /// comment thread), and publish it: the direct body paragraphs that lost
+    /// their references or marks and the removed stories
+    /// ([`Self::publish_body_blocks_and_removed_stories`]). The removed
+    /// stories' handles retire, each edited paragraph keeps its owner and its
+    /// runs are born again, every other handle stays. `Ok(false)` leaves the
+    /// document and every handle as they were, for the staged route: the
+    /// facade left the removal to it, or the publication does not take the
+    /// edit (a body unit that is not one paragraph for one, a part that
+    /// does not tell the removal alone). A refusal of the removal leaves
+    /// them as they were too, and is the answer, as is an error of the
+    /// publication, which undoes the edit first.
+    pub(super) fn remove_stories_in_place(
+        &mut self,
+        py: Python<'_>,
+        operation: &'static str,
+        remove: impl FnOnce(
+            &mut oxoffice_docx::Document,
+        ) -> oxoffice_docx::Result<Option<Vec<oxoffice_docx::StoryId>>>,
+    ) -> PyResult<bool> {
+        self.ensure_word_authority(py)?;
+        self.inner.hold_edit_undo();
+        // A removal that panics leaves the document as it was: the guard
+        // undoes it as it drops.
+        let held = super::block_edits_in_place::HeldUndo {
+            document: &mut self.inner,
+            armed: true,
+        };
+        let removed = remove(held.document);
+        let undo = held.take();
+        let stories = match removed {
+            Ok(Some(stories)) => stories,
+            Ok(None) | Err(_) => {
+                if let Some(undo) = undo {
+                    self.inner.undo_edit(undo);
+                }
+                return removed
+                    .map(|_| false)
+                    .map_err(|error| docx_to_pyerr(py, error));
+            }
+        };
+        let undo = undo.expect("a removal in place holds its undo");
+        #[cfg(debug_assertions)]
+        let before = {
+            let mut before = self.inner.clone_for_staging();
+            before.undo_edit(undo.clone());
+            before
+        };
+        struct Held<'a> {
+            document: &'a mut PyDocument,
+            undo: Option<oxoffice_docx::EditUndo>,
+        }
+        impl Drop for Held<'_> {
+            fn drop(&mut self) {
+                if let Some(undo) = self.undo.take() {
+                    self.document.inner.undo_edit(undo);
+                }
+            }
+        }
+        let mut held = Held {
+            document: self,
+            undo: Some(undo),
+        };
+        let published = {
+            let undo = held.undo.as_ref().expect("held undo");
+            // Each changed unit, one paragraph for one, with the block it
+            // held before.
+            let mut blocks = Vec::new();
+            for change in &undo.report().body_blocks {
+                let previous = undo
+                    .previous_body_units()
+                    .find(|(slot, blocks)| *slot == change.slot && blocks.len() == change.removed);
+                match (change.removed, change.inserted, previous) {
+                    (1, 1, Some((slot, [previous]))) => blocks.push((slot, previous)),
+                    _ => return Ok(false),
+                }
+            }
+            held.document.publish_body_blocks_and_removed_stories(
+                py,
+                &blocks,
+                &stories,
+                operation,
+                #[cfg(debug_assertions)]
+                &before,
+            )?
+        };
         if published != paragraph_in_place::BlocksPublication::Published {
             return Ok(false);
         }

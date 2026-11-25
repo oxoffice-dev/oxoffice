@@ -1274,3 +1274,35 @@ fn a_note_refused_in_place_changes_nothing() {
     assert_eq!(doc.to_bytes().unwrap(), before);
     assert!(doc.footnotes().is_empty());
 }
+
+/// Two paragraphs, each referencing its own footnote, through a save.
+fn two_footnoted_paragraphs() -> (Document, i32, i32) {
+    let mut doc = doc_with(&["first", "second"]);
+    let first = doc.add_footnote("note one");
+    doc.paragraph_mut(0).unwrap().add_footnote_ref(first);
+    let second = doc.add_footnote("note two");
+    doc.paragraph_mut(1).unwrap().add_footnote_ref(second);
+    (reopen(&mut doc), first, second)
+}
+
+#[test]
+fn removing_a_saved_footnote_is_taken_in_place() {
+    let (mut doc, first, second) = two_footnoted_paragraphs();
+    let story = doc
+        .remove_note_in_place(StoryKind::Footnote, first)
+        .unwrap()
+        .expect("a saved note is removed in place");
+    assert_eq!(story.kind(), StoryKind::Footnote);
+    let doc = reopen(&mut doc);
+    let ids: Vec<i32> = doc.footnotes().into_iter().map(|(id, _)| id).collect();
+    assert_eq!(ids, [second]);
+    assert_eq!(texts(&doc), ["first", "second"]);
+}
+
+#[test]
+fn removing_an_unknown_note_in_place_fails_and_changes_nothing() {
+    let (mut doc, _, _) = two_footnoted_paragraphs();
+    let before = doc.to_bytes().unwrap();
+    assert!(doc.remove_note_in_place(StoryKind::Footnote, 99).is_err());
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}

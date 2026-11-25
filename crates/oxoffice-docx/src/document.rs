@@ -386,6 +386,19 @@ pub struct StoryId {
     fingerprint: u64,
 }
 
+impl StoryId {
+    /// The story of `owner`, a story owner of `part_name` read by
+    /// `scan_story_owners`.
+    pub(crate) fn of_owner(kind: StoryKind, part_name: &str, owner: &StoryOwnerSpan) -> Self {
+        StoryId {
+            kind,
+            part_name: part_name.to_owned(),
+            owner_index: owner.owner_index,
+            fingerprint: owner.fingerprint,
+        }
+    }
+}
+
 /// A checked path to one item inside a story owner.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContentLocation {
@@ -1900,6 +1913,94 @@ mod tests {
         doc.keep_body_savable_after_typed_insert(slot, savable_before);
         let kept = doc.unsavable_body_edit_cache.get() == Some(&None);
         (doc, kept)
+    }
+
+    #[test]
+    fn a_note_or_comment_added_in_place_keeps_the_savable_answer() {
+        let body = format!("<w:p><w:r><w:t>one</w:t></w:r></w:p>{}", control_owner());
+        let mut doc = read_with_body(&body);
+        assert_eq!(doc.unsavable_body_edit(), None, "the body is savable");
+        doc.create_note_in_body_slot(StoryKind::Footnote, 0, 1, "note")
+            .unwrap()
+            .expect("a direct paragraph takes the note in place");
+        assert_eq!(doc.unsavable_body_edit_cache.get(), Some(&None));
+        let range = crate::RunRange {
+            start: crate::RunPosition {
+                body_index: 0,
+                run_index: 0,
+            },
+            end: crate::RunPosition {
+                body_index: 0,
+                run_index: 1,
+            },
+        };
+        doc.add_comment_with_date(range, "A", None, "comment", crate::CommentDate::Undated)
+            .unwrap();
+        assert_eq!(doc.unsavable_body_edit_cache.get(), Some(&None));
+        assert_eq!(doc.unsavable_body_edit(), None);
+    }
+
+    #[test]
+    fn a_comment_removal_checks_every_hit_block_before_keeping_the_answer() {
+        // The thread marks paragraphs 0 and 2; paragraph 2 holds an inline
+        // control named like the body's nested owner.
+        let body = format!(
+            "<w:p><w:r><w:t>zero</w:t></w:r></w:p><w:p><w:r><w:t>one</w:t></w:r></w:p>\
+             <w:p><w:sdt><w:sdtContent><w:r><w:t>in</w:t></w:r></w:sdtContent></w:sdt>\
+             <w:r><w:t>two</w:t></w:r></w:p>{}",
+            control_owner()
+        );
+        let mut doc = read_with_body(&body);
+        let range = |start: usize, end: usize, end_run: usize| crate::RunRange {
+            start: crate::RunPosition {
+                body_index: start,
+                run_index: 0,
+            },
+            end: crate::RunPosition {
+                body_index: end,
+                run_index: end_run,
+            },
+        };
+        let thread = doc
+            .add_comment_with_date(
+                range(0, 2, 2),
+                "A",
+                None,
+                "thread",
+                crate::CommentDate::Undated,
+            )
+            .unwrap();
+        doc.add_comment_with_date(
+            range(1, 1, 1),
+            "A",
+            None,
+            "other",
+            crate::CommentDate::Undated,
+        )
+        .unwrap();
+        let mut doc = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
+        assert_eq!(doc.unsavable_body_edit(), None, "the body is savable");
+        doc.remove_comment_in_place(thread)
+            .unwrap()
+            .expect("the thread is removed in place");
+        assert!(
+            doc.unsavable_body_edit_cache.get().is_none(),
+            "a hit block holds an owner's element name"
+        );
+        assert_eq!(doc.unsavable_body_edit(), None);
+    }
+
+    #[test]
+    fn typed_edits_of_several_blocks_keep_the_answer_only_when_none_holds_an_owner() {
+        let body = format!("<w:p><w:r><w:t>one</w:t></w:r></w:p>{}", control_owner());
+        let mut doc = read_with_body(&body);
+        assert_eq!(doc.unsavable_body_edit(), None, "the body is savable");
+        doc.invalidate_layout();
+        // The second block holds the owner's element name.
+        doc.keep_body_savable_after_typed_edits(0..2, true);
+        assert!(doc.unsavable_body_edit_cache.get().is_none());
+        doc.keep_body_savable_after_typed_edits(0..1, true);
+        assert_eq!(doc.unsavable_body_edit_cache.get(), Some(&None));
     }
 
     #[test]

@@ -77,6 +77,12 @@ enum Reservation {
         authored: Vec<String>,
         nested: Vec<String>,
     },
+    /// Comment ids an edit retired: the authored ones, and those of them it
+    /// also freed.
+    RetiredCommentIds {
+        authored: Vec<i32>,
+        freed: Vec<i32>,
+    },
     /// A relationship of `owner`'s part, or of the package when `None`,
     /// added when the relationships' counter was `next_id`.
     PackageRelationship {
@@ -673,6 +679,10 @@ impl Document {
                             sets.entry(owner.clone()).or_default().extend(ids);
                         }
                     }
+                }
+                Reservation::RetiredCommentIds { authored, freed } => {
+                    identifiers.authored_comment_ids.extend(authored);
+                    identifiers.comment_ids.extend(freed);
                 }
                 Reservation::DrawingId(id) => {
                     identifiers.drawing_ids.remove(&id);
@@ -1604,10 +1614,17 @@ impl DocumentIdentifiers {
         &mut self,
         comment_ids: impl IntoIterator<Item = i32>,
     ) {
+        let (mut authored, mut freed) = (Vec::new(), Vec::new());
         for id in comment_ids {
-            if self.authored_comment_ids.remove(&id) && !self.preserved_comment_ids.contains(&id) {
-                self.comment_ids.remove(&id);
+            if self.authored_comment_ids.remove(&id) {
+                authored.push(id);
+                if !self.preserved_comment_ids.contains(&id) && self.comment_ids.remove(&id) {
+                    freed.push(id);
+                }
             }
+        }
+        if !authored.is_empty() {
+            self.record(|| Reservation::RetiredCommentIds { authored, freed });
         }
     }
 

@@ -1555,3 +1555,62 @@ fn every_corpus_document_lists_its_story_ranges() {
         .collect::<Vec<_>>();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+#[test]
+fn removing_a_saved_thread_across_paragraphs_is_taken_in_place() {
+    let mut doc = doc_with(&["one", "two", "three", "four"]);
+    let kept = doc
+        .add_comment(run_range(3, 0, 3, 1), "Di", None, "kept")
+        .unwrap();
+    let root = doc
+        .add_comment(run_range(0, 0, 2, 1), "Ada", None, "three paragraphs")
+        .unwrap();
+    doc.reply_to(root, "Ben", "a reply").unwrap();
+    let mut doc = reopen(&mut doc);
+    let stories = doc
+        .remove_comment_in_place(root)
+        .unwrap()
+        .expect("a saved thread is removed in place");
+    assert_eq!(stories.len(), 2);
+    let doc = reopen(&mut doc);
+    let ids: Vec<i32> = doc.comments().iter().map(CommentRef::id).collect();
+    assert_eq!(ids, [kept]);
+    assert_eq!(texts(&doc), ["one", "two", "three", "four"]);
+}
+
+#[test]
+fn removing_the_last_thread_is_left_to_the_staged_route() {
+    let mut doc = doc_with(&["one"]);
+    let only = doc
+        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "only")
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    let before = doc.to_bytes().unwrap();
+    assert_eq!(doc.remove_comment_in_place(only).unwrap(), None);
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert!(doc.remove_comment(only).unwrap());
+    assert!(doc.comments().is_empty());
+}
+
+/// A note whose text carries a comment: removing the note removes the
+/// comment's marks too, which the in-place route leaves to the staged one.
+#[test]
+fn removing_a_commented_note_is_left_to_the_staged_route() {
+    let mut doc = doc_with(&["noted", "other"]);
+    let note = doc.add_footnote("commented note");
+    doc.paragraph_mut(0).unwrap().add_footnote_ref(note);
+    let in_note = story_paragraph(&doc, StoryKind::Footnote, 0);
+    doc.add_story_comment(story_range(&in_note, 0, 1), "Ada", None, "in the note")
+        .unwrap();
+    doc.add_comment(run_range(1, 0, 1, 1), "Ben", None, "in the body")
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    let before = doc.to_bytes().unwrap();
+    assert_eq!(
+        doc.remove_note_in_place(StoryKind::Footnote, note).unwrap(),
+        None
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    doc.remove_footnote(note).unwrap();
+    assert!(doc.footnotes().iter().all(|(id, _)| *id != note));
+}

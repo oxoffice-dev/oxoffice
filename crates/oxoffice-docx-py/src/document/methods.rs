@@ -3991,6 +3991,17 @@ impl PyDocument {
     }
 
     fn remove_comment(&mut self, id: i32, py: Python<'_>) -> PyResult<bool> {
+        if self
+            .inner
+            .comments()
+            .iter()
+            .any(|comment| comment.id() == id)
+            && self.remove_stories_in_place(py, "Document.remove_comment", |document| {
+                document.remove_comment_in_place(id)
+            })?
+        {
+            return Ok(true);
+        }
         let mut candidate = self.inner.clone_for_staging();
         let removed = candidate
             .remove_comment(id)

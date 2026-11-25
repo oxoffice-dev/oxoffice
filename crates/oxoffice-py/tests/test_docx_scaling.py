@@ -821,13 +821,12 @@ GROWING = {
     "Document.clone_content_control", "Document.import_fragment", "Document.insert_bibliography",
     "Document.insert_content", "Document.insert_content_control", "Document.insert_document", "Document.insert_html",
     "Document.insert_section", "Document.move_comment", "Document.move_content", "Document.move_content_control",
-    "Document.reject_revision_id", "Document.remove_comment", "Document.remove_content_control",
-    "Document.remove_endnote", "Document.remove_footnote", "Document.remove_hyperlink", "Document.remove_section",
-    "Document.repeat_content_control", "Document.replace_text_at", "Document.reply_to",
-    "Document.unwrap_content_control", "FootnoteEndnote.delete", "Paragraph.add_hyperlink",
-    "Paragraph.add_internal_hyperlink", "Paragraph.replace_text", "Paragraph.replace_xml", "Run.replace_xml",
-    "Run.text", "SectionHandle.replace_xml", "Table.add_row", "Table.clone_row", "Table.delete_column",
-    "Table.insert_column", "Table.remove_row", "Table.replace_xml", "Table.set_cell_grid_span",
+    "Document.reject_revision_id", "Document.remove_content_control", "Document.remove_hyperlink",
+    "Document.remove_section", "Document.repeat_content_control", "Document.replace_text_at", "Document.reply_to",
+    "Document.unwrap_content_control", "Paragraph.add_hyperlink", "Paragraph.add_internal_hyperlink",
+    "Paragraph.replace_text", "Paragraph.replace_xml", "Run.replace_xml", "Run.text", "SectionHandle.replace_xml",
+    "Table.add_row", "Table.clone_row", "Table.delete_column", "Table.insert_column", "Table.remove_row",
+    "Table.replace_xml", "Table.set_cell_grid_span",
 }
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 

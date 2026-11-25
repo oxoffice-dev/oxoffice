@@ -1230,3 +1230,213 @@ pub(crate) struct StorySplice {
     new: Vec<WordOwnerAddress>,
     new_inside: Vec<bool>,
 }
+
+/// `location` as it reads once the stories `removed` (identities before the
+/// removal) left its part: each story of a removed story's kind and part
+/// after one of them takes the owner index it now has.
+fn without_removed_stories(
+    location: &WordOwnerLocation,
+    removed: &[oxoffice_docx::StoryId],
+) -> WordOwnerLocation {
+    let index = |story: &oxoffice_docx::StoryId| {
+        let before = removed
+            .iter()
+            .filter(|gone| {
+                gone.kind() == story.kind()
+                    && gone.part_name() == story.part_name()
+                    && gone.owner_index() < story.owner_index()
+            })
+            .count();
+        story.owner_index() - before
+    };
+    let content = |location: &oxoffice_docx::ContentLocation| {
+        let mut location = location.clone();
+        location.set_story_owner_index(index(location.story()));
+        location
+    };
+    match location {
+        WordOwnerLocation::Paragraph(location) => WordOwnerLocation::Paragraph(content(location)),
+        WordOwnerLocation::Table(location) => WordOwnerLocation::Table(content(location)),
+        WordOwnerLocation::Run(location, path) => {
+            WordOwnerLocation::Run(content(location), path.clone())
+        }
+        WordOwnerLocation::Hyperlink(location, link) => {
+            WordOwnerLocation::Hyperlink(content(location), *link)
+        }
+        WordOwnerLocation::Cell {
+            table,
+            row,
+            cell,
+            story,
+        } => {
+            let mut story = story.clone();
+            story.set_owner_index(index(&story));
+            WordOwnerLocation::Cell {
+                table: content(table),
+                row: *row,
+                cell: *cell,
+                story,
+            }
+        }
+        WordOwnerLocation::Section(index) => WordOwnerLocation::Section(*index),
+    }
+}
+
+impl PyDocument {
+    /// The read half of the publication of stories removed in place (notes,
+    /// or the comments of a thread), all of one part: the part read alone,
+    /// and the owners it keeps checked against the new read. `None` when
+    /// the splice cannot publish it: stories of several parts, a part the
+    /// pieces do not hold by part or that does not read alone, or a kept
+    /// owner that reads otherwise once the owner indexes after the removed
+    /// stories are moved down (a removed story that held a table or a text
+    /// box renumbers the part's cell or text-box stories). Like
+    /// [`Self::read_story_splice`], it reads no body owner.
+    pub(crate) fn read_removed_story_splice(
+        &self,
+        py: Python<'_>,
+        stories: &[oxoffice_docx::StoryId],
+    ) -> PyResult<Option<RemovedStorySplice>> {
+        let Some(first) = stories.first() else {
+            return Ok(None);
+        };
+        let part_name = first.part_name();
+        if stories.iter().any(|story| story.part_name() != part_name) {
+            return Ok(None);
+        }
+        let Some((part, old)) = self
+            .pieces
+            .as_ref()
+            .and_then(|pieces| pieces.part_owner_addresses(part_name))
+        else {
+            return Ok(None);
+        };
+        let read = {
+            let sources = self
+                .inner
+                .story_part_sources()
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            sources
+                .iter()
+                .find(|(_, name, _)| name == part_name)
+                .and_then(|(kind, name, xml)| WordPieces::read_part(&self.inner, *kind, name, xml))
+        };
+        let Some((piece, new)) = read else {
+            return Ok(None);
+        };
+        let mut removed = vec![false; old.len()];
+        for story in stories {
+            for (removed, inside) in removed.iter_mut().zip(in_story(&old, story)) {
+                *removed |= inside;
+            }
+        }
+        let removed_keys = stories
+            .iter()
+            .flat_map(|story| self.story_owner_keys(story))
+            .collect::<Vec<_>>();
+        if removed_keys.len() != removed.iter().filter(|removed| **removed).count() {
+            return Ok(None);
+        }
+        // The kept owners as they read once the removal renumbered their
+        // stories: the new read holds them alone, in walk order.
+        let remapped = old
+            .iter()
+            .map(|address| WordOwnerAddress {
+                location: without_removed_stories(&address.location, stories),
+                ..address.clone()
+            })
+            .collect::<Vec<_>>();
+        if routes_outside(&remapped, &removed) != routes_outside(&new, &vec![false; new.len()]) {
+            return Ok(None);
+        }
+        let mut kept = Vec::new();
+        kept.try_reserve(new.len()).map_err(|_| {
+            pyo3::exceptions::PyMemoryError::new_err("Word story splice allocation failed")
+        })?;
+        for (address, _) in old.iter().zip(&removed).filter(|(_, removed)| !**removed) {
+            let Some(key) = self.indexes.find(&self.owners, &address.location) else {
+                return Ok(None);
+            };
+            kept.push(self.owners[key].owner.generation());
+        }
+        Ok(Some(RemovedStorySplice {
+            part,
+            piece,
+            new,
+            kept,
+            removed: removed_keys,
+        }))
+    }
+
+    /// The states the owners of the removed stories retire, the snapshot
+    /// scope aside; a removal gives birth to no owner.
+    pub(crate) fn removed_story_splice_scopes(
+        &self,
+        splice: &RemovedStorySplice,
+    ) -> Vec<RevisionState> {
+        splice
+            .removed
+            .iter()
+            .flat_map(|&key| self.owners[key].states())
+            .collect()
+    }
+
+    /// Install what `splice` read, after the revision committed: the owners
+    /// of the removed stories go (`remove_owners`), and every kept owner of
+    /// the part takes its new address (a story after a removed one has a
+    /// lower owner index) with its states, found by generation since the
+    /// removal moves keys. The caller may have published body owners since
+    /// the read: the removed owners are found again by their stories.
+    pub(crate) fn apply_removed_story_splice(
+        &mut self,
+        stories: &[oxoffice_docx::StoryId],
+        splice: RemovedStorySplice,
+    ) {
+        let RemovedStorySplice {
+            part,
+            piece,
+            new,
+            kept,
+            ..
+        } = splice;
+        let removed = stories
+            .iter()
+            .flat_map(|story| self.story_owner_keys(story))
+            .collect::<Vec<_>>();
+        self.remove_owners(&removed);
+        let keys = kept
+            .iter()
+            .map(|generation| self.indexes.by_generation[generation])
+            .collect::<Vec<_>>();
+        // Unindex every kept owner of the part before any is indexed again:
+        // unindexing an owner drops its children lists, which the children,
+        // all in the part, rebuild in walk order.
+        for &key in &keys {
+            self.indexes.unindex_owner(key, &self.owners[key]);
+        }
+        for (index, mut address) in new.into_iter().enumerate() {
+            let key = keys[index];
+            address.parent = address.parent.map(|parent| keys[parent]);
+            let owner = WordOwner::with_states_of(address, &self.owners[key], &self.indexes.items);
+            self.indexes.index_owner(key, &owner);
+            self.owners[key] = owner;
+        }
+        self.pieces
+            .as_mut()
+            .expect("active pieces")
+            .replace_part(part, piece);
+    }
+}
+
+/// A part whose stories were removed in place, read and checked by
+/// [`PyDocument::read_removed_story_splice`].
+pub(crate) struct RemovedStorySplice {
+    part: usize,
+    piece: std::sync::Arc<WordPartPiece>,
+    /// The part's owners after the removal, in walk order.
+    new: Vec<WordOwnerAddress>,
+    /// The generation of the kept owner of each of `new`.
+    kept: Vec<u64>,
+    /// The keys of the removed stories' owners, as read.
+    removed: Vec<usize>,
+}

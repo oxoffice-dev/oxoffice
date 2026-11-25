@@ -258,7 +258,7 @@ impl PyDocument {
             && pieces.context.as_ref() == Some(&context)
             && pieces.blocks.len() == self.inner.body_children().len()
         {
-            for (slot, previous) in undo.previous_body_block_units() {
+            for (slot, previous) in undo.previous_body_units() {
                 let ([previous], Some(piece), Some(block)) = (
                     previous,
                     pieces.blocks.get(slot),
