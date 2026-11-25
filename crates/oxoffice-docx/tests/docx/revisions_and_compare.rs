@@ -3,10 +3,12 @@
 //! versions of a document into a redline that resolves back to either one.
 
 use std::collections::HashMap;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use oxoffice_docx::{
     Alignment, BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
     Document, RenderOptions, RevisionKind, RevisionStyle, RevisionView, RunItemRef, StoryKind,
+    StoryParagraph, ValidationSeverity,
 };
 
 use crate::support::{doc_with, doc_with_body, reopen, texts};
@@ -5426,3 +5428,298 @@ fn a_comment_end_in_a_deletion_inside_a_rejected_insertion_stays() {
     });
     assert_eq!(comment_after(&mut doc, Document::reject_all), "30");
 }
+
+// ---- Compare after an edit, on every producer's copy ----
+// A tool edits one paragraph of a file a producer saved, then hands the
+// reader a redline of the two versions. Comparing a file with itself passes
+// whatever it holds: a refusal shows only once a paragraph near the construct
+// that triggers it changed. So each kind of paragraph a copy holds is edited
+// on its own, and each edit is compared, accepted, rejected and validated.
+
+/// The kinds of paragraph the walk edits, in the order it reports them.
+const PARAGRAPH_KINDS: [&str; 14] = [
+    "plain",
+    "field",
+    "hyperlink",
+    "inline control",
+    "block control",
+    "table of contents",
+    "table cell",
+    "header",
+    "footer",
+    "footnote",
+    "endnote",
+    "comment anchor",
+    "bookmark",
+    "text box",
+];
+
+/// The word every edit writes, in no corpus file.
+const EDITED_WORD: &str = "zephyr";
+
+/// The kinds of a paragraph, from where it sits and the XML it holds. A
+/// paragraph holding a tracked change is left out: the edit walks compare
+/// what a producer wrote, not revisions a reviewer left pending.
+fn paragraph_kinds(doc: &Document, paragraph: &StoryParagraph) -> Vec<&'static str> {
+    let Ok(xml) = doc.paragraph_element_xml(&paragraph.location) else {
+        return Vec::new();
+    };
+    let xml = String::from_utf8_lossy(&xml);
+    let holds =
+        |tag: &str| xml.contains(&format!("<w:{tag} ")) || xml.contains(&format!("<w:{tag}>"));
+    if ["ins", "del", "moveFrom", "moveTo", "rPrChange", "pPrChange"]
+        .iter()
+        .any(|tag| holds(tag))
+    {
+        return Vec::new();
+    }
+    let story = paragraph.location.story().kind();
+    let in_block_control = paragraph.location.index_path().len() > 1
+        && matches!(story, StoryKind::Body | StoryKind::TableCell);
+    let toc = xml.contains("PAGEREF") || (in_block_control && xml.contains("w:anchor="));
+    let field = holds("fldChar") || holds("fldSimple");
+    let hyperlink = holds("hyperlink");
+    let inline_control = holds("sdt");
+    let comment = holds("commentRangeStart") || holds("commentReference");
+    let bookmark = holds("bookmarkStart");
+    let mut kinds = Vec::new();
+    let structural = [
+        (story == StoryKind::TableCell, "table cell"),
+        (story == StoryKind::Header, "header"),
+        (story == StoryKind::Footer, "footer"),
+        (story == StoryKind::Footnote, "footnote"),
+        (story == StoryKind::Endnote, "endnote"),
+        (story == StoryKind::TextBox, "text box"),
+        (toc, "table of contents"),
+        (in_block_control && !toc, "block control"),
+        (field && !toc, "field"),
+        (hyperlink && !toc, "hyperlink"),
+        (inline_control, "inline control"),
+        (comment, "comment anchor"),
+        (bookmark && !toc, "bookmark"),
+    ];
+    kinds.extend(
+        structural
+            .iter()
+            .filter(|(has, _)| *has)
+            .map(|(_, kind)| *kind),
+    );
+    let other = [
+        "footnoteReference",
+        "endnoteReference",
+        "drawing",
+        "pict",
+        "object",
+    ]
+    .iter()
+    .any(|tag| holds(tag))
+        || xml.contains("<m:oMath");
+    if kinds.is_empty() && story == StoryKind::Body && !other {
+        kinds.push("plain");
+    }
+    kinds
+}
+
+/// The words of `text` an edit may replace: letters only, four or more, each
+/// found once in the paragraph so that a counted replacement takes it.
+fn replaceable_words(text: &str) -> Vec<&str> {
+    let mut words = text
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|word| word.chars().count() >= 4 && text.matches(*word).count() == 1)
+        .collect::<Vec<_>>();
+    words.dedup();
+    words
+}
+
+/// A corpus copy the walk edits: its bytes, its text with every revision it
+/// holds rejected, and the validation errors it already has.
+struct EditedCopy {
+    source: Vec<u8>,
+    rejected: Vec<(StoryKind, String)>,
+    errors: Vec<String>,
+}
+
+impl EditedCopy {
+    fn new(source: Vec<u8>) -> Self {
+        let mut doc = Document::from_bytes(&source).expect("copy opens");
+        let errors = validation_errors(&doc);
+        let rejected = story_texts(&rejected(&mut doc));
+        Self {
+            source,
+            rejected,
+            errors,
+        }
+    }
+}
+
+fn validation_errors(doc: &Document) -> Vec<String> {
+    doc.validate()
+        .expect("validation runs")
+        .findings
+        .into_iter()
+        .filter(|finding| finding.severity == ValidationSeverity::Error)
+        .map(|finding| finding.message)
+        .collect()
+}
+
+/// One edit of the walk: the word replaced in a paragraph, by its place in
+/// the story paragraphs. Its location is read again before the edit: a
+/// location goes stale once its story changed.
+type Edit = (usize, String);
+
+/// The first edit of a paragraph of this kind that a counted replacement
+/// takes, among the first few paragraphs and words. `paragraphs` come with
+/// their kinds.
+fn edit_of_kind(
+    copy: &EditedCopy,
+    paragraphs: &[(StoryParagraph, Vec<&'static str>)],
+    kind: &str,
+) -> Option<Edit> {
+    paragraphs
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, kinds))| kinds.contains(&kind))
+        .take(4)
+        .flat_map(|(at, (paragraph, _))| {
+            replaceable_words(&paragraph.text)
+                .into_iter()
+                .take(4)
+                .map(move |word| (at, paragraph.location.clone(), word.to_owned()))
+        })
+        .find(|(_, location, word)| {
+            let mut edited = Document::from_bytes(&copy.source).expect("copy opens");
+            matches!(
+                edited.try_replace_text_at(location, word, EDITED_WORD, Some(1)),
+                Ok(Ok(1))
+            )
+        })
+        .map(|(at, _, word)| (at, word))
+}
+
+/// Makes `edits` on the copy, compares the original with the edited copy
+/// and checks the redline: it holds every edit, is as valid as the copy, and
+/// resolves to either version (the revisions the copy already holds resolve
+/// with the new ones). What failed, if anything.
+fn compare_after_edits(copy: &EditedCopy, edits: &[&Edit]) -> Result<(), String> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let mut edited = Document::from_bytes(&copy.source).expect("copy opens");
+        for (at, word) in edits {
+            let location = edited.story_paragraphs().expect("story paragraphs")[*at]
+                .location
+                .clone();
+            let replaced = edited.try_replace_text_at(&location, word, EDITED_WORD, Some(1));
+            assert!(
+                matches!(replaced, Ok(Ok(1))),
+                "the edit of {word:?} is refused: {replaced:?}"
+            );
+        }
+        let mut edited = reopen(&mut edited);
+        let mut original = Document::from_bytes(&copy.source).unwrap();
+        let diagnostics = original
+            .compare(&edited, AUTHOR, DATE)
+            .unwrap_or_else(|error| panic!("compare: {error}"));
+        assert!(
+            diagnostics.is_empty(),
+            "compare diagnostics: {diagnostics:?}"
+        );
+        let mut redline = reopen(&mut original);
+        let revisions = redline.story_revisions().expect("revisions read");
+        let holds = |kind: RevisionKind, text: &str| {
+            revisions
+                .iter()
+                .any(|revision| revision.kind() == kind && revision.text().contains(text))
+        };
+        assert!(
+            holds(RevisionKind::Insertion, EDITED_WORD)
+                && edits
+                    .iter()
+                    .all(|(_, word)| holds(RevisionKind::Deletion, word)),
+            "the redline does not hold the edit"
+        );
+        let new = validation_errors(&redline)
+            .into_iter()
+            .filter(|error| !copy.errors.contains(error))
+            .collect::<Vec<_>>();
+        assert!(new.is_empty(), "the redline is invalid: {new:?}");
+        assert!(
+            story_texts(&accepted(&mut redline)) == story_texts(&accepted(&mut edited)),
+            "accepting every change does not give the edited copy"
+        );
+        assert!(
+            story_texts(&rejected(&mut redline)) == copy.rejected,
+            "rejecting every change does not give the original"
+        );
+    }))
+    .map_err(|panic| {
+        panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+            .unwrap_or_default()
+    })
+}
+
+#[test]
+fn a_paragraph_of_each_kind_edited_in_a_producer_copy_compares_and_resolves_to_either_version() {
+    // One copy on a pull request; every Word copy of every producer but the
+    // long ones with `OXOFFICE_WORKFLOWS=full`.
+    let mut copies = crate::support::every_short_docx_copy();
+    if !crate::support::every_copy() {
+        copies.retain(|copy| copy == COMPARE_AFTER_EDIT_PR_COPY);
+    }
+    crate::support::run_workflow("compare-after-edit", &copies, |path| {
+        let copy = EditedCopy::new(crate::support::workflow_source(path));
+        let doc = Document::from_bytes(&copy.source).expect("copy opens");
+        let paragraphs = doc
+            .story_paragraphs()
+            .expect("story paragraphs")
+            .into_iter()
+            .map(|paragraph| {
+                let kinds = paragraph_kinds(&doc, &paragraph);
+                (paragraph, kinds)
+            })
+            .collect::<Vec<_>>();
+        let edits = PARAGRAPH_KINDS
+            .iter()
+            .filter_map(|kind| edit_of_kind(&copy, &paragraphs, kind).map(|edit| (*kind, edit)))
+            .collect::<Vec<_>>();
+        assert!(!edits.is_empty(), "{path}: no paragraph was edited");
+        // Every kind's edit in one comparison; each on its own only when that
+        // one fails, to name the kinds that fail. A comparison reads around
+        // what an edit touched, so the edits do not hide each other.
+        let mut distinct = Vec::<&Edit>::new();
+        for (_, edit) in &edits {
+            if !distinct.contains(&edit) {
+                distinct.push(edit);
+            }
+        }
+        let joint = compare_after_edits(&copy, &distinct);
+        let failures = if joint.is_ok() {
+            Vec::new()
+        } else {
+            edits
+                .iter()
+                .filter_map(|(kind, edit)| {
+                    compare_after_edits(&copy, &[edit])
+                        .err()
+                        .map(|error| format!("{kind} ({error})"))
+                })
+                .collect::<Vec<_>>()
+        };
+        let kinds = edits.iter().map(|(kind, _)| *kind).collect::<Vec<_>>();
+        assert!(
+            failures.is_empty(),
+            "{path}: kinds failing: {}. Edited: {}.",
+            failures.join("; "),
+            kinds.join(", ")
+        );
+        assert!(
+            joint.is_ok(),
+            "{path}: the edits of every kind fail together: {joint:?}"
+        );
+    });
+}
+
+/// The copy a pull request walks: a page written in Google Docs, with a
+/// paragraph of most kinds, which compares in seconds.
+const COMPARE_AFTER_EDIT_PR_COPY: &str = "google-docs/review.docx";

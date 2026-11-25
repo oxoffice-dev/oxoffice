@@ -373,7 +373,8 @@ pub type Workflow = (&'static str, fn() -> Vec<String>);
 /// `OXOFFICE_WORKFLOWS=full`: an entry of `workflows-known.toml` must name
 /// one of them and one of its copies, so that a renamed walk or a dropped
 /// copy shows.
-pub const WORKFLOWS: [Workflow; 7] = [
+pub const WORKFLOWS: [Workflow; 8] = [
+    ("compare-after-edit", every_short_docx_copy),
     ("page-numbers", every_page_numbers_copy),
     ("redline", every_thesis_copy),
     ("redline-rebuilt-toc", every_thesis_copy),
@@ -382,6 +383,17 @@ pub const WORKFLOWS: [Workflow; 7] = [
     ("restyle", every_record_copy),
     ("resolve-all", every_tracked_copy),
 ];
+
+/// Every Word copy of the corpus, of every producer, in manifest order, but
+/// the `long-*` ones: they hold the report's constructs at length, and a
+/// comparison of one costs a minute in the `ci` profile.
+pub fn every_short_docx_copy() -> Vec<String> {
+    corpus_files("docx")
+        .into_iter()
+        .map(|file| file.path)
+        .filter(|path| !path.rsplit('/').next().unwrap_or(path).starts_with("long-"))
+        .collect()
+}
 
 /// The page-number pass walks the thesis and the record.
 fn every_page_numbers_copy() -> Vec<String> {
