@@ -146,6 +146,7 @@ mod toc;
 use fonts::valid_authored_sfnt;
 pub use render::ContentMeasurement;
 
+mod block_edits_in_place;
 mod body;
 mod content;
 mod headers_footers;

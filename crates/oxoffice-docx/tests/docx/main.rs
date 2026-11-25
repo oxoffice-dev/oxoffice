@@ -23,6 +23,7 @@ mod inspection;
 mod lists;
 mod mail_merge_and_templates;
 mod notes;
+mod paragraph_edits_in_place;
 mod paragraphs_and_styles;
 mod pdf;
 mod pdf_forms;

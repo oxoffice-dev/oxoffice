@@ -441,6 +441,19 @@ impl PyRun {
     fn add_field(&self, py: Python<'_>, instruction: &str, cached_result: &str) -> PyResult<()> {
         let (location, _) = self.validate(py)?;
         let mut document = self.document.borrow_mut(py);
+        if let ParagraphLocation::Body(index) = location
+            && document
+                .edit_body_paragraph_in_place(py, index, "Run.add_field", |paragraph| {
+                    let mut added = Ok(());
+                    paragraph.edit_run(&self.run_path, |run| {
+                        added = run.add_field(instruction, cached_result)
+                    })?;
+                    added
+                })?
+                .is_some()
+        {
+            return Ok(());
+        }
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |paragraph| {
@@ -467,6 +480,24 @@ impl PyRun {
         let field = definition.field();
         let (location, _) = self.validate(py)?;
         let mut document = self.document.borrow_mut(py);
+        if let ParagraphLocation::Body(index) = location
+            && document
+                .edit_body_paragraph_in_place(
+                    py,
+                    index,
+                    "Run.add_legacy_form_field",
+                    |paragraph| {
+                        let mut added = Ok(());
+                        paragraph.edit_run(&self.run_path, |run| {
+                            added = run.add_field_value(field.clone());
+                        })?;
+                        added
+                    },
+                )?
+                .is_some()
+        {
+            return Ok(());
+        }
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |paragraph| {
@@ -490,6 +521,15 @@ impl PyRun {
     fn remove(&self, py: Python<'_>) -> PyResult<()> {
         let (location, run_index) = self.validate(py)?;
         let mut document = self.document.borrow_mut(py);
+        if let ParagraphLocation::Body(index) = location
+            && document
+                .edit_body_paragraph_in_place(py, index, "Run.remove", |paragraph| {
+                    paragraph.remove_run(run_index)
+                })?
+                .is_some()
+        {
+            return Ok(());
+        }
         let mut candidate = document.inner.clone_for_staging();
         location
             .edit(&mut candidate, |paragraph| paragraph.remove_run(run_index))

@@ -587,7 +587,7 @@ impl PyDocument {
             .map_err(revision_to_pyerr)?;
         // The story's owners take the keys of its retired ones, then keys
         // after every current one; a parent is in the story with its child.
-        // A story that lost owners compacts the inventory.
+        // A story that lost owners removes them by swap (`remove_owners`).
         let count = new_inside.iter().filter(|inside| **inside).count();
         let mut free = keys.clone();
         if count < keys.len() {
