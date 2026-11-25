@@ -50,7 +50,24 @@ fn raw_attribute_values(
         let Some(&first) = xml.get(start) else {
             break;
         };
-        if matches!(first, b'/' | b'?' | b'!') {
+        // Markup that holds no element: an end tag, a comment, a CDATA
+        // section, a processing instruction, a declaration.
+        let skip_past: Option<&[u8]> = match first {
+            b'/' => Some(b">"),
+            b'?' => Some(b"?>"),
+            b'!' if xml[start..].starts_with(b"!--") => Some(b"-->"),
+            b'!' if xml[start..].starts_with(b"![CDATA[") => Some(b"]]>"),
+            b'!' => Some(b">"),
+            _ => None,
+        };
+        if let Some(end) = skip_past {
+            match xml[start..]
+                .windows(end.len())
+                .position(|window| window == end)
+            {
+                Some(found) => at = start + found + end.len(),
+                None => break,
+            }
             continue;
         }
         let name_end = xml[start..]
@@ -155,7 +172,8 @@ struct ReferenceSearch<'a> {
     raw_id: &'a dyn Fn(i32) -> bool,
     typed_run: &'a dyn Fn(&RunContent) -> bool,
     comment_ranges: bool,
-    hit: bool,
+    /// How many references the typed owners hold.
+    typed: usize,
     raw_hit: bool,
 }
 
@@ -168,41 +186,49 @@ impl WrittenVisitor for ReferenceSearch<'_> {
         if raw_attribute_values(xml, self.elements, b"id", &mut |value| {
             value.trim().parse::<i32>().is_ok_and(raw_id)
         }) {
-            self.hit = true;
             self.raw_hit = true;
         }
     }
 
     fn paragraph(&mut self, paragraph: &CT_P) {
-        if self.comment_ranges
-            && paragraph.comment_ranges.iter().any(|marker| {
-                let (CommentRangeMarker::Start { id, .. } | CommentRangeMarker::End { id, .. }) =
-                    marker;
-                (self.raw_id)(*id)
-            })
-        {
-            self.hit = true;
+        if self.comment_ranges {
+            self.typed +=
+                paragraph
+                    .comment_ranges
+                    .iter()
+                    .filter(|marker| {
+                        let (CommentRangeMarker::Start { id, .. }
+                        | CommentRangeMarker::End { id, .. }) = marker;
+                        (self.raw_id)(*id)
+                    })
+                    .count();
         }
     }
 
     fn run(&mut self, run: &CT_R) {
-        if run.content.iter().any(self.typed_run) {
-            self.hit = true;
-        }
+        self.typed += run
+            .content
+            .iter()
+            .filter(|content| (self.typed_run)(content))
+            .count();
     }
 }
 
+/// Each block's hit, with how many references its typed owners hold.
 fn search_slots(
     document: &Document,
-    search: &mut dyn FnMut(&BodyContent) -> Option<bool>,
-) -> Vec<SlotHit> {
+    search: &mut dyn FnMut(&BodyContent) -> (usize, bool),
+) -> Vec<(SlotHit, usize)> {
     document
         .document
         .body
         .content
         .iter()
         .enumerate()
-        .filter_map(|(slot, block)| search(block).map(|raw| SlotHit { slot, raw }))
+        .filter_map(|(slot, block)| {
+            let (typed, raw) = search(block);
+            (typed > 0 || raw).then_some((SlotHit { slot, raw }, typed))
+        })
         .collect()
 }
 
@@ -257,15 +283,15 @@ impl Document {
                 raw_id: &raw_id,
                 typed_run: &typed_run,
                 comment_ranges: false,
-                hit: false,
+                typed: 0,
                 raw_hit: false,
             };
             block.visit_written(&mut search);
-            search.hit.then_some(search.raw_hit)
+            (search.typed, search.raw_hit)
         });
         #[cfg(debug_assertions)]
         self.assert_slots_match_serialized(&hits, &elements, &raw_id);
-        hits
+        hits.into_iter().map(|(hit, _)| hit).collect()
     }
 
     /// The body blocks that hold a range mark or a reference of one of the
@@ -280,25 +306,27 @@ impl Document {
                 raw_id: &raw_id,
                 typed_run: &typed_run,
                 comment_ranges: true,
-                hit: false,
+                typed: 0,
                 raw_hit: false,
             };
             block.visit_written(&mut search);
-            search.hit.then_some(search.raw_hit)
+            (search.typed, search.raw_hit)
         });
         #[cfg(debug_assertions)]
         self.assert_slots_match_serialized(&hits, COMMENT_ELEMENTS, &raw_id);
-        hits
+        hits.into_iter().map(|(hit, _)| hit).collect()
     }
 
     /// Debug proof of a slot query: the blocks of the serialized main part
     /// whose bytes hold a WordprocessingML element of `elements` with an
-    /// accepted `w:id` are the slots found. A main part that does not
-    /// serialize proves nothing.
+    /// accepted `w:id` are the slots found, and a block whose bytes hold
+    /// more of them than its typed owners is found raw (a reference the
+    /// typed owners do not hold is in a raw fragment). A main part that
+    /// does not serialize proves nothing.
     #[cfg(debug_assertions)]
     fn assert_slots_match_serialized(
         &self,
-        hits: &[SlotHit],
+        hits: &[(SlotHit, usize)],
         elements: &[&[u8]],
         accepted: &dyn Fn(i32) -> bool,
     ) {
@@ -309,16 +337,29 @@ impl Document {
             value.trim().parse::<i32>().is_ok_and(accepted)
         })
         .expect("the serialized main part reads");
-        let mut serialized = offsets
+        let mut serialized = Vec::<(usize, usize)>::new();
+        for slot in offsets
             .into_iter()
             .filter_map(|offset| children.iter().position(|range| range.contains(&offset)))
-            .collect::<Vec<_>>();
-        serialized.dedup();
-        let walked = hits.iter().map(|hit| hit.slot).collect::<Vec<_>>();
+        {
+            match serialized.last_mut() {
+                Some((last, count)) if *last == slot => *count += 1,
+                _ => serialized.push((slot, 1)),
+            }
+        }
+        let walked = hits.iter().map(|(hit, _)| hit.slot).collect::<Vec<_>>();
         assert_eq!(
-            walked, serialized,
+            walked,
+            serialized.iter().map(|(slot, _)| *slot).collect::<Vec<_>>(),
             "the written-fragment walk and the serialized main part disagree on the blocks"
         );
+        for ((hit, typed), (_, count)) in hits.iter().zip(&serialized) {
+            assert!(
+                hit.raw || *typed >= *count,
+                "block {} writes {count} references, its typed owners hold {typed}, and no raw fragment was found",
+                hit.slot
+            );
+        }
     }
 }
 
@@ -401,10 +442,15 @@ mod tests {
     #[test]
     fn raw_search_skips_other_elements_and_end_tags() {
         assert!(styles(r#"<w:pStyles w:val="A"/></w:pStyle><w:t>pStyle val="B"</w:t>"#).is_empty());
-        assert!(
-            styles(r#"<!-- <w:pStyle w:val="A"/> -->"#)
-                .iter()
-                .all(|value| value == "A")
+        assert!(styles(r#"<!-- <w:pStyle w:val="A"/> -->"#).is_empty());
+        assert!(styles(r#"<w:t><![CDATA[<w:rStyle w:val="A"/>]]></w:t>"#).is_empty());
+        assert_eq!(
+            styles(r#"<?probe <w:rStyle w:val="A"/> ?><w:rStyle w:val="B"/>"#),
+            ["B"]
+        );
+        assert_eq!(
+            styles(r#"<w:p a="x>y"><!-- -- > --><w:pStyle w:val='C'/></w:p>"#),
+            ["C"]
         );
     }
 }

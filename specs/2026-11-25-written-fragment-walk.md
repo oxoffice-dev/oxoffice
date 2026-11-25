@@ -129,8 +129,13 @@ copy, the shape of `link_style_to_numbering` (#633): the numbering journal
 the styles model is put back on a refusal or a panic. The numbering part
 is no longer flushed: releasing a level's `w:pStyle` changes no content
 reference, so the numbering model check (`validate_numbering_model`)
-replaces the whole graph check, and the save writes the model. The debug
-oracle runs the staged route on a copy and compares.
+replaces the whole graph check (which serialized the body), and the save
+writes the model. A release over content that already named a missing
+numbering instance was refused before and now goes, as for
+`link_style_to_numbering`. The main part is no longer serialized either:
+a body the writer cannot write no longer refuses the removal, the save
+refuses it as before. The debug oracle runs the staged route of before on
+a copy and compares.
 
 ## What we do not do
 

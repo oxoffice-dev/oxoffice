@@ -53,6 +53,27 @@ fn a_note_reference_is_found_typed_in_a_tracked_insertion_and_in_a_text_box() {
 }
 
 #[test]
+fn a_reference_inside_an_xml_comment_or_cdata_is_not_one() {
+    let body = [
+        r#"<w:p><w:r><w:foo><!-- <w:footnoteReference w:id="2"/> --></w:foo><w:t>x</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:foo><![CDATA[<w:footnoteReference w:id="2"/>]]></w:foo><w:t>x</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:foo><!-- <w:rStyle w:val="Probe"/> --></w:foo><w:t>x</w:t></w:r></w:p>"#,
+    ]
+    .concat();
+    let mut doc = doc_with_body(&body);
+    assert!(
+        doc.body_slots_referencing_note(StoryKind::Footnote, 2)
+            .is_empty()
+    );
+    doc.add_style(oxoffice_docx::StyleBuilder::paragraph("Probe", "Probe"))
+        .expect("the style is added");
+    assert!(
+        doc.remove_style("Probe")
+            .expect("no content names the style")
+    );
+}
+
+#[test]
 fn comment_marks_are_found_for_a_set_of_ids() {
     let body = [
         r#"<w:p><w:commentRangeStart w:id="5"/><w:r><w:t>a</w:t></w:r></w:p>"#.to_string(),
@@ -127,7 +148,8 @@ fn slot_queries_cost() {
             .collect::<String>();
         let mut doc = doc_with_body(&body);
         let ids = HashSet::from([1]);
-        let time = |doc: &mut oxoffice_docx::Document, call: &dyn Fn(&mut oxoffice_docx::Document)| {
+        let time = |doc: &mut oxoffice_docx::Document,
+                    call: &dyn Fn(&mut oxoffice_docx::Document)| {
             (0..7)
                 .map(|_| {
                     let start = std::time::Instant::now();

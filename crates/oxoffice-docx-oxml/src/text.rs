@@ -58,7 +58,8 @@ pub use run::{
     hyperlink_revision_index,
 };
 use run::{
-    ParsedHyperlinkAttributes, RAW_COMMENT_REFERENCE_FLAG, run_xml_root, write_run_raw_source,
+    ParsedHyperlinkAttributes, RAW_COMMENT_REFERENCE_FLAG, retained_comment_reference_id,
+    run_xml_root, write_run_raw_source,
 };
 pub(crate) use run::{
     RunChildAction, RunChildPlan, SpecialRunValue, comment_reference_has_payload_attributes,

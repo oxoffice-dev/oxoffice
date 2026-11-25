@@ -540,11 +540,12 @@ fn visit_run(run: &CT_R, visitor: &mut dyn WrittenVisitor) {
         if position.is_some_and(|position| position & RAW_COMMENT_REFERENCE_FLAG != 0) {
             // A retained comment reference (one with extra attributes) is
             // written in place of the typed reference it matches, and only
-            // then; the id is the typed one.
-            if run
-                .content
-                .iter()
-                .any(|content| matches!(content, RunContent::CommentReference { .. }))
+            // then: the run must hold a typed reference with its id.
+            let id = retained_comment_reference_id(raw);
+            if id.is_some()
+                && run.content.iter().any(|content| {
+                    matches!(content, RunContent::CommentReference { id: typed, .. } if Some(*typed) == id)
+                })
             {
                 visitor.raw(raw);
             }

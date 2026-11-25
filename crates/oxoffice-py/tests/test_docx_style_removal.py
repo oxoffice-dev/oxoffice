@@ -99,3 +99,20 @@ def test_a_style_named_by_content_is_refused_and_the_document_is_unchanged(where
     # Another style no content names still goes.
     other = next(s.style_id for s in doc.styles if s.name == "ProbePara")
     assert doc.remove_style(other) is True
+
+
+def test_a_refusal_after_a_released_level_puts_the_level_back():
+    # The style is linked to a list level that names it back, and a paragraph uses it: the level is released before
+    # the content check refuses, and the refusal puts it back.
+    doc = oxdocx.Document()
+    style = doc.add_style("Probe used", "paragraph").style_id
+    definition = doc.add_numbering_definition([oxdocx.ListLevel(format="decimal", text="%1.")])
+    instance = doc.add_numbering_instance(definition)
+    doc.link_style_to_numbering(style, instance, 0)
+    doc.add_paragraph("styled", style=style)
+    before = doc.to_bytes()
+    with pytest.raises(Exception, match="referenced by document content"):
+        doc.remove_style(style)
+    assert doc.to_bytes() == before
+    package = zipfile.ZipFile(io.BytesIO(doc.to_bytes()))
+    assert f'<w:pStyle w:val="{style}"/>' in package.read("word/numbering.xml").decode()

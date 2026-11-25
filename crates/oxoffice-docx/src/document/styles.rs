@@ -844,8 +844,9 @@ impl Document {
 
     /// [`Self::remove_style`] on this document. A refusal leaves the styles
     /// and the numbering to the caller, which puts them back. Releasing a
-    /// level's `w:pStyle` is checked with the numbering graph as the
-    /// staged route did; the save writes the numbering model.
+    /// level's `w:pStyle` changes no numbering reference of the content, so
+    /// the numbering model alone is checked (as `link_style_to_numbering`
+    /// does) and the save writes it.
     fn remove_style_in_place(&mut self, style_id: &str) -> Result<()> {
         let removed = self.styles_removed_with(style_id);
         let released = self.release_numbering_levels_naming(&removed);
@@ -862,14 +863,16 @@ impl Document {
             .retain(|style| !removed.contains(&style.style_id));
         style::validate_style_graph_change(&previous, &self.styles)?;
         if released {
-            self.validate_numbering_graph()?;
+            self.validate_numbering_model()?;
         }
         Ok(())
     }
 
     /// Debug proof that [`Self::remove_style`] in place leaves the styles
-    /// and the numbering the staged route leaves, or refuses with its error
-    /// and leaves them as they were.
+    /// and the numbering the staged route of before leaves, or refuses with
+    /// its error and leaves them as they were. The one difference allowed:
+    /// the staged route refused a release over content whose numbering
+    /// references did not resolve before the call.
     #[cfg(debug_assertions)]
     fn assert_style_removal_matches_staged(
         &self,
@@ -894,9 +897,17 @@ impl Document {
             style::validate_style_graph_change(&before.styles, &staged.styles)?;
             if released {
                 staged.validate_numbering_graph()?;
+                staged.flush_to_package()?;
             }
             Ok(())
         })();
+        if outcome.is_ok()
+            && staged_outcome.is_err()
+            && before.validate_numbering_graph().is_err()
+            && before.validate_numbering_model().is_ok()
+        {
+            return;
+        }
         let expected = match (outcome, staged_outcome) {
             (Ok(()), Ok(())) => &staged,
             (Err(direct), Err(staged_error)) => {
