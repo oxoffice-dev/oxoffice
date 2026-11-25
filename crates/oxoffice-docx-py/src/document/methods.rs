@@ -3791,6 +3791,9 @@ impl PyDocument {
         range: PyRef<'_, PyStoryRunRange>,
         py: Python<'_>,
     ) -> PyResult<()> {
+        if self.move_comment_in_place(py, id, &range)? {
+            return Ok(());
+        }
         let mut candidate = self.inner.clone_for_staging();
         let start = oxoffice_docx::StoryRunPosition {
             location: self.native_location(py, &range.start.item)?,

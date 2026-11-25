@@ -6,9 +6,9 @@ use std::io::Cursor;
 
 use oxoffice_docx::paragraph::ParagraphItemRef;
 use oxoffice_docx::{
-    CommentDate, CommentRef, ContentLocation, Document, HalfPoint, RunItemRef, RunPosition,
-    RunRange, StoryKind, StoryRangeKind, StoryRunPosition, StoryRunRange, StyleBuilder, StyleType,
-    TextCommentOptions, Twips,
+    CommentDate, CommentRef, ContentLocation, ControlBlock, Document, HalfPoint, RunItemRef,
+    RunPosition, RunRange, StoryKind, StoryRangeKind, StoryRunPosition, StoryRunRange,
+    StyleBuilder, StyleType, TextCommentOptions, Twips,
 };
 use oxoffice_opc::OpcPackage;
 
@@ -1736,4 +1736,235 @@ fn every_corpus_document_lists_its_story_ranges() {
         })
         .collect::<Vec<_>>();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The location of body paragraph `slot`, in a body whose items are its
+/// direct paragraphs.
+fn body_paragraph(doc: &Document, slot: usize) -> ContentLocation {
+    let body = doc
+        .stories()
+        .unwrap()
+        .into_iter()
+        .find(|story| story.kind() == StoryKind::Body)
+        .unwrap();
+    doc.story_items(&body).unwrap()[slot].location().clone()
+}
+
+/// The direct body block of body paragraph `slot`.
+fn paragraph_block(slot: usize) -> ControlBlock {
+    ControlBlock {
+        slot,
+        owner_index: 0,
+        item_index: 0,
+    }
+}
+
+/// Move comment `id` onto `range` of body paragraph `slot` holding the
+/// edit's undo, in place when the facade takes it, else by the staged
+/// route: the body slots changed in place.
+fn move_in_place(doc: &mut Document, id: i32, range: StoryRunRange, slot: usize) -> Vec<usize> {
+    doc.hold_edit_undo();
+    let moved = doc
+        .move_comment_in_block(id, &range, paragraph_block(slot))
+        .unwrap();
+    let slots = doc
+        .take_edit_undo()
+        .map(|undo| {
+            undo.report()
+                .body_blocks
+                .iter()
+                .map(|change| change.slot)
+                .collect()
+        })
+        .unwrap_or_default();
+    if moved.is_none() {
+        doc.move_comment(id, range).unwrap();
+    }
+    slots
+}
+
+/// A comment of `Ada` on "beta" in "alpha beta gamma", the second of three
+/// paragraphs.
+fn comment_on_beta() -> (Document, i32) {
+    let mut doc = doc_with(&["before", "alpha beta gamma", "after"]);
+    let id = doc
+        .add_comment_on_text(
+            "beta",
+            "Ada",
+            "on beta",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    (doc, id)
+}
+
+#[test]
+fn a_comment_moved_within_its_body_paragraph_is_moved_in_place() {
+    // Runs "alpha ", "beta", the reference, " gamma": before the reference,
+    // on it and after it.
+    for (start, end, anchored) in [
+        (0, 1, "alpha "),
+        (0, 2, "alpha beta"),
+        (2, 4, " gamma"),
+        (0, 4, "alpha beta gamma"),
+    ] {
+        let (mut doc, id) = comment_on_beta();
+        let location = body_paragraph(&doc, 1);
+        let range = story_range(&location, start, end);
+        assert_eq!(
+            doc.move_comment_in_place_slots(id, &range, paragraph_block(1)),
+            Some(vec![1]),
+            "{start}..{end}"
+        );
+        assert_eq!(move_in_place(&mut doc, id, range, 1), [1], "{start}..{end}");
+
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["before", "alpha beta gamma", "after"]);
+        assert_eq!(
+            doc.comment_anchor_text(id).unwrap().as_deref(),
+            Some(anchored),
+            "{start}..{end}"
+        );
+        assert_eq!(comment_marks(&doc), [id, id, id]);
+    }
+}
+
+#[test]
+fn a_comment_moved_onto_its_own_range_changes_nothing() {
+    let (mut doc, id) = comment_on_beta();
+    let range = doc.comment_anchor(id).unwrap().unwrap();
+    let saved = doc.to_bytes().unwrap();
+    assert_eq!(
+        doc.move_comment_in_place_slots(id, &range, paragraph_block(1)),
+        Some(vec![1])
+    );
+    assert!(move_in_place(&mut doc, id, range, 1).is_empty());
+    assert_eq!(doc.to_bytes().unwrap(), saved);
+}
+
+#[test]
+fn a_comment_move_out_of_its_paragraph_or_its_story_takes_the_staged_route() {
+    // To another body paragraph.
+    let (mut doc, id) = comment_on_beta();
+    let range = story_range(&body_paragraph(&doc, 2), 0, 1);
+    assert_eq!(
+        doc.move_comment_in_place_slots(id, &range, paragraph_block(2)),
+        None
+    );
+    assert!(move_in_place(&mut doc, id, range, 2).is_empty());
+    let reopened = reopen(&mut doc);
+    assert_eq!(
+        reopened.comment_anchor_text(id).unwrap().as_deref(),
+        Some("after")
+    );
+
+    // To a header.
+    let (mut doc, id) = comment_on_beta();
+    doc.set_header("Header words");
+    let header = story_paragraph(&doc, StoryKind::Header, 0);
+    let range = story_range(&header, 0, 1);
+    assert_eq!(
+        doc.move_comment_in_place_slots(id, &range, paragraph_block(1)),
+        None
+    );
+    doc.move_comment(id, range).unwrap();
+    let reopened = reopen(&mut doc);
+    assert_eq!(anchor_kind(&reopened, id), StoryKind::Header);
+
+    // From a header.
+    let mut doc = doc_with(&["body text"]);
+    doc.set_header("Header words");
+    let header = story_paragraph(&doc, StoryKind::Header, 0);
+    let id = doc
+        .add_story_comment_with_date(
+            story_range(&header, 0, 1),
+            "Ada",
+            None,
+            "On the header",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    let range = story_range(&body_paragraph(&doc, 0), 0, 1);
+    assert_eq!(
+        doc.move_comment_in_place_slots(id, &range, paragraph_block(0)),
+        None
+    );
+    assert!(move_in_place(&mut doc, id, range, 0).is_empty());
+    let reopened = reopen(&mut doc);
+    assert_eq!(anchor_kind(&reopened, id), StoryKind::Body);
+}
+
+#[test]
+fn a_comment_with_a_reply_moves_by_the_staged_route() {
+    let (mut doc, id) = comment_on_beta();
+    let reply = doc
+        .reply_to_with_date(id, "Ben", "reply", CommentDate::Undated)
+        .unwrap();
+    let range = story_range(&body_paragraph(&doc, 1), 0, 1);
+    assert_eq!(
+        doc.move_comment_in_place_slots(id, &range, paragraph_block(1)),
+        None
+    );
+    assert!(move_in_place(&mut doc, id, range, 1).is_empty());
+    let reopened = reopen(&mut doc);
+    for moved in [id, reply] {
+        assert_eq!(
+            reopened.comment_anchor_text(moved).unwrap().as_deref(),
+            Some("alpha ")
+        );
+    }
+}
+
+#[test]
+fn a_comment_whose_source_paragraph_holds_only_its_marks_is_left_to_the_staged_route() {
+    let mut doc = doc_with(&["text"]);
+    let id = doc
+        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "root")
+        .unwrap();
+    let body = format!(
+        concat!(
+            r#"<w:p><w:commentRangeStart w:id="{id}"/><w:commentRangeEnd w:id="{id}"/>"#,
+            r#"<w:r><w:commentReference w:id="{id}"/></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t>text</w:t></w:r></w:p>"#
+        ),
+        id = id
+    );
+    let mut doc = Document::from_bytes(&with_body(doc.to_bytes().unwrap(), &body)).unwrap();
+    let saved = doc.to_bytes().unwrap();
+    let range = story_range(&body_paragraph(&doc, 1), 0, 1);
+    assert_eq!(
+        doc.move_comment_in_place_slots(id, &range, paragraph_block(1)),
+        None
+    );
+    assert_eq!(
+        doc.move_comment_in_block(id, &range, paragraph_block(1))
+            .unwrap(),
+        None
+    );
+    assert_eq!(doc.to_bytes().unwrap(), saved);
+}
+
+#[test]
+fn a_comment_move_the_staged_route_refuses_is_refused_unchanged() {
+    let (mut doc, id) = comment_on_beta();
+    let saved = doc.to_bytes().unwrap();
+    // Past the last run, and a reversed range.
+    for (start, end) in [(0, 9), (3, 1)] {
+        let range = story_range(&body_paragraph(&doc, 1), start, end);
+        assert_eq!(
+            doc.move_comment_in_place_slots(id, &range, paragraph_block(1)),
+            None
+        );
+        assert!(doc.move_comment(id, range).is_err());
+        assert_eq!(doc.to_bytes().unwrap(), saved);
+    }
+    // An unknown comment.
+    let range = story_range(&body_paragraph(&doc, 1), 0, 1);
+    assert_eq!(
+        doc.move_comment_in_place_slots(id + 100, &range, paragraph_block(1)),
+        None
+    );
 }

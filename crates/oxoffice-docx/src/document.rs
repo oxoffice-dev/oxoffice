@@ -357,6 +357,7 @@ pub use owner_snapshots::resolved_xml_events;
 mod edit_in_place;
 #[cfg(debug_assertions)]
 pub(crate) use edit_in_place::without_namespace_declarations;
+mod comment_moves_in_place;
 mod relationships;
 mod revisions_in_place;
 mod staged_output;

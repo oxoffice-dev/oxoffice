@@ -263,6 +263,72 @@ def test_a_reply_to_a_comment_in_a_header_is_added_and_saved(saved):
     assert by_id[reply].anchor_text == by_id[parent].anchor_text
 
 
+def commented_range(doc, start, end, paragraph=5):
+    """Runs start..end of body paragraph `paragraph` (5 holds the comment), as a StoryRunRange."""
+    index = doc.find_content_index(doc.paragraphs[paragraph])
+    (item,) = [it for it in doc.story_items if it.story.kind == "body" and it.kind == "paragraph"
+               and it.direct_body_index == index]
+    return oxdocx.StoryRunRange(start=oxdocx.StoryRunPosition(item=item, run_index=start),
+                                end=oxdocx.StoryRunPosition(item=item, run_index=end))
+
+
+def test_a_comment_moved_within_its_paragraph_keeps_every_handle_outside_it(saved):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    comment = the_comment(doc)
+    edited = doc.paragraphs[5]
+    text = edited.text
+    edited_run = edited.runs[0]
+    moved_onto = edited.runs[2].text
+
+    # Run 1 is the reference run: runs 2..3 are the paragraph's second text run.
+    doc.move_comment(comment.id, commented_range(doc, 2, 3))
+
+    del taken["commented paragraph"]
+    assert reads(taken) == before(taken)
+    assert comment.text == "a remark"
+    assert the_comment(doc).anchor_text == moved_onto
+    # The edited paragraph keeps its handle; its runs are born again.
+    assert edited.text == text
+    assert outcome(lambda: edited_run.text) == STALE
+    taken["run"][0].text = "edited run"
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert again.paragraphs[3].runs[2].text == "edited run"
+    assert the_comment(again).anchor_text == moved_onto
+    assert again.paragraphs[5].text == text
+
+
+def test_a_comment_moved_to_another_paragraph_is_moved_and_saved(saved):
+    doc = oxdocx.Document.open(saved)
+    comment = the_comment(doc)
+
+    doc.move_comment(comment.id, commented_range(doc, 0, 1, paragraph=7))
+
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert the_comment(again).anchor_text == again.paragraphs[7].runs[0].text
+
+
+@pytest.mark.parametrize("refused", ["unknown comment", "past the last run", "reversed"])
+def test_a_refused_comment_move_leaves_the_document_and_every_handle_as_they_were(saved, refused):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    comment = the_comment(doc)
+    edited_run = doc.paragraphs[5].runs[0]
+    data = doc.to_bytes()
+    comment_id, start, end = {
+        "unknown comment": (comment.id + 100, 2, 3),
+        "past the last run": (comment.id, 0, 40),
+        "reversed": (comment.id, 3, 1),
+    }[refused]
+
+    with pytest.raises(oxdocx.DocxError):
+        doc.move_comment(comment_id, commented_range(doc, start, end))
+
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert edited_run.text == doc.paragraphs[5].runs[0].text
+
+
 @pytest.mark.skipif(not debug_build(), reason="a debug build fails the publication on request")
 @pytest.mark.parametrize("failure", ["error", "panic"])
 def test_a_comment_whose_publication_fails_leaves_the_document_and_every_handle_as_they_were(

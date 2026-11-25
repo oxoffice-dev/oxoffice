@@ -211,4 +211,56 @@ impl PyDocument {
             BlocksPublication::WholeRoute => Ok(None),
         }
     }
+
+    /// Move comment `id` onto `range` on the live document when the facade
+    /// moves it in place within one direct body paragraph
+    /// ([`oxoffice_docx::Document::move_comment_in_block`], the range's
+    /// paragraph found from the inventory's pieces): that paragraph is
+    /// published alone, every other handle kept, and a move onto the
+    /// comment's own range keeps every handle. `Ok(false)` leaves the
+    /// document and every handle as they were, for the whole route, decided
+    /// before the edit where the inventory tells.
+    pub(super) fn move_comment_in_place(
+        &mut self,
+        py: Python<'_>,
+        id: i32,
+        range: &PyStoryRunRange,
+    ) -> PyResult<bool> {
+        const OPERATION: &str = "Document.move_comment";
+        let (Some(start), Some(end)) = (
+            self.in_place_location(py, &range.start.item)?,
+            self.in_place_location(py, &range.end.item)?,
+        ) else {
+            return Ok(false);
+        };
+        if start != end {
+            return Ok(false);
+        }
+        let Some(block) = self.story_item_block(py, &start)? else {
+            return Ok(false);
+        };
+        let native = oxoffice_docx::StoryRunRange {
+            start: oxoffice_docx::StoryRunPosition {
+                location: start,
+                run_index: range.start.run_index,
+            },
+            end: oxoffice_docx::StoryRunPosition {
+                location: end,
+                run_index: range.end.run_index,
+            },
+        };
+        let Some(slots) = self.inner.move_comment_in_place_slots(id, &native, block) else {
+            return Ok(false);
+        };
+        if !self.body_paragraphs_publishable(&slots) {
+            return Ok(false);
+        }
+        let moved = self.publish_blocks_edited_in_place(
+            py,
+            OPERATION,
+            paragraph_in_place::BlockRetention::EditedParagraphKeepsItsOwner,
+            |document| document.move_comment_in_block(id, &native, block),
+        )?;
+        Ok(moved.is_some())
+    }
 }
