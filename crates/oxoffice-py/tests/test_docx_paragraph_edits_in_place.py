@@ -185,8 +185,8 @@ def test_a_publication_that_fails_after_the_swap_puts_the_paragraph_back(body, c
 # A field a run adds reads in place as part of that run's text, where the reopened save reads its result as a run
 # of its own. A staged set_hyperlink_url reopened the document and hid it; the URL is now set in place.
 FIELD_READS_OTHERWISE = [
-    pytest.param(call, marks=pytest.mark.xfail(strict=True, reason="an added field's result reads otherwise after "
-                                               "a reopen")) if call in ("Run.add_field", "Run.add_legacy_form_field")
+    pytest.param(call, marks=pytest.mark.xfail(strict=True, reason="oxoffice-dev/oxoffice#651: an added field's "
+                                               "result reads otherwise after a reopen")) if call in ("Run.add_field", "Run.add_legacy_form_field")
     else call
     for call in EDITS
 ]
