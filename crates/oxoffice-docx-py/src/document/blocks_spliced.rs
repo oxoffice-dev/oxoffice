@@ -207,7 +207,7 @@ fn placed_blocks(
 }
 
 /// A splice of direct body blocks, planned from the inventory alone.
-struct BlocksSplice {
+pub(crate) struct BlocksSplice {
     slot: usize,
     removed: usize,
     inserted: usize,
@@ -223,46 +223,19 @@ struct BlocksSplice {
     pieces: Vec<WordBlockOwners>,
 }
 
-impl PyDocument {
-    /// Publish `previous`, direct body blocks the facade replaced in place
-    /// by the `inserted` blocks now at `slot`, as a splice that keeps the
-    /// owners of every other block (decision 2 of "body handles follow their
-    /// element"): the owners of `previous` retire, those of the new blocks
-    /// are born, the document epoch and the snapshot retire. Any shape this
-    /// splice does not prove answers [`BlocksPublication::WholeRoute`] with
-    /// nothing changed.
-    pub(super) fn publish_body_blocks_spliced(
-        &mut self,
-        slot: usize,
-        previous: &[oxoffice_docx_oxml::BodyContent],
-        inserted: usize,
-        operation: &'static str,
-    ) -> PyResult<BlocksPublication> {
-        let Some(plan) = self.plan_blocks_splice(slot, previous, inserted) else {
-            return Ok(BlocksPublication::WholeRoute);
-        };
-        #[cfg(debug_assertions)]
-        let before = {
-            let mut document = self.inner.clone_for_staging();
-            document
-                .splice_body_blocks(slot, inserted, previous.to_vec())
-                .expect("the spliced slots are in the body");
-            (document, self.owners.clone())
-        };
-        #[cfg(debug_assertions)]
-        self.assert_old_owners_are_the_blocks_closure(&plan);
-        #[cfg(debug_assertions)]
-        let counts = (plan.old_keys.len(), plan.born.len());
-        self.commit_blocks_splice(plan, operation)?;
-        #[cfg(debug_assertions)]
-        self.assert_blocks_splice(&before, counts.0, counts.1);
-        Ok(BlocksPublication::Published)
+#[cfg(debug_assertions)]
+impl BlocksSplice {
+    /// The owners the splice retires and those it bears.
+    pub(super) fn counts(&self) -> (usize, usize) {
+        (self.old_keys.len(), self.born.len())
     }
+}
 
+impl PyDocument {
     /// The plan of a splice of `previous` by the `inserted` blocks now at
     /// `slot`, read from the inventory, the pieces and the new blocks, or
     /// `None` for the whole route.
-    fn plan_blocks_splice(
+    pub(super) fn plan_blocks_splice(
         &self,
         slot: usize,
         previous: &[oxoffice_docx_oxml::BodyContent],
@@ -409,7 +382,7 @@ impl PyDocument {
     /// Commit `plan`: retire the old owners and the snapshot, replace the
     /// records of the old items, splice the projections, remove the old
     /// owners by swap and append the new ones, then the pieces.
-    fn commit_blocks_splice(
+    pub(super) fn commit_blocks_splice(
         &mut self,
         plan: BlocksSplice,
         operation: &'static str,
@@ -574,7 +547,7 @@ impl PyDocument {
     /// by route are every owner of the old blocks, as a walk of the owners
     /// finds them by their body story item or main-part cell story.
     #[cfg(debug_assertions)]
-    fn assert_old_owners_are_the_blocks_closure(&self, plan: &BlocksSplice) {
+    pub(super) fn assert_old_owners_are_the_blocks_closure(&self, plan: &BlocksSplice) {
         let items = plan.bases.first..plan.bases.first + plan.old.items;
         let cells = plan.bases.cells..plan.bases.cells + plan.old.cells;
         let part = self
@@ -645,7 +618,7 @@ impl PyDocument {
     /// every owner outside the blocks and only those, as "body handles follow
     /// their element" keeps them.
     #[cfg(debug_assertions)]
-    fn assert_blocks_splice(
+    pub(super) fn assert_blocks_splice(
         &self,
         (document, owners): &(oxoffice_docx::Document, Vec<WordOwner>),
         retired: usize,

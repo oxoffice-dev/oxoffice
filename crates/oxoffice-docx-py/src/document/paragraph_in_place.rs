@@ -3,6 +3,7 @@
 //! blocks, touching the owners of the replaced ones and the records of the
 //! body items after them, never the rest of the inventory.
 
+use super::blocks_spliced::BlocksSplice;
 use super::*;
 
 /// Which owners of a replaced block keep their states.
@@ -29,6 +30,48 @@ pub(crate) enum BlocksPublication {
     /// and the caller puts the old blocks back and takes the whole route.
     WholeRoute,
 }
+
+/// A block replacement planned with no state changed.
+pub(crate) enum BlocksPlan {
+    /// The new blocks are the old ones.
+    Unchanged,
+    /// One paragraph edited where it stands.
+    Paragraph(ReplacedBlock),
+    /// Blocks removed or inserted.
+    Spliced(Box<BlocksSplice>),
+}
+
+/// What the debug oracle of a block replacement needs of its plan.
+#[cfg(debug_assertions)]
+#[derive(Clone)]
+pub(crate) enum BlocksSummary {
+    Unchanged,
+    Paragraph(ReplacedBlock),
+    /// The owners retired and born.
+    Spliced {
+        retired: usize,
+        born: usize,
+    },
+}
+
+#[cfg(debug_assertions)]
+impl BlocksPlan {
+    /// What the debug oracle needs, taken before the commit consumes the plan.
+    pub(crate) fn summary(&self) -> BlocksSummary {
+        match self {
+            Self::Unchanged => BlocksSummary::Unchanged,
+            Self::Paragraph(target) => BlocksSummary::Paragraph(target.clone()),
+            Self::Spliced(plan) => {
+                let (retired, born) = plan.counts();
+                BlocksSummary::Spliced { retired, born }
+            }
+        }
+    }
+}
+
+/// The document and the inventory before a block replacement.
+#[cfg(debug_assertions)]
+pub(crate) type BlocksDebugCopy = (oxoffice_docx::Document, Vec<WordOwner>);
 
 /// The old block of a swap the facade made, held until the publication
 /// commits: any other exit (a refusal, an error, a panic) puts it back.
@@ -58,7 +101,8 @@ impl Drop for SwappedBlock<'_> {
 
 /// What the block replacement needs of the replaced block, read from the
 /// inventory and the pieces.
-struct ReplacedBlock {
+#[derive(Clone)]
+pub(crate) struct ReplacedBlock {
     slot: usize,
     /// The block's root owner and its body story item.
     selected: usize,
@@ -152,37 +196,109 @@ impl PyDocument {
         operation: &'static str,
         retention: BlockRetention,
     ) -> PyResult<BlocksPublication> {
-        if let BlockRetention::Spliced = retention {
-            self.ensure_word_authority(py)?;
-            return self.publish_body_blocks_spliced(slot, previous, inserted, operation);
-        }
-        let ([old], 1) = (previous, inserted) else {
-            return Ok(BlocksPublication::WholeRoute);
-        };
-        let Some(new) = self.inner.body_children().get(slot) else {
-            return Ok(BlocksPublication::WholeRoute);
-        };
-        if new == old {
-            return Ok(BlocksPublication::Unchanged);
-        }
         self.ensure_word_authority(py)?;
-        let Some(target) = self.replaced_block(slot, old) else {
+        let Some(plan) = self.prepare_blocks_replaced(slot, previous, inserted, retention)? else {
             return Ok(BlocksPublication::WholeRoute);
         };
         #[cfg(debug_assertions)]
-        let before = {
-            let mut document = self.inner.clone_for_staging();
-            document
-                .swap_body_block(slot, old.clone())
-                .expect("the replaced slot is in the body");
-            (document, self.owners.clone())
-        };
-        let published = self.replace_paragraph_owners(&target, operation)?;
+        let (before, summary) = (
+            self.blocks_replaced_debug_copy(slot, previous, inserted),
+            plan.summary(),
+        );
+        let published = self.commit_blocks_replaced(py, plan, operation)?;
         #[cfg(debug_assertions)]
         if published == BlocksPublication::Published {
-            self.assert_paragraph_replacement(&before, &target);
+            self.assert_blocks_replaced(&before, &summary);
         }
         Ok(published)
+    }
+
+    /// The plan of [`Self::publish_body_blocks_replaced`], read from the
+    /// inventory, the pieces and the new blocks with no state changed:
+    /// `None` for the whole route, [`BlocksPlan::Unchanged`] for new blocks
+    /// equal to the old ones. The caller has ensured the Word authority.
+    /// Debug builds check here that the old owners found by route are the
+    /// blocks' closure.
+    pub(crate) fn prepare_blocks_replaced(
+        &self,
+        slot: usize,
+        previous: &[oxoffice_docx_oxml::BodyContent],
+        inserted: usize,
+        retention: BlockRetention,
+    ) -> PyResult<Option<BlocksPlan>> {
+        if let BlockRetention::Spliced = retention {
+            let Some(plan) = self.plan_blocks_splice(slot, previous, inserted) else {
+                return Ok(None);
+            };
+            #[cfg(debug_assertions)]
+            self.assert_old_owners_are_the_blocks_closure(&plan);
+            return Ok(Some(BlocksPlan::Spliced(Box::new(plan))));
+        }
+        let ([old], 1) = (previous, inserted) else {
+            return Ok(None);
+        };
+        let Some(new) = self.inner.body_children().get(slot) else {
+            return Ok(None);
+        };
+        if new == old {
+            return Ok(Some(BlocksPlan::Unchanged));
+        }
+        Ok(self.replaced_block(slot, old).map(BlocksPlan::Paragraph))
+    }
+
+    /// Commit a plan of [`Self::prepare_blocks_replaced`]: its revision
+    /// scopes, then the inventory, which cannot fail. No debug oracle runs
+    /// here: call [`Self::assert_blocks_replaced`] after every commit that
+    /// goes with it, when this one answers [`BlocksPublication::Published`].
+    /// [`BlocksPublication::WholeRoute`] (a paragraph edit whose new block
+    /// the splice does not take) or an error leaves the inventory unchanged.
+    pub(crate) fn commit_blocks_replaced(
+        &mut self,
+        py: Python<'_>,
+        plan: BlocksPlan,
+        operation: &'static str,
+    ) -> PyResult<BlocksPublication> {
+        self.ensure_word_authority(py)?;
+        match plan {
+            BlocksPlan::Unchanged => Ok(BlocksPublication::Unchanged),
+            BlocksPlan::Paragraph(target) => self.replace_paragraph_owners(&target, operation),
+            BlocksPlan::Spliced(plan) => {
+                self.commit_blocks_splice(*plan, operation)?;
+                Ok(BlocksPublication::Published)
+            }
+        }
+    }
+
+    /// Under debug assertions, the document and the inventory as they were
+    /// before the blocks at `slot..slot + inserted` replaced `previous`, for
+    /// [`Self::assert_blocks_replaced`]. Take it before the commit.
+    #[cfg(debug_assertions)]
+    pub(crate) fn blocks_replaced_debug_copy(
+        &self,
+        slot: usize,
+        previous: &[oxoffice_docx_oxml::BodyContent],
+        inserted: usize,
+    ) -> BlocksDebugCopy {
+        let mut document = self.inner.clone_for_staging();
+        document
+            .splice_body_blocks(slot, inserted, previous.to_vec())
+            .expect("the replaced slots are in the body");
+        (document, self.owners.clone())
+    }
+
+    /// Under debug assertions, after a published block replacement and any
+    /// commit that goes with it: the oracles of the plan's shape (rebuild,
+    /// kept owners naming their elements, the retention of the whole route
+    /// or of a splice).
+    #[cfg(debug_assertions)]
+    pub(crate) fn assert_blocks_replaced(&self, before: &BlocksDebugCopy, summary: &BlocksSummary) {
+        match summary {
+            BlocksSummary::Unchanged => {}
+            BlocksSummary::Paragraph(target) => self.assert_paragraph_replacement(before, target),
+            BlocksSummary::Spliced { retired, born } => {
+                self.assert_blocks_splice(before, *retired, *born);
+            }
+        }
     }
 
     /// The inventory facts of the direct body block at `slot`, whose block
