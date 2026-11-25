@@ -67,6 +67,31 @@ pub struct CrossReferenceOptions {
     pub copy_referenced_notes: bool,
 }
 
+/// The run of one field that [`Document::insert_field`] inserts, once the
+/// field is checked for attachment.
+fn field_run(field: Field) -> Result<CT_R> {
+    field
+        .validate_for_attachment()
+        .map_err(|error| Error::Other(error.to_string()))?;
+    let mut run = CT_R::new("");
+    run.content = vec![RunContent::Field(field)];
+    Ok(run)
+}
+
+impl crate::Paragraph<'_> {
+    /// Insert `field` in a run of its own at accepted run boundary
+    /// `run_index` of this paragraph, as [`Document::insert_field`] does at a
+    /// [`crate::StoryRunPosition`] naming it, with the same errors. On error
+    /// the paragraph is unchanged.
+    #[doc(hidden)]
+    pub fn insert_field_at(&mut self, run_index: usize, field: Field) -> Result<()> {
+        let run = field_run(field)?;
+        self.inner
+            .insert_accepted_run(run_index, run)
+            .map_err(|error| Error::Other(format!("field insertion boundary: {error}")))
+    }
+}
+
 impl Document {
     /// Insert a dynamic sequence field at a checked accepted run boundary.
     pub fn insert_sequence(
@@ -128,11 +153,7 @@ impl Document {
 
     /// Insert a field at one checked physical run boundary without replacing its owner.
     pub fn insert_field(&mut self, position: &crate::StoryRunPosition, field: Field) -> Result<()> {
-        field
-            .validate_for_attachment()
-            .map_err(|error| Error::Other(error.to_string()))?;
-        let mut run = CT_R::new("");
-        run.content = vec![RunContent::Field(field)];
+        let run = field_run(field)?;
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
         candidate.insert_story_run_staged(position, run)?;

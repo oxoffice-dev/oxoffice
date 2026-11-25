@@ -764,7 +764,7 @@ impl Document {
 /// prefix bound again to another namespace is not told apart: the oracle
 /// that uses this compares what both routes wrote from one model.
 #[cfg(debug_assertions)]
-fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
+pub(crate) fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(xml.len());
     let mut in_tag = false;
     let mut quote = None;

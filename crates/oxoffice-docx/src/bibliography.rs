@@ -931,7 +931,16 @@ impl Document {
         position: &crate::StoryRunPosition,
         options: &CitationOptions,
     ) -> Result<()> {
-        self.insert_checked_story_field(position, citation_instruction(options)?)
+        self.insert_field(position, Self::citation_field(options)?)
+    }
+
+    /// The complex citation field [`Self::insert_citation`] inserts.
+    fn citation_field(options: &CitationOptions) -> Result<oxoffice_docx_oxml::text::Field> {
+        Ok(oxoffice_docx_oxml::text::Field::from_instruction(
+            citation_instruction(options)?,
+            oxoffice_docx_oxml::text::FieldForm::Complex,
+            Vec::new(),
+        )?)
     }
 
     /// Insert one bibliography owner with its own selectors and document style.
@@ -960,6 +969,75 @@ impl Document {
         candidate.insert_content(position, crate::ContentFragment::paragraph(paragraph)?)?;
         candidate.prepare_staged_package()?;
         publish_source_collection(self, candidate)
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Document {
+    /// Debug proof that a citation inserted in place, whose outcome was
+    /// `result` (the error's text on a refusal), made what
+    /// [`Self::insert_citation`] at `position` makes on `before`, a copy taken
+    /// before the edit: the same parts, read without their namespace
+    /// declarations (the staged route declares the part's namespaces again on
+    /// the paragraph it splices), or the same error and unchanged bytes.
+    #[doc(hidden)]
+    pub fn assert_citation_matches_staged(
+        &self,
+        mut before: Self,
+        position: &crate::StoryRunPosition,
+        options: &CitationOptions,
+        result: std::result::Result<(), String>,
+    ) {
+        let unchanged = before.to_bytes().map_err(|error| error.to_string());
+        let staged = before.insert_citation(position, options);
+        match (result, staged) {
+            (Ok(()), Ok(())) => assert_eq!(
+                self.parts_without_namespace_declarations(),
+                before.parts_without_namespace_declarations(),
+                "an in-place citation saves other parts than the staged one"
+            ),
+            (Err(direct), Err(staged)) => {
+                assert!(
+                    direct.contains(&staged.to_string()),
+                    "an in-place citation refused with {direct}, the staged one with {staged}"
+                );
+                assert_eq!(
+                    self.clone_for_staging()
+                        .to_bytes()
+                        .map_err(|error| error.to_string()),
+                    unchanged,
+                    "a refused in-place citation changed the document"
+                );
+            }
+            (Ok(()), Err(staged)) => panic!("an in-place citation hid the staged error {staged}"),
+            (Err(direct), Ok(())) => panic!("an in-place citation refused with {direct}"),
+        }
+    }
+
+    /// The parts a save writes, their namespace declarations set aside as
+    /// [`Document::assert_in_place_matches_staged_declarations_aside`] does.
+    fn parts_without_namespace_declarations(&self) -> Vec<(String, Vec<u8>)> {
+        let package = self
+            .clone_for_staging()
+            .staged_output_package()
+            .expect("the document saves");
+        let entries = package.zip_entries().expect("the package serializes");
+        entries
+            .into_iter()
+            .map(|(name, data)| (name, crate::document::without_namespace_declarations(&data)))
+            .collect()
+    }
+}
+
+impl crate::Paragraph<'_> {
+    /// Insert a complex citation at accepted run boundary `run_index` of this
+    /// paragraph: the field [`Document::insert_citation`] inserts at a
+    /// [`crate::StoryRunPosition`] naming this paragraph, with the same
+    /// errors. The citation writes this paragraph alone. On error the
+    /// paragraph is unchanged.
+    #[doc(hidden)]
+    pub fn insert_citation(&mut self, run_index: usize, options: &CitationOptions) -> Result<()> {
+        self.insert_field_at(run_index, Document::citation_field(options)?)
     }
 }
 
