@@ -170,7 +170,7 @@ impl Document {
             .content
             .drain(range.clone())
             .collect::<Vec<_>>();
-        self.invalidate_layout();
+        self.invalidate_after_removal();
         Ok(Some(RemovedBodyBlocks {
             slot: range.start,
             blocks,
@@ -190,6 +190,8 @@ impl Document {
             freed,
         } = removed;
         self.splice_body_blocks(slot, 0, blocks)?;
+        // The body is the one the removal found savable.
+        self.unsavable_body_edit_cache = OnceLock::from(None);
         self.freed_relationships
             .retain(|entry| !freed.contains(entry));
         Ok(())
@@ -255,7 +257,7 @@ impl Document {
             .content
             .drain(range.clone())
             .collect::<Vec<_>>();
-        self.invalidate_layout();
+        self.invalidate_after_removal();
         let removed = RemovedBodyBlocks {
             slot: range.start,
             blocks,
@@ -295,6 +297,15 @@ impl Document {
             return Ok(None);
         }
         Ok(Some(first..last))
+    }
+
+    /// Drop the layout after a removal in place, keeping the answer that the
+    /// body saves after a typed edit: the removal found it savable, and a
+    /// body without some of its blocks holds no namespace owner or prefix
+    /// it did not hold (debug builds check a kept answer on each read).
+    fn invalidate_after_removal(&mut self) {
+        self.invalidate_layout();
+        self.unsavable_body_edit_cache = OnceLock::from(None);
     }
 
     /// The content relationships of the main part that the blocks in `range`
