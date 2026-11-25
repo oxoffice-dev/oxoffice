@@ -176,7 +176,9 @@ def test_adding_and_replacing_a_source_keeps_every_handle_bound():
     run.text = "Second edited"
     back = reopened(doc)
     assert [paragraph.text for paragraph in back.paragraphs] == ["First edited", "Second edited"]
-    assert [(source.tag, source.guid) for source in back.bibliography_sources()][0] == ("Smith20", guid)
+    smith_back = back.bibliography_sources()[0]
+    assert (smith_back.tag, smith_back.guid) == ("Smith20", guid)
+    assert smith_back.supported.fields == (("title", "Another"),)
 
 
 def test_a_replacement_that_changes_nothing_writes_nothing():
