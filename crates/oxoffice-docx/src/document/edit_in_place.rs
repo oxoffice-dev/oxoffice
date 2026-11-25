@@ -172,9 +172,13 @@ impl EditUndo {
     }
 
     /// The direct body blocks the `BodyBlocks` unit copied before the edit,
-    /// from its slot on.
+    /// from its slot on, when the edit named one such unit (as
+    /// [`EditReport::body`]).
     pub fn previous_body_blocks(&self) -> Option<&[oxoffice_docx_oxml::document::BodyContent]> {
-        self.body.as_ref().map(|copy| copy.blocks.as_slice())
+        match self.body.as_slice() {
+            [copy] => Some(copy.blocks.as_slice()),
+            _ => None,
+        }
     }
 }
 
