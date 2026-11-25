@@ -862,6 +862,7 @@ mod tests {
     /// The run "!" appended to the first body paragraph: typed on `live`,
     /// by the staged byte splice (which repeats the root's namespace
     /// declarations on the paragraph) with `staged_text` on the oracle's copy.
+    #[cfg(debug_assertions)]
     fn check_appended_run(staged_text: &'static str) {
         let mut document = Document::new();
         document.add_paragraph("Alpha");
@@ -892,17 +893,20 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn the_oracle_takes_a_respliced_paragraph_for_the_same_paragraph() {
         check_appended_run("!");
     }
 
     #[test]
     #[should_panic(expected = "in-place edit saves other bytes than the staged edit")]
+    #[cfg(debug_assertions)]
     fn the_oracle_sees_a_difference_inside_a_respliced_paragraph() {
         check_appended_run("?");
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn only_a_declaration_the_root_makes_is_dropped() {
         let xml = br#"<?xml version="1.0"?><w:document xmlns:w="urn:w" xmlns:r="urn:r"><w:p xmlns:w="urn:w" xmlns:r="urn:other" xmlns:x="urn:x" w:rsidR="1"/></w:document>"#;
         assert_eq!(
