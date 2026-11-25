@@ -201,6 +201,68 @@ def test_a_comment_over_two_paragraphs_is_added_and_saved(saved):
     assert comment.anchor_text.startswith("run 0 of paragraph 6 ")
 
 
+def test_a_reply_keeps_every_handle_outside_its_paragraph_and_its_story(saved):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    parent = the_comment(doc)
+    edited = doc.paragraphs[5]
+    text = edited.text
+    edited_run = edited.runs[0]
+
+    reply = doc.reply_to(parent.id, author="Ben", text="agreed", date="2026-11-25T10:00:00Z")
+
+    # The commented paragraph and the comments edited alone: every handle outside them reads what it read, the
+    # parent comment's too.
+    assert reads(taken) == before(taken)
+    assert parent.text == "a remark"
+    assert parent.id == the_comment(doc).id
+    (written,) = [comment for comment in doc.comments if comment.id == reply]
+    assert (written.text, written.parent_id) == ("agreed", parent.id)
+    # The edited paragraph keeps its handle; its runs are born again.
+    assert edited.text == text
+    assert outcome(lambda: edited_run.text) == STALE
+    assert f'w:commentReference w:id="{reply}"' in edited.xml
+    taken["run"][0].text = "edited run"
+    taken["cell"][0].text = "edited cell"
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    assert again.paragraphs[3].runs[2].text == "edited run"
+    assert again.tables[0].cell(0, 1).text == "edited cell"
+    by_id = {comment.id: comment for comment in again.comments}
+    assert by_id[reply].parent_id == parent.id
+    assert by_id[reply].anchor_text == by_id[parent.id].anchor_text
+
+
+def test_a_reply_to_an_unknown_comment_leaves_the_document_and_every_handle_as_they_were(saved):
+    doc = oxdocx.Document.open(saved)
+    taken = handles_taken(doc)
+    edited_run = doc.paragraphs[5].runs[0]
+    data = doc.to_bytes()
+
+    with pytest.raises(oxdocx.DocxError, match="does not exist"):
+        doc.reply_to(max(comment.id for comment in doc.comments) + 100, author="Ben", text="agreed")
+
+    assert doc.to_bytes() == data
+    assert reads(taken) == before(taken)
+    assert edited_run.text == doc.paragraphs[5].runs[0].text
+
+
+def test_a_reply_to_a_comment_in_a_header_is_added_and_saved(saved):
+    doc = oxdocx.Document.open(saved)
+    header = doc.section(0).header.paragraphs[0]
+    (item,) = [it for it in doc.story_items if it.story.kind == "header" and it.kind == "paragraph"
+               and it.text == header.text]
+    parent = doc.add_comment(oxdocx.StoryRunRange(start=oxdocx.StoryRunPosition(item=item, run_index=0),
+                                                  end=oxdocx.StoryRunPosition(item=item, run_index=1)),
+                             author="Reviewer", text="on the header")
+
+    reply = doc.reply_to(parent, author="Ben", text="agreed")
+
+    again = oxdocx.Document.from_bytes(doc.to_bytes())
+    by_id = {comment.id: comment for comment in again.comments}
+    assert by_id[reply].parent_id == parent
+    assert by_id[reply].anchor_text == by_id[parent].anchor_text
+
+
 @pytest.mark.skipif(not debug_build(), reason="a debug build fails the publication on request")
 @pytest.mark.parametrize("failure", ["error", "panic"])
 def test_a_comment_whose_publication_fails_leaves_the_document_and_every_handle_as_they_were(

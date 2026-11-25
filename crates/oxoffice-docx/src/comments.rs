@@ -8,7 +8,7 @@ use oxoffice_docx_oxml::comments_extended::{CT_CommentEx, CT_CommentsEx};
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::BodyContent;
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
-use oxoffice_docx_oxml::text::{CT_P, CT_R, RangeAnchor, RunContent};
+use oxoffice_docx_oxml::text::{CT_P, CT_R, CommentRangeMarker, RangeAnchor, RunContent};
 use oxoffice_opc::OpcPackage;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
@@ -167,6 +167,29 @@ impl StoryRangeRef {
         match self.kind {
             StoryRangeKind::Bookmark { id, .. } => Some(id),
             _ => None,
+        }
+    }
+}
+
+/// Where a reply answered in place writes its marks: its start in the
+/// direct body paragraph at `start_slot`, before accepted run `start_run`,
+/// and its end in the one at `end_slot`, before accepted run `end_run` (just
+/// after the parent's reference run).
+#[derive(Clone, Copy, Debug)]
+struct ReplyMarks {
+    start_slot: usize,
+    end_slot: usize,
+    start_run: usize,
+    end_run: usize,
+}
+
+impl ReplyMarks {
+    /// The distinct slots, ascending.
+    fn slots(&self) -> Vec<usize> {
+        if self.start_slot == self.end_slot {
+            vec![self.start_slot]
+        } else {
+            vec![self.start_slot, self.end_slot]
         }
     }
 }
@@ -2442,11 +2465,269 @@ impl Document {
         reject_non_xml_comment(author, initials, text)?;
         let date = date.resolve()?;
         let date = date.as_deref();
+        // Decided before any edit: a parent whose marks are direct children
+        // of direct body paragraphs is answered in place, any other on the
+        // staged route.
+        let Some(marks) = self.reply_marks_in_body(parent_id) else {
+            return self.reply_to_with_initials_staged(parent_id, author, initials, text, date);
+        };
+        let mut units = marks
+            .slots()
+            .into_iter()
+            .map(|slot| crate::EditUnit::BodyBlocks { slot, count: 1 })
+            .collect::<Vec<_>>();
+        // The flush of pending typed notes and comments writes their parts.
+        units.extend([
+            crate::EditUnit::Comments,
+            crate::EditUnit::Footnotes,
+            crate::EditUnit::Styles,
+            crate::EditUnit::Parts,
+        ]);
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(&units, |document| {
+            let id = document.reply_to_in_place(&marks, parent_id, author, initials, text, date)?;
+            document.flush_dirty_related_story_models()?;
+            Ok(id)
+        });
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged_declarations_aside(before, &result, |staged| {
+            staged.reply_to_with_initials_staged(parent_id, author, initials, text, date)
+        });
+        result
+    }
+
+    /// The direct body slots a reply to `parent_id` writes its marks in, in
+    /// ascending order, when [`Self::reply_to_with_initials`] answers it in
+    /// place; `None` when it takes the staged route.
+    #[doc(hidden)]
+    pub fn reply_in_place_slots(&self, parent_id: i32) -> Option<Vec<usize>> {
+        self.reply_marks_in_body(parent_id)
+            .map(|marks| marks.slots())
+    }
+
+    /// Where a reply to `parent_id` writes its marks when the parent's
+    /// start, end and reference run are direct children of direct body
+    /// paragraphs, found by a walk of the body's typed blocks and read on
+    /// those paragraphs alone: the reply starts where the parent starts and
+    /// ends after the parent's reference run, as
+    /// [`Self::anchor_reply_crossing`] places it. `None`, for the staged
+    /// route, for any other shape: a parent in another story, a table cell,
+    /// a block control, a hyperlink, a control or a raw fragment, a parent
+    /// without a single start, end and reference, a reference that does not
+    /// follow the end, and marks that cannot be written as the staged route
+    /// writes them (checked on copies of the paragraphs).
+    fn reply_marks_in_body(&self, parent_id: i32) -> Option<ReplyMarks> {
+        self.comments
+            .as_ref()?
+            .comments
+            .iter()
+            .any(|comment| comment.id == parent_id)
+            .then_some(())?;
+        let hits = self.body_slots_counting_comment_references(&HashSet::from([parent_id]));
+        if hits.is_empty() || hits.len() > 2 || hits.iter().any(|(hit, _)| hit.raw) {
+            return None;
+        }
+        let (mut start, mut end, mut reference) = (None, None, None);
+        for (hit, typed) in &hits {
+            let BodyContent::Paragraph(paragraph) = self.document.body.content.get(hit.slot)?
+            else {
+                return None;
+            };
+            let mut direct = 0;
+            for marker in &paragraph.comment_ranges {
+                match marker {
+                    CommentRangeMarker::Start { id, .. } if *id == parent_id => {
+                        start.replace(hit.slot).is_none().then_some(())?;
+                        direct += 1;
+                    }
+                    CommentRangeMarker::End { id, .. } if *id == parent_id => {
+                        end.replace(hit.slot).is_none().then_some(())?;
+                        direct += 1;
+                    }
+                    _ => {}
+                }
+            }
+            for run in &paragraph.runs {
+                for content in &run.content {
+                    if matches!(content, RunContent::CommentReference { id, .. } if *id == parent_id)
+                    {
+                        reference.replace(hit.slot).is_none().then_some(())?;
+                        direct += 1;
+                    }
+                }
+            }
+            // A mark the walk found outside the paragraph's direct children.
+            if direct != *typed {
+                return None;
+            }
+        }
+        let (start_slot, end_slot) = (start?, end?);
+        if reference != Some(end_slot) || start_slot > end_slot {
+            return None;
+        }
+        let paragraph = |slot: usize| match &self.document.body.content[slot] {
+            BodyContent::Paragraph(paragraph) => paragraph.as_ref(),
+            _ => unreachable!("hit slots are paragraphs"),
+        };
+        // The accepted run axis the staged route reads the parent on.
+        let (start_run, end_run) = if start_slot == end_slot {
+            match paragraph(start_slot)
+                .accepted_comment_projection(parent_id, false)
+                .ok()?
+            {
+                (_, false, Some(start), Some(end)) => (start, end),
+                _ => return None,
+            }
+        } else {
+            let (start, end) = (
+                paragraph(start_slot)
+                    .accepted_comment_projection(parent_id, false)
+                    .ok()?,
+                paragraph(end_slot)
+                    .accepted_comment_projection(parent_id, true)
+                    .ok()?,
+            );
+            match (start, end) {
+                ((_, true, Some(start), None), (_, false, None, Some(end))) => (start, end),
+                _ => return None,
+            }
+        };
+        // The reference run is the accepted run the parent's range ends
+        // before, and holds the reference alone.
+        let last = paragraph(end_slot);
+        let mut found = None;
+        for (index, path) in last.accepted_run_paths().iter().enumerate() {
+            let run = last.accepted_run(path)?;
+            if run.content.iter().any(
+                |content| matches!(content, RunContent::CommentReference { id, .. } if *id == parent_id),
+            ) {
+                found.replace((index, run)).is_none().then_some(())?;
+            }
+        }
+        let (index, run) = found?;
+        if index != end_run || !reply_reference_has_only_metadata(run, parent_id).ok()? {
+            return None;
+        }
+        let marks = ReplyMarks {
+            start_slot,
+            end_slot,
+            start_run,
+            end_run: end_run + 1,
+        };
+        // The marks of a reply whose id no mark of these paragraphs uses.
+        let used = |id: i32| {
+            [start_slot, end_slot].iter().any(|slot| {
+                paragraph(*slot).comment_ranges.iter().any(|marker| {
+                    let (CommentRangeMarker::Start { id: found, .. }
+                    | CommentRangeMarker::End { id: found, .. }) = marker;
+                    *found == id
+                })
+            })
+        };
+        let probe = (0..=i32::MAX).rev().find(|id| !used(*id))?;
+        self.reply_marked_paragraphs(&marks, parent_id, probe, "CommentReference")
+            .ok()?;
+        Some(marks)
+    }
+
+    /// The paragraphs of `marks` with the marks of reply `id` written as
+    /// [`Self::anchor_reply_crossing`] and
+    /// [`Self::style_written_comment_reference`] write them: the range
+    /// anchored on the accepted run axis with its reference run after the
+    /// end, the start moved just after the parent's start, the reference
+    /// run styled `style`.
+    fn reply_marked_paragraphs(
+        &self,
+        marks: &ReplyMarks,
+        parent_id: i32,
+        id: i32,
+        style: &str,
+    ) -> Result<Vec<(usize, CT_P)>> {
+        let paragraph = |slot: usize| match self.document.body.content.get(slot) {
+            Some(BodyContent::Paragraph(paragraph)) => Ok(paragraph.as_ref().clone()),
+            _ => Err(Error::Other(format!(
+                "comment id {parent_id} has no range to reply to"
+            ))),
+        };
+        let anchor = RangeAnchor::Comment(id);
+        let label = "comment reply";
+        let mut first = paragraph(marks.start_slot)?;
+        let mut written = if marks.start_slot == marks.end_slot {
+            anchor_paragraph_range(
+                &mut first,
+                Some(marks.start_run),
+                Some(marks.end_run),
+                anchor,
+                label,
+            )?;
+            vec![(marks.start_slot, first)]
+        } else {
+            let mut last = paragraph(marks.end_slot)?;
+            anchor_paragraph_range(&mut first, Some(marks.start_run), None, anchor, label)?;
+            anchor_paragraph_range(&mut last, None, Some(marks.end_run), anchor, label)?;
+            vec![(marks.start_slot, first), (marks.end_slot, last)]
+        };
+        if !written[0].1.place_comment_start_after(id, parent_id) {
+            return Err(Error::Other(format!(
+                "comment id {parent_id} has no range to reply to"
+            )));
+        }
+        let last = written.len() - 1;
+        style_comment_reference(&mut written[last].1, id, style)?;
+        Ok(written)
+    }
+
+    /// The in-place half of [`Self::reply_to_with_initials`], inside its
+    /// open edit: the reply's marks written in the paragraphs of `marks`,
+    /// then the reply as the staged route defines it.
+    fn reply_to_in_place(
+        &mut self,
+        marks: &ReplyMarks,
+        parent_id: i32,
+        author: &str,
+        initials: Option<&str>,
+        text: &str,
+        date: Option<&str>,
+    ) -> Result<i32> {
+        validate_comment_date(date)?;
+        let parent_index = self.reply_parent_index(parent_id)?;
+        let id = self.identifiers.reserve_comment_id()?;
+        let styles = self.prepare_comment_authoring()?;
+        for (slot, paragraph) in self.reply_marked_paragraphs(marks, parent_id, id, &styles.1)? {
+            self.replace_body_block_in_place(slot, BodyContent::Paragraph(Box::new(paragraph)))?;
+        }
+        self.push_reply_definition(parent_index, id, author, initials, text, date, &styles)?;
+        Ok(id)
+    }
+
+    /// The staged route of [`Self::reply_to_with_initials`], its debug
+    /// oracle and its route for every parent not taken in place.
+    fn reply_to_with_initials_staged(
+        &mut self,
+        parent_id: i32,
+        author: &str,
+        initials: Option<&str>,
+        text: &str,
+        date: Option<&str>,
+    ) -> Result<i32> {
         let mut candidate = self.clone_for_staging();
         let id = candidate.reply_to_staged(parent_id, author, initials, text, date)?;
         candidate.flush_dirty_related_story_models()?;
         self.commit_staged_mutation(candidate);
         Ok(id)
+    }
+
+    fn reply_parent_index(&self, parent_id: i32) -> Result<usize> {
+        self.comments
+            .as_ref()
+            .and_then(|comments| {
+                comments
+                    .comments
+                    .iter()
+                    .position(|item| item.id == parent_id)
+            })
+            .ok_or_else(|| Error::Other(format!("comment id {parent_id} does not exist")))
     }
 
     fn reply_to_staged(
@@ -2458,19 +2739,30 @@ impl Document {
         date: Option<&str>,
     ) -> Result<i32> {
         validate_comment_date(date)?;
-        let parent_index = self
-            .comments
-            .as_ref()
-            .and_then(|comments| {
-                comments
-                    .comments
-                    .iter()
-                    .position(|item| item.id == parent_id)
-            })
-            .ok_or_else(|| Error::Other(format!("comment id {parent_id} does not exist")))?;
+        let parent_index = self.reply_parent_index(parent_id)?;
         let (id, story) = self.anchor_reply_crossing(parent_id, None)?;
         let styles = self.prepare_comment_authoring()?;
         self.style_written_comment_reference(&story, id, &styles.1)?;
+        self.push_reply_definition(parent_index, id, author, initials, text, date, &styles)?;
+        Ok(id)
+    }
+
+    /// Define reply `id` to the comment at `parent_index`, whose marks are
+    /// written: its paragraphs styled with `styles`, the paragraph ids that
+    /// link it to its parent, its comments and extended comments entries
+    /// (the last of their parts), and the models and relationships they
+    /// need.
+    #[allow(clippy::too_many_arguments)]
+    fn push_reply_definition(
+        &mut self,
+        parent_index: usize,
+        id: i32,
+        author: &str,
+        initials: Option<&str>,
+        text: &str,
+        date: Option<&str>,
+        styles: &(String, String),
+    ) -> Result<()> {
         let existing_parent_para_id = last_para_id(
             &self
                 .comments
@@ -2486,7 +2778,7 @@ impl Document {
             None => allocate_para_id_from_occupied(&mut occupied)?,
         };
         let (paragraphs, paragraph_ids, para_id) =
-            comment_text_paragraphs(text, &mut occupied, &styles)?;
+            comment_text_paragraphs(text, &mut occupied, styles)?;
         self.ensure_comment_models()?;
         self.ensure_comment_relationships()?;
 
@@ -2534,7 +2826,7 @@ impl Document {
         });
         self.comments_dirty = true;
         self.invalidate_layout();
-        Ok(id)
+        Ok(())
     }
 
     /// Reuse checked story endpoints, extending the reply through the parent's

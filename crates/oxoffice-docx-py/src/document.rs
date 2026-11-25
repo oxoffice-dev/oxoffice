@@ -90,6 +90,7 @@ mod block_edits;
 mod block_edits_in_place;
 mod body_splice;
 mod inventory_matches;
+mod marks_in_place;
 mod owner_anchors;
 mod owner_facts;
 mod owner_locations;

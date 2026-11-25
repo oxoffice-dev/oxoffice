@@ -298,6 +298,19 @@ impl Document {
     /// comments `ids`.
     #[doc(hidden)]
     pub fn body_slots_referencing_comments(&self, ids: &HashSet<i32>) -> Vec<SlotHit> {
+        self.body_slots_counting_comment_references(ids)
+            .into_iter()
+            .map(|(hit, _)| hit)
+            .collect()
+    }
+
+    /// [`Self::body_slots_referencing_comments`], with how many range marks
+    /// and reference runs of those comments the typed owners of each block
+    /// hold.
+    pub(crate) fn body_slots_counting_comment_references(
+        &self,
+        ids: &HashSet<i32>,
+    ) -> Vec<(SlotHit, usize)> {
         let raw_id = |value: i32| ids.contains(&value);
         let typed_run = |content: &RunContent| matches!(content, RunContent::CommentReference { id, .. } if ids.contains(id));
         let hits = search_slots(self, &mut |block| {
@@ -314,7 +327,7 @@ impl Document {
         });
         #[cfg(debug_assertions)]
         self.assert_slots_match_serialized(&hits, COMMENT_ELEMENTS, &raw_id);
-        hits.into_iter().map(|(hit, _)| hit).collect()
+        hits
     }
 
     /// Debug proof of a slot query: the blocks of the serialized main part

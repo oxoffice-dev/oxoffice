@@ -225,6 +225,16 @@ impl EditUndo {
             _ => None,
         }
     }
+
+    /// The direct body blocks each `BodyBlocks` unit copied before the
+    /// edit, with the unit's slot, in slot order.
+    pub fn previous_body_block_units(
+        &self,
+    ) -> impl Iterator<Item = (usize, &[oxoffice_docx_oxml::document::BodyContent])> {
+        self.body
+            .iter()
+            .map(|copy| (copy.slot, copy.blocks.as_slice()))
+    }
 }
 
 /// The in-place edit open on a document and the undo its caller holds. A
@@ -849,7 +859,10 @@ impl Document {
     /// writes its element from the model while the staged route writes it
     /// from a fragment that declares its namespaces again: the two packages
     /// hold the same parts, and the same bytes once the namespace
-    /// declarations are set aside.
+    /// declarations, and the whitespace between a part's XML declaration
+    /// and its root, are set aside. A staged route that writes the main part
+    /// as bytes and reads it again loses the line break a producer wrote
+    /// after the declaration, which a typed body edit keeps (#638).
     #[cfg(debug_assertions)]
     pub(crate) fn assert_in_place_matches_staged_declarations_aside<
         T: PartialEq + std::fmt::Debug,
@@ -868,7 +881,12 @@ impl Document {
                     let mut parts = package
                         .parts
                         .iter()
-                        .map(|(name, bytes)| (name.clone(), without_namespace_declarations(bytes)))
+                        .map(|(name, bytes)| {
+                            (
+                                name.clone(),
+                                without_namespace_declarations(&without_prolog_whitespace(bytes)),
+                            )
+                        })
                         .collect::<Vec<_>>();
                     parts.sort();
                     parts
@@ -931,6 +949,23 @@ impl Document {
             (Err(direct), Ok(_)) => panic!("in-place edit refused with {direct}"),
         }
     }
+}
+
+/// `xml` without the whitespace that follows its leading XML declaration.
+#[cfg(debug_assertions)]
+fn without_prolog_whitespace(xml: &[u8]) -> Vec<u8> {
+    if !xml.starts_with(b"<?xml") {
+        return xml.to_vec();
+    }
+    let Some(end) = xml.windows(2).position(|window| window == b"?>") else {
+        return xml.to_vec();
+    };
+    let rest = &xml[end + 2..];
+    let skipped = rest
+        .iter()
+        .take_while(|byte| byte.is_ascii_whitespace())
+        .count();
+    [&xml[..end + 2], &rest[skipped..]].concat()
 }
 
 /// `xml` without the namespace declarations of its tags (` xmlns="..."`,

@@ -12,7 +12,7 @@ use oxoffice_docx::{
 };
 use oxoffice_opc::OpcPackage;
 
-use crate::support::{doc_with, doc_with_body, reopen, texts};
+use crate::support::{doc_with, doc_with_body, reopen, texts, with_body};
 
 /// Runs `start_run..end_run`, from body paragraph `start` to body paragraph `end`.
 fn run_range(start: usize, start_run: usize, end: usize, end_run: usize) -> RunRange {
@@ -343,6 +343,188 @@ fn a_thread_keeps_every_reply_under_its_own_parent() {
             (nested, Some(first)),
         ]
     );
+}
+
+/// Reply to `parent` as `Ben`, undated, holding the edit's undo: the reply
+/// and the body slots the edit changed in place, none on the staged route.
+fn reply_in_place(doc: &mut Document, parent: i32) -> (i32, Vec<usize>) {
+    doc.hold_edit_undo();
+    let reply = doc
+        .reply_to_with_date(parent, "Ben", "reply", CommentDate::Undated)
+        .unwrap();
+    let slots = doc
+        .take_edit_undo()
+        .map(|undo| {
+            undo.report()
+                .body_blocks
+                .iter()
+                .map(|change| change.slot)
+                .collect()
+        })
+        .unwrap_or_default();
+    (reply, slots)
+}
+
+#[test]
+fn a_reply_in_one_body_paragraph_writes_its_marks_in_place() {
+    let mut doc = doc_with(&["before", "Hello brave world", "after"]);
+    let root = doc
+        .add_comment_on_text(
+            "brave",
+            "Ada",
+            "root",
+            TextCommentOptions {
+                date: CommentDate::Undated,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(doc.reply_in_place_slots(root), Some(vec![1]));
+    let (reply, slots) = reply_in_place(&mut doc, root);
+    assert_eq!(slots, [1]);
+    // A reply to the reply has its own marks around the thread's.
+    assert_eq!(doc.reply_in_place_slots(reply), Some(vec![1]));
+    let (nested, _) = reply_in_place(&mut doc, reply);
+
+    let doc = reopen(&mut doc);
+    assert_eq!(texts(&doc), ["before", "Hello brave world", "after"]);
+    for id in [root, reply, nested] {
+        assert_eq!(
+            doc.comment_anchor_text(id).unwrap().as_deref(),
+            Some("brave")
+        );
+    }
+    assert_eq!(comment(&doc, reply).parent_id(), Some(root));
+    assert_eq!(comment(&doc, nested).parent_id(), Some(reply));
+    // Each start follows its parent's; each end and reference follows the
+    // parent's reference.
+    assert_eq!(
+        comment_marks(&doc),
+        [
+            root, reply, nested, root, root, reply, reply, nested, nested
+        ]
+    );
+}
+
+#[test]
+fn a_reply_to_a_range_over_paragraphs_edits_its_first_and_last_paragraph_in_place() {
+    for (end, expected) in [(1, "first\nsecond"), (2, "first\nsecond\nthird")] {
+        let mut doc = doc_with(&["first", "second", "third", "fourth"]);
+        let root = doc
+            .add_comment(run_range(0, 0, end, 1), "Ada", None, "span")
+            .unwrap();
+        assert_eq!(doc.reply_in_place_slots(root), Some(vec![0, end]));
+        let (reply, slots) = reply_in_place(&mut doc, root);
+        assert_eq!(slots, [0, end]);
+
+        let doc = reopen(&mut doc);
+        assert_eq!(texts(&doc), ["first", "second", "third", "fourth"]);
+        assert_eq!(
+            doc.comment_anchor_text(reply).unwrap().as_deref(),
+            Some(expected)
+        );
+        assert_eq!(comment(&doc, reply).parent_id(), Some(root));
+    }
+}
+
+#[test]
+fn a_reply_around_bookmarks_and_links_writes_the_staged_marks_in_place() {
+    let mut doc = doc_with(&["text"]);
+    let root = doc
+        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "root")
+        .unwrap();
+    let saved = doc.to_bytes().unwrap();
+    let start = format!(r#"<w:commentRangeStart w:id="{root}"/>"#);
+    let end = format!(
+        r#"<w:commentRangeEnd w:id="{root}"/><w:r><w:commentReference w:id="{root}"/></w:r>"#
+    );
+    for (body, anchored) in [
+        // The reply's start goes back before the bookmark, after the
+        // parent's start, as the staged route moves it.
+        (
+            format!(
+                r#"<w:p>{start}<w:bookmarkStart w:id="0" w:name="b"/><w:r><w:t>text</w:t></w:r><w:bookmarkEnd w:id="0"/>{end}</w:p>"#
+            ),
+            "text",
+        ),
+        (
+            format!(
+                r#"<w:p><w:r><w:t>a </w:t></w:r>{start}<w:hyperlink w:anchor="b"><w:r><w:t>link</w:t></w:r></w:hyperlink>{end}<w:r><w:t> z</w:t></w:r></w:p>"#
+            ),
+            "link",
+        ),
+        (
+            format!(
+                r#"<w:p>{start}<w:r><w:t>one</w:t></w:r></w:p><w:p><w:r><w:t>two</w:t></w:r><w:bookmarkStart w:id="0" w:name="b"/><w:bookmarkEnd w:id="0"/>{end}</w:p>"#
+            ),
+            "one\ntwo",
+        ),
+    ] {
+        let mut doc = Document::from_bytes(&with_body(saved.clone(), &body)).unwrap();
+        let expected = doc.reply_in_place_slots(root).expect("in place");
+        let (reply, slots) = reply_in_place(&mut doc, root);
+        assert_eq!(slots, expected, "{body}");
+        let doc = reopen(&mut doc);
+        assert_eq!(
+            doc.comment_anchor_text(reply).unwrap().as_deref(),
+            Some(anchored),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_reply_to_a_comment_outside_direct_body_paragraphs_takes_the_staged_route() {
+    // A header.
+    let mut doc = doc_with(&["body text"]);
+    doc.set_header("Header words");
+    let header = story_paragraph(&doc, StoryKind::Header, 0);
+    let root = doc
+        .add_story_comment_with_date(
+            story_range(&header, 0, 1),
+            "Ada",
+            None,
+            "On the header",
+            CommentDate::Undated,
+        )
+        .unwrap();
+    assert_eq!(doc.reply_in_place_slots(root), None);
+    let (reply, slots) = reply_in_place(&mut doc, root);
+    assert!(slots.is_empty());
+    let reopened = reopen(&mut doc);
+    assert_eq!(anchor_kind(&reopened, reply), StoryKind::Header);
+    assert_eq!(
+        reopened.comment_anchor_text(reply).unwrap().as_deref(),
+        Some("Header words")
+    );
+
+    // A parent whose reference run a tracked insertion holds: a raw hit.
+    let mut doc = doc_with(&["text"]);
+    let root = doc
+        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "root")
+        .unwrap();
+    let bytes = with_body(
+        doc.to_bytes().unwrap(),
+        &format!(
+            concat!(
+                r#"<w:p><w:commentRangeStart w:id="{id}"/><w:r><w:t>text</w:t></w:r>"#,
+                r#"<w:commentRangeEnd w:id="{id}"/><w:ins w:id="90" w:author="a" "#,
+                r#"w:date="2024-01-01T00:00:00Z"><w:r><w:commentReference w:id="{id}"/>"#,
+                r#"</w:r></w:ins></w:p>"#
+            ),
+            id = root
+        ),
+    );
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    assert_eq!(doc.reply_in_place_slots(root), None);
+    let (reply, slots) = reply_in_place(&mut doc, root);
+    assert!(slots.is_empty());
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        doc.comment_anchor_text(reply).unwrap().as_deref(),
+        Some("text")
+    );
+    assert_eq!(comment(&doc, reply).parent_id(), Some(root));
 }
 
 #[test]

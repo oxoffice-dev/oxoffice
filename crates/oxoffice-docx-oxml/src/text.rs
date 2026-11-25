@@ -5105,6 +5105,61 @@ impl CT_P {
         false
     }
 
+    /// Put the paragraph-level start marker of comment `id` just after the
+    /// paragraph-level start marker of comment `after`, among the children
+    /// at that marker's direct run boundary, as a reply's start follows its
+    /// parent's. Returns whether both markers are direct children of this
+    /// paragraph; the paragraph is unchanged otherwise.
+    #[doc(hidden)]
+    pub fn place_comment_start_after(&mut self, id: i32, after: i32) -> bool {
+        let start_of = |paragraph: &Self, wanted: i32| {
+            let mut found = paragraph
+                .comment_ranges
+                .iter()
+                .enumerate()
+                .filter(|(_, marker)| {
+                    matches!(marker, CommentRangeMarker::Start { id, .. } if *id == wanted)
+                })
+                .map(|(index, _)| index);
+            match (found.next(), found.next()) {
+                (Some(index), None) => Some(index),
+                _ => None,
+            }
+        };
+        let (Some(moved), Some(parent)) = (start_of(self, id), start_of(self, after)) else {
+            return false;
+        };
+        let (from, to) = (
+            self.comment_ranges[moved].run_index(),
+            self.comment_ranges[parent].run_index(),
+        );
+        let mut paragraph = self.clone();
+        let mut source = paragraph.boundary_items(from);
+        source.retain(|item| *item != BoundaryItem::Marker(moved));
+        let mut target = if from == to {
+            source.clone()
+        } else {
+            paragraph.boundary_items(to)
+        };
+        let Some(position) = target
+            .iter()
+            .position(|item| *item == BoundaryItem::Marker(parent))
+        else {
+            return false;
+        };
+        target.insert(position + 1, BoundaryItem::Marker(moved));
+        if from == to {
+            paragraph.place_boundary_items(&[(to, target)]);
+        } else {
+            paragraph.place_boundary_items(&[(from, source), (to, target)]);
+        }
+        if !paragraph.refresh_bookmark_projection() {
+            return false;
+        }
+        *self = paragraph;
+        true
+    }
+
     /// Insert one run at a checked accepted-view boundary atomically.
     #[doc(hidden)]
     pub fn insert_accepted_run(

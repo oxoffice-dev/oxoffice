@@ -816,7 +816,7 @@ GROWING = {
     "Document.remove_content_control", "Document.remove_content_range", "Document.remove_endnote",
     "Document.remove_footnote", "Document.remove_hyperlink", "Document.remove_section",
     "Document.repeat_content_control", "Document.replace_image", "Document.replace_image_for_story",
-    "Document.replace_text_at", "Document.reply_to", "Document.set_chart_legend", "Document.set_hyperlink_url",
+    "Document.replace_text_at", "Document.set_chart_legend", "Document.set_hyperlink_url",
     "Document.set_picture_size", "Document.set_picture_sizes_for_relationship", "Document.unwrap_content_control",
     "FootnoteEndnote.delete", "Paragraph.add_hyperlink", "Paragraph.add_internal_hyperlink", "Paragraph.replace_text",
     "Paragraph.replace_xml", "Run.add_picture", "Run.replace_xml", "Run.text", "SectionHandle.replace_xml",

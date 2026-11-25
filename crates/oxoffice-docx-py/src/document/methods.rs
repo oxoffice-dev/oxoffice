@@ -3850,6 +3850,9 @@ impl PyDocument {
         py: Python<'_>,
     ) -> PyResult<i32> {
         let date = comment_date(date, undated)?;
+        if let Some(id) = self.reply_in_place(py, parent_id, author, initials, text, date)? {
+            return Ok(id);
+        }
         let mut candidate = self.inner.clone_for_staging();
         let id = candidate
             .reply_to_with_initials(parent_id, author, initials, text, date)
