@@ -506,6 +506,54 @@ trusted. A table cell, a header or footer, a block content control, a
 text box, a hyperlink or a story item the caller built keep today's
 route; `insert_citation_after_text` (a text search) too.
 
+### SEC: replies, comment moves and revision ids (amended 2026-11-25)
+
+`reply_to`, `move_comment`, `accept_revision_id` and `reject_revision_id`
+edit the direct body paragraphs that hold their marks in place, one
+`BodyBlocks { slot, count: 1 }` unit per paragraph (plus `Comments`,
+`Footnotes`, `Styles`, `Parts` for the comment calls), and publish the
+paragraph's block replacement (#636) and, for a reply, the story splice of
+the new comment (#641). The paragraph keeps its owner and its run handles
+go; every other handle is kept.
+
+The route is decided before the edit, at the cost of the paragraphs that
+hold the marks, by a hidden predicate the facade and the binding share
+(`reply_in_place_slots`, `move_comment_in_place_slots`,
+`revision_id_in_place_slots`); a "no" takes today's staged route, which
+pays nothing of the in-place attempt. The predicates find the paragraphs
+with the written-fragment walk (#637) and answer "no" for:
+
+- a reply: a parent anchored outside the body, in a table cell or a text
+  box; a mark or the reference inside a hyperlink, control, smart tag or
+  revision (a raw hit); a reference that is not the accepted run right
+  after the parent's end; a start that would land in a revision or control;
+- a move: a comment with replies (threads); a source or destination
+  outside the direct body paragraphs; a source paragraph the staged route
+  would drop (marks only);
+- a revision id: an id also written in a header, footer, note, comment or
+  the final or background section properties (a byte scan of those parts,
+  which do not grow with the body); a table, control or section; a
+  paragraph-mark revision (it joins paragraphs); comment marks, note
+  references, fields or note custody bookmarks in the paragraph; a dirty
+  notes or comments model; the comparison comment record; a paragraph the
+  resolver rewrites in bytes the model would not write back;
+- every call: more than one paragraph to publish. The facade can edit them
+  in place, but the binding publishes one paragraph per revision until the
+  N -> M publication of the block lane; it takes the whole route before
+  the edit.
+
+A revision paragraph is resolved alone: the main part's own resolver runs
+on the paragraph in its frame (root, body, final section properties) and
+the result is reparsed as exactly one paragraph.
+
+The debug oracle compares with the staged route as before; its normal form
+also drops the whitespace after the XML declaration, which the staged
+route's reparse loses and the in-place route keeps (#638).
+
+`insert_section`, `remove_section` and `move_content` follow in a second
+pull request: they change block counts at two slots and need the N -> M
+publication and `SectionProperties { index }` (#645).
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.
