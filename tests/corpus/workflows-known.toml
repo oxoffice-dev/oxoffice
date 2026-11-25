@@ -8,28 +8,27 @@
 # compare-after-edit: an edit inside a text box in mc:AlternateContent is
 # redlined as the whole box deleted and inserted, and the deleted copy keeps
 # w:t in the box's paragraphs inside the w:del: the redline fails validation.
-# Issue to come (#659).
 
 [[known]]
 file = "authored/newsletter.docx"
 workflow = "compare-after-edit"
-issue = 659
+issue = 666
 message = "kinds failing: text box (the redline is invalid: [\"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\"])."
 
 [[known]]
 file = "google/newsletter.docx"
 workflow = "compare-after-edit"
-issue = 659
+issue = 666
 message = "kinds failing: text box (the redline is invalid: [\"part /word/document.xml: w:t inside w:del must use w:delText\"])."
 
 [[known]]
 file = "libreoffice/newsletter.docx"
 workflow = "compare-after-edit"
-issue = 659
+issue = 666
 message = "kinds failing: text box (the redline is invalid: [\"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\"])."
 
 [[known]]
 file = "word/newsletter.docx"
 workflow = "compare-after-edit"
-issue = 659
+issue = 666
 message = "kinds failing: text box (the redline is invalid: [\"part /word/document.xml: w:t inside w:del must use w:delText\", \"part /word/document.xml: w:t inside w:del must use w:delText\"])."

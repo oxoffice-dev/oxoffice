@@ -202,7 +202,7 @@ pub(super) fn compare_control_from_xml(
             && (blocks(&original_content) || blocks(&edited_content))
         {
             return Err(Error::Other(format!(
-                "comparison cannot give an empty block content control content, nor take all of it, at {location}"
+                "comparison cannot give an empty block content control content, nor take all of it, at {location} (limitation docx-compare-empty-container)"
             )));
         }
         let whitespace_slots = control_whitespace_slots(original)?;
