@@ -700,6 +700,9 @@ impl Document {
                     "cannot serialize a modified document with a shadowed `{prefix}` namespace"
                 )));
             }
+            // The previous flush's record, whose pieces under a kept producer
+            // root carry over where the body did not change.
+            let previous_record = self.main_part_blocks.clone();
             let serialized = match template.as_deref_mut() {
                 Some(template) => self.main_part_xml_in(Some(template))?,
                 None => self.main_part_xml()?,
@@ -715,7 +718,27 @@ impl Document {
                 template.as_deref_mut(),
             )?;
             replayed_output_has_retained_namespace_owner = has_retained_owner;
-            Some(replayed)
+            // A body edit keeps the root the producer wrote: its declaration
+            // and the order of its attributes (rule 7). The written root
+            // stays when the two roots differ in anything else.
+            let producer_root = if template.is_none() && replayed == serialized {
+                kept_xml.as_deref().and_then(|existing| {
+                    self.main_part_blocks.as_ref()?.with_producer_root(
+                        &serialized,
+                        existing,
+                        previous_record.as_ref(),
+                    )
+                })
+            } else {
+                None
+            };
+            match producer_root {
+                Some((xml, record)) => {
+                    self.main_part_blocks = Some(record);
+                    Some(xml)
+                }
+                None => Some(replayed),
+            }
         };
         let namespace_scopes = document_namespace_scopes(
             doc_xml

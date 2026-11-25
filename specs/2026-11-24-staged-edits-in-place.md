@@ -404,6 +404,44 @@ form operations (#7).
 - `remove_bibliography_source` keeps its staged route: it reads every
   citation field of the document to refuse removing a cited source.
 
+### S1c-1: notes and comments with a body reference (amended 2026-11-25)
+
+`add_footnote`, `add_endnote` and `add_comment` on one direct body
+paragraph edit in place over `BodyBlocks { slot, count: 1 }`, the notes or
+comments model, `Styles` (a missing reference style joins the open edit,
+no nested commit) and `Parts`. The facade inserts the typed reference run
+in the paragraph (`create_note_in_body_slot`; `add_comment_with_date` over
+its start..end slots) and appends the note or comment last in its part;
+the comment id is reserved in the journal. Both note routes refuse text
+XML 1.0 cannot carry up front (the staged route refused it at reopen).
+
+The binding publishes both halves in one step
+(`publish_body_paragraph_and_story`): the paragraph's block replacement
+and the story splice of the new entry are both checked before either
+commits, since each half alone sees the other's change unpublished; the
+debug inventory check runs once after both. The edited paragraph keeps its
+owner, its run handles go (the paragraph retention); every other handle is
+kept. A first note or comment (its part is born), a table cell, block
+control or text box location, a range over two paragraphs, a non-body
+story (`StoryRunRange`) and any half answering the whole route undo the
+edit and keep today's route. The debug oracle compares saved parts in a
+normal form (`oracle_normal_form`): namespace declarations repeating the
+root's (same prefix and URI) are dropped, as the staged byte splice
+re-declares them.
+### S2b: isolate_span and insert_citation (amended 2026-11-25)
+
+Both calls change one direct body paragraph and nothing else (a citation
+writes its field runs only: no source, style or setting). On a body
+paragraph they run inside `edit_body_paragraph_in_place` and publish the
+block replacement (#636): the paragraph keeps its owner, its run handles
+go, every other handle is kept. The citation's typed insertion
+(`Paragraph::insert_field_at`, `insert_accepted_run`) replaces the byte
+splice of `insert_story_run_staged`; the staged route stays as the debug
+oracle. A listed story item is validated before its body index is
+trusted. A table cell, a header or footer, a block content control, a
+text box, a hyperlink or a story item the caller built keep today's
+route; `insert_citation_after_text` (a text search) too.
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.

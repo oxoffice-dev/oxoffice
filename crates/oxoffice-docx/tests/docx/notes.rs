@@ -1202,3 +1202,75 @@ fn a_table_added_to_a_footnote_reports_the_footnotes_changed() {
         .collect::<Vec<_>>();
     assert_eq!(kinds, [StoryItemKind::Paragraph, StoryItemKind::Table]);
 }
+
+#[test]
+fn a_note_made_in_place_at_a_body_slot_is_the_note_the_staged_route_makes() {
+    for (family, kind) in [
+        (Footnote, StoryKind::Footnote),
+        (Endnote, StoryKind::Endnote),
+    ] {
+        let mut in_place = doc_with(&["Alpha", "Beta"]);
+        let mut staged = doc_with(&["Alpha", "Beta"]);
+        // The first note adds the part and the reference style, the second
+        // finds them; the second goes before the paragraph's only run.
+        for (slot, run) in [(1, 1), (0, 0)] {
+            let id = in_place
+                .create_note_in_body_slot(kind, slot, run, &format!("note {slot}"))
+                .unwrap()
+                .expect("a direct paragraph takes the note in place");
+            let position = boundary(&staged, slot, run);
+            let staged_id = match family {
+                Footnote => staged.create_footnote_at(&position, &format!("note {slot}")),
+                Endnote => staged.create_endnote_at(&position, &format!("note {slot}")),
+            }
+            .unwrap();
+            assert_eq!(id, staged_id);
+        }
+        // The staged route also repeats the root's namespace declarations
+        // on the paragraph it splices: the reads are the same.
+        let (reopened, staged) = (reopen(&mut in_place), reopen(&mut staged));
+        for doc in [&reopened, &staged] {
+            assert_eq!(references(doc, 0), vec![(family, 3)]);
+            assert_eq!(references(doc, 1), vec![(family, 2)]);
+        }
+        for id in [2, 3] {
+            assert_eq!(
+                note_text(&reopened, family, id),
+                note_text(&staged, family, id)
+            );
+        }
+        assert_eq!(texts(&reopened), texts(&staged));
+    }
+}
+
+#[test]
+fn a_note_refused_in_place_changes_nothing() {
+    let mut doc = doc_with(&["Alpha"]);
+    doc.add_table(1, 1);
+    let before = doc.to_bytes().unwrap();
+    // A run boundary past the paragraph's last run is the staged refusal.
+    let error = doc
+        .create_note_in_body_slot(StoryKind::Endnote, 0, 5, "refused")
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "note reference run boundary is out of range"
+    );
+    assert!(
+        doc.create_note_in_body_slot(StoryKind::Footnote, 0, 5, "refused")
+            .is_err()
+    );
+    // A table, or a slot past the body, is left to the staged route.
+    assert_eq!(
+        doc.create_note_in_body_slot(StoryKind::Footnote, 1, 0, "left")
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        doc.create_note_in_body_slot(StoryKind::Footnote, 9, 0, "left")
+            .unwrap(),
+        None
+    );
+    assert_eq!(doc.to_bytes().unwrap(), before);
+    assert!(doc.footnotes().is_empty());
+}

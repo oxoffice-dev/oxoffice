@@ -106,83 +106,7 @@ impl Document {
 
     /// Create a note and reference together at a checked body or table-cell run boundary.
     pub fn create_footnote_at(&mut self, position: &StoryRunPosition, text: &str) -> Result<i32> {
-        if !matches!(
-            position.location.story.kind(),
-            StoryKind::Body | StoryKind::TableCell
-        ) || position.location.story.part_name() != self.doc_part_name
-        {
-            return Err(Error::Other(
-                "note references require body or body-table content".to_owned(),
-            ));
-        }
-        let mut candidate = self.clone_for_staging();
-        let mark_style = candidate.note_reference_style_id(StoryKind::Footnote)?;
-        candidate
-            .read_story_paragraph(&position.location, |paragraph| paragraph.run_count())?
-            .checked_sub(position.run_index)
-            .ok_or_else(|| {
-                Error::Other("note reference run boundary is out of range".to_owned())
-            })?;
-        let specials = missing_note_specials(
-            &candidate.footnotes,
-            candidate
-                .footnotes_part_name
-                .as_deref()
-                .and_then(|part| candidate.package.get_part(part)),
-            StoryKind::Footnote,
-            None,
-        )?;
-        candidate.footnotes.footnotes.extend(specials);
-        let occupied = candidate
-            .footnotes
-            .footnotes
-            .iter()
-            .map(|note| note.id)
-            .collect::<HashSet<_>>();
-        let mut id = 2_i32;
-        while occupied.contains(&id) {
-            id = id
-                .checked_add(1)
-                .ok_or_else(|| Error::Other("footnote ID range is exhausted".to_owned()))?;
-        }
-        candidate.reserve_footnotes_bundle()?;
-        let mut paragraph = CT_P::new();
-        let mut note_marker = CT_R::new("");
-        note_marker.properties = Some(CT_RPr {
-            style_id: Some(mark_style.clone()),
-            ..Default::default()
-        });
-        note_marker.content.clear();
-        note_marker.extra_xml.push(b"<w:footnoteRef/>".to_vec());
-        note_marker.extra_xml_positions.push(1);
-        paragraph.runs.push(note_marker);
-        paragraph.add_run(" ");
-        paragraph.add_run(text);
-        candidate
-            .footnotes
-            .footnotes
-            .push(oxoffice_docx_oxml::footnotes::CT_Footnote {
-                id,
-                note_type: oxoffice_docx_oxml::footnotes::NoteType::Normal,
-                paragraphs: vec![paragraph],
-            });
-        candidate.footnotes_dirty = true;
-        candidate.flush_dirty_related_story_models()?;
-        candidate.refresh_related_story_caches()?;
-        candidate.invalidate_layout();
-        let mut run = CT_R::new("");
-        run.properties = Some(CT_RPr {
-            style_id: Some(mark_style.clone()),
-            ..Default::default()
-        });
-        run.content = vec![RunContent::FootnoteRef {
-            id,
-            custom_mark: None,
-        }];
-        candidate.insert_story_run_staged(position, run)?;
-        let reopened = candidate.prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(reopened);
-        Ok(id)
+        self.create_note_at_staged(StoryKind::Footnote, position, text)
     }
 
     /// Create a normal endnote and append its reference to a direct body paragraph.
@@ -205,6 +129,110 @@ impl Document {
 
     /// Create a note and reference together at a checked body or table-cell run boundary.
     pub fn create_endnote_at(&mut self, position: &StoryRunPosition, text: &str) -> Result<i32> {
+        self.create_note_at_staged(StoryKind::Endnote, position, text)
+    }
+
+    /// Create a footnote or endnote whose reference goes before run
+    /// `run_index` of the direct body paragraph at body slot `slot` (the
+    /// paragraph's end at its run count), as [`Self::create_footnote_at`]
+    /// and [`Self::create_endnote_at`] do, on the live document: the
+    /// paragraph is edited in its typed model, the note is appended to its
+    /// part, and nothing is serialized or reopened. `Ok(None)` changes
+    /// nothing and leaves the call to those routes: `slot` holds no direct
+    /// paragraph. A refusal leaves the document as it was.
+    #[doc(hidden)]
+    pub fn create_note_in_body_slot(
+        &mut self,
+        kind: StoryKind,
+        slot: usize,
+        run_index: usize,
+        text: &str,
+    ) -> Result<Option<i32>> {
+        let note_unit = match kind {
+            StoryKind::Footnote => EditUnit::Footnotes,
+            StoryKind::Endnote => EditUnit::Endnotes,
+            _ => {
+                return Err(Error::Other(
+                    "a note is a footnote or an endnote".to_owned(),
+                ));
+            }
+        };
+        if !matches!(
+            self.document.body.content.get(slot),
+            Some(BodyContent::Paragraph(_))
+        ) {
+            return Ok(None);
+        }
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(
+            // The flush of typed footnotes may write pending comments; the
+            // first note adds its part, relationship and override.
+            &[
+                EditUnit::BodyBlocks { slot, count: 1 },
+                note_unit,
+                EditUnit::Comments,
+                EditUnit::Styles,
+                EditUnit::Parts,
+            ],
+            |document| document.create_note_in_slot_here(kind, slot, run_index, text),
+        );
+        #[cfg(debug_assertions)]
+        {
+            let location = before
+                .direct_body_item_location(slot)
+                .expect("the body reads")
+                .expect("a direct paragraph has a location");
+            let position = StoryRunPosition {
+                location,
+                run_index,
+            };
+            self.assert_in_place_matches_staged_declarations_aside(before, &result, |staged| {
+                staged.create_note_at_staged(kind, &position, text)
+            });
+        }
+        result.map(Some)
+    }
+
+    fn create_note_in_slot_here(
+        &mut self,
+        kind: StoryKind,
+        slot: usize,
+        run_index: usize,
+        text: &str,
+    ) -> Result<i32> {
+        oxoffice_core::xml::reject_non_xml_characters("note text", text)?;
+        let mark_style = self.note_reference_style_id(kind)?;
+        let Some(BodyContent::Paragraph(paragraph)) = self.document.body.content.get(slot) else {
+            unreachable!("the caller checked the slot");
+        };
+        paragraph
+            .accepted_run_paths()
+            .len()
+            .checked_sub(run_index)
+            .ok_or_else(|| {
+                Error::Other("note reference run boundary is out of range".to_owned())
+            })?;
+        let id = self.push_note(kind, &mark_style, text)?;
+        let Some(BodyContent::Paragraph(paragraph)) = self.document.body.content.get_mut(slot)
+        else {
+            unreachable!("the caller checked the slot");
+        };
+        paragraph
+            .insert_accepted_run(run_index, note_reference_run(kind, id, &mark_style))
+            .map_err(|error| Error::Other(format!("field insertion boundary: {error}")))?;
+        self.invalidate_layout();
+        Ok(id)
+    }
+
+    /// The staged route of the note creators: a copy is edited, saved and
+    /// reopened. It is the debug oracle of [`Self::create_note_in_body_slot`].
+    fn create_note_at_staged(
+        &mut self,
+        kind: StoryKind,
+        position: &StoryRunPosition,
+        text: &str,
+    ) -> Result<i32> {
         if !matches!(
             position.location.story.kind(),
             StoryKind::Body | StoryKind::TableCell
@@ -214,24 +242,87 @@ impl Document {
                 "note references require body or body-table content".to_owned(),
             ));
         }
+        // A character XML 1.0 cannot carry is refused before anything is
+        // written, on both routes, as python-docx refuses such text.
+        oxoffice_core::xml::reject_non_xml_characters("note text", text)?;
         let mut candidate = self.clone_for_staging();
-        let mark_style = candidate.note_reference_style_id(StoryKind::Endnote)?;
+        let mark_style = candidate.note_reference_style_id(kind)?;
         candidate
             .read_story_paragraph(&position.location, |paragraph| paragraph.run_count())?
             .checked_sub(position.run_index)
             .ok_or_else(|| {
                 Error::Other("note reference run boundary is out of range".to_owned())
             })?;
-        candidate.flush_to_package()?;
-        let existing_part = candidate.note_part_name(StoryKind::Endnote)?;
-        let part_name = candidate.reserve_document_part_bundle(
+        if kind == StoryKind::Endnote {
+            candidate.flush_to_package()?;
+        }
+        let id = candidate.push_note(kind, &mark_style, text)?;
+        candidate.insert_story_run_staged(position, note_reference_run(kind, id, &mark_style))?;
+        let reopened = candidate.prepare_and_reopen_staged()?;
+        self.commit_staged_mutation(reopened);
+        Ok(id)
+    }
+
+    /// Append a normal note of `text` to the footnotes or endnotes part,
+    /// with the special notes the part lacks, under the smallest free id
+    /// from 2, and answer its id. The first note adds the part.
+    fn push_note(&mut self, kind: StoryKind, mark_style: &str, text: &str) -> Result<i32> {
+        let mut paragraph = CT_P::new();
+        let mut note_marker = CT_R::new("");
+        note_marker.properties = Some(CT_RPr {
+            style_id: Some(mark_style.to_owned()),
+            ..Default::default()
+        });
+        note_marker.content.clear();
+        note_marker.extra_xml.push(if kind == StoryKind::Endnote {
+            b"<w:endnoteRef/>".to_vec()
+        } else {
+            b"<w:footnoteRef/>".to_vec()
+        });
+        note_marker.extra_xml_positions.push(1);
+        paragraph.runs.push(note_marker);
+        paragraph.add_run(" ");
+        paragraph.add_run(text);
+        if kind == StoryKind::Footnote {
+            let specials = missing_note_specials(
+                &self.footnotes,
+                self.footnotes_part_name
+                    .as_deref()
+                    .and_then(|part| self.package.get_part(part)),
+                StoryKind::Footnote,
+                None,
+            )?;
+            self.footnotes.footnotes.extend(specials);
+            let occupied = self
+                .footnotes
+                .footnotes
+                .iter()
+                .map(|note| note.id)
+                .collect::<HashSet<_>>();
+            let id = smallest_free_note_id(&occupied, "footnote")?;
+            self.reserve_footnotes_bundle()?;
+            self.footnotes
+                .footnotes
+                .push(oxoffice_docx_oxml::footnotes::CT_Footnote {
+                    id,
+                    note_type: oxoffice_docx_oxml::footnotes::NoteType::Normal,
+                    paragraphs: vec![paragraph],
+                });
+            self.footnotes_dirty = true;
+            self.flush_dirty_related_story_models()?;
+            self.refresh_related_story_caches()?;
+            self.invalidate_layout();
+            return Ok(id);
+        }
+        let existing_part = self.note_part_name(StoryKind::Endnote)?;
+        let part_name = self.reserve_document_part_bundle(
             existing_part.as_deref(),
             "/word/endnotes.xml",
             rel_types::ENDNOTES,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml",
         )?;
-        let part_exists = candidate.package.get_part(&part_name).is_some();
-        let source = match candidate.package.get_part(&part_name) {
+        let part_exists = self.package.get_part(&part_name).is_some();
+        let source = match self.package.get_part(&part_name) {
             Some(xml) => xml.to_vec(),
             None => oxoffice_docx_oxml::footnotes::CT_Footnotes::new().to_xml_endnotes()?,
         };
@@ -241,24 +332,7 @@ impl Document {
             .iter()
             .map(|note| note.id)
             .collect::<HashSet<_>>();
-        let mut id = 2_i32;
-        while occupied.contains(&id) {
-            id = id
-                .checked_add(1)
-                .ok_or_else(|| Error::Other("endnote ID range is exhausted".to_owned()))?;
-        }
-        let mut paragraph = CT_P::new();
-        let mut note_marker = CT_R::new("");
-        note_marker.properties = Some(CT_RPr {
-            style_id: Some(mark_style.clone()),
-            ..Default::default()
-        });
-        note_marker.content.clear();
-        note_marker.extra_xml.push(b"<w:endnoteRef/>".to_vec());
-        note_marker.extra_xml_positions.push(1);
-        paragraph.runs.push(note_marker);
-        paragraph.add_run(" ");
-        paragraph.add_run(text);
+        let id = smallest_free_note_id(&occupied, "endnote")?;
         let note = oxoffice_docx_oxml::footnotes::CT_Footnote {
             id,
             note_type: oxoffice_docx_oxml::footnotes::NoteType::Normal,
@@ -275,20 +349,8 @@ impl Document {
         .collect::<Result<Vec<_>>>()?;
         fragments.push(serialized_note_fragment(&note, StoryKind::Endnote)?);
         let updated = append_story_fragments_to_root(&source, b"endnotes", b"endnote", &fragments)?;
-        set_story_source_xml(&mut candidate, &part_name, updated)?;
-        candidate.invalidate_layout();
-        let mut run = CT_R::new("");
-        run.properties = Some(CT_RPr {
-            style_id: Some(mark_style.clone()),
-            ..Default::default()
-        });
-        run.content = vec![RunContent::EndnoteRef {
-            id,
-            custom_mark: None,
-        }];
-        candidate.insert_story_run_staged(position, run)?;
-        let reopened = candidate.prepare_and_reopen_staged()?;
-        self.commit_staged_mutation(reopened);
+        set_story_source_xml(self, &part_name, updated)?;
+        self.invalidate_layout();
         Ok(id)
     }
 
@@ -520,6 +582,55 @@ impl Document {
     /// Find the current story identity for a normal endnote ID.
     pub fn endnote_story(&self, id: i32) -> Result<Option<StoryId>> {
         self.note_story(StoryKind::Endnote, id)
+    }
+
+    /// The part that holds the footnotes, endnotes or comments, if the
+    /// document has one, read from the relationships alone.
+    #[doc(hidden)]
+    pub fn annotation_part_name(&self, kind: StoryKind) -> Result<Option<String>> {
+        match kind {
+            StoryKind::Comment => Ok(self.comments_part_name.clone()),
+            _ => self.note_part_name(kind),
+        }
+    }
+
+    /// The story of the comment `id`, read from the comments part alone:
+    /// the body is not read. `None` when no comment has that ID.
+    #[doc(hidden)]
+    pub fn comment_story(&self, id: i32) -> Result<Option<StoryId>> {
+        let (Some(part_name), Some(comments)) = (&self.comments_part_name, &self.comments) else {
+            return Ok(None);
+        };
+        let mut matches = comments
+            .comments
+            .iter()
+            .enumerate()
+            .filter(|(_, comment)| comment.id == id);
+        let Some((index, _)) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some() {
+            return Err(Error::Other(format!("comment ID {id} is ambiguous")));
+        }
+        let xml = self.package.get_part(part_name).ok_or_else(|| {
+            Error::Other(format!("comment stories target missing part {part_name}"))
+        })?;
+        let stories = scan_story_owners(xml, StoryKind::Comment)?
+            .into_iter()
+            .filter(|owner| owner.kind == StoryKind::Comment)
+            .map(|owner| StoryId {
+                kind: StoryKind::Comment,
+                part_name: part_name.clone(),
+                owner_index: owner.owner_index,
+                fingerprint: owner.fingerprint,
+            })
+            .collect::<Vec<_>>();
+        if stories.len() != comments.comments.len() {
+            return Err(Error::Other(
+                "comment story count differs from the comment definitions".to_owned(),
+            ));
+        }
+        Ok(stories.into_iter().nth(index))
     }
 
     /// Omit review state only within transferred body content and its selected notes.
@@ -1363,4 +1474,36 @@ impl Document {
         self.add_style(note_reference_style(kind, &self.styles))?;
         Ok(id.to_owned())
     }
+}
+
+/// The smallest note id from 2 that `occupied` does not hold.
+fn smallest_free_note_id(occupied: &HashSet<i32>, what: &str) -> Result<i32> {
+    let mut id = 2_i32;
+    while occupied.contains(&id) {
+        id = id
+            .checked_add(1)
+            .ok_or_else(|| Error::Other(format!("{what} ID range is exhausted")))?;
+    }
+    Ok(id)
+}
+
+/// The body run that shows note `id`, in the note reference style.
+fn note_reference_run(kind: StoryKind, id: i32, mark_style: &str) -> CT_R {
+    let mut run = CT_R::new("");
+    run.properties = Some(CT_RPr {
+        style_id: Some(mark_style.to_owned()),
+        ..Default::default()
+    });
+    run.content = vec![if kind == StoryKind::Endnote {
+        RunContent::EndnoteRef {
+            id,
+            custom_mark: None,
+        }
+    } else {
+        RunContent::FootnoteRef {
+            id,
+            custom_mark: None,
+        }
+    }];
+    run
 }

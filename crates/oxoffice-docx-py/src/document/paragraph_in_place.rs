@@ -278,6 +278,123 @@ impl PyDocument {
         Ok(BlocksPublication::Published)
     }
 
+    /// The body slot of the paragraph at `location`, from the inventory
+    /// alone, when it is a direct body paragraph that a block replacement
+    /// can publish ([`Self::publishable_body_slot`]). The caller ensured the
+    /// Word authority.
+    pub(crate) fn publishable_paragraph_slot(&self, location: &ParagraphLocation) -> Option<usize> {
+        let ParagraphLocation::Body(index) = location else {
+            return None;
+        };
+        let native = self
+            .indexes
+            .body_paragraphs
+            .as_ref()?
+            .get(*index)?
+            .as_ref()?
+            .location();
+        let key = self
+            .indexes
+            .find(&self.owners, &WordOwnerLocation::Paragraph(native))?;
+        let slot = self.owners[key].body_slot()?;
+        (self.indexes.direct_body_paragraph(slot) == Some(key) && self.publishable_body_slot(slot))
+            .then_some(slot)
+    }
+
+    /// Whether the direct body block at `slot` is a paragraph that a block
+    /// replacement can publish. The caller ensured the Word authority.
+    pub(crate) fn publishable_body_slot(&self, slot: usize) -> bool {
+        self.inner
+            .body_children()
+            .get(slot)
+            .is_some_and(|block| self.replaced_block(slot, block).is_some())
+    }
+
+    /// Publish an in-place edit that changed the direct body paragraph at
+    /// `slot` (it was `previous`) and added `story` in a related part (a
+    /// note or a comment, the last entry of its part): the paragraph keeps
+    /// its owner and properties states and its runs are born again, as
+    /// [`Self::publish_body_blocks_replaced`] publishes them, then the
+    /// story's owners are born as [`Self::splice_story_owners`] publishes
+    /// them; every other owner keeps its states.
+    ///
+    /// [`BlocksPublication::WholeRoute`] when either half cannot be taken,
+    /// with nothing published. Both halves publish under one revision,
+    /// prepared and reserved before it commits: an error leaves the
+    /// inventory as it was, and nothing after the commit fails. Under
+    /// debug assertions the whole edit is checked once both are published
+    /// (each half alone sees the other's change unpublished).
+    pub(crate) fn publish_body_paragraph_and_story(
+        &mut self,
+        py: Python<'_>,
+        slot: usize,
+        previous: &oxoffice_docx_oxml::BodyContent,
+        story: &oxoffice_docx::StoryId,
+        operation: &'static str,
+    ) -> PyResult<BlocksPublication> {
+        match self.inner.body_children().get(slot) {
+            Some(new) if new != previous => {}
+            _ => return Ok(BlocksPublication::WholeRoute),
+        }
+        self.ensure_word_authority(py)?;
+        // A part that does not read alone takes the whole route, as one
+        // that reads otherwise does.
+        let Some(splice) = self.read_story_splice(py, story).ok().flatten() else {
+            return Ok(BlocksPublication::WholeRoute);
+        };
+        let Some(plan @ BlocksPlan::Paragraph(..)) = self.plan_blocks_replaced(
+            slot,
+            std::slice::from_ref(previous),
+            1,
+            BlockRetention::EditedParagraphKeepsItsOwner,
+        )?
+        else {
+            return Ok(BlocksPublication::WholeRoute);
+        };
+        #[cfg(debug_assertions)]
+        let (before, summary) = (
+            self.blocks_replaced_debug_copy(slot, std::slice::from_ref(previous), 1),
+            plan.summary(),
+        );
+        // One revision retires and gives birth for both halves: whatever can
+        // fail comes before its commit, so both halves publish or neither.
+        let (story_retired, story_births) = self.story_splice_scopes(story, &splice);
+        let mut retired = plan.retired().to_vec();
+        retired.extend(story_retired);
+        retired.push(
+            self.snapshot_scope
+                .as_ref()
+                .expect("active Word authority")
+                .clone(),
+        );
+        let paragraph_births = plan.births().len();
+        let mut births = plan.births().to_vec();
+        births.extend(story_births);
+        births.push(RevisionScope::Text);
+        let revision = self
+            .revisions
+            .prepare_local_scopes(operation, &retired, &births)
+            .map_err(revision_to_pyerr)?;
+        let states = (0..births.len())
+            .map(|index| revision.born(index).expect("prepared birth"))
+            .collect::<Vec<_>>();
+        self.reserve_blocks_replaced(&plan)?;
+        self.reserve_story_splice(&splice)?;
+        plan.debug_fail()?;
+        self.revisions
+            .commit_scopes(revision)
+            .map_err(revision_to_pyerr)?;
+        // The commit: nothing below fails.
+        let (snapshot, states) = states.split_last().expect("snapshot birth");
+        let (paragraph_states, story_states) = states.split_at(paragraph_births);
+        self.apply_blocks_replaced(plan, paragraph_states);
+        self.apply_story_splice(story, splice, story_states);
+        self.snapshot_scope = Some(snapshot.clone());
+        #[cfg(debug_assertions)]
+        self.assert_blocks_replaced(&before, &summary);
+        Ok(BlocksPublication::Published)
+    }
+
     /// The plan of [`Self::publish_body_blocks_replaced`], read from the
     /// inventory, the pieces and the new blocks with no state changed:
     /// `None` for the whole route, [`BlocksPlan::Unchanged`] for new blocks

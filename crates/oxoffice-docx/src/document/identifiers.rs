@@ -45,6 +45,11 @@ enum Reservation {
     },
     AbstractNumberingId(u32),
     NumberingInstanceId(u32),
+    /// A comment id, and whether it became an authored one.
+    CommentId {
+        id: i32,
+        authored: bool,
+    },
     ContentControlId(i32),
     PermissionId(i32),
     /// The override stored under `stored`, and the case variants it
@@ -385,6 +390,12 @@ impl Document {
                 }
                 Reservation::NumberingInstanceId(id) => {
                     identifiers.numbering_instance_ids.remove(&id);
+                }
+                Reservation::CommentId { id, authored } => {
+                    identifiers.comment_ids.remove(&id);
+                    if authored {
+                        identifiers.authored_comment_ids.remove(&id);
+                    }
                 }
                 Reservation::ContentControlId(id) => {
                     identifiers.content_control_ids.remove(&id);
@@ -976,7 +987,8 @@ impl DocumentIdentifiers {
 
     pub(crate) fn reserve_comment_id(&mut self) -> Result<i32> {
         let id = reserve_i32(&mut self.comment_ids, 0, "comment")?;
-        self.authored_comment_ids.insert(id);
+        let authored = self.authored_comment_ids.insert(id);
+        self.record(|| Reservation::CommentId { id, authored });
         Ok(id)
     }
 
