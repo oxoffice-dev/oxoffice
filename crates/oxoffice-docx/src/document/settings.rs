@@ -1043,6 +1043,16 @@ impl Document {
         part: SettingsPart,
         install: impl Fn(&mut Self),
     ) -> Result<()> {
+        if self.in_place_is_open() {
+            // The open edit journals the reservation and holds a copy of the
+            // settings, and undoes both on any exit that is not a success.
+            match part {
+                SettingsPart::Settings => self.reserve_settings_part()?,
+                SettingsPart::WebSettings => self.reserve_web_settings_part()?,
+            }
+            install(self);
+            return Ok(());
+        }
         #[cfg(debug_assertions)]
         let before = self.clone_for_staging();
         let names = (
@@ -1201,23 +1211,23 @@ impl Document {
             return;
         };
         let owner = self.doc_part_name.clone();
-        let mut removed_ids = Vec::new();
-        if let Some(relationships) = self.package.get_part_rels_mut(&owner) {
-            relationships.items.retain(|relationship| {
-                let remove = relationship.rel_type == rel_types::SETTINGS
+        // The journal records the edge removed, not the main part's
+        // relationships.
+        let removed_ids: Vec<String> = self
+            .package
+            .remove_relationships_where(&owner, |relationship| {
+                relationship.rel_type == rel_types::SETTINGS
                     && relationship_is_internal(relationship)
-                    && OpcPackage::resolve_rel_target(&owner, &relationship.target) == part_name;
-                if remove {
-                    removed_ids.push(relationship.id.clone());
-                }
-                !remove
-            });
-        }
+                    && OpcPackage::resolve_rel_target(&owner, &relationship.target) == part_name
+            })
+            .into_iter()
+            .map(|relationship| relationship.id)
+            .collect();
         self.identifiers
             .retire_authored_story_relationships(&owner, removed_ids);
         self.package.remove_part(&part_name);
         self.package.remove_part_rels(&part_name);
-        self.package.content_types.remove_override(&part_name);
+        self.package.remove_content_type_override(&part_name);
         self.identifiers.retire_authored_part(&part_name);
         self.settings = None;
         self.settings_owned = false;

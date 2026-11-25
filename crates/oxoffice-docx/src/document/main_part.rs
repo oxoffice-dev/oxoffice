@@ -2417,7 +2417,7 @@ fn prove_empty_body_frame(head: &[u8], tail: &[u8]) -> Option<CT_Document> {
     (parsed.to_xml().ok().as_deref() == Some(shell.as_slice())).then_some(parsed)
 }
 
-fn parse_one_child(head: &[u8], tail: &[u8], child: &[u8]) -> Option<BodyContent> {
+pub(super) fn parse_one_child(head: &[u8], tail: &[u8], child: &[u8]) -> Option<BodyContent> {
     if child.is_empty() {
         return None;
     }

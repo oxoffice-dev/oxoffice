@@ -451,7 +451,7 @@ impl PyDocument {
         Ok(snapshot)
     }
 
-    fn validate_owned_story(&self, py: Python<'_>, story: &PyStory) -> PyResult<()> {
+    pub(super) fn validate_owned_story(&self, py: Python<'_>, story: &PyStory) -> PyResult<()> {
         let Some(path) = &story.binding else {
             return Ok(());
         };

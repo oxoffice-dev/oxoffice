@@ -138,7 +138,7 @@ fn namespace_matches(namespace: &ResolveResult<'_>, expected: Option<&[u8]>) -> 
     }
 }
 
-pub(super) fn validate_store_item(xml: &[u8]) -> Result<()> {
+pub(crate) fn validate_store_item(xml: &[u8]) -> Result<()> {
     if xml.is_empty() {
         return Err(Error::Other("custom XML item is empty".to_owned()));
     }

@@ -48,6 +48,24 @@ enum Reservation {
         replaced: Vec<(String, String)>,
     },
     PackageRelationships(String),
+    /// A relationship id authored in a story part's relationships.
+    AuthoredStoryRelationship {
+        owner: String,
+        id: String,
+    },
+    /// A part name and content type override an edit retired, when it
+    /// removed their part: the undo holds them again.
+    RetiredPart {
+        identity: Option<String>,
+        content_type_override: Option<String>,
+    },
+    /// The relationship ids of `owner` an edit retired, per set.
+    RetiredRelationships {
+        owner: String,
+        occupied: Vec<String>,
+        authored: Vec<String>,
+        nested: Vec<String>,
+    },
     /// A relationship of `owner`'s part, or of the package when `None`,
     /// added when the relationships' counter was `next_id`.
     PackageRelationship {
@@ -62,6 +80,14 @@ impl ReservationJournal {
     pub(crate) fn extend(&mut self, later: ReservationJournal) {
         self.entries.extend(later.entries);
         self.removed_from_package |= later.removed_from_package;
+        self.written_to_package |= later.written_to_package;
+    }
+
+    /// The part writes and removals this journal records were put back by
+    /// the part journal of an in-place edit, so undoing the rest is valid.
+    pub(crate) fn forget_package_writes(&mut self) {
+        self.removed_from_package = false;
+        self.written_to_package = false;
     }
 
     /// Whether the edit changed the package graph.
@@ -183,6 +209,14 @@ impl Document {
     ///
     /// [`ContentTypes::add_override`]: oxoffice_opc::ContentTypes::add_override
     pub(crate) fn add_override_journaled(&mut self, part_name: &str, content_type: &str) {
+        debug_assert!(
+            !self
+                .package
+                .part_journal()
+                .is_some_and(|journal| journal.removed_override(part_name)),
+            "an override removed through the part journal is added again through the \
+             reservation journal, whose undo would remove the one the part journal puts back"
+        );
         let overrides = &mut self.package.content_types.overrides;
         let replaced = overrides
             .iter()
@@ -216,10 +250,11 @@ impl Document {
         rel_type: &str,
         target: &str,
     ) {
+        let covered = owner.is_some_and(|owner| self.cover_relationship_add(owner, id));
         let relationships = match owner {
             None => &mut self.package.package_rels,
             Some(owner) => {
-                if self.package.get_part_rels(owner).is_none() {
+                if !covered && self.package.get_part_rels(owner).is_none() {
                     self.identifiers
                         .record(|| Reservation::PackageRelationships(owner.to_owned()));
                 }
@@ -232,12 +267,76 @@ impl Document {
         );
         let next_id = relationships.next_id();
         relationships.add_with_id(id, rel_type, target);
-        self.identifiers
-            .record(|| Reservation::PackageRelationship {
-                owner: owner.map(str::to_owned),
+        if !covered {
+            self.identifiers
+                .record(|| Reservation::PackageRelationship {
+                    owner: owner.map(str::to_owned),
+                    id: id.to_owned(),
+                    next_id,
+                });
+        }
+    }
+
+    /// Add the external relationship `id` to `owner`'s part, recorded in the
+    /// open journal at the cost of the edge, not of the owner's
+    /// relationships.
+    pub(crate) fn add_external_relationship_journaled(
+        &mut self,
+        owner: &str,
+        id: &str,
+        rel_type: &str,
+        target: &str,
+    ) {
+        let covered = self.cover_relationship_add(owner, id);
+        if !covered && self.package.get_part_rels(owner).is_none() {
+            self.identifiers
+                .record(|| Reservation::PackageRelationships(owner.to_owned()));
+        }
+        let relationships = self.package.get_or_create_part_rels(owner);
+        debug_assert!(
+            relationships.items.iter().all(|item| item.id != id),
+            "a reserved relationship id is already in the package"
+        );
+        let next_id = relationships.next_id();
+        relationships
+            .items
+            .push(oxoffice_opc::relationship::Relationship {
                 id: id.to_owned(),
-                next_id,
+                rel_type: rel_type.to_owned(),
+                target: target.to_owned(),
+                target_mode: Some("External".to_owned()),
             });
+        if !covered {
+            self.identifiers
+                .record(|| Reservation::PackageRelationship {
+                    owner: Some(owner.to_owned()),
+                    id: id.to_owned(),
+                    next_id,
+                });
+        }
+    }
+
+    /// Whether the part journal undoes the add of relationship `id` to
+    /// `owner`, so that the reservation journal records nothing of it.
+    ///
+    /// An undo runs the part journal first, then the reservation journal
+    /// (`undo_edit`), which removes by id and removes an owner's
+    /// relationships it created. When the part journal recorded the owner's
+    /// relationships whole, its copy puts them back as they were, and a
+    /// reservation undo after it would remove what the copy restored (the
+    /// owner's relationships, or an id the copy holds). When the part
+    /// journal removed `id` one by one, the reservation undo would remove
+    /// the item the part journal reinserts; the owner is then recorded whole
+    /// here, after that removal, and the copy covers the add.
+    fn cover_relationship_add(&mut self, owner: &str, id: &str) -> bool {
+        if self
+            .package
+            .part_journal()
+            .is_some_and(|journal| journal.removed_relationship(owner, id))
+        {
+            self.package.record_part_rels(owner);
+        }
+        self.package.part_journal_records_rels(owner)
     }
 
     /// Remove, latest first, what `journal` recorded, leaving the registry
@@ -288,6 +387,44 @@ impl Document {
                 }
                 Reservation::PackageRelationships(owner) => {
                     self.package.remove_part_rels(&owner);
+                }
+                Reservation::AuthoredStoryRelationship { owner, id } => {
+                    if let Some(authored) =
+                        identifiers.authored_story_relationship_ids.get_mut(&owner)
+                    {
+                        authored.remove(&id);
+                        if authored.is_empty() {
+                            identifiers.authored_story_relationship_ids.remove(&owner);
+                        }
+                    }
+                }
+                Reservation::RetiredPart {
+                    identity,
+                    content_type_override,
+                } => {
+                    identifiers.part_names.extend(identity);
+                    identifiers
+                        .content_type_overrides
+                        .extend(content_type_override);
+                }
+                Reservation::RetiredRelationships {
+                    owner,
+                    occupied,
+                    authored,
+                    nested,
+                } => {
+                    for (sets, ids) in [
+                        (&mut identifiers.relationship_ids, occupied),
+                        (&mut identifiers.authored_story_relationship_ids, authored),
+                        (
+                            &mut identifiers.authored_nested_story_relationship_ids,
+                            nested,
+                        ),
+                    ] {
+                        if !ids.is_empty() {
+                            sets.entry(owner.clone()).or_default().extend(ids);
+                        }
+                    }
                 }
                 Reservation::PackageRelationship { owner, id, next_id } => {
                     let relationships = match &owner {
@@ -961,6 +1098,22 @@ impl DocumentIdentifiers {
         self.authored_content_type_defaults.insert(extension);
     }
 
+    /// Record `id` as authored in `owner`'s story relationships.
+    pub(crate) fn author_story_relationship(&mut self, owner: &str, id: &str) {
+        let owner = relationship_owner_identity(owner);
+        if self
+            .authored_story_relationship_ids
+            .entry(owner.clone())
+            .or_default()
+            .insert(id.to_owned())
+        {
+            self.record(|| Reservation::AuthoredStoryRelationship {
+                owner,
+                id: id.to_owned(),
+            });
+        }
+    }
+
     pub(crate) fn register_content_type_override(&mut self, part_name: &str) {
         let part_name = part_name.to_ascii_lowercase();
         if !self.content_type_overrides.contains(&part_name) {
@@ -995,6 +1148,23 @@ impl DocumentIdentifiers {
             .into_iter()
             .filter(|id| !preserved.contains(id))
             .collect::<HashSet<_>>();
+        if self.journal.0.is_some() {
+            let held = |sets: &HashMap<String, HashSet<String>>| {
+                sets.get(&owner).map_or_else(Vec::new, |set| {
+                    set.iter()
+                        .filter(|id| removed.contains(*id))
+                        .cloned()
+                        .collect()
+                })
+            };
+            let entry = Reservation::RetiredRelationships {
+                owner: owner.clone(),
+                occupied: held(&self.relationship_ids),
+                authored: held(&self.authored_story_relationship_ids),
+                nested: held(&self.authored_nested_story_relationship_ids),
+            };
+            self.record(|| entry);
+        }
         if let Some(occupied) = self.relationship_ids.get_mut(&owner) {
             occupied.retain(|id| !removed.contains(id));
             if occupied.is_empty() {
@@ -1018,11 +1188,20 @@ impl DocumentIdentifiers {
 
     pub(crate) fn retire_authored_part(&mut self, part_name: &str) {
         let identity = part_name_identity(part_name);
-        if !self.preserved_part_names.contains(&identity) {
-            self.part_names.remove(&identity);
+        let identity = (!self.preserved_part_names.contains(&identity)
+            && self.part_names.remove(&identity))
+        .then_some(identity);
+        let lowered = part_name.to_ascii_lowercase();
+        let content_type_override = self
+            .content_type_overrides
+            .remove(&lowered)
+            .then_some(lowered);
+        if identity.is_some() || content_type_override.is_some() {
+            self.record(|| Reservation::RetiredPart {
+                identity,
+                content_type_override,
+            });
         }
-        self.content_type_overrides
-            .remove(&part_name.to_ascii_lowercase());
     }
 
     pub(crate) fn retire_authored_comment_ids(

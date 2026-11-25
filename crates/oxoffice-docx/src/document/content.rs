@@ -45,6 +45,27 @@ impl Document {
         }
     }
 
+    /// [`Self::invalidate_layout`] after an edit that leaves the main part
+    /// and the body alone (a settings or package part edit): what a save of
+    /// the body answers stays.
+    pub(crate) fn invalidate_layout_keeping_body_answer(&mut self) {
+        let kept = self.unsavable_body_edit_cache.get().cloned();
+        self.invalidate_layout();
+        if let Some(kept) = kept {
+            self.unsavable_body_edit_cache = OnceLock::from(kept);
+        }
+    }
+
+    /// Record that typed edits of this body can still be saved after a block
+    /// swap whose caller proved it changes no namespace declaration and no
+    /// namespace owner, when they could before it. The caller asked
+    /// [`Self::unsavable_body_edit`] before the swap.
+    pub(crate) fn keep_body_savable_after_swap(&mut self) {
+        if self.unsavable_body_edit_cache.get().is_none() {
+            self.unsavable_body_edit_cache = OnceLock::from(None);
+        }
+    }
+
     /// The error a save of this body would return after a typed edit, when the
     /// retained nested owners cannot be replayed or a serializer prefix is
     /// shadowed. `None` is not a general proof that the document is savable.
@@ -1009,4 +1030,142 @@ pub(super) fn note_reference_ids_in(xml: &[u8]) -> Result<NoteReferenceIds> {
         buffer.clear();
     }
     Ok(ids)
+}
+
+/// One direct body block written alone between the head and the tail of the
+/// main part, and the span of one story item inside it.
+pub(crate) struct BodyBlockItem {
+    /// The bytes before the block, through the body start tag.
+    pub(crate) head: Vec<u8>,
+    /// The head, the block and the tail.
+    pub(crate) xml: Vec<u8>,
+    /// The length of the bytes after the block, from the final section on.
+    pub(crate) tail: usize,
+    /// The item, in `xml`.
+    pub(crate) item: Range<usize>,
+}
+
+impl BodyBlockItem {
+    /// The block of `xml`, an edit of [`Self::xml`] that kept its head and
+    /// tail.
+    pub(crate) fn block_of<'a>(&self, xml: &'a [u8]) -> &'a [u8] {
+        &xml[self.head.len()..xml.len() - self.tail]
+    }
+
+    /// The tail of [`Self::xml`].
+    pub(crate) fn tail_bytes(&self) -> &[u8] {
+        &self.xml[self.xml.len() - self.tail..]
+    }
+}
+
+impl Document {
+    /// The direct body block at `slot` written alone under the root and the
+    /// final section of the main part, at the cost of that block, and the
+    /// item `index` of the story owner `(kind, owner)` inside it: owners and
+    /// items are counted from the start of the block, as
+    /// [`Self::block_element_extent`] counts them. `None` when the block has
+    /// no such item, the item is not of `item_kind`, or a save of the body is
+    /// known to fail, which the staged route reports.
+    pub(crate) fn body_block_item(
+        &self,
+        slot: usize,
+        (kind, owner): (StoryKind, usize),
+        index: usize,
+        item_kind: StoryItemKind,
+    ) -> Result<Option<BodyBlockItem>> {
+        // Computed once after an invalidation: an empty cache is no answer,
+        // and the swap keeps a savable answer
+        // (`keep_body_savable_after_typed_insert`).
+        if self.unsavable_body_edit().is_some() {
+            return Ok(None);
+        }
+        let Some(block) = self.document.body.content.get(slot) else {
+            return Ok(None);
+        };
+        let child = self.document.body_item_xml(block)?;
+        // The frame of the part with no body child, which costs the root and
+        // the final section, not the body.
+        let frame = CT_Document {
+            body: CT_Body {
+                content: Vec::new(),
+                sect_pr: self.document.body.sect_pr.clone(),
+            },
+            extra_namespaces: self.document.extra_namespaces.clone(),
+            background_xml: self.document.background_xml.clone(),
+            background_extra_xml: self.document.background_extra_xml.clone(),
+            root_attributes: self.document.root_attributes.clone(),
+        };
+        let (head, tail) = frame.body_frame_xml()?;
+        let mut xml = Vec::with_capacity(head.len() + child.len() + tail.len());
+        xml.extend_from_slice(&head);
+        xml.extend_from_slice(&child);
+        xml.extend_from_slice(&tail);
+        let written = xml.len();
+        // The declaration a save adds to the root when the block uses w14.
+        declare_w14_on_part_root(&mut xml)?;
+        let head = xml[..head.len() + xml.len() - written].to_vec();
+        let block_span = head.len()..xml.len() - tail.len();
+        let owners = scan_story_owners(&xml, StoryKind::Body)?;
+        let Some(owner) = owners
+            .iter()
+            .find(|candidate| candidate.kind == kind && candidate.owner_index == owner)
+        else {
+            return Ok(None);
+        };
+        let items = scan_story_items(&xml, owner, None)?;
+        let Some(item) = items.get(index) else {
+            return Ok(None);
+        };
+        if item.kind != item_kind
+            || item.full.start < block_span.start
+            || item.full.end > block_span.end
+        {
+            return Ok(None);
+        }
+        let item = item.full.clone();
+        Ok(Some(BodyBlockItem {
+            head,
+            tail: tail.len(),
+            xml,
+            item,
+        }))
+    }
+
+    /// The block `child` reads as between `head` and `tail`, when it writes
+    /// back to exactly `child`.
+    pub(crate) fn reparse_body_block(
+        head: &[u8],
+        tail: &[u8],
+        child: &[u8],
+    ) -> Option<BodyContent> {
+        super::main_part::parse_one_child(head, tail, child)
+    }
+
+    /// Put `block` in place of the direct body block at `slot`, in place
+    /// (`EditUnit::BodyBlocks`), and answer whether the body changed. The
+    /// caller made `block` from the block at `slot` and checked that it
+    /// reads back as it writes.
+    pub(crate) fn replace_body_block_in_place(
+        &mut self,
+        slot: usize,
+        block: BodyContent,
+    ) -> Result<bool> {
+        if self.document.body.content.get(slot) == Some(&block) {
+            return Ok(false);
+        }
+        if slot >= self.document.body.content.len() {
+            return Err(Error::Other(format!("body has no block {slot}")));
+        }
+        let savable_before = self.unsavable_body_edit_cache.get() == Some(&None);
+        self.edit_in_place(&[EditUnit::BodyBlocks { slot, count: 1 }], |document| {
+            document.document.body.content[slot] = block;
+            document.invalidate_layout();
+            Ok(())
+        })?;
+        let changed = self.take_last_edit_changed();
+        if changed {
+            self.keep_body_savable_after_typed_insert(slot, savable_before);
+        }
+        Ok(changed)
+    }
 }

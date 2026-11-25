@@ -354,6 +354,17 @@ impl std::fmt::Debug for RevisionReadContext {
 }
 
 impl CT_Revision {
+    /// Whether the captured wrapper, or a revision nested in it, holds `needle`.
+    pub(crate) fn raw_xml_contains(&self, needle: &[u8]) -> bool {
+        crate::raw_scan::bytes_contain(&self.raw_xml, needle)
+            || self
+                .nested_revisions
+                .iter()
+                .any(|(_, nested)| nested.raw_xml_contains(needle))
+    }
+}
+
+impl CT_Revision {
     /// The entries of the parse context that this revision's source reads:
     /// the bindings of the prefixes its captured XML names, in a stable
     /// order. The other bindings in scope belong to the part, which another

@@ -237,6 +237,90 @@ What S1a builds differs from decision 1 in how the units are kept:
 - What stays linear: finding the touched note's owners walks the owner
   list (a compare per owner), under a millisecond at 400 paragraphs.
 
+### S4: content controls, forms, mail merge (amended 2026-11-25)
+
+S4 lands in three pull requests: settings-and-parts calls with the content
+control property setters, then the calls that change body blocks, then the
+form operations (#7).
+
+- **Removals are journaled, not refused.** A call that removes a part,
+  relationships or a content type override (a mail-merge package) needs an
+  undo the reservation journal does not have. The part journal records,
+  besides the bytes of each part, the relationships it removes one by one
+  (`remove_relationships_where`: the owner, the position and the item,
+  which the undo inserts back, latest first), the relationships of an owner
+  it removes whole (`remove_part_rels`, at the cost of that owner's, a
+  custom XML item's or a recipient part's) and the overrides it removes
+  (`remove_content_type_override`). It costs the items an edit removes,
+  never a copy of the main part's relationships, which grow with the body:
+  the edge to a released store or to an emptied settings part is removed
+  item by item, and an external relationship a call adds (a recipient
+  source) goes through the reservation journal, as an internal one does.
+  `record_part_rels` stays for an edit that changes an owner's
+  relationships in place otherwise; these calls no longer use it. The
+  registry journals what it retires (`retire_authored_part`,
+  `retire_authored_story_relationships`) and the story relationship ids it
+  authors, and the undo holds them again.
+- **The part journal is undone before the reservation journal.** The
+  reservation undo removes by id or by name, so it must not remove what the
+  part journal just put back. A relationship added to an owner whose
+  relationships the part journal recorded whole
+  (`part_journal_records_rels`) is not recorded as a reservation: the copy
+  puts the owner back as it was. An add of an id the part journal removed
+  one by one first records the owner whole, so the same holds. An edit
+  never adds again, through the reservation journal, an override it removed
+  through the part journal in the same call; debug builds check it.
+- **`Settings` and `Parts` units.** `EditUnit::Settings` copies the
+  settings model and its part name, which do not grow with the body. A
+  settings edit made inside an open call (`set_document_variable`,
+  `set_mail_merge_settings`) joins it and keeps no journal of its own.
+  `EditUnit::Parts` names package parts an edit writes outside any model
+  (custom XML items, recipient data): the part journal is their copy, and
+  `part_journal_changed` their no-op answer.
+- **Mail merge publishes nothing.** `set_mail_merge_package` and
+  `remove_mail_merge_package` write the settings, the merge store, the
+  recipient part and their relationships: no handle names any of them, so
+  every handle stays. `protect_form` writes the settings in place after
+  its validation, as `set_document_protection` does. These calls leave the
+  body alone, so after a typed edit of a body that cannot be saved after
+  one they are made and the save reports the body, as after a section
+  edit; the staged route failed at its own save. The debug oracles accept
+  that difference only when the document already failed to save before the
+  call, with the same error.
+- **Which controls bind a store is read from the typed controls.** Before
+  it overwrites or releases its store, a mail-merge call asks whether
+  another control binds it. That check serialized the whole body; it reads
+  the body's typed controls (`content_controls`) and scans the other XML
+  parts. The typed controls do not include those inside a piece kept as raw
+  XML (a text box in a run, a drawing kept as source, an unknown child, a
+  raw block or control content): when no typed control binds the store and
+  such a piece names a `dataBinding` (a byte search over the raw pieces),
+  the body is serialized and scanned. A picture names none. Debug builds
+  compare the typed answer with the serialized scan.
+  `set_mail_merge_package` costs 11.2, 30.2 and 103.9 ms at 25, 100 and
+  400 paragraphs on `main`, 2.5, 2.8 and 3.9 ms in place;
+  `remove_mail_merge_package` 10.0, 28.7 and 103.2 ms, 1.5, 1.8 and
+  2.8 ms. The walk of the raw pieces costs about 1 ms at 400 paragraphs in
+  the unoptimized scaling build.
+- **A content control property is edited in its block.** The setters of
+  a control's tag, alias, lock, appearance, placeholder flag, data binding
+  and type write the one direct body block that holds the control (the
+  control itself, or the paragraph, table or control around it), edit the
+  control's properties in those bytes with today's editors, read the block
+  back (it must rewrite to the same bytes) and swap it in under a
+  `BodyBlocks { slot, count: 1 }` unit. The binding finds the block from
+  its pieces' item counts, without reading the stories, re-reads that
+  block's owners and keeps every handle: the control and every element
+  around it stay the same elements. Controls outside the body, a type
+  change that needs a fresh identifier or a relationship check (a picture,
+  a repeating section that wraps its content), a body that cannot be saved
+  after a typed edit, and a block that does not read back the same keep
+  today's route. That answer is asked once after each invalidation; a
+  property edit that adds no namespace declaration but the standard `w14`
+  or `w15` binding keeps it across the swap, and a settings or package part
+  edit (a store, a mail-merge package) keeps it too.
+  The seven setters cost 3.5 to 4.4 ms at 25, 100 and 400 paragraphs.
+
 ### What we do not do
 
 - No change to which handles of the touched story retire.

@@ -21,6 +21,27 @@ pub enum EditUnit {
     Comments,
     /// The styles model.
     Styles,
+    /// The settings model and its part name.
+    Settings,
+    /// Package parts the edit writes outside the models of its other units
+    /// (custom XML items, recipient data): their bytes, the relationships
+    /// and content type overrides the edit records, by the part journal
+    /// alone.
+    Parts,
+    /// The `count` direct body blocks from `slot` (0 for an insertion at
+    /// `slot`): the edit may replace them with any number of blocks, and
+    /// change no other block. They are copied, at the cost of these blocks.
+    BodyBlocks { slot: usize, count: usize },
+}
+
+/// What an edit did to the direct body blocks of its `BodyBlocks` unit: the
+/// `removed` blocks from `slot` gave way to `inserted` blocks.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyBlocksChange {
+    pub slot: usize,
+    pub removed: usize,
+    pub inserted: usize,
 }
 
 /// What an in-place edit changed, for the caller that publishes it.
@@ -29,6 +50,8 @@ pub enum EditUnit {
 pub struct EditReport {
     /// Each unit the edit named, and whether it changed.
     pub units: Vec<(EditUnit, bool)>,
+    /// The blocks of the `BodyBlocks` unit, when it changed.
+    pub body: Option<BodyBlocksChange>,
 }
 
 impl EditReport {
@@ -68,6 +91,30 @@ struct CommentsCopy {
     extended_owned: bool,
 }
 
+#[derive(Clone, Debug)]
+struct BodyBlocksCopy {
+    slot: usize,
+    blocks: Vec<oxoffice_docx_oxml::document::BodyContent>,
+    length: usize,
+    unsavable: Option<Option<String>>,
+}
+
+impl BodyBlocksCopy {
+    /// The range of the body that holds what the edit left in place of the
+    /// copied blocks, found from the change of the body's length.
+    fn current_range(&self, length: usize) -> std::ops::Range<usize> {
+        let end = (self.slot + self.blocks.len() + length).saturating_sub(self.length);
+        self.slot..end.max(self.slot)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SettingsCopy {
+    settings: Option<CT_Settings>,
+    part_name: Option<String>,
+    owned: bool,
+}
+
 #[derive(Clone)]
 struct StylesCopy {
     styles: Arc<CT_Styles>,
@@ -93,6 +140,8 @@ pub struct EditUndo {
     footnotes: Option<FootnotesCopy>,
     comments: Option<CommentsCopy>,
     styles: Option<StylesCopy>,
+    settings: Option<SettingsCopy>,
+    body: Option<BodyBlocksCopy>,
     /// The endnotes part's bytes before the edit, for its no-op answer.
     endnotes: Option<Option<Vec<u8>>>,
     scalars: ScalarCopy,
@@ -118,6 +167,8 @@ pub(super) struct InPlaceState {
     open_units: Vec<EditUnit>,
     hold: bool,
     held: Option<EditUndo>,
+    /// Whether the last outermost in-place edit changed its units.
+    last_changed: bool,
 }
 
 impl Clone for InPlaceState {
@@ -133,6 +184,8 @@ impl Document {
             footnotes: None,
             comments: None,
             styles: None,
+            settings: None,
+            body: None,
             endnotes: None,
             scalars: ScalarCopy {
                 embedded_invalidated_signatures: self.embedded_invalidated_signatures.clone(),
@@ -175,6 +228,24 @@ impl Document {
                         part_name: self.styles_part_name.clone(),
                     });
                 }
+                EditUnit::Settings => {
+                    undo.settings = Some(SettingsCopy {
+                        settings: self.settings.clone(),
+                        part_name: self.settings_part_name.clone(),
+                        owned: self.settings_owned,
+                    });
+                }
+                EditUnit::Parts => {}
+                EditUnit::BodyBlocks { slot, count } => {
+                    let content = &self.document.body.content;
+                    let end = (*slot + *count).min(content.len());
+                    undo.body = Some(BodyBlocksCopy {
+                        slot: *slot,
+                        blocks: content[(*slot).min(end)..end].to_vec(),
+                        length: content.len(),
+                        unsavable: self.unsavable_body_edit_cache.get().cloned(),
+                    });
+                }
             }
         }
         undo
@@ -187,12 +258,25 @@ impl Document {
             footnotes,
             comments,
             styles,
+            settings,
+            body,
             scalars,
             parts,
             reservations,
             ..
         } = undo;
+        // The part journal first, then the reservation journal, which
+        // removes by id or by name. So the reservation journal records no
+        // add the part journal undoes: a relationship added to an owner the
+        // part journal recorded whole, or whose id it removed one by one
+        // (the owner is then recorded whole), is left to the part journal's
+        // copy (`cover_relationship_add`); an override removed through the
+        // part journal is never added again in the same call (checked in
+        // debug builds by `add_override_journaled`).
         self.package.undo_part_journal(parts);
+        // The part journal put back the bytes the edit wrote or removed.
+        let mut reservations = reservations;
+        reservations.forget_package_writes();
         self.undo_reservations(reservations);
         if let Some(copy) = footnotes {
             self.footnotes = copy.footnotes;
@@ -214,10 +298,27 @@ impl Document {
             self.styles_part_cache = copy.part_cache;
             self.styles_part_name = copy.part_name;
         }
+        if let Some(copy) = settings {
+            self.settings = copy.settings;
+            self.settings_part_name = copy.part_name;
+            self.settings_owned = copy.owned;
+        }
         self.embedded_invalidated_signatures = scalars.embedded_invalidated_signatures;
         self.freed_relationships = scalars.freed_relationships;
         self.package_signatures_invalidated = scalars.package_signatures_invalidated;
+        // Only a body unit changes what a save of the body answers.
+        let unsavable = match &body {
+            Some(copy) => copy.unsavable.clone(),
+            None => self.unsavable_body_edit_cache.get().cloned(),
+        };
+        if let Some(copy) = body {
+            let range = copy.current_range(self.document.body.content.len());
+            self.document.body.content.splice(range, copy.blocks);
+        }
         self.invalidate_layout();
+        if let Some(unsavable) = unsavable {
+            self.unsavable_body_edit_cache = std::sync::OnceLock::from(unsavable);
+        }
     }
 
     /// Whether the units of `undo` differ from what the document holds now.
@@ -247,10 +348,28 @@ impl Document {
                             .styles
                             .as_ref()
                             .is_some_and(|copy| *copy.styles != *self.styles),
+                        EditUnit::Settings => undo.settings.as_ref().is_some_and(|copy| {
+                            copy.settings != self.settings
+                                || copy.part_name != self.settings_part_name
+                        }),
+                        EditUnit::Parts => self.package.part_journal_changed(&undo.parts),
+                        EditUnit::BodyBlocks { .. } => undo.body.as_ref().is_some_and(|copy| {
+                            let content = &self.document.body.content;
+                            content.get(copy.current_range(content.len())) != Some(&copy.blocks[..])
+                        }),
                     };
                     (unit.clone(), changed)
                 })
                 .collect(),
+            body: undo.body.as_ref().and_then(|copy| {
+                let content = &self.document.body.content;
+                let range = copy.current_range(content.len());
+                (content.get(range.clone()) != Some(&copy.blocks[..])).then_some(BodyBlocksChange {
+                    slot: copy.slot,
+                    removed: copy.blocks.len(),
+                    inserted: range.len(),
+                })
+            }),
         }
     }
 
@@ -343,8 +462,17 @@ impl Document {
         {
             document.package_signatures_invalidated = true;
         }
+        document.in_place.last_changed = undo.report.changed();
         if undo.report.changed() {
-            document.invalidate_layout();
+            if undo
+                .units
+                .iter()
+                .all(|unit| matches!(unit, EditUnit::Settings | EditUnit::Parts))
+            {
+                document.invalidate_layout_keeping_body_answer();
+            } else {
+                document.invalidate_layout();
+            }
         }
         #[cfg(debug_assertions)]
         document.assert_undo_restores(before, &undo);
@@ -355,6 +483,18 @@ impl Document {
             }
         }
         Ok(value)
+    }
+
+    /// Whether the last outermost in-place edit changed what it named: the
+    /// no-op answer of a call that returns one.
+    pub(crate) fn take_last_edit_changed(&mut self) -> bool {
+        std::mem::take(&mut self.in_place.last_changed)
+    }
+
+    /// Whether an in-place edit is open: an edit that keeps its own journal
+    /// joins it instead, and the open edit undoes it.
+    pub(super) fn in_place_is_open(&self) -> bool {
+        self.in_place.open
     }
 
     /// Keep the undo of the next in-place edits for [`Self::take_edit_undo`]
@@ -382,6 +522,8 @@ impl EditUndo {
             footnotes,
             comments,
             styles,
+            settings,
+            body,
             endnotes,
             parts,
             reservations,
@@ -396,6 +538,13 @@ impl EditUndo {
         self.footnotes = self.footnotes.take().or(footnotes);
         self.comments = self.comments.take().or(comments);
         self.styles = self.styles.take().or(styles);
+        self.settings = self.settings.take().or(settings);
+        debug_assert!(
+            self.body.is_none() || body.is_none(),
+            "two held edits name body blocks"
+        );
+        self.body = self.body.take().or(body);
+        self.report.body = self.report.body.or(report.body);
         self.endnotes = self.endnotes.take().or(endnotes);
         self.parts.extend(parts);
         self.reservations.extend(reservations);
@@ -437,7 +586,10 @@ impl Document {
                 && restored.comments == before.comments
                 && restored.comments_extended == before.comments_extended
                 && restored.comments_part_name == before.comments_part_name
-                && *restored.styles == *before.styles,
+                && *restored.styles == *before.styles
+                && restored.settings == before.settings
+                && restored.settings_part_name == before.settings_part_name
+                && restored.settings_owned == before.settings_owned,
             "an in-place edit changed a model outside its units ({:?})",
             undo.units
         );
@@ -488,6 +640,15 @@ impl Document {
                     "a refused in-place edit changed the document"
                 );
             }
+            // A document that could not be saved before the edit (a typed
+            // edit of a body that cannot be saved after one) fails the staged
+            // route at its save. An edit that leaves the body alone is made
+            // in place and leaves that error to the save, as a section edit
+            // does: the save still reports it.
+            (Ok(_), Err(staged_error))
+                if unchanged.is_err()
+                    && live == unchanged
+                    && live == Err(staged_error.to_string()) => {}
             (Ok(direct), Err(staged_error)) => {
                 panic!("in-place edit {direct:?} hid the staged error {staged_error}")
             }
@@ -522,6 +683,81 @@ mod tests {
             document.comments.is_some(),
             document.package.get_part("/word/extra.xml").is_some(),
         )
+    }
+
+    #[test]
+    fn a_refusal_after_a_custom_xml_store_and_a_removal_leaves_the_document_as_it_was() {
+        let mut document = Document::new();
+        document
+            .set_document_variable("kept", "value")
+            .expect("a variable is set");
+        let before = document.clone_for_staging().to_bytes().unwrap();
+        let identifiers = document.identifiers.clone();
+        let result: Result<()> =
+            document.edit_in_place(&[EditUnit::Settings, EditUnit::Parts], |document| {
+                crate::bibliography::add_custom_xml_store_in_place(document, b"<data/>", &[])?;
+                document.remove_document_variable("kept")?;
+                let settings = document
+                    .settings_part_name
+                    .clone()
+                    .expect("a settings part");
+                document.package.remove_part(&settings);
+                document.package.remove_part_rels(&settings);
+                document.package.remove_content_type_override(&settings);
+                document.identifiers.retire_authored_part(&settings);
+                Err(Error::Other("refused".to_owned()))
+            });
+        assert!(result.is_err());
+        assert_eq!(document.identifiers, identifiers);
+        assert_eq!(document.clone_for_staging().to_bytes().unwrap(), before);
+    }
+
+    /// The relationships of the main part, as their ids, types and targets.
+    fn main_relationships(document: &Document) -> Option<Vec<oxoffice_opc::Relationship>> {
+        document
+            .package
+            .get_part_rels(&document.doc_part_name)
+            .map(|relationships| relationships.items.clone())
+    }
+
+    #[test]
+    fn a_refusal_puts_back_relationships_removed_whole_then_created_again() {
+        let mut document = Document::new();
+        let owner = document.doc_part_name.clone();
+        let before = main_relationships(&document);
+        assert!(before.as_ref().is_some_and(|items| !items.is_empty()));
+        let result: Result<()> = document.edit_in_place(&[EditUnit::Parts], |document| {
+            document.package.remove_part_rels(&owner);
+            assert!(document.package.part_journal_records_rels(&owner));
+            document.add_relationship_journaled(Some(&owner), "rId90", "urn:test", "a.xml");
+            document.add_external_relationship_journaled(
+                &owner,
+                "rId91",
+                "urn:test",
+                "https://example.com",
+            );
+            Err(Error::Other("refused".to_owned()))
+        });
+        assert!(result.is_err());
+        assert_eq!(main_relationships(&document), before);
+    }
+
+    #[test]
+    fn a_refusal_puts_back_a_relationship_removed_then_added_again_with_its_id() {
+        let mut document = Document::new();
+        let owner = document.doc_part_name.clone();
+        let before = main_relationships(&document);
+        let first = before.as_ref().unwrap()[0].clone();
+        let result: Result<()> = document.edit_in_place(&[EditUnit::Parts], |document| {
+            let removed = document
+                .package
+                .remove_relationships_where(&owner, |item| item.id == first.id);
+            assert_eq!(removed, std::slice::from_ref(&first));
+            document.add_relationship_journaled(Some(&owner), &first.id, "urn:test", "b.xml");
+            Err(Error::Other("refused".to_owned()))
+        });
+        assert!(result.is_err());
+        assert_eq!(main_relationships(&document), before);
     }
 
     #[test]
