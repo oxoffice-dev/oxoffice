@@ -1,10 +1,11 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
 use oxoffice_core::xml::{local_name, matches_local_name};
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use super::paragraph::{
     TextNamespaceScope, text_close_generated_child, text_root_spellings_scoped, text_validate_root,
@@ -125,7 +126,7 @@ impl CT_TextListStyle {
                     style.source_root = text_root_spellings_scoped(
                         &element,
                         inherited,
-                        &capture_empty_element(&element)?,
+                        &capture_empty(&element, reader.empty_writing())?,
                     )?;
                     return Ok(style);
                 }
@@ -189,7 +190,7 @@ impl CT_TextListStyle {
                     if name == b"defPPr" || list_level(&name)?.is_some() {
                         validate_list_style_root(&element)?;
                     }
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     style.capture_child(&name, raw, &mut boundary, &namespaces)?;
                 }
                 Event::End(element)

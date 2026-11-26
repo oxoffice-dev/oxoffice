@@ -2,13 +2,14 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw};
 use oxoffice_core::units::{Angle, Percent1000};
 use oxoffice_core::xml::{get_attr, local_name, matches_local_name};
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::color::{ColorChoice, ColorError};
 use crate::namespace::A_NS;
@@ -186,7 +187,7 @@ impl CT_OuterShadowEffect {
                     .push(boundary, capture_element(reader, &element)?),
                 Event::Empty(element) => shadow
                     .raw_children
-                    .push(boundary, capture_empty_element(&element)?),
+                    .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 Event::End(element)
                     if matches_local_name(element.name().as_ref(), b"outerShdw") =>
                 {
@@ -376,7 +377,7 @@ impl CT_EffectList {
                     boundary = boundary.max(raw_effect_boundary(element.name().as_ref()));
                     effects
                         .raw_children
-                        .push(boundary, capture_empty_element(&element)?);
+                        .push(boundary, capture_empty(&element, reader.empty_writing())?);
                 }
                 Event::End(element)
                     if matches_local_name(element.name().as_ref(), b"effectLst") =>

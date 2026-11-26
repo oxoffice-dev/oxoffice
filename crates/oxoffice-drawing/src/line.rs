@@ -2,10 +2,11 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
 use oxoffice_core::xml::{get_attr, local_name, matches_local_name};
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::fill::{Fill, FillError};
 use crate::namespace::{
@@ -458,7 +459,7 @@ impl CT_LineProperties {
                 }
                 Event::Empty(element) if !property_is_drawing(&element, namespaces)? => {
                     line.raw_children
-                        .push(boundary, capture_empty_element(&element)?);
+                        .push(boundary, capture_empty(&element, reader.empty_writing())?);
                 }
                 Event::Start(element) if is_fill(element.name().as_ref()) => {
                     line.fill = Some(Fill::from_element_in(reader, &element, namespaces)?);
@@ -530,7 +531,7 @@ impl CT_LineProperties {
                 ),
                 Event::Empty(element) => line.raw_children.push(
                     raw_boundary(element.name().as_ref(), boundary),
-                    capture_empty_element(&element)?,
+                    capture_empty(&element, reader.empty_writing())?,
                 ),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"ln") => break,
                 Event::Eof => return Err(missing_end("ln")),
@@ -636,9 +637,10 @@ fn parse_custom_dash(reader: &mut Reader<&[u8]>) -> Result<CustomDash> {
             Event::Start(element) => dash
                 .raw_children
                 .push(dash.stops.len(), capture_element(reader, &element)?),
-            Event::Empty(element) => dash
-                .raw_children
-                .push(dash.stops.len(), capture_empty_element(&element)?),
+            Event::Empty(element) => dash.raw_children.push(
+                dash.stops.len(),
+                capture_empty(&element, reader.empty_writing())?,
+            ),
             Event::End(element) if matches_local_name(element.name().as_ref(), b"custDash") => {
                 break;
             }
@@ -786,7 +788,9 @@ fn capture_all_children(reader: &mut Reader<&[u8]>, end_name: &[u8]) -> Result<O
             .map_err(OxmlError::from)?
         {
             Event::Start(element) => raw_children.push(0, capture_element(reader, &element)?),
-            Event::Empty(element) => raw_children.push(0, capture_empty_element(&element)?),
+            Event::Empty(element) => {
+                raw_children.push(0, capture_empty(&element, reader.empty_writing())?)
+            }
             Event::End(element) if matches_local_name(element.name().as_ref(), end_name) => break,
             Event::Eof => return Err(missing_end(&String::from_utf8_lossy(end_name))),
             _ => {}

@@ -1,10 +1,11 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw};
 use oxoffice_core::xml::matches_local_name;
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::order::OrderedRawChildren;
 
@@ -211,7 +212,7 @@ impl CT_TextBody {
                     if body_properties.is_some() {
                         return Err(TextError::DuplicateElement("bodyPr".to_owned()));
                     }
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     let parsed = CT_TextBodyProperties::from_xml(&raw)?;
                     source_body_properties = Some(SourceBodyProperties {
                         raw,
@@ -236,7 +237,7 @@ impl CT_TextBody {
                     if list_style.is_some() {
                         return Err(TextError::DuplicateElement("lstStyle".to_owned()));
                     }
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     list_style = Some(CT_TextListStyle::from_xml_boxed_with_namespaces(
                         &raw,
                         &namespaces,
@@ -252,7 +253,7 @@ impl CT_TextBody {
                     boundary = boundary.max(2 + paragraphs.len());
                 }
                 Event::Empty(element) if text_owned_name(&element, &namespaces)? == b"p" => {
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     paragraphs.push(CT_TextParagraph::from_xml_with_namespaces(
                         &raw,
                         &namespaces,
@@ -263,7 +264,7 @@ impl CT_TextBody {
                     raw_children.push(boundary, capture_element(reader, &element)?)
                 }
                 Event::Empty(element) => {
-                    raw_children.push(boundary, capture_empty_element(&element)?)
+                    raw_children.push(boundary, capture_empty(&element, reader.empty_writing())?)
                 }
                 Event::End(element)
                     if matches_local_name(element.name().as_ref(), root_local_name) =>

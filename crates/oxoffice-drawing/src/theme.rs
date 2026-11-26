@@ -1,8 +1,9 @@
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, push_attributes};
 use oxoffice_core::xml::{local_name, matches_local_name, push_escaped_attribute};
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 use std::fmt;
 
 use crate::color::{ColorChoice, ColorError, ThemeColorSlot};
@@ -277,7 +278,9 @@ impl CT_OfficeStyleSheet {
                     return Err(missing("themeElements children"));
                 }
                 Event::Start(e) => raw_children.push(boundary, capture_element(reader, &e)?),
-                Event::Empty(e) => raw_children.push(boundary, capture_empty_element(&e)?),
+                Event::Empty(e) => {
+                    raw_children.push(boundary, capture_empty(&e, reader.empty_writing())?)
+                }
                 Event::End(e) if matches_local_name(e.name().as_ref(), b"theme") => break,
                 Event::Eof => return Err(missing_end("theme")),
                 _ => {}
@@ -353,7 +356,9 @@ impl CT_ThemeElements {
                     return Err(missing(format!("{} children", element_name(&e))));
                 }
                 Event::Start(e) => raw_children.push(boundary, capture_element(reader, &e)?),
-                Event::Empty(e) => raw_children.push(boundary, capture_empty_element(&e)?),
+                Event::Empty(e) => {
+                    raw_children.push(boundary, capture_empty(&e, reader.empty_writing())?)
+                }
                 Event::End(e) if matches_local_name(e.name().as_ref(), b"themeElements") => break,
                 Event::Eof => return Err(missing_end("themeElements")),
                 _ => {}
@@ -422,7 +427,9 @@ impl CT_ColorScheme {
                     return Err(missing(format!("{} colour", element_name(&e))));
                 }
                 Event::Start(e) => raw_children.push(boundary, capture_element(reader, &e)?),
-                Event::Empty(e) => raw_children.push(boundary, capture_empty_element(&e)?),
+                Event::Empty(e) => {
+                    raw_children.push(boundary, capture_empty(&e, reader.empty_writing())?)
+                }
                 Event::End(e) if matches_local_name(e.name().as_ref(), b"clrScheme") => break,
                 Event::Eof => return Err(missing_end("clrScheme")),
                 _ => {}
@@ -504,7 +511,7 @@ fn read_color_slot(reader: &mut Reader<&[u8]>, start: &BytesStart<'_>) -> Result
                 boundary = 1;
             }
             Event::Start(e) => children.push(boundary, capture_element(reader, &e)?),
-            Event::Empty(e) => children.push(boundary, capture_empty_element(&e)?),
+            Event::Empty(e) => children.push(boundary, capture_empty(&e, reader.empty_writing())?),
             Event::End(e) if local_name(e.name().as_ref()) == end => break,
             Event::Eof => return Err(missing_end(String::from_utf8_lossy(&end))),
             _ => {}
@@ -546,7 +553,9 @@ impl CT_FontScheme {
                     return Err(missing(format!("{} children", element_name(&e))));
                 }
                 Event::Start(e) => raw_children.push(boundary, capture_element(reader, &e)?),
-                Event::Empty(e) => raw_children.push(boundary, capture_empty_element(&e)?),
+                Event::Empty(e) => {
+                    raw_children.push(boundary, capture_empty(&e, reader.empty_writing())?)
+                }
                 Event::End(e) if matches_local_name(e.name().as_ref(), b"fontScheme") => break,
                 Event::Eof => return Err(missing_end("fontScheme")),
                 _ => {}
@@ -639,7 +648,9 @@ impl CT_FontCollection {
                     boundary = 3 + supplemental_fonts.len();
                 }
                 Event::Start(e) => raw_children.push(boundary, capture_element(reader, &e)?),
-                Event::Empty(e) => raw_children.push(boundary, capture_empty_element(&e)?),
+                Event::Empty(e) => {
+                    raw_children.push(boundary, capture_empty(&e, reader.empty_writing())?)
+                }
                 Event::End(e) if local_name(e.name().as_ref()) == end => break,
                 Event::Eof => return Err(missing_end(String::from_utf8_lossy(&end))),
                 _ => {}
@@ -773,7 +784,9 @@ impl CT_StyleMatrix {
                     return Err(missing(format!("{} entries", element_name(&e))));
                 }
                 Event::Start(e) => raw_children.push(boundary, capture_element(reader, &e)?),
-                Event::Empty(e) => raw_children.push(boundary, capture_empty_element(&e)?),
+                Event::Empty(e) => {
+                    raw_children.push(boundary, capture_empty(&e, reader.empty_writing())?)
+                }
                 Event::End(e) if matches_local_name(e.name().as_ref(), b"fmtScheme") => break,
                 Event::Eof => return Err(missing_end("fmtScheme")),
                 _ => {}
@@ -843,13 +856,15 @@ fn read_fill_list(
                 values.push(Fill::from_xml(&xml)?);
             }
             Event::Empty(e) if is_fill(e.name().as_ref()) => {
-                let xml = capture_empty_element(&e)?;
+                let xml = capture_empty(&e, reader.empty_writing())?;
                 values.push(Fill::from_xml(&xml)?);
             }
             Event::Start(e) => raw
                 .children
                 .push(values.len(), capture_element(reader, &e)?),
-            Event::Empty(e) => raw.children.push(values.len(), capture_empty_element(&e)?),
+            Event::Empty(e) => raw
+                .children
+                .push(values.len(), capture_empty(&e, reader.empty_writing())?),
             Event::End(e) if local_name(e.name().as_ref()) == end => break,
             Event::Eof => return Err(missing_end(String::from_utf8_lossy(end))),
             _ => {}
@@ -876,13 +891,15 @@ fn read_line_list(
                 values.push(CT_LineProperties::from_xml(&xml)?);
             }
             Event::Empty(e) if matches_local_name(e.name().as_ref(), b"ln") => {
-                let xml = capture_empty_element(&e)?;
+                let xml = capture_empty(&e, reader.empty_writing())?;
                 values.push(CT_LineProperties::from_xml(&xml)?);
             }
             Event::Start(e) => raw
                 .children
                 .push(values.len(), capture_element(reader, &e)?),
-            Event::Empty(e) => raw.children.push(values.len(), capture_empty_element(&e)?),
+            Event::Empty(e) => raw
+                .children
+                .push(values.len(), capture_empty(&e, reader.empty_writing())?),
             Event::End(e) if matches_local_name(e.name().as_ref(), b"lnStyleLst") => break,
             Event::Eof => return Err(missing_end("lnStyleLst")),
             _ => {}
@@ -917,7 +934,9 @@ fn read_effect_style_list(
             Event::Start(e) => raw
                 .children
                 .push(values.len(), capture_element(reader, &e)?),
-            Event::Empty(e) => raw.children.push(values.len(), capture_empty_element(&e)?),
+            Event::Empty(e) => raw
+                .children
+                .push(values.len(), capture_empty(&e, reader.empty_writing())?),
             Event::End(e) if matches_local_name(e.name().as_ref(), b"effectStyleLst") => break,
             Event::Eof => return Err(missing_end("effectStyleLst")),
             _ => {}
@@ -956,11 +975,16 @@ impl CT_EffectStyle {
                 }
                 Event::Empty(e) if matches_local_name(e.name().as_ref(), b"effectLst") => {
                     reject_duplicate(&effect_list, "effectLst")?;
-                    effect_list = Some(CT_EffectList::from_xml(&capture_empty_element(&e)?)?);
+                    effect_list = Some(CT_EffectList::from_xml(&capture_empty(
+                        &e,
+                        reader.empty_writing(),
+                    )?)?);
                     boundary = 1;
                 }
                 Event::Start(e) => raw_children.push(boundary, capture_element(reader, &e)?),
-                Event::Empty(e) => raw_children.push(boundary, capture_empty_element(&e)?),
+                Event::Empty(e) => {
+                    raw_children.push(boundary, capture_empty(&e, reader.empty_writing())?)
+                }
                 Event::End(e) if matches_local_name(e.name().as_ref(), b"effectStyle") => break,
                 Event::Eof => return Err(missing_end("effectStyle")),
                 _ => {}
@@ -1050,7 +1074,7 @@ fn read_leaf_children(
     loop {
         match reader.read_event_into(&mut buf).map_err(OxmlError::from)? {
             Event::Start(e) => raw.push(0, capture_element(reader, &e)?),
-            Event::Empty(e) => raw.push(0, capture_empty_element(&e)?),
+            Event::Empty(e) => raw.push(0, capture_empty(&e, reader.empty_writing())?),
             Event::End(e) if local_name(e.name().as_ref()) == end => break,
             Event::Eof => return Err(missing_end(String::from_utf8_lossy(&end))),
             _ => {}
