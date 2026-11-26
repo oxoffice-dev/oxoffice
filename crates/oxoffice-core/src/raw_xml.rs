@@ -286,13 +286,6 @@ fn capture_element_in(
     Ok((writer.into_inner(), ranges.map(|ranges| ranges.pieces)))
 }
 
-/// Capture an empty (self-closing) element as raw bytes.
-pub fn capture_empty_element(e: &BytesStart) -> Result<Vec<u8>> {
-    let mut writer = Writer::new(Vec::new());
-    writer.write_event(Event::Empty(e.to_owned()))?;
-    Ok(writer.into_inner())
-}
-
 /// Capture an element with nothing inside as raw bytes, in `writing`:
 /// `<x .../>` or `<x ...></x>`. An element read by
 /// [`crate::xml_reader`] passes the reader's
