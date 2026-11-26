@@ -543,8 +543,12 @@ impl Document {
                 &actual_items[actual_controls[nested]]
             };
             if let [_, ordinal] = location.index_path.as_slice() {
-                let canonical_paragraphs = scan_story_control_paragraphs(&canonical.xml, selected)?;
-                let paragraphs = scan_story_control_paragraphs(&source.xml, item)?;
+                // Paragraph or table `ordinal` of the control, by the kind.
+                let block = control_block_name(location.item_kind)
+                    .ok_or_else(|| Error::Other("scoped replacement requires a block".into()))?;
+                let canonical_paragraphs =
+                    scan_story_control_blocks(&canonical.xml, selected, block)?;
+                let paragraphs = scan_story_control_blocks(&source.xml, item, block)?;
                 let select = |paragraphs: &[Range<usize>]| {
                     paragraphs
                         .get(*ordinal)

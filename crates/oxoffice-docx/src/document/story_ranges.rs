@@ -1162,54 +1162,13 @@ impl Document {
         Ok(Some(parts))
     }
 
+    /// The paragraph at `location`: [`Self::story_item_source`], which reads
+    /// `[i]` and a paragraph `[c, k]` of a block control alike.
     pub(super) fn story_range_paragraph_source<'a>(
         &'a self,
         location: &ContentLocation,
     ) -> Result<(StorySource<'a>, StoryItemSpan)> {
-        if location.index_path.len() == 1 {
-            return self.story_item_source(location);
-        }
-        if location.index_path.len() != 2 || location.item_kind != StoryItemKind::Paragraph {
-            return Err(StoryError::InvalidPath {
-                path: location.index_path.clone(),
-            }
-            .into());
-        }
-        let (source, owner, layout) = self.story_source_owner_and_layout(&location.story, true)?;
-        let items = story_owner_items(source.xml.as_ref(), &owner, layout.as_ref())?;
-        let control_index = location.index_path[0];
-        let control = items.get(control_index).ok_or(StoryError::OutOfBounds {
-            index: control_index,
-            len: items.len(),
-        })?;
-        if control.kind != StoryItemKind::ContentControl {
-            return Err(StoryError::KindMismatch {
-                expected: StoryItemKind::ContentControl,
-                actual: control.kind,
-            }
-            .into());
-        }
-        let paragraphs = story_control_paragraphs(source.xml.as_ref(), control, layout.as_ref())?;
-        let paragraph_index = location.index_path[1];
-        let full = paragraphs
-            .get(paragraph_index)
-            .cloned()
-            .ok_or(StoryError::OutOfBounds {
-                index: paragraph_index,
-                len: paragraphs.len(),
-            })?;
-        Ok((
-            source,
-            StoryItemSpan {
-                kind: StoryItemKind::Paragraph,
-                scan: full.clone(),
-                full,
-                direct_owner_child: false,
-                complex_field: false,
-                complex_ancestors: Vec::new(),
-                sdt_context: None,
-            },
-        ))
+        self.story_item_source(location)
     }
 }
 

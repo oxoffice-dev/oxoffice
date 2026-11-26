@@ -142,7 +142,8 @@ CLI where it makes sense and Python everywhere.
   for every operation that inserts, copies, moves or removes whole blocks.
   Four shapes, the same in every story: `[i]`, story item `i` (a direct
   child of the story owner, or a block control written in another block
-  control's content); `[c, k]`, paragraph `k` of block control `c`;
+  control's content); `[c, k]`, paragraph `k` of block control `c`, or
+  its table `k` with the kind table (the kind says what `k` counts);
   `ContentLocation::end(story)`, before the body's section properties; and
   `ContentLocation::control_end(story, c)`, after the last child of `c`'s
   content. The container of a location is the story owner or that

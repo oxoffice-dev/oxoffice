@@ -71,9 +71,10 @@ pub(super) fn table_parent_range(
     document: &Document,
     destination: &ContentLocation,
 ) -> Result<PartRange> {
+    // A table location: `[t]`, or table `k` of block control `c`, `[c, k]`.
     if Document::location_is_end(destination)
         || destination.item_kind() != StoryItemKind::Table
-        || destination.index_path().len() != 1
+        || !matches!(destination.index_path().len(), 1 | 2)
     {
         return Err(Error::Other(
             "content control placement does not match its parent".to_owned(),
@@ -89,20 +90,30 @@ pub(super) fn row_parent_range(
     document: &Document,
     destination: &ContentLocation,
 ) -> Result<PartRange> {
+    // A row is its table's location followed by the row index: `[t, r]`,
+    // or `[c, k, r]` for table `k` of block control `c`.
     let path = destination.index_path();
-    let [table_index, row_index] = path else {
+    let Some((row_index, table)) = path.split_last() else {
         return Err(Error::Other(
             "content control placement does not match its parent".to_owned(),
         ));
     };
-    if destination.item_kind() != StoryItemKind::Table {
+    if destination.item_kind() != StoryItemKind::Table || !matches!(table.len(), 1 | 2) {
         return Err(Error::Other(
             "content control placement does not match its parent".to_owned(),
         ));
     }
     let (part, xml, table_range, _) = document
-        .copy_indexed_story_item(destination, &[*table_index])
-        .map_err(control_fault)?;
+        .copy_indexed_story_item(destination, table)
+        .map_err(|error| match (error, table) {
+            (Error::Story(crate::StoryError::KindMismatch { .. }), [control]) => {
+                Error::Other(format!(
+                    "a cell content control goes in a row: [table, row] for a table that is story \
+                 item [table], [{control}, k, row] for table k of block control {control}"
+                ))
+            }
+            (error, _) => control_fault(error),
+        })?;
     let range = nth_direct_child(&xml, &table_range, b"tr", *row_index)?;
     Ok(PartRange { part, xml, range })
 }

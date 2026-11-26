@@ -151,6 +151,11 @@ impl StoryId {
 }
 
 impl ContentLocation {
+    /// The item at `index_path` in `story`: `[i]`, story item `i`; `[c, k]`,
+    /// paragraph `k` of the block content control that is story item `c`,
+    /// or with the kind [`StoryItemKind::Table`], its table `k`. The kind
+    /// says what `k` counts: the paragraphs or the tables written directly
+    /// in the control's content.
     pub fn new(story: StoryId, item_kind: StoryItemKind, index_path: Vec<usize>) -> Self {
         Self {
             story,
@@ -178,8 +183,9 @@ impl ContentLocation {
     /// The path is `[control_index]` and the kind
     /// [`StoryItemKind::ContentControl`], as the location of the control
     /// itself, and [`Self::is_end`] tells them apart. A paragraph `k` of the
-    /// control is `[control_index, k]`; `[control_index, n]`, past its `n`
-    /// paragraphs, names nothing.
+    /// control is `[control_index, k]`, and so is its table `k` with the kind
+    /// table; `[control_index, n]`, past its `n` paragraphs or tables, names
+    /// nothing.
     pub fn control_end(story: StoryId, control_index: usize) -> Self {
         Self {
             story,

@@ -1277,6 +1277,26 @@ pub(super) fn scan_story_control_paragraphs(
     xml: &[u8],
     control: &StoryItemSpan,
 ) -> Result<Vec<Range<usize>>> {
+    scan_story_control_blocks(xml, control, b"p")
+}
+
+/// The local name of the blocks `[c, k]` of `kind` counts in a block
+/// control: its paragraphs or its tables.
+pub(super) fn control_block_name(kind: StoryItemKind) -> Option<&'static [u8]> {
+    match kind {
+        StoryItemKind::Paragraph => Some(b"p"),
+        StoryItemKind::Table => Some(b"tbl"),
+        _ => None,
+    }
+}
+
+/// The Word elements named `local` (`p` or `tbl`) written directly in the
+/// content of `control`, in document order.
+pub(super) fn scan_story_control_blocks(
+    xml: &[u8],
+    control: &StoryItemSpan,
+    local_block: &[u8],
+) -> Result<Vec<Range<usize>>> {
     let empty_word_prefixes = Arc::new(Vec::new());
     let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -1329,7 +1349,7 @@ pub(super) fn scan_story_control_paragraphs(
                         && parent.namespace == StoryNamespace::Word
                         && parent.local_name.as_ref() == b"sdtContent"
                 });
-                if !opaque && is_word && local.as_ref() == b"p" && direct_content {
+                if !opaque && is_word && local.as_ref() == local_block && direct_content {
                     paragraphs.push(
                         before..if empty {
                             after

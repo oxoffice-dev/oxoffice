@@ -3191,17 +3191,20 @@ pub(super) fn story_owner_item(
     Ok((items.get(index).cloned(), items.len()))
 }
 
-pub(super) fn story_control_paragraphs(
+/// [`scan_story_control_blocks`] of `control`, read from its body block
+/// alone when `layout` holds it.
+pub(super) fn story_control_blocks(
     xml: &[u8],
     control: &StoryItemSpan,
+    local_block: &[u8],
     layout: Option<&MainStoryLayout>,
 ) -> Result<Vec<Range<usize>>> {
     let Some((source, shift)) = layout.and_then(|layout| layout.block_source(xml, &control.full))
     else {
-        return scan_story_control_paragraphs(xml, control);
+        return scan_story_control_blocks(xml, control, local_block);
     };
     let local = control.moved(|at, _| at - shift);
-    Ok(scan_story_control_paragraphs(&source, &local)?
+    Ok(scan_story_control_blocks(&source, &local, local_block)?
         .into_iter()
         .map(|paragraph| paragraph.start + shift..paragraph.end + shift)
         .collect())
