@@ -764,6 +764,67 @@ fn a_bookmark_start_with_no_end_is_no_bookmark_to_a_field() {
     ));
     doc.update_layout_backed_fields().unwrap();
     assert_eq!(texts(&reopen(&mut doc))[0], "1");
+    // A list item holding a start with no end gives the bookmark neither
+    // its number nor its place.
+    let mut doc = Document::new();
+    let definition = doc
+        .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
+        .unwrap();
+    let list = doc.add_numbering_instance(definition, &[]).unwrap();
+    doc.add_paragraph("First").numbering(list, 0);
+    doc.add_paragraph("Second").numbering(list, 0);
+    doc.add_bookmark("Clause", runs(0, 0, 0, 1)).unwrap();
+    for instruction in [r"REF clause \n \h", r"REF clause \p"] {
+        doc.add_paragraph("See ")
+            .add_run("")
+            .add_field(instruction, "?")
+            .unwrap();
+    }
+    let mut doc = with_main_xml(&mut doc, |xml| {
+        xml.replacen(
+            "Second</w:t></w:r>",
+            r#"Second</w:t></w:r><w:bookmarkStart w:id="99" w:name="Clause"/>"#,
+            1,
+        )
+    });
+    assert!(
+        drawn_text(&doc).ends_with("See 1See above"),
+        "{}",
+        drawn_text(&doc)
+    );
+    doc.update_fields(&no_context()).unwrap();
+    assert_eq!(texts(&doc)[2..], ["See 1", "See above"]);
+    // Nor does it lift the suppressed numbering of the bookmark's paragraph.
+    let body = format!(
+        r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr></w:pPr>{}</w:p><w:p><w:bookmarkStart w:id="9" w:name="Clause"/>{}</w:p><w:p>{}</w:p>"#,
+        r#"<w:bookmarkStart w:id="0" w:name="Clause"/><w:r><w:t>Kept</w:t></w:r><w:bookmarkEnd w:id="0"/>"#,
+        plain("Copy"),
+        complex_field(r"REF clause \n", "?")
+    );
+    assert_eq!(texts_over_updates(&body)[3], ["Kept", "Copy", "0"]);
+    // Nor does a sequence field find it by its bookmark operand.
+    let body = format!(
+        r#"<w:p><w:bookmarkStart w:id="9" w:name="Second"/>{}</w:p>{}<w:p>{}</w:p>"#,
+        simple_field("SEQ Figure", "1"),
+        bookmarked(0, "Second", &simple_field("SEQ Figure", "2")),
+        complex_field("SEQ Figure SECOND", "?")
+    );
+    assert_eq!(texts_over_updates(&body)[3], ["1", "2", "2"]);
+}
+
+/// A copy of `doc` whose main part `edit` writes again.
+fn with_main_xml(doc: &mut Document, edit: impl FnOnce(String) -> String) -> Document {
+    let mut package =
+        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
+            .unwrap();
+    let main = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
+    let edited = edit(xml.clone());
+    assert_ne!(edited, xml, "the edit applies");
+    package.set_part(&main, edited.into_bytes());
+    let mut out = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
 }
 
 #[test]

@@ -364,7 +364,9 @@ impl SequenceCollector<'_> {
             let order = self.bookmark_order;
             self.bookmark_order += 1;
             if marker.is_start() {
-                if let Some(name) = marker.name() {
+                if opens_bookmark(self.input, marker)
+                    && let Some(name) = marker.name()
+                {
                     self.bookmark_starts.push((
                         id,
                         name.to_owned(),
@@ -506,7 +508,9 @@ impl SequenceCollector<'_> {
                 continue;
             }
             if marker.is_start() {
-                if let Some(name) = marker.name() {
+                if opens_bookmark(self.input, marker)
+                    && let Some(name) = marker.name()
+                {
                     self.snapshot.position_bookmark_starts.push((
                         id,
                         name.to_owned(),

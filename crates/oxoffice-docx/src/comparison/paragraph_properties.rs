@@ -442,8 +442,12 @@ fn retained_xml_as_said(properties: &mut CT_PPr) {
         canonical(raw, &[]);
     }
     if let Some(mark) = properties.rpr.as_mut() {
+        // The mark's toggle carriers, which a save writes again under the
+        // prefix of its own writing.
         for raw in &mut mark.revision_xml {
-            canonical(raw, &[]);
+            if let Some(canonical) = retained_canonical(raw) {
+                *raw = canonical.into_bytes();
+            }
         }
         mark.font_extra_attributes.sort();
         mark.language_extra_attributes.sort();

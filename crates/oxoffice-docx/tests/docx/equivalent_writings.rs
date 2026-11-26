@@ -313,11 +313,12 @@ fn the_canonical_form_tells_apart_two_parts_that_say_different_things() {
     assert!(refused.is_err_and(|error| error.contains("names a renamed prefix")));
 }
 
-// A table paragraph's `w:cnfStyle` is kept as written: written again in
-// another attribute order, or under another prefix and saved again after an
-// edit, it is no change; with another region it is one.
+// A table paragraph's `w:cnfStyle`, or a paragraph mark's toggle, is kept
+// as written: written again in another attribute order, or under another
+// prefix and saved again after an edit, it is no change; with another region
+// it is one.
 #[test]
-fn a_kept_table_paragraph_property_counts_only_when_what_it_says_changes() {
+fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
     let cell = |cnf: &str, text: &str| {
         docx_with_body(&format!(
             r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:cnfStyle {cnf}/></w:pPr><w:r><w:t>{text} totals.</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
@@ -336,15 +337,37 @@ fn a_kept_table_paragraph_property_counts_only_when_what_it_says_changes() {
     }
     let other_prefixes =
         |bytes: Vec<u8>| rewrite_package(&bytes, Writing::OtherPrefixes).unwrap().0;
-    let original = other_prefixes(original);
-    for (edited, same) in [
-        (r#"w:val="100000000000" w:firstRow="1""#, true),
-        (r#"w:val="100000000000" w:firstRow="0""#, false),
-    ] {
-        let mut doc = open(&other_prefixes(cell(edited, "Quarterly"))).unwrap();
+    let mark = docx_with_body(
+        r#"<w:p><w:pPr><w:rPr><w:rtl w:val="false" w:extra="x"/></w:rPr></w:pPr><w:r><w:t>Quarterly totals.</w:t></w:r></w:p>"#,
+    );
+    for (row, (original, edited, same)) in [
+        (
+            &original,
+            cell(r#"w:val="100000000000" w:firstRow="1""#, "Quarterly"),
+            true,
+        ),
+        (
+            &original,
+            cell(r#"w:val="100000000000" w:firstRow="0""#, "Quarterly"),
+            false,
+        ),
+        (&mark, mark.clone(), true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut doc = open(&other_prefixes(edited)).unwrap();
         assert_eq!(doc.replace_text("Quarterly", "Yearly"), 1);
         let saved = open(&doc.to_bytes().unwrap()).unwrap();
-        let found = open(&original).unwrap().compare(&saved, AUTHOR, DATE);
-        assert_eq!(found.unwrap().is_empty(), same, "other prefixes, {edited}");
+        let found = open(&other_prefixes(original.clone()))
+            .unwrap()
+            .compare(&saved, AUTHOR, DATE);
+        assert_eq!(
+            found
+                .map(|found| found.is_empty())
+                .map_err(|error| error.to_string()),
+            Ok(same),
+            "other prefixes, row {row}"
+        );
     }
 }
