@@ -2529,7 +2529,8 @@ fn write_rewritten_style_scalar<W: std::io::Write>(
                 writer.write_event(Event::Start(rewritten_style_scalar_start(&element, value)?))?;
             }
             Event::Empty(element) if root_pending => {
-                writer.write_event(Event::Empty(rewritten_style_scalar_start(&element, value)?))?;
+                let rewritten = rewritten_style_scalar_start(&element, value)?;
+                crate::raw_xml::write_empty(writer, &rewritten, reader.empty_writing())?;
                 break;
             }
             Event::Eof => break,

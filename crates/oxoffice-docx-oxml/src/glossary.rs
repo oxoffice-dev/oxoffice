@@ -1310,23 +1310,14 @@ fn patch_root_word_value(
     let mut reader = Reader::from_reader(raw);
     let mut buffer = Vec::new();
     loop {
+        let begin = reader.buffer_position() as usize;
         match reader.read_event_into(&mut buffer)? {
-            event @ (Event::Start(_) | Event::Empty(_)) => {
-                let empty = matches!(event, Event::Empty(_));
-                let element = match event {
-                    Event::Start(element) | Event::Empty(element) => element,
-                    _ => unreachable!(),
-                };
+            Event::Start(element) | Event::Empty(element) => {
                 let prefixes = word_prefixes_at(&element, inherited_prefixes)?;
-                let mut tag = if empty {
-                    let mut writer = Writer::new(Vec::new());
-                    writer.write_event(Event::Empty(element.clone()))?;
-                    writer.into_inner()
-                } else {
-                    let mut writer = Writer::new(Vec::new());
-                    writer.write_event(Event::Start(element.clone()))?;
-                    writer.into_inner()
-                };
+                // The start tag as written, its close included: the rest of
+                // the element follows it unchanged, in its writing.
+                let written = start_tag(&raw[begin..])?;
+                let mut tag = raw[begin..begin + written.range.end].to_vec();
                 let mut attribute_key = None;
                 for attribute in element.attributes() {
                     let attribute = attribute?;
@@ -1357,9 +1348,8 @@ fn patch_root_word_value(
                     }
                     (None, None) => unreachable!("handled before parsing the element"),
                 }
-                let original_tag_len = reader.buffer_position() as usize;
                 let mut output = tag;
-                output.extend_from_slice(&raw[original_tag_len..]);
+                output.extend_from_slice(&raw[begin + written.range.end..]);
                 return Ok(output);
             }
             Event::Eof => return Ok(raw.to_vec()),

@@ -2136,3 +2136,56 @@ fn an_entity_in_a_text_body_container_survives_an_edit_of_its_text() {
         assert!(xml.contains(kept), "{kept}: {xml}");
     }
 }
+
+#[test]
+fn an_empty_element_written_with_an_end_tag_keeps_it_across_a_shape_edit() {
+    let kept = r#"<x:k xmlns:x="urn:oxoffice:test"></x:k>"#;
+    // The element as the slide part writes it, as another producer may, the
+    // edit of its shape, what the saved slide holds.
+    type Edit = fn(&mut Presentation);
+    let rows: [(&str, &str, Edit, &str); 2] = [
+        (
+            "<p:nvPr/>",
+            "<p:nvPr><x:k xmlns:x=\"urn:oxoffice:test\"></x:k></p:nvPr>",
+            |prs| assert_eq!(prs.try_replace_text("Quarterly", "Yearly").unwrap(), 1),
+            kept,
+        ),
+        (
+            r#"name="TextBox 2"/>"#,
+            r#"name="TextBox 2"></p:cNvPr>"#,
+            |prs| {
+                let mut slide = prs.slide_mut(0).unwrap();
+                slide.shape_mut(0).unwrap().set_name("Renamed").unwrap();
+            },
+            r#"name="Renamed"></p:cNvPr>"#,
+        ),
+    ];
+    for (from, to, edit, expected) in rows {
+        let mut prs = blank_slide_deck();
+        let mut slide = prs.slide_mut(0).unwrap();
+        let text_box = slide.add_textbox(Emu(IN), Emu(IN), Emu(4 * IN), Emu(IN));
+        text_box.unwrap().set_text("Quarterly results").unwrap();
+        let parts = oxoffice_xml_test::package_parts(&prs.to_bytes().unwrap()).unwrap();
+        let parts = parts.into_iter().map(|(name, data)| {
+            let data = match name.as_str() {
+                "ppt/slides/slide1.xml" => {
+                    let xml = String::from_utf8(data).unwrap();
+                    assert!(xml.contains(from), "{from}: {xml}");
+                    xml.replacen(from, to, 1).into_bytes()
+                }
+                _ => data,
+            };
+            (name, data)
+        });
+        let bytes = oxoffice_xml_test::write_package(&parts.collect::<Vec<_>>());
+        let mut prs = Presentation::from_bytes(&bytes).unwrap();
+        edit(&mut prs);
+        let saved = oxoffice_xml_test::package_parts(&prs.to_bytes().unwrap()).unwrap();
+        let (_, slide) = saved
+            .iter()
+            .find(|(name, _)| name == "ppt/slides/slide1.xml")
+            .unwrap();
+        let slide = String::from_utf8_lossy(slide);
+        assert!(slide.contains(expected), "{to}: {slide}");
+    }
+}

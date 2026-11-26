@@ -81,13 +81,14 @@ fn ppt_xml_close_namespaces(xml: &[u8]) -> Result<Vec<u8>> {
                     }
                 }
                 let mut writer = XmlWriter::new(Vec::new());
-                writer
-                    .write_event(if empty {
-                        XmlEvent::Empty(root)
-                    } else {
-                        XmlEvent::Start(root)
-                    })
-                    .map_err(|error| invalid_shape_mutation("read XML", error.to_string()))?;
+                if empty {
+                    oxoffice_core::raw_xml::write_empty(&mut writer, &root, reader.empty_writing())
+                } else {
+                    writer
+                        .write_event(XmlEvent::Start(root))
+                        .map_err(oxoffice_core::OxmlError::from)
+                }
+                .map_err(|error| invalid_shape_mutation("read XML", error.to_string()))?;
                 let mut result = writer.into_inner();
                 result.extend_from_slice(&xml[reader.buffer_position() as usize..]);
                 return Ok(result);

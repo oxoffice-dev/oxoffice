@@ -1073,11 +1073,15 @@ fn prepare_shape_style_for_materialization(
                         prepared.push_attribute((key.as_str(), escaped.as_ref()));
                     }
                 }
-                writer.write_event(if empty {
-                    Event::Empty(prepared)
+                if empty {
+                    oxoffice_core::raw_xml::write_empty(
+                        &mut writer,
+                        &prepared,
+                        reader.empty_writing(),
+                    )?;
                 } else {
-                    Event::Start(prepared)
-                })?;
+                    writer.write_event(Event::Start(prepared))?;
+                }
                 if !empty {
                     scopes.push(scope);
                     roles.push(if reference {

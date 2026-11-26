@@ -1636,7 +1636,9 @@ impl CT_TableCell {
     /// Serializes the cell with a standalone DrawingML namespace.
     pub fn to_xml(&self) -> Result<Vec<u8>> {
         let xml = self.canonical_xml()?;
-        let mut reader = Reader::from_reader(xml.as_slice());
+        // The model's own writing, copied as written.
+        let mut source = Reader::from_reader(xml.as_slice());
+        let reader = source.verbatim();
         let mut writer = Writer::new(Vec::new());
         let first = reader.read_event()?;
         let Event::Start(mut root) = first else {

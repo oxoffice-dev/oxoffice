@@ -518,7 +518,10 @@ fn write_rewritten_prefix<W: std::io::Write>(
     prefix: &str,
     emission: Option<&crate::text::FieldXmlEmission>,
 ) -> Result<()> {
-    let mut reader = Reader::from_reader(raw);
+    // Every element is written again under `prefix` and none is modelled:
+    // read as written, an empty element keeps its writing.
+    let mut source = Reader::from_reader(raw);
+    let reader = source.verbatim();
     loop {
         match reader.read_event()? {
             Event::Start(element) => {
@@ -1791,7 +1794,9 @@ fn merge_property_child_attributes(
         }
     }
 
-    let mut reader = Reader::from_reader(generated);
+    // The model's own writing, copied as written.
+    let mut source = Reader::from_reader(generated);
+    let reader = source.verbatim();
     let mut writer = Writer::new(Vec::new());
     let mut buf = Vec::new();
     let mut first = true;

@@ -2,7 +2,9 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{
+    capture_element, capture_empty, emit_raw, push_attributes, write_empty,
+};
 use oxoffice_core::xml::{local_name, matches_local_name};
 use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
@@ -845,13 +847,15 @@ fn close_inherited_typed_shape_groups(
                         }
                     }
                     let closed = BytesStart::from_content(content, start.name().as_ref().len());
-                    writer
-                        .write_event(if empty {
-                            Event::Empty(closed)
-                        } else {
-                            Event::Start(closed)
-                        })
-                        .map_err(OxmlError::from)?;
+                    if empty {
+                        write_empty(&mut writer, &closed, reader.empty_writing())?;
+                    } else {
+                        writer
+                            .write_event(Event::Start(closed))
+                            .map_err(OxmlError::from)?;
+                    }
+                } else if empty {
+                    write_empty(&mut writer, start, reader.empty_writing())?;
                 } else {
                     writer.write_event(event).map_err(OxmlError::from)?;
                 }
@@ -904,9 +908,7 @@ fn close_inherited_shape_property(raw: &[u8], namespaces: &[(String, String)]) -
     let mut writer = Writer::new(Vec::new());
     let closed = BytesStart::from_content(content, name_len);
     if empty {
-        writer
-            .write_event(Event::Empty(closed))
-            .map_err(OxmlError::from)?;
+        write_empty(&mut writer, &closed, reader.empty_writing())?;
     } else {
         writer
             .write_event(Event::Start(closed))

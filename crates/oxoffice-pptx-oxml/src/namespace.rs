@@ -158,7 +158,11 @@ pub(crate) fn non_visual_drawing_without_identity(xml: &[u8]) -> Result<Vec<u8>,
                 }
                 let mut writer = Writer::new(Vec::new());
                 if is_empty {
-                    writer.write_event(Event::Empty(replacement))?;
+                    oxoffice_core::raw_xml::write_empty(
+                        &mut writer,
+                        &replacement,
+                        reader.empty_writing(),
+                    )?;
                 } else {
                     writer.write_event(Event::Start(replacement))?;
                     writer.get_mut().extend_from_slice(&xml[end..]);
@@ -203,7 +207,11 @@ pub(crate) fn set_non_visual_drawing_name(xml: &mut Vec<u8>, name: &str) -> Resu
                 }
                 let mut writer = Writer::new(Vec::new());
                 if is_empty {
-                    writer.write_event(Event::Empty(replacement))?;
+                    oxoffice_core::raw_xml::write_empty(
+                        &mut writer,
+                        &replacement,
+                        reader.empty_writing(),
+                    )?;
                 } else {
                     writer.write_event(Event::Start(replacement))?;
                     writer.get_mut().extend_from_slice(&xml[end..]);

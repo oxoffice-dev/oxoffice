@@ -3247,7 +3247,10 @@ fn rewrite_group_children(
     modeled: &[u8],
     inherited_prefixes: &[String],
 ) -> Result<Vec<u8>> {
-    let mut reader = Reader::from_reader(raw);
+    // A copy of the part that models nothing but the replaced child: read
+    // as written, so every other element keeps its writing.
+    let mut source_reader = Reader::from_reader(raw);
+    let reader = source_reader.verbatim();
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::with_capacity(raw.len() + modeled.len()));
     let mut prefixes = Vec::new();
@@ -3275,7 +3278,7 @@ fn rewrite_group_children(
                         writer.get_mut().extend_from_slice(modeled);
                         inserted = true;
                     }
-                    capture_element(&mut reader, &element)?;
+                    capture_element(reader, &element)?;
                 } else {
                     writer.write_event(Event::Start(element.into_owned()))?;
                     depth += 1;
@@ -3353,7 +3356,10 @@ fn rewrite_child_in_raw(
     inherited_prefixes: &[String],
     order: &[&[u8]],
 ) -> Result<Vec<u8>> {
-    let mut reader = Reader::from_reader(raw);
+    // A copy of the part that models nothing but the replaced child: read
+    // as written, so every other element keeps its writing.
+    let mut source_reader = Reader::from_reader(raw);
+    let reader = source_reader.verbatim();
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::with_capacity(raw.len() + replacement.len()));
     let mut prefixes = Vec::new();
@@ -3385,7 +3391,7 @@ fn rewrite_child_in_raw(
                         writer.get_mut().extend_from_slice(replacement);
                         inserted = true;
                     }
-                    capture_element(&mut reader, &element)?;
+                    capture_element(reader, &element)?;
                 } else {
                     if !inserted && element_follows(order, child_local, &element, &child_prefixes) {
                         writer.get_mut().extend_from_slice(replacement);
@@ -3478,7 +3484,10 @@ pub(crate) fn rewrite_ordered_child(
     replacement: &[u8],
     matches: fn(&[u8], &[u8], &[String]) -> bool,
 ) -> Result<Vec<u8>> {
-    let mut reader = Reader::from_reader(source);
+    // A copy of the part that models nothing but the replaced child: read
+    // as written, so every other element keeps its writing.
+    let mut source_reader = Reader::from_reader(source);
+    let reader = source_reader.verbatim();
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::with_capacity(source.len() + replacement.len()));
     let mut root_prefixes = Vec::new();
@@ -3510,7 +3519,7 @@ pub(crate) fn rewrite_ordered_child(
                         writer.get_mut().extend_from_slice(replacement);
                         inserted = true;
                     }
-                    capture_element(&mut reader, &element)?;
+                    capture_element(reader, &element)?;
                 } else {
                     if !inserted && element_follows(order, local, &element, &prefixes) {
                         writer.get_mut().extend_from_slice(replacement);

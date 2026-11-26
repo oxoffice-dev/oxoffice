@@ -2123,7 +2123,7 @@ fn capture_ns_element(reader: &mut NsReader<&[u8]>, start: &BytesStart<'_>) -> R
                 }
             }
             Event::Empty(ref element) => {
-                writer.write_event(Event::Empty(element.to_owned()))?;
+                crate::raw_xml::write_empty(&mut writer, element, reader.empty_writing())?;
             }
             Event::Text(ref text) => {
                 writer.write_event(Event::Text(text.to_owned().into_owned()))?;

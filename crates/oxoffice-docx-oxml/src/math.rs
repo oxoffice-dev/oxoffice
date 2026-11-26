@@ -4294,7 +4294,10 @@ fn parse_element(raw: &[u8], inherited: &[(String, String)]) -> Result<ParsedEle
             Event::Start(element) if inside => {
                 children.push(capture_element(&mut reader, &element)?)
             }
-            Event::Empty(element) if inside => children.push(capture_empty(&element)?),
+            Event::Empty(element) if inside => children.push(crate::raw_xml::capture_empty(
+                &element,
+                reader.empty_writing(),
+            )?),
             Event::Text(text) if inside && !text.as_ref().iter().all(u8::is_ascii_whitespace) => {
                 children.push(capture_event(Event::Text(text.into_owned()))?)
             }
@@ -4741,9 +4744,6 @@ fn math_text_has_invalid_space(element: &BytesStart<'_>) -> Result<bool> {
     Ok(false)
 }
 
-fn capture_empty(element: &BytesStart<'_>) -> Result<Vec<u8>> {
-    capture_event(Event::Empty(element.to_owned().into_owned()))
-}
 fn capture_event(event: Event<'static>) -> Result<Vec<u8>> {
     let mut output = Vec::new();
     Writer::new(&mut output).write_event(event)?;

@@ -600,11 +600,11 @@ pub(super) fn close_import_table_style(
         start.push_attribute(("xmlns", ""));
     }
     let mut writer = XmlWriter::new(Vec::new());
-    writer.write_event(if empty {
-        XmlEvent::Empty(start)
+    if empty {
+        oxoffice_core::raw_xml::write_empty(&mut writer, &start, reader.empty_writing())?;
     } else {
-        XmlEvent::Start(start)
-    })?;
+        writer.write_event(XmlEvent::Start(start))?;
+    }
     let mut closed = writer.into_inner();
     closed.extend_from_slice(&xml[reader.buffer_position() as usize..]);
     Ok(closed)

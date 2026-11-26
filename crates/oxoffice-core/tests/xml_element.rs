@@ -1097,12 +1097,23 @@ const DOCUMENT_READERS: [&str; 7] = [
 
 /// Files of `DOCUMENT_READERS` that name quick-xml's reader, by how many
 /// lines and why their code must see an empty element's start and end tags.
-const QUICK_XML_READERS: [(&str, usize, &str); 0] = [];
+const QUICK_XML_READERS: [(&str, usize, &str); 2] = [
+    (
+        "crates/oxoffice-docx-oxml/src/paragraph_properties.rs",
+        1,
+        "rereads the paragraph properties the model just wrote, as written",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/run_properties.rs",
+        1,
+        "rereads the run properties the model just wrote, as written",
+    ),
+];
 
 /// The lines of `source`, but its `#[cfg(test)]` items, that name quick-xml's
 /// reader: a `quick_xml::Reader`, `quick_xml::NsReader` or
-/// `quick_xml::reader::` path, or `Reader` or `NsReader` in a
-/// `use quick_xml::{..}`.
+/// `quick_xml::reader::` path, a reader built as `Verbatim::from_..`, or
+/// `Reader` or `NsReader` in a `use quick_xml::{..}`.
 fn quick_xml_readers(source: &str) -> Vec<usize> {
     let code = without_test_items(source);
     let line_of = |at: usize| code[..at].matches('\n').count() + 1;
@@ -1111,10 +1122,12 @@ fn quick_xml_readers(source: &str) -> Vec<usize> {
         "quick_xml::Reader",
         "quick_xml::NsReader",
         "quick_xml::reader::",
+        "Verbatim::from_",
     ] {
         for (at, _) in code.match_indices(path) {
             let next = code[at + path.len()..].chars().next();
-            if !next.is_some_and(|c| c.is_alphanumeric() || c == '_') || path.ends_with("::") {
+            let prefix = path.ends_with("::") || path.ends_with('_');
+            if !next.is_some_and(|c| c.is_alphanumeric() || c == '_') || prefix {
                 found.push(line_of(at));
             }
         }
@@ -1145,16 +1158,18 @@ fn the_check_finds_a_quick_xml_reader() {
         "use quick_xml::{Writer, events::Event};\n",
         "let b = oxoffice_core::xml_reader::Reader::from_reader(xml);\n",
         "let c = quick_xml::ReaderLike::new();\n",
+        "let d = xml_reader::Verbatim::from_reader(xml);\n",
+        "fn g(reader: &mut Verbatim<&[u8]>) {}\n",
         "#[cfg(test)]\nmod tests { fn t() { quick_xml::Reader::from_str(\"\"); } }\n",
     );
-    assert_eq!(quick_xml_readers(source), [1, 2, 3, 7]);
+    assert_eq!(quick_xml_readers(source), [1, 2, 3, 7, 11]);
 }
 
 // A reader that models an empty element on `Event::Empty` alone drops
 // `<w:b></w:b>` (#664): every reader of a document part goes through
 // `oxoffice_core::xml_reader`, which reads both writings as one empty event.
-// Verbatim reads go through `Reader::verbatim`, `xml_reader::Verbatim` or
-// `raw_xml::capture_element`.
+// Verbatim reads go through `Reader::verbatim` or `raw_xml::capture_element`;
+// a reader built as `Verbatim::from_..` is listed with its reason.
 #[test]
 fn every_document_reader_reads_both_writings_of_an_empty_element() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

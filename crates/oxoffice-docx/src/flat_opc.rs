@@ -265,6 +265,8 @@ fn read_xml_data(
     limit: u64,
     inherited_namespaces: &NamespaceDeclarations,
 ) -> Result<Vec<u8>> {
+    // A part is copied as written: its empty elements keep their writing.
+    let reader = reader.verbatim();
     let mut output = Writer::new(Vec::new());
     let mut buffer = Vec::new();
     let mut depth = 0_usize;
@@ -539,7 +541,9 @@ fn write_flat_package(package: &OpcPackage) -> Result<Vec<u8>> {
 }
 
 fn copy_xml_without_declaration(xml: &[u8], output: &mut Writer<Vec<u8>>) -> Result<()> {
-    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
+    // A copy as written: empty elements keep their writing.
+    let mut source = oxoffice_core::xml_reader::Reader::from_reader(xml);
+    let reader = source.verbatim();
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     loop {
@@ -600,7 +604,9 @@ fn materialize_required_inherited_namespaces(
 ) -> Result<Vec<u8>> {
     let mut required = HashSet::new();
     let mut local_scopes = Vec::new();
-    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
+    // Copied as written: only the root gains declarations.
+    let mut source = oxoffice_core::xml_reader::Reader::from_reader(xml);
+    let reader = source.verbatim();
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     loop {
@@ -637,7 +643,9 @@ fn materialize_required_inherited_namespaces(
         .filter(|(key, _)| required.contains(key))
         .cloned()
         .collect::<NamespaceDeclarations>();
-    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
+    // Copied as written: only the root gains declarations.
+    let mut source = oxoffice_core::xml_reader::Reader::from_reader(xml);
+    let reader = source.verbatim();
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::new());
     let mut buffer = Vec::new();
