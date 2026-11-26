@@ -689,7 +689,14 @@ impl Document {
                         Error::Other("missing original comment snapshot".to_owned())
                     })?,
                 )?;
+            } else if let Some(edited) = record.get("edited") {
+                // The pending comments also hold the removed ones whose
+                // markers the deleted content keeps: accepting gives the
+                // edited comments. A record written before holds none.
+                crate::comparison::apply_comment_snapshot(&mut candidate, edited)?;
             }
+            // A marker the resolution leaves keeps its comment.
+            candidate.keep_comment_definitions_from(self)?;
             candidate
                 .package
                 .remove_part(crate::comparison::COMMENT_COMPARISON_PART);

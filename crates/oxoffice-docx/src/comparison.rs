@@ -1080,12 +1080,16 @@ impl Document {
             let mut carried_comments = edited_comments.clone();
             remap_comment_targets(&candidate, &mut carried_comments)?;
             apply_comment_snapshot(&mut candidate, &carried_comments)?;
+            // The markers of a removed comment stay in the deleted content
+            // until the deletion is accepted, and their comment with them.
+            candidate.keep_comment_definitions_from(&original)?;
             let record = serde_json::to_vec(&serde_json::json!({
                 "version": 1,
                 "author": author,
                 "timestamp": timestamp,
                 "id": revision_id,
                 "original": original_comments,
+                "edited": carried_comments,
                 "added_reply_ids": added_reply_ids,
             }))
             .map_err(|error| Error::Other(error.to_string()))?;
@@ -1169,6 +1173,9 @@ impl Document {
             candidate.package.write_to(&mut bytes)?;
             candidate = Document::from_bytes(bytes.get_ref())?;
         }
+        // Content taken from the edited version names its styles, and the
+        // first note or comment it brings the styles of notes and comments.
+        candidate.adopt_missing_styles(&edited)?;
         candidate = reopen_staged(candidate)?;
         // The postconditions resolve only the revisions this comparison
         // wrote, so a kept revision stays in both resolved copies and must

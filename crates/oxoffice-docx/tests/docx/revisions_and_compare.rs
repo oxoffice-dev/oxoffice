@@ -8,7 +8,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use oxoffice_docx::{
     Alignment, BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
     Document, RenderOptions, RevisionKind, RevisionStyle, RevisionView, RunItemRef, StoryKind,
-    StoryParagraph, ValidationSeverity,
+    StoryParagraph, StyleBuilder, ValidationSeverity,
 };
 
 use crate::support::{doc_with, doc_with_body, reopen, texts};
@@ -5115,6 +5115,66 @@ fn a_note_with_no_paragraph_in_one_version_is_compared_whole() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn a_redline_holds_the_styles_and_the_comments_its_content_names() {
+    // Content taken from the edited version names styles the original may
+    // lack, and a removed comment's markers stay in the deleted content
+    // until the deletion is accepted: the redline brings those styles, with
+    // the styles they are based on, and keeps that comment.
+    let styled = |styled: bool| {
+        let mut doc = doc_with(&["Claim."]);
+        if styled {
+            doc.add_style(StyleBuilder::paragraph("Base", "Base"))
+                .unwrap();
+            doc.add_style(StyleBuilder::paragraph("Clause", "Clause").based_on("Base"))
+                .unwrap();
+            doc.add_paragraph("Added.").style("Clause");
+        }
+        doc
+    };
+    let commented = |commented: bool| {
+        let mut doc = doc_with(&["Claim.", "Two."]);
+        if commented {
+            let at = |run_index| oxoffice_docx::RunPosition {
+                body_index: 0,
+                run_index,
+            };
+            let range = oxoffice_docx::RunRange {
+                start: at(0),
+                end: at(1),
+            };
+            doc.add_comment_with_date(
+                range,
+                "Ada",
+                None,
+                "Note.",
+                oxoffice_docx::CommentDate::Undated,
+            )
+            .unwrap();
+        }
+        doc
+    };
+    for (case, mut original, edited) in [
+        ("a style the original lacks", styled(false), styled(true)),
+        ("the first comment", commented(false), commented(true)),
+        ("a comment removed whole", commented(true), commented(false)),
+    ] {
+        let mut doc = redline(reopen(&mut original), &edited);
+        let report = doc.validate().unwrap();
+        assert!(report.is_valid(), "{case}: {:?}", report.findings);
+        assert_eq!(
+            story_texts(&accepted(&mut doc)),
+            story_texts(&edited),
+            "{case}"
+        );
+        assert_eq!(
+            story_texts(&rejected(&mut doc)),
+            story_texts(&original),
+            "{case}"
+        );
     }
 }
 
