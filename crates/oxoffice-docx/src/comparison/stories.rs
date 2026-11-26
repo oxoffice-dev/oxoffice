@@ -601,6 +601,24 @@ pub(super) fn compare_story_inner_impl(
             "comparison could not correlate related-story owners at {location}"
         )));
     }
+    // No tracked change records a header, a footer or a text box itself, and
+    // the last paragraph mark of a story cannot be taken out: a story holding
+    // nothing in one version cannot be marked to hold the other's blocks. A
+    // note goes whole instead (see `reconcile_note_ids`), a comment through
+    // its snapshot.
+    let blocks = |document: &CT_Document| {
+        document.body.content.iter().any(|content| {
+            matches!(
+                content,
+                BodyContent::Paragraph(_) | BodyContent::Table(_) | BodyContent::ContentControl(_)
+            )
+        })
+    };
+    if blocks(&original_document) != blocks(&edited_document) {
+        return Err(Error::Other(format!(
+            "comparison cannot give an empty story content, nor take all of it, at {location} (limitation docx-compare-empty-container)"
+        )));
+    }
     let held_original = HeldRevisions::of(
         original,
         &original_spans,

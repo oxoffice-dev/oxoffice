@@ -4986,29 +4986,44 @@ fn a_text_box_changed_whole_is_refused_never_written_as_an_invalid_redline() {
 }
 
 #[test]
-fn a_block_control_empty_in_one_version_is_refused_with_why() {
-    // The last mark of a control's content cannot be taken out, as the
-    // body's last cannot: a control holding nothing in one version cannot
-    // be marked to hold the other's paragraph.
-    let version = |content: &str| {
+fn a_container_empty_in_one_version_is_refused_with_why() {
+    // No tracked change records a block control, a header or a text box
+    // itself, and the last mark of their content cannot be taken out, as
+    // the body's last cannot: one holding nothing in one version cannot be
+    // marked to hold the other's paragraph.
+    let control = |content: &str| {
         doc_with_body(&format!(
             r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>{}"#,
             plain("After")
         ))
     };
-    for (from, to) in [
-        (String::new(), plain("Inside")),
-        (plain("Inside"), String::new()),
-    ] {
-        let error = version(&from)
-            .compare(&version(&to), AUTHOR, DATE)
-            .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("cannot give an empty block content control content"),
-            "{error}"
-        );
+    let header = |content: &str| {
+        let mut doc = doc_with(&["Body."]);
+        doc.set_header("Head");
+        with_part(&mut doc, "header1.xml", |xml| {
+            let open = xml.find("<w:hdr").unwrap();
+            let open = open + xml[open..].find('>').unwrap() + 1;
+            let close = xml.find("</w:hdr>").unwrap();
+            format!("{}{content}{}", &xml[..open], &xml[close..])
+        })
+    };
+    let text_box = |content: &str| {
+        doc_with_body(&format!(
+            "<w:p><w:r><w:t>Boxed </w:t></w:r>{}</w:p>{}",
+            crate::support::text_box_run(7, content),
+            plain("After")
+        ))
+    };
+    for version in [&control as &dyn Fn(&str) -> Document, &header, &text_box] {
+        for (from, to) in [("", plain("Inside")), (&plain("Inside"), String::new())] {
+            let error = version(from)
+                .compare(&version(&to), AUTHOR, DATE)
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("docx-compare-empty-container"),
+                "{error}"
+            );
+        }
     }
 }
 
