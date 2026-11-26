@@ -2,8 +2,8 @@
   "id": "docx-compare-empty-container",
   "format": "docx",
   "area": "compare",
-  "title": "Comparison refuses a block content control or a note that is empty in one version",
-  "symptom": "compare refuses a block content control that holds nothing in one version and paragraphs in the other (\"cannot give an empty block content control content, nor take all of it\"): the last paragraph mark of a control's content cannot be taken out, as the body's last cannot; and it refuses a footnote or endnote with no paragraph added or removed whole (\"content fragment has no root element\")",
-  "workaround": "give the empty control or note one empty paragraph in that version before comparing",
+  "title": "Comparison refuses a block content control, header, footer or text box that is empty in one version",
+  "symptom": "compare refuses a block content control, a header or footer, or a text box that holds nothing in one version and paragraphs in the other (\"cannot give an empty ... content, nor take all of it\"), and a footnote or endnote both versions hold that compare cannot pair by id: a note reference in a tracked change, referenced twice or outside the main story, a note one version does not reference, or notes of an earlier comparison still pending (any other such note is deleted and inserted whole): no tracked change records the container itself, and the last paragraph mark of its content cannot be taken out, as the body's last cannot",
+  "workaround": "give the empty container one empty paragraph in that version before comparing",
   "issue": 665
 }

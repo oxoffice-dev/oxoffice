@@ -614,6 +614,73 @@ impl Document {
         self.styles.get_by_id(style_id).map(|s| Style { inner: s })
     }
 
+    /// Give this document the definition of every style its stories name,
+    /// that it lacks and `source` defines, with the styles those are based
+    /// on, linked to or followed by: a comparison takes content from the
+    /// edited version, which names its own styles. A style this document
+    /// defines stays as it is.
+    pub(crate) fn adopt_missing_styles(&mut self, source: &Document) -> Result<()> {
+        // Nothing to adopt, nothing to read: the usual case of two versions
+        // of one document.
+        let own = self
+            .styles
+            .styles
+            .iter()
+            .map(|style| style.style_id.as_str())
+            .collect::<HashSet<_>>();
+        if source
+            .styles
+            .styles
+            .iter()
+            .all(|style| own.contains(style.style_id.as_str()))
+        {
+            return Ok(());
+        }
+        let main = self.doc_part_name.clone();
+        let mut parts = vec![main.clone()];
+        parts.extend(
+            self.package
+                .get_part_rels(&main)
+                .iter()
+                .flat_map(|rels| &rels.items)
+                .filter(|relationship| {
+                    relationship_is_internal(relationship)
+                        && STORY_TEXT_RELATIONSHIPS.contains(&relationship.rel_type.as_str())
+                })
+                .map(|relationship| OpcPackage::resolve_rel_target(&main, &relationship.target)),
+        );
+        let mut wanted = std::collections::VecDeque::new();
+        for part in parts {
+            if let Some(xml) = self.package.get_part(&part) {
+                let references = document_style_references(xml).map_err(Error::Other)?;
+                wanted.extend(references.into_iter().map(|(_, style_id)| style_id));
+            }
+        }
+        let mut seen = HashSet::new();
+        let mut adopted = Vec::new();
+        while let Some(style_id) = wanted.pop_front() {
+            if !seen.insert(style_id.clone()) || self.styles.get_by_id(&style_id).is_some() {
+                continue;
+            }
+            let Some(style) = source.styles.get_by_id(&style_id) else {
+                continue;
+            };
+            wanted.extend(
+                [&style.based_on, &style.linked_style, &style.next_style]
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+            adopted.push(style.clone());
+        }
+        if adopted.is_empty() {
+            return Ok(());
+        }
+        let before = Arc::clone(&self.styles);
+        Arc::make_mut(&mut self.styles).styles.extend(adopted);
+        crate::style::validate_style_graph_change(&before, &self.styles).map(|_| ())
+    }
+
     // ---- Style manipulation ----
 
     /// Add a custom style after validating the change to the style graph.

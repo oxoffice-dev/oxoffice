@@ -4917,6 +4917,113 @@ impl Document {
         Ok(())
     }
 
+    /// Copy from `source` the definition of every comment a marker of this
+    /// document names and no definition here holds, into this document's
+    /// comments part, made from `source`'s when it has none. A comparison
+    /// keeps the markers of a removed comment in the deleted content until
+    /// the deletion is accepted, and so the comment. Its companion entries
+    /// (reply, resolved state) are not copied: a comment needs none.
+    pub(crate) fn keep_comment_definitions_from(&mut self, source: &Document) -> Result<()> {
+        let owner = self.doc_part_name.clone();
+        let defined_ids = |entries: &[CommentPartEntry]| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.attributes.get("id")?.parse::<i32>().ok())
+                .collect::<HashSet<_>>()
+        };
+        let defined = self
+            .comment_definition_entries_at(&owner)?
+            .map(|(_, entries)| defined_ids(&entries))
+            .unwrap_or_default();
+        let missing = self
+            .comment_source_inventory_at(&owner)?
+            .values()
+            .flatten()
+            .map(|marker| marker.id)
+            .filter(|id| !defined.contains(id))
+            .collect::<HashSet<_>>();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let Some((source_part, entries)) =
+            source.comment_definition_entries_at(&source.doc_part_name)?
+        else {
+            return Ok(());
+        };
+        let source_xml = source
+            .package
+            .get_part(&source_part)
+            .expect("checked comments part");
+        let mut kept = Vec::new();
+        for entry in entries.iter().filter(|entry| {
+            entry
+                .attributes
+                .get("id")
+                .and_then(|id| id.parse::<i32>().ok())
+                .is_some_and(|id| missing.contains(&id))
+        }) {
+            let scope = crate::document::story_namespace_scope_at(source_xml, entry.span.start)?;
+            kept.extend(crate::document::close_content_fragment_namespaces(
+                &source_xml[entry.span.clone()],
+                &scope,
+            )?);
+        }
+        if kept.is_empty() {
+            return Ok(());
+        }
+        let kept = String::from_utf8(kept).map_err(|error| Error::Other(error.to_string()))?;
+        let text = |xml: &[u8]| {
+            std::str::from_utf8(xml)
+                .map(str::to_owned)
+                .map_err(|error| Error::Other(error.to_string()))
+        };
+        let with_kept = |xml: &str| -> Result<String> {
+            let root = oxoffice_core::xml_element::root_element_span(xml)?;
+            let (start, end) = (root.start_tag.start, root.end_tag.end);
+            Ok(format!(
+                "{}{}{}",
+                &xml[..start],
+                oxoffice_core::xml_element::append_content(&xml[start..end], &kept)?,
+                &xml[end..]
+            ))
+        };
+        let part = self.comment_relationship_part_at(
+            &owner,
+            oxoffice_opc::relationship::rel_types::COMMENTS,
+        )?;
+        if let Some(part) = part {
+            let xml = with_kept(&text(self.package.get_part(&part).expect("checked part"))?)?;
+            self.package.set_part(&part, xml.into_bytes());
+            return Ok(());
+        }
+        // A part of the source's own name, holding only the kept comments.
+        if self.package.get_part(&source_part).is_some() {
+            return Err(Error::Other(format!(
+                "comment definitions cannot be kept: {source_part} is another part"
+            )));
+        }
+        let shell = text(source_xml)?;
+        let root = oxoffice_core::xml_element::root_element_span(&shell)?;
+        let (start, end) = (root.start_tag.start, root.end_tag.end);
+        let empty = oxoffice_core::xml_element::replace_content(&shell[start..end], "")?.0;
+        let xml = with_kept(&format!("{}{empty}{}", &shell[..start], &shell[end..]))?;
+        self.package.set_part(&source_part, xml.into_bytes());
+        self.package
+            .content_types
+            .add_override(&source_part, COMMENTS_CONTENT_TYPE);
+        let target = source_part
+            .strip_prefix(&format!(
+                "{}/",
+                owner.rsplit_once('/').map_or("", |(folder, _)| folder)
+            ))
+            .unwrap_or(&source_part)
+            .to_owned();
+        self.package
+            .get_or_create_part_rels(&owner)
+            .add(oxoffice_opc::relationship::rel_types::COMMENTS, &target);
+        Ok(())
+    }
+
     fn reconcile_comment_removal_at(&mut self, before: &Document, owner: &str) -> Result<()> {
         let mut source = before.clone_for_staging();
         source.flush_to_package()?;

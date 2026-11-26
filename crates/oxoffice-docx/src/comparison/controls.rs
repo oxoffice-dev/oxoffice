@@ -190,9 +190,12 @@ pub(super) fn compare_control_from_xml(
             )?;
             return Ok(output);
         }
-        // The last paragraph mark of a block control's content cannot be
-        // taken out: a control holding nothing in one version cannot be
-        // marked to hold the other's paragraphs. Runs of an inline one can.
+        // No tracked change records a control itself, and the last paragraph
+        // mark of a block control's content cannot be taken out: removing it
+        // merges the paragraph after the control into it, and a control that
+        // loses all its blocks is removed whole. A control holding nothing in
+        // one version cannot be marked to hold the other's paragraphs. Runs
+        // of an inline one can.
         let blocks = |content: &[&SdtContent]| {
             content
                 .iter()

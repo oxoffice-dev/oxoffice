@@ -670,9 +670,26 @@ pub(super) fn note_markers(document: &Document, note: NoteKind) -> Result<Vec<No
             .ok_or_else(|| Error::Other(format!("missing custody story {part}")))?;
         let tree = crate::revision::XmlTree::parse(source)?;
         let paragraphs = crate::document::admitted_story_paragraph_spans(source, kind)?;
+        // A note with no paragraph holds its pair directly, at block level
+        // (see `insert_note_marker`): the note owner stands for its first
+        // paragraph.
+        let empty_note_owner = |index: usize| {
+            tree.elements[index].parent.filter(|&parent| {
+                let owner = &tree.elements[parent];
+                owner.word
+                    && owner.modeled
+                    && owner.local == note.owner()
+                    && !paragraphs
+                        .iter()
+                        .any(|span| span.start >= owner.open_end && span.end <= owner.close_start)
+            })
+        };
         // The real owner inventory excludes opaque descendant stories. Also
         // require the marker's own path to that paragraph to stay modeled.
         let marker_paragraph = |index: usize| {
+            if let Some(owner) = empty_note_owner(index) {
+                return Some(owner);
+            }
             // Bookmarks themselves are retained raw leaves in XmlTree. Their
             // actual containing path, rather than that leaf classification,
             // must be admitted and modeled.
@@ -751,7 +768,10 @@ pub(super) fn note_markers(document: &Document, note: NoteKind) -> Result<Vec<No
                     "duplicate custody bookmark name or pair id".into(),
                 ));
             }
-            let p = if tree.elements[parent].word && tree.elements[parent].local == "p" {
+            let in_empty_note = empty_note_owner(index).is_some();
+            let p = if in_empty_note
+                || (tree.elements[parent].word && tree.elements[parent].local == "p")
+            {
                 Some(parent)
             } else {
                 tree.elements[parent].parent.filter(|&at| {
@@ -834,7 +854,8 @@ pub(super) fn note_markers(document: &Document, note: NoteKind) -> Result<Vec<No
                 let first = paragraphs.iter().find(|span| {
                     span.start >= owner_node.open_end && span.end <= owner_node.close_start
                 });
-                if first != Some(&(tree.elements[paragraph].start..tree.elements[paragraph].end)) {
+                let host = tree.elements[paragraph].start..tree.elements[paragraph].end;
+                if first != (!in_empty_note).then_some(&host) {
                     return Err(Error::Other(
                         "note custody pair is not in its first note paragraph".into(),
                     ));
@@ -1869,6 +1890,11 @@ fn note_bookmark(
 }
 
 fn close_note_fragment(xml: &str, bindings: &NamespaceBindings) -> Result<String> {
+    // The content of a note with no paragraph, written self-closing or open
+    // and empty, holds no element to carry a declaration.
+    if xml.trim().is_empty() {
+        return Ok(xml.to_owned());
+    }
     let scope = bindings
         .iter()
         .filter_map(|(name, value)| {
@@ -2069,9 +2095,28 @@ pub(super) fn reconcile_note_ids(
             .map(|(_, text)| text.clone())
             .collect::<Vec<_>>()
     };
+    // A note with nothing inside cannot be revised in place into one holding
+    // paragraphs, nor the reverse: the last mark of a story cannot be
+    // tracked. Such notes are not paired, so the edited one takes a new id
+    // and the comparison deletes the original note and inserts the edited
+    // one, each whole with its reference.
+    let empty = |part: &NotePart, normal: &BTreeMap<i32, &NoteOwner>| {
+        normal
+            .iter()
+            .filter(|(_, owner)| part.xml[owner.inner.clone()].trim().is_empty())
+            .map(|(id, _)| *id)
+            .collect::<HashSet<_>>()
+    };
+    let (left_empty, right_empty) = (
+        empty(&left_part, &left_normal),
+        empty(&right_part, &right_normal),
+    );
     let mut ids = HashMap::new();
     for (index, other) in strict_pairs(&text_of(&left), &text_of(&right)) {
-        ids.insert(right[other].0, left[index].0);
+        let (from, to) = (right[other].0, left[index].0);
+        if left_empty.contains(&to) == right_empty.contains(&from) {
+            ids.insert(from, to);
+        }
     }
     // A note one version does not reference keeps its id and is revised in
     // place, so a pair is dropped when it would take the id of such an
@@ -2722,9 +2767,14 @@ fn insert_note_marker(
     let root = &tree.elements[tree.elements[tree.root].children[0]];
     let paragraphs =
         crate::document::admitted_story_paragraph_spans(wrapped.as_bytes(), kind.note_story())?;
-    let first = paragraphs
-        .first()
-        .ok_or_else(|| Error::Other("note custody requires its first note paragraph".into()))?;
+    let Some(first) = paragraphs.first() else {
+        // A note with no paragraph has no first paragraph to hold the pair:
+        // it starts the note's content, at block level, where
+        // `note_markers` reads it.
+        let mut result = wrapped[root.open_end..root.close_start].to_owned();
+        result.insert_str(0, marker);
+        return Ok(result);
+    };
     let paragraph = tree
         .elements
         .iter()

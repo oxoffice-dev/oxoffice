@@ -8,7 +8,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use oxoffice_docx::{
     Alignment, BodyItemRef, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
     Document, RenderOptions, RevisionKind, RevisionStyle, RevisionView, RunItemRef, StoryKind,
-    StoryParagraph, ValidationSeverity,
+    StoryParagraph, StyleBuilder, ValidationSeverity,
 };
 
 use crate::support::{doc_with, doc_with_body, reopen, texts};
@@ -4986,28 +4986,242 @@ fn a_text_box_changed_whole_is_refused_never_written_as_an_invalid_redline() {
 }
 
 #[test]
-fn a_block_control_empty_in_one_version_is_refused_with_why() {
-    // The last mark of a control's content cannot be taken out, as the
-    // body's last cannot: a control holding nothing in one version cannot
-    // be marked to hold the other's paragraph.
-    let version = |content: &str| {
+fn a_container_empty_in_one_version_is_refused_with_why() {
+    // No tracked change records a block control, a header or a text box
+    // itself, and the last mark of their content cannot be taken out, as
+    // the body's last cannot: one holding nothing in one version cannot be
+    // marked to hold the other's paragraph.
+    let control = |content: &str| {
         doc_with_body(&format!(
             r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>{}"#,
             plain("After")
         ))
     };
-    for (from, to) in [
-        (String::new(), plain("Inside")),
-        (plain("Inside"), String::new()),
+    let header = |content: &str| {
+        let mut doc = doc_with(&["Body."]);
+        doc.set_header("Head");
+        with_part(&mut doc, "header1.xml", |xml| {
+            let open = xml.find("<w:hdr").unwrap();
+            let open = open + xml[open..].find('>').unwrap() + 1;
+            let close = xml.find("</w:hdr>").unwrap();
+            format!("{}{content}{}", &xml[..open], &xml[close..])
+        })
+    };
+    let text_box = |content: &str| {
+        doc_with_body(&format!(
+            "<w:p><w:r><w:t>Boxed </w:t></w:r>{}</w:p>{}",
+            crate::support::text_box_run(7, content),
+            plain("After")
+        ))
+    };
+    // A note whose reference sits in a tracked change is not paired by id,
+    // so it is compared in place, as a story.
+    let note = |content: &str| {
+        let mut doc = doc_with_notes(&[("Claim.", Some("Source.")), ("Two.", Some("Old"))]);
+        let mut doc = with_part_edited(&mut doc, "word/document.xml", |xml| {
+            let reference = r#"<w:footnoteReference w:id="2"/></w:r>"#;
+            let end = xml.find(reference).unwrap() + reference.len();
+            let start = xml[..end].rfind("<w:r>").unwrap();
+            format!(
+                r#"{}<w:ins w:id="90" w:author="Ada" w:date="{DATE}">{}</w:ins>{}"#,
+                &xml[..start],
+                &xml[start..end],
+                &xml[end..]
+            )
+        });
+        with_part_edited(&mut doc, "word/footnotes.xml", |xml| {
+            with_note_edited(xml, "footnote", 3, |_| content.to_owned())
+        })
+    };
+    for version in [
+        &control as &dyn Fn(&str) -> Document,
+        &header,
+        &text_box,
+        &note,
     ] {
-        let error = version(&from)
-            .compare(&version(&to), AUTHOR, DATE)
-            .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("cannot give an empty block content control content"),
-            "{error}"
+        for (from, to) in [("", plain("Inside")), (&plain("Inside"), String::new())] {
+            let error = version(from)
+                .compare(&version(&to), AUTHOR, DATE)
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("docx-compare-empty-container"),
+                "{error}"
+            );
+        }
+    }
+}
+
+/// Each body paragraph's text with its references to notes of this kind
+/// (`footnote` or `endnote`), `[+]` to one holding a paragraph and `[-]`
+/// to one holding none; how many normal notes of that kind the part holds;
+/// and every story's paragraph texts. Read from the saved XML: the note
+/// readers skip a note written self-closing.
+fn referenced_notes(
+    doc: &mut Document,
+    owner: &str,
+) -> (Vec<String>, usize, Vec<(StoryKind, String)>) {
+    let package = crate::support::package_parts(&doc.to_bytes().unwrap());
+    let xml = String::from_utf8_lossy(&package[&format!("word/{owner}s.xml")]).into_owned();
+    let notes = xml
+        .split(&format!("<w:{owner} "))
+        .skip(1)
+        .filter(|note| !note[..note.find('>').unwrap()].contains("w:type="))
+        .map(|note| {
+            let id = note.split(r#"w:id=""#).nth(1).unwrap();
+            let id = id[..id.find('"').unwrap()].parse::<i32>().unwrap();
+            (id, note.contains("<w:p"))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut texts = Vec::new();
+    for paragraph in doc.paragraphs() {
+        let mut text = String::new();
+        for run in paragraph.runs() {
+            for item in run.items() {
+                match item {
+                    RunItemRef::Text(part) => text.push_str(part),
+                    RunItemRef::FootnoteReference(id) | RunItemRef::EndnoteReference(id) => {
+                        text.push_str(if notes[&id] { "[+]" } else { "[-]" });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        texts.push(text);
+    }
+    (texts, notes.len(), story_texts(doc))
+}
+
+#[test]
+fn a_note_with_no_paragraph_in_one_version_is_compared_whole() {
+    // A note written with nothing inside, self-closing or open and empty,
+    // added or removed with its reference, or both versions' note empty in
+    // one and holding a paragraph in the other: the note goes whole, its
+    // custody pair at block level when it has no paragraph to hold it.
+    for owner in ["footnote", "endnote"] {
+        for written in [String::from("/>"), format!(">\n  </w:{owner}>")] {
+            let version = |second: Option<&str>| {
+                let paragraphs = [("Claim.", Some("Source.")), ("Two.", second)];
+                let mut doc = if owner == "footnote" {
+                    doc_with_notes(&paragraphs)
+                } else {
+                    doc_with_endnote_texts(&paragraphs)
+                };
+                if second != Some("") {
+                    return doc;
+                }
+                with_part(&mut doc, &format!("{owner}s.xml"), |xml| {
+                    let start = xml.rfind(&format!("<w:{owner} ")).unwrap();
+                    let open = start + xml[start..].find('>').unwrap();
+                    let end = xml.rfind(&format!("</w:{owner}>")).unwrap() + owner.len() + 5;
+                    format!("{}{written}{}", &xml[..open], &xml[end..])
+                })
+            };
+            for (case, from, to) in [
+                ("added", None, Some("")),
+                ("removed", Some(""), None),
+                ("emptied", Some("Text."), Some("")),
+                ("filled", Some(""), Some("Text.")),
+            ] {
+                let (mut original, mut edited) = (version(from), version(to));
+                let case = format!("{owner} {written:?} {case}");
+                let mut doc = redline(reopen(&mut original), &edited);
+                let report = doc.validate().unwrap();
+                assert!(report.is_valid(), "{case}: {:?}", report.findings);
+                for (outcome, mut resolved, wanted) in [
+                    ("accepted", accepted(&mut doc), &mut edited),
+                    ("rejected", rejected(&mut doc), &mut original),
+                ] {
+                    assert_eq!(
+                        referenced_notes(&mut resolved, owner),
+                        referenced_notes(wanted, owner),
+                        "{case} {outcome}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_redline_holds_the_styles_and_the_comments_its_content_names() {
+    // Content taken from the edited version names styles the original may
+    // lack, and a removed comment's markers stay in the deleted content
+    // until the deletion is accepted: the redline brings those styles, with
+    // the styles they are based on, and keeps that comment.
+    let styled = |styled: bool| {
+        let mut doc = doc_with(&["Claim."]);
+        if styled {
+            doc.add_style(StyleBuilder::paragraph("Base", "Base"))
+                .unwrap();
+            doc.add_style(StyleBuilder::paragraph("Clause", "Clause").based_on("Base"))
+                .unwrap();
+            doc.add_paragraph("Added.").style("Clause");
+        }
+        doc
+    };
+    // A header paragraph in a style whose next style the original lacks too.
+    let headed = |styled: bool| {
+        let mut doc = doc_with(&["Claim."]);
+        doc.set_header("Head");
+        if !styled {
+            return doc;
+        }
+        doc.add_style(StyleBuilder::paragraph("After", "After"))
+            .unwrap();
+        doc.add_style(StyleBuilder::paragraph("Banner", "Banner").next_style("After"))
+            .unwrap();
+        with_part(&mut doc, "header1.xml", |xml| {
+            xml.replacen(
+                "<w:r>",
+                r#"<w:pPr><w:pStyle w:val="Banner"/></w:pPr><w:r>"#,
+                1,
+            )
+        })
+    };
+    let commented = |commented: bool| {
+        let mut doc = doc_with(&["Claim.", "Two."]);
+        if commented {
+            let at = |run_index| oxoffice_docx::RunPosition {
+                body_index: 0,
+                run_index,
+            };
+            let range = oxoffice_docx::RunRange {
+                start: at(0),
+                end: at(1),
+            };
+            doc.add_comment_with_date(
+                range,
+                "Ada",
+                None,
+                "Note.",
+                oxoffice_docx::CommentDate::Undated,
+            )
+            .unwrap();
+        }
+        doc
+    };
+    for (case, mut original, edited) in [
+        ("a style the original lacks", styled(false), styled(true)),
+        (
+            "a header style and its next style",
+            headed(false),
+            headed(true),
+        ),
+        ("the first comment", commented(false), commented(true)),
+        ("a comment removed whole", commented(true), commented(false)),
+    ] {
+        let mut doc = redline(reopen(&mut original), &edited);
+        let report = doc.validate().unwrap();
+        assert!(report.is_valid(), "{case}: {:?}", report.findings);
+        assert_eq!(
+            story_texts(&accepted(&mut doc)),
+            story_texts(&edited),
+            "{case}"
+        );
+        assert_eq!(
+            story_texts(&rejected(&mut doc)),
+            story_texts(&original),
+            "{case}"
         );
     }
 }
