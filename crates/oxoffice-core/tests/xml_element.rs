@@ -800,6 +800,7 @@ fn ends_with_a_tag_end(code: &str) -> bool {
     name == "after"
         || name == "end"
         || name.ends_with("_end")
+        || name == "opening"
         || code.ends_with("buffer_position()as usize")
         || code.ends_with("buffer_position()as usize)")
 }
@@ -842,7 +843,7 @@ fn takes_two_from_a_tag_end(line: &str) -> bool {
             let outside = before_path(receiver);
             if after.starts_with("..")
                 || (outside.ends_with("truncate(") && after.starts_with(')'))
-                || (outside.ends_with("[..") && after.starts_with(']'))
+                || (outside.ends_with("..") && after.starts_with(']'))
             {
                 return true;
             }
@@ -870,8 +871,9 @@ fn takes_two_from_a_tag_end(line: &str) -> bool {
 
 /// Whether one line of code assumes that an empty element's bytes end with
 /// `/>`: a two-character literal `"/>"`, a byte compared with `b'/'` at an
-/// offset, the last `/` taken for the close, a tag's close taken as two
-/// bytes or one, or two bytes taken from a tag's end.
+/// offset, the last `/` taken for the close, a tag ending with `b"/"`, a
+/// tag's close taken as two bytes or one, or two bytes taken from a tag's
+/// end.
 fn assumes_self_closing(line: &str) -> bool {
     let line = line.trim_start();
     if line.starts_with("//") {
@@ -900,10 +902,14 @@ fn assumes_self_closing(line: &str) -> bool {
     .any(|pattern| code.contains(pattern));
     // `.rposition(|byte| *byte == b'/')`: the last slash taken for the close.
     let last_slash = code.contains("rposition(|") && code.contains("==b'/')");
+    // `ends_with(b"/")`: a tag's close read as its last byte.
+    let last_byte = ["ends_with(b\"/\")", "strip_suffix(b\"/\")"]
+        .iter()
+        .any(|call| code.contains(call));
     let one_or_two = ((code.contains("-if ") || code.contains("_sub(if "))
         && code.contains("{2}else{1}"))
         || code.contains("Empty(_)=>2");
-    literal || at_offset || last_slash || one_or_two || takes_two_from_a_tag_end(line)
+    literal || at_offset || last_slash || last_byte || one_or_two || takes_two_from_a_tag_end(line)
 }
 
 /// The lines of `source`, but its `#[cfg(test)]` items, that assume an empty
@@ -924,9 +930,11 @@ fn self_closing_assumptions(source: &str) -> Vec<usize> {
 /// was read, never source bytes it splices; `not a document part`, HTML,
 /// EPUB, SVG or RTF; `not a tag`, arithmetic on something else; `verbatim
 /// reader`, a crate whose readers deliver elements as written (packages,
-/// spreadsheets, test support). Every other line takes where a tag ends from
+/// spreadsheets, test support); `both writings`, a test of a tag's last byte
+/// that answers the same for `<x></x>`, or on a branch an empty element
+/// written so never reaches. Every other line takes where a tag ends from
 /// `oxoffice_core::xml_element`.
-const SELF_CLOSING: [(&str, usize, &str); 20] = [
+const SELF_CLOSING: [(&str, usize, &str); 24] = [
     ("crates/oxoffice-core/src/raw_xml.rs", 1, "helper"),
     ("crates/oxoffice-core/src/xml_element.rs", 2, "helper"),
     ("crates/oxoffice-docx-oxml/src/math.rs", 2, "writes"),
@@ -947,21 +955,37 @@ const SELF_CLOSING: [(&str, usize, &str); 20] = [
     ),
     ("crates/oxoffice-docx/src/comparison/fields.rs", 1, "writes"),
     (
+        "crates/oxoffice-docx/src/comparison/stories.rs",
+        1,
+        "both writings",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/main_part.rs",
+        1,
+        "both writings",
+    ),
+    (
         "crates/oxoffice-docx/src/document/story_text.rs",
         1,
         "not a tag",
     ),
     ("crates/oxoffice-docx/src/epub.rs", 2, "not a document part"),
+    (
+        "crates/oxoffice-docx/src/field/fragment.rs",
+        1,
+        "both writings",
+    ),
     ("crates/oxoffice-docx/src/html.rs", 1, "not a document part"),
     ("crates/oxoffice-docx/src/rtf.rs", 1, "not a document part"),
     ("crates/oxoffice-docx/src/svg.rs", 2, "not a document part"),
+    ("crates/oxoffice-docx/src/template.rs", 1, "not a tag"),
     ("crates/oxoffice-media/src/lib.rs", 1, "verbatim reader"),
     (
         "crates/oxoffice-opc/src/relationship.rs",
         5,
         "verbatim reader",
     ),
-    ("crates/oxoffice-pptx-oxml/src/comments.rs", 3, "writes"),
+    ("crates/oxoffice-pptx-oxml/src/comments.rs", 4, "writes"),
     ("crates/oxoffice-pptx-oxml/src/picture.rs", 1, "writes"),
     ("crates/oxoffice-pptx-oxml/src/presentation.rs", 1, "writes"),
     (
@@ -1002,10 +1026,15 @@ fn the_check_finds_a_tag_close_taken_as_two_bytes() {
         "let p = tag.iter().rposition(|byte| *byte != b'/');\n",
         "if boundary + 2 != owner.full.end {\n",
         "if index + 2 == roles.len() {\n",
+        "output.extend_from_slice(&original[..*opening - 2]);\n",
+        "let r = rewritten[b\"<record\".len()..rewritten.len() - 2].to_vec();\n",
+        "if element[..open_end].ends_with(b\"/\") {\n",
+        "let s = attributes.strip_suffix(b\"/\");\n",
+        "let t = path.ends_with('/');\n",
     );
     assert_eq!(
         self_closing_assumptions(source),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 19, 20, 22]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 19, 20, 22, 24, 25, 26, 27]
     );
 }
 

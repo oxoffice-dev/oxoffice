@@ -1956,7 +1956,34 @@ fn expand_empty_element(raw: &[u8], inner: &[u8]) -> Result<Vec<u8>> {
     if span.range() != (0..raw.len()) || !span.content.is_empty() {
         return Err(malformed());
     }
-    Ok(oxoffice_core::xml_element::replace_content(raw, inner)?.0)
+    // Opened even when `inner` is empty: the element gets its end tag.
+    let mut out = raw[..span.attributes_end()].to_vec();
+    out.push(b'>');
+    out.extend_from_slice(inner);
+    out.extend_from_slice(b"</");
+    out.extend_from_slice(span.name.as_bytes());
+    out.push(b'>');
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_empty_element;
+
+    #[test]
+    fn an_empty_element_is_opened_for_its_content_even_an_empty_one() {
+        for (raw, inner, expanded) in [
+            ("<w:odso/>", "", "<w:odso></w:odso>"),
+            (
+                "<w:odso a=\"1\" />",
+                "<w:udl/>",
+                "<w:odso a=\"1\" ><w:udl/></w:odso>",
+            ),
+        ] {
+            let out = expand_empty_element(raw.as_bytes(), inner.as_bytes()).unwrap();
+            assert_eq!(String::from_utf8(out).unwrap(), expanded, "{raw}");
+        }
+    }
 }
 
 #[derive(Default)]
