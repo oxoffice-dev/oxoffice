@@ -117,6 +117,15 @@ Table of Contents, Automatic Table 1, save as .docx under `files/word/`,
 close the document, quit Word, then give it Word's version, from
 `tests/corpus/generate`:
 `python3 -c 'import manifest, os; manifest.update({("word", "docx"): "Microsoft Word for Mac <version>"}, since=os.path.getmtime("../files/word/<file>.docx"))'`.
-Scripted, the same is
-`make new table of contents at active document with properties {text object:(create range active document start 0 end 0), use heading styles:true, upper heading level:1, lower heading level:3}`
-in Word's AppleScript, not tried yet.
+It is done by hand: Word's AppleScript reaches the building blocks of its
+loaded templates only, and the gallery's Automatic Table 1 is in none of
+them (`make new table of contents` would write the TOC field alone, without
+the block control around it).
+
+- `toc.docx`: the manual with Automatic Table 1 inserted before its first
+  heading by Word for Mac 16.115.2 in French: a block control of the "Table
+  of Contents" gallery (`w:docPartObj`, `w:docPartUnique`) holding a heading
+  and the `TOC \o "1-3" \h \z \u` field, whose entries are links to `_Toc`
+  bookmarks Word added on the 11 headings; every style id rewritten in
+  French by Word (`Titre1` for `Heading1`, `TM1`, `En-ttedetabledesmatires`,
+  `Lienhypertexte`).

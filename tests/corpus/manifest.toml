@@ -435,6 +435,12 @@ size = 56262
 features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "endnote", "header-footer", "sections", "landscape", "title-page", "page-number-format", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation", "rsid", "paraId"]
 
 [[file]]
+path = "word/toc.docx"
+producer = "Microsoft Word for Mac 16.115.2"
+size = 49797
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "nested-table", "chart", "header-footer", "sections", "columns", "toc", "page-fields", "ref-fields", "bookmark", "hyperlink", "content-control", "rsid", "paraId"]
+
+[[file]]
 path = "word-google/record.docx"
 producer = "Google Docs export of the Word copy"
 size = 16595
