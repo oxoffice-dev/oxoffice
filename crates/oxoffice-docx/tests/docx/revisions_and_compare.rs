@@ -4835,19 +4835,125 @@ fn a_changed_paragraph_holding_an_empty_revision_is_compared() {
     }
 }
 
+/// A run holding a text box, as each producer writes one: Word, LibreOffice
+/// and Google write a DrawingML choice and a VML fallback, older files the
+/// VML alone, some writers the DrawingML alone.
+fn text_box_of_form(form: &str, content: &str) -> String {
+    let run = crate::support::text_box_run(7, content);
+    let between = |open: &str, close: &str| &run[run.find(open).unwrap()..run.find(close).unwrap()];
+    match form {
+        "alternate content" => run,
+        "drawing" => format!(
+            r#"<w:r>{}</w:r>"#,
+            between("<w:drawing>", "</mc:Choice>").replacen(
+                "<w:drawing>",
+                r#"<w:drawing xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">"#,
+                1
+            )
+        ),
+        _ => format!(
+            r#"<w:r>{}</w:r>"#,
+            between("<w:pict>", "</mc:Fallback>").replacen(
+                "<w:pict>",
+                r#"<w:pict xmlns:v="urn:schemas-microsoft-com:vml">"#,
+                1
+            )
+        ),
+    }
+}
+
+#[test]
+fn a_text_box_edited_inside_is_tracked_inside_each_copy_of_the_box() {
+    // An edit inside a box is marked inside it, in each copy an alternate
+    // content holds, as Word marks it: the redline is valid and resolves to
+    // either version, in the body or a header, formatting compared or
+    // ignored. Text typed into an empty box and an edit beside the box as
+    // well compare the same.
+    let paragraph = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let version = |part: &str, before: &str, form: &str, content: &str| {
+        let boxed = text_box_of_form(form, content);
+        if part == "document.xml" {
+            return doc_with_body(&format!(
+                r#"<w:p><w:r><w:t xml:space="preserve">{before} </w:t></w:r>{boxed}</w:p>{}"#,
+                plain("Tail.")
+            ));
+        }
+        let mut doc = doc_with(&["Body."]);
+        doc.set_header(before);
+        with_part(&mut doc, part, |xml| {
+            xml.replacen("<w:r>", &format!("{boxed}<w:r>"), 1)
+        })
+    };
+    let (body, header) = ("document.xml", "header1.xml");
+    for (form, case, part, ignore_formatting) in [
+        ("alternate content", "edit inside", body, false),
+        ("alternate content", "typed into an empty box", body, false),
+        ("alternate content", "edit beside too", body, false),
+        ("alternate content", "edit inside", body, true),
+        ("alternate content", "edit inside", header, true),
+        ("drawing", "edit inside", body, false),
+        ("vml", "edit inside", body, false),
+    ] {
+        let copies = if form == "alternate content" { 2 } else { 1 };
+        let (from, to, text) = if case == "typed into an empty box" {
+            ("<w:p/>".to_owned(), paragraph("Typed"), "Typed")
+        } else {
+            (
+                paragraph("Inside the box"),
+                paragraph("Within the box"),
+                "Within the box",
+            )
+        };
+        let beside = if case == "edit beside too" {
+            "After"
+        } else {
+            "Before"
+        };
+        let case = format!("{form}, {case}, {part}, ignore formatting {ignore_formatting}");
+        let options = ComparisonOptions {
+            ignore_formatting,
+            ..ComparisonOptions::default()
+        };
+        let edited = version(part, beside, form, &to);
+        let mut doc = version(part, "Before", form, &from);
+        let diagnostics = doc
+            .compare_with_options(&edited, AUTHOR, DATE, &options)
+            .unwrap_or_else(|error| panic!("{case}: {error}"));
+        assert!(diagnostics.is_empty(), "{case}: {diagnostics:?}");
+        let mut doc = reopen(&mut doc);
+        let report = doc.validate().unwrap();
+        assert!(report.is_valid(), "{case}: {:?}", report.findings);
+        let xml = part_xml(&mut doc, part);
+        let marked = xml
+            .split("</w:txbxContent>")
+            .filter(|piece| {
+                piece
+                    .rfind("<w:txbxContent")
+                    .is_some_and(|at| piece[at..].contains("<w:ins "))
+            })
+            .count();
+        assert_eq!(marked, copies, "{case}: {xml}");
+        let (mut accepted, mut rejected) = (accepted(&mut doc), rejected(&mut doc));
+        let written =
+            |doc: &mut Document| part_xml(doc, part).matches(&format!(">{text}<")).count();
+        assert_eq!(written(&mut accepted), copies, "{case}");
+        assert_eq!(written(&mut rejected), 0, "{case}");
+        assert_eq!(story_texts(&accepted), story_texts(&edited), "{case}");
+        assert_eq!(
+            story_texts(&rejected),
+            story_texts(&version(part, "Before", form, &from)),
+            "{case}"
+        );
+    }
+}
+
 #[test]
 fn a_text_box_changed_whole_is_refused_never_written_as_an_invalid_redline() {
-    // Replaced or deleted whole, a box's deleted copy keeps its text as
-    // text to insert (#666): an edit inside Word's box (a DrawingML choice
-    // and a VML fallback) or inside a DrawingML box alone, and a box
-    // deleted. An edit beside the box compares.
+    // Replaced or deleted whole, a box's deleted copy would keep its text as
+    // text to insert (#666): a box deleted, and a box changed outside its
+    // text as well as inside. An edit beside the box compares.
     let word_box = |text: &str| {
         crate::support::text_box_run(7, &format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"))
-    };
-    let drawing_box = |text: &str| {
-        let run = word_box(text);
-        let choice = &run[run.find("<w:drawing>").unwrap()..run.find("</mc:Choice>").unwrap()];
-        format!("<w:r>{choice}</w:r>")
     };
     let version = |boxed: &str, tail: &str| {
         doc_with_body(&format!(
@@ -4856,17 +4962,12 @@ fn a_text_box_changed_whole_is_refused_never_written_as_an_invalid_redline() {
         ))
     };
     for (case, from, to) in [
-        (
-            "edit inside",
-            word_box("Inside the box"),
-            word_box("Within the box"),
-        ),
-        (
-            "edit inside DrawingML",
-            drawing_box("Inside the box"),
-            drawing_box("Within the box"),
-        ),
         ("box deleted", word_box("Inside the box"), String::new()),
+        (
+            "box resized and edited",
+            word_box("Inside the box"),
+            word_box("Within the box").replace(r#"cy="914400""#, r#"cy="1828800""#),
+        ),
     ] {
         let mut doc = version(&from, "Tail.");
         match doc.compare(&version(&to, "Tail."), AUTHOR, DATE) {

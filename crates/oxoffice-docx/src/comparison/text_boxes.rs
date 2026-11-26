@@ -253,6 +253,29 @@ pub(super) fn word_ids_with_options(
     }
 }
 
+/// Whether the text boxes of a story changed only inside: the same boxes in
+/// the same hosts, one at least holding other content. Such a story is
+/// compared box by box, so that an edit is tracked inside its box, in each
+/// copy an alternate content holds, rather than the box replaced whole.
+pub(super) fn text_boxes_changed_inside(
+    original: &str,
+    edited: &str,
+    word_prefix: &str,
+) -> Result<bool> {
+    let left = text_box_spans(original, word_prefix)?;
+    let right = text_box_spans(edited, word_prefix)?;
+    if left.is_empty()
+        || left.len() != right.len()
+        || text_box_host_skeletons(original, &left)? != text_box_host_skeletons(edited, &right)?
+    {
+        return Ok(false);
+    }
+    Ok(left
+        .iter()
+        .zip(&right)
+        .any(|(left, right)| original[left.clone()] != edited[right.clone()]))
+}
+
 pub(super) fn text_box_spans(xml: &str, word_prefix: &str) -> Result<Vec<Range<usize>>> {
     let open = format!(
         r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}">"#
@@ -414,8 +437,9 @@ pub(super) fn paired_run_replacement(
             )));
         }
     }
-    // Replaced whole, the deleted copy of a box would keep its text as
-    // inserted text: no valid redline holds it yet.
+    // A box changed only inside is compared box by box before this point
+    // ([`text_boxes_changed_inside`]). Replaced whole, the deleted copy of a
+    // box would keep its text as inserted text: no valid redline holds it.
     let holds_box = |run: &CT_R| {
         run.extra_xml.iter().any(|raw| {
             raw.windows(b"txbxContent".len())
@@ -424,7 +448,7 @@ pub(super) fn paired_run_replacement(
     };
     if !projected && (holds_box(original) || holds_box(edited)) {
         return Err(Error::Other(format!(
-            "comparison cannot track a change to a run holding a text box at {location}: it would replace the whole box (#666)"
+            "comparison cannot track a change to a run holding a text box at {location}: the run or its box changed outside the box text, or the story adds or removes a box, so the box would be replaced whole (#666)"
         )));
     }
     let inserted_xml = publish_run_source(

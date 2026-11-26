@@ -122,7 +122,7 @@ use text_boxes::{
     modeled_revision_count_with_options, paired_run_replacement, policy_textbox_intervals,
     private_text_box_host_spans, replace_text_boxes_in_hosts, restore_text_box_subtrees,
     text_box_coordinates, text_box_host_skeletons, text_box_host_spans, text_box_marker_local,
-    text_box_spans, without_text_box_subtrees, word_ids_with_options,
+    text_box_spans, text_boxes_changed_inside, without_text_box_subtrees, word_ids_with_options,
 };
 
 mod alignment;
@@ -920,12 +920,20 @@ impl Document {
             extract_body_inner(edited_xml)?.to_owned()
         } else if story_ignored(options, ComparisonStoryKind::Main) {
             extract_body_inner(original_xml)?.to_owned()
-        } else if story_ignored(options, ComparisonStoryKind::TextBox) {
+        } else if story_ignored(options, ComparisonStoryKind::TextBox)
+            || text_boxes_changed_inside(
+                extract_body_inner(original_xml)?,
+                extract_body_inner(edited_xml)?,
+                "w",
+            )?
+        {
             let original_source = std::str::from_utf8(original_xml).map_err(utf8_error)?;
             let edited_source = std::str::from_utf8(edited_xml).map_err(utf8_error)?;
             let (_, original_bindings) = main_body_source(original_source.as_bytes())?;
             let (_, edited_bindings) = main_body_source(edited_source.as_bytes())?;
-            compare_story_inner(
+            // Box by box, whatever the formatting policy: replaced whole, the
+            // deleted copy of a box would keep its text as text (#666).
+            compare_story_inner_impl(
                 extract_body_inner(original_xml)?,
                 extract_body_inner(edited_xml)?,
                 "body",
@@ -934,6 +942,7 @@ impl Document {
                 &edited_bindings,
                 &mut metadata,
                 &mut diagnostics,
+                true,
             )?
         } else {
             let original_body = extract_body_inner(original_xml)?;
