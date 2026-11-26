@@ -123,7 +123,10 @@ CLI where it makes sense and Python everywhere.
 - Root parts have `from_xml(&[u8])` and `to_xml(&self)`. Nested elements take
   a `&mut Reader` and a `&mut Writer`.
 - **Tolerant on read, fixed on write**: any namespace prefix is accepted, the
-  canonical one is written.
+  canonical one is written. A part's root keeps the declarations it was read
+  with, a default namespace included: the unmodelled XML kept without a
+  prefix stays in it when the part is written again, beside the modelled
+  elements written under `w:`.
 - **Unmodelled XML is preserved verbatim** through
   `oxoffice_core::raw_xml::capture_element`. Parse what you use, keep the
   rest.

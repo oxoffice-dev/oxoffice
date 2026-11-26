@@ -315,9 +315,10 @@ fn the_canonical_form_tells_apart_two_parts_that_say_different_things() {
 
 // A table paragraph's `w:cnfStyle`, or a toggle's carrier in a paragraph or
 // its mark, is kept as written: written again in another attribute order,
-// or under another prefix or with another spelling of its value (`1` or
-// `on` saved as no value, `0` as `false`) after an edit, it is no change;
-// with another region or value it is one.
+// or under another prefix, without one (the default namespace), or with
+// another spelling of its value (`1` or `on` saved as no value, `0` as
+// `false`) after an edit, it is no change; with another region or value it
+// is one.
 #[test]
 fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
     let cell = |cnf: &str, text: &str| {
@@ -336,8 +337,15 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
                 .compare(&open(&cell(edited, "Yearly")).unwrap(), AUTHOR, DATE);
         assert_eq!(found.unwrap().is_empty(), same, "{edited}");
     }
-    let other_prefixes =
-        |bytes: Vec<u8>| rewrite_package(&bytes, Writing::OtherPrefixes).unwrap().0;
+    // As written, under other prefixes, with the default namespace, and with
+    // the default namespace over other prefixes: elements without a prefix,
+    // attributes under one that is neither `w` nor the element's.
+    let writings: [&[Writing]; 4] = [
+        &[],
+        &[Writing::OtherPrefixes],
+        &[Writing::DefaultNamespace],
+        &[Writing::OtherPrefixes, Writing::DefaultNamespace],
+    ];
     let paragraph = |ppr: &str| {
         docx_with_body(&format!(
             r#"<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>Quarterly totals.</w:t></w:r></w:p>"#
@@ -406,15 +414,19 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
     .into_iter()
     .enumerate()
     {
-        for other in [false, true] {
-            let written = |bytes: Vec<u8>| if other { other_prefixes(bytes) } else { bytes };
+        for writing in writings {
+            let written = |bytes: Vec<u8>| {
+                writing.iter().fold(bytes, |bytes, writing| {
+                    rewrite_package(&bytes, *writing).unwrap().0
+                })
+            };
             let mut doc = open(&written(edited.clone())).unwrap();
             assert_eq!(doc.replace_text("Quarterly", "Yearly"), 1);
             let saved = open(&doc.to_bytes().unwrap()).unwrap();
             let mut redline = open(&written(original.clone())).unwrap();
             let found = redline
                 .compare(&saved, AUTHOR, DATE)
-                .unwrap_or_else(|error| panic!("other prefixes {other}, row {row}: {error}"));
+                .unwrap_or_else(|error| panic!("{writing:?}, row {row}: {error}"));
             // A kept property that says the same is no property change.
             let tracked = package_parts(&redline.to_bytes().unwrap())
                 .unwrap()
@@ -422,11 +434,49 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
                 .any(|(name, xml)| {
                     name.ends_with("document.xml") && xml.windows(8).any(|w| w == b"PrChange")
                 });
-            assert_eq!(
-                found.is_empty() && !tracked,
-                same,
-                "other prefixes {other}, row {row}"
-            );
+            assert_eq!(found.is_empty() && !tracked, same, "{writing:?}, row {row}");
         }
     }
+}
+
+// A header written with WordprocessingML as its default namespace keeps the
+// elements its model holds raw (a bookmark around its paragraph) in that
+// namespace when an edit writes the header again.
+#[test]
+fn a_header_written_again_keeps_its_default_namespace() {
+    let mut doc = Document::new();
+    doc.set_header("Quarterly totals");
+    let parts = package_parts(&doc.to_bytes().unwrap()).unwrap();
+    let parts: Vec<_> = parts
+        .into_iter()
+        .map(|(name, xml)| match name.starts_with("word/header") {
+            true => {
+                let xml = String::from_utf8(xml).unwrap();
+                let xml = xml
+                    .replacen(
+                        "<w:p>",
+                        r#"<w:bookmarkStart w:id="0" w:name="head"/><w:p>"#,
+                        1,
+                    )
+                    .replacen("</w:hdr>", r#"<w:bookmarkEnd w:id="0"/></w:hdr>"#, 1);
+                (name, xml.into_bytes())
+            }
+            false => (name, xml),
+        })
+        .collect();
+    let original = write_package(&parts);
+    let header = |bytes: Vec<u8>| {
+        let mut doc = open(&bytes).unwrap();
+        assert_eq!(doc.replace_text("Quarterly", "Yearly"), 1);
+        let saved = package_parts(&doc.to_bytes().unwrap()).unwrap();
+        let (_, xml) = saved
+            .iter()
+            .find(|(name, _)| name.starts_with("word/header"))
+            .unwrap();
+        canonical(xml).unwrap()
+    };
+    let written = rewrite_package(&original, Writing::DefaultNamespace)
+        .unwrap()
+        .0;
+    assert_eq!(header(written), header(original));
 }

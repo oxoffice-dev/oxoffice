@@ -74,10 +74,11 @@ decision, and `root_prefix` falling back to `w`; the diff in
    accept and reject, HTML, PDF) on five inputs, each in the harness's form
    and in that form (`other-prefixes` then `default-namespace`: elements
    unprefixed, attributes `ox4:`, `w` unbound), found one difference: after
-   any edit of `word/report.docx`'s body, a table row's and a cell's
-   `cnfStyle` lose their region attributes and a paragraph's is written with
-   `w:val` twice, which is no namespace-well-formed XML. The table-property
-   path is to be located in the implementation.
+   any edit of `word/report.docx`'s body, a paragraph's `cnfStyle` is
+   written with `w:val` twice, which is no namespace-well-formed XML. (A
+   table row's and a cell's `cnfStyle` lose their region attributes too, but
+   in every writing, `w:` included: the table property model keeps `w:val`
+   only. Not this class.)
 
 Measured with the prototype (1 fixed, the refusal lifted, `root_prefix`
 falling back to `w`): the PR sample passes every step of the writing in a
@@ -130,10 +131,15 @@ writing or producer declares one there.
 ### 2. Attributes are WordprocessingML's by namespace
 
 A retained carrier's WordprocessingML attributes are those whose prefix is
-bound to WordprocessingML where the reader read it: the part's bindings in
-scope, recorded on the carrier when it is captured, and its own
-declarations. An unprefixed attribute never is one (it has no namespace).
-The element's own prefix stops standing for its attributes'.
+bound to WordprocessingML where the reader read it. A carrier written
+without a prefix declares, when it is captured, the default namespace and
+the prefixes its reader had bound to WordprocessingML that it uses
+(`properties::carrier_bindings`); `carrier_word_prefixes` reads them as it
+reads any declaration on the carrier. A carrier with a prefix is captured
+as today. An unprefixed attribute never is a Word one (it has no
+namespace). When the modelled element is written, the carrier's
+declarations of WordprocessingML are not copied: its Word attributes are
+written under the modelled element's prefix.
 
 ### 3. The comparison reads a story with its part's bindings
 
@@ -142,14 +148,18 @@ The element's own prefix stops standing for its attributes'.
   prefix the root binds to WordprocessingML, else `w` (declared where it is
   written by `close_content_fragment_namespaces`, as for generated `w:`
   today).
-- The wrappers that scan a fragment (text boxes, private markers) declare
-  the root's bindings, the default namespace included, instead of one
-  prefix; the `"w"` of the main part's scans becomes the main part's
-  bindings.
-- Retained property XML is canonicalized with the WordprocessingML bindings
-  of its part, the default namespace included for elements.
-- `without_own_val` removes the attribute named `{W}val`, whatever its
-  prefix; an unprefixed `val` is kept and compared.
+- The wrappers that scan a fragment for WordprocessingML elements (text
+  boxes, private markers, a paragraph's runs) bind WordprocessingML as the
+  default namespace beside the Word prefix (`scan_root_start`): an
+  unprefixed element there is the default namespace's of a part written
+  with it. They look for Word local names (`txbxContent`, `r`,
+  `fldSimple`) and private markers, which no other vocabulary of a Word
+  part writes, so the part's own default need not be threaded to them.
+- Retained property XML is canonicalized as today: an unprefixed carrier
+  declares its bindings itself (section 2).
+- `without_own_val` removes the carrier's WordprocessingML `val`, whatever
+  its prefix (`carrier_word_prefixes`); an unprefixed `val` is kept and
+  compared.
 
 ### What a save keeps of the input writing
 
@@ -179,7 +189,7 @@ One pull request, `fix(docx): a word part written with the default
 namespace can be edited`, closing #663:
 
 1. `docx-oxml`: the two roots keep `xmlns`; carriers read their attributes
-   by namespace (section 2), and the table-property path of cause 3.
+   by namespace (section 2).
 2. `docx`: the refusal and its helper removed; the comparison changes of
    section 3.
 3. The limitation `crates/oxoffice-cli/limitations/docx-default-namespace.json`
@@ -206,10 +216,16 @@ differences fixed) and the compare walks with `OXOFFICE_WORKFLOWS=full`.
   the toggle carriers, edited, saved and compared: without sections 1 to 3
   the new writings fail on the refusal, the carriers' `w:val`, the
   canonical `cnfStyle` and the doubled `val`. One closure and one array in
-  the driver. For the table-property path of cause 3, the `cell` builder
-  also gives the row and the cell a `cnfStyle` with a region attribute, as
-  Word writes them (`word/report.docx`); if the row's edit does not write
-  the table again, the implementation picks the edit that does.
+  the driver. The table's row and cell are written again by the edit
+  already; a `cnfStyle` there would fail in every writing alike (cause 3's
+  note), so the rows do not hold one.
+- `a_header_written_again_keeps_its_default_namespace`: a header with a
+  bookmark around its paragraph (held raw), in the default namespace,
+  written again by `replace_text`, reads as its `w:` writing does. No other
+  test writes a header's model again under that writing.
+- `main_part_root.rs` asserted the old writer: a root declaring a default
+  namespace was written anew after an edit. It now stays as the producer
+  wrote it (`a_root_with_a_default_namespace_is_kept`).
 - No Python test: the bindings are not touched.
 
 ## Decided with the maintainer
@@ -224,7 +240,7 @@ differences fixed) and the compare walks with `OXOFFICE_WORKFLOWS=full`.
    infoset under the Namespaces in XML recommendation, is checked in Word
    later, not as a merge gate.
 4. The table rows of the #676 test are edited by an operation that writes
-   the row again.
+   the row again (`replace_text` does).
 
 ## Links
 

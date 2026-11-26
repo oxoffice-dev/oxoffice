@@ -859,8 +859,10 @@ impl CT_PPr {
                         pending_raw.push(raw);
                     } else if let Some(slot) = ppr_toggle_slot(name.as_ref(), &prefixes) {
                         let captured = capture_element(reader, e)?;
-                        let raw =
-                            crate::text::raw_with_external_bindings(&captured, owner_bindings)?;
+                        let raw = crate::text::raw_with_external_bindings(
+                            &captured,
+                            &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
+                        )?;
                         if toggle_element_is_explicitly_empty(&captured)? {
                             let value = parse_word_toggle(e, &prefixes)?;
                             if let Some(field) = ppr_toggle_field_mut(&mut ppr, slot) {
@@ -984,7 +986,7 @@ impl CT_PPr {
                             toggle_has_unsupported_attributes(e, &prefixes)?;
                         let raw = crate::text::raw_with_external_bindings(
                             &capture_empty_element(e)?,
-                            owner_bindings,
+                            &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
                         )?;
                         record_modeled_toggle_candidate(
                             &mut ppr.revision_xml,
@@ -1018,7 +1020,7 @@ impl CT_PPr {
                         if value.is_none() || toggle_has_unsupported_attributes(e, &prefixes)? {
                             let raw = crate::text::raw_with_external_bindings(
                                 &capture_empty_element(e)?,
-                                owner_bindings,
+                                &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
                             )?;
                             let occurrence = occurrences[PPR_CNF_STYLE_SLOT as usize] - 1;
                             if value.is_some() {

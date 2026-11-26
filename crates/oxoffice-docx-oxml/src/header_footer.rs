@@ -253,7 +253,9 @@ impl CT_HdrFtr {
         let mut buf = Vec::new();
         let mut word_prefixes = Vec::new();
 
-        let known_ns: &[&[u8]] = &[b"xmlns:w", b"xmlns:r", b"xmlns"];
+        // The declarations the root writer always writes itself; a default
+        // namespace is kept, as the main part's root keeps it.
+        let known_ns: &[&[u8]] = &[b"xmlns:w", b"xmlns:r"];
 
         loop {
             match reader.read_event_into(&mut buf) {

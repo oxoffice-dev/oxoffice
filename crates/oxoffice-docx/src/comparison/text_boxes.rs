@@ -40,9 +40,7 @@ pub(super) fn text_box_marker_local(
 }
 
 fn contains_private_text_box_marker(xml: &str, word_prefix: &str, local: &str) -> Result<bool> {
-    let open = format!(
-        r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}">"#
-    );
+    let open = scan_root_start(word_prefix);
     let wrapped = format!("{open}{xml}</rdocxcmp:root>");
     let mut reader = NsReader::from_reader(wrapped.as_bytes());
     reader.config_mut().trim_text(false);
@@ -173,9 +171,7 @@ fn private_text_box_host_roles(
     marker_local: &str,
     written: impl Fn(i32) -> bool,
 ) -> Result<Vec<(Range<usize>, MarkerRole)>> {
-    let open = format!(
-        r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}">"#
-    );
+    let open = scan_root_start(word_prefix);
     let wrapped = format!("{open}{xml}</rdocxcmp:root>");
     let offset = open.len();
     let mut reader = NsReader::from_reader(wrapped.as_bytes());
@@ -326,9 +322,7 @@ pub(super) fn private_text_box_host_spans(
     word_prefix: &str,
     marker_local: &str,
 ) -> Result<Vec<Range<usize>>> {
-    let open = format!(
-        r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}">"#
-    );
+    let open = scan_root_start(word_prefix);
     let wrapped = format!("{open}{xml}</rdocxcmp:root>");
     let offset = open.len();
     let mut reader = NsReader::from_reader(wrapped.as_bytes());
@@ -593,9 +587,7 @@ pub(super) fn deleted_text_box_contents(
 /// The outermost text boxes of `xml` (each `txbxContent`, a copy an
 /// alternate content holds included), in order.
 pub(super) fn text_box_spans(xml: &str, word_prefix: &str) -> Result<Vec<Range<usize>>> {
-    let open = format!(
-        r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}">"#
-    );
+    let open = scan_root_start(word_prefix);
     let wrapped = format!("{open}{xml}</rdocxcmp:root>");
     let offset = open.len();
     let mut reader = NsReader::from_reader(wrapped.as_bytes());

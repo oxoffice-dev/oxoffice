@@ -38,7 +38,6 @@ pub(super) fn set_story_source_xml_in(
         if let Some(prefix) = unsafe_serializer_namespace_prefix(
             &rewritten_root_declarations,
             &document.body_namespace_declarations,
-            document.package.get_part(part_name),
         ) {
             return Err(Error::Other(format!(
                 "cannot serialize a modified document with a shadowed `{prefix}` namespace"

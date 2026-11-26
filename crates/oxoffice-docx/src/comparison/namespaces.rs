@@ -2,16 +2,57 @@
 
 use super::*;
 
+/// The prefix the comparison writes new WordprocessingML markup of the
+/// `local` root's part under: the root's own; for a root written without a
+/// prefix (WordprocessingML as the default namespace, #663), the first
+/// prefix the root binds to WordprocessingML, else `w`, which the writer
+/// declares where it writes it. A root without a prefix that binds `w` to
+/// another namespace and no prefix to WordprocessingML has none.
 pub(super) fn root_prefix(xml: &str, local: &str) -> Result<String> {
-    let suffix = format!(":{local}");
-    let suffix_at = xml
-        .find(&suffix)
-        .ok_or_else(|| Error::Other(format!("comparison {local} root has no prefix")))?;
-    let name_start = xml[..suffix_at]
-        .rfind('<')
-        .map(|at| at + 1)
-        .ok_or_else(|| Error::Other(format!("comparison {local} root has no start")))?;
-    Ok(xml[name_start..suffix_at].to_owned())
+    let bindings = root_namespace_bindings(xml, local, &[])?;
+    let mut reader = Reader::from_str(xml);
+    let name = loop {
+        match reader
+            .read_event()
+            .map_err(|error| Error::Other(format!("comparison {local} root: {error}")))?
+        {
+            Event::Start(element) | Event::Empty(element) => {
+                break std::str::from_utf8(element.name().as_ref())
+                    .map_err(utf8_error)?
+                    .to_owned();
+            }
+            Event::Eof => return Err(Error::Other(format!("comparison {local} root is missing"))),
+            _ => {}
+        }
+    };
+    if let Some((prefix, _)) = name.split_once(':') {
+        return Ok(prefix.to_owned());
+    }
+    let bound = bindings.iter().find_map(|(key, uri)| {
+        key.strip_prefix("xmlns:")
+            .filter(|_| uri == W_NS)
+            .map(str::to_owned)
+    });
+    match bound {
+        Some(prefix) => Ok(prefix),
+        None if !bindings.iter().any(|(key, _)| key == "xmlns:w") => Ok("w".to_owned()),
+        None => Err(Error::Other(format!(
+            "comparison {local} root binds no prefix to WordprocessingML and `w` to another namespace"
+        ))),
+    }
+}
+
+/// The start tag of the root a fragment of a Word part is scanned under:
+/// WordprocessingML bound to `word_prefix` and as the default namespace, so
+/// that an element its part writes without a prefix under a default
+/// namespace (#663) is found as one written with it. The scans look for
+/// WordprocessingML elements by their local name (`txbxContent`, `r`,
+/// `fldSimple`) and the comparison's private markers, which no other
+/// vocabulary of a Word part writes there.
+pub(super) fn scan_root_start(word_prefix: &str) -> String {
+    format!(
+        r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}" xmlns="{W_NS}">"#
+    )
 }
 
 /// The range of the content of the `local` owner that `xml` starts with,

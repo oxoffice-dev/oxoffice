@@ -687,7 +687,6 @@ impl Document {
         let unsafe_prefix = unsafe_serializer_namespace_prefix(
             &self.root_namespace_declarations,
             &self.body_namespace_declarations,
-            existing_document_xml,
         )
         .or_else(|| unsafe_nested_namespace_prefix(nested_namespace_owners));
         let kept_xml = existing_document_xml.map(<[u8]>::to_vec);

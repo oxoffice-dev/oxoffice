@@ -15,9 +15,7 @@ pub(super) fn plain_local_edit_facts(
     document_xml: &[u8],
     nested_namespace_owners: &OnceLock<Option<Vec<NestedNamespaceOwner>>>,
 ) -> (bool, OnceLock<Option<String>>) {
-    if let Some(prefix) =
-        unsafe_serializer_namespace_prefix(root_declarations, body_declarations, Some(document_xml))
-    {
+    if let Some(prefix) = unsafe_serializer_namespace_prefix(root_declarations, body_declarations) {
         return (
             true,
             OnceLock::from(Some(shadowed_namespace_diagnostic(&prefix))),
