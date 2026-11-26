@@ -5,14 +5,13 @@ use std::io::Write;
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{
-    capture_element, capture_empty_element, capture_event, push_attributes,
-};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, capture_event, push_attributes};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::color::ColorChoice;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::text::CT_TextBody;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::namespace::{NamespaceBindings, R_NS, all_attributes};
 use crate::relmap::rewrite_exact_rel_ids_with_namespaces;
@@ -977,7 +976,9 @@ fn root_and_children_impl(
                     buffer.clear();
                     match reader.read_event_into(&mut buffer)? {
                         Event::Start(child) => children.push(capture_element(&mut reader, &child)?),
-                        Event::Empty(child) => children.push(capture_empty_element(&child)?),
+                        Event::Empty(child) => {
+                            children.push(capture_empty(&child, reader.empty_writing())?)
+                        }
                         Event::End(end) if local_name(end.name().as_ref()) == expected => {
                             ensure_document_end(&mut reader, &mut buffer)?;
                             return Ok((owned, children, false));

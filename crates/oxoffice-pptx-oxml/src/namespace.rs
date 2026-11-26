@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::xml::{escape_attribute_value, push_escaped_attribute};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::namespace::A_NS;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 /// PresentationML main namespace URI.
 pub const P_NS: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";

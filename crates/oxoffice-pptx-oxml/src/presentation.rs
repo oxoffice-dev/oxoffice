@@ -2,17 +2,18 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{
-    capture_element, capture_empty_element, capture_event, emit_raw, push_attributes,
+    capture_element, capture_empty, capture_event, emit_raw, push_attributes,
 };
 use oxoffice_core::units::Emu;
 use oxoffice_core::xml::{
     escape_attribute_value, push_escaped_attribute, reject_non_xml_characters,
 };
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::text::CT_TextListStyle;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::namespace::{
     FIXED_MODEL_PREFIXES, NamespaceBindings, P_NS, R_NS, all_attributes, root_attributes,
@@ -131,7 +132,7 @@ impl SectionSlideIdSidecar {
         xml.push(b'>');
         xml.extend_from_slice(&self.raw_children);
         xml.extend_from_slice(b"</sldId>");
-        let mut reader = quick_xml::reader::NsReader::from_reader(xml.as_slice());
+        let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(xml.as_slice());
         loop {
             match reader.read_resolved_event() {
                 Ok((namespace, Event::Start(start) | Event::Empty(start))) => {
@@ -1781,7 +1782,7 @@ impl CT_Presentation {
                     let namespaces = root_namespaces.with_start(&element)?;
                     let is_presentationml =
                         namespaces.element_uri(element.name().as_ref()) == Some(P_NS);
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     state.capture_child(&name, is_presentationml, &namespaces, raw)?;
                 }
                 Event::End(element) if local_name(element.name().as_ref()) == b"presentation" => {
@@ -2228,7 +2229,7 @@ fn parse_section(xml: &[u8], inherited: &NamespaceBindings) -> Result<Section> {
             }
             Event::Empty(element) => {
                 let scope = section_scope.with_start(&element)?;
-                let raw = capture_empty_element(&element)?;
+                let raw = capture_empty(&element, reader.empty_writing())?;
                 if local_name(element.name().as_ref()) == b"sldIdLst"
                     && scope.element_uri(element.name().as_ref()) == Some(P14_NS)
                     && slide_ids.is_none()
@@ -2317,7 +2318,7 @@ fn parse_section_slide_ids(
             }
             Event::Empty(element) => {
                 let scope = root_scope.with_start(&element)?;
-                let raw = capture_empty_element(&element)?;
+                let raw = capture_empty(&element, reader.empty_writing())?;
                 if local_name(element.name().as_ref()) == b"sldId"
                     && scope.element_uri(element.name().as_ref()) == Some(P14_NS)
                 {
@@ -2392,7 +2393,7 @@ fn parse_section_slide_id_sidecar(
                 raw_children.extend_from_slice(&capture_element(&mut reader, &element)?);
             }
             Event::Empty(element) => {
-                raw_children.extend_from_slice(&capture_empty_element(&element)?);
+                raw_children.extend_from_slice(&capture_empty(&element, reader.empty_writing())?);
             }
             Event::End(element) if local_name(element.name().as_ref()) == b"sldId" => break,
             Event::Eof => return Err(OxmlError::MissingElement("closing p14:sldId".to_owned())),
@@ -2575,7 +2576,10 @@ fn write_section_list_preserving_raw(
                 }
             }
             Event::Empty(element) => {
-                raw_children.push(originals.len(), capture_empty_element(&element)?);
+                raw_children.push(
+                    originals.len(),
+                    capture_empty(&element, reader.empty_writing())?,
+                );
             }
             Event::End(element) if local_name(element.name().as_ref()) == b"sectionLst" => {
                 closing
@@ -3034,7 +3038,7 @@ fn parse_slide_list(xml: &[u8], inherited: &NamespaceBindings) -> Result<ParsedS
             }
             Event::Empty(element) => {
                 let namespaces = list_namespaces.with_start(&element)?;
-                let raw = capture_empty_element(&element)?;
+                let raw = capture_empty(&element, reader.empty_writing())?;
                 if local_name(element.name().as_ref()) == b"sldId"
                     && namespaces.element_uri(element.name().as_ref()) == Some(P_NS)
                 {
@@ -3085,7 +3089,7 @@ fn parse_master_list(xml: &[u8], inherited: &NamespaceBindings) -> Result<Parsed
             }
             Event::Empty(element) => {
                 let namespaces = list_namespaces.with_start(&element)?;
-                let raw = capture_empty_element(&element)?;
+                let raw = capture_empty(&element, reader.empty_writing())?;
                 if local_name(element.name().as_ref()) == b"sldMasterId"
                     && namespaces.element_uri(element.name().as_ref()) == Some(P_NS)
                 {
@@ -3169,7 +3173,9 @@ fn parse_identifier(
                 break;
             }
             Event::Start(element) => raw_children.push(0, capture_element(&mut reader, &element)?),
-            Event::Empty(element) => raw_children.push(0, capture_empty_element(&element)?),
+            Event::Empty(element) => {
+                raw_children.push(0, capture_empty(&element, reader.empty_writing())?)
+            }
             Event::End(element) if local_name(element.name().as_ref()) == expected.as_bytes() => {
                 break;
             }
@@ -3245,7 +3251,9 @@ fn parse_size(xml: &[u8], expected: &str) -> Result<CT_SlideSize> {
                 break;
             }
             Event::Start(element) => raw_children.push(0, capture_element(&mut reader, &element)?),
-            Event::Empty(element) => raw_children.push(0, capture_empty_element(&element)?),
+            Event::Empty(element) => {
+                raw_children.push(0, capture_empty(&element, reader.empty_writing())?)
+            }
             Event::End(element) if local_name(element.name().as_ref()) == expected.as_bytes() => {
                 break;
             }

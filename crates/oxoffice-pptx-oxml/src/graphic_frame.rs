@@ -2,13 +2,14 @@ use std::collections::HashSet;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::table::CT_Table;
 use oxoffice_drawing::xfrm::CT_Transform2D;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::diagram::DiagramRelationshipIds;
 use crate::namespace::{
@@ -415,7 +416,7 @@ impl CT_GraphicFrame {
                     let child_namespaces = namespaces.with_start(&child)?;
                     let name = local_name(child.name().as_ref()).to_vec();
                     let uri = child_namespaces.element_uri(child.name().as_ref());
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_frame_child(
                         &name,
                         uri,
@@ -600,7 +601,7 @@ fn parse_graphic(xml: &[u8], inherited: &NamespaceBindings) -> Result<ParsedGrap
                             let child_namespaces = namespaces.with_start(&child)?;
                             let uri = child_namespaces.element_uri(child.name().as_ref());
                             let name = local_name(child.name().as_ref()).to_vec();
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             capture_graphic_child(
                                 &name,
                                 uri,
@@ -698,7 +699,7 @@ impl CT_GraphicData {
                             }
                             Event::Empty(child) => {
                                 let child_namespaces = namespaces.with_start(&child)?;
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 capture_payload(
                                     &uri,
                                     raw,
@@ -896,7 +897,7 @@ impl RawElementShell {
                                 if is_drawing_properties {
                                     non_visual_name = non_visual_drawing_name(&child)?;
                                 }
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 if is_drawing_properties {
                                     non_visual_id = non_visual_drawing_id(&raw);
                                     drawing_properties_index = Some(children.len());

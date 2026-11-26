@@ -8,10 +8,11 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_core::xml_text::resolve_entity;
+use quick_xml::Writer;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::namespace::{MC_NS, NamespaceBindings, P_NS, all_attributes};
 
@@ -688,7 +689,7 @@ fn collect_schema_node_ids(
                     && scope.element_uri(child.name().as_ref()) == Some(P_NS)
                 {
                     collect_schema_common_time_node_ids(
-                        &capture_empty_element(&child)?,
+                        &capture_empty(&child, reader.empty_writing())?,
                         parent,
                         maximum,
                     )?;
@@ -729,7 +730,7 @@ fn collect_schema_common_owner_ids(
                     && local_name(child.name().as_ref()) == b"cTn"
                 {
                     collect_schema_common_time_node_ids(
-                        &capture_empty_element(&child)?,
+                        &capture_empty(&child, reader.empty_writing())?,
                         parent,
                         maximum,
                     )?;
@@ -1601,7 +1602,7 @@ fn parse_node_frames(
                         );
                     if direct_list && !recognized {
                         let raw = if empty {
-                            capture_empty_element(&start)?
+                            capture_empty(&start, reader.empty_writing())?
                         } else {
                             capture_element(&mut reader, &start)?
                         };
@@ -1923,7 +1924,7 @@ fn parse_common_media_node(xml: &[u8], inherited: &NamespaceBindings) -> Result<
                 let local = local_name(child_name.as_ref());
                 if scope.element_uri(child.name().as_ref()) == Some(P_NS) && local == b"cTn" {
                     let parsed = parse_common_time_node(
-                        &capture_empty_element(&child)?,
+                        &capture_empty(&child, reader.empty_writing())?,
                         root.as_ref().expect("common media root"),
                     )?;
                     set_once(&mut common, parsed, "cTn")?;
@@ -2157,7 +2158,7 @@ fn parse_common_behavior(xml: &[u8], inherited: &NamespaceBindings) -> Result<Pa
                         b"cTn" => set_once(
                             &mut common,
                             parse_common_time_node(
-                                &capture_empty_element(&child)?,
+                                &capture_empty(&child, reader.empty_writing())?,
                                 root.as_ref().expect("root"),
                             )?,
                             "cTn",
@@ -2232,7 +2233,7 @@ fn parse_container_common(xml: &[u8], inherited: &NamespaceBindings) -> Result<C
                     set_once(
                         &mut common,
                         parse_common_time_node(
-                            &capture_empty_element(&child)?,
+                            &capture_empty(&child, reader.empty_writing())?,
                             root.as_ref().expect("root"),
                         )?,
                         "cTn",
@@ -2324,7 +2325,7 @@ fn parse_sequence(xml: &[u8], inherited: &NamespaceBindings) -> Result<TimingSeq
                         b"cTn" => set_once(
                             &mut common,
                             parse_common_time_node(
-                                &capture_empty_element(&child)?,
+                                &capture_empty(&child, reader.empty_writing())?,
                                 root.as_ref().expect("root"),
                             )?,
                             "cTn",
@@ -2649,7 +2650,7 @@ fn collect_condition_target_presence(
                     && matches!(local.as_slice(), b"stCondLst" | b"endCondLst")
                 {
                     let raw = if empty {
-                        capture_empty_element(&start)?
+                        capture_empty(&start, reader.empty_writing())?
                     } else {
                         capture_element(&mut reader, &start)?
                     };
@@ -3083,7 +3084,7 @@ fn direct_transition_in_branch(
                     set_once(
                         &mut selected,
                         SelectedFragment {
-                            xml: capture_empty_element(&child)?,
+                            xml: capture_empty(&child, reader.empty_writing())?,
                             parent_namespaces: parent,
                             range,
                         },
@@ -3547,7 +3548,7 @@ fn direct_effect_fragment(
                     set_once(
                         &mut selected,
                         SelectedFragment {
-                            xml: capture_empty_element(&effect)?,
+                            xml: capture_empty(&effect, reader.empty_writing())?,
                             parent_namespaces: parent,
                             range,
                         },
@@ -3848,7 +3849,7 @@ fn collect_modeled_node_ranges(
                     && local_name(child.name().as_ref()) == b"cTn"
                 {
                     let start = start_tag_range(xml, reader.buffer_position() as usize)?.start;
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     collect_common_time_node_ranges(&raw, parent, base + start, id, matches)?;
                 }
             }
@@ -3892,7 +3893,7 @@ fn collect_behavior_ranges(
                     && local_name(child.name().as_ref()) == b"cTn"
                 {
                     let start = start_tag_range(xml, reader.buffer_position() as usize)?.start;
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     collect_common_time_node_ranges(&raw, parent, base + start, id, matches)?;
                 }
             }

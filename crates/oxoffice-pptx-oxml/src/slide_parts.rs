@@ -2,18 +2,19 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{
-    capture_element, capture_empty_element, capture_event, emit_raw, push_attributes,
+    capture_element, capture_empty, capture_event, emit_raw, push_attributes,
 };
 use oxoffice_core::xml::push_escaped_attribute;
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::color::{ColorChoice, ColorMap, ColorMapSlot, ThemeColorSlot};
 use oxoffice_drawing::fill::Fill;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::text::CT_TextListStyle;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer};
 
 use crate::namespace::{
     FIXED_MODEL_PREFIXES, MC_NS, NamespaceBindings, P_NS, R_NS, all_attributes, is_fixed_xmlns,
@@ -1400,7 +1401,7 @@ fn parse_root_children(
                     && all_attributes(&child)?
                         .iter()
                         .all(|(name, _)| name == "xmlns" || name.starts_with("xmlns:"));
-                let raw = capture_empty_element(&child)?;
+                let raw = capture_empty(&child, reader.empty_writing())?;
                 parsed.capture_child(
                     &name,
                     namespace_uri,
@@ -1808,7 +1809,7 @@ impl CT_CommonSlideData {
                     let child_ns = namespaces.with_start(&child)?;
                     let local = local_name(child.name().as_ref()).to_vec();
                     let is_p = child_ns.element_uri(child.name().as_ref()) == Some(P_NS);
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_common_child(
                         &local,
                         is_p,
@@ -1927,7 +1928,7 @@ fn parse_background_rendering(
             Event::Empty(child) => {
                 let child_ns = namespaces.with_start(&child)?;
                 let is_p = child_ns.element_uri(child.name().as_ref()) == Some(P_NS);
-                let raw = capture_empty_element(&child)?;
+                let raw = capture_empty(&child, reader.empty_writing())?;
                 let parsed = match (is_p, local_name(child.name().as_ref())) {
                     (true, b"bgPr") => Some(BackgroundRendering::Properties(None)),
                     (true, b"bgRef") => Some(parse_background_reference(&raw, &child_ns)?),
@@ -2004,7 +2005,7 @@ fn parse_background_fill_children(
                 let qualified_name = child.name();
                 let name = local_name(qualified_name.as_ref());
                 if is_drawing && is_fill_name(name) {
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     let parsed = Fill::from_xml(&raw).map_err(map_drawing_error)?;
                     if fill.replace(parsed).is_some() {
                         return Err(duplicate("background fill"));
@@ -2180,7 +2181,7 @@ impl CT_ColorMapOverride {
                     let child_ns = namespaces.with_start(&child)?;
                     let local = local_name(child.name().as_ref()).to_vec();
                     let is_a = child_ns.element_uri(child.name().as_ref()) == Some(A_NS);
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_override_choice(
                         &local,
                         is_a,
@@ -2314,7 +2315,7 @@ impl CT_MasterTextStyles {
                     let child_ns = namespaces.with_start(&child)?;
                     let name = local_name(child.name().as_ref()).to_vec();
                     let is_p = child_ns.element_uri(child.name().as_ref()) == Some(P_NS);
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_text_style(
                         &name,
                         is_p,
@@ -2563,7 +2564,7 @@ fn capture_shell_children(
     loop {
         match reader.read_event_into(&mut buffer)? {
             Event::Start(child) => children.push(0, capture_element(reader, &child)?),
-            Event::Empty(child) => children.push(0, capture_empty_element(&child)?),
+            Event::Empty(child) => children.push(0, capture_empty(&child, reader.empty_writing())?),
             event @ (Event::Text(_)
             | Event::GeneralRef(_)
             | Event::CData(_)
