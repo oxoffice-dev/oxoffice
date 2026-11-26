@@ -2905,8 +2905,23 @@ impl CT_Sdt {
                     }
                 }
                 Ok(Event::Empty(child)) => {
-                    sdt.slots
-                        .push(RootSlot::Raw(capture_empty_element(&child)?));
+                    let child_prefixes = word_prefixes_at(&child, &prefixes)?;
+                    if is_word_element(child.name().as_ref(), b"sdtContent", &child_prefixes)
+                        && !sdt
+                            .slots
+                            .iter()
+                            .any(|slot| matches!(slot, RootSlot::Content))
+                    {
+                        // Content holding nothing, in either writing.
+                        sdt.content_attributes = capture_attributes(&child, &child_prefixes, &[])?;
+                        sdt.content_word_prefixes = child_prefixes.to_vec();
+                        sdt.slots.push(RootSlot::Content);
+                    } else {
+                        sdt.slots.push(RootSlot::Raw(capture_empty(
+                            &child,
+                            reader.empty_writing(),
+                        )?));
+                    }
                 }
                 Ok(Event::End(end)) if matches_local_name(end.name().as_ref(), b"sdt") => break,
                 Ok(Event::Eof) => {
@@ -4062,7 +4077,11 @@ fn parse_content(
                 .into_iter()
                 .find(|local| is_word_element(child.name().as_ref(), local, &prefixes));
                 if owned_word_child.is_some_and(|local| !owner.owns(local)) {
-                    append_retained_sdt_content(&mut content, None, capture_empty_element(&child)?);
+                    append_retained_sdt_content(
+                        &mut content,
+                        None,
+                        capture_empty(&child, reader.empty_writing())?,
+                    );
                 } else if owned_word_child.is_some() {
                     append_modeled_content_child(
                         reader,

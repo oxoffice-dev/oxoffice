@@ -1055,7 +1055,11 @@ impl CT_Document {
                         if body.is_some() {
                             return Err(OxmlError::UnexpectedElement("w:body".to_owned()));
                         }
-                        body = Some(CT_Body::new());
+                        // As `<w:body></w:body>` reads: no content, no section.
+                        body = Some(CT_Body {
+                            content: Vec::new(),
+                            sect_pr: None,
+                        });
                         if let Some(ordinary) = &mut ordinary
                             && let Some(origin) = reader_input_origin(xml, &reader)
                         {

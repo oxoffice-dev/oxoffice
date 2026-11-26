@@ -105,7 +105,8 @@ fn complex_field_events(
             note_mark_empty = false;
             continue;
         }
-        let text = !empty && is_word_element(name.as_ref(), b"t", &prefixes);
+        // A text with nothing inside is an empty text, as the run reads it.
+        let text = is_word_element(name.as_ref(), b"t", &prefixes);
         // A started note reference with nothing inside reads as the empty one.
         let started_reference = !empty
             && (is_word_element(name.as_ref(), b"footnoteReference", &prefixes)
@@ -114,8 +115,9 @@ fn complex_field_events(
         let modeled = properties
             || started_reference
             || text
+            || is_word_element(name.as_ref(), b"delText", &prefixes)
             || (!empty
-                && [b"delText".as_slice(), b"drawing", b"commentReference"]
+                && [b"drawing".as_slice(), b"commentReference"]
                     .iter()
                     .any(|local| is_word_element(name.as_ref(), local, &prefixes)))
             || (empty
@@ -132,7 +134,7 @@ fn complex_field_events(
         if modeled
             && !properties
             && let Some(slot) = empty_mark.take()
-            && ((!empty && is_word_element(name.as_ref(), b"delText", &prefixes))
+            && (is_word_element(name.as_ref(), b"delText", &prefixes)
                 || (empty
                     && matches!(
                         parse_typed_special_run_child(&root, &prefixes)?,
@@ -146,7 +148,11 @@ fn complex_field_events(
         }
         if text && note_mark_empty {
             // The first `w:t` is the mark, even an empty one.
-            let mark = crate::xml_text::read_element_text(&mut reader, root.name());
+            let mark = if empty {
+                String::new()
+            } else {
+                crate::xml_text::read_element_text(&mut reader, root.name())
+            };
             if mark.is_empty() {
                 empty_mark = Some(boundaries.len());
             }
