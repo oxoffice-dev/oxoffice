@@ -116,7 +116,12 @@ fn paragraph_properties_xml_impl(
         &original_numbering_xml,
     ) || edited_properties.numbering_revision_xml_positions != original_numbering_positions
         || edited_properties.numbering_revision_position != original_numbering_position
-        || !same_retained_xml(&edited_properties.revision_xml, &original_revision_xml)
+        || !same_retained_xml_at(
+            &edited_properties.revision_xml,
+            &edited_properties.revision_xml_positions,
+            &original_revision_xml,
+            &original_revision_positions,
+        )
         || edited_properties.revision_xml_positions != original_revision_positions
     {
         formatting_diagnostic(diagnostics, location.to_owned());
@@ -342,14 +347,77 @@ pub(super) fn modeled_paragraph_properties(properties: Option<&CT_PPr>) -> Optio
 /// (attribute order, quotes, spacing, a local declaration), which is no
 /// change of formatting.
 pub(super) fn same_retained_xml(left: &[Vec<u8>], right: &[Vec<u8>]) -> bool {
+    same_retained_xml_at(left, &[], right, &[])
+}
+
+/// [`same_retained_xml`] of property elements kept at `positions`, a
+/// toggle's carrier read as [`retained_as_said`] reads it.
+fn same_retained_xml_at(
+    left: &[Vec<u8>],
+    left_positions: &[(u8, usize)],
+    right: &[Vec<u8>],
+    right_positions: &[(u8, usize)],
+) -> bool {
     left.len() == right.len()
-        && left.iter().zip(right).all(|(left, right)| {
-            left == right
-                || matches!(
-                    (retained_canonical(left), retained_canonical(right)),
-                    (Some(left), Some(right)) if left == right
-                )
-        })
+        && left
+            .iter()
+            .zip(right)
+            .enumerate()
+            .all(|(index, (left, right))| {
+                left == right
+                    || matches!(
+                        (
+                            retained_as_said(left, is_carrier(left_positions, index)),
+                            retained_as_said(right, is_carrier(right_positions, index)),
+                        ),
+                        (Some(left), Some(right)) if left == right
+                    )
+            })
+}
+
+/// Whether the retained element at `index` of a properties' kept XML, at
+/// `positions`, is a modelled toggle's carrier.
+fn is_carrier(positions: &[(u8, usize)], index: usize) -> bool {
+    positions.get(index).is_some_and(|position| {
+        oxoffice_docx_oxml::properties::raw_is_modeled_attribute_carrier(*position)
+    })
+}
+
+/// [`retained_canonical`] of a retained property element; a modelled
+/// toggle's carrier, kept for its other attributes, without its `w:val`: the
+/// modelled toggle says the value, and a save writes it in its own spelling
+/// (`1` or `on` as no value, `0` or `off` as `false`), which is no change.
+fn retained_as_said(xml: &[u8], carrier: bool) -> Option<String> {
+    if !carrier {
+        return retained_canonical(xml);
+    }
+    let without = without_own_val(std::str::from_utf8(xml).ok()?)?;
+    retained_canonical(without.as_bytes())
+}
+
+/// `xml`, one element with no content, without the `val` attribute under
+/// the element's own prefix; its other attributes kept as written.
+fn without_own_val(xml: &str) -> Option<String> {
+    let mut reader = Reader::from_str(xml);
+    let start = match reader.read_event().ok()? {
+        Event::Empty(start) => start,
+        Event::Start(start) if matches!(reader.read_event().ok()?, Event::End(_)) => start,
+        _ => return None,
+    };
+    let val = match start.name().prefix() {
+        Some(prefix) => [prefix.as_ref(), b":val"].concat(),
+        None => b"val".to_vec(),
+    };
+    let mut rebuilt = BytesStart::new(std::str::from_utf8(start.name().as_ref()).ok()?.to_owned());
+    for attribute in start.attributes() {
+        let attribute = attribute.ok()?;
+        if attribute.key.as_ref() != val.as_slice() {
+            oxoffice_core::xml::push_raw_attribute(&mut rebuilt, attribute);
+        }
+    }
+    let mut writer = Writer::new(Vec::new());
+    writer.write_event(Event::Empty(rebuilt)).ok()?;
+    String::from_utf8(writer.into_inner()).ok()
 }
 
 /// The canonical form of a retained property element, its own prefix read
@@ -440,12 +508,17 @@ fn retained_xml_as_said(properties: &mut CT_PPr) {
     for (_, _, raw) in &mut properties.num_pr_extra_xml {
         canonical(raw, &[]);
     }
-    for raw in properties
-        .numbering_revision_xml
-        .iter_mut()
-        .chain(&mut properties.revision_xml)
-    {
+    for raw in &mut properties.numbering_revision_xml {
         canonical(raw, &[]);
+    }
+    for (index, raw) in properties.revision_xml.iter_mut().enumerate() {
+        if is_carrier(&properties.revision_xml_positions, index) {
+            if let Some(said) = retained_as_said(raw, true) {
+                *raw = said.into_bytes();
+            }
+        } else {
+            canonical(raw, &[]);
+        }
     }
     if let Some(mark) = properties.rpr.as_mut() {
         mark_as_said(mark);
@@ -453,11 +526,14 @@ fn retained_xml_as_said(properties: &mut CT_PPr) {
 }
 
 /// The paragraph mark's retained XML as what it says: its toggle carriers,
-/// which a save writes again under the prefix of its own writing, in
-/// [`retained_canonical`] form, and its kept attributes in one order.
+/// which a save writes again under the prefix of its own writing and with
+/// the modelled value's spelling, in [`retained_as_said`] form, and its kept
+/// attributes in one order.
 fn mark_as_said(mark: &mut oxoffice_docx_oxml::properties::CT_RPr) {
-    for raw in &mut mark.revision_xml {
-        if let Some(canonical) = retained_canonical(raw) {
+    for (index, raw) in mark.revision_xml.iter_mut().enumerate() {
+        if let Some(canonical) =
+            retained_as_said(raw, is_carrier(&mark.revision_xml_positions, index))
+        {
             *raw = canonical.into_bytes();
         }
     }

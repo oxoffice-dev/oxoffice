@@ -313,10 +313,11 @@ fn the_canonical_form_tells_apart_two_parts_that_say_different_things() {
     assert!(refused.is_err_and(|error| error.contains("names a renamed prefix")));
 }
 
-// A table paragraph's `w:cnfStyle`, or a paragraph mark's toggle, is kept
-// as written: written again in another attribute order, or under another
-// prefix and saved again after an edit, it is no change; with another region
-// it is one.
+// A table paragraph's `w:cnfStyle`, or a toggle's carrier in a paragraph or
+// its mark, is kept as written: written again in another attribute order,
+// or under another prefix or with another spelling of its value (`1` or
+// `on` saved as no value, `0` as `false`) after an edit, it is no change;
+// with another region or value it is one.
 #[test]
 fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
     let cell = |cnf: &str, text: &str| {
@@ -337,11 +338,24 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
     }
     let other_prefixes =
         |bytes: Vec<u8>| rewrite_package(&bytes, Writing::OtherPrefixes).unwrap().0;
-    let mark = |extra: &str| {
-        docx_with_body(&format!(
-            r#"<w:p><w:pPr><w:rPr><w:rtl w:val="false" w:extra="{extra}"/></w:rPr></w:pPr><w:r><w:t>Quarterly totals.</w:t></w:r></w:p>"#
-        ))
+    // A toggle's carrier: a modelled toggle with another attribute, in the
+    // mark (`w:rtl`) or the paragraph (`w:bidi`), whose text is bookmarked
+    // or not.
+    let carrier = |element: &str, val: &str, extra: &str, bookmarked: bool| {
+        let toggle = format!(r#"<w:{element} w:val="{val}" w:extra="{extra}"/>"#);
+        let ppr = match element {
+            "rtl" => format!("<w:rPr>{toggle}</w:rPr>"),
+            _ => toggle,
+        };
+        let text = r#"<w:r><w:t>Quarterly totals.</w:t></w:r>"#;
+        let text = if bookmarked {
+            format!(r#"<w:bookmarkStart w:id="0" w:name="totals"/>{text}<w:bookmarkEnd w:id="0"/>"#)
+        } else {
+            text.to_owned()
+        };
+        docx_with_body(&format!(r#"<w:p><w:pPr>{ppr}</w:pPr>{text}</w:p>"#))
     };
+    let mark = |val: &str, extra: &str| carrier("rtl", val, extra, false);
     for (row, (original, edited, same)) in [
         (
             &original,
@@ -353,28 +367,51 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
             cell(r#"w:val="100000000000" w:firstRow="0""#, "Quarterly"),
             false,
         ),
-        (&mark("x"), mark("x"), true),
-        (&mark("x"), mark("y"), false),
+        (&mark("false", "x"), mark("false", "x"), true),
+        (&mark("false", "x"), mark("false", "y"), false),
+        (&mark("1", "x"), mark("1", "x"), true),
+        (&mark("0", "x"), mark("0", "x"), true),
+        (&mark("1", "x"), mark("0", "x"), false),
+        (
+            &carrier("bidi", "on", "x", false),
+            carrier("bidi", "on", "x", false),
+            true,
+        ),
+        (
+            &carrier("bidi", "on", "x", true),
+            carrier("bidi", "on", "x", true),
+            true,
+        ),
+        (
+            &carrier("bidi", "on", "x", false),
+            carrier("bidi", "off", "x", false),
+            false,
+        ),
     ]
     .into_iter()
     .enumerate()
     {
-        let mut doc = open(&other_prefixes(edited)).unwrap();
-        assert_eq!(doc.replace_text("Quarterly", "Yearly"), 1);
-        let saved = open(&doc.to_bytes().unwrap()).unwrap();
-        let mut redline = open(&other_prefixes(original.clone())).unwrap();
-        let found = redline.compare(&saved, AUTHOR, DATE).unwrap();
-        // A kept mark property that says the same is no run property change.
-        let tracked = package_parts(&redline.to_bytes().unwrap())
-            .unwrap()
-            .into_iter()
-            .any(|(name, xml)| {
-                name.ends_with("document.xml") && xml.windows(9).any(|w| w == b"rPrChange")
-            });
-        assert_eq!(
-            found.is_empty() && !tracked,
-            same,
-            "other prefixes, row {row}"
-        );
+        for other in [false, true] {
+            let written = |bytes: Vec<u8>| if other { other_prefixes(bytes) } else { bytes };
+            let mut doc = open(&written(edited.clone())).unwrap();
+            assert_eq!(doc.replace_text("Quarterly", "Yearly"), 1);
+            let saved = open(&doc.to_bytes().unwrap()).unwrap();
+            let mut redline = open(&written(original.clone())).unwrap();
+            let found = redline
+                .compare(&saved, AUTHOR, DATE)
+                .unwrap_or_else(|error| panic!("other prefixes {other}, row {row}: {error}"));
+            // A kept property that says the same is no property change.
+            let tracked = package_parts(&redline.to_bytes().unwrap())
+                .unwrap()
+                .into_iter()
+                .any(|(name, xml)| {
+                    name.ends_with("document.xml") && xml.windows(8).any(|w| w == b"PrChange")
+                });
+            assert_eq!(
+                found.is_empty() && !tracked,
+                same,
+                "other prefixes {other}, row {row}"
+            );
+        }
     }
 }
