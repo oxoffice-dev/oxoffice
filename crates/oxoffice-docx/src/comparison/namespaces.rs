@@ -117,11 +117,12 @@ fn declared_bindings(xml: &[u8]) -> Vec<(String, String)> {
                     } else {
                         name.strip_prefix(b"xmlns:")
                     };
-                    if let (Some(prefix), Ok(uri)) = (prefix, std::str::from_utf8(&attribute.value))
+                    if let (Some(prefix), Ok(uri)) =
+                        (prefix, oxoffice_core::xml::attribute_text(&attribute))
                         && let Ok(prefix) = std::str::from_utf8(prefix)
                         && !bindings.iter().any(|(known, _)| known == prefix)
                     {
-                        bindings.push((prefix.to_owned(), uri.to_owned()));
+                        bindings.push((prefix.to_owned(), uri.into_owned()));
                     }
                 }
             }

@@ -196,11 +196,12 @@ fn private_text_box_host_roles(
         let after = reader.buffer_position() as usize;
         let role = open_elements.last().map_or(MarkerRole::Kept, |open| open.0);
         let span = |start: usize| start.saturating_sub(offset)..after.saturating_sub(offset);
+        let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(element) | Event::Empty(element)
                 if private && element.local_name().as_ref() == marker_local.as_bytes() =>
             {
-                if wrapped[..after].ends_with("/>") {
+                if empty {
                     markers.push((span(before), role));
                 } else {
                     open_elements.push((role, Some(before)));
@@ -214,7 +215,12 @@ fn private_text_box_host_roles(
                         attribute.key.local_name().as_ref() == b"id"
                             && attribute.key.prefix().is_some()
                     })
-                    .and_then(|attribute| std::str::from_utf8(&attribute.value).ok()?.parse().ok())
+                    .and_then(|attribute| {
+                        oxoffice_core::xml::attribute_text(&attribute)
+                            .ok()?
+                            .parse()
+                            .ok()
+                    })
                     .is_some_and(&written);
                 let role = match element.local_name().as_ref() {
                     b"del" | b"moveFrom" if written_id => MarkerRole::Deleted,
@@ -515,7 +521,10 @@ pub(super) fn deleted_text_box_contents(
                                 && attribute.key.prefix().is_some()
                         })
                         .and_then(|attribute| {
-                            std::str::from_utf8(&attribute.value).ok()?.parse().ok()
+                            oxoffice_core::xml::attribute_text(&attribute)
+                                .ok()?
+                                .parse()
+                                .ok()
                         })
                         .is_some_and(&written);
                 let mut frame = Frame {
