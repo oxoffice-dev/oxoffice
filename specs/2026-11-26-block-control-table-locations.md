@@ -251,6 +251,18 @@ Python tests (paragraphs, tables, block locations, content controls).
 9. **Severity.** #660 is labelled S3 (rare); Google writes the shape on ordinary files and a paragraph loop stops on
    it. Recommended: S2.
 
+## Outcome
+
+Shipped as planned in Rust and the CLI. Python differs in three points, left in #660:
+
+- A handle of a table in a block control keeps no owner record: the owner inventory lists story items only. It reads
+  its location at each call (`table_story_location`, one body scan), and its edits publish as `Conservative`,
+  retiring the other handles as `Document.insert_content` does. No batched `story_tables` read in the owner index.
+- `table_story_location` returns `None` when the model and the source count other numbers of body tables, without a
+  debug assertion.
+- `Cell.tables` is unchanged: its owner inventory cache lists story items, so a table in a block control of a cell is
+  reached through `story_tables` or its location.
+
 ## Links
 
 - Issue #660; #657 and its spec
