@@ -1,7 +1,8 @@
 # Written by generate/manifest.py from the files under files/: do not edit by
 # hand, except known_failure and rewritten. Every file is ours: authored by
 # generate/author.py, then opened and saved by the producer named here
-# (generate/produce.py). They are released under the repository's licence.
+# (generate/produce.py), or written in Google Docs or by hand in Word (see
+# the README). They are released under the repository's licence.
 #
 # features: what the file's XML carries, so a failure points at an area.
 # known_failure: the issue that makes a save without an edit rewrite the parts
@@ -437,7 +438,7 @@ features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "tab
 [[file]]
 path = "word/toc.docx"
 producer = "Microsoft Word for Mac 16.115.2"
-size = 49797
+size = 49952
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "nested-table", "chart", "header-footer", "sections", "columns", "toc", "page-fields", "ref-fields", "bookmark", "hyperlink", "content-control", "rsid", "paraId"]
 
 [[file]]

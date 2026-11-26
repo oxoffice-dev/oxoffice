@@ -13,7 +13,9 @@ for the tests that read real documents (round trips, edits, performance). See
   lack in [`ooxml.py`](generate/ooxml.py).
 - `files/word/`, `files/powerpoint/`, `files/libreoffice/`, `files/google/`:
   the same sources opened and saved by each editor, written by
-  [`generate/produce.py`](generate/produce.py).
+  [`generate/produce.py`](generate/produce.py), except `word/toc.docx`, made
+  by hand in Word (see
+  [A table of contents inserted in Word](#a-table-of-contents-inserted-in-word)).
 - `files/google-docs/`: documents written in Google Docs itself, through the
   Docs API, by [`generate/google_docs.py`](generate/google_docs.py) from the requests of
   [`generate/google_docs.json`](generate/google_docs.json): `review`
@@ -65,6 +67,29 @@ python3 tests/corpus/generate/manifest.py [--check]
 Every producer rewrites the manifest with its version at the end of its run,
 so a run only needs a commit.
 
+## A table of contents inserted in Word
+
+A table of contents inserted by Word (its own building block, not the field
+of a source) needs Word on a Mac and a hand in its window: open a source
+with headings, References, Table of Contents, Automatic Table 1, save as
+.docx under `files/word/`, close the document, quit Word, then give it
+Word's version, from `tests/corpus/generate`:
+`python3 -c 'import manifest, os; manifest.update({("word", "docx"): "Microsoft Word for Mac <version>"}, since=os.path.getmtime("../files/word/<file>.docx"))'`.
+Word's AppleScript reaches the building blocks of its loaded templates
+only, and the gallery's Automatic Table 1 is in none of them (`make new
+table of contents` would write the TOC field alone, without the block
+control around it). Later fixes to the file can be scripted: open it,
+`update (table of contents 1 of doc)`, save, close, quit.
+
+- `word/toc.docx`: the manual with Automatic Table 1 inserted before its
+  first heading by Word for Mac 16.115.2 in French, then the whole table
+  updated, so its page numbers are Word's: a block control of the "Table of
+  Contents" gallery (`w:docPartObj`, `w:docPartUnique`) holding a heading
+  and the `TOC \o "1-3" \h \z \u` field, whose entries are links to `_Toc`
+  bookmarks Word added on the 11 headings; every style id rewritten in
+  French by Word (`Titre1` for `Heading1`, `TM1`, `En-ttedetabledesmatires`,
+  `Lienhypertexte`).
+
 ## Written in Google Docs
 
 ```bash
@@ -110,22 +135,3 @@ and comments in a run, across cells, rows, a table's edge or a link's edge
 do not make Google write them, nor do the `google/` copies' converted
 comments and Word contents. What does is unknown, so that shape is tested on
 synthetic documents.
-
-A table of contents inserted by Word (its own building block, not the field
-of a source) needs Word on a Mac: open a source with headings, References,
-Table of Contents, Automatic Table 1, save as .docx under `files/word/`,
-close the document, quit Word, then give it Word's version, from
-`tests/corpus/generate`:
-`python3 -c 'import manifest, os; manifest.update({("word", "docx"): "Microsoft Word for Mac <version>"}, since=os.path.getmtime("../files/word/<file>.docx"))'`.
-It is done by hand: Word's AppleScript reaches the building blocks of its
-loaded templates only, and the gallery's Automatic Table 1 is in none of
-them (`make new table of contents` would write the TOC field alone, without
-the block control around it).
-
-- `toc.docx`: the manual with Automatic Table 1 inserted before its first
-  heading by Word for Mac 16.115.2 in French: a block control of the "Table
-  of Contents" gallery (`w:docPartObj`, `w:docPartUnique`) holding a heading
-  and the `TOC \o "1-3" \h \z \u` field, whose entries are links to `_Toc`
-  bookmarks Word added on the 11 headings; every style id rewritten in
-  French by Word (`Titre1` for `Heading1`, `TM1`, `En-ttedetabledesmatires`,
-  `Lienhypertexte`).
