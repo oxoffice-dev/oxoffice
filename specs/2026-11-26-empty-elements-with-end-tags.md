@@ -105,9 +105,11 @@ Source surgery takes where a tag ends from the helper of #658, never from
   namespace declaration goes) and `self_closing`. The only code that knows
   "two bytes or one".
 - `ElementSpan::attributes_end()`, the same on a span.
-- `start_tag`, `element_span`, `find_element` and `root_element_span` take
-  bytes as well as text (`&(impl AsRef<[u8]> + ?Sized)`): most sites hold
-  bytes, `&str` callers are unchanged.
+- `start_tag`, `element_span`, `find_element`, `root_element_span`,
+  `replace_content` and `append_content` take bytes as well as text
+  (`&(impl AsRef<[u8]> + ?Sized)`, the last two returning the same kind they
+  are given): most sites hold bytes (the chart's `authoring.rs` opens an
+  element for content on bytes), `&str` callers are unchanged.
 
 The 96 lines are of four kinds:
 
@@ -201,7 +203,7 @@ collapses yet.
 
 1. The seven crates read through `xml_reader` (the prototype's import
    change, plus `docx-layout`); the reader check.
-2. `capture_empty_element` removed, its 276 callers on
+2. `capture_empty_element` removed, its 276-277 callers on
    `capture_empty(e, reader.empty_writing())` (the five of
    `drawing/text/paragraph.rs` take the writing as a parameter); echo loops
    and `capture_event` of a read `Event::Empty` per section 4.
@@ -209,6 +211,9 @@ collapses yet.
    grep (`*_is_explicitly_empty`, `read_text` of an element that can be
    empty, `*_has_payload`) and by the prototype's 134 failures.
 4. The behaviour tests, the eight known entries removed, the perf check.
+5. `docs/ARCHITECTURE.md`, model invariants: every reader of a document
+   part goes through `oxoffice_core::xml_reader`, and `raw_xml::capture_empty`
+   carries the writing of an empty element, beside `capture_element`.
 
 One commit per crate for 1 and 2 (mechanical), one per family for 3.
 
