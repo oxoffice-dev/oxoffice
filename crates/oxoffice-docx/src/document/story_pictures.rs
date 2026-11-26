@@ -609,7 +609,7 @@ impl Document {
             ));
         }
         let run_count = paragraph.accepted_run_paths().len();
-        let (paired, name_counts) = self.story_range_metadata()?;
+        let (paired, start_names) = self.story_range_metadata()?;
         let (ranges, across) = paired?;
         let existing = ranges.iter().find_map(|entry| {
             let crate::StoryRangeKind::Bookmark { name, .. } = entry.kind() else {
@@ -636,7 +636,7 @@ impl Document {
                         crate::StoryRangeKind::Bookmark { name, .. } => Some(name.as_str()),
                         _ => None,
                     })
-                    .chain(name_counts.keys().map(String::as_str))
+                    .chain(start_names.taken.keys().map(String::as_str))
                     .map(oxoffice_docx_oxml::text::bookmark_name_key)
                     .collect::<HashSet<_>>();
                 let mut suffix = 1u32;
