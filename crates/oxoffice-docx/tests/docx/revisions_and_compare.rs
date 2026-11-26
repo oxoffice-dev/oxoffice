@@ -4623,6 +4623,24 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
     let wrapped = google_control(101, &deleted(gone));
     let final_paragraph = format!("{before}{}", removed(&deleted(gone)));
     let kept_and_removed = format!("{}{}", plain("Kept."), removed(&deleted(gone)));
+    // Paragraphs each in a block control, as Google Docs writes a suggestion
+    // deleting from one paragraph into another: the marks of the first two
+    // removed, the text of the second.
+    let chain = format!(
+        "{}{}{}",
+        google_control(
+            100,
+            &removed(&format!("<w:r><w:t>Kept.</w:t></w:r>{}", deleted(gone)))
+        ),
+        google_control(101, &removed(&deleted(gone))),
+        google_control(
+            102,
+            &format!(
+                r#"<w:p>{}<w:r><w:t xml:space="preserve"> Also.</w:t></w:r></w:p>"#,
+                deleted(gone)
+            )
+        ),
+    );
     let report = |body: &str, comments: usize| {
         format!(
             "{body}--- comment (/word/comments.xml) ---\n{}",
@@ -4678,7 +4696,7 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
         (
             "the last paragraph of a footnote",
             "footnote",
-            kept_and_removed,
+            kept_and_removed.clone(),
             None,
             Ok("Before.\n--- footnote (/word/footnotes.xml) ---\nKept.\n\n".into()),
         ),
@@ -4691,7 +4709,77 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
                 one_cell_table(&plain("Cell.")),
             ),
             None,
-            Err("only a paragraph right after the control whose mark stays can take the merge"),
+            Ok("Before.\nKept.\nCell.\t\nAfter.\n".into()),
+        ),
+        (
+            "a paragraph before a table and one ending the body after it, their text kept",
+            "body",
+            format!(
+                "{before}{}{}{}",
+                removed("<w:r><w:t>Kept.</w:t></w:r>"),
+                one_cell_table(&plain("Cell.")),
+                removed("<w:r><w:t>Last.</w:t></w:r>"),
+            ),
+            None,
+            Ok("Before.\nKept.\nCell.\t\nLast.\n".into()),
+        ),
+        (
+            "a chain of block controls ending a cell",
+            "body",
+            format!(
+                "{before}{}{after}",
+                one_cell_table(&format!(
+                    "{}{}",
+                    google_control(
+                        100,
+                        &removed(&format!("<w:r><w:t>Kept.</w:t></w:r>{}", deleted(gone)))
+                    ),
+                    google_control(101, &removed(&deleted(gone))),
+                ))
+            ),
+            None,
+            Ok("Before.\nKept.\t\nAfter.\n".into()),
+        ),
+        (
+            "a chain of block controls",
+            "body",
+            format!("{before}{chain}{after}"),
+            None,
+            Ok("Before.\nKept. Also.\nAfter.\n".into()),
+        ),
+        (
+            "a chain of block controls in a cell",
+            "body",
+            format!("{before}{}{after}", one_cell_table(&chain)),
+            None,
+            Ok("Before.\nKept. Also.\t\nAfter.\n".into()),
+        ),
+        (
+            "comment starts in nested inline controls, one ending elsewhere",
+            "body",
+            format!(
+                "{before}{}<w:p><w:r><w:t>After.</w:t></w:r>{}</w:p>",
+                google_control(
+                    100,
+                    &removed(&google_control(
+                        101,
+                        &format!(
+                            r#"<w:del w:id="3" w:author="A" w:date="{DATE}"/>{}{}"#,
+                            start(0),
+                            deleted(&format!(
+                                "{}{}{gone}{}{}<w:r><w:rPr><w:b/></w:rPr></w:r>",
+                                start(1),
+                                start(2),
+                                end(0),
+                                end(1)
+                            ))
+                        )
+                    )),
+                ),
+                end(2)
+            ),
+            None,
+            Ok(report("Before.\nAfter.\n", 1)),
         ),
         (
             "a block control's only paragraph, its text in an inline control",

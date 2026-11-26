@@ -17,11 +17,20 @@ the predicate that decides a block control goes whole (`inline_content_removes` 
 
 ## Decision
 
-**A. The last mark of a story stays.** A removed mark with no owner after it in its story (the body, a cell, a header,
-a note, a comment, a text box, or a block control ending one, nested ones included) stays, untracked: its paragraph
-keeps its properties and what the resolution keeps of its content, and the removed marks before it merge into it. The
-Word check of 2026-11-23 found Word cannot remove the body's last mark either (Accept All left that change, Reject All
-an empty tracked paragraph). The comparison never writes such a mark; only other producers' redlines hold one.
+**A. A removed mark with no paragraph to merge with stays.** At the end of its story (the body, a cell, a header, a
+note, a comment, a text box, or a block control ending one, nested ones included), or before a table that stays, the
+removed mark stays, untracked: its paragraph keeps its properties and what the resolution keeps of its content, and the
+removed marks before it merge into it. The Word check of 2026-11-23 found Word cannot remove the body's last mark either
+(Accept All left that change, Reject All an empty tracked paragraph). The comparison never writes such a mark; only
+other producers' redlines hold one.
+
+**Chains across block controls.** The removed last mark of a block control merges, as Word's merge rule does, with the
+paragraph after the control, which joins the control (Word check of 2026-11-23); that paragraph may be the first one
+of the next block control, nested ones too, or follow the end of an enclosing control. While the marks it meets are
+removed, the merge goes on, across tables the resolution removes whole, until a paragraph whose mark stays, or rule A.
+The merged paragraph takes the properties of the last one and stays in the first control; a control the merge leaves
+with no owner goes, as one whose content all goes does. Google Docs writes a suggestion that deletes across paragraphs
+this way, each paragraph in its own `goog_rdk` control (up to 165 a file, in the body and in cells).
 
 **B. A paragraph removed whole takes the wrappers the resolution empties.** Where a paragraph goes whole (a block
 control removed whole, a paragraph before a table or block control that stays, the end of the body after one), an
@@ -35,15 +44,15 @@ in its emptied wrappers and the comment marks its removed text keeps (Google mov
 `w:ins`). A bookmark whose two ends go with it is dropped. A comment whose start, end and reference all go, in removed
 revisions or in the content removed whole, goes whole with its definition.
 
-**The end of the body after a table or block control** is unchanged: a removed last paragraph that keeps nothing goes,
-and the body ends with that table or control, as the comparison needs to give back a body that ended with one. Rule A
-applies after a paragraph. Before preserved XML only (`w:altChunk`, a block `w:customXml`) the mark now stays (rule A).
+**Before a table, or ending the body after a table or block control**, removed paragraphs that keep nothing go, as
+before (the body may end with that table or control, as the comparison needs to give back a body that ended with one);
+ones that keep content merge into the last, whose mark stays (rule A). Before preserved XML only (`w:altChunk`, a block
+`w:customXml`) the mark now stays (rule A).
 
 **Stays refused**, with a message that says why:
 
-- a block control's last mark followed by a table, by a paragraph whose mark is removed too, or by the end of an
-  enclosing control that a paragraph follows: only a paragraph right after the control whose mark stays can take it;
-- a removed last paragraph after a table or block control that keeps content;
+- a paragraph outside block controls whose mark is removed and whose text stays, before a block control that stays:
+  merging it into the control's first paragraph is not decided (see question 5);
 - a paragraph removed whole holding the reference of a comment that starts or ends outside the content removed with it;
 - a simple field emptied by the resolution follows the retiring-field rule, as before.
 
@@ -57,13 +66,18 @@ applies after a paragraph. Before preserved XML only (`w:altChunk`, a block `w:c
 3. A user's control holding nothing in a paragraph removed whole goes with its properties (date, drop-down, alias).
    Recommendation: keep, unless a real file shows an empty typed control in a deleted paragraph.
 4. Rejecting a Google-inserted last paragraph leaves an empty last paragraph, as Word's Reject All does.
+5. Which control keeps a merge across two controls. We keep it in the first, as Word keeps the paragraph after a
+   control in that control; Word may keep it in the next one instead (the text is the same). Recommendation: keep the
+   first, and decide the paragraph-before-a-control case with the same Word check.
 
 ## Plan
 
-One pull request (#686): rules A and B in `revision.rs`; one table of shapes in `revisions_and_compare.rs` (body,
-block control, nested controls, cell, header, footnote, the mark alone by id, the kept refusal, wrapped and unwrapped
-comment marks, a comment ending in a link) accepted as deletions and rejected as insertions, each failing on main; the
-issue's repro in Python.
+1. #686: rules A and B in `revision.rs`; one table of shapes in `revisions_and_compare.rs` (body, block control,
+   nested controls, cell, header, footnote, the mark alone by id, wrapped and unwrapped comment marks, a comment ending
+   in a link) accepted as deletions and rejected as insertions, each failing on main; the issue's repro in Python.
+2. The chains (`merge_after_control`), after a rerun of the real files left 7 of 13 failing: rows for a chain of
+   controls in the body, in a cell and ending a cell, a control's last mark and a paragraph's before a table, a
+   paragraph's ending the body after one, and the nested comment starts of two of the files (resolved by #686).
 
 ## Links
 
