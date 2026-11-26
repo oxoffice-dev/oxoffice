@@ -18,13 +18,46 @@ impl Document {
         layout: Option<&MainStoryLayout>,
         location: &ContentLocation,
     ) -> Result<StoryItemSpan> {
-        if location.index_path.len() != 1 {
-            return Err(StoryError::InvalidPath {
-                path: location.index_path.clone(),
+        let invalid = || StoryError::InvalidPath {
+            path: location.index_path.clone(),
+        };
+        let index = match location.index_path.as_slice() {
+            [index] => *index,
+            // Paragraph or table `ordinal` of block control `control`.
+            [control, ordinal] => {
+                let block = control_block_name(location.item_kind).ok_or_else(invalid)?;
+                let (item, len) = story_owner_item(xml, owner, layout, *control)?;
+                let item = item.ok_or(StoryError::OutOfBounds {
+                    index: *control,
+                    len,
+                })?;
+                if item.kind != StoryItemKind::ContentControl {
+                    return Err(StoryError::KindMismatch {
+                        expected: StoryItemKind::ContentControl,
+                        actual: item.kind,
+                    }
+                    .into());
+                }
+                let blocks = story_control_blocks(xml, &item, block, layout)?;
+                let full = blocks
+                    .get(*ordinal)
+                    .cloned()
+                    .ok_or(StoryError::OutOfBounds {
+                        index: *ordinal,
+                        len: blocks.len(),
+                    })?;
+                return Ok(StoryItemSpan {
+                    kind: location.item_kind,
+                    scan: full.clone(),
+                    full,
+                    direct_owner_child: false,
+                    complex_field: false,
+                    complex_ancestors: Vec::new(),
+                    sdt_context: None,
+                });
             }
-            .into());
-        }
-        let index = location.index_path[0];
+            _ => return Err(invalid().into()),
+        };
         let (item, len) = story_owner_item(xml, owner, layout, index)?;
         let item = item.ok_or(StoryError::OutOfBounds { index, len })?;
         if item.kind != location.item_kind {

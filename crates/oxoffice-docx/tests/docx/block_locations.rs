@@ -6,8 +6,9 @@ use std::io::Cursor;
 use std::sync::OnceLock;
 
 use oxoffice_docx::{
-    CaptionOptions, ContentFragment, ContentLocation, Document, DocumentFragment,
-    FragmentConflictPolicy, RunPosition, RunRange, StoryId, StoryItemKind, StoryKind,
+    CaptionOptions, ContentControlPlacement, ContentFragment, ContentLocation, Document,
+    DocumentFragment, FragmentConflictPolicy, RunPosition, RunRange, StoryId, StoryItemKind,
+    StoryKind,
 };
 use oxoffice_docx_oxml::text::CT_P;
 use oxoffice_opc::OpcPackage;
@@ -49,11 +50,19 @@ fn item(tag: &str, text: &str) -> String {
     sdt(tag, &properties, &p(text))
 }
 
+/// `table` in a block control as Google Docs writes one: locked, alone.
+fn google_table(n: usize, table: &str) -> String {
+    format!(
+        "<w:sdt><w:sdtPr><w:lock w:val=\"contentLocked\"/><w:id w:val=\"{n}\"/>\
+         <w:tag w:val=\"goog_rdk_{n}\"/></w:sdtPr><w:sdtContent>{table}</w:sdtContent></w:sdt>"
+    )
+}
+
 /// Every container a location can name: block controls three levels deep,
 /// a cell holding a control and one whose only paragraph is in a control, a
 /// text box, a plain text control, a repeating section, an empty control, an
-/// inline control; a header whose only block is a control; a footnote and a
-/// comment.
+/// inline control, a table alone in a locked control; a header whose only
+/// block is a control; a footnote and a comment.
 fn fixture() -> Document {
     static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
     let bytes =
@@ -75,6 +84,7 @@ fn fixture() -> Document {
             "<w:p><w:r><w:t>Tail</w:t></w:r><w:sdt><w:sdtPr><w:tag w:val=\"inline\"/></w:sdtPr>\
              <w:sdtContent><w:r><w:t>!</w:t></w:r></w:sdtContent></w:sdt></w:p>"
                 .to_owned(),
+            google_table(1, &table(&p("Boxed"))),
         ]
         .concat();
             let mut doc = doc_with_body(&body);
@@ -100,8 +110,14 @@ fn fixture() -> Document {
 }
 
 /// `doc` saved with the content of its header replaced by `content`.
-fn with_header(mut doc: Document, content: &str) -> Vec<u8> {
-    let header = story(&doc, StoryKind::Header).part_name().to_owned();
+fn with_header(doc: Document, content: &str) -> Vec<u8> {
+    with_story(doc, StoryKind::Header, content)
+}
+
+/// `doc` saved with the content of its header or footer `kind` replaced by
+/// `content`.
+fn with_story(mut doc: Document, kind: StoryKind, content: &str) -> Vec<u8> {
+    let header = story(&doc, kind).part_name().to_owned();
     let bytes = doc.to_bytes().expect("saves");
     let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
     let xml = String::from_utf8(package.get_part(&header).expect("header").to_vec()).unwrap();
@@ -109,7 +125,10 @@ fn with_header(mut doc: Document, content: &str) -> Vec<u8> {
         .find("<w:p>")
         .or_else(|| xml.find("<w:p "))
         .expect("a paragraph");
-    let end = xml.rfind("</w:hdr>").expect("the header's end");
+    let end = xml
+        .rfind("</w:hdr>")
+        .or_else(|| xml.rfind("</w:ftr>"))
+        .expect("the part's end");
     package.set_part(
         &header,
         format!("{}{content}{}", &xml[..start], &xml[end..]).into_bytes(),
@@ -139,14 +158,63 @@ fn same_story(left: &StoryId, right: &StoryId) -> bool {
         && left.owner_index() == right.owner_index()
 }
 
-/// The texts of the paragraphs of `story`, in order.
+/// The blocks of `story` in order: the text of each paragraph, and
+/// `table:TEXT` for a table outside its cells, so that a table copied, moved
+/// or removed shows.
 fn texts_of(doc: &Document, story: &StoryId) -> Vec<String> {
-    doc.story_paragraphs()
+    use quick_xml::events::Event;
+    let mut paragraphs = doc
+        .story_paragraphs()
         .expect("story paragraphs")
         .into_iter()
         .filter(|paragraph| same_story(paragraph.location.story(), story))
-        .map(|paragraph| paragraph.text.trim().to_owned())
-        .collect()
+        .map(|paragraph| paragraph.text.trim().to_owned());
+    let xml = doc
+        .element_extent(story, None)
+        .expect("the story reads")
+        .expect("the story owner")
+        .xml;
+    let mut reader = quick_xml::Reader::from_reader(xml.as_slice());
+    let (mut texts, mut open, mut table) = (Vec::new(), Vec::<Vec<u8>>::new(), None::<String>);
+    let mut buffer = Vec::new();
+    loop {
+        let event = reader.read_event_into(&mut buffer).expect("story XML");
+        // Below the owner, outside a paragraph, table, cell or text box.
+        let block = |open: &[Vec<u8>]| {
+            !open.is_empty()
+                && !open[1..]
+                    .iter()
+                    .any(|name| matches!(name.as_slice(), b"p" | b"tbl" | b"tc" | b"txbxContent"))
+        };
+        match &event {
+            Event::Start(element) | Event::Empty(element) => {
+                let name = element.local_name().as_ref().to_vec();
+                if block(&open) && name == b"p" {
+                    texts.push(paragraphs.next().expect("a story paragraph"));
+                } else if block(&open) && name == b"tbl" {
+                    table = Some(String::new());
+                }
+                if matches!(event, Event::Start(_)) {
+                    open.push(name);
+                }
+            }
+            Event::Text(text) if table.is_some() => {
+                table
+                    .as_mut()
+                    .unwrap()
+                    .push_str(&String::from_utf8_lossy(text));
+            }
+            Event::End(_) => {
+                if open.pop().as_deref() == Some(b"tbl") && block(&open) {
+                    texts.push(format!("table:{}", table.take().unwrap_or_default()));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    texts
 }
 
 fn body_texts(doc: &Document) -> Vec<String> {
@@ -328,7 +396,8 @@ fn shapes() -> Vec<Shape> {
     let item = refusals(&INSERTS, SECTION, &[(Op::CloneFrom, ITEM), (Op::Move, ITEM), (Op::RangeFrom, ITEM), (Op::RangeTo, ITEM)]);
     let section_end = refusals(&INSERTS[..4], SECTION, &[(Op::CloneTo, SECTION), (Op::MoveTo, SECTION), (Op::RangeTo, ITEM)]);
     let section_end = refusals(&[], "", &[section_end, ENDS].concat());
-    // Body paragraphs: Before, Box 1, Inner 1, Deep 1, Box 2, After, Holder, Plain, Item 1, Item 2, Tail!.
+    // Body blocks: Before, Box 1, Inner 1, Deep 1, Box 2, After, four cell tables, Holder, Plain, Item 1, Item 2,
+    // Tail!, the table Boxed.
     vec![
         ("a body paragraph [i]", "p:After", "body", 5, Some((5, 6)), Some(("c:box", 1, 5)), Some("after:After"), &[]),
         ("a paragraph [c, k] of a body control", "c:box/1", "body", 4, Some((4, 5)), Some(("c:inner", 2, 4)), Some("e:box"), &[]),
@@ -339,7 +408,7 @@ fn shapes() -> Vec<Shape> {
         ("a control three levels deep [i]", "c:deep", "body", 3, Some((3, 4)), Some(("c:inner/0", 2, 3)), Some("e:inner"), &[]),
         ("a paragraph of a control three levels deep", "c:deep/0", "body", 3, Some((3, 4)), None, Some("e:deep"), only),
         ("the end of a control three levels deep", "e:deep", "body", 4, None, Some(("c:deep/0", 3, 4)), None, ENDS),
-        ("the end of the body", "end@Before", "body", 11, None, Some(("p:Tail!", 10, 11)), None, ENDS),
+        ("the end of the body", "end@Before", "body", 16, None, Some(("c:goog_rdk_1", 15, 16)), None, ENDS),
         ("[c, n] past a control's paragraphs", "c:box/2", "body", 0, None, None, None, &[(Op::All, "control_end(story, ")]),
         ("a cell paragraph [i]", "p:Cell", "@Cell", 0, Some((0, 1)), None, Some("c:cellbox"), &[]),
         ("a paragraph of a control in a cell", "c:cellbox/0", "@Cell", 1, Some((1, 2)), None, Some("e:cellbox"), only),
@@ -353,15 +422,16 @@ fn shapes() -> Vec<Shape> {
         ("a footnote paragraph [i]", "p:Note", "@Note", 0, Some((0, 1)), None, Some("end@Note"), &[(Op::Html, HTML), (Op::Remove, "only block of its footnote")]),
         ("a text box paragraph [i]", "p:Text box", "@Text box", 0, Some((0, 1)), None, Some("end@Text box"), &[(Op::Html, HTML), (Op::Remove, "only block of its text box")]),
         ("a comment paragraph [i]", "p:Remark", "@Remark", 0, Some((0, 1)), None, Some("end@Remark"), &[(Op::Html, HTML), (Op::Remove, "only block of its comment")]),
-        ("the paragraph of a plain text control", "c:typed/0", "body", 7, Some((7, 8)), None, Some("e:typed"), typed),
-        ("a repeating section item [i]", "c:item2", "body", 9, Some((9, 10)), Some(("c:item", 8, 9)), Some("e:section"), item),
-        ("the end of a repeating section", "e:section", "body", 10, None, Some(("c:item2", 9, 10)), None, section_end),
+        ("the paragraph of a plain text control", "c:typed/0", "body", 11, Some((11, 12)), None, Some("e:typed"), typed),
+        ("a repeating section item [i]", "c:item2", "body", 13, Some((13, 14)), Some(("c:item", 12, 13)), Some("e:section"), item),
+        ("the end of a repeating section", "e:section", "body", 14, None, Some(("c:item2", 13, 14)), None, section_end),
         ("[c, 0] of a repeating section", "c:section/0", "body", 0, None, None, None, &[(Op::All, "name a paragraph of an item")]),
-        ("the end of a repeating section item", "e:item", "body", 9, None, Some(("c:item/0", 8, 9)), None, ENDS),
-        ("the end of an empty control", "e:empty", "body", 10, None, None, None, ENDS),
+        ("the end of a repeating section item", "e:item", "body", 13, None, Some(("c:item/0", 12, 13)), None, ENDS),
+        ("the end of an empty control", "e:empty", "body", 14, None, None, None, ENDS),
         ("[c, k] of an inline control", "c:inline/0", "body", 0, None, None, None, &[(Op::All, "inside a paragraph and holds no block")]),
         ("an inline control [i]", "c:inline", "body", 0, None, None, None, &[(Op::All, "not a block")]),
-        ("a table [c, k] in a block control", "t:box/0", "body", 0, None, None, None, &[(Op::All, "#660")]),
+        ("a table [c, k] alone in a locked control", "t:goog_rdk_1/0", "body", 15, Some((15, 16)), None, Some("e:goog_rdk_1"), only),
+        ("[c, n] of kind table past a control's tables", "t:box/0", "body", 0, None, None, None, &[(Op::All, "control_end(story, ")]),
     ]
 }
 
@@ -664,7 +734,7 @@ fn a_range_in_a_block_control_ends_at_its_end_and_names_the_route() {
     let mut doc = fixture();
     doc.clone_content(&location(&doc, "c:item"), &location(&doc, "e:section"))
         .expect("an item copied to its section's end");
-    assert_eq!(&body_texts(&doc)[8..11], ["Item 1", "Item 2", "Item 1"]);
+    assert_eq!(&body_texts(&doc)[12..15], ["Item 1", "Item 2", "Item 1"]);
 }
 
 #[test]
@@ -915,46 +985,239 @@ fn a_table_of_authorities_in_a_block_control_keeps_its_categories_in_order() {
 }
 
 #[test]
-fn a_table_in_a_block_control_is_copied_as_its_limitation_says() {
-    let mut doc = doc_with_body(&format!(
+fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
+    // Paragraph [c, 0] and table [c, 0] are both there: a reader counting
+    // the wrong kind edits "Under".
+    let body = format!(
         "{}{}",
+        p("Before"),
         sdt(
             "box",
             "",
-            &[p("Above"), table(&p("Boxed")), p("Below")].concat()
-        ),
-        p("After")
-    ));
-    let error = refusal(doc.clone_content(
-        &location(&doc, "t:box/0"),
-        &ContentLocation::end(body(&doc)),
-    ));
-    assert!(
-        error.contains("#660") && error.contains("control_end(story, control)"),
-        "{error}"
+            &format!(
+                "{}<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
+                 </w:tblGrid><w:tr><w:tc>{}</w:tc><w:tc>{}</w:tc></w:tr></w:tbl>",
+                p("Under"),
+                p("Boxed"),
+                p("Two")
+            )
+        )
     );
-    // From the paragraph before it to the paragraph after it, or to the
-    // control's end; and with its whole control.
-    for end in ["c:box/1", "e:box"] {
-        let fragment = DocumentFragment::from_range(
-            &doc,
-            &location(&doc, "c:box/0"),
-            &location(&doc, end),
-            false,
-        )
-        .expect("the workaround's range");
-        doc.import_fragment(
-            &ContentLocation::end(body(&doc)),
-            &fragment,
-            FragmentConflictPolicy::default(),
-        )
-        .expect("imported");
+    type Edit = fn(&mut Document, &ContentLocation) -> oxoffice_docx::Result<()>;
+    let cases: [(&str, Edit, &str); 9] = [
+        (
+            "read",
+            |doc, at| {
+                assert_eq!(doc.read_story_table(at, |table| table.row_count())?, 1);
+                let cell = doc.cell_element_xml(at, 0, 1)?;
+                assert!(String::from_utf8_lossy(&cell).contains("Two"));
+                let options = oxoffice_docx::RenderOptions::default();
+                doc.measure_content(at, oxoffice_docx::Length::cm(10.0), options)?;
+                let paragraph = ContentLocation::new(
+                    at.story().clone(),
+                    StoryItemKind::Paragraph,
+                    at.index_path().to_vec(),
+                );
+                doc.measure_content(&paragraph, oxoffice_docx::Length::cm(10.0), options)
+                    .map(|_| ())
+            },
+            "Boxed",
+        ),
+        (
+            "scoped replacement",
+            |doc, at| {
+                assert_eq!(
+                    doc.try_replace_text_at(at, "Boxed", "Swapped", Some(1))?,
+                    Ok(1)
+                );
+                Ok(())
+            },
+            "Swapped",
+        ),
+        (
+            "table XML",
+            |doc, at| {
+                let xml = String::from_utf8(doc.table_element_xml(at)?).unwrap();
+                doc.replace_table_xml(at, &xml.replace("Boxed", "Swapped"))
+            },
+            "Swapped",
+        ),
+        (
+            "cell XML",
+            |doc, at| {
+                let xml = String::from_utf8(doc.cell_element_xml(at, 0, 0)?).unwrap();
+                doc.replace_cell_xml(at, 0, 0, &xml.replace("Boxed", "Swapped"))
+            },
+            "Swapped",
+        ),
+        (
+            "table edit",
+            |doc, at| doc.edit_story_table(at, |table| table.add_row().map(|_| ())),
+            "</w:tr><w:tr><w:tc><w:p/>",
+        ),
+        (
+            "row copy",
+            |doc, at| doc.clone_story_table_row(at, 0, 1).map(|_| ()),
+            "Boxed</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Two</w:t></w:r></w:p></w:tc></w:tr><w:tr>",
+        ),
+        (
+            "column removal",
+            |doc, at| doc.delete_story_table_column(at, 1),
+            "Boxed</w:t></w:r></w:p></w:tc></w:tr>",
+        ),
+        (
+            "row control",
+            |doc, at| doc.insert_content_control(at, control_spec(ContentControlPlacement::Row)),
+            "<w:tag w:val=\"placed\"/>",
+        ),
+        (
+            "cell control",
+            |doc, at| {
+                let row = ContentLocation::new(
+                    at.story().clone(),
+                    StoryItemKind::Table,
+                    [at.index_path(), &[0]].concat(),
+                );
+                doc.insert_content_control(&row, control_spec(ContentControlPlacement::Cell))
+            },
+            "<w:tag w:val=\"placed\"/>",
+        ),
+    ];
+    for (name, edit, expected) in cases {
+        let mut doc = doc_with_body(&body);
+        let at = location(&doc, "t:box/0");
+        edit(&mut doc, &at).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let doc = reopen(&mut doc);
+        let table =
+            String::from_utf8(doc.table_element_xml(&location(&doc, "t:box/0")).unwrap()).unwrap();
+        assert!(table.contains(expected), "{name}: {table}");
+        assert_eq!(body_texts(&doc)[1], "Under", "{name}");
     }
-    doc.clone_content(&location(&doc, "c:box"), &ContentLocation::end(body(&doc)))
-        .expect("the whole control");
+    // A row is its table's location and the row index.
+    let mut doc = doc_with_body(&body);
+    let error = refusal(doc.insert_content_control(
+        &location(&doc, "t:box/0"),
+        control_spec(ContentControlPlacement::Cell),
+    ));
+    assert!(error.contains("[1, k, row]"), "{error}");
+}
+
+fn control_spec(placement: ContentControlPlacement) -> oxoffice_docx::ContentControlSpec {
+    oxoffice_docx::ContentControlSpec {
+        placement,
+        kind: oxoffice_docx_oxml::content_control::SdtType::RichText,
+        tag: Some("placed".to_owned()),
+        alias: None,
+        lock: None,
+        appearance: None,
+        placeholder: None,
+    }
+}
+
+#[test]
+fn a_table_in_a_block_control_is_listed_as_a_table_in_every_story() {
+    // Google Docs tables: in the body, in a body table's cell, in a footer.
+    let mut doc = doc_with_body(&format!(
+        "{}{}{}{}",
+        p("Before {name}"),
+        google_table(1, &table(&p("A {name}"))),
+        table(&format!(
+            "{}{}",
+            p("Cell"),
+            google_table(2, &table(&p("Inner {name}")))
+        )),
+        p("After {name}")
+    ));
+    doc.set_footer("Foot");
+    let mut doc = Document::from_bytes(&with_story(
+        doc,
+        StoryKind::Footer,
+        &google_table(3, &table(&p("F {name}"))),
+    ))
+    .expect("reopens");
+    // Its cells are no paragraphs of the story around it.
+    let paragraphs = doc
+        .paragraphs()
+        .iter()
+        .map(|paragraph| paragraph.text())
+        .collect::<Vec<_>>();
+    assert_eq!(paragraphs, ["Before {name}", "After {name}"]);
+    let visibility = doc.paragraph_visibility().expect("visibility");
     assert_eq!(
-        reopen(&mut doc).tables().len(),
-        4,
-        "the table and its three copies"
+        visibility.len(),
+        doc.paragraph_count(),
+        "one entry a paragraph"
+    );
+    assert_eq!(
+        body_texts(&doc),
+        [
+            "Before {name}",
+            "table:A {name}",
+            "table:CellInner {name}",
+            "After {name}"
+        ]
+    );
+    let cell: Vec<String> = doc.tables()[1]
+        .cell(0, 0)
+        .expect("a cell")
+        .paragraphs()
+        .map(|paragraph| paragraph.text())
+        .collect();
+    assert_eq!(cell, ["Cell"]);
+    // Every story lists it among its tables (a cell's item 0 is its `w:tcPr`),
+    // and its location edits it.
+    let body = body(&doc);
+    let direct = ContentLocation::new(body.clone(), StoryItemKind::Table, vec![2]);
+    let cell = doc.story_table_cell(&direct, 0, 0).expect("the cell story");
+    let footer = story(&doc, StoryKind::Footer);
+    let listed = [&body, &cell, &footer].map(|story| {
+        doc.story_tables(story)
+            .expect("tables")
+            .iter()
+            .map(|table| table.index_path().to_vec())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        listed,
+        [
+            vec![vec![1, 0], vec![2]],
+            vec![vec![2, 0]],
+            vec![vec![0, 0]]
+        ]
+    );
+    assert_eq!(
+        doc.table_story_location(0).unwrap().unwrap().index_path(),
+        [1, 0]
+    );
+    assert_eq!(
+        doc.table_story_location(1).unwrap().unwrap().index_path(),
+        [2]
+    );
+    for (story, path) in [(body, vec![1, 0]), (cell, vec![2, 0]), (footer, vec![0, 0])] {
+        let at = ContentLocation::new(refreshed(&doc, &story), StoryItemKind::Table, path);
+        let replaced = doc.try_replace_text_at(&at, "{name}", "Ada", Some(1));
+        assert_eq!(replaced.expect("replaced"), Ok(1));
+    }
+    // The lock stays as written.
+    let bytes = reopen(&mut doc).to_bytes().expect("saves");
+    let parts = package_parts(&bytes);
+    let xml = parts
+        .values()
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect::<String>();
+    assert_eq!(xml.matches("<w:lock w:val=\"contentLocked\"/>").count(), 3);
+    assert!(
+        xml.contains("F Ada") && !xml.contains("{name}</w:t></w:r></w:p></w:tc>"),
+        "{xml}"
+    );
+    let doc = Document::from_bytes(&bytes).expect("reopens");
+    assert_eq!(
+        body_texts(&doc),
+        [
+            "Before {name}",
+            "table:A Ada",
+            "table:CellInner Ada",
+            "After {name}"
+        ]
     );
 }

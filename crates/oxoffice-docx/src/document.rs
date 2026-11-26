@@ -201,8 +201,8 @@ use main_part::{
     ScopedChildCorrespondence, StandaloneParagraphValue, full_direct_body_item_location,
     holds_field_words, picture_free_span_kind, producer_scoped_normalization_seed, root_start_tag,
     scan_body_block, scan_body_children, scoped_children_correspond, scoped_normalization_context,
-    scoped_normalization_reuse_allowed, single_frame_body, story_control_paragraphs,
-    story_owner_item, story_owner_items,
+    scoped_normalization_reuse_allowed, single_frame_body, story_control_blocks, story_owner_item,
+    story_owner_items,
 };
 use namespace_replay::{
     plain_local_edit_facts, replay_nested_namespace_declarations,
@@ -282,10 +282,10 @@ use story_fields::{admit_story_sdt_content_slot, complex_story_field_xml, modele
 use story_scan::{
     ComplexFieldMarker, StoryFieldContext, StoryFieldTracker, StoryTextPiece,
     accepted_story_text_visible, bind_text_box_source_owners, complex_field_marker,
-    complex_field_text_visible, editable_note_owner, opaque_story_event, paired_story_owners,
-    prepare_semantic_paragraph_projection, scan_story_control_paragraphs,
-    scan_story_control_paragraphs_with_scope, scan_story_item_links, scan_story_items,
-    story_break_text, story_field_marker_tracked, structural_fingerprint,
+    complex_field_text_visible, control_block_name, editable_note_owner, opaque_story_event,
+    paired_story_owners, prepare_semantic_paragraph_projection, scan_story_control_blocks,
+    scan_story_control_paragraphs, scan_story_control_paragraphs_with_scope, scan_story_item_links,
+    scan_story_items, story_break_text, story_field_marker_tracked, structural_fingerprint,
     update_complex_field_results,
 };
 pub(crate) use story_scan::{

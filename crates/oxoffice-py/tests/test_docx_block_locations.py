@@ -138,8 +138,7 @@ def test_a_refusal_names_the_route():
     boxed = next(t for t in doc.tables if t.cell(0, 0).text == "Boxed cell")
     for call, error, route in [
         (lambda: doc.find_content_index(paragraph(doc, "Cell")), ValueError, "in a table cell and has no body index"),
-        (lambda: doc.find_content_index(boxed), ValueError, "#660"),
-        (lambda: doc.pop_content(boxed), ValueError, r"control_end\(story, control\)"),
+        (lambda: doc.find_content_index(boxed), ValueError, "inside a block content control and has no body index"),
         (lambda: doc.move_content(paragraph(doc, "Inner 1"), body(doc)), ox.DocxError, "remove_content_control"),
     ]:
         with pytest.raises(error, match=route):
@@ -184,3 +183,42 @@ def test_a_toc_entry_is_added_after_the_last_one():
     doc.paragraphs[body_paragraphs.index(entries()[-1].index_path)].insert_paragraph_before("6 Appendix")
     after = [sp.text for sp in entries()]
     assert after == texts_before[:-1] + [texts_before[-2], "6 Appendix", texts_before[-1]]
+
+
+def google(n, table):
+    """`table` in a block control as Google Docs writes one: locked, alone."""
+    return (
+        f'<w:sdt><w:sdtPr><w:lock w:val="contentLocked"/><w:id w:val="{n}"/><w:tag w:val="goog_rdk_{n}"/></w:sdtPr>'
+        f"<w:sdtContent>{table}</w:sdtContent></w:sdt>"
+    )
+
+
+def test_a_google_docs_table_in_a_locked_control_reads_and_edits_like_any_table():
+    doc = document(p("Before {name}") + google(1, TABLE.format(p("A {name}"))) + p("After {name}"))
+    doc.set_footer("Foot")
+    footer = next(s.part_name for s in doc.stories if s.kind == "footer").lstrip("/")
+    foot = lambda xml: xml.replace("</w:ftr>", google(2, TABLE.format(p("F {name}"))) + "</w:ftr>")
+    doc = ox.Document.from_bytes(with_parts(doc.to_bytes(), {footer: foot}))
+    # A loop over the paragraphs passes the table by, which is reached as a table, in the footer too.
+    for paragraph in doc.paragraphs:
+        paragraph.replace_text("{name}", "Ada")
+    doc.tables[0].cell(0, 0).paragraphs[0].replace_text("{name}", "Ada")
+    doc.section(0).footer.tables[0].cell(0, 0).paragraphs[0].replace_text("{name}", "Ada")
+    assert [x.text for x in doc.paragraphs] == ["Before Ada", "After Ada"]
+    assert "A Ada" in doc.tables[0].xml and "A Ada" in doc.tables[0].cell(0, 0).xml
+    doc.tables[0].replace_xml(doc.tables[0].xml.replace("A Ada", "A Bob"))
+    doc.tables[0].add_row()
+    assert len(doc.tables[0].rows) == 2
+    # The handle is a location, as ContentLocation(story, "table", (c, k)) is; the control keeps a block.
+    with pytest.raises(ox.DocxError, match="remove_content_control"):
+        doc.pop_content(doc.tables[0])
+    after = doc.pop_content(doc.paragraphs[1])
+    doc.insert_content(doc.tables[0], after)
+    doc.clone_content(doc.tables[0], body(doc))
+    doc.move_content(ox.ContentLocation(body(doc), "table", (1, 0)), body(doc))
+    assert [t.cell(0, 0).text for t in doc.tables] == ["A Bob", "A Bob"]
+    assert [x.text for x in doc.paragraphs] == ["Before Ada", "After Ada"]
+    data = doc.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(data)) as package:
+        xml = "".join(package.read(name).decode() for name in package.namelist() if name.endswith(".xml"))
+    assert "F Ada" in xml and xml.count('<w:lock w:val="contentLocked"/>') == 2

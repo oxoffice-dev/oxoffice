@@ -1,0 +1,9 @@
+{
+  "id": "docx-python-cell-control-tables",
+  "format": "docx",
+  "area": "python",
+  "title": "Python: a table written in a block content control inside a table cell has no handle",
+  "symptom": "Cell.tables lists the tables written directly in a cell, and Cell.paragraphs does not list the paragraphs of a table, so no Python handle reaches a table written in a block content control of a cell (as Google Docs writes one); Rust Document::story_tables of the cell story lists it",
+  "workaround": "name it by its location, ContentLocation(cell_story, \"table\", (c, k)) with c the control's story item index, in clone_content, move_content, pop_content and insert_content, or replace its text with Cell.replace_text",
+  "issue": 660
+}

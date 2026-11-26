@@ -3289,7 +3289,10 @@ impl CT_Sdt {
         {
             match child {
                 SdtContent::Paragraph(paragraph) => paragraphs.push(paragraph),
-                SdtContent::Table(table) => table.collect_paragraphs(paragraphs),
+                // A table written in a block control is a table: its cells
+                // are no paragraphs of the story around it, as a direct
+                // table's are not.
+                SdtContent::Table(_) => {}
                 SdtContent::Row(row) => row.collect_paragraphs(paragraphs),
                 SdtContent::Cell(cell) => cell.collect_paragraphs(paragraphs),
                 SdtContent::ContentControl(sdt) => sdt.collect_paragraphs(owner, paragraphs),

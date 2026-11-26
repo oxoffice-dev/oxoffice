@@ -4286,21 +4286,6 @@ impl CT_Tbl {
             }
         }
     }
-
-    pub(crate) fn collect_paragraphs<'a>(&'a self, paragraphs: &mut Vec<&'a CT_P>) {
-        for index in 0..=self.rows.len() {
-            for (_, _, sdt) in self
-                .content_controls
-                .iter()
-                .filter(|(at, _, _)| *at == index)
-            {
-                sdt.collect_paragraphs(SdtOwner::Table, paragraphs);
-            }
-            if let Some(row) = self.rows.get(index) {
-                row.collect_paragraphs(paragraphs);
-            }
-        }
-    }
 }
 
 impl Default for CT_Tbl {

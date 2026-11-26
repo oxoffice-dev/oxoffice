@@ -7,7 +7,8 @@
 //!   owner, or a block content control written directly in the content of
 //!   another block control;
 //! - `[c, k]`: paragraph `k` among the paragraphs written directly in the
-//!   content of block control `c`;
+//!   content of block control `c`, or with the kind table, table `k` among
+//!   its tables;
 //! - `end(story)`: after the story's last block, before the body's section
 //!   properties;
 //! - `control_end(story, c)`: after the last child of control `c`'s content.
@@ -71,7 +72,8 @@ fn block_control_item<'a>(
     if item.kind != StoryItemKind::ContentControl {
         return Err(refused(format!(
             "story item {control} is a {}, not a block content control: [control, k] names a \
-             paragraph of a block content control, and [{control}] names the item itself",
+             paragraph or a table of a block content control, and [{control}] names the item \
+             itself",
             item_kind_words(item.kind)
         )));
     }
@@ -330,43 +332,35 @@ pub(super) fn resolve_block_location(
                 item_kind_words(item.kind)
             )))
         }
-        (false, [control, paragraph]) => {
-            match location.item_kind {
-                StoryItemKind::Paragraph => {}
-                StoryItemKind::Table => {
-                    return Err(refused(
-                        "a table written directly in a block content control has no location \
-                         (limitation docx-block-control-table-location, #660): copy, move or \
-                         remove it with its control, or copy it in a from_range from the \
-                         paragraph before it ([control, k]) to the paragraph after it or to \
-                         control_end(story, control)"
-                            .to_owned(),
-                    ));
-                }
-                kind => {
-                    return Err(refused(format!(
-                        "[{control}, {paragraph}] names a paragraph of a block content control, \
-                         not a {}: give it the kind paragraph",
-                        item_kind_words(kind)
-                    )));
-                }
-            }
+        (false, [control, ordinal]) => {
+            let Some(block) = control_block_name(location.item_kind) else {
+                return Err(refused(format!(
+                    "[{control}, {ordinal}] names a paragraph or a table of a block content \
+                     control, not a {}: a nested block control is its own story item [i]",
+                    item_kind_words(location.item_kind)
+                )));
+            };
+            let (noun, what) = if block == b"p" {
+                ("paragraph", "paragraphs")
+            } else {
+                ("table", "tables")
+            };
             let item = block_control_item(&story_items, *control, path)?;
-            let paragraphs = scan_story_control_paragraphs(xml, item)?;
-            let Some(span) = paragraphs.get(*paragraph) else {
+            let blocks = scan_story_control_blocks(xml, item, block)?;
+            let Some(span) = blocks.get(*ordinal) else {
                 if block_control_container(xml, story, item)?.1 == ContainerTakes::Items {
                     return Err(refused(format!(
                         "content control {control} is a repeating section, which holds its \
-                         items and no paragraph: name a paragraph of an item ([item, k]) or an \
+                         items and no {what}: name a {noun} of an item ([item, k]) or an \
                          item's end (control_end(story, item)), or add an item with \
                          repeat_content_control"
                     )));
                 }
                 return Err(refused(format!(
-                    "content control {control} has {} paragraphs, so [{control}, {paragraph}] is \
+                    "content control {control} has {} {what}, so [{control}, {ordinal}] is \
                      past them: the location after its last block is control_end(story, \
                      {control})",
-                    paragraphs.len()
+                    blocks.len()
                 )));
             };
             control_slot(*control, Some(span))
@@ -703,6 +697,53 @@ impl Document {
             StoryItemKind::Paragraph,
             slot.paragraph_path_at(xml, &owner, boundary)?,
         ))
+    }
+
+    /// The tables of `story` outside its cells, in document order: a table
+    /// that is a story item, `[i]`, and a table written in a block content
+    /// control at any depth, `[c, k]`.
+    pub fn story_tables(&self, story: &StoryId) -> Result<Vec<ContentLocation>> {
+        let (source, owner) = self.story_source_and_owner(story)?;
+        let xml = source.xml.as_ref();
+        let mut tables = Vec::new();
+        for (index, item) in scan_story_items(xml, &owner, None)?.iter().enumerate() {
+            match item.kind {
+                StoryItemKind::Table => tables.push((item.full.start, vec![index])),
+                StoryItemKind::ContentControl
+                    if item.sdt_context == Some(StorySdtContext::Block) =>
+                {
+                    for (k, table) in scan_story_control_blocks(xml, item, b"tbl")?
+                        .into_iter()
+                        .enumerate()
+                    {
+                        tables.push((table.start, vec![index, k]));
+                    }
+                }
+                _ => {}
+            }
+        }
+        tables.sort_by_key(|(start, _)| *start);
+        Ok(tables
+            .into_iter()
+            .map(|(_, path)| ContentLocation::new(story.clone(), StoryItemKind::Table, path))
+            .collect())
+    }
+
+    /// The location of body table `table_index`, the index
+    /// [`Self::table`] takes: entry `table_index` of the body's
+    /// [`Self::story_tables`]. `None` past the tables, or when the model
+    /// counts another number of body tables than the source lists.
+    pub fn table_story_location(&self, table_index: usize) -> Result<Option<ContentLocation>> {
+        let body = self
+            .stories()?
+            .into_iter()
+            .find(|story| story.kind == StoryKind::Body)
+            .ok_or_else(|| Error::Other("document body story is missing".to_owned()))?;
+        let tables = self.story_tables(&body)?;
+        if tables.len() != self.document.body.tables().count() {
+            return Ok(None);
+        }
+        Ok(tables.into_iter().nth(table_index))
     }
 
     /// Whether `location` names a block, as the block operations read it.

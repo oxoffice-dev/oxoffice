@@ -35,7 +35,8 @@ fn nth_paragraph_in_control<'a>(
     for child in &mut control.content {
         let paragraph = match child {
             SdtContent::Paragraph(paragraph) => take_paragraph(paragraph, index),
-            SdtContent::Table(table) => nth_paragraph_in_table(table, index),
+            // A table written in the control is a table, as in the body.
+            SdtContent::Table(_) => None,
             SdtContent::Row(row) => nth_paragraph_in_row(row, index),
             SdtContent::Cell(cell) => nth_paragraph_in_cell(cell, index),
             SdtContent::ContentControl(control) => nth_paragraph_in_control(control, index),
@@ -54,22 +55,13 @@ fn paragraph_count_in_control(control: &CT_Sdt) -> usize {
         .iter()
         .map(|child| match child {
             SdtContent::Paragraph(_) => 1,
-            SdtContent::Table(table) => paragraph_count_in_table(table),
+            SdtContent::Table(_) => 0,
             SdtContent::Row(row) => paragraph_count_in_row(row),
             SdtContent::Cell(cell) => paragraph_count_in_cell(cell),
             SdtContent::ContentControl(control) => paragraph_count_in_control(control),
             SdtContent::Run(_) | SdtContent::RawXml(_) => 0,
         })
         .sum()
-}
-
-fn paragraph_count_in_table(table: &CT_Tbl) -> usize {
-    table
-        .content_controls
-        .iter()
-        .map(|(_, _, control)| paragraph_count_in_control(control))
-        .sum::<usize>()
-        + table.rows.iter().map(paragraph_count_in_row).sum::<usize>()
 }
 
 fn paragraph_count_in_row(row: &CT_Row) -> usize {
@@ -89,48 +81,6 @@ fn paragraph_count_in_cell(cell: &CT_Tc) -> usize {
             CellContent::Table(_) => 0,
         })
         .sum()
-}
-
-fn nth_paragraph_in_table<'a>(table: &'a mut CT_Tbl, index: &mut usize) -> Option<&'a mut CT_P> {
-    let CT_Tbl {
-        rows,
-        content_controls,
-        ..
-    } = table;
-    let mut selected_control = None;
-    let mut selected_row = None;
-    for boundary in 0..=rows.len() {
-        for (control_index, (_, _, control)) in content_controls
-            .iter()
-            .enumerate()
-            .filter(|(_, (at, _, _))| *at == boundary)
-        {
-            let count = paragraph_count_in_control(control);
-            if *index < count {
-                selected_control = Some(control_index);
-                break;
-            }
-            *index -= count;
-        }
-        if selected_control.is_some() {
-            break;
-        }
-        if let Some(row) = rows.get(boundary) {
-            let count = paragraph_count_in_row(row);
-            if *index < count {
-                selected_row = Some(boundary);
-                break;
-            }
-            *index -= count;
-        }
-    }
-    if let Some(control_index) = selected_control {
-        nth_paragraph_in_control(&mut content_controls[control_index].2, index)
-    } else if let Some(row_index) = selected_row {
-        nth_paragraph_in_row(&mut rows[row_index], index)
-    } else {
-        None
-    }
 }
 
 fn nth_paragraph_in_row<'a>(row: &'a mut CT_Row, index: &mut usize) -> Option<&'a mut CT_P> {

@@ -12,7 +12,7 @@ type ParagraphVisibilityPath = Vec<(&'static [u8], usize)>;
 type ParagraphVisibilityOwners<'a> = Vec<(ParagraphVisibilityPath, &'a CT_P)>;
 
 // Pair typed owners with their structural encounter slots. Raw children and
-// formatting are not owner slots. Tables directly in body or cells stay opaque.
+// formatting are not owner slots. Tables stay opaque, in block controls too.
 fn paragraph_visibility_owners(
     document: &Document,
     scope: ParagraphVisibilityScope,
@@ -38,32 +38,13 @@ fn paragraph_visibility_owners(
             slot += 1;
             match child {
                 SdtContent::Paragraph(p) => out.push((next, p)),
-                SdtContent::Table(t) => table(t, &next, out),
+                // A table written in the control stays opaque, as a direct
+                // table does: its cells are no paragraphs of the story.
+                SdtContent::Table(_) => {}
                 SdtContent::Row(r) => row(r, &next, out),
                 SdtContent::Cell(c) => cell(c, &next, out),
                 SdtContent::ContentControl(c) => control(c, owner, &next, out),
                 _ => {}
-            }
-        }
-    }
-    fn table<'a>(
-        t: &'a CT_Tbl,
-        path: &[(&'static [u8], usize)],
-        out: &mut ParagraphVisibilityOwners<'a>,
-    ) {
-        let mut slot = 0;
-        for index in 0..=t.rows.len() {
-            for (_, _, c) in t.content_controls.iter().filter(|(at, _, _)| *at == index) {
-                let mut next = path.to_vec();
-                next.push((b"sdt", slot));
-                slot += 1;
-                control(c, b"tbl", &next, out);
-            }
-            if let Some(r) = t.rows.get(index) {
-                let mut next = path.to_vec();
-                next.push((b"tr", slot));
-                slot += 1;
-                row(r, &next, out);
             }
         }
     }
@@ -335,11 +316,8 @@ pub(super) fn paragraph_visibility_from_main_source(
                                 && matches!(container, Some(b"body" | b"tbl" | b"tr" | b"tc"))
                         }
                         b"sdtContent" => first_content,
-                        b"tbl" => {
-                            admitted_parent
-                                && parent == Some(b"sdtContent")
-                                && matches!(container, Some(b"body" | b"tc"))
-                        }
+                        // A table, in a control too, stays opaque.
+                        b"tbl" => false,
                         b"tr" => admitted_parent && container == Some(b"tbl"),
                         b"tc" => admitted_parent && container == Some(b"tr"),
                         b"p" if admitted_parent && matches!(container, Some(b"body" | b"tc")) => {
