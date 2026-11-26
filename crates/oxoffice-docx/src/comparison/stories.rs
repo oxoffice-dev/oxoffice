@@ -469,9 +469,11 @@ pub(super) fn compare_story_inner(
     diagnostics: &mut Vec<ComparisonDiagnostic>,
 ) -> Result<String> {
     // Formatting policy uses the same qualified paired host publisher as the
-    // main story. Ignored text boxes keep the existing mask-and-restore scan.
+    // main story. Ignored text boxes keep the existing mask-and-restore scan,
+    // and boxes changed only inside are compared box by box (#666).
     let scan_text_boxes = !metadata.options.ignore_formatting
-        || story_ignored(metadata.options, ComparisonStoryKind::TextBox);
+        || story_ignored(metadata.options, ComparisonStoryKind::TextBox)
+        || text_boxes_changed_inside(original, edited, word_prefix)?;
     compare_story_inner_impl(
         original,
         edited,

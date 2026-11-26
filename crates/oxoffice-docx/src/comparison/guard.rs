@@ -183,6 +183,26 @@ impl GuardProjection<'_> {
                 "guard source closure changed descendant bytes".into(),
             ));
         }
+        // The other copies of a box (an alternate content's fallback) are
+        // read as bodies too, so that two writings of one copy compare alike.
+        let admitted = boxes
+            .iter()
+            .map(|(span, ..)| span.clone())
+            .collect::<Vec<_>>();
+        let copies = text_box_copies(&closed, &admitted)?;
+        let piece = |range: Range<usize>| {
+            let mut piece = String::new();
+            let mut cursor = range.start;
+            for (inner, _) in &copies {
+                let inner = inner.start - added..inner.end - added;
+                if range.start <= inner.start && inner.end <= range.end {
+                    piece.push_str(&actual[cursor..inner.start]);
+                    cursor = inner.end;
+                }
+            }
+            piece.push_str(&actual[cursor..range.end]);
+            piece
+        };
         let mut outside = Vec::new();
         let mut bodies = Vec::new();
         let mut cursor = 0;
@@ -202,13 +222,13 @@ impl GuardProjection<'_> {
             let start = box_span.start + inner.start - added;
             let end = box_span.start + inner.end - added;
             if !typed && drawing.is_none() {
-                outside.push(actual[cursor..start].to_owned());
+                outside.push(piece(cursor..start));
             }
             if typed {
                 let box_start = box_span.start - added;
                 let box_end = box_span.end - added;
-                outside.push(actual[box_start..start].to_owned());
-                outside.push(actual[end..box_end].to_owned());
+                outside.push(piece(box_start..start));
+                outside.push(piece(end..box_end));
             }
             let inner_xml = &actual[start..end];
             let model = story_document(inner_xml, &bindings)?;
@@ -223,14 +243,26 @@ impl GuardProjection<'_> {
             cursor = end;
         }
         if !typed && drawing.is_none() {
-            outside.push(actual[cursor..].to_owned());
+            outside.push(piece(cursor..actual.len()));
         }
         if let Some(span) = drawing_span {
             let start = span.start - added;
             let end = span.end - added;
             let inner = element_inner_range_any_prefix(&actual[start..end], "drawing")?;
-            outside.push(actual[..start + inner.start].to_owned());
-            outside.push(actual[start + inner.end..].to_owned());
+            outside.push(piece(0..start + inner.start));
+            outside.push(piece(start + inner.end..actual.len()));
+        }
+        for (inner, bindings) in &copies {
+            let inner_xml = &closed[inner.clone()];
+            let model = story_document(inner_xml, bindings)?;
+            bodies.push(guard_source_body(
+                &model,
+                inner_xml,
+                bindings,
+                self.document,
+                self.owner,
+                self.options,
+            )?);
         }
         let drawing = drawing
             .map(|drawing| -> Result<_> {
@@ -359,11 +391,19 @@ impl GuardProjection<'_> {
                             })
                             .count();
                         let selected = original.alt_drawings.get(index);
-                        if !selected
-                            .and_then(|drawing| drawing.anchor.as_ref())
-                            .and_then(|anchor| anchor.shape.as_ref())
-                            .is_some_and(|shape| shape.text_body.is_some())
-                        {
+                        if !selected.is_some_and(|drawing| {
+                            drawing
+                                .anchor
+                                .as_ref()
+                                .and_then(|anchor| anchor.shape.as_ref())
+                                .or_else(|| {
+                                    drawing
+                                        .inline
+                                        .as_ref()
+                                        .and_then(|inline| inline.shape.as_ref())
+                                })
+                                .is_some_and(|shape| shape.text_body.is_some())
+                        }) {
                             continue;
                         }
                         selected
@@ -409,6 +449,52 @@ impl GuardProjection<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// The inner range and scope of each `txbxContent` of `host` outside the
+/// `admitted` boxes and outside one another: the copies an alternate
+/// content's fallback holds of its boxes.
+fn text_box_copies(
+    host: &str,
+    admitted: &[Range<usize>],
+) -> Result<Vec<(Range<usize>, NamespaceBindings)>> {
+    let mut reader = NsReader::from_str(host);
+    let mut copies: Vec<(Range<usize>, NamespaceBindings)> = Vec::new();
+    let mut open: Option<(usize, NamespaceBindings, usize)> = None;
+    let mut depth = 0usize;
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map_err(|error| Error::Other(error.to_string()))?;
+        let text_box =
+            matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes());
+        match event {
+            Event::Start(element) => {
+                depth += 1;
+                if open.is_none()
+                    && text_box
+                    && element.local_name().as_ref() == b"txbxContent"
+                    && !admitted.iter().any(|span| span.contains(&before))
+                {
+                    let start = reader.buffer_position() as usize;
+                    open = Some((start, resolved_source_bindings(&reader)?, depth));
+                }
+            }
+            Event::End(_) => {
+                if let Some((start, bindings, at)) = open.take() {
+                    if at == depth {
+                        copies.push((start..before, bindings));
+                    } else {
+                        open = Some((start, bindings, at));
+                    }
+                }
+                depth -= 1;
+            }
+            Event::Eof => return Ok(copies),
+            _ => {}
+        }
     }
 }
 
@@ -506,9 +592,9 @@ pub(super) fn guard_source_body_at(
             observations,
         ));
     }
-    if options.ignore_formatting {
-        cleaned = inspection;
-    }
+    // A run holding a text box is read without its box: the host carries
+    // each copy of the box as a body, so that the box compares as a story.
+    cleaned = inspection;
     let projection = if ordinary_part {
         coalesced_postcondition_body
     } else {
