@@ -257,11 +257,14 @@ Shipped as planned in Rust and the CLI. Python differs in three points, left in 
 
 - A handle of a table in a block control keeps no owner record: the owner inventory lists story items only. It reads
   its location at each call (`table_story_location`, one body scan), and its edits publish as `Conservative`,
-  retiring the other handles as `Document.insert_content` does. No batched `story_tables` read in the owner index.
+  retiring the other handles as `Document.insert_content` does. No batched `story_tables` read in the owner index:
+  each call costs a story discovery and a scan of the body, so a loop over N such tables costs N body scans.
 - `table_story_location` returns `None` when the model and the source count other numbers of body tables, without a
   debug assertion.
 - `Cell.tables` is unchanged: its owner inventory cache lists story items, so a table in a block control of a cell is
-  reached through `story_tables` or its location.
+  reached through its location only (limitation `docx-python-cell-control-tables`, #660): `Cell.paragraphs` no
+  longer lists its paragraphs either.
+- `Document::paragraph_visibility` follows the paragraph walks (found in review).
 
 ## Links
 

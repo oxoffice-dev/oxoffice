@@ -1256,8 +1256,6 @@ fn diff_streams(file: &Path, doc: &Document) -> Result<(Vec<DiffStream>, Vec<Str
     Ok((streams, not_compared))
 }
 
-/// Label a `text --json` paragraph path one-based, such as `row 1, cell 2,
-/// paragraph 1`.
 /// The tables written in the block content control `control`, at any
 /// depth of nested block controls.
 fn control_tables<'a>(control: &'a CT_Sdt, tables: &mut Vec<&'a CT_Tbl>) {
@@ -1270,6 +1268,8 @@ fn control_tables<'a>(control: &'a CT_Sdt, tables: &mut Vec<&'a CT_Tbl>) {
     }
 }
 
+/// Label a `text --json` paragraph path one-based, such as `row 1, cell 2,
+/// paragraph 1`.
 fn json_path_label(paragraph: &Value) -> String {
     paragraph["path"]
         .as_array()

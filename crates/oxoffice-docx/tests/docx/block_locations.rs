@@ -1142,6 +1142,12 @@ fn a_table_in_a_block_control_is_listed_as_a_table_in_every_story() {
         .map(|paragraph| paragraph.text())
         .collect::<Vec<_>>();
     assert_eq!(paragraphs, ["Before {name}", "After {name}"]);
+    let visibility = doc.paragraph_visibility().expect("visibility");
+    assert_eq!(
+        visibility.len(),
+        doc.paragraph_count(),
+        "one entry a paragraph"
+    );
     assert_eq!(
         body_texts(&doc),
         [
