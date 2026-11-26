@@ -403,8 +403,9 @@ impl NoteRegistry {
 pub(crate) fn run_note_events(
     run: &oxoffice_docx_oxml::text::CT_R,
 ) -> Result<Vec<(usize, String)>> {
+    use oxoffice_core::xml_reader::NsReader;
     use oxoffice_docx_oxml::text::CT_R;
-    use quick_xml::{Writer, events::Event, name::ResolveResult, reader::NsReader};
+    use quick_xml::{Writer, events::Event, name::ResolveResult};
     let mut events = Vec::new();
     for (index, raw) in run.extra_xml.iter().enumerate() {
         let encoded = run.extra_xml_positions.get(index).copied().unwrap_or(0);
