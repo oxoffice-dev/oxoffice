@@ -51,6 +51,124 @@ pub(crate) fn story_namespace_scope_at(
     }
 }
 
+/// `written`, a fragment an operation wrote in place of `original` at a
+/// place whose bindings in scope are `scope`, without the namespace
+/// declarations of its root that `original`'s root does not carry and that
+/// bind a prefix to what `scope` binds it to. An operation reads a fragment
+/// with the bindings of its place declared on it, and may write them back on
+/// its root; the part keeps the root's start tag as it was written, and the
+/// declarations change nothing there. A root start tag this cannot read is
+/// left as it is.
+pub(crate) fn without_inherited_root_declarations(
+    original: &[u8],
+    written: Vec<u8>,
+    scope: &BTreeMap<String, String>,
+) -> Vec<u8> {
+    let (Ok(original_attributes), Ok(written_attributes)) =
+        (root_attributes(original), root_attributes(&written))
+    else {
+        return written;
+    };
+    let kept = original_attributes
+        .into_iter()
+        .filter_map(|attribute| attribute.declared_prefix)
+        .collect::<HashSet<_>>();
+    let redundant = written_attributes
+        .into_iter()
+        .filter(|attribute| {
+            attribute.declared_prefix.as_ref().is_some_and(|prefix| {
+                !kept.contains(prefix)
+                    && scope.get(prefix).map(String::as_bytes)
+                        == Some(&written[attribute.value.clone()])
+            })
+        })
+        .map(|attribute| attribute.span)
+        .collect::<Vec<_>>();
+    if redundant.is_empty() {
+        return written;
+    }
+    let mut without = Vec::with_capacity(written.len());
+    let mut at = 0;
+    for span in redundant {
+        without.extend_from_slice(&written[at..span.start]);
+        at = span.end;
+    }
+    without.extend_from_slice(&written[at..]);
+    without
+}
+
+/// One attribute of a fragment's root start tag.
+struct RootAttribute {
+    /// The attribute with the white space before it.
+    span: Range<usize>,
+    /// The prefix it declares, `""` for a default namespace, if it is a
+    /// namespace declaration.
+    declared_prefix: Option<String>,
+    /// Its value between the quotes, as written.
+    value: Range<usize>,
+}
+
+/// The attributes of a fragment's root start tag, read from its bytes.
+fn root_attributes(xml: &[u8]) -> Result<Vec<RootAttribute>> {
+    let malformed = || Error::Other("content fragment start tag is malformed".into());
+    let start = xml
+        .iter()
+        .enumerate()
+        .find(|(at, byte)| **byte == b'<' && !matches!(xml.get(at + 1), Some(b'?' | b'!')))
+        .map(|(at, _)| at)
+        .ok_or_else(|| Error::Other("content fragment has no root element".into()))?;
+    let mut at = start + 1;
+    while at < xml.len() && !xml[at].is_ascii_whitespace() && !matches!(xml[at], b'>' | b'/') {
+        at += 1;
+    }
+    let mut attributes = Vec::new();
+    loop {
+        let before = at;
+        while at < xml.len() && xml[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        match xml.get(at) {
+            Some(b'>' | b'/') => return Ok(attributes),
+            None => return Err(malformed()),
+            _ => {}
+        }
+        let name_start = at;
+        while at < xml.len() && !xml[at].is_ascii_whitespace() && xml[at] != b'=' {
+            at += 1;
+        }
+        let name = &xml[name_start..at];
+        while at < xml.len() && xml[at] != b'=' {
+            at += 1;
+        }
+        at += 1;
+        while at < xml.len() && xml[at].is_ascii_whitespace() {
+            at += 1;
+        }
+        let quote = *xml.get(at).ok_or_else(malformed)?;
+        if !matches!(quote, b'"' | b'\'') {
+            return Err(malformed());
+        }
+        let value_start = at + 1;
+        let value_end = value_start
+            + xml[value_start..]
+                .iter()
+                .position(|byte| *byte == quote)
+                .ok_or_else(malformed)?;
+        at = value_end + 1;
+        let declared_prefix = if name == b"xmlns" {
+            Some(String::new())
+        } else {
+            name.strip_prefix(b"xmlns:")
+                .map(|prefix| String::from_utf8_lossy(prefix).into_owned())
+        };
+        attributes.push(RootAttribute {
+            span: before..at,
+            declared_prefix,
+            value: value_start..value_end,
+        });
+    }
+}
+
 // Pooled local declaration frames and exact target offsets form one lexical proof.
 #[allow(clippy::type_complexity)]
 pub(crate) fn story_namespace_ancestors_at(

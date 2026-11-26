@@ -5,7 +5,9 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use oxoffice_docx::{Document, ReplaceOptions, ReplacementRefusal, UnreachedReplacement};
+use oxoffice_docx::{
+    Document, ReplaceOptions, ReplacementRefusal, StoryKind, UnreachedReplacement,
+};
 use oxoffice_opc::OpcPackage;
 
 const PRODUCERS: [&str; 2] = ["word", "google"];
@@ -66,4 +68,210 @@ fn a_value_as_long_as_its_placeholder_is_checked_too() {
         let refusal = unreached(doc.try_replace_all_checked(&[("ACME", "ACNE", None)], CHECKED));
         assert_eq!(refusal.left, 3, "{producer}");
     }
+}
+
+// ---- A replacement scoped to one paragraph ----
+
+/// The bytes of `part` in this package.
+fn package_part(bytes: &[u8], part: &str) -> String {
+    let parts = crate::support::package_parts(bytes);
+    String::from_utf8(parts[part.trim_start_matches('/')].clone()).expect("the part is UTF-8")
+}
+
+/// The paragraph of `xml` that holds `text`: from its start tag to its end.
+fn paragraph_holding<'a>(xml: &'a str, text: &str) -> &'a str {
+    let at = xml
+        .find(text)
+        .unwrap_or_else(|| panic!("{text} is in the part"));
+    let start = xml[..at]
+        .rmatch_indices("<w:p")
+        .find(|(index, _)| matches!(xml.as_bytes()[index + 4], b' ' | b'>'))
+        .map(|(index, _)| index)
+        .expect("a paragraph holds the text");
+    let end = xml[at..].find("</w:p>").expect("the paragraph ends") + at + "</w:p>".len();
+    &xml[start..end]
+}
+
+#[test]
+fn a_paragraph_edited_through_its_location_is_written_back_without_declarations_of_its_own() {
+    // An edit reads the paragraph with the bindings in scope declared on it;
+    // the part takes the paragraph back with the start tag it had and no
+    // namespace declared in it that it did not declare: a word replaced in
+    // it, and a run added to it (as the bindings add one to a paragraph of
+    // another story). Comment marks, Google's attributes on the paragraph,
+    // a header.
+    for (copy, kind, word) in [
+        ("authored/contract.docx", StoryKind::Body, "Each"),
+        ("google/contract.docx", StoryKind::Body, "Each"),
+        ("libreoffice/record.docx", StoryKind::Header, "Change"),
+    ] {
+        let source = std::fs::read(crate::support::corpus_root().join("files").join(copy))
+            .expect("the corpus copy reads");
+        let doc = Document::from_bytes(&source).expect("the copy opens");
+        let paragraph = doc
+            .story_paragraphs()
+            .expect("story paragraphs")
+            .into_iter()
+            .find(|paragraph| {
+                paragraph.location.story().kind() == kind
+                    && paragraph
+                        .text
+                        .split(|c: char| !c.is_alphabetic())
+                        .any(|w| w == word)
+                    && paragraph.text.matches(word).count() == 1
+            })
+            .unwrap_or_else(|| panic!("{copy}: a {kind:?} paragraph holds {word}"));
+        let part = paragraph.part_name().to_owned();
+        let before = package_part(&source, &part);
+        assert_eq!(
+            before.matches(word).count(),
+            1,
+            "{copy}: {word} once in {part}"
+        );
+        let before = paragraph_holding(&before, word);
+        let mut replaced = Document::from_bytes(&source).unwrap();
+        assert_eq!(
+            replaced
+                .try_replace_text_at(&paragraph.location, word, "Zephyr", Some(1))
+                .unwrap(),
+            Ok(1),
+            "{copy}"
+        );
+        let mut added = Document::from_bytes(&source).unwrap();
+        added
+            .edit_story_paragraph(&paragraph.location, |edited| {
+                edited.add_run(" Zephyr.");
+                Ok(())
+            })
+            .unwrap_or_else(|error| panic!("{copy}: {error}"));
+        for (edit, mut doc) in [("replaced", replaced), ("added", added)] {
+            let after = package_part(&doc.to_bytes().unwrap(), &part);
+            let after = paragraph_holding(&after, "Zephyr");
+            let start_tag = |paragraph: &str| paragraph[..=paragraph.find('>').unwrap()].to_owned();
+            assert_eq!(start_tag(after), start_tag(before), "{copy} {part} {edit}");
+            assert_eq!(
+                after.matches("xmlns").count(),
+                before.matches("xmlns").count(),
+                "{copy} {part} {edit}: {after}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_replacement_in_one_paragraph_names_the_text_it_cannot_reach() {
+    // The letter's country is a merge field's result: the paragraph shows
+    // it, the replacement does not reach it, and says so.
+    let doc = crate::support::corpus_doc("word/letter.docx");
+    let paragraph = doc
+        .story_paragraphs()
+        .unwrap()
+        .into_iter()
+        .find(|paragraph| paragraph.text.contains("Country"))
+        .expect("a paragraph shows the merge field");
+    let mut doc = crate::support::corpus_doc("word/letter.docx");
+    let mismatch = doc
+        .try_replace_text_at(&paragraph.location, "Country", "Nation", Some(1))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!((mismatch.found, mismatch.unreached), (0, 1));
+    assert!(
+        mismatch.to_string().contains("1 it cannot reach"),
+        "{mismatch}"
+    );
+    // A cell's text is no part of the first body paragraph, though both
+    // stories are numbered 0 of their kind.
+    let mut doc = crate::support::doc_with_body(concat!(
+        "<w:p><w:r><w:t>Hello there.</w:t></w:r></w:p>",
+        r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Target cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+        "<w:p/>"
+    ));
+    let location = doc.story_paragraphs().unwrap()[0].location.clone();
+    let mismatch = doc
+        .try_replace_text_at(&location, "Target", "Goal", Some(1))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!((mismatch.found, mismatch.unreached), (0, 0));
+}
+
+/// The location of the story paragraph that reads `text`.
+fn location_of(doc: &Document, text: &str) -> oxoffice_docx::ContentLocation {
+    doc.story_paragraphs()
+        .unwrap()
+        .into_iter()
+        .find(|paragraph| paragraph.text == text)
+        .unwrap_or_else(|| panic!("a paragraph reads {text}"))
+        .location
+}
+
+#[test]
+fn every_route_that_writes_an_item_back_declares_no_namespace_in_it() {
+    // A run added and a word replaced in a text box, written twice (its
+    // choice and its fallback), a field inserted at a run, a cell's and a
+    // control's paragraph replaced as XML, a run replaced as XML: no edited
+    // paragraph declares what the part binds.
+    const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+    let body = format!(
+        concat!(
+            r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{}</w:p><w:p><w:r><w:t>Plain words.</w:t></w:r></w:p>"#,
+            r#"<w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell words.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+            r#"<w:sdt><w:sdtPr><w:id w:val="9"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Control words.</w:t></w:r></w:p></w:sdtContent></w:sdt><w:p/>"#,
+        ),
+        crate::support::text_box_run(7, "<w:p><w:r><w:t>Inside the box</w:t></w:r></w:p>")
+    );
+    let paragraph_xml = format!("<w:p {W}><w:r><w:t>Other words.</w:t></w:r></w:p>");
+    type Edit<'a> = &'a dyn Fn(&mut Document);
+    let routes: [(&str, Edit); 6] = [
+        ("run added in a text box", &|doc| {
+            doc.edit_story_paragraph(&location_of(doc, "Inside the box"), |paragraph| {
+                paragraph.add_run(" Zephyr.");
+                Ok(())
+            })
+            .unwrap();
+        }),
+        ("word replaced in a text box", &|doc| {
+            let boxed = location_of(doc, "Inside the box");
+            assert_eq!(
+                doc.try_replace_text_at(&boxed, "Inside", "Within", Some(1))
+                    .unwrap(),
+                Ok(1)
+            );
+        }),
+        ("field inserted", &|doc| {
+            let location = location_of(doc, "Plain words.");
+            let position = oxoffice_docx::StoryRunPosition {
+                location,
+                run_index: 1,
+            };
+            doc.insert_field(&position, oxoffice_docx::Field::new("PAGE", "1"))
+                .unwrap();
+        }),
+        ("cell paragraph replaced as XML", &|doc| {
+            doc.replace_paragraph_xml(&location_of(doc, "Cell words."), &paragraph_xml)
+                .unwrap();
+        }),
+        ("control paragraph replaced as XML", &|doc| {
+            doc.replace_paragraph_xml(&location_of(doc, "Control words."), &paragraph_xml)
+                .unwrap();
+        }),
+        ("run replaced as XML", &|doc| {
+            let location = location_of(doc, "Plain words.");
+            let position = oxoffice_docx::StoryRunPosition {
+                location,
+                run_index: 0,
+            };
+            doc.replace_run_xml(&position, &format!("<w:r {W}><w:t>Run words.</w:t></w:r>"))
+                .unwrap();
+        }),
+    ];
+    let declaring = routes
+        .into_iter()
+        .filter(|(_, edit)| {
+            let mut doc = crate::support::doc_with_body(&body);
+            edit(&mut doc);
+            package_part(&doc.to_bytes().unwrap(), "/word/document.xml").contains("<w:p xmlns")
+        })
+        .map(|(route, _)| route)
+        .collect::<Vec<_>>();
+    assert!(declaring.is_empty(), "{declaring:?}");
 }

@@ -94,7 +94,7 @@ use namespaces::{
 pub(crate) use postconditions::reopen_staged;
 use postconditions::{
     NormalizedPackage, comparison_postcondition_error, normalized_package,
-    refuse_changed_existing_revisions, resolved_candidate,
+    refuse_changed_existing_revisions, resolved_candidate, text_in_deletions,
 };
 use relationships::{
     chart_relationship_signature, hyperlink_targets, relationship_classes,
@@ -1201,6 +1201,19 @@ impl Document {
                 options,
                 &new_ids,
             )?;
+        }
+        let parts = std::iter::once(&candidate.doc_part_name)
+            .chain(original_stories.iter().map(|story| &story.part_name));
+        for part in parts {
+            if candidate
+                .package
+                .get_part(part)
+                .is_some_and(text_in_deletions)
+            {
+                return Err(Error::Other(format!(
+                    "comparison would write text inside a deletion of {part}, as a run holding a text box deleted or replaced whole does (#666)"
+                )));
+            }
         }
         // A link written as a field is read back before the resolution
         // retires its note markers, from the bytes the field was written in.

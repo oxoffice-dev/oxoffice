@@ -414,6 +414,19 @@ pub(super) fn paired_run_replacement(
             )));
         }
     }
+    // Replaced whole, the deleted copy of a box would keep its text as
+    // inserted text: no valid redline holds it yet.
+    let holds_box = |run: &CT_R| {
+        run.extra_xml.iter().any(|raw| {
+            raw.windows(b"txbxContent".len())
+                .any(|window| window == b"txbxContent")
+        })
+    };
+    if !projected && (holds_box(original) || holds_box(edited)) {
+        return Err(Error::Other(format!(
+            "comparison cannot track a change to a run holding a text box at {location}: it would replace the whole box (#666)"
+        )));
+    }
     let inserted_xml = publish_run_source(
         original,
         &inserted,

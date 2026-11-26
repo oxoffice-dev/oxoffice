@@ -148,6 +148,8 @@ impl Document {
             .map_err(|error| Error::Other(format!("field insertion boundary: {error}")))?;
         let replacement = serialize_content_fragment(BodyContent::Paragraph(Box::new(paragraph)))?;
         let replacement = close_content_fragment_namespaces(&replacement, &scope)?;
+        let replacement =
+            without_inherited_root_declarations(&xml[item.full.clone()], replacement, &scope);
         xml.splice(item.full, replacement);
         set_story_source_xml(self, &part_name, xml)
     }

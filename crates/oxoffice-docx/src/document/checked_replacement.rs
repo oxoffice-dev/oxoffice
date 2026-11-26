@@ -193,6 +193,7 @@ impl Document {
                     placeholder: placeholder.to_owned(),
                     expected,
                     found,
+                    unreached: 0,
                 }
                 .into()));
             }

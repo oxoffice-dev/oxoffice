@@ -628,6 +628,7 @@ pub(super) fn paired_scoped_edits(
             literal_input,
         );
         let (raw, actual_count) = counterpart?;
+        let raw = without_inherited_root_declarations(&xml[range.clone()], raw, &scope);
         if actual_count != count {
             return Err(Error::Other(
                 "paired replacement physical counts are unequal".into(),

@@ -643,6 +643,7 @@ fn counted_replacement_changes_nothing_when_a_count_is_wrong() {
             placeholder: "{{b}}".to_owned(),
             expected: 1,
             found: 2,
+            unreached: 0,
         }
     );
     // The first pair matched, and is not applied either.

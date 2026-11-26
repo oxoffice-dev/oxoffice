@@ -207,6 +207,30 @@ size = 72640
 features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "connector", "auto-shape", "text-box", "hyperlink", "hidden-slide", "comments", "slide-number", "widescreen"]
 
 [[file]]
+path = "google-docs/comments.docx"
+producer = "Google Docs (written through the Docs API, author names neutral)"
+size = 11516
+features = ["headings", "table", "comment", "tracked-changes", "format-change", "bookmark", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "google-docs/reply.docx"
+producer = "Google Docs, edited by hand in the browser (author names neutral)"
+size = 11643
+features = ["headings", "table", "comment", "comment-reply", "tracked-changes", "format-change", "bookmark", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "google-docs/review.docx"
+producer = "Google Docs (written through the Docs API, author names neutral)"
+size = 10813
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "footnote", "tracked-changes", "format-change", "header-footer", "bookmark", "hyperlink", "rsid", "paraId"]
+
+[[file]]
+path = "google-docs/toc.docx"
+producer = "Google Docs, edited by hand in the browser (author names neutral)"
+size = 11599
+features = ["headings", "title", "bullet-list", "numbered-list", "table", "footnote", "tracked-changes", "format-change", "header-footer", "toc", "ref-fields", "bookmark", "hyperlink", "content-control", "list-control", "rsid", "paraId"]
+
+[[file]]
 path = "libreoffice/contract.docx"
 producer = "LibreOffice 26.2.6.3"
 size = 29010

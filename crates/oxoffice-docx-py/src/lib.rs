@@ -107,13 +107,12 @@ pub(crate) fn replacement_count_to_pyerr(
     let (message, index) = if batch {
         (mismatch.to_string(), Some(mismatch.index))
     } else {
-        (
-            format!(
-                "expected {} replacement(s) of \"{}\", found {}",
-                mismatch.expected, mismatch.placeholder, mismatch.found
-            ),
-            None,
-        )
+        // The pair's wording without its index: a single replacement.
+        let message = mismatch.to_string();
+        let message = message
+            .split_once(": ")
+            .map_or(message.as_str(), |(_, rest)| rest);
+        (message.to_owned(), None)
     };
     match public_exception_type(py, "ReplacementCountError") {
         Ok(class) => PyErr::from_type(class, (message, mismatch.expected, mismatch.found, index)),

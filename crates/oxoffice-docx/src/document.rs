@@ -296,7 +296,7 @@ use story_scopes::{
     content_fragment_root_is_section_properties, direct_story_content_items,
     direct_story_content_items_in, ordered_story_link_spans, scan_story_item_links_with_scope,
     scan_story_items_with_scope, scoped_story_fragment, story_item_text_with_scope,
-    story_link_spans, story_namespace_scopes_at,
+    story_link_spans, story_namespace_scopes_at, without_inherited_root_declarations,
 };
 pub(crate) use story_scopes::{story_namespace_ancestors_at, story_namespace_scope_at};
 pub(crate) use story_source_edits::set_story_source_xml;

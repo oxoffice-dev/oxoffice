@@ -1,0 +1,12 @@
+{
+  "file": "google-docs/toc.docx",
+  "reason": "a table of contents, a drop-down chip and a reply written in Google Docs",
+  "resources": "984cd2d4dba68a1992df38f2fe39bb1a84f9270dc8b9d5864d67c4b15a2b62c8",
+  "outline_and_tags": "fcc74a43129974420e187c6f6bd574816784f4d3c37e91e1c247afe140739881",
+  "catalog": "68b0dcbc5d41ef8e5db56f51d7b9ed661b7a2c315e1410f2ed14f173cfbc539f",
+  "pages": [
+    {"page": 1, "pixels": "88660eda0998a4e28d399a215cbd7de84b191bf5b86f18573f2d3be5c4f3672d", "content": "3487dc62de2160b8b5282bdc4adb32ecc15a75bce7bf050d8234bfc1d24fcda0", "annotations": "c5cc5c699beaf0ddda37fa4ded2d3fbbb41b6a25bd4f66789ff52cac156b7b18", "dictionary": "e7bec2a88171e0910f4b5e066d662a704fa4a5fe0f756cb45ab74685c07bcb1c"},
+    {"page": 2, "pixels": "1560b05695eaae49c5197144ef5fc3e408aae9e9d2d440e7025ca70df4c1a190", "content": "655ab6462f5f59b23b6f7693deb222ebdcfc62d54646c631a35d3ac5f602bde7", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "52677ae045ae98f3f07a142227660abadce0b7d29c953ed746047ed5d485b326"},
+    {"page": 3, "pixels": "20d7c3a148a042c6d8e62856216dadc9bb073cceca0ea086a3cc86169507ea2d", "content": "ea47ac973367393231df4bb7941a769a9b533ecbb54013d3474c3ceecc0e0484", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "c58f6bb5b88e18e7f1b40075f7f1dffef3b62b88d6652522b81112b48cff94a5"}
+  ]
+}

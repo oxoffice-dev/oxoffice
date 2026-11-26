@@ -72,10 +72,10 @@ impl Document {
             let mut edits = Vec::with_capacity(ranges.len());
             for range in ranges {
                 let scope = story_namespace_scope_at(&xml, range.start)?;
-                edits.push((
-                    range,
-                    close_content_fragment_namespaces(&replacement, &scope)?,
-                ));
+                let closed = close_content_fragment_namespaces(&replacement, &scope)?;
+                let written =
+                    without_inherited_root_declarations(&xml[range.clone()], closed, &scope);
+                edits.push((range, written));
             }
             for (range, bytes) in edits.into_iter().rev() {
                 xml.splice(range, bytes);
@@ -83,6 +83,8 @@ impl Document {
         } else {
             let scope = story_namespace_scope_at(&xml, item_range.start)?;
             let replacement = close_content_fragment_namespaces(&replacement, &scope)?;
+            let replacement =
+                without_inherited_root_declarations(&xml[item_range.clone()], replacement, &scope);
             xml.splice(item_range, replacement);
         }
         let after = before.as_ref().map(|_| xml.clone());
@@ -151,6 +153,8 @@ impl Document {
         let replacement = content_fragment_for_insertion(&candidate, &location.story, &fragment)?;
 
         let replacement = close_content_fragment_namespaces(&replacement, &scope)?;
+        let replacement =
+            without_inherited_root_declarations(&xml[item.full.clone()], replacement, &scope);
 
         // Replaced main-part content takes the notes only it referenced.
         let before = (part_name == candidate.doc_part_name).then(|| xml.clone());
