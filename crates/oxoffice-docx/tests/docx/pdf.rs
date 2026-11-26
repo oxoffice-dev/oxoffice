@@ -2529,6 +2529,45 @@ fn a_cross_reference_finds_its_bookmark_whatever_the_case() {
 }
 
 #[test]
+fn a_link_skips_a_bookmark_start_with_no_end_for_the_whole_bookmark() {
+    // LibreOffice writes a start with no end beside a whole bookmark of the
+    // same name (libreoffice/form.docx): it is no bookmark to Word.
+    let stray = r#"<w:bookmarkStart w:id="9" w:name="RESULTS"/>"#;
+    let whole = r#"<w:bookmarkStart w:id="0" w:name="Results"/><w:r><w:t>Findings</w:t></w:r><w:bookmarkEnd w:id="0"/>"#;
+    for (what, before, inside) in [
+        (
+            "inside a paragraph, in another case",
+            format!("<w:p>{stray}<w:r><w:t>Stray</w:t></w:r></w:p>"),
+            "",
+        ),
+        (
+            "between blocks",
+            format!(
+                "{}<w:p><w:r><w:t>Stray</w:t></w:r></w:p>",
+                stray.replace("RESULTS", "Results")
+            ),
+            "",
+        ),
+        ("in the bookmark's paragraph", String::new(), stray),
+    ] {
+        let doc = doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:hyperlink w:anchor="Results"><w:r><w:t>Go</w:t></w:r></w:hyperlink></w:p>"#,
+                r#"{}<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p>{}{}</w:p>"#,
+            ),
+            before, inside, whole
+        ));
+        let pdf = pdf_of(&doc);
+        let links = pdf.internal_links(0);
+        assert_eq!(links.len(), 1, "{what}: {links:?}");
+        assert!(
+            links.iter().all(|(page, ..)| *page == 1),
+            "{what}: {links:?}"
+        );
+    }
+}
+
+#[test]
 fn a_page_reference_nested_in_a_table_of_contents_links_its_page_number() {
     let doc = doc_with_body(concat!(
         r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,

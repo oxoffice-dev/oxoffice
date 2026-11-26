@@ -285,7 +285,12 @@ pub(crate) fn raw_occurrence(position: (u8, usize)) -> usize {
     position.1 & !RAW_MODELED_FLAGS
 }
 
-pub(crate) fn raw_is_modeled_attribute_carrier(position: (u8, usize)) -> bool {
+/// Whether the retained element at `position` (an entry of a properties'
+/// `revision_xml_positions`) carries a modelled element's attributes: a
+/// toggle kept for the attributes it holds beside `w:val`, written on the
+/// modelled element, whose own value is written in place of the carrier's;
+/// or a kept `w:pBdr` or `w:tabs`, with its content.
+pub fn raw_is_modeled_attribute_carrier(position: (u8, usize)) -> bool {
     position.1 & RAW_MODELED_ATTRIBUTES_FLAG != 0
 }
 

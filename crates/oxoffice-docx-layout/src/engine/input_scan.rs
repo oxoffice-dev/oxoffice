@@ -38,11 +38,12 @@ fn bookmark_names(input: &LayoutInput) -> std::borrow::Cow<'_, crate::input::Boo
             .enumerate()
             .map(|(id, name)| (bookmark_name_key(name), id))
             .collect();
+        let end_ids = read_bookmark_end_ids(input);
         crate::input::BookmarkNames {
             page_targets,
             page_target_ids,
-            spellings: read_bookmark_spellings(input),
-            end_ids: read_bookmark_end_ids(input),
+            spellings: read_bookmark_spellings(input, &end_ids),
+            end_ids,
         }
     };
     let (cached_owner, cached) = input.bookmark_names.0.get_or_init(|| (owner, read()));
@@ -81,14 +82,16 @@ pub(super) fn opens_bookmark(input: &LayoutInput, marker: &BookmarkMarker) -> bo
 }
 
 /// The first spelling of each bookmark that starts in the stories of the
-/// input, by its folded name.
-fn read_bookmark_spellings(input: &LayoutInput) -> HashMap<String, String> {
+/// input, by its folded name. A start with no end (`end_ids`) is no
+/// bookmark, so it gives no spelling.
+fn read_bookmark_spellings(input: &LayoutInput, end_ids: &HashSet<i32>) -> HashMap<String, String> {
     let block_bookmarks = input.block_bookmarks();
     let mut spellings = HashMap::new();
     for paragraph in input_story_paragraphs(input).iter().flatten() {
         let (before, after) = block_bookmarks.markers(paragraph);
         for marker in paragraph.bookmark_markers.iter().chain(before).chain(after) {
             if marker.is_start()
+                && marker.id().is_none_or(|id| end_ids.contains(&id))
                 && let Some(name) = marker.name()
             {
                 spellings
