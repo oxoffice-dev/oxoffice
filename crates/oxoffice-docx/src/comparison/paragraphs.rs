@@ -665,7 +665,7 @@ pub(super) fn paragraph_shell(source: Option<&str>) -> Result<(String, String)> 
     let (end, empty, name) = element_opening(source)?;
     let mut opening = source[..end].to_owned();
     if empty {
-        opening.truncate(opening.len() - 2);
+        opening.truncate(oxoffice_core::xml_element::start_tag(source)?.attributes_end);
         opening.push('>');
     }
     Ok((opening, format!("</{name}>")))

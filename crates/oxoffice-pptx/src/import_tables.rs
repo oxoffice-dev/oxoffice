@@ -330,7 +330,14 @@ impl Presentation {
         let changed_metadata = original_table_xml != destination_xml;
         if !appended.is_empty() || changed_metadata {
             if destination_styles.empty {
-                let mut xml = destination_xml[..destination_styles.head_end - 2].to_vec();
+                let start = destination_styles.start;
+                let attributes_end = start
+                    + oxoffice_core::xml_element::start_tag(&destination_xml[start..])
+                        .map_err(|error| {
+                            invalid_presentation_mutation("import table styles", error.to_string())
+                        })?
+                        .attributes_end;
+                let mut xml = destination_xml[..attributes_end].to_vec();
                 xml.push(b'>');
                 xml.extend_from_slice(&appended);
                 xml.extend_from_slice(format!("</{}>", destination_styles.name).as_bytes());
@@ -471,6 +478,7 @@ pub(super) fn import_table_styles(xml: &[u8]) -> std::result::Result<ImportTable
                         }
                     }
                     result = Some(ImportTableStyles {
+                        start: begin,
                         metadata,
                         opaque: Vec::new(),
                         default,
@@ -667,17 +675,10 @@ fn merge_import_table_root_metadata(
     }
     let origin = usize::from(destination.starts_with(b"\xef\xbb\xbf")) * 3;
     let mut reader = quick_xml::Reader::from_reader(&destination[origin..]);
-    let (start, begin, end, empty) = loop {
+    let (start, begin) = loop {
         let begin = origin + reader.buffer_position() as usize;
-        let event = reader.read_event()?;
-        let empty = matches!(event, XmlEvent::Empty(_));
-        if let XmlEvent::Start(start) | XmlEvent::Empty(start) = event {
-            break (
-                start.into_owned(),
-                begin,
-                origin + reader.buffer_position() as usize,
-                empty,
-            );
+        if let XmlEvent::Start(start) | XmlEvent::Empty(start) = reader.read_event()? {
+            break (start.into_owned(), begin);
         }
     };
     let mut start = start;
@@ -686,20 +687,19 @@ fn merge_import_table_root_metadata(
         start.push_attribute((key.as_str(), value.as_ref()));
     }
     let mut writer = XmlWriter::new(Vec::new());
-    writer.write_event(if empty {
-        XmlEvent::Empty(start)
-    } else {
-        XmlEvent::Start(start)
-    })?;
+    writer.write_event(XmlEvent::Start(start))?;
     let head = writer.into_inner();
+    // The rewritten head, then the root's own close and content as written.
+    let head_end = oxoffice_core::xml_element::start_tag(&head)?.attributes_end;
+    let close =
+        begin + oxoffice_core::xml_element::start_tag(&destination[begin..])?.attributes_end;
     let mut changed = destination[..begin].to_vec();
-    changed.extend_from_slice(&head[..head.len() - if empty { 2 } else { 1 }]);
+    changed.extend_from_slice(&head[..head_end]);
     for raw in attributes {
         changed.push(b' ');
         changed.extend_from_slice(&raw);
     }
-    changed.extend_from_slice(if empty { b"/>" } else { b">" });
-    changed.extend_from_slice(&destination[end..]);
+    changed.extend_from_slice(&destination[close..]);
     let scope = import_table_styles(&changed)?;
     let mut opaque = Vec::new();
     for raw in &source.opaque {
@@ -710,11 +710,10 @@ fn merge_import_table_root_metadata(
     }
     if !opaque.is_empty() {
         if scope.empty {
-            let mut result = changed[..scope.head_end - 2].to_vec();
-            result.push(b'>');
-            result.extend(opaque);
-            result.extend(format!("</{}>", scope.name).as_bytes());
-            result.extend_from_slice(&changed[scope.head_end..]);
+            let mut result = changed[..scope.start].to_vec();
+            result.extend(
+                oxoffice_core::xml_element::replace_content(&changed[scope.start..], &opaque)?.0,
+            );
             changed = result;
         } else {
             changed.splice(scope.close..scope.close, opaque);

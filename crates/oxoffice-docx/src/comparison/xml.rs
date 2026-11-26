@@ -57,7 +57,7 @@ pub(super) fn insert_first_child(xml: &str, child: &str) -> Result<String> {
     if empty {
         return Ok(format!(
             "{}>{child}</{name}>{}",
-            &xml[..end - 2],
+            &xml[..oxoffice_core::xml_element::start_tag(xml)?.attributes_end],
             &xml[end..]
         ));
     }

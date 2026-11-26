@@ -496,7 +496,9 @@ fn expanded_property_root(source: &[u8], namespace: &str, root: &str) -> Result<
             XmlEvent::Empty(start)
                 if qualified && xml_local_name(start.name().as_ref()) == root.as_bytes() =>
             {
-                let mut result = source[..end - 2].to_vec();
+                let tag = oxoffice_core::xml_element::start_tag(&source[begin..])
+                    .map_err(|e| invalid_shape_mutation("properties", e.to_string()))?;
+                let mut result = source[..begin + tag.attributes_end].to_vec();
                 result.push(b'>');
                 result.extend_from_slice(b"</");
                 result.extend_from_slice(start.name().as_ref());
@@ -1052,7 +1054,9 @@ fn edit_property_text(source: &[u8], value: Option<&str>) -> Result<Vec<u8>> {
                 result.extend_from_slice(&source[begin..end]);
             }
             XmlEvent::Empty(start) if !opened => {
-                result.extend_from_slice(&source[begin..end - 2]);
+                let tag = oxoffice_core::xml_element::start_tag(&source[begin..])
+                    .map_err(|error| invalid_shape_mutation("properties", error.to_string()))?;
+                result.extend_from_slice(&source[begin..begin + tag.attributes_end]);
                 result.push(b'>');
                 result.extend_from_slice(
                     oxoffice_core::xml::escape_text(value.unwrap_or("")).as_bytes(),

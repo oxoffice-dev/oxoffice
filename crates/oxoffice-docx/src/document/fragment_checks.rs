@@ -79,10 +79,11 @@ pub(super) fn story_owner_content_end_in(
             .map_err(|error| Error::Other(format!("story owner boundary scan failed: {error}")))?
         {
             Event::Start(_) => depth += 1,
+            // The content of an empty owner goes where its attributes end.
             Event::Empty(_) if depth == 0 => {
-                return (owner.full.end >= owner.full.start + 2)
-                    .then_some(owner.full.end - 2)
-                    .ok_or_else(|| Error::Other("empty story owner is incomplete".to_owned()));
+                return Ok(owner.full.start
+                    + oxoffice_core::xml_element::start_tag(&xml[owner.full.start..])?
+                        .attributes_end);
             }
             Event::End(_) if depth == 1 => return Ok(owner.full.start + before),
             Event::End(_) => depth = depth.saturating_sub(1),
@@ -628,7 +629,9 @@ pub(super) fn insert_story_fragment(
         }
     };
     if let Some(name) = empty_name {
-        if boundary + 2 != owner.full.end {
+        let attributes_end = owner.full.start
+            + oxoffice_core::xml_element::start_tag(&source[owner.full.start..])?.attributes_end;
+        if boundary != attributes_end {
             return Err(Error::Other(
                 "empty story owner insertion boundary is invalid".to_owned(),
             ));

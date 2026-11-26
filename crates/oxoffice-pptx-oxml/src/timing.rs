@@ -852,7 +852,7 @@ fn append_to_timing_list(
                 validate_element(&start, &scope, b"timing")?;
                 let range = start_tag_range(xml, reader.buffer_position() as usize)?;
                 let list = authored_timing_list(inserted);
-                return expand_empty_element(xml, range, start.name().as_ref(), list.as_bytes());
+                return expand_empty_element(xml, range, list.as_bytes());
             }
             Event::Start(child) => {
                 let scope = root.as_ref().expect("timing root").with_start(&child)?;
@@ -877,7 +877,7 @@ fn append_to_timing_list(
                 if scope.element_uri(child.name().as_ref()) == Some(P_NS)
                     && local_name(child.name().as_ref()) == b"tnLst"
                 {
-                    return expand_empty_element(xml, range, child.name().as_ref(), inserted);
+                    return expand_empty_element(xml, range, inserted);
                 }
                 if later_child_start.is_none()
                     && scope.element_uri(child.name().as_ref()) == Some(P_NS)
@@ -946,21 +946,12 @@ fn insert_bytes(xml: &[u8], at: usize, inserted: &[u8]) -> Result<Vec<u8>> {
 fn expand_empty_element(
     xml: &[u8],
     range: std::ops::Range<usize>,
-    qualified_name: &[u8],
     inserted: &[u8],
 ) -> Result<Vec<u8>> {
-    let slash = xml[range.clone()]
-        .iter()
-        .rposition(|byte| *byte == b'/')
-        .map(|offset| range.start + offset)
-        .ok_or_else(|| OxmlError::InvalidValue("empty timing element lacks slash".to_owned()))?;
-    let mut output = Vec::with_capacity(xml.len() + inserted.len() + qualified_name.len() + 2);
-    output.extend_from_slice(&xml[..slash]);
-    output.push(b'>');
-    output.extend_from_slice(inserted);
-    output.extend_from_slice(b"</");
-    output.extend_from_slice(qualified_name);
-    output.push(b'>');
+    let (opened, _) = oxoffice_core::xml_element::replace_content(&xml[range.clone()], inserted)?;
+    let mut output = Vec::with_capacity(xml.len() - range.len() + opened.len());
+    output.extend_from_slice(&xml[..range.start]);
+    output.extend_from_slice(&opened);
     output.extend_from_slice(&xml[range.end..]);
     Ok(output)
 }
@@ -4207,7 +4198,9 @@ fn replace_transition_effect(
     let mut insertion = None;
     loop {
         let begin = reader.buffer_position() as usize;
-        match reader.read_event()? {
+        let event = reader.read_event()?;
+        let empty = matches!(event, Event::Empty(_));
+        match event {
             Event::Start(start) if scope.is_none() => {
                 scope = Some(inherited.with_start(&start)?);
                 root_end = reader.buffer_position() as usize;
@@ -4215,7 +4208,9 @@ fn replace_transition_effect(
             Event::Empty(start) if scope.is_none() => {
                 let end = reader.buffer_position() as usize;
                 let name = start.name().as_ref().to_vec();
-                let mut expanded = xml[..end - 2].to_vec();
+                let attributes_end =
+                    begin + oxoffice_core::xml_element::start_tag(&xml[begin..])?.attributes_end;
+                let mut expanded = xml[..attributes_end].to_vec();
                 expanded.extend_from_slice(b">");
                 expanded.extend_from_slice(b"</");
                 expanded.extend_from_slice(&name);
@@ -4224,7 +4219,6 @@ fn replace_transition_effect(
                 return replace_transition_effect(&expanded, inherited, effect);
             }
             Event::Start(child) | Event::Empty(child) => {
-                let empty = xml[begin..reader.buffer_position() as usize].ends_with(b"/>");
                 let parent = scope.as_ref().expect("transition root");
                 let child_scope = parent.with_start(&child)?;
                 let raw = if empty {

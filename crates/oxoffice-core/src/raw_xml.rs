@@ -1,11 +1,12 @@
 //! Raw XML capture utilities for preserving unknown elements during round-trip.
 
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::{BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 use std::io::Write;
 use std::ops::Range;
 
 use crate::error::Result;
+use crate::xml_reader::EmptyWriting;
 
 /// Capture a full XML subtree (from after the start tag through the matching end tag)
 /// and return it as raw bytes. The returned bytes include the start tag, all children,
@@ -290,6 +291,38 @@ pub fn capture_empty_element(e: &BytesStart) -> Result<Vec<u8>> {
     let mut writer = Writer::new(Vec::new());
     writer.write_event(Event::Empty(e.to_owned()))?;
     Ok(writer.into_inner())
+}
+
+/// Capture an element with nothing inside as raw bytes, in `writing`:
+/// `<x .../>` or `<x ...></x>`. An element read by
+/// [`crate::xml_reader`] passes the reader's
+/// [`empty_writing`](crate::xml_reader::Reader::empty_writing), one built by
+/// the caller [`EmptyWriting::SelfClosed`].
+pub fn capture_empty(e: &BytesStart, writing: EmptyWriting) -> Result<Vec<u8>> {
+    let mut writer = Writer::new(Vec::new());
+    write_empty(&mut writer, e, writing)?;
+    Ok(writer.into_inner())
+}
+
+/// Write an element with nothing inside to `writer` in `writing`, as
+/// [`capture_empty`] captures it: for a loop that writes back an
+/// [`Event::Empty`] it read.
+pub fn write_empty<W: Write>(
+    writer: &mut Writer<W>,
+    e: &BytesStart,
+    writing: EmptyWriting,
+) -> Result<()> {
+    match writing {
+        EmptyWriting::SelfClosed => writer.write_event(Event::Empty(e.borrow()))?,
+        EmptyWriting::EndTag => {
+            writer.write_event(Event::Start(e.borrow()))?;
+            // An empty text keeps an indenting writer from breaking the line
+            // between the two tags.
+            writer.write_event(Event::Text(BytesText::new("")))?;
+            writer.write_event(Event::End(e.to_end()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Serialize one event on its own, as the raw bytes of an unmodelled child.

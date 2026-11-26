@@ -348,14 +348,8 @@ pub(crate) fn set_non_visual_drawing_text(
     let replacement = value
         .map(|value| format!(" {key}=\"{}\"", escape_attribute_value(value)).into_bytes())
         .unwrap_or_default();
-    let range = owned.unwrap_or_else(|| {
-        let insertion = if xml.get(end.wrapping_sub(2)) == Some(&b'/') {
-            end - 2
-        } else {
-            end - 1
-        };
-        insertion..insertion
-    });
+    let attributes_end = oxoffice_core::xml_element::start_tag(xml.as_slice())?.attributes_end;
+    let range = owned.unwrap_or(attributes_end..attributes_end);
     let mut candidate = Vec::with_capacity(xml.len() + replacement.len());
     candidate.extend_from_slice(&xml[..range.start]);
     candidate.extend_from_slice(&replacement);
@@ -388,7 +382,7 @@ fn accessibility_element_parts(xml: &[u8]) -> Result<AccessibilityElementParts, 
     };
     let start_end = reader.buffer_position() as usize;
     if empty {
-        let mut start = xml[..start_end - 2].to_vec();
+        let mut start = xml[..oxoffice_core::xml_element::start_tag(xml)?.attributes_end].to_vec();
         start.push(b'>');
         return Ok(AccessibilityElementParts {
             start,

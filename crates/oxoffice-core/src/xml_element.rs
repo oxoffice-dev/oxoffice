@@ -3,9 +3,12 @@
 //! The element may use any prefix, be written self-closing (`<w:sdtContent/>`,
 //! as Google Docs writes an empty one) or with spaces in its end tag
 //! (`</w:p >`). Code that needs where an element's content starts or ends,
-//! or that writes content into an element, goes through here, never through
-//! a search for the text `</name>`: `tests/xml_element.rs` refuses such a
-//! search anywhere else in `crates/*/src`.
+//! where its tag closes, or that writes content into an element, goes through
+//! here, never through a search for the text `</name>` or `/>`:
+//! `tests/xml_element.rs` refuses both anywhere else in `crates/*/src`.
+//!
+//! The XML is text or bytes: the functions that read take either, and the
+//! functions that write give back the kind they are given ([`Markup`]).
 
 use std::ops::Range;
 
@@ -13,6 +16,52 @@ use quick_xml::Reader;
 use quick_xml::events::Event;
 
 use crate::error::{OxmlError, Result};
+
+const BYTE_ORDER_MARK: &[u8] = b"\xef\xbb\xbf";
+
+/// The start tag, or the empty-element tag, an element is written with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartTag {
+    /// The qualified name, as written.
+    pub name: String,
+    /// The tag, from its `<` to its `>`.
+    pub range: Range<usize>,
+    /// Where the attributes end, before the tag's `/>` or `>`: where an
+    /// attribute or a namespace declaration goes.
+    pub attributes_end: usize,
+    /// Whether the tag is an empty-element tag (`<x/>`), the whole element.
+    pub self_closing: bool,
+}
+
+/// The start tag (or empty-element tag) `xml` starts with, read as one
+/// event. The only code that knows whether a tag closes with two bytes or
+/// one.
+pub fn start_tag(xml: &(impl AsRef<[u8]> + ?Sized)) -> Result<StartTag> {
+    let xml = xml.as_ref();
+    if let Some(rest) = xml.strip_prefix(BYTE_ORDER_MARK) {
+        let mut tag = start_tag(rest)?;
+        tag.range = tag.range.start + 3..tag.range.end + 3;
+        tag.attributes_end += 3;
+        return Ok(tag);
+    }
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let (name, self_closing) = match reader.read_event()? {
+        Event::Start(start) => (
+            std::str::from_utf8(start.name().as_ref())?.to_owned(),
+            false,
+        ),
+        Event::Empty(start) => (std::str::from_utf8(start.name().as_ref())?.to_owned(), true),
+        _ => return Err(invalid("the XML does not start with an element".to_owned())),
+    };
+    let end = position(&reader);
+    Ok(StartTag {
+        name,
+        range: 0..end,
+        attributes_end: end - if self_closing { 2 } else { 1 },
+        self_closing,
+    })
+}
 
 /// The parts of one element in the XML it is read from, as byte ranges.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +92,12 @@ impl ElementSpan {
         self.name.rsplit(':').next().unwrap_or(&self.name)
     }
 
+    /// Where the attributes of the start tag end, before its `/>` or `>`:
+    /// where an attribute or a namespace declaration goes.
+    pub fn attributes_end(&self) -> usize {
+        self.start_tag.end - if self.is_self_closing() { 2 } else { 1 }
+    }
+
     fn shifted(mut self, by: usize) -> Self {
         for range in [&mut self.start_tag, &mut self.content, &mut self.end_tag] {
             *range = range.start + by..range.end + by;
@@ -61,11 +116,12 @@ fn position(reader: &Reader<&[u8]>) -> usize {
 
 /// The element `xml` starts with: `xml` must start with its start tag, and
 /// may go on after its end.
-pub fn element_span(xml: &str) -> Result<ElementSpan> {
-    if let Some(rest) = xml.strip_prefix('\u{feff}') {
+pub fn element_span(xml: &(impl AsRef<[u8]> + ?Sized)) -> Result<ElementSpan> {
+    let xml = xml.as_ref();
+    if let Some(rest) = xml.strip_prefix(BYTE_ORDER_MARK) {
         return element_span(rest).map(|span| span.shifted(3));
     }
-    let mut reader = Reader::from_str(xml);
+    let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     reader.config_mut().check_end_names = false;
     let (name, empty) = match reader.read_event()? {
@@ -113,11 +169,12 @@ pub fn element_span(xml: &str) -> Result<ElementSpan> {
 
 /// The root element of a part, after its XML declaration, comments,
 /// processing instructions and whitespace, its ranges in `xml`.
-pub fn root_element_span(xml: &str) -> Result<ElementSpan> {
-    if let Some(rest) = xml.strip_prefix('\u{feff}') {
+pub fn root_element_span(xml: &(impl AsRef<[u8]> + ?Sized)) -> Result<ElementSpan> {
+    let xml = xml.as_ref();
+    if let Some(rest) = xml.strip_prefix(BYTE_ORDER_MARK) {
         return root_element_span(rest).map(|span| span.shifted(3));
     }
-    let mut reader = Reader::from_str(xml);
+    let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     loop {
         let before = position(&reader);
@@ -134,11 +191,12 @@ pub fn root_element_span(xml: &str) -> Result<ElementSpan> {
 
 /// The first element of `xml`, at any depth, whose qualified name is `name`
 /// as written, its ranges in `xml`.
-pub fn find_element(xml: &str, name: &str) -> Result<Option<ElementSpan>> {
-    if let Some(rest) = xml.strip_prefix('\u{feff}') {
+pub fn find_element(xml: &(impl AsRef<[u8]> + ?Sized), name: &str) -> Result<Option<ElementSpan>> {
+    let xml = xml.as_ref();
+    if let Some(rest) = xml.strip_prefix(BYTE_ORDER_MARK) {
         return Ok(find_element(rest, name)?.map(|span| span.shifted(3)));
     }
-    let mut reader = Reader::from_str(xml);
+    let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     reader.config_mut().check_end_names = false;
     loop {
@@ -155,40 +213,100 @@ pub fn find_element(xml: &str, name: &str) -> Result<Option<ElementSpan>> {
     }
 }
 
+/// XML as text (`str`, `String`) or as bytes (`[u8]`, `Vec<u8>`):
+/// [`replace_content`] and [`append_content`] give back the kind they are
+/// given.
+pub trait Markup: AsRef<[u8]> + sealed::Sealed {
+    /// `String` for text, `Vec<u8>` for bytes.
+    type Owned;
+
+    /// `bytes`, made of pieces of this kind and of the content given, as
+    /// this kind.
+    #[doc(hidden)]
+    fn owned(bytes: Vec<u8>) -> Result<Self::Owned>;
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for str {}
+    impl Sealed for String {}
+    impl Sealed for [u8] {}
+    impl Sealed for Vec<u8> {}
+}
+
+impl Markup for str {
+    type Owned = String;
+
+    fn owned(bytes: Vec<u8>) -> Result<String> {
+        String::from_utf8(bytes).map_err(|error| error.utf8_error().into())
+    }
+}
+
+impl Markup for String {
+    type Owned = String;
+
+    fn owned(bytes: Vec<u8>) -> Result<String> {
+        str::owned(bytes)
+    }
+}
+
+impl Markup for [u8] {
+    type Owned = Vec<u8>;
+
+    fn owned(bytes: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(bytes)
+    }
+}
+
+impl Markup for Vec<u8> {
+    type Owned = Vec<u8>;
+
+    fn owned(bytes: Vec<u8>) -> Result<Vec<u8>> {
+        Ok(bytes)
+    }
+}
+
 /// The element `xml` starts with (and what follows it), its content
 /// replaced by `content`, and where `content` starts in the result. An
-/// element written self-closing gets an end tag to hold `content`, and stays
-/// as written when `content` is empty.
-pub fn replace_content(xml: &str, content: &str) -> Result<(String, usize)> {
-    let span = element_span(xml)?;
-    if span.is_self_closing() {
-        if content.is_empty() {
-            return Ok((xml.to_owned(), span.content.start));
-        }
-        let tag = xml[span.start_tag.clone()]
-            .strip_suffix("/>")
-            .ok_or_else(|| invalid(format!("{} has no empty-element tag", span.name)))?;
-        let opening = format!("{}>", tag.trim_end());
-        let at = opening.len();
-        return Ok((
-            format!(
-                "{opening}{content}</{}>{}",
-                span.name,
-                &xml[span.end_tag.end..]
-            ),
-            at,
-        ));
+/// element written self-closing gets an end tag to hold `content`, its start
+/// tag kept as written up to its `/>`, and stays as written when `content`
+/// is empty.
+pub fn replace_content<X: Markup + ?Sized>(
+    xml: &X,
+    content: &(impl AsRef<[u8]> + ?Sized),
+) -> Result<(X::Owned, usize)> {
+    let (source, content) = (xml.as_ref(), content.as_ref());
+    let span = element_span(source)?;
+    if span.is_self_closing() && content.is_empty() {
+        return Ok((X::owned(source.to_vec())?, span.content.start));
     }
-    let mut output = xml.to_owned();
-    output.replace_range(span.content.clone(), content);
-    Ok((output, span.content.start))
+    let mut output = Vec::with_capacity(source.len() + content.len() + span.name.len() + 3);
+    if span.is_self_closing() {
+        output.extend_from_slice(&source[..span.attributes_end()]);
+        output.push(b'>');
+        let at = output.len();
+        output.extend_from_slice(content);
+        output.extend_from_slice(b"</");
+        output.extend_from_slice(span.name.as_bytes());
+        output.push(b'>');
+        output.extend_from_slice(&source[span.end_tag.end..]);
+        return Ok((X::owned(output)?, at));
+    }
+    output.extend_from_slice(&source[..span.content.start]);
+    output.extend_from_slice(content);
+    output.extend_from_slice(&source[span.content.end..]);
+    Ok((X::owned(output)?, span.content.start))
 }
 
 /// The element `xml` starts with, `addition` written at the end of its
 /// content (an element written self-closing gets an end tag).
-pub fn append_content(xml: &str, addition: &str) -> Result<String> {
-    let span = element_span(xml)?;
-    let content = format!("{}{addition}", &xml[span.content.clone()]);
+pub fn append_content<X: Markup + ?Sized>(
+    xml: &X,
+    addition: &(impl AsRef<[u8]> + ?Sized),
+) -> Result<X::Owned> {
+    let source = xml.as_ref();
+    let span = element_span(source)?;
+    let content = [&source[span.content.clone()], addition.as_ref()].concat();
     Ok(replace_content(xml, &content)?.0)
 }
 

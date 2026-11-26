@@ -1,6 +1,7 @@
 //! WordprocessingML glossary document parts and building-block entries.
 
 use oxoffice_core::xml::{XmlLexicalError, validate_strict_xml_1_0};
+use oxoffice_core::xml_element::start_tag;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
 use quick_xml::reader::NsReader;
@@ -1160,8 +1161,7 @@ fn parse_properties(raw_xml: &[u8], inherited_prefixes: &[String]) -> Result<CT_
                     root_seen = true;
                     source_word_prefixes = local_prefixes.into_owned();
                     let name = String::from_utf8_lossy(element.name().as_ref()).into_owned();
-                    root_start_xml = capture_empty_element(&element)?;
-                    root_start_xml.splice(root_start_xml.len() - 2.., *b">");
+                    root_start_xml = standalone_event(Event::Start(element.to_owned()))?;
                     root_end_xml = standalone_event(Event::End(BytesEnd::new(name)))?;
                 } else {
                     let raw = capture_empty_element(&element)?;
@@ -1345,13 +1345,9 @@ fn patch_root_word_value(
                     (None, Some(value)) => {
                         let (prefix, declare) = usable_word_prefix(&prefixes, &tag, output_prefix);
                         if declare {
-                            declare_word_prefix(&mut tag, &prefix)?;
+                            declare_word_prefix(&mut tag, 0, &prefix)?;
                         }
-                        let insert_at = if tag.ends_with(b"/>") {
-                            tag.len() - 2
-                        } else {
-                            tag.len() - 1
-                        };
+                        let insert_at = start_tag(&tag)?.attributes_end;
                         let escaped = oxoffice_core::xml::escape_attribute_value(value);
                         tag.splice(
                             insert_at..insert_at,
@@ -1540,6 +1536,7 @@ fn prepare_container_output(
     let mut reader = Reader::from_reader(raw);
     let mut buffer = Vec::new();
     loop {
+        let before = reader.buffer_position() as usize;
         match reader.read_event_into(&mut buffer)? {
             event @ (Event::Start(_) | Event::Empty(_)) => {
                 let empty = matches!(event, Event::Empty(_));
@@ -1552,17 +1549,14 @@ fn prepare_container_output(
                 let prefixes = word_prefixes_at(&element, inherited_prefixes)?;
                 let (prefix, declare) = usable_word_prefix(&prefixes, &start, preferred);
                 if declare {
-                    declare_word_prefix(&mut start, &prefix)?;
+                    declare_word_prefix(&mut start, before, &prefix)?;
                 }
                 let mut output = start;
                 if empty {
-                    let slash = output
-                        .iter()
-                        .rposition(|byte| *byte == b'/')
-                        .ok_or_else(|| {
-                            OxmlError::MissingElement("empty container close".to_owned())
-                        })?;
-                    output.remove(slash);
+                    // Opened for content: the start tag up to its close.
+                    let opened = before + start_tag(&output[before..])?.attributes_end;
+                    output.truncate(opened);
+                    output.push(b'>');
                     let name = std::str::from_utf8(element.name().as_ref())?.to_owned();
                     output.extend_from_slice(format!("</{name}>").as_bytes());
                 } else {
@@ -1594,14 +1588,9 @@ fn usable_word_prefix(prefixes: &[String], tag: &[u8], preferred: &str) -> (Stri
     (changed_output_prefix(&[], tag), true)
 }
 
-fn declare_word_prefix(tag: &mut Vec<u8>, prefix: &str) -> Result<()> {
-    let insert_at = if tag.ends_with(b"/>") {
-        tag.len() - 2
-    } else {
-        tag.len()
-            .checked_sub(1)
-            .ok_or_else(|| OxmlError::MissingElement("element start tag".to_owned()))?
-    };
+/// Declare `prefix` for the Word namespace in the start tag at `at` in `tag`.
+fn declare_word_prefix(tag: &mut Vec<u8>, at: usize, prefix: &str) -> Result<()> {
+    let insert_at = at + start_tag(&tag[at..])?.attributes_end;
     tag.splice(
         insert_at..insert_at,
         format!(r#" xmlns:{prefix}="{W_NS}""#).bytes(),
@@ -2104,6 +2093,7 @@ fn expanded_root_wrapper(source: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
     let mut reader = Reader::from_reader(source);
     let mut buffer = Vec::new();
     loop {
+        let before = reader.buffer_position() as usize;
         match reader.read_event_into(&mut buffer)? {
             Event::Start(element) => {
                 let end = reader.buffer_position() as usize;
@@ -2111,13 +2101,9 @@ fn expanded_root_wrapper(source: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
                 return Ok((source[..end].to_vec(), format!("</{name}>").into_bytes()));
             }
             Event::Empty(element) => {
-                let end = reader.buffer_position() as usize;
-                let mut start = source[..end].to_vec();
-                let slash = start
-                    .iter()
-                    .rposition(|byte| *byte == b'/')
-                    .ok_or_else(|| OxmlError::MissingElement("empty root close".to_owned()))?;
-                start.remove(slash);
+                let mut start =
+                    source[..before + start_tag(&source[before..])?.attributes_end].to_vec();
+                start.push(b'>');
                 let name = std::str::from_utf8(element.name().as_ref())?.to_owned();
                 return Ok((start, format!("</{name}>").into_bytes()));
             }

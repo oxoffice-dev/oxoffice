@@ -512,13 +512,10 @@ impl Presentation {
         let bytes = if owner.attributes.iter().any(|(key, _, _)| key == "name") {
             patch_theme_attribute(source, &owner, "name", name)?
         } else {
-            let mut reader = NsReader::from_reader(&source[owner.start..]);
-            let mut buffer = Vec::new();
-            reader
-                .read_event_into(&mut buffer)
-                .map_err(|error| footer_malformed(&part, error))?;
-            let insertion =
-                owner.start + reader.buffer_position() as usize - if owner.empty { 2 } else { 1 };
+            let insertion = owner.start
+                + oxoffice_core::xml_element::start_tag(&source[owner.start..])
+                    .map_err(|error| footer_malformed(&part, error))?
+                    .attributes_end;
             let mut bytes = source[..insertion].to_vec();
             bytes.extend_from_slice(
                 format!(" name=\"{}\"", escape_attribute_value(name)).as_bytes(),
@@ -840,7 +837,6 @@ pub(super) fn portable_owned_fragment(
         let event = reader
             .read_event_into(&mut buffer)
             .map_err(|error| invalid_shape_mutation("apply theme", error.to_string()))?;
-        let finish = reader.buffer_position() as usize;
         let empty = matches!(&event, XmlEvent::Empty(_));
         match event {
             XmlEvent::Start(start) | XmlEvent::Empty(start) => {
@@ -910,7 +906,12 @@ pub(super) fn portable_owned_fragment(
                     }
                 }
                 if begin == owner_start {
-                    let insertion = finish - if empty { 2 } else { 1 };
+                    let insertion = owner_start
+                        + oxoffice_core::xml_element::start_tag(&source[owner_start..])
+                            .map_err(|error| {
+                                invalid_shape_mutation("apply theme", error.to_string())
+                            })?
+                            .attributes_end;
                     let mut result = source[owner_start..insertion].to_vec();
                     for (key, value, declaration_scope) in &inherited_policies {
                         let property = key.rsplit(':').next().unwrap_or(key);
@@ -1226,39 +1227,11 @@ fn append_imported_master_id(source: &[u8], id: u32, relationship: &str) -> Resu
     );
     let mut result = source.to_vec();
     if let Some((_, _, begin, end)) = lists.first().copied() {
-        let mut reader = NsReader::from_reader(&source[*begin..*end]);
-        let mut buffer = Vec::new();
-        // Read the physical token only. Its qualified ownership was proved in the parent scope above.
-        let event = reader
-            .read_event_into(&mut buffer)
-            .map_err(OpcError::from)?;
-        let head_end = *begin + reader.buffer_position() as usize;
-        match event {
-            XmlEvent::Empty(start) => {
-                let name = String::from_utf8_lossy(start.name().as_ref()).into_owned();
-                let expanded = format!(">{item}</{name}>");
-                result.splice(head_end - 2..head_end, expanded.bytes());
-            }
-            XmlEvent::Start(_) => {
-                let incomplete =
-                    |_| invalid_shape_mutation("import master", "master list is incomplete");
-                let list = std::str::from_utf8(&source[*begin..*end]).map_err(incomplete)?;
-                let close = oxoffice_core::xml_element::element_span(list)
-                    .map_err(|_| {
-                        invalid_shape_mutation("import master", "master list is incomplete")
-                    })?
-                    .end_tag
-                    .start
-                    + *begin;
-                result.splice(close..close, item.bytes());
-            }
-            _ => {
-                return Err(invalid_shape_mutation(
-                    "import master",
-                    "master list root is unsupported",
-                ));
-            }
-        }
+        // The list, its qualified ownership proved in the parent scope above,
+        // gets the item at the end of its content.
+        let list = oxoffice_core::xml_element::append_content(&source[*begin..*end], &item)
+            .map_err(|_| invalid_shape_mutation("import master", "master list is incomplete"))?;
+        result.splice(*begin..*end, list);
     } else {
         let insertion = children
             .iter()

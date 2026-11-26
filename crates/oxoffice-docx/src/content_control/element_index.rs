@@ -194,11 +194,10 @@ pub(super) fn insert_into_element(
 
 pub(super) fn expand_empty(element: &[u8], payload: &[u8]) -> Result<Vec<u8>> {
     let qname = element_qname(element)?;
-    let slash = element
-        .windows(2)
-        .rposition(|window| window == b"/>")
-        .ok_or_else(|| Error::Other("content control empty element is not closed".to_owned()))?;
-    let mut updated = element[..slash].to_vec();
+    let attributes_end = oxoffice_core::xml_element::start_tag(element)
+        .map_err(|_| Error::Other("content control empty element is not closed".to_owned()))?
+        .attributes_end;
+    let mut updated = element[..attributes_end].to_vec();
     while updated.last().is_some_and(u8::is_ascii_whitespace) {
         updated.pop();
     }

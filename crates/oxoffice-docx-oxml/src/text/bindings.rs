@@ -1470,17 +1470,12 @@ pub(crate) fn retained_binding_plan<'a>(
     loop {
         let start = reader.buffer_position() as usize;
         let event = reader.read_event_into(&mut buffer)?;
-        let (open_end, end, empty) = match event {
+        let end = match event {
             Event::Start(root) => {
-                let open_end = reader.buffer_position() as usize;
                 reader.read_to_end_into(root.name(), &mut Vec::new())?;
-                (open_end, reader.buffer_position() as usize, false)
+                reader.buffer_position() as usize
             }
-            Event::Empty(_) => (
-                reader.buffer_position() as usize,
-                reader.buffer_position() as usize,
-                true,
-            ),
+            Event::Empty(_) => reader.buffer_position() as usize,
             Event::Eof => break,
             _ => {
                 buffer.clear();
@@ -1506,7 +1501,9 @@ pub(crate) fn retained_binding_plan<'a>(
                 })?;
         }
         if !required.is_empty() {
-            roots.push((open_end - if empty { 2 } else { 1 }, required));
+            let attributes_end =
+                start + oxoffice_core::xml_element::start_tag(&raw[start..])?.attributes_end;
+            roots.push((attributes_end, required));
         }
         buffer.clear();
     }
@@ -1940,7 +1937,6 @@ fn raw_with_root_bindings_and_map_in(
     loop {
         let start = reader.buffer_position() as usize;
         let event = reader.read_event()?;
-        let empty = matches!(event, Event::Empty(_));
         let element = match event {
             Event::Start(element) | Event::Empty(element) => element,
             Event::Eof => {
@@ -1952,12 +1948,15 @@ fn raw_with_root_bindings_and_map_in(
             _ => continue,
         };
         let end = reader.buffer_position() as usize;
-        // Exactly the payload and delimiters emitted by quick-xml's existing
-        // Start/Empty writer, with the same lexical or semantic value policy.
+        // The tag's own close, and what follows it, are copied as written.
+        let attributes_end =
+            start + oxoffice_core::xml_element::start_tag(&raw[start..])?.attributes_end;
+        // Exactly the payload emitted by quick-xml's existing Start/Empty
+        // writer, with the same lexical or semantic value policy.
         let mut length = start
             .checked_add(element.as_ref().len())
-            .and_then(|n| n.checked_add(if empty { 3 } else { 2 }))
-            .and_then(|n| n.checked_add(raw.len() - end))
+            .and_then(|n| n.checked_add(1))
+            .and_then(|n| n.checked_add(raw.len() - attributes_end))
             .ok_or_else(|| OxmlError::InvalidValue("raw namespace output overflow".into()))?;
         for (prefix, namespace) in bindings {
             let key = if prefix.is_empty() {
@@ -1999,32 +1998,24 @@ fn raw_with_root_bindings_and_map_in(
             }
             output.push(b'"');
         }
-        output.extend_from_slice(if empty { b"/>" } else { b">" });
-        output.extend_from_slice(&raw[end..]);
+        output.extend_from_slice(&raw[attributes_end..]);
         debug_assert_eq!(output.len(), length);
         let mapped = source_map
             .map(|map| -> Result<_> {
                 // These are the actual copied prefix/payload and suffix ranges of
                 // this producer. Namespace insertions have no incoming authority.
                 let payload_end = start + 1 + element.as_ref().len();
-                let delimiter = if empty {
-                    b"/>".as_slice()
-                } else {
-                    b">".as_slice()
-                };
-                let delimiter_start = end - delimiter.len();
                 let mut joined = crate::document::WordSourceMap::generated(0);
                 joined.extend(&map.slice(0..start)?)?;
                 if raw.get(start..start + 1) == Some(b"<")
                     && raw.get(start + 1..payload_end) == Some(element.as_ref())
-                    && payload_end == delimiter_start
-                    && raw.get(delimiter_start..end) == Some(delimiter)
+                    && payload_end == attributes_end
                 {
                     joined.extend(&map.slice(start..payload_end)?)?;
                     joined.extend(&crate::document::WordSourceMap::generated(
                         length - raw.len(),
                     ))?;
-                    joined.extend(&map.slice(delimiter_start..raw.len())?)?;
+                    joined.extend(&map.slice(attributes_end..raw.len())?)?;
                 } else {
                     // A canonicalized opening remains Generated. The untouched
                     // suffix still comes from this exact consumed source range.
@@ -2117,14 +2108,13 @@ fn raw_with_root_word_binding_in<'raw>(
     let mut reader = Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     loop {
-        let event = reader.read_event()?;
-        let close = match event {
-            Event::Start(_) => 1,
-            Event::Empty(_) => 2,
+        let start = reader.buffer_position() as usize;
+        match reader.read_event()? {
+            Event::Start(_) | Event::Empty(_) => {}
             Event::Eof => return Ok((Cow::Borrowed(raw), false)),
             _ => continue,
-        };
-        let at = reader.buffer_position() as usize - close;
+        }
+        let at = start + oxoffice_core::xml_element::start_tag(&raw[start..])?.attributes_end;
         let escaped = escaped_source_len(namespace)?;
         let length = raw
             .len()

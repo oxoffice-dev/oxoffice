@@ -367,7 +367,8 @@ pub(crate) fn bibliography_first_paragraph_properties(
         }
         validate(parsed, old, order)?;
         if old.empty {
-            let mut result = xml[old.full.start..old.full.end - 2].to_vec();
+            let tag = oxoffice_core::xml_element::start_tag(&xml[old.full.start..])?;
+            let mut result = xml[old.full.start..old.full.start + tag.attributes_end].to_vec();
             result.push(b'>');
             for &child in &new.children {
                 result.extend_from_slice(&generated_particle(

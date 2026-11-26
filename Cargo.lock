@@ -1214,6 +1214,7 @@ name = "oxoffice-docx-layout"
 version = "0.7.0"
 dependencies = [
  "oxoffice-chart",
+ "oxoffice-core",
  "oxoffice-docx-oxml",
  "oxoffice-drawing",
  "oxoffice-layout",

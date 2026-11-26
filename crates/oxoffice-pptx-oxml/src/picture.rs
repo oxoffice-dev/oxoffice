@@ -1429,15 +1429,7 @@ fn replace_media_source_attributes(
         copied_through = removal.end;
     }
     rewritten_tag.extend_from_slice(&xml[copied_through..tag_range.end]);
-    let terminator = rewritten_tag
-        .iter()
-        .rposition(|byte| *byte == b'>')
-        .ok_or_else(|| OxmlError::InvalidValue("media start tag has no terminator".to_owned()))?;
-    let insertion = if rewritten_tag.get(terminator.wrapping_sub(1)) == Some(&b'/') {
-        terminator - 1
-    } else {
-        terminator
-    };
+    let insertion = oxoffice_core::xml_element::start_tag(&rewritten_tag)?.attributes_end;
     let attribute_name = match source {
         MediaSource::Embedded { .. } => "embed",
         MediaSource::Linked { .. } => "link",

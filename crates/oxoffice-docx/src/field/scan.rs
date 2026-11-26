@@ -135,12 +135,7 @@ pub(crate) fn xml_fragment_with_namespaces(
                     local_namespaces.insert(String::from_utf8_lossy(prefix).into_owned());
                 }
             }
-            let tag_end = reader.buffer_position() as usize;
-            let insertion = if tag_end >= 2 && raw[tag_end - 2] == b'/' {
-                tag_end - 2
-            } else {
-                tag_end - 1
-            };
+            let insertion = oxoffice_core::xml_element::start_tag(raw)?.attributes_end;
             (insertion, local_namespaces)
         }
         _ => return Err(Error::Other(format!("{description} has no start tag"))),
@@ -1739,12 +1734,7 @@ fn append_with_inherited_namespaces(
                         local_namespaces.insert(String::from_utf8_lossy(prefix).into_owned());
                     }
                 }
-                let tag_end = reader.buffer_position() as usize;
-                let insertion = if tag_end >= 2 && raw[tag_end - 2] == b'/' {
-                    tag_end - 2
-                } else {
-                    tag_end - 1
-                };
+                let insertion = oxoffice_core::xml_element::start_tag(raw)?.attributes_end;
                 (insertion, local_namespaces)
             }
             _ => {

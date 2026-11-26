@@ -134,6 +134,7 @@ fn bibliography_instruction_source(
             let word = namespace_is_word(&namespace);
             let event = event.into_owned();
             let after = reader.buffer_position() as usize;
+            let empty = matches!(event, Event::Empty(_));
             let physical = |offset: usize| -> Result<usize> {
                 offset
                     .checked_sub(wrapper_len)
@@ -149,7 +150,6 @@ fn bibliography_instruction_source(
                         return Err(Error::Other("mixed bibliography instruction XML".into()));
                     }
                     let local = element.local_name().as_ref().to_vec();
-                    let empty = wrapped.get(after.saturating_sub(2)..after) == Some(b"/>");
                     if source.attribute && word && local == b"fldSimple" {
                         for attribute in element.attributes() {
                             let attribute =
@@ -430,9 +430,9 @@ fn preserve_bibliography_div_group(
         let event = reader.read_event_into(&mut buffer).map_err(|error| {
             Error::Other(format!("invalid bibliography producer identity: {error}"))
         })?;
+        let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(start) | Event::Empty(start) => {
-                let empty = story.xml[reader.buffer_position() as usize - 2] == b'/';
                 let (namespace, local) = reader.resolver().resolve_element(start.name());
                 let word = matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == W_NS.as_bytes());
                 let local = if word {

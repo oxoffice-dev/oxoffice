@@ -2852,9 +2852,10 @@ pub(crate) fn rewrite_word_root_attribute(
     value: &str,
 ) -> Result<Vec<u8>> {
     let mut reader = Reader::from_reader(raw);
-    let element = loop {
+    let (tag_start, element) = loop {
+        let tag_start = reader.buffer_position() as usize;
         match reader.read_event()? {
-            Event::Start(element) | Event::Empty(element) => break element,
+            Event::Start(element) | Event::Empty(element) => break (tag_start, element),
             Event::Decl(_) | Event::Comment(_) | Event::PI(_) => {}
             Event::Text(text) if text.as_ref().iter().all(u8::is_ascii_whitespace) => {}
             _ => return Err(OxmlError::InvalidValue("missing property root".to_owned())),
@@ -2907,12 +2908,8 @@ pub(crate) fn rewrite_word_root_attribute(
                 (prefix, declaration)
             }
         };
-        let end = reader.buffer_position() as usize;
-        let insert = if raw.get(end.saturating_sub(2)) == Some(&b'/') {
-            end - 2
-        } else {
-            end - 1
-        };
+        let insert =
+            tag_start + oxoffice_core::xml_element::start_tag(&raw[tag_start..])?.attributes_end;
         let attribute = format!(
             "{declaration} {prefix}:{}=\"{value}\"",
             std::str::from_utf8(local)?
