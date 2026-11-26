@@ -220,22 +220,20 @@ impl PyHeaderFooter {
             .section_story(self.index, self.kind, self.variant)
             .map_err(|error| docx_to_pyerr(py, error))?
         {
-            for item in document
+            // The story's tables, those of its block content controls too.
+            for location in document
                 .inner
-                .story_items(story.story())
+                .story_tables(story.story())
                 .map_err(|error| docx_to_pyerr(py, error))?
             {
-                if item.kind() == oxoffice_docx::StoryItemKind::Table {
-                    let location = item.location().clone();
-                    let path = document
-                        .revisions
-                        .capture(smallvec![PathSeg::Body(location.index_path()[0])]);
-                    tables.push(Py::new(
-                        py,
-                        PyTable::for_story(self.document.clone_ref(py), path, location)
-                            .bind_current(py, Some(document.section_child_scope(self.index)?))?,
-                    )?);
-                }
+                let path = document
+                    .revisions
+                    .capture(smallvec![PathSeg::Body(location.index_path()[0])]);
+                tables.push(Py::new(
+                    py,
+                    PyTable::for_story(self.document.clone_ref(py), path, location)
+                        .bind_current(py, Some(document.section_child_scope(self.index)?))?,
+                )?);
             }
         }
         PyTuple::new(py, tables)

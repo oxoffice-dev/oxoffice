@@ -56,9 +56,6 @@ pub(super) fn checked_heading_level(value: &Bound<'_, PyAny>) -> PyResult<i64> {
 /// What `find_content_index` says of a block that is no direct body child.
 const NO_BODY_INDEX_ROUTE: &str = "and has no body index: pass the paragraph or table itself (or its ContentLocation) to clone_content, move_content, pop_content or insert_content";
 
-/// What a location says of a table written directly in a block control.
-const TABLE_IN_CONTROL: &str = "a table written directly in a block content control has no location (limitation docx-block-control-table-location, #660): copy, move or remove it with its control, or copy it in a DocumentFragment.from_range from the paragraph before it ((control, k)) to the paragraph after it or to ContentLocation.control_end(story, control)";
-
 impl PyDocument {
     pub(super) fn direct_content_index(
         slf: &Py<Self>,
@@ -106,7 +103,9 @@ impl PyDocument {
             return table
                 .direct_body_index(py)
                 .map_err(|_| match table.in_block_control(py) {
-                    Ok(true) => PyValueError::new_err(TABLE_IN_CONTROL),
+                    Ok(true) => PyValueError::new_err(format!(
+                        "the table is inside a block content control {NO_BODY_INDEX_ROUTE}"
+                    )),
                     _ => PyValueError::new_err(format!(
                         "the table is not a direct body child {NO_BODY_INDEX_ROUTE}"
                     )),
@@ -156,9 +155,6 @@ impl PyDocument {
                 return Err(PyValueError::new_err(
                     "content handle belongs to a different document",
                 ));
-            }
-            if table.in_block_control(py)? {
-                return Err(PyValueError::new_err(TABLE_IN_CONTROL));
             }
             return table.block_location(py);
         }

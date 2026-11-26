@@ -73,9 +73,14 @@ impl TableLocation {
         match self {
             Self::Related(location) => Self::refreshed(document, location),
             Self::Body(index) => {
-                let slot = document.content_index_of_table(*index).ok_or_else(|| {
-                    oxoffice_docx::Error::Other("table has no checked direct physical owner".into())
-                })?;
+                // A table written in a block content control: `[c, k]`.
+                let Some(slot) = document.content_index_of_table(*index) else {
+                    return document.table_story_location(*index)?.ok_or_else(|| {
+                        oxoffice_docx::Error::Other(
+                            "table has no checked physical source owner".into(),
+                        )
+                    });
+                };
                 document
                     .direct_body_item_location(slot)?
                     .filter(|location| location.item_kind() == oxoffice_docx::StoryItemKind::Table)
@@ -138,6 +143,33 @@ impl TableLocation {
             }
         }
     }
+}
+
+/// `location` when the owner inventory holds it: a table written in a block
+/// content control, `[c, k]`, has no owner there, and its handle reads its
+/// location each time.
+fn inventoried_table(
+    location: oxoffice_docx::ContentLocation,
+) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation> {
+    if location.index_path().len() == 1 {
+        Ok(location)
+    } else {
+        Err(oxoffice_docx::Error::Other(
+            "a table of a block content control has no owner record".into(),
+        ))
+    }
+}
+
+/// The location of a table whose handle has no owner record: a table of a
+/// block content control.
+fn unowned_table_location(
+    document: &oxoffice_docx::Document,
+    index: usize,
+    related: &Option<oxoffice_docx::ContentLocation>,
+) -> PyResult<oxoffice_docx::ContentLocation> {
+    TableLocation::new(index, related)
+        .native(document)
+        .map_err(|_| PyValueError::new_err("table XML owner route is unsupported"))
 }
 
 /// The route of a table handle's physical owner in the inventory of
@@ -514,6 +546,7 @@ impl PyTable {
                 .indexed_table_location(index, &self.related, None)
                 .map(Ok)
                 .unwrap_or_else(|| TableLocation::new(index, &self.related).native(&document.inner))
+                .and_then(inventoried_table)
             {
                 Ok(location) => {
                     let (path, owner) = document.capture_owner(
@@ -561,6 +594,10 @@ impl PyTable {
         let index = table_index(&self.path)?;
         let location =
             prepared_table_location(py, document, prepared, candidate, index, &self.related)?;
+        if inventoried_table(location.clone()).is_err() {
+            self.path = document.capture_prepared_snapshot(prepared, self.path.segs.clone())?;
+            return Ok(self);
+        }
         let (path, owner) = document.capture_prepared_owner(
             prepared,
             &crate::document::WordOwnerLocation::Table(location),
@@ -602,8 +639,7 @@ impl PyTable {
             .read(&self.document.borrow(py).inner, read)
             .map_err(|error| docx_to_pyerr(py, error))
     }
-    /// Whether this is a body table written in a block content control,
-    /// which has no location (limitation docx-block-control-table-location).
+    /// Whether this is a body table written in a block content control.
     pub(crate) fn in_block_control(&self, py: Python<'_>) -> PyResult<bool> {
         let index = self.validate(py)?;
         let related = self.current_related(py)?;
@@ -730,12 +766,18 @@ impl PyTable {
 
     #[getter]
     fn xml(&self, py: Python<'_>) -> PyResult<String> {
-        self.validate(py)?;
+        let index = self.validate(py)?;
+        let related = self.current_related(py)?;
         let document = self.document.borrow(py);
-        let owner = self
-            .owner
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("table XML owner route is unsupported"))?;
+        let Some(owner) = self.owner.as_ref() else {
+            // A table of a block content control, read at its location.
+            let bytes = document
+                .inner
+                .table_element_xml(&unowned_table_location(&document.inner, index, &related)?)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            return String::from_utf8(bytes)
+                .map_err(|error| PyValueError::new_err(error.to_string()));
+        };
         let current = || -> PyResult<Vec<u8>> {
             let location = document.current_table_owner(owner)?;
             document
@@ -760,17 +802,30 @@ impl PyTable {
     }
 
     fn replace_xml(&self, py: Python<'_>, xml: &str) -> PyResult<()> {
-        self.validate(py)?;
+        let index = self.validate(py)?;
+        let related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
-        let owner = self
-            .owner
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("table XML owner route is unsupported"))?;
-        let location = document.current_table_owner(owner)?;
+        let location = match self.owner.as_ref() {
+            Some(owner) => document.current_table_owner(owner)?,
+            None => unowned_table_location(&document.inner, index, &related)?,
+        };
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .replace_table_xml(&location, xml)
             .map_err(|error| docx_to_pyerr(py, error))?;
+        if self.owner.is_none() {
+            // No owner record (a table of a block content control): published
+            // as a structural edit, as `Document.insert_content` is.
+            let prepared = document.prepare_word_revision(
+                py,
+                &candidate,
+                "Table.replace_xml",
+                crate::document::WordPublication::Conservative,
+            )?;
+            document.commit_word_revision(prepared)?;
+            document.install_inner(candidate);
+            return Ok(());
+        }
         document.publish_owner_candidate(
             py,
             candidate,
@@ -1691,6 +1746,7 @@ impl PyRow {
                 .indexed_table_location(index, &self.related, None)
                 .map(Ok)
                 .unwrap_or_else(|| TableLocation::new(index, &self.related).native(&document.inner))
+                .and_then(inventoried_table)
             {
                 Ok(location) => {
                     let (path, owner) = document.capture_owner(
@@ -1728,6 +1784,10 @@ impl PyRow {
             table_index(&self.path)?,
             &self.related,
         )?;
+        if inventoried_table(location.clone()).is_err() {
+            self.path = document.capture_prepared_snapshot(prepared, self.path.segs.clone())?;
+            return Ok(self);
+        }
         let (path, owner) = document.capture_prepared_owner(
             prepared,
             &crate::document::WordOwnerLocation::Table(location),
@@ -2152,6 +2212,7 @@ impl PyCell {
                 .indexed_table_location(table, &self.related, None)
                 .map(Ok)
                 .unwrap_or_else(|| TableLocation::new(table, &self.related).native(&document.inner))
+                .and_then(inventoried_table)
             {
                 Ok(table) => {
                     let location = match document.indexed_cell_location(&table, row, cell) {
@@ -2302,12 +2363,22 @@ impl PyCell {
 
     #[getter]
     fn xml(&self, py: Python<'_>) -> PyResult<String> {
-        self.validate(py)?;
+        let (table, row, cell) = self.validate(py)?;
+        let related = self.current_related(py)?;
         let document = self.document.borrow(py);
-        let owner = self
-            .owner
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("cell XML owner route is unsupported"))?;
+        let Some(owner) = self.owner.as_ref() else {
+            // A cell of a table of a block content control, read at its location.
+            let bytes = document
+                .inner
+                .cell_element_xml(
+                    &unowned_table_location(&document.inner, table, &related)?,
+                    row,
+                    cell,
+                )
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            return String::from_utf8(bytes)
+                .map_err(|error| PyValueError::new_err(error.to_string()));
+        };
         let current = || -> PyResult<Vec<u8>> {
             let (location, row, cell) = document.current_cell_owner(owner)?;
             document
@@ -2336,13 +2407,17 @@ impl PyCell {
     }
 
     fn replace_xml(&self, py: Python<'_>, xml: &str) -> PyResult<()> {
-        self.validate(py)?;
+        let (table, row, cell) = self.validate(py)?;
+        let related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
-        let owner = self
-            .owner
-            .as_ref()
-            .ok_or_else(|| PyValueError::new_err("cell XML owner route is unsupported"))?;
-        let (location, row, cell) = document.current_cell_owner(owner)?;
+        let (location, row, cell) = match self.owner.as_ref() {
+            Some(owner) => document.current_cell_owner(owner)?,
+            None => (
+                unowned_table_location(&document.inner, table, &related)?,
+                row,
+                cell,
+            ),
+        };
         let story = document
             .inner
             .story_table_cell(&location, row, cell)
@@ -2351,6 +2426,19 @@ impl PyCell {
         candidate
             .replace_cell_xml(&location, row, cell, xml)
             .map_err(|error| docx_to_pyerr(py, error))?;
+        if self.owner.is_none() {
+            // No owner record (a table of a block content control): published
+            // as a structural edit, as `Document.insert_content` is.
+            let prepared = document.prepare_word_revision(
+                py,
+                &candidate,
+                "Cell.replace_xml",
+                crate::document::WordPublication::Conservative,
+            )?;
+            document.commit_word_revision(prepared)?;
+            document.install_inner(candidate);
+            return Ok(());
+        }
         document.publish_owner_candidate(
             py,
             candidate,
@@ -2386,19 +2474,11 @@ impl PyCell {
                 .map(oxoffice_docx::Length::emu);
         let current_related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
-        let story = if current_related.is_none() {
-            // Preserve the direct-table lookup's current error ordering.
-            let slot = document
-                .inner
-                .content_index_of_table(table)
-                .ok_or_else(|| {
-                    docx_to_pyerr(
-                        py,
-                        oxoffice_docx::Error::Other(
-                            "table has no checked direct physical owner".into(),
-                        ),
-                    )
-                })?;
+        let direct = current_related
+            .is_none()
+            .then(|| document.inner.content_index_of_table(table))
+            .flatten();
+        let story = if let Some(slot) = direct {
             document
                 .inner
                 .direct_body_cell_story(slot, row, cell)
