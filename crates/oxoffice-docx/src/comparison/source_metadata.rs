@@ -15,7 +15,6 @@ fn ordinary_identity_filtered_source(xml: &str, inherited: &NamespaceBindings) -
     let (namespace, event) = reader
         .read_resolved_event()
         .map_err(|error| Error::Other(error.to_string()))?;
-    let empty = matches!(event, Event::Empty(_));
     let (Event::Start(root) | Event::Empty(root)) = event else {
         return Ok(closed);
     };
@@ -55,17 +54,15 @@ fn ordinary_identity_filtered_source(xml: &str, inherited: &NamespaceBindings) -
             oxoffice_core::xml::push_raw_attribute(&mut filtered, attribute);
         }
     }
-    let tail = reader.buffer_position() as usize;
+    // The filtered head, then the root's own close and content as written.
     let mut writer = Writer::new(Vec::new());
-    writer.write_event(if empty {
-        Event::Empty(filtered)
-    } else {
-        Event::Start(filtered)
-    })?;
-    writer
-        .get_mut()
-        .extend_from_slice(&closed.as_bytes()[tail..]);
-    String::from_utf8(writer.into_inner()).map_err(utf8_error)
+    writer.write_event(Event::Start(filtered))?;
+    let mut output = writer.into_inner();
+    output.truncate(oxoffice_core::xml_element::start_tag(&output)?.attributes_end);
+    output.extend_from_slice(
+        &closed.as_bytes()[oxoffice_core::xml_element::start_tag(&closed)?.attributes_end..],
+    );
+    String::from_utf8(output).map_err(utf8_error)
 }
 
 pub(super) fn source_root_metadata(
