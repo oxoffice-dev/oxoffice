@@ -1064,7 +1064,7 @@ pub(crate) fn without_namespace_declarations(xml: &[u8]) -> Vec<u8> {
 fn without_whitespace_between_elements(xml: &[u8]) -> Vec<u8> {
     use quick_xml::events::Event;
     const TEXT_ELEMENTS: &[&[u8]] = &[b"t", b"delText", b"instrText", b"delInstrText"];
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut out = Vec::with_capacity(xml.len());
     // Per open element: whether its text is kept whatever it holds.

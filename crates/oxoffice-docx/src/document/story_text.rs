@@ -42,7 +42,7 @@ pub(super) fn story_hyperlink_tags(
     xml: &[u8],
     link: &Range<usize>,
 ) -> Result<(Range<usize>, Option<Range<usize>>)> {
-    let mut reader = quick_xml::Reader::from_reader(&xml[link.clone()]);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&xml[link.clone()]);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut depth = 0usize;
@@ -88,7 +88,7 @@ pub(super) fn external_story_hyperlink_start(
     scope: &BTreeMap<String, String>,
     relationship_id: &str,
 ) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(tag);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(tag);
     let mut buffer = Vec::new();
     let element = match reader
         .read_event_into(&mut buffer)
@@ -181,7 +181,7 @@ pub(super) fn unwrap_story_hyperlink(
     let mut edits = vec![(start.clone(), Vec::new())];
     if let Some(end) = end {
         let mut declarations = Vec::new();
-        let mut reader = quick_xml::Reader::from_reader(&xml[start.clone()]);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&xml[start.clone()]);
         let mut buffer = Vec::new();
         if let Event::Start(element) = reader
             .read_event_into(&mut buffer)
@@ -346,7 +346,8 @@ pub(super) fn bookmark_marker_spans(xml: &[u8]) -> Result<Vec<BookmarkMarkerSpan
                             story_element_end(xml, before)?
                         };
                         if !empty {
-                            let mut child = quick_xml::Reader::from_reader(&xml[after..end]);
+                            let mut child =
+                                oxoffice_core::xml_reader::Reader::from_reader(&xml[after..end]);
                             if !matches!(
                                 child
                                     .read_event()

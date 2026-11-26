@@ -3,12 +3,12 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::namespace::matches_local_name;
 use oxoffice_docx_oxml::placeholder;
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
 use oxoffice_docx_oxml::text::{CT_P, RunContent};
-use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde_json::Value;
 

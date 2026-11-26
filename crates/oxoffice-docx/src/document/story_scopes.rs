@@ -6,7 +6,7 @@ pub(crate) fn story_namespace_scope_at(
     xml: &[u8],
     offset: usize,
 ) -> Result<BTreeMap<String, String>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut scopes = vec![BTreeMap::<String, String>::new()];
     let mut changed_frames = Vec::new();
@@ -185,7 +185,7 @@ pub(crate) fn story_namespace_ancestors_at(
     let mut found = HashMap::with_capacity(requested.len());
     let mut active = Vec::<Option<usize>>::new();
     let mut decoded_bytes = 0usize;
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut buffer = Vec::new();
     loop {
         let before = reader.buffer_position() as usize;
@@ -259,7 +259,7 @@ pub(super) fn story_namespace_scopes_at(
     if requested.is_empty() {
         return Ok(found);
     }
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut scopes = vec![BTreeMap::<String, String>::new()];
     let mut changed_frames = Vec::new();
@@ -537,7 +537,7 @@ pub(super) fn content_fragment_root_is_section_properties(
     item: &StoryItemSpan,
 ) -> Result<bool> {
     let mut scope = story_namespace_scope_at(xml, item.full.start)?;
-    let mut reader = quick_xml::Reader::from_reader(&xml[item.full.clone()]);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&xml[item.full.clone()]);
     let mut buffer = Vec::new();
     loop {
         match reader

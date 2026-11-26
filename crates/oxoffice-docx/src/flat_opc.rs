@@ -7,12 +7,12 @@ use std::path::Path;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use oxoffice_core::xml::validate_strict_xml_1_0;
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_opc::content_types::{self, ContentTypes};
 use oxoffice_opc::relationship::{Relationships, rel_types};
 use oxoffice_opc::{OpcPackage, PackageReadLimits, write_atomic_file};
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
 use quick_xml::{Writer, XmlVersion};
 
 use crate::document::Document;
@@ -539,7 +539,7 @@ fn write_flat_package(package: &OpcPackage) -> Result<Vec<u8>> {
 }
 
 fn copy_xml_without_declaration(xml: &[u8], output: &mut Writer<Vec<u8>>) -> Result<()> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     loop {
@@ -600,7 +600,7 @@ fn materialize_required_inherited_namespaces(
 ) -> Result<Vec<u8>> {
     let mut required = HashSet::new();
     let mut local_scopes = Vec::new();
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     loop {
@@ -637,7 +637,7 @@ fn materialize_required_inherited_namespaces(
         .filter(|(key, _)| required.contains(key))
         .cloned()
         .collect::<NamespaceDeclarations>();
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::new());
     let mut buffer = Vec::new();

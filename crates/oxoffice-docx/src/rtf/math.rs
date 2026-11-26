@@ -6,9 +6,9 @@
 
 use std::fmt::Write as _;
 
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_docx_oxml::math::{CT_OMath, CT_OMathPara, OfficeMath};
 use oxoffice_docx_oxml::namespace::{M_NS, W_NS};
-use quick_xml::NsReader;
 use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
 

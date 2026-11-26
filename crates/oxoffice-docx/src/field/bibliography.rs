@@ -170,7 +170,9 @@ fn bibliography_instruction_source(
                                 let start = before + start;
                                 let finish = before + finish;
                                 let mut text_reader =
-                                    quick_xml::Reader::from_reader(&wrapped[start..finish]);
+                                    oxoffice_core::xml_reader::Reader::from_reader(
+                                        &wrapped[start..finish],
+                                    );
                                 let mut text_buffer = Vec::new();
                                 loop {
                                     let text_before = text_reader.buffer_position() as usize;
@@ -650,8 +652,9 @@ pub(crate) fn update_bibliography_caches(
                     "native bibliography paragraph properties",
                 )?;
                 let paragraph_start = span.instruction_paragraph_start;
-                let mut reader =
-                    quick_xml::Reader::from_reader(&story.xml[paragraph_start..span.result_start]);
+                let mut reader = oxoffice_core::xml_reader::Reader::from_reader(
+                    &story.xml[paragraph_start..span.result_start],
+                );
                 let mut buffer = Vec::new();
                 let Event::Start(start) = reader.read_event_into(&mut buffer).map_err(|error| {
                     Error::Other(format!("invalid bibliography first paragraph: {error}"))

@@ -929,8 +929,9 @@ impl Document {
                         .and_then(|(_, scopes)| scopes.get(&span.start))
                     {
                         Some(inherited) => {
-                            let mut reader =
-                                quick_xml::Reader::from_reader(&source.xml[span.clone()]);
+                            let mut reader = oxoffice_core::xml_reader::Reader::from_reader(
+                                &source.xml[span.clone()],
+                            );
                             match reader.read_event().map_err(|error| {
                                 Error::Other(format!("story namespace scope scan failed: {error}"))
                             })? {

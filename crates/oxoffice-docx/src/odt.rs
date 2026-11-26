@@ -7,6 +7,7 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use oxoffice_core::xml::is_xml_1_0_character;
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_docx_oxml::document::BodyContent;
 use oxoffice_docx_oxml::numbering::{CT_Lvl, ST_NumberFormat};
 use oxoffice_docx_oxml::properties::{CT_PPr, CT_RPr};
@@ -20,7 +21,6 @@ use oxoffice_docx_oxml::units::Twips;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
-use quick_xml::reader::NsReader;
 use zip::CompressionMethod;
 use zip::ZipWriter;
 use zip::read::ZipArchive;

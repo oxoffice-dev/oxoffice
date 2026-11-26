@@ -239,7 +239,7 @@ fn apply_picture_anchor(anchor: &mut CT_Anchor, options: PictureAnchor) {
 // Locate only the unchanged API-owned alternate representation. Raw unrelated
 // header content and any edits outside this exact owner remain outside the splice.
 pub(super) fn drawingml_watermark_span(xml: &[u8]) -> Result<Option<(Range<usize>, u32)>> {
-    let mut reader = quick_xml::NsReader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(xml);
     let mut depth = 0usize;
     struct WatermarkOwner {
         start: usize,

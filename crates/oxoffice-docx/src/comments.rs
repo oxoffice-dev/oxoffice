@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_docx_oxml::comments::{CT_Comment, CT_Comments};
 use oxoffice_docx_oxml::comments_extended::{CT_CommentEx, CT_CommentsEx};
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
@@ -13,7 +14,6 @@ use oxoffice_opc::OpcPackage;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
 
 use crate::document::{
     CommentParagraphValue, visit_body_paragraphs_mut, visit_body_table_paragraphs_mut,
@@ -4378,7 +4378,8 @@ impl Document {
         let markers = comment_source_markers(xml)?;
         let mut edits = Vec::new();
         for marker in markers.into_iter().rev() {
-            let mut reader = quick_xml::Reader::from_reader(&xml[marker.span.clone()]);
+            let mut reader =
+                oxoffice_core::xml_reader::Reader::from_reader(&xml[marker.span.clone()]);
             if matches!(
                 reader
                     .read_event()

@@ -96,7 +96,7 @@ fn rebinding_namespace_declarations(
 /// The serializer owns the canonical `w` and `r` prefixes. Every other root
 /// attribute, including compatibility declarations, stays in source order.
 pub(super) fn retain_styles_root_attributes(source: &[u8], serialized: Vec<u8>) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(source);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source);
     let mut buffer = Vec::new();
     let root = loop {
         match reader
@@ -164,7 +164,7 @@ pub(super) fn retain_styles_root_attributes(source: &[u8], serialized: Vec<u8>) 
 }
 
 pub(super) fn root_namespace_declarations(xml: &[u8]) -> Result<Vec<(String, String)>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut buffer = Vec::new();
     loop {
         match reader
@@ -576,7 +576,7 @@ pub(super) fn logical_owner_snapshot(
     inherited_bindings: &[(String, String)],
     prospective_declarations: &[(String, String)],
 ) -> Result<LogicalOwnerSnapshot> {
-    let mut reader = quick_xml::Reader::from_reader(owner_xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(owner_xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut owner_bindings = inherited_bindings.to_vec();
@@ -692,7 +692,7 @@ fn namespace_marker_without_owner_declarations(
     // The drawing reader closes namespaces lost with its drawing wrapper on
     // the retained inline/anchor root. Admit only that concrete relocation.
     // Every other declaration and every nonnamespace byte stays significant.
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut depth = 0usize;
     let mut root_bindings = inherited_bindings.to_vec();
@@ -857,7 +857,7 @@ fn namespace_marker_without_owner_declarations(
 /// as it does in the serialized part a marker is looked for in. Start tags
 /// keep their spelling. XML the reader refuses is kept as it is.
 fn as_captured(raw: Vec<u8>) -> Vec<u8> {
-    let mut reader = quick_xml::Reader::from_reader(raw.as_slice());
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw.as_slice());
     reader.config_mut().trim_text(false);
     let mut writer = quick_xml::Writer::new(Vec::with_capacity(raw.len()));
     loop {
@@ -877,7 +877,7 @@ fn strip_marker_root_namespace_declarations(
     raw: &[u8],
     declarations: &[(String, String)],
 ) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     let mut buffer = Vec::new();
     let element = match reader
         .read_event_into(&mut buffer)
@@ -964,7 +964,7 @@ fn namespace_owner_markers(
     inherited_bindings: &[(String, String)],
     allow_redundant_local_bindings: bool,
 ) -> Result<Vec<NamespaceMarker>> {
-    let mut reader = quick_xml::Reader::from_reader(owner_xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(owner_xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut stack = Vec::new();

@@ -80,7 +80,7 @@ enum DynamicContentControlOwner {
 }
 
 fn dynamic_element_end(xml: &[u8], start: usize) -> Result<usize> {
-    let mut reader = quick_xml::Reader::from_reader(&xml[start..]);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&xml[start..]);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut depth = 0usize;
@@ -116,7 +116,7 @@ pub(crate) fn xml_fragment_with_namespaces(
     bindings: &BTreeMap<String, String>,
     description: &str,
 ) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let (insertion, local_namespaces) = match reader
@@ -1211,7 +1211,7 @@ fn dynamic_element_slice(xml: &[u8], start: usize) -> Result<&[u8]> {
     let tail = xml.get(start..).ok_or_else(|| {
         Error::Other("table of contents element offset is outside the document".to_owned())
     })?;
-    let mut reader = quick_xml::Reader::from_reader(tail);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(tail);
     let mut buffer = Vec::new();
     let mut depth = 0usize;
     loop {
@@ -1653,7 +1653,7 @@ pub(super) fn parse_dynamic_toc_field(xml: &[u8], span: &DynamicTocSpan) -> Resu
     source.extend_from_slice(span.start_paragraph_name.as_bytes());
     source.push(b'>');
     let parse_paragraph = |source: &[u8]| -> Result<CT_P> {
-        let mut reader = quick_xml::Reader::from_reader(source);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source);
         reader.config_mut().trim_text(false);
         let mut buffer = Vec::new();
         loop {
@@ -1710,7 +1710,7 @@ fn append_with_inherited_namespaces(
     raw: &[u8],
     inherited_namespaces: &BTreeMap<String, String>,
 ) -> Result<()> {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let (insertion, local_namespaces) =

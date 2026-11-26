@@ -8,8 +8,8 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::Event;
-use quick_xml::reader::Reader;
 
 use super::*;
 

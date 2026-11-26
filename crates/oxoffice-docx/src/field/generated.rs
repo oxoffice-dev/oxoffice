@@ -2295,7 +2295,7 @@ pub(super) fn generated_simple_span(
 }
 
 fn generated_simple_cache_xml(raw: &[u8], bindings: &BTreeMap<String, String>) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut depth = 0usize;
