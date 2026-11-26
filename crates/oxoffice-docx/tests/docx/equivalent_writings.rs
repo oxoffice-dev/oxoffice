@@ -338,6 +338,11 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
     }
     let other_prefixes =
         |bytes: Vec<u8>| rewrite_package(&bytes, Writing::OtherPrefixes).unwrap().0;
+    let paragraph = |ppr: &str| {
+        docx_with_body(&format!(
+            r#"<w:p><w:pPr>{ppr}</w:pPr><w:r><w:t>Quarterly totals.</w:t></w:r></w:p>"#
+        ))
+    };
     // A toggle's carrier: a modelled toggle with another attribute, in the
     // mark (`w:rtl`) or the paragraph (`w:bidi`), whose text is bookmarked
     // or not.
@@ -386,6 +391,16 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
             &carrier("bidi", "on", "x", false),
             carrier("bidi", "off", "x", false),
             false,
+        ),
+        (
+            &paragraph(r#"<w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs>"#),
+            paragraph(r#"<w:tabs><w:tab w:pos="720" w:val="left"/></w:tabs>"#),
+            true,
+        ),
+        (
+            &paragraph(r#"<w:pBdr><w:top w:val="single" w:sz="4"/></w:pBdr>"#),
+            paragraph(r#"<w:pBdr><w:top w:sz="4" w:val="single"/></w:pBdr>"#),
+            true,
         ),
     ]
     .into_iter()

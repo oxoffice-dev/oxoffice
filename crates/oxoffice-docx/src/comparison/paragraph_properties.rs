@@ -387,12 +387,15 @@ fn is_carrier(positions: &[(u8, usize)], index: usize) -> bool {
 /// toggle's carrier, kept for its other attributes, without its `w:val`: the
 /// modelled toggle says the value, and a save writes it in its own spelling
 /// (`1` or `on` as no value, `0` or `off` as `false`), which is no change.
+/// A kept element with content (`w:pBdr`, `w:tabs`) is read whole.
 fn retained_as_said(xml: &[u8], carrier: bool) -> Option<String> {
-    if !carrier {
-        return retained_canonical(xml);
+    let without = carrier
+        .then(|| std::str::from_utf8(xml).ok().and_then(without_own_val))
+        .flatten();
+    match without {
+        Some(without) => retained_canonical(without.as_bytes()),
+        None => retained_canonical(xml),
     }
-    let without = without_own_val(std::str::from_utf8(xml).ok()?)?;
-    retained_canonical(without.as_bytes())
 }
 
 /// `xml`, one element with no content, without the `val` attribute under
