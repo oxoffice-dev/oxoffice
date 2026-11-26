@@ -214,6 +214,18 @@ size = 11516
 features = ["headings", "table", "comment", "tracked-changes", "format-change", "bookmark", "hyperlink", "rsid", "paraId"]
 
 [[file]]
+path = "google-docs/office-comment-deleted-in-word.docx"
+producer = "Microsoft Word for Mac 16.115.2, from the Google Docs copy (author names neutral)"
+size = 23944
+features = ["headings", "table", "bookmark", "content-control", "rsid", "paraId"]
+
+[[file]]
+path = "google-docs/office-comment.docx"
+producer = "Google Docs, edited in Office mode in the browser (author names neutral)"
+size = 21657
+features = ["headings", "table", "comment", "bookmark", "content-control", "rsid", "paraId"]
+
+[[file]]
 path = "google-docs/reply.docx"
 producer = "Google Docs, edited by hand in the browser (author names neutral)"
 size = 11643
