@@ -1949,24 +1949,14 @@ fn field_map_elements(mappings: &[MailMergeFieldMapping]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
+/// `raw`, one element with nothing inside, holding `inner`.
 fn expand_empty_element(raw: &[u8], inner: &[u8]) -> Result<Vec<u8>> {
-    if raw.len() < 3 || !raw.starts_with(b"<") || &raw[raw.len() - 2..] != b"/>" {
-        return Err(Error::Other(
-            "mail-merge element span is malformed".to_owned(),
-        ));
+    let malformed = || Error::Other("mail-merge element span is malformed".to_owned());
+    let span = oxoffice_core::xml_element::element_span(raw).map_err(|_| malformed())?;
+    if span.range() != (0..raw.len()) || !span.content.is_empty() {
+        return Err(malformed());
     }
-    let name_end = raw
-        .iter()
-        .position(|byte| byte.is_ascii_whitespace() || *byte == b'/' || *byte == b'>')
-        .unwrap_or(raw.len());
-    let name = &raw[1..name_end];
-    let mut out = raw[..raw.len() - 2].to_vec();
-    out.push(b'>');
-    out.extend_from_slice(inner);
-    out.extend_from_slice(b"</");
-    out.extend_from_slice(name);
-    out.push(b'>');
-    Ok(out)
+    Ok(oxoffice_core::xml_element::replace_content(raw, inner)?.0)
 }
 
 #[derive(Default)]

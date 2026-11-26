@@ -754,9 +754,8 @@ fn story_append_position(
             Event::Empty(element) => {
                 if !saw_root && is_word && element.local_name().as_ref() == root_local_name {
                     let name = element.name().as_ref().to_vec();
-                    let insertion = after.checked_sub(2).ok_or_else(|| {
-                        Error::Other("empty story root opening tag is incomplete".to_owned())
-                    })?;
+                    let insertion = before
+                        + oxoffice_core::xml_element::start_tag(&xml[before..])?.attributes_end;
                     return Ok(StoryAppendPosition::Empty {
                         insertion,
                         after,

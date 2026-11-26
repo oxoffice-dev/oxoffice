@@ -90,12 +90,11 @@ pub(super) fn external_story_hyperlink_start(
 ) -> Result<Vec<u8>> {
     let mut reader = quick_xml::Reader::from_reader(tag);
     let mut buffer = Vec::new();
-    let (element, empty) = match reader
+    let element = match reader
         .read_event_into(&mut buffer)
         .map_err(|error| Error::Other(format!("story hyperlink scan failed: {error}")))?
     {
-        Event::Start(element) => (element, false),
-        Event::Empty(element) => (element, true),
+        Event::Start(element) | Event::Empty(element) => element,
         _ => {
             return Err(Error::Other(
                 "story hyperlink start tag is invalid".to_owned(),
@@ -162,7 +161,9 @@ pub(super) fn external_story_hyperlink_start(
         )
         .as_bytes(),
     );
-    rewritten.extend_from_slice(if empty { b"/>" } else { b">" });
+    // The tag's own close stays as written.
+    let attributes_end = oxoffice_core::xml_element::start_tag(tag)?.attributes_end;
+    rewritten.extend_from_slice(&tag[attributes_end..]);
     Ok(rewritten)
 }
 
@@ -1341,18 +1342,14 @@ pub(super) fn replace_story_item_text(
             if let Some(end) = root_end {
                 updated.splice(end..end, run);
             } else if root_is_empty {
-                let slash = item.full.end.checked_sub(2).ok_or_else(|| {
-                    Error::Other("self-closing paragraph story item is truncated".to_owned())
-                })?;
-                if source.get(slash..item.full.end) != Some(b"/>".as_slice()) {
-                    return Err(Error::Other(
-                        "self-closing paragraph story item has no closing slash".to_owned(),
-                    ));
-                }
+                // The paragraph is opened for content where its attributes end.
+                let attributes_end = item.full.start
+                    + oxoffice_core::xml_element::start_tag(&source[item.full.start..])?
+                        .attributes_end;
                 let mut replacement = b">".to_vec();
                 replacement.extend_from_slice(&run);
                 replacement.extend_from_slice(format!("</{prefix}p>").as_bytes());
-                updated.splice(slash..item.full.end, replacement);
+                updated.splice(attributes_end..item.full.end, replacement);
             } else {
                 return Err(Error::Other(
                     "paragraph story item has no closing element".to_owned(),

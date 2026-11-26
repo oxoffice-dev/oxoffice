@@ -2791,7 +2791,9 @@ fn toc_overlay_entry_properties(
     let mut output = original[..start].to_vec();
     let empty = opening_end == end && closing_start == start;
     if empty {
-        output.extend_from_slice(&original[start..opening_end - 2]);
+        let attributes_end =
+            oxoffice_core::xml_element::start_tag(&original[start..])?.attributes_end;
+        output.extend_from_slice(&original[start..start + attributes_end]);
         output.push(b'>');
     } else {
         output.extend_from_slice(&original[start..opening_end]);

@@ -263,15 +263,9 @@ fn prefix_in_scope(reader: &NsReader<&[u8]>, namespace: AttrNs) -> Option<String
 }
 
 pub(super) fn insert_into_start_tag(tag: &mut Vec<u8>, attribute: &str) -> Result<()> {
-    let end = tag
-        .iter()
-        .rposition(|byte| *byte == b'>')
-        .ok_or_else(|| form_fault("content control start tag is not closed"))?;
-    let at = if end > 0 && tag[end - 1] == b'/' {
-        end - 1
-    } else {
-        end
-    };
+    let at = oxoffice_core::xml_element::start_tag(tag.as_slice())
+        .map_err(|_| form_fault("content control start tag is not closed"))?
+        .attributes_end;
     tag.splice(at..at, attribute.as_bytes().iter().copied());
     Ok(())
 }

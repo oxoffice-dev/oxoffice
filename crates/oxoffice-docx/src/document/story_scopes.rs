@@ -192,6 +192,7 @@ pub(crate) fn story_namespace_ancestors_at(
         let event = reader
             .read_event_into(&mut buffer)
             .map_err(|error| Error::Other(format!("field-cache ancestor scan failed: {error}")))?;
+        let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(element) | Event::Empty(element) => {
                 // Snapshot BEFORE the target's own declarations. The root is
@@ -199,10 +200,6 @@ pub(crate) fn story_namespace_ancestors_at(
                 if requested.contains(&before) {
                     found.insert(before, active.iter().flatten().copied().collect());
                 }
-                let empty = xml.get(
-                    (reader.buffer_position() as usize).saturating_sub(2)
-                        ..reader.buffer_position() as usize,
-                ) == Some(b"/>");
                 if !empty {
                     let mut local = Vec::new();
                     if !active.is_empty() {

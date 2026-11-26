@@ -654,7 +654,7 @@ fn source_text_fragment(
     let (end, empty, name) = element_opening(xml)?;
     let mut opening = xml[..end].to_owned();
     if empty {
-        opening.truncate(end - 2);
+        opening.truncate(oxoffice_core::xml_element::start_tag(xml)?.attributes_end);
         opening.push('>');
     }
     if has_edge_whitespace(&value) && !text.preserve_space {

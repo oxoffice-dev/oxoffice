@@ -819,7 +819,8 @@ fn before_path(code: &str) -> &str {
 
 /// Whether one line of code takes two bytes from a tag's end: `after - 2`,
 /// `buffer_position() as usize - 2`, `end.saturating_sub(2)`,
-/// `truncate(x.len() - 2)`, `[..x.len() - 2]`, `x.len() - 2..`.
+/// `truncate(x.len() - 2)`, `[..x.len() - 2]`, `x.len() - 2..`, or leaves
+/// two to it: `boundary + 2 != owner.full.end`.
 fn takes_two_from_a_tag_end(line: &str) -> bool {
     let code = compact(line);
     // `code` before a path (`a.b.c`), not before the `..` of a range.
@@ -843,6 +844,18 @@ fn takes_two_from_a_tag_end(line: &str) -> bool {
                 || (outside.ends_with("truncate(") && after.starts_with(')'))
                 || (outside.ends_with("[..") && after.starts_with(']'))
             {
+                return true;
+            }
+        }
+    }
+    // `boundary + 2 != owner.full.end`: two bytes left to a tag's end.
+    for comparison in ["+2!=", "+2=="] {
+        for (at, _) in code.match_indices(comparison) {
+            let rest = &code[at + comparison.len()..];
+            let path = rest
+                .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.')))
+                .map_or(rest, |end| &rest[..end]);
+            if ends_with_a_tag_end(path) {
                 return true;
             }
         }
@@ -912,7 +925,7 @@ fn self_closing_assumptions(source: &str) -> Vec<usize> {
 /// deliver elements as written (packages, spreadsheets, test support);
 /// `to move`, a site this pull request moves onto `xml_element`. Every other
 /// line takes where a tag ends from `oxoffice_core::xml_element`.
-const SELF_CLOSING: [(&str, usize, &str); 54] = [
+const SELF_CLOSING: [(&str, usize, &str); 27] = [
     ("crates/oxoffice-core/src/raw_xml.rs", 1, "helper"),
     ("crates/oxoffice-core/src/xml_element.rs", 2, "helper"),
     (
@@ -936,117 +949,14 @@ const SELF_CLOSING: [(&str, usize, &str); 54] = [
         1,
         "writes",
     ),
-    ("crates/oxoffice-docx/src/bibliography.rs", 2, "to move"),
-    (
-        "crates/oxoffice-docx/src/bibliography/paragraph_properties.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/bibliography/source.rs",
-        3,
-        "to move",
-    ),
-    ("crates/oxoffice-docx/src/building_block.rs", 1, "to move"),
-    ("crates/oxoffice-docx/src/comments.rs", 5, "to move"),
-    (
-        "crates/oxoffice-docx/src/comparison/controls.rs",
-        1,
-        "to move",
-    ),
     ("crates/oxoffice-docx/src/comparison/fields.rs", 1, "writes"),
-    (
-        "crates/oxoffice-docx/src/comparison/leaf_publications.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/comparison/paragraphs.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/comparison/text_boxes.rs",
-        1,
-        "to move",
-    ),
-    ("crates/oxoffice-docx/src/comparison/xml.rs", 1, "to move"),
-    (
-        "crates/oxoffice-docx/src/content_control/data_binding.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/content_control/element_index.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/content_control/namespaces.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/document/block_locations.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/document/edited_paragraph.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/document/fragment_checks.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/document/namespaces.rs",
-        1,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/document/story_scopes.rs",
-        2,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/document/story_source_edits.rs",
-        1,
-        "to move",
-    ),
     (
         "crates/oxoffice-docx/src/document/story_text.rs",
         1,
         "not a tag",
     ),
-    (
-        "crates/oxoffice-docx/src/document/story_text.rs",
-        3,
-        "to move",
-    ),
     ("crates/oxoffice-docx/src/epub.rs", 2, "not a document part"),
-    (
-        "crates/oxoffice-docx/src/field/bibliography.rs",
-        2,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx/src/field/merge_package.rs",
-        2,
-        "to move",
-    ),
-    ("crates/oxoffice-docx/src/field/ref_copy.rs", 1, "to move"),
-    ("crates/oxoffice-docx/src/field/scan.rs", 4, "to move"),
-    (
-        "crates/oxoffice-docx/src/field/story_sources.rs",
-        1,
-        "to move",
-    ),
-    ("crates/oxoffice-docx/src/field/toc.rs", 1, "to move"),
     ("crates/oxoffice-docx/src/html.rs", 1, "not a document part"),
-    ("crates/oxoffice-docx/src/revision.rs", 3, "to move"),
     ("crates/oxoffice-docx/src/rtf.rs", 1, "not a document part"),
     ("crates/oxoffice-docx/src/svg.rs", 2, "not a document part"),
     ("crates/oxoffice-media/src/lib.rs", 1, "verbatim reader"),
@@ -1100,10 +1010,12 @@ fn the_check_finds_a_tag_close_taken_as_two_bytes() {
         "let n = open_end.checked_sub(if empty { 2 } else { 1 });\n",
         "let o = tag.iter().rposition(|byte| *byte == b'/');\n",
         "let p = tag.iter().rposition(|byte| *byte != b'/');\n",
+        "if boundary + 2 != owner.full.end {\n",
+        "if index + 2 == roles.len() {\n",
     );
     assert_eq!(
         self_closing_assumptions(source),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 19, 20]
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 19, 20, 22]
     );
 }
 
