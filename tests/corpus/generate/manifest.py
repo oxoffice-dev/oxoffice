@@ -32,7 +32,8 @@ HEADER = """\
 # Written by generate/manifest.py from the files under files/: do not edit by
 # hand, except known_failure and rewritten. Every file is ours: authored by
 # generate/author.py, then opened and saved by the producer named here
-# (generate/produce.py). They are released under the repository's licence.
+# (generate/produce.py), or written in Google Docs or by hand in Word (see
+# the README). They are released under the repository's licence.
 #
 # features: what the file's XML carries, so a failure points at an area.
 # known_failure: the issue that makes a save without an edit rewrite the parts
