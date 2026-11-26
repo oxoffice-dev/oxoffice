@@ -620,6 +620,22 @@ impl Document {
     /// edited version, which names its own styles. A style this document
     /// defines stays as it is.
     pub(crate) fn adopt_missing_styles(&mut self, source: &Document) -> Result<()> {
+        // Nothing to adopt, nothing to read: the usual case of two versions
+        // of one document.
+        let own = self
+            .styles
+            .styles
+            .iter()
+            .map(|style| style.style_id.as_str())
+            .collect::<HashSet<_>>();
+        if source
+            .styles
+            .styles
+            .iter()
+            .all(|style| own.contains(style.style_id.as_str()))
+        {
+            return Ok(());
+        }
         let main = self.doc_part_name.clone();
         let mut parts = vec![main.clone()];
         parts.extend(

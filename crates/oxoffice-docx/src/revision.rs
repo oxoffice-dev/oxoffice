@@ -695,8 +695,11 @@ impl Document {
                 // edited comments. A record written before holds none.
                 crate::comparison::apply_comment_snapshot(&mut candidate, edited)?;
             }
-            // A marker the resolution leaves keeps its comment.
-            candidate.keep_comment_definitions_from(self)?;
+            // A marker the resolution leaves keeps its comment, read from
+            // the document as written before the resolution.
+            let mut before = self.clone_for_staging();
+            before.flush_to_package()?;
+            candidate.keep_comment_definitions_from(&before)?;
             candidate
                 .package
                 .remove_part(crate::comparison::COMMENT_COMPARISON_PART);

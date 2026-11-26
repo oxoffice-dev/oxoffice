@@ -5014,7 +5014,31 @@ fn a_container_empty_in_one_version_is_refused_with_why() {
             plain("After")
         ))
     };
-    for version in [&control as &dyn Fn(&str) -> Document, &header, &text_box] {
+    // A note whose reference sits in a tracked change is not paired by id,
+    // so it is compared in place, as a story.
+    let note = |content: &str| {
+        let mut doc = doc_with_notes(&[("Claim.", Some("Source.")), ("Two.", Some("Old"))]);
+        let mut doc = with_part_edited(&mut doc, "word/document.xml", |xml| {
+            let reference = r#"<w:footnoteReference w:id="2"/></w:r>"#;
+            let end = xml.find(reference).unwrap() + reference.len();
+            let start = xml[..end].rfind("<w:r>").unwrap();
+            format!(
+                r#"{}<w:ins w:id="90" w:author="Ada" w:date="{DATE}">{}</w:ins>{}"#,
+                &xml[..start],
+                &xml[start..end],
+                &xml[end..]
+            )
+        });
+        with_part_edited(&mut doc, "word/footnotes.xml", |xml| {
+            with_note_edited(xml, "footnote", 3, |_| content.to_owned())
+        })
+    };
+    for version in [
+        &control as &dyn Fn(&str) -> Document,
+        &header,
+        &text_box,
+        &note,
+    ] {
         for (from, to) in [("", plain("Inside")), (&plain("Inside"), String::new())] {
             let error = version(from)
                 .compare(&version(&to), AUTHOR, DATE)
@@ -5135,6 +5159,25 @@ fn a_redline_holds_the_styles_and_the_comments_its_content_names() {
         }
         doc
     };
+    // A header paragraph in a style whose next style the original lacks too.
+    let headed = |styled: bool| {
+        let mut doc = doc_with(&["Claim."]);
+        doc.set_header("Head");
+        if !styled {
+            return doc;
+        }
+        doc.add_style(StyleBuilder::paragraph("After", "After"))
+            .unwrap();
+        doc.add_style(StyleBuilder::paragraph("Banner", "Banner").next_style("After"))
+            .unwrap();
+        with_part(&mut doc, "header1.xml", |xml| {
+            xml.replacen(
+                "<w:r>",
+                r#"<w:pPr><w:pStyle w:val="Banner"/></w:pPr><w:r>"#,
+                1,
+            )
+        })
+    };
     let commented = |commented: bool| {
         let mut doc = doc_with(&["Claim.", "Two."]);
         if commented {
@@ -5159,6 +5202,11 @@ fn a_redline_holds_the_styles_and_the_comments_its_content_names() {
     };
     for (case, mut original, edited) in [
         ("a style the original lacks", styled(false), styled(true)),
+        (
+            "a header style and its next style",
+            headed(false),
+            headed(true),
+        ),
         ("the first comment", commented(false), commented(true)),
         ("a comment removed whole", commented(true), commented(false)),
     ] {
