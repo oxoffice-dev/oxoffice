@@ -194,7 +194,8 @@ def google(n, table):
 
 
 def test_a_google_docs_table_in_a_locked_control_reads_and_edits_like_any_table():
-    doc = document(p("Before {name}") + google(1, TABLE.format(p("A {name}"))) + p("After {name}"))
+    inner = TABLE.format(p("Cell") + google(3, TABLE.format(p("Inner {name}"))))
+    doc = document(p("Before {name}") + google(1, TABLE.format(p("A {name}"))) + p("After {name}") + inner)
     doc.set_footer("Foot")
     footer = next(s.part_name for s in doc.stories if s.kind == "footer").lstrip("/")
     foot = lambda xml: xml.replace("</w:ftr>", google(2, TABLE.format(p("F {name}"))) + "</w:ftr>")
@@ -204,6 +205,9 @@ def test_a_google_docs_table_in_a_locked_control_reads_and_edits_like_any_table(
         paragraph.replace_text("{name}", "Ada")
     doc.tables[0].cell(0, 0).paragraphs[0].replace_text("{name}", "Ada")
     doc.section(0).footer.tables[0].cell(0, 0).paragraphs[0].replace_text("{name}", "Ada")
+    # A table in a control inside a cell is among the cell's tables.
+    doc.tables[1].cell(0, 0).tables[0].cell(0, 0).paragraphs[0].replace_text("{name}", "Ada")
+    assert "Inner Ada" in doc.tables[1].cell(0, 0).tables[0].xml
     assert [x.text for x in doc.paragraphs] == ["Before Ada", "After Ada"]
     assert "A Ada" in doc.tables[0].xml and "A Ada" in doc.tables[0].cell(0, 0).xml
     doc.tables[0].replace_xml(doc.tables[0].xml.replace("A Ada", "A Bob"))
@@ -216,9 +220,9 @@ def test_a_google_docs_table_in_a_locked_control_reads_and_edits_like_any_table(
     doc.insert_content(doc.tables[0], after)
     doc.clone_content(doc.tables[0], body(doc))
     doc.move_content(ox.ContentLocation(body(doc), "table", (1, 0)), body(doc))
-    assert [t.cell(0, 0).text for t in doc.tables] == ["A Bob", "A Bob"]
+    assert [t.cell(0, 0).text for t in doc.tables] == ["Cell", "A Bob", "A Bob"]
     assert [x.text for x in doc.paragraphs] == ["Before Ada", "After Ada"]
     data = doc.to_bytes()
     with zipfile.ZipFile(io.BytesIO(data)) as package:
         xml = "".join(package.read(name).decode() for name in package.namelist() if name.endswith(".xml"))
-    assert "F Ada" in xml and xml.count('<w:lock w:val="contentLocked"/>') == 2
+    assert "F Ada" in xml and xml.count('<w:lock w:val="contentLocked"/>') == 3

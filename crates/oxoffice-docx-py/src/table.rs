@@ -2708,9 +2708,16 @@ impl PyCell {
     #[getter]
     fn tables<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let (table, row, cell) = self.validate(py)?;
+        // The owner inventory lists the cell's own tables; one written in a
+        // block content control of the cell is read from the cell's story.
+        let controls = self.read(py, |cell| {
+            cell.items()
+                .any(|item| matches!(item, oxoffice_docx::CellItemRef::ContentControl(_)))
+        })?;
         let cached = self
             .owner
             .as_ref()
+            .filter(|_| !controls)
             .and_then(|owner| self.document.borrow(py).cached_cell_tables(owner));
         let locations = match cached {
             Some(locations) => locations,
@@ -2721,12 +2728,8 @@ impl PyCell {
                     self.physical_story(py, &document.inner, &current_related, table, row, cell)?;
                 document
                     .inner
-                    .story_items(&story)
+                    .story_tables(&story)
                     .map_err(|error| docx_to_pyerr(py, error))?
-                    .into_iter()
-                    .filter(|item| item.kind() == oxoffice_docx::StoryItemKind::Table)
-                    .map(|item| item.location().clone())
-                    .collect()
             }
         };
         let mut tables = Vec::new();

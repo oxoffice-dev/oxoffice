@@ -266,6 +266,15 @@ Shipped as planned in Rust and the CLI. Python differs in three points, left in 
   longer lists its paragraphs either.
 - `Document::paragraph_visibility` follows the paragraph walks (found in review).
 
+Follow-up (`fix/block-control-tables-everywhere`): `Cell.tables` lists the tables of the cell's block controls, read
+from the cell's story when the cell holds a control; `move_content_control` and `clone_content_control` of a row or
+cell control take a table of a block control (`[c, k]`, `[c, k, r]`); the paragraph visibility walk loses its dead row
+and cell arms. The owner record stays out: the owner inventory is built from the four families of
+`story_owner_snapshots` (story items, physical cells, range paragraphs, links), rebuilt per body block and shifted by
+item heads, with debug checks against a full rebuild; a `[c, k]` table is in none of them, and adding a fifth family
+reaches its three producers, the piece assembly, the indexes, the splice shifts and the form sources. The limitation
+narrows to `docx-python-control-table-handles` (#660).
+
 ## Links
 
 - Issue #660; #657 and its spec

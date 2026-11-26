@@ -1,0 +1,9 @@
+{
+  "id": "docx-python-control-table-handles",
+  "format": "docx",
+  "area": "python",
+  "title": "Python: a handle of a table in a block content control reads its location at each call",
+  "symptom": "a Table or Cell handle of a table written in a block content control (as Google Docs writes one) has no owner record: it reads its location at each call (one scan of its story), and a structural edit through it (Table.replace_xml, Table.add_row, a cell's replace_xml) retires every other handle of the document",
+  "workaround": "fetch handles again after such an edit (doc.tables, Cell.tables); for many such tables, read and edit them by location in Rust (Document::story_tables, table_element_xml, edit_story_table)",
+  "issue": 660
+}
