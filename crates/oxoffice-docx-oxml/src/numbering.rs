@@ -3,13 +3,14 @@
 //! These types represent the content of `numbering.xml`, which defines
 //! abstract numbering formats and numbering instances that paragraphs reference.
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{MC_NS, W_NS, matches_local_name};
 use crate::properties::{CT_PPr, CT_RPr};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::shared::ST_Jc;
 
 const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -1602,7 +1603,7 @@ fn generated_children(raw: &[u8], schema_children: &[&[u8]]) -> Result<Vec<(usiz
                     .iter()
                     .position(|candidate| *candidate == local.as_ref())
                     .expect("typed property writers emit only modelled children");
-                children.push((position, capture_empty_element(element)?));
+                children.push((position, capture_empty(element, reader.empty_writing())?));
             }
             Ok(Event::End(_)) | Ok(Event::Eof) => return Ok(children),
             Err(error) => return Err(error.into()),
@@ -1712,7 +1713,7 @@ fn property_overlay_with_children(
                         })
                     {
                         extras.extend(pending.drain(..).map(|raw| (position, raw)));
-                        modelled.push((position, capture_empty_element(element)?));
+                        modelled.push((position, capture_empty(element, reader.empty_writing())?));
                         last_modelled_position = Some(position);
                     } else if is_word_name(element.name().as_ref(), &prefixes)
                         && let Some(position) = schema_children
@@ -1720,10 +1721,10 @@ fn property_overlay_with_children(
                             .position(|local| *local == element.local_name().as_ref())
                     {
                         extras.extend(pending.drain(..).map(|raw| (position, raw)));
-                        extras.push((position, capture_empty_element(element)?));
+                        extras.push((position, capture_empty(element, reader.empty_writing())?));
                         last_modelled_position = Some(position);
                     } else {
-                        pending.push(capture_empty_element(element)?);
+                        pending.push(capture_empty(element, reader.empty_writing())?);
                     }
                 }
                 Ok(Event::End(_)) | Ok(Event::Eof) => {
@@ -2046,9 +2047,9 @@ fn occurrence_overlay(raw: &[u8], word_prefixes: &[String]) -> Result<Occurrence
                 let child_prefixes = word_prefixes_at(element, &prefixes)?;
                 if is_word_element(element.name().as_ref(), b"tab", &child_prefixes) {
                     extras.extend(pending.drain(..).map(|raw| (modelled.len(), raw)));
-                    modelled.push(capture_empty_element(element)?);
+                    modelled.push(capture_empty(element, reader.empty_writing())?);
                 } else {
-                    pending.push(capture_empty_element(element)?);
+                    pending.push(capture_empty(element, reader.empty_writing())?);
                 }
             }
             Ok(Event::End(_)) | Ok(Event::Eof) => {
@@ -3371,7 +3372,7 @@ impl CT_Lvl {
                     if is_word_element(name.as_ref(), b"start", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
                         let parsed = value.as_deref().and_then(|value| value.parse().ok());
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_start || parsed.is_none() {
                             lvl.extra_xml.push((0, raw));
                         } else {
@@ -3385,7 +3386,7 @@ impl CT_Lvl {
                     } else if is_word_element(name.as_ref(), b"numFmt", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
                         let parsed = value.map(|value| ST_NumberFormat::from_str(&value));
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_num_fmt || parsed.is_none() {
                             lvl.extra_xml.push((1, raw));
                         } else {
@@ -3399,7 +3400,7 @@ impl CT_Lvl {
                     } else if is_word_element(name.as_ref(), b"lvlRestart", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
                         let parsed = value.as_deref().and_then(|value| value.parse().ok());
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_restart || parsed.is_none() {
                             lvl.extra_xml.push((2, raw));
                         } else {
@@ -3412,7 +3413,7 @@ impl CT_Lvl {
                         boundary = 3;
                     } else if is_word_element(name.as_ref(), b"pStyle", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_p_style {
                             lvl.extra_xml.push((boundary, raw));
                             continue;
@@ -3425,7 +3426,7 @@ impl CT_Lvl {
                         boundary = 4;
                     } else if is_word_element(name.as_ref(), b"isLgl", &prefixes) {
                         let parsed = typed_on_off_value(e, &prefixes)?;
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_legal || parsed.is_none() {
                             lvl.extra_xml.push((4, raw));
                         } else {
@@ -3439,7 +3440,7 @@ impl CT_Lvl {
                     } else if is_word_element(name.as_ref(), b"suff", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
                         let parsed = value.as_deref().and_then(ST_LvlSuffix::from_str);
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_suffix || parsed.is_none() {
                             lvl.extra_xml.push((5, raw));
                         } else {
@@ -3452,7 +3453,7 @@ impl CT_Lvl {
                         boundary = 6;
                     } else if is_word_element(name.as_ref(), b"lvlText", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_lvl_text || value.is_none() {
                             lvl.extra_xml.push((6, raw));
                         } else {
@@ -3468,7 +3469,7 @@ impl CT_Lvl {
                         let parsed = value
                             .as_deref()
                             .and_then(|value| ST_Jc::from_str(value).ok());
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_lvl_jc || parsed.is_none() {
                             lvl.extra_xml.push((9, raw));
                         } else {
@@ -3480,7 +3481,7 @@ impl CT_Lvl {
                         }
                         boundary = 10;
                     } else if is_word_element(name.as_ref(), b"pPr", &prefixes) {
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         let (ppr, has_producer) = ppr_from_raw(&raw, &prefixes)?;
                         lvl.ppr = Some(ppr.clone());
                         if has_producer {
@@ -3488,7 +3489,7 @@ impl CT_Lvl {
                         }
                         boundary = 11;
                     } else if is_word_element(name.as_ref(), b"rPr", &prefixes) {
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         let (rpr, has_producer) = rpr_from_raw(&raw, &prefixes)?;
                         lvl.rpr = Some(rpr.clone());
                         if has_producer {
@@ -3497,7 +3498,8 @@ impl CT_Lvl {
                         boundary = 12;
                     } else {
                         let (at, next) = level_raw_boundary(name.as_ref(), boundary, &prefixes);
-                        lvl.extra_xml.push((at, capture_empty_element(e)?));
+                        lvl.extra_xml
+                            .push((at, capture_empty(e, reader.empty_writing())?));
                         boundary = next;
                     }
                 }
@@ -3894,7 +3896,7 @@ impl CT_AbstractNum {
                     let prefixes = word_prefixes_at(e, word_prefixes)?;
                     if is_word_element(name.as_ref(), b"nsid", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_nsid {
                             abs.extra_xml.push((boundary, raw));
                             continue;
@@ -3907,7 +3909,7 @@ impl CT_AbstractNum {
                         boundary = 1;
                     } else if is_word_element(name.as_ref(), b"multiLevelType", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_multi_level_type {
                             abs.extra_xml.push((boundary, raw));
                             continue;
@@ -3921,7 +3923,7 @@ impl CT_AbstractNum {
                         boundary = 2;
                     } else if is_word_element(name.as_ref(), b"tmpl", &prefixes) {
                         let value = typed_leaf_value(e, &prefixes)?;
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_tmpl {
                             abs.extra_xml.push((boundary, raw));
                             continue;
@@ -3939,7 +3941,8 @@ impl CT_AbstractNum {
                         boundary = 7 + abs.levels.len();
                     } else {
                         let (at, next) = abstract_raw_boundary(name.as_ref(), boundary, &prefixes);
-                        abs.extra_xml.push((at, capture_empty_element(e)?));
+                        abs.extra_xml
+                            .push((at, capture_empty(e, reader.empty_writing())?));
                         boundary = next;
                     }
                 }
@@ -4182,7 +4185,7 @@ impl CT_NumLvl {
                     if is_word_element(element.name().as_ref(), b"startOverride", &prefixes) {
                         let raw_value = typed_leaf_value(element, &prefixes)?;
                         let parsed = raw_value.as_deref().and_then(|item| item.parse().ok());
-                        let raw = capture_empty_element(element)?;
+                        let raw = capture_empty(element, reader.empty_writing())?;
                         if seen_start || parsed.is_none() {
                             value.extra_xml.push((0, raw));
                         } else {
@@ -4198,7 +4201,9 @@ impl CT_NumLvl {
                         let mut level = CT_Lvl::new(u32_attribute(element, b"ilvl", &prefixes)?);
                         capture_level_attributes(&mut level, element, &prefixes)?;
                         if seen_level {
-                            value.extra_xml.push((1, capture_empty_element(element)?));
+                            value
+                                .extra_xml
+                                .push((1, capture_empty(element, reader.empty_writing())?));
                         } else {
                             seen_level = true;
                             value.level = Some(level);
@@ -4207,7 +4212,7 @@ impl CT_NumLvl {
                     } else {
                         value
                             .extra_xml
-                            .push((boundary, capture_empty_element(element)?));
+                            .push((boundary, capture_empty(element, reader.empty_writing())?));
                     }
                 }
                 Ok(Event::End(ref element))
@@ -4313,7 +4318,7 @@ impl CT_Num {
                 Ok(Event::Empty(ref e)) => {
                     let prefixes = word_prefixes_at(e, word_prefixes)?;
                     if is_word_element(e.name().as_ref(), b"abstractNumId", &prefixes) {
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if seen_abstract_num_id {
                             extra_xml.push((position, raw));
                             continue;
@@ -4328,11 +4333,11 @@ impl CT_Num {
                         }
                         position = 1;
                     } else if is_word_element(e.name().as_ref(), b"lvlOverride", &prefixes) {
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         level_overrides.push(CT_NumLvl::from_raw_with_prefixes(&raw, &prefixes)?);
                         position = 1 + level_overrides.len();
                     } else {
-                        extra_xml.push((position, capture_empty_element(e)?));
+                        extra_xml.push((position, capture_empty(e, reader.empty_writing())?));
                     }
                 }
                 Ok(Event::Start(ref e)) => {
@@ -4632,7 +4637,7 @@ impl CT_Numbering {
                     } else {
                         extra_xml.push((
                             root_raw_boundary(name.as_ref(), position, &prefixes),
-                            capture_empty_element(e)?,
+                            capture_empty(e, reader.empty_writing())?,
                         ));
                     }
                 }

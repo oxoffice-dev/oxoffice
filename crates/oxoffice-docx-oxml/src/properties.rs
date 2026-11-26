@@ -1,11 +1,11 @@
 //! Paragraph properties (`CT_PPr`) and run properties (`CT_RPr`).
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
-use crate::run_properties::language_element_is_explicitly_empty;
 use crate::shared::ST_OnOff;
 
 pub use crate::paragraph_properties::{CT_FramePr, CT_PPr};
@@ -869,7 +869,7 @@ pub fn protected_source_residual(
         "rdocxResidual",
     )))?;
     let source = writer.into_inner();
-    let mut reader = quick_xml::NsReader::from_reader(source.as_slice());
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(source.as_slice());
     reader.config_mut().trim_text(false);
     let mut nodes = Vec::<ResidualNode>::new();
     // The prefixes each node's subtree names: the only bindings of its scope

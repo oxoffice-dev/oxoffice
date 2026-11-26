@@ -836,7 +836,7 @@ impl CT_P {
                         );
                         comment_sources.push((
                             comment_ranges.last().expect("captured marker").clone(),
-                            capture_empty_element(e)?,
+                            capture_empty(e, reader.empty_writing())?,
                         ));
                     } else if is_word_element(name.as_ref(), b"bookmarkStart", &prefixes)
                         || is_word_element(name.as_ref(), b"bookmarkEnd", &prefixes)
@@ -856,9 +856,9 @@ impl CT_P {
                             word_prefixes: prefixes.to_vec(),
                             has_child_content: false,
                         });
-                        extra_xml.push((runs.len(), capture_empty_element(e)?));
+                        extra_xml.push((runs.len(), capture_empty(e, reader.empty_writing())?));
                     } else if is_word_element(name.as_ref(), b"fldSimple", &prefixes) {
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         let mapped = control_facts.as_deref().and_then(|facts| {
                             facts.field_input(reader, event_start..reader.buffer_position(), &raw)
                         });
@@ -882,7 +882,7 @@ impl CT_P {
                         }
                     } else if !matches_local_name(name.as_ref(), b"p") {
                         let raw_before = raw_xml_count_at(&extra_xml, runs.len());
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if (is_word_element(name.as_ref(), b"ins", &prefixes)
                             || is_word_element(name.as_ref(), b"del", &prefixes)
                             || is_word_element(name.as_ref(), b"moveFrom", &prefixes)

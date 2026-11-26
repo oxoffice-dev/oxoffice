@@ -1,15 +1,16 @@
 //! Header and footer elements: `CT_HdrFtr`.
 
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
 use crate::numbering::{namespace_bindings, word_prefixes_at};
 use crate::properties::is_word_element;
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::text::{CT_P, ROOT_R_BINDING, ROOT_WP_BINDING, declare_w14_on_part_root};
 
 const VML_NS: &str = "urn:schemas-microsoft-com:vml";
@@ -315,7 +316,7 @@ impl CT_HdrFtr {
                     } else if !matches_local_name(name.as_ref(), b"hdr")
                         && !matches_local_name(name.as_ref(), b"ftr")
                     {
-                        extra_xml.push(capture_empty_element(e)?);
+                        extra_xml.push(capture_empty(e, reader.empty_writing())?);
                         extra_xml_positions.push(paragraphs.len());
                     }
                 }

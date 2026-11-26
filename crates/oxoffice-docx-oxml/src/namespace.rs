@@ -1,9 +1,9 @@
 //! OOXML namespace constants.
 
+use oxoffice_core::xml_reader::NsReader;
 use quick_xml::XmlVersion;
 use quick_xml::events::Event;
 use quick_xml::name::{Namespace, QName, ResolveResult};
-use quick_xml::reader::NsReader;
 
 use crate::error::Result;
 

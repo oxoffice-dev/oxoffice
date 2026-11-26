@@ -1,7 +1,8 @@
 //! Footnote and endnote elements: `CT_Footnotes`, `CT_Footnote`.
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::Result;
 use crate::namespace::{W_NS, matches_local_name};

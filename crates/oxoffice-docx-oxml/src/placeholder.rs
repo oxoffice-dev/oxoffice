@@ -1870,7 +1870,7 @@ fn remove_emptied_runs_in(
                     (raw, prefixes.to_vec())
                 }
             };
-            let mut reader = quick_xml::Reader::from_reader(raw);
+            let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
             let quick_xml::events::Event::Start(root) = reader.read_event().ok()? else {
                 return None;
             };
@@ -2376,8 +2376,9 @@ fn edit_text_box_block(
     edit: &mut TextBoxEditor<'_, '_>,
     input: Option<&crate::document::WordFieldInput>,
 ) -> crate::Result<(usize, Option<crate::document::WordSourceMap>)> {
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     use quick_xml::events::Event;
-    use quick_xml::{Reader, Writer};
     let (record_input, _record_publication) = match input {
         Some(input) => {
             let (input, publication) = input.record_publication(raw)?;
@@ -2699,9 +2700,10 @@ pub(crate) fn try_replace_in_block_with_constructors_in(
     mut context: Option<ScopedLiteralContext<'_>>,
 ) -> crate::Result<usize> {
     use crate::OxmlError;
+    use oxoffice_core::xml_reader::{NsReader, Reader};
+    use quick_xml::Writer;
     use quick_xml::events::Event;
     use quick_xml::name::ResolveResult;
-    use quick_xml::{NsReader, Reader, Writer};
 
     // Validate the whole closed source, including attributes and opaque children.
     let mut checked = NsReader::from_reader(raw.as_slice());
@@ -2995,7 +2997,7 @@ struct ScopedContainerStart {
 
 fn scoped_container_starts(raw: &[u8]) -> crate::Result<Vec<ScopedContainerStart>> {
     use quick_xml::events::Event;
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     let mut buffer = Vec::new();
     let mut stack: Vec<(Vec<String>, Option<usize>)> = Vec::new();
     let mut result = Vec::new();
@@ -3066,7 +3068,7 @@ fn restore_scoped_container_attributes(source: &[u8], rewritten: &[u8]) -> crate
         }
         // A declaration restored for an attribute must not redirect names in
         // the rewritten subtree. Refuse conflicting inherited bindings too.
-        let mut reader = quick_xml::Reader::from_reader(attributes.as_slice());
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(attributes.as_slice());
         if let Event::Empty(record) = reader.read_event()? {
             let bindings = namespace_bindings(&retained.scope);
             for attribute in record.attributes() {
@@ -3145,7 +3147,7 @@ type NamespaceUse = (Vec<String>, Vec<(String, String)>);
 /// The [`NamespaceUse`] of `xml`, the empty prefix standing for the default
 /// namespace of an unprefixed element.
 fn namespace_use(xml: &[u8]) -> Option<NamespaceUse> {
-    use quick_xml::Reader;
+    use oxoffice_core::xml_reader::Reader;
     use quick_xml::events::Event;
 
     let prefix_of = |name: &[u8]| {
@@ -3585,8 +3587,9 @@ fn rewrite_text_boxes_within(
     use crate::error::OxmlError;
     use crate::namespace::matches_local_name;
     use crate::raw_xml::capture_element;
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     use quick_xml::events::Event;
-    use quick_xml::{Reader, Writer};
 
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -3928,12 +3931,13 @@ fn rewrite_notes(
     use crate::error::OxmlError;
     use crate::raw_xml::capture_element;
     use quick_xml::events::Event;
-    use quick_xml::{Reader, Writer};
 
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::new());
     let mut buffer = Vec::new();
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     let mut total_count = 0;
     // The bindings the elements open around the current position declare.
     let mut scopes: Vec<Vec<String>> = Vec::new();
@@ -4030,7 +4034,6 @@ fn rewrite_alternate_content(
     use crate::namespace::matches_local_name;
     use crate::raw_xml::capture_element;
     use quick_xml::events::Event;
-    use quick_xml::{Reader, Writer};
     let mut reader = Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::new());
@@ -4046,6 +4049,8 @@ fn rewrite_alternate_content(
     };
     let prefixes = word_prefixes_at(&start, inherited)?;
     writer.write_event(Event::Start(start.into_owned()))?;
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     textbox_transport(
         &mut map,
         input,
@@ -4211,7 +4216,6 @@ pub fn replace_many_in_chart_xml(
 ) -> crate::error::Result<(Vec<u8>, usize)> {
     use crate::namespace::matches_local_name;
     use quick_xml::events::{BytesEnd, BytesText, Event};
-    use quick_xml::{Reader, Writer};
 
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -4231,6 +4235,8 @@ pub fn replace_many_in_chart_xml(
                 let name = e.name();
                 writer.write_event(Event::Start(e.borrow()))?;
 
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
                 // Consume the element as a whole. Reading it event by event
                 // would split the value at every entity reference and could
                 // miss a placeholder straddling one.

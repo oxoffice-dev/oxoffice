@@ -2,10 +2,11 @@
 
 use std::borrow::Cow;
 
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::Writer;
 use quick_xml::events::attributes::Attribute;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::QName;
-use quick_xml::{Reader, Writer};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
@@ -104,7 +105,7 @@ impl CT_BorderEdge {
             generated = writer.into_inner();
             generated.as_slice()
         };
-        let mut reader = quick_xml::NsReader::from_reader(raw);
+        let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(raw);
         let (_, event) = reader.read_resolved_event()?;
         let root = match event {
             Event::Start(root) | Event::Empty(root) => root,

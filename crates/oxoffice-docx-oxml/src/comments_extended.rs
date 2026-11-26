@@ -2,11 +2,12 @@
 
 use std::io::Write;
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 
 /// Namespace used by the Microsoft comments-extended extension.
 pub const W15_NS: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
@@ -82,7 +83,10 @@ impl CT_CommentsEx {
                     ) {
                         comments.push(parse_comment_ex(element, &child_prefixes)?);
                     } else if saw_root {
-                        extra_xml.push((comments.len(), capture_empty_element(element)?));
+                        extra_xml.push((
+                            comments.len(),
+                            capture_empty(element, reader.empty_writing())?,
+                        ));
                     }
                 }
                 Ok(Event::Eof) => break,

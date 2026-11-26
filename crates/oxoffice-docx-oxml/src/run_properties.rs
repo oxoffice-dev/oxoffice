@@ -1,7 +1,8 @@
 //! Run properties (`CT_RPr`).
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use std::borrow::Cow;
 
@@ -16,7 +17,7 @@ use crate::properties::{
     toggle_element_is_explicitly_empty, toggle_has_unsupported_attributes, word_prefixes_at,
     write_toggle,
 };
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::revision::CT_Revision;
 use crate::shared::{ST_HighlightColor, ST_Underline};
 use crate::units::{HalfPoint, Twips};
@@ -659,7 +660,7 @@ impl CT_RPr {
     pub fn solid_text_fill(&self) -> Option<(String, f64)> {
         const NS: &[u8] = b"http://schemas.microsoft.com/office/word/2010/wordml";
         for raw in &self.revision_xml {
-            let mut probe = quick_xml::NsReader::from_reader(raw.as_slice());
+            let mut probe = oxoffice_core::xml_reader::NsReader::from_reader(raw.as_slice());
             let Ok((namespace, event)) = probe.read_resolved_event() else {
                 continue;
             };
@@ -668,7 +669,7 @@ impl CT_RPr {
             {
                 continue;
             }
-            let mut reader = quick_xml::NsReader::from_reader(raw.as_slice());
+            let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(raw.as_slice());
             let mut path = Vec::new();
             let mut color = None;
             let mut alpha = 1.0;
@@ -807,7 +808,7 @@ impl CT_RPr {
                             measurement.apply(&mut rpr);
                         } else {
                             let raw = crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 owner_bindings,
                             )?;
                             record_rpr_raw_at(&mut rpr, raw, RPR_KERN_SLOT, 0);
@@ -1088,7 +1089,7 @@ impl CT_RPr {
                         rpr.rtl = Some(parse_word_toggle(e, &prefixes)?);
                         rtl_carrier_required = toggle_has_unsupported_attributes(e, &prefixes)?;
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
                         )?;
                         record_modeled_toggle_candidate(
@@ -1110,7 +1111,7 @@ impl CT_RPr {
                         || is_word_element(name.as_ref(), b"del", &prefixes)
                     {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
@@ -1126,7 +1127,7 @@ impl CT_RPr {
                         }
                     } else if is_word_element(name.as_ref(), b"rPrChange", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
@@ -1150,7 +1151,7 @@ impl CT_RPr {
                         }
                     } else {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         if let Some(slot) = rpr_schema_slot(name.as_ref(), &prefixes) {

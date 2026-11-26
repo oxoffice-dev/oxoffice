@@ -1,7 +1,8 @@
 //! Document-level elements: `CT_Document` and `CT_Body`.
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::borders::CT_BorderEdge;
 use crate::content_control::{CT_Sdt, SdtOwner};
@@ -15,7 +16,7 @@ use crate::numbering::{
 use crate::properties::{
     get_word_val_attr, is_word_attribute, is_word_element, parse_twips_measure, parse_word_toggle,
 };
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::revision::{CT_Revision, RevisionKind};
 use crate::shared::{ST_OnOff, ST_PageOrientation, ST_SectionType};
 use crate::table::{CT_Tbl, ST_VerticalJc};
@@ -708,7 +709,7 @@ impl CT_Body {
                         } else {
                             content.push(BodyContent::RawXml(Box::new(
                                 crate::text::raw_with_external_bindings(
-                                    &capture_empty_element(e)?,
+                                    &capture_empty(e, reader.empty_writing())?,
                                     owner_bindings,
                                 )?,
                             )));
@@ -716,7 +717,7 @@ impl CT_Body {
                     } else {
                         content.push(BodyContent::RawXml(Box::new(
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 owner_bindings,
                             )?,
                         )));
@@ -1063,9 +1064,9 @@ impl CT_Document {
                             );
                         }
                     } else if is_word_element(e.name().as_ref(), b"background", &prefixes) {
-                        background_xml = Some(capture_empty_element(e)?);
+                        background_xml = Some(capture_empty(e, reader.empty_writing())?);
                     } else if matches_local_name(e.name().as_ref(), b"background") {
-                        background_extra_xml.push(capture_empty_element(e)?);
+                        background_extra_xml.push(capture_empty(e, reader.empty_writing())?);
                     }
                 }
                 Ok(Event::End(ref e))

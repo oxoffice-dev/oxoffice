@@ -1,13 +1,14 @@
 //! Style elements: `CT_Styles`, `CT_Style`, `CT_DocDefaults`.
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
 use crate::numbering::{parse_scoped_ppr, parse_scoped_rpr, word_prefixes_at};
 use crate::properties::{CT_PPr, CT_RPr, is_word_attribute, is_word_element};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::shared::ST_OnOff;
 use crate::table::{CT_TblPr, CT_TcPr, CT_TrPr};
 
@@ -311,7 +312,7 @@ impl CT_Style {
                         || is_word_element(ename.as_ref(), b"rPr", &prefixes)
                     {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &bindings,
                         )?;
                         if is_word_element(ename.as_ref(), b"pPr", &prefixes) {
@@ -330,7 +331,7 @@ impl CT_Style {
                         modeled_xml.push((
                             rank,
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &bindings,
                             )?,
                         ));
@@ -347,7 +348,7 @@ impl CT_Style {
                             .then(|| parse_style_priority(e, &prefixes))
                             .transpose()?
                             .flatten();
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if string_value.is_some()
                             || toggle_value.is_some()
                             || priority_value.is_some()
@@ -379,7 +380,10 @@ impl CT_Style {
                     } else {
                         extra_xml.push((
                             style_child_rank(ename.as_ref(), &prefixes),
-                            make_style_raw_self_contained(&capture_empty_element(e)?, &bindings)?,
+                            make_style_raw_self_contained(
+                                &capture_empty(e, reader.empty_writing())?,
+                                &bindings,
+                            )?,
                         ));
                     }
                 }
@@ -1747,7 +1751,7 @@ impl CT_Styles {
                     let bindings = namespace_bindings_at(e, &namespace_bindings)?;
                     if is_word_element(e.name().as_ref(), b"docDefaults", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &bindings,
                         )?;
                         doc_defaults = Some(CT_DocDefaults::from_source_xml(&raw, &prefixes)?);
@@ -1759,7 +1763,7 @@ impl CT_Styles {
                         )?);
                     } else if !is_word_element(e.name().as_ref(), b"styles", &prefixes) {
                         extra_xml.push(make_style_raw_self_contained(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &bindings,
                         )?);
                     }
@@ -2385,7 +2389,7 @@ fn preserved_conditional_style_children(raw: &[u8]) -> Result<Vec<(u8, Vec<u8>)>
                         b"pPr" | b"rPr" | b"tblPr" | b"trPr" | b"tcPr"
                     ))
                 {
-                    extras.push((5, capture_empty_element(empty)?));
+                    extras.push((5, capture_empty(empty, reader.empty_writing())?));
                 }
             }
             Event::End(_) | Event::Eof => break,

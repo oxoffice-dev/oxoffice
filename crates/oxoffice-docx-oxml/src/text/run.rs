@@ -1649,7 +1649,7 @@ impl CT_R {
                         && comment_reference_has_payload_attributes(e, &prefixes)
                     {
                         extra_xml.push(close_comment_reference_source(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &prefixes,
                         )?);
                         extra_xml_positions.push(modeled_children | RAW_COMMENT_REFERENCE_FLAG);
@@ -1684,7 +1684,7 @@ impl CT_R {
                         // capturing it here would move it past <w:t> and
                         // produce schema-invalid output. An empty rPr carries
                         // no formatting, so dropping it loses nothing.
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         extra_xml.push(raw);
                         extra_xml_positions.push(modeled_children);
                     }
@@ -2297,7 +2297,7 @@ fn close_comment_reference_source(raw: &[u8], prefixes: &[String]) -> Result<Vec
 }
 
 pub(super) fn retained_comment_reference_id(raw: &[u8]) -> Option<i32> {
-    let mut reader = quick_xml::reader::NsReader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(raw);
     let (ns, event) = reader.read_resolved_event().ok()?;
     if !matches!(ns, ResolveResult::Bound(namespace) if namespace.as_ref() == crate::namespace::W_NS.as_bytes())
     {

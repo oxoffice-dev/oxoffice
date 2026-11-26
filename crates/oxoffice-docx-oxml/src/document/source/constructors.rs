@@ -228,7 +228,10 @@ impl ConstructorFailures {
 // The same live input/reader suffix establishes physical displacement. A BOM
 // is removed during reader initialization without entering its logical count.
 // No equal-content or unrelated empty slice can establish this relationship.
-pub(crate) fn reader_input_origin(input: &[u8], reader: &Reader<&[u8]>) -> Option<usize> {
+pub(crate) fn reader_input_origin(
+    input: &[u8],
+    reader: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
+) -> Option<usize> {
     let remaining = *reader.get_ref();
     let physical = input.len().checked_sub(remaining.len())?;
     if (input.as_ptr() as usize).checked_add(physical) != Some(remaining.as_ptr() as usize) {

@@ -2,10 +2,11 @@
 
 use oxoffice_core::xml::{XmlLexicalError, validate_strict_xml_1_0};
 use oxoffice_core::xml_element::start_tag;
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -14,7 +15,7 @@ use crate::error::{OxmlError, Result};
 use crate::namespace::W_NS;
 use crate::numbering::word_prefixes_at;
 use crate::properties::{is_word_attribute, is_word_element};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 
 /// Bytes and invocation-only companions follow the same existing glossary edit
 /// recipe. Legacy callers keep no maps or events.
@@ -579,7 +580,7 @@ impl CT_GlossaryDocument {
                     {
                         let source_span = event_start..reader.buffer_position() as usize;
                         let mut part = parse_doc_part(
-                            capture_empty_element(&element)?,
+                            capture_empty(&element, reader.empty_writing())?,
                             &local_prefixes,
                             source_span,
                         )?;
@@ -1052,7 +1053,7 @@ fn parse_doc_part(
                             "w:docPartPr must precede w:docPartBody".to_owned(),
                         ));
                     }
-                    properties_xml = Some(capture_empty_element(&element)?);
+                    properties_xml = Some(capture_empty(&element, reader.empty_writing())?);
                     properties_span = Some(event_start..reader.buffer_position() as usize);
                 } else if depth == 1 && local.as_deref() == Some("docPartBody") {
                     if body_xml.is_some() {
@@ -1060,7 +1061,7 @@ fn parse_doc_part(
                             "multiple direct w:docPartBody children".to_owned(),
                         ));
                     }
-                    body_xml = Some(capture_empty_element(&element)?);
+                    body_xml = Some(capture_empty(&element, reader.empty_writing())?);
                     body_span = Some(event_start..reader.buffer_position() as usize);
                 }
             }
@@ -1164,7 +1165,7 @@ fn parse_properties(raw_xml: &[u8], inherited_prefixes: &[String]) -> Result<CT_
                     root_start_xml = standalone_event(Event::Start(element.to_owned()))?;
                     root_end_xml = standalone_event(Event::End(BytesEnd::new(name)))?;
                 } else {
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     if let Some(field_slot) = property_slot(&element, &local_prefixes) {
                         if std::mem::replace(&mut seen_fields[field_slot], true) {
                             return Err(OxmlError::InvalidValue(format!(
@@ -1496,7 +1497,7 @@ where
             Event::Empty(element) => {
                 let local_prefixes = word_prefixes_at(&element, &prefixes)?;
                 let local = word_local_name(&element, &local_prefixes);
-                let raw_child = capture_empty_element(&element)?;
+                let raw_child = capture_empty(&element, reader.empty_writing())?;
                 if depth == 1
                     && let Some(local) = local
                 {

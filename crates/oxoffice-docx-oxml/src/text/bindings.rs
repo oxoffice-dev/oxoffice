@@ -2143,7 +2143,7 @@ mod tests {
     #[test]
     fn a_retained_root_attribute_keeps_a_tab_written_as_a_reference() {
         let source = br#"<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:x" x:note="a&#9;b"/>"#;
-        let mut reader = quick_xml::Reader::from_reader(&source[..]);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&source[..]);
         let Event::Empty(start) = reader.read_event().unwrap() else {
             panic!("an empty run");
         };

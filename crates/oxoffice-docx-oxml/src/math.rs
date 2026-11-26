@@ -2,8 +2,9 @@
 
 use std::io::Write;
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{M_NS, W_NS};
@@ -4078,7 +4079,7 @@ fn canonical_element(raw: &[u8]) -> Result<Vec<u8>> {
     source.extend_from_slice(b"<rdocxScope>");
     source.extend_from_slice(raw);
     source.extend_from_slice(b"</rdocxScope>");
-    let mut reader = quick_xml::NsReader::from_reader(source.as_slice());
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(source.as_slice());
     reader.config_mut().trim_text(false);
     let mut output = Vec::with_capacity(raw.len());
     // The bindings the output holds at each open element, whether the last

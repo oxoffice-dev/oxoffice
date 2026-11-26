@@ -178,7 +178,7 @@ pub(super) fn parse_hyperlink_children(
             }
             Event::Empty(element) => {
                 let prefixes = word_prefixes_at(&element, word_prefixes)?;
-                let raw = capture_empty_element(&element)?;
+                let raw = capture_empty(&element, reader.empty_writing())?;
                 if is_content_revision_element(element.name().as_ref(), &prefixes) {
                     if let Some(revision) = CT_Revision::from_raw_with_input(
                         raw.clone(),
