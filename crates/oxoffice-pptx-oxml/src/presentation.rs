@@ -767,7 +767,7 @@ fn font_element_parts(xml: &[u8]) -> Result<FontElementParts> {
     };
     let start_end = reader.buffer_position() as usize;
     if empty {
-        let mut start = xml[..start_end - 2].to_vec();
+        let mut start = xml[..oxoffice_core::xml_element::start_tag(xml)?.attributes_end].to_vec();
         start.push(b'>');
         return Ok(FontElementParts {
             start,

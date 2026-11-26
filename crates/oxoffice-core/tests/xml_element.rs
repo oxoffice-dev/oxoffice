@@ -912,7 +912,7 @@ fn self_closing_assumptions(source: &str) -> Vec<usize> {
 /// deliver elements as written (packages, spreadsheets, test support);
 /// `to move`, a site this pull request moves onto `xml_element`. Every other
 /// line takes where a tag ends from `oxoffice_core::xml_element`.
-const SELF_CLOSING: [(&str, usize, &str); 60] = [
+const SELF_CLOSING: [(&str, usize, &str); 54] = [
     ("crates/oxoffice-core/src/raw_xml.rs", 1, "helper"),
     ("crates/oxoffice-core/src/xml_element.rs", 2, "helper"),
     (
@@ -1055,19 +1055,9 @@ const SELF_CLOSING: [(&str, usize, &str); 60] = [
         5,
         "verbatim reader",
     ),
-    ("crates/oxoffice-pptx-oxml/src/comments.rs", 2, "to move"),
-    ("crates/oxoffice-pptx-oxml/src/comments.rs", 2, "writes"),
-    ("crates/oxoffice-pptx-oxml/src/namespace.rs", 3, "to move"),
-    ("crates/oxoffice-pptx-oxml/src/picture.rs", 1, "to move"),
+    ("crates/oxoffice-pptx-oxml/src/comments.rs", 3, "writes"),
     ("crates/oxoffice-pptx-oxml/src/picture.rs", 1, "writes"),
-    (
-        "crates/oxoffice-pptx-oxml/src/presentation.rs",
-        2,
-        "to move",
-    ),
-    ("crates/oxoffice-pptx-oxml/src/shape_tree.rs", 1, "to move"),
-    ("crates/oxoffice-pptx-oxml/src/slide_parts.rs", 2, "to move"),
-    ("crates/oxoffice-pptx-oxml/src/timing.rs", 3, "to move"),
+    ("crates/oxoffice-pptx-oxml/src/presentation.rs", 1, "writes"),
     ("crates/oxoffice-pptx/src/hyperlinks.rs", 2, "to move"),
     ("crates/oxoffice-pptx/src/import_notes.rs", 3, "to move"),
     ("crates/oxoffice-pptx/src/import_tables.rs", 4, "to move"),
