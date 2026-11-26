@@ -553,6 +553,10 @@ fn write_xml_events<W: std::io::Write>(writer: &mut Writer<W>, raw: &[u8]) -> Re
     loop {
         match reader.read_event()? {
             Event::Eof => return Ok(()),
+            // An empty element read is written back in its writing.
+            Event::Empty(element) => {
+                oxoffice_core::raw_xml::write_empty(writer, &element, reader.empty_writing())?
+            }
             event => writer.write_event(event)?,
         }
     }
@@ -938,6 +942,10 @@ pub(crate) fn write_typed_leaf_raw_in<W: std::io::Write>(
                 break;
             }
             Event::Eof => break,
+            // An empty element read is written back in its writing.
+            Event::Empty(element) => {
+                oxoffice_core::raw_xml::write_empty(writer, &element, reader.empty_writing())?
+            }
             event => writer.write_event(event)?,
         }
     }

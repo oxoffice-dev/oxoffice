@@ -1514,7 +1514,10 @@ pub(crate) fn retained_binding_plan<'a>(
     })
 }
 
-pub(crate) fn generated_subtree_end(reader: &mut Reader<&[u8]>, name: &[u8]) -> Result<usize> {
+pub(crate) fn generated_subtree_end(
+    reader: &mut oxoffice_core::xml_reader::Verbatim<&[u8]>,
+    name: &[u8],
+) -> Result<usize> {
     let mut depth = 1u32;
     loop {
         match reader.read_event()? {

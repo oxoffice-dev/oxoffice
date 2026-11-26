@@ -2352,7 +2352,9 @@ fn write_rpr_with_positioned_raw<W: std::io::Write>(
     });
     let mut raw_index = 0usize;
     let mut occurrences = [0usize; RPR_END_SLOT as usize + 1];
-    let mut reader = Reader::from_reader(generated);
+    // The model's own writing, read as written: an empty container it wrote
+    // `<x></x>` is still its root, opened and closed.
+    let mut reader = oxoffice_core::xml_reader::Verbatim::from_reader(generated);
     reader.config_mut().trim_text(false);
     let mut inside = false;
     loop {
