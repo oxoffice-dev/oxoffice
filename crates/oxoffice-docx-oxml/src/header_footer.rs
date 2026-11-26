@@ -459,7 +459,7 @@ pub fn replace_authored_watermark(xml: &[u8], watermark: &VmlWatermark) -> Resul
         let mut completed_owner = None;
         let mut empty_owner = false;
         let mut completed_header = false;
-        let mut empty_header_name = None;
+        let mut empty_root = false;
         match event {
             Event::Start(ref element) => {
                 depth += 1;
@@ -480,7 +480,7 @@ pub fn replace_authored_watermark(xml: &[u8], watermark: &VmlWatermark) -> Resul
                 let name = element.name();
                 let local = local_name(name.as_ref());
                 if depth == 0 && is_word && local == b"hdr" {
-                    empty_header_name = Some(name.as_ref().to_vec());
+                    empty_root = true;
                 } else if pict_depth.is_some()
                     && is_vml
                     && local == b"shape"
@@ -523,8 +523,8 @@ pub fn replace_authored_watermark(xml: &[u8], watermark: &VmlWatermark) -> Resul
         if completed_header {
             header_end = Some(event_start);
         }
-        if let Some(root_name) = empty_header_name {
-            empty_header = Some((event_start..event_end, root_name));
+        if empty_root {
+            empty_header = Some(event_start..event_end);
         }
         buffer.clear();
     }
@@ -568,20 +568,12 @@ pub fn replace_authored_watermark(xml: &[u8], watermark: &VmlWatermark) -> Resul
         output.extend_from_slice(&xml[position..]);
         return Ok(output);
     }
-    if let Some((range, root_name)) = empty_header {
-        let empty = &xml[range.clone()];
-        let close = empty
-            .windows(2)
-            .rposition(|window| window == b"/>")
-            .ok_or_else(|| OxmlError::InvalidValue("empty header root".to_owned()))?;
-        let mut output = Vec::with_capacity(xml.len() + paragraph.len() + root_name.len() + 2);
+    if let Some(range) = empty_header {
+        let (root, _) =
+            oxoffice_core::xml_element::replace_content(&xml[range.clone()], &paragraph)?;
+        let mut output = Vec::with_capacity(xml.len() + paragraph.len() + root.len());
         output.extend_from_slice(&xml[..range.start]);
-        output.extend_from_slice(&empty[..close]);
-        output.push(b'>');
-        output.extend_from_slice(&paragraph);
-        output.extend_from_slice(b"</");
-        output.extend_from_slice(&root_name);
-        output.push(b'>');
+        output.extend_from_slice(&root);
         output.extend_from_slice(&xml[range.end..]);
         return Ok(output);
     }

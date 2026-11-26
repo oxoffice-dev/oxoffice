@@ -1337,9 +1337,9 @@ pub(super) fn cached_field_source(
         let start = reader.buffer_position() as usize;
         let event = reader.read_event_into(&mut buffer)?;
         let event_end = reader.buffer_position() as usize;
+        let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(element) | Event::Empty(element) => {
-                let empty = raw.get(event_end.saturating_sub(2)..event_end) == Some(b"/>");
                 let inherited = contexts
                     .last()
                     .map(|context| context.prefixes.as_slice())
@@ -2314,10 +2314,8 @@ fn write_updated_empty_text_element<W: std::io::Write>(
 
 struct FieldLockOwner<'a> {
     start: usize,
-    end: usize,
     element: BytesStart<'a>,
     prefixes: Vec<String>,
-    empty: bool,
 }
 
 /// One actual surgical source edit. Escaping is sized before payload emission.
@@ -2455,10 +2453,8 @@ fn field_lock_owner<'a>(
                 if owner {
                     return Ok(Some(FieldLockOwner {
                         start,
-                        end: reader.buffer_position() as usize,
                         element: element.clone(),
                         prefixes: prefixes.into_owned(),
-                        empty: matches!(event, Event::Empty(_)),
                     }));
                 }
                 if matches!(event, Event::Start(_)) {
@@ -2546,12 +2542,10 @@ fn plan_field_lock<'a>(
         replacement.push(FieldSourcePiece::Literal(if value { b"1" } else { b"0" }));
         replacement.push(FieldSourcePiece::Literal(b"\""));
     }
-    replacement.push(FieldSourcePiece::Literal(if owner.empty {
-        b"/>"
-    } else {
-        b">"
-    }));
-    FieldSourceEdit::new(raw.len(), owner.start..owner.end, replacement)
+    // The start tag is rewritten up to its close, which stays as written.
+    let attributes_end =
+        owner.start + oxoffice_core::xml_element::start_tag(&raw[owner.start..])?.attributes_end;
+    FieldSourceEdit::new(raw.len(), owner.start..attributes_end, replacement)
 }
 
 pub(super) fn write_field_lock_update<W: std::io::Write>(

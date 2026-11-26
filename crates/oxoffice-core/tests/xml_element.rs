@@ -912,7 +912,7 @@ fn self_closing_assumptions(source: &str) -> Vec<usize> {
 /// deliver elements as written (packages, spreadsheets, test support);
 /// `to move`, a site this pull request moves onto `xml_element`. Every other
 /// line takes where a tag ends from `oxoffice_core::xml_element`.
-const SELF_CLOSING: [(&str, usize, &str); 70] = [
+const SELF_CLOSING: [(&str, usize, &str); 63] = [
     ("crates/oxoffice-chart/src/authoring.rs", 2, "to move"),
     ("crates/oxoffice-core/src/raw_xml.rs", 1, "helper"),
     ("crates/oxoffice-core/src/xml_element.rs", 2, "helper"),
@@ -921,48 +921,21 @@ const SELF_CLOSING: [(&str, usize, &str); 70] = [
         1,
         "to move",
     ),
-    (
-        "crates/oxoffice-docx-oxml/src/content_control.rs",
-        4,
-        "to move",
-    ),
-    (
-        "crates/oxoffice-docx-oxml/src/document/source/fragments.rs",
-        1,
-        "to move",
-    ),
-    ("crates/oxoffice-docx-oxml/src/glossary.rs", 5, "to move"),
-    (
-        "crates/oxoffice-docx-oxml/src/header_footer.rs",
-        1,
-        "to move",
-    ),
     ("crates/oxoffice-docx-oxml/src/math.rs", 2, "writes"),
-    ("crates/oxoffice-docx-oxml/src/settings.rs", 2, "to move"),
-    (
-        "crates/oxoffice-docx-oxml/src/text/bindings.rs",
-        4,
-        "to move",
-    ),
     (
         "crates/oxoffice-docx-oxml/src/text/bindings.rs",
         1,
         "writes",
     ),
     (
-        "crates/oxoffice-docx-oxml/src/text/field_complex.rs",
-        3,
-        "to move",
-    ),
-    (
         "crates/oxoffice-docx-oxml/src/text/field_legacy_form.rs",
         1,
-        "to move",
+        "writes",
     ),
     (
         "crates/oxoffice-docx-oxml/src/text/field_rewrite.rs",
-        3,
-        "to move",
+        1,
+        "writes",
     ),
     ("crates/oxoffice-docx/src/bibliography.rs", 2, "to move"),
     (
