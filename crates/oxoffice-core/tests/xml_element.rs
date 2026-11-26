@@ -919,13 +919,14 @@ fn self_closing_assumptions(source: &str) -> Vec<usize> {
 
 /// Files that write `/>` or count a tag's close, by how many lines and why:
 /// `helper`, the one place that knows a tag's close (`xml_element`) and the
-/// verbatim capture (`raw_xml`); `writes`, an element the code builds, not
-/// one it read; `not a document part`, HTML, EPUB, SVG or RTF; `not a tag`,
-/// arithmetic on something else; `verbatim reader`, a crate whose readers
-/// deliver elements as written (packages, spreadsheets, test support);
-/// `to move`, a site this pull request moves onto `xml_element`. Every other
-/// line takes where a tag ends from `oxoffice_core::xml_element`.
-const SELF_CLOSING: [(&str, usize, &str); 26] = [
+/// verbatim capture (`raw_xml`); `writes`, an element the code writes as the
+/// model does, one it builds or a modelled element it closes as its event
+/// was read, never source bytes it splices; `not a document part`, HTML,
+/// EPUB, SVG or RTF; `not a tag`, arithmetic on something else; `verbatim
+/// reader`, a crate whose readers deliver elements as written (packages,
+/// spreadsheets, test support). Every other line takes where a tag ends from
+/// `oxoffice_core::xml_element`.
+const SELF_CLOSING: [(&str, usize, &str); 20] = [
     ("crates/oxoffice-core/src/raw_xml.rs", 1, "helper"),
     ("crates/oxoffice-core/src/xml_element.rs", 2, "helper"),
     ("crates/oxoffice-docx-oxml/src/math.rs", 2, "writes"),
@@ -963,12 +964,6 @@ const SELF_CLOSING: [(&str, usize, &str); 26] = [
     ("crates/oxoffice-pptx-oxml/src/comments.rs", 3, "writes"),
     ("crates/oxoffice-pptx-oxml/src/picture.rs", 1, "writes"),
     ("crates/oxoffice-pptx-oxml/src/presentation.rs", 1, "writes"),
-    ("crates/oxoffice-pptx/src/hyperlinks.rs", 2, "to move"),
-    ("crates/oxoffice-pptx/src/import_notes.rs", 3, "to move"),
-    ("crates/oxoffice-pptx/src/import_tables.rs", 4, "to move"),
-    ("crates/oxoffice-pptx/src/masters.rs", 1, "to move"),
-    ("crates/oxoffice-pptx/src/properties.rs", 2, "to move"),
-    ("crates/oxoffice-pptx/src/themes.rs", 3, "to move"),
     (
         "crates/oxoffice-render-test/src/xml.rs",
         1,

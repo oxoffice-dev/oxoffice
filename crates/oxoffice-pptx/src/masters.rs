@@ -92,15 +92,9 @@ impl Presentation {
             .write_xml(&mut writer, &tag)
             .map_err(|error| footer_malformed(&part, error.to_string()))?;
         let mut replacement = writer.into_inner();
-        let first_end = replacement
-            .iter()
-            .position(|byte| *byte == b'>')
-            .ok_or_else(|| footer_malformed(&part, "level source has no start token"))?;
-        let insertion = if replacement[first_end - 1] == b'/' {
-            first_end - 1
-        } else {
-            first_end
-        };
+        let insertion = oxoffice_core::xml_element::start_tag(&replacement)
+            .map_err(|_| footer_malformed(&part, "level source has no start token"))?
+            .attributes_end;
         let mut fragment_reader = quick_xml::Reader::from_reader(replacement.as_slice());
         let start = match fragment_reader.read_event().map_err(OpcError::from)? {
             XmlEvent::Start(start) | XmlEvent::Empty(start) => start,

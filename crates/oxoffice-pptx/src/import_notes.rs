@@ -687,9 +687,9 @@ fn substitute_notes_placeholder_color(
             .map_err(|error| footer_malformed(part, error.to_string()))?;
         let uri = import_namespace_uri(namespace, decoder)
             .map_err(|error| footer_malformed(part, error.to_string()))?;
+        let empty = matches!(event, XmlEvent::Empty(_));
         match event {
             XmlEvent::Start(start) | XmlEvent::Empty(start) => {
-                let empty = xml[begin..reader.buffer_position() as usize].ends_with(b"/>");
                 let modeled = scopes.last().copied().unwrap_or(true)
                     && notes_theme_modeled_element(&uri, start.local_name().as_ref());
                 if !empty {
@@ -711,7 +711,6 @@ fn substitute_notes_placeholder_color(
                 if !placeholder {
                     continue;
                 }
-                let empty = xml[begin..reader.buffer_position() as usize].ends_with(b"/>");
                 let mut reference = reference.cloned().ok_or_else(|| {
                     footer_malformed(
                         part,
@@ -1313,10 +1312,9 @@ fn freeze_source_notes_theme(
             .map_err(|error| footer_malformed(part, error.to_string()))?;
         let uri = import_namespace_uri(namespace, decoder)
             .map_err(|error| footer_malformed(part, error.to_string()))?;
-        let end = reader.buffer_position() as usize;
+        let empty = matches!(event, XmlEvent::Empty(_));
         match event {
             XmlEvent::Start(element) | XmlEvent::Empty(element) => {
-                let empty = xml[begin..end].ends_with(b"/>");
                 let modeled = stack.last().is_none_or(|(modeled, _)| *modeled)
                     && notes_theme_modeled_element(&uri, element.local_name().as_ref());
                 let local = element.local_name();

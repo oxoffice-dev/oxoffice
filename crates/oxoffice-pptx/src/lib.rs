@@ -997,6 +997,8 @@ fn media_infos_for_slide(
 }
 
 struct ImportTableStyles {
+    /// Where the root starts.
+    start: usize,
     metadata: Vec<ImportTableStyleAttribute>,
     opaque: Vec<Vec<u8>>,
     default: Option<String>,

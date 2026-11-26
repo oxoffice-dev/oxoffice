@@ -726,9 +726,9 @@ fn locate_shape_hyperlink(xml: &[u8], shape_id: u32) -> Result<Option<ShapeHyper
             (xml_is(&namespace, P_NS), xml_is(&namespace, A_NS), event)
         };
         let end_offset = reader.buffer_position() as usize;
+        let empty = matches!(event, XmlEvent::Empty(_));
         match event {
             XmlEvent::Start(start) | XmlEvent::Empty(start) => {
-                let empty = xml[start_offset..end_offset].ends_with(b"/>");
                 if target_depth.is_none()
                     && is_p
                     && xml_local_name(start.name().as_ref()) == b"cNvPr"
@@ -889,15 +889,13 @@ fn rewrite_shape_hyperlink(
     let click = format!(r#"<a:hlinkClick xmlns:a="{A_NS}" xmlns:r="{R_NS}" r:id="{id}"{action}/>"#);
     let mut rewritten = Vec::with_capacity(xml.len() + click.len() + location.root_name.len() + 3);
     if location.empty_root {
-        let head = &xml[location.root_start..location.root_head_end];
-        let open = head
-            .strip_suffix(b"/>")
-            .ok_or_else(|| invalid_shape_mutation("shape hyperlink", "malformed empty p:cNvPr"))?;
+        let (opened, _) = oxoffice_core::xml_element::replace_content(
+            &xml[location.root_start..location.root_head_end],
+            &click,
+        )
+        .map_err(|error| invalid_shape_mutation("shape hyperlink", error.to_string()))?;
         rewritten.extend_from_slice(&xml[..location.root_start]);
-        rewritten.extend_from_slice(open);
-        rewritten.extend_from_slice(b">");
-        rewritten.extend_from_slice(click.as_bytes());
-        rewritten.extend_from_slice(format!("</{}>", location.root_name).as_bytes());
+        rewritten.extend_from_slice(&opened);
         rewritten.extend_from_slice(&xml[location.root_head_end..]);
     } else {
         rewritten.extend_from_slice(&xml[..location.root_head_end]);
