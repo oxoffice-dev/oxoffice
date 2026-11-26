@@ -2357,11 +2357,12 @@ fn layout_paragraph_with_source_and_table(
     result.heading_text = heading_level.map(|_| heading_text);
     // A bookmark that starts inside the paragraph and that a field or a link
     // targets has a marker there: it lands where the marker is drawn. The
-    // others land at the top of the paragraph.
+    // others land at the top of the paragraph. A start with no end is no
+    // bookmark and lands nowhere.
     result.bookmark_targets = para
         .bookmark_markers
         .iter()
-        .filter(|bookmark| bookmark.is_start())
+        .filter(|bookmark| opens_bookmark(input, bookmark))
         .filter_map(|bookmark| bookmark.name())
         .filter_map(|name| page_ref_id(input, name).map(|target| (target, name)))
         .filter(|(_, name)| bookmark_exists(input, name))
@@ -2372,7 +2373,7 @@ fn layout_paragraph_with_source_and_table(
         .iter()
         .chain(block_before)
         .chain(block_after)
-        .filter(|bookmark| bookmark.is_start())
+        .filter(|bookmark| opens_bookmark(input, bookmark))
         .filter_map(|bookmark| bookmark.name())
         .filter(|name| {
             !result
