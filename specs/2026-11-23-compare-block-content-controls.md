@@ -21,7 +21,8 @@ body. A block content control (`w:sdt` holding paragraphs and tables) has no suc
 - A control added or removed in a cell or inside another control is refused the same way.
 - Accepting or rejecting cannot resolve such a control either: a control whose every run and paragraph mark is
   deleted (as Word writes one deleted under tracking) stops accept with `cannot remove the final paragraph mark`,
-  because the last paragraph mark of the control has no paragraph after it inside the control.
+  because the last paragraph mark of the control has no paragraph after it inside the control. Resolved below; a
+  removed mark that ends a story is decided in [2026-11-26](2026-11-26-resolving-a-removed-last-mark.md).
 
 ## Decision
 
@@ -91,4 +92,5 @@ One pull request, closing #460 and #433:
 ## Links
 
 - Issues #460, #433.
+- Followed by [resolving a removed last mark](2026-11-26-resolving-a-removed-last-mark.md) (#680).
 - The final-table rule this follows: `a_paragraph_deleted_before_a_final_table_deleted_by_an_earlier_redline_is_compared`.
