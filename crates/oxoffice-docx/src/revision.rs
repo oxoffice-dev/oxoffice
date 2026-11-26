@@ -1578,7 +1578,18 @@ impl<'a> XmlTree<'a> {
         for element in &self.elements {
             let actual_root = roots.contains(&(element.start, element.end));
             let parent_admitted = element.parent.is_some_and(|parent| admitted[parent]);
-            admitted.push(element.word && element.modeled && (actual_root || parent_admitted));
+            // Each copy of a box an admitted run holds (an alternate
+            // content's fallback beside its choice) is the same story.
+            let box_copy = element.word
+                && element.local == "txbxContent"
+                && std::iter::successors(element.parent, |&parent| self.elements[parent].parent)
+                    .find(|&ancestor| {
+                        self.elements[ancestor].word && self.elements[ancestor].local == "r"
+                    })
+                    .is_some_and(|run| admitted[run]);
+            admitted.push(
+                element.word && element.modeled && (actual_root || parent_admitted || box_copy),
+            );
         }
         Ok(admitted)
     }

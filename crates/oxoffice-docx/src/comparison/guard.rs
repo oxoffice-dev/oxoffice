@@ -406,7 +406,9 @@ impl GuardProjection<'_> {
                         }) {
                             continue;
                         }
-                        selected
+                        // An inline frame is read from its bytes outside the
+                        // box: its model leaves out the wrap distances.
+                        selected.filter(|drawing| drawing.anchor.is_some())
                     } else {
                         None
                     };
@@ -982,7 +984,7 @@ fn project_source_body(
 /// deleted and inserted, or one the source already repeats), so a drawing
 /// kept as raw XML, as an `mc:AlternateContent` is, forgets it here as a
 /// modeled one does in [`normalize_drawing_identity`].
-fn without_drawing_ids(raw: &[u8]) -> Vec<u8> {
+pub(super) fn without_drawing_ids(raw: &[u8]) -> Vec<u8> {
     if !raw.windows(b"docPr".len()).any(|window| window == b"docPr") {
         return raw.to_vec();
     }

@@ -38,6 +38,23 @@ pub(super) fn drawing_signature(
         inline.raw_xml = None;
     }
     if let Some(anchor) = &mut signature.anchor {
+        // The bindings the anchor reads, wherever they are declared: out of
+        // the anchor (its inherited scope) or in it, as a writer that
+        // declares a prefix on the anchor rather than on the drawing does.
+        for (prefix, uri) in anchor
+            .raw_xml
+            .as_deref()
+            .map(declared_bindings)
+            .unwrap_or_default()
+        {
+            if !anchor
+                .source_namespace_bindings
+                .iter()
+                .any(|(known, _)| *known == prefix)
+            {
+                anchor.source_namespace_bindings.push((prefix, uri));
+            }
+        }
         anchor.raw_xml = None;
         let mut prefixes = HashSet::new();
         if anchor
@@ -82,6 +99,38 @@ pub(super) fn required_external_bindings(
         buffer.clear();
     }
     Ok(required)
+}
+
+/// Each prefix `xml` declares, on any element, with the first namespace it
+/// is bound to.
+fn declared_bindings(xml: &[u8]) -> Vec<(String, String)> {
+    let mut reader = Reader::from_reader(xml);
+    let mut bindings = Vec::<(String, String)>::new();
+    let mut buffer = Vec::new();
+    while let Ok(event) = reader.read_event_into(&mut buffer) {
+        match event {
+            Event::Start(element) | Event::Empty(element) => {
+                for attribute in element.attributes().flatten() {
+                    let name = attribute.key.as_ref();
+                    let prefix = if name == b"xmlns" {
+                        Some(&b""[..])
+                    } else {
+                        name.strip_prefix(b"xmlns:")
+                    };
+                    if let (Some(prefix), Ok(uri)) = (prefix, std::str::from_utf8(&attribute.value))
+                        && let Ok(prefix) = std::str::from_utf8(prefix)
+                        && !bindings.iter().any(|(known, _)| known == prefix)
+                    {
+                        bindings.push((prefix.to_owned(), uri.to_owned()));
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    bindings
 }
 
 pub(super) fn declared_prefixes(element: &BytesStart<'_>) -> Result<HashSet<String>> {

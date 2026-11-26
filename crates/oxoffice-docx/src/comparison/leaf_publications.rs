@@ -454,7 +454,11 @@ fn run_publication_roles(
                 "raw publication source boundary changed".into(),
             ));
         }
-        let output_boundary = CT_R::raw_child_position(run.extra_xml_positions[local]);
+        // A raw child's place counts the properties of the run it was read
+        // in; the generated run may have them or not (a format change).
+        let output_boundary = CT_R::raw_child_position(run.extra_xml_positions[local])
+            .saturating_sub(usize::from(run.properties.is_some()))
+            + properties;
         if output_boundary > total {
             return Err(Error::Other(
                 "raw publication boundary is outside the emitted owner".into(),
