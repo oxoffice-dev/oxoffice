@@ -110,8 +110,14 @@ fn fixture() -> Document {
 }
 
 /// `doc` saved with the content of its header replaced by `content`.
-fn with_header(mut doc: Document, content: &str) -> Vec<u8> {
-    let header = story(&doc, StoryKind::Header).part_name().to_owned();
+fn with_header(doc: Document, content: &str) -> Vec<u8> {
+    with_story(doc, StoryKind::Header, content)
+}
+
+/// `doc` saved with the content of its header or footer `kind` replaced by
+/// `content`.
+fn with_story(mut doc: Document, kind: StoryKind, content: &str) -> Vec<u8> {
+    let header = story(&doc, kind).part_name().to_owned();
     let bytes = doc.to_bytes().expect("saves");
     let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
     let xml = String::from_utf8(package.get_part(&header).expect("header").to_vec()).unwrap();
@@ -119,7 +125,10 @@ fn with_header(mut doc: Document, content: &str) -> Vec<u8> {
         .find("<w:p>")
         .or_else(|| xml.find("<w:p "))
         .expect("a paragraph");
-    let end = xml.rfind("</w:hdr>").expect("the header's end");
+    let end = xml
+        .rfind("</w:hdr>")
+        .or_else(|| xml.rfind("</w:ftr>"))
+        .expect("the part's end");
     package.set_part(
         &header,
         format!("{}{content}{}", &xml[..start], &xml[end..]).into_bytes(),
@@ -1103,4 +1112,106 @@ fn control_spec(placement: ContentControlPlacement) -> oxoffice_docx::ContentCon
         appearance: None,
         placeholder: None,
     }
+}
+
+#[test]
+fn a_table_in_a_block_control_is_listed_as_a_table_in_every_story() {
+    // Google Docs tables: in the body, in a body table's cell, in a footer.
+    let mut doc = doc_with_body(&format!(
+        "{}{}{}{}",
+        p("Before {name}"),
+        google_table(1, &table(&p("A {name}"))),
+        table(&format!(
+            "{}{}",
+            p("Cell"),
+            google_table(2, &table(&p("Inner {name}")))
+        )),
+        p("After {name}")
+    ));
+    doc.set_footer("Foot");
+    let mut doc = Document::from_bytes(&with_story(
+        doc,
+        StoryKind::Footer,
+        &google_table(3, &table(&p("F {name}"))),
+    ))
+    .expect("reopens");
+    // Its cells are no paragraphs of the story around it.
+    let paragraphs = doc
+        .paragraphs()
+        .iter()
+        .map(|paragraph| paragraph.text())
+        .collect::<Vec<_>>();
+    assert_eq!(paragraphs, ["Before {name}", "After {name}"]);
+    assert_eq!(
+        body_texts(&doc),
+        [
+            "Before {name}",
+            "table:A {name}",
+            "table:CellInner {name}",
+            "After {name}"
+        ]
+    );
+    let cell: Vec<String> = doc.tables()[1]
+        .cell(0, 0)
+        .expect("a cell")
+        .paragraphs()
+        .map(|paragraph| paragraph.text())
+        .collect();
+    assert_eq!(cell, ["Cell"]);
+    // Every story lists it among its tables (a cell's item 0 is its `w:tcPr`),
+    // and its location edits it.
+    let body = body(&doc);
+    let direct = ContentLocation::new(body.clone(), StoryItemKind::Table, vec![2]);
+    let cell = doc.story_table_cell(&direct, 0, 0).expect("the cell story");
+    let footer = story(&doc, StoryKind::Footer);
+    let listed = [&body, &cell, &footer].map(|story| {
+        doc.story_tables(story)
+            .expect("tables")
+            .iter()
+            .map(|table| table.index_path().to_vec())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        listed,
+        [
+            vec![vec![1, 0], vec![2]],
+            vec![vec![2, 0]],
+            vec![vec![0, 0]]
+        ]
+    );
+    assert_eq!(
+        doc.table_story_location(0).unwrap().unwrap().index_path(),
+        [1, 0]
+    );
+    assert_eq!(
+        doc.table_story_location(1).unwrap().unwrap().index_path(),
+        [2]
+    );
+    for (story, path) in [(body, vec![1, 0]), (cell, vec![2, 0]), (footer, vec![0, 0])] {
+        let at = ContentLocation::new(refreshed(&doc, &story), StoryItemKind::Table, path);
+        let replaced = doc.try_replace_text_at(&at, "{name}", "Ada", Some(1));
+        assert_eq!(replaced.expect("replaced"), Ok(1));
+    }
+    // The lock stays as written.
+    let bytes = reopen(&mut doc).to_bytes().expect("saves");
+    let parts = package_parts(&bytes);
+    let xml = parts
+        .values()
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect::<String>();
+    assert_eq!(xml.matches("<w:lock w:val=\"contentLocked\"/>").count(), 3);
+    assert!(
+        xml.contains("F Ada") && !xml.contains("{name}</w:t></w:r></w:p></w:tc>"),
+        "{xml}"
+    );
+    let doc = Document::from_bytes(&bytes).expect("reopens");
+    assert_eq!(
+        body_texts(&doc),
+        [
+            "Before {name}",
+            "table:A Ada",
+            "table:CellInner Ada",
+            "After {name}"
+        ]
+    );
 }

@@ -699,6 +699,53 @@ impl Document {
         ))
     }
 
+    /// The tables of `story` outside its cells, in document order: a table
+    /// that is a story item, `[i]`, and a table written in a block content
+    /// control at any depth, `[c, k]`.
+    pub fn story_tables(&self, story: &StoryId) -> Result<Vec<ContentLocation>> {
+        let (source, owner) = self.story_source_and_owner(story)?;
+        let xml = source.xml.as_ref();
+        let mut tables = Vec::new();
+        for (index, item) in scan_story_items(xml, &owner, None)?.iter().enumerate() {
+            match item.kind {
+                StoryItemKind::Table => tables.push((item.full.start, vec![index])),
+                StoryItemKind::ContentControl
+                    if item.sdt_context == Some(StorySdtContext::Block) =>
+                {
+                    for (k, table) in scan_story_control_blocks(xml, item, b"tbl")?
+                        .into_iter()
+                        .enumerate()
+                    {
+                        tables.push((table.start, vec![index, k]));
+                    }
+                }
+                _ => {}
+            }
+        }
+        tables.sort_by_key(|(start, _)| *start);
+        Ok(tables
+            .into_iter()
+            .map(|(_, path)| ContentLocation::new(story.clone(), StoryItemKind::Table, path))
+            .collect())
+    }
+
+    /// The location of body table `table_index`, the index
+    /// [`Self::table`] takes: entry `table_index` of the body's
+    /// [`Self::story_tables`]. `None` past the tables, or when the model
+    /// counts another number of body tables than the source lists.
+    pub fn table_story_location(&self, table_index: usize) -> Result<Option<ContentLocation>> {
+        let body = self
+            .stories()?
+            .into_iter()
+            .find(|story| story.kind == StoryKind::Body)
+            .ok_or_else(|| Error::Other("document body story is missing".to_owned()))?;
+        let tables = self.story_tables(&body)?;
+        if tables.len() != self.document.body.tables().count() {
+            return Ok(None);
+        }
+        Ok(tables.into_iter().nth(table_index))
+    }
+
     /// Whether `location` names a block, as the block operations read it.
     pub(crate) fn names_a_block(&self, location: &ContentLocation) -> bool {
         self.story_source_and_owner(&location.story)

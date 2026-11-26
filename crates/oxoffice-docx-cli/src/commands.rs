@@ -1212,14 +1212,20 @@ fn diff_streams(file: &Path, doc: &Document) -> Result<(Vec<DiffStream>, Vec<Str
         items: body,
     }];
 
-    // The table cells of the body use the `text --json` traversal. A table
-    // inside a block content control is left to the body paragraphs, which
-    // already hold its text.
+    // The table cells of the body use the `text --json` traversal, for every
+    // table `Document::tables` lists: a table inside a block content control
+    // is a table, whose cells the body paragraphs do not hold.
     let document = parsed_main_document(file)?;
     let mut cells = Vec::new();
     let mut table_number = 0;
     for (body_index, content) in document.body.content.iter().enumerate() {
-        if let BodyContent::Table(table) = content {
+        let mut tables = Vec::new();
+        match content {
+            BodyContent::Table(table) => tables.push(table.as_ref()),
+            BodyContent::ContentControl(control) => control_tables(control, &mut tables),
+            _ => {}
+        }
+        for table in tables {
             table_number += 1;
             let mut paragraphs = Vec::new();
             collect_table_paragraphs(body_index, &[], table, &mut paragraphs);
@@ -1252,6 +1258,18 @@ fn diff_streams(file: &Path, doc: &Document) -> Result<(Vec<DiffStream>, Vec<Str
 
 /// Label a `text --json` paragraph path one-based, such as `row 1, cell 2,
 /// paragraph 1`.
+/// The tables written in the block content control `control`, at any
+/// depth of nested block controls.
+fn control_tables<'a>(control: &'a CT_Sdt, tables: &mut Vec<&'a CT_Tbl>) {
+    for content in &control.content {
+        match content {
+            SdtContent::Table(table) => tables.push(table),
+            SdtContent::ContentControl(nested) => control_tables(nested, tables),
+            _ => {}
+        }
+    }
+}
+
 fn json_path_label(paragraph: &Value) -> String {
     paragraph["path"]
         .as_array()
