@@ -89,7 +89,7 @@ use guard::{
 use move_pairs::{crossing_reply_additions, pair_moves, share_trailing_move};
 use namespaces::{
     actual_root_bindings, declared_prefixes, drawing_signature, element_inner_range_any_prefix,
-    foreign_word_binding, required_external_bindings, root_prefix,
+    foreign_word_binding, required_external_bindings, root_prefix, scan_root_start,
 };
 pub(crate) use postconditions::reopen_staged;
 use postconditions::{

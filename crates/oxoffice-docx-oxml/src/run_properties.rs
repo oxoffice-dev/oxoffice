@@ -1089,7 +1089,7 @@ impl CT_RPr {
                         rtl_carrier_required = toggle_has_unsupported_attributes(e, &prefixes)?;
                         let raw = crate::text::raw_with_external_bindings(
                             &capture_empty_element(e)?,
-                            owner_bindings,
+                            &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
                         )?;
                         record_modeled_toggle_candidate(
                             &mut rpr.revision_xml,
@@ -1164,8 +1164,10 @@ impl CT_RPr {
                     let prefixes = word_prefixes_at(e, word_prefixes)?;
                     if is_word_element(e.name().as_ref(), b"rtl", &prefixes) {
                         let captured = capture_element(reader, e)?;
-                        let raw =
-                            crate::text::raw_with_external_bindings(&captured, owner_bindings)?;
+                        let raw = crate::text::raw_with_external_bindings(
+                            &captured,
+                            &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
+                        )?;
                         if toggle_element_is_explicitly_empty(&captured)? {
                             record_rpr_modeled(
                                 &mut rpr,

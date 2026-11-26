@@ -964,8 +964,11 @@ impl CT_Document {
         let mut document_open = false;
         let mut document_closed = false;
 
-        // Known namespace prefixes that we always emit ourselves
-        let known_ns: &[&[u8]] = &[b"xmlns:w", b"xmlns:r", b"xmlns:mc", b"xmlns"];
+        // The declarations the root writer always writes itself. A default
+        // namespace is kept with the others: the raw elements the model
+        // keeps unprefixed are in it, and stay there when the part is
+        // written again.
+        let known_ns: &[&[u8]] = &[b"xmlns:w", b"xmlns:r", b"xmlns:mc"];
 
         loop {
             let event_start = reader.buffer_position() as usize;

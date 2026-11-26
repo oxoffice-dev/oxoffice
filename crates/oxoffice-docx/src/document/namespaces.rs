@@ -207,10 +207,14 @@ fn apply_namespace_declarations(
     Ok(())
 }
 
+/// The prefix whose binding the canonical serializer cannot keep when it
+/// writes this main part again: any declaration on the body, or a root
+/// declaration of one of the serializer's own prefixes to another
+/// namespace. A default namespace is kept as declared (the root writer
+/// writes it back), whatever it binds.
 pub(super) fn unsafe_serializer_namespace_prefix(
     root_declarations: &[(String, String)],
     body_declarations: &[(String, String)],
-    document_xml: Option<&[u8]>,
 ) -> Option<String> {
     if let Some((name, _)) = body_declarations.first() {
         return Some(namespace_prefix(name));
@@ -218,73 +222,9 @@ pub(super) fn unsafe_serializer_namespace_prefix(
 
     root_declarations.iter().find_map(|(name, value)| {
         let prefix = namespace_prefix(name);
-        let expected = match canonical_serializer_namespace(&prefix) {
-            Some(expected) => expected,
-            None if prefix.is_empty() => {
-                return match document_xml.and_then(|xml| root_default_namespace_is_used(xml, value))
-                {
-                    Some(false) => None,
-                    Some(true) | None => Some("default".to_owned()),
-                };
-            }
-            None => return None,
-        };
+        let expected = canonical_serializer_namespace(&prefix)?;
         (value != expected).then_some(prefix)
     })
-}
-
-fn root_default_namespace_is_used(xml: &[u8], root_namespace: &str) -> Option<bool> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
-    let mut buffer = Vec::new();
-    let mut root_binding_scopes = Vec::new();
-    loop {
-        let event = reader.read_event_into(&mut buffer).ok()?;
-        match event {
-            Event::Start(ref element) | Event::Empty(ref element) => {
-                let mut local_default = None;
-                for attribute in element.attributes() {
-                    let attribute = attribute.ok()?;
-                    if attribute.key.as_ref() == b"xmlns" {
-                        if local_default.is_some() {
-                            return None;
-                        }
-                        local_default = Some(
-                            attribute
-                                .decoded_and_normalized_value(
-                                    XmlVersion::Implicit1_0,
-                                    element.decoder(),
-                                )
-                                .ok()?
-                                .into_owned(),
-                        );
-                    }
-                }
-
-                let root_binding_is_active = if root_binding_scopes.is_empty() {
-                    if local_default.as_deref() != Some(root_namespace) {
-                        return None;
-                    }
-                    true
-                } else if local_default.is_some() {
-                    false
-                } else {
-                    *root_binding_scopes.last()?
-                };
-                if !element.name().as_ref().contains(&b':') && root_binding_is_active {
-                    return Some(true);
-                }
-                if matches!(event, Event::Start(_)) {
-                    root_binding_scopes.push(root_binding_is_active);
-                }
-            }
-            Event::End(_) => {
-                root_binding_scopes.pop()?;
-            }
-            Event::Eof => return root_binding_scopes.is_empty().then_some(false),
-            _ => {}
-        }
-        buffer.clear();
-    }
 }
 
 fn canonical_serializer_namespace(prefix: &str) -> Option<&'static str> {
@@ -1411,15 +1351,18 @@ pub(super) fn unsafe_nested_namespace_prefix(owners: &[NestedNamespaceOwner]) ->
     })
 }
 
+/// The refusal of a save that cannot keep the binding of `prefix`. The
+/// empty prefix is a default namespace the body declares (a root's is kept):
+/// a known limitation (#663).
 pub(super) fn shadowed_namespace_diagnostic(prefix: &str) -> String {
-    let diagnostic =
-        format!("cannot serialize a modified document with a shadowed `{prefix}` namespace");
-    if prefix == "default" {
-        // A known limitation (#663): the writer cannot rebind the main
-        // namespace a document writes without a prefix.
+    if prefix.is_empty() {
         return format!(
-            "{diagnostic}: a document written with WordprocessingML as its default namespace cannot be edited yet (limitation docx-default-namespace, see `oxoffice limitations`)"
+            "cannot serialize a modified document whose body declares a default namespace: {DEFAULT_NAMESPACE_BELOW_ROOT}"
         );
     }
-    diagnostic
+    format!("cannot serialize a modified document with a shadowed `{prefix}` namespace")
 }
+
+/// What an edit refused for a default namespace declared below the root
+/// says (#663).
+pub(super) const DEFAULT_NAMESPACE_BELOW_ROOT: &str = "a document that declares a default namespace below its root (on the body, a table or a block content control) cannot be edited yet (limitation docx-default-namespace-below-root, see `oxoffice limitations`)";

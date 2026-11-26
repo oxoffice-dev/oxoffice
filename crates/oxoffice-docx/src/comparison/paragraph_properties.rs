@@ -398,8 +398,11 @@ fn retained_as_said(xml: &[u8], carrier: bool) -> Option<String> {
     }
 }
 
-/// `xml`, one element with no content, without the `val` attribute under
-/// the element's own prefix; its other attributes kept as written.
+/// `xml`, one element with no content, without its WordprocessingML `val`
+/// attribute, whatever its prefix (the carrier's Word prefixes:
+/// `oxoffice_docx_oxml::properties::carrier_word_prefixes`); its other
+/// attributes kept as written. An unprefixed `val` has no namespace: the
+/// model does not read it and a save keeps it, so it stays.
 fn without_own_val(xml: &str) -> Option<String> {
     let mut reader = Reader::from_str(xml);
     let start = match reader.read_event().ok()? {
@@ -407,14 +410,15 @@ fn without_own_val(xml: &str) -> Option<String> {
         Event::Start(start) if matches!(reader.read_event().ok()?, Event::End(_)) => start,
         _ => return None,
     };
-    let val = match start.name().prefix() {
-        Some(prefix) => [prefix.as_ref(), b":val"].concat(),
-        None => b"val".to_vec(),
+    let prefixes = oxoffice_docx_oxml::properties::carrier_word_prefixes(&start).ok()?;
+    let is_word_val = |key: &[u8]| {
+        key.strip_suffix(b":val")
+            .is_some_and(|prefix| prefixes.iter().any(|word| word.as_bytes() == prefix))
     };
     let mut rebuilt = BytesStart::new(std::str::from_utf8(start.name().as_ref()).ok()?.to_owned());
     for attribute in start.attributes() {
         let attribute = attribute.ok()?;
-        if attribute.key.as_ref() != val.as_slice() {
+        if !is_word_val(attribute.key.as_ref()) {
             oxoffice_core::xml::push_raw_attribute(&mut rebuilt, attribute);
         }
     }

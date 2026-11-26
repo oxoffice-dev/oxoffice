@@ -89,41 +89,12 @@ message = "gives another result"
 # a:alphaModFix under another prefix is kept raw, its opacity unread
 # (oxoffice-drawing fill.rs:724-745).
 
-# D4: a document whose root binds the default namespace refuses every edit
-# (document/namespaces.rs:219-229): limitation docx-default-namespace, #663.
-
-[[known]]
-input = "*.docx"
-writing = "default-namespace"
-operation = "edit"
-issue = 663
-message = "shadowed `default` namespace"
-
 # D5: the replay of nested namespace owners cannot match an owner written
 # another way: oxoffice-docx document/namespace_replay.rs:206-280.
 
 # D6: a paragraph's w:cnfStyle under another prefix is kept raw where the
 # original's is rewritten from the model: the edit writes it otherwise
 # (oxoffice-docx-oxml paragraph properties).
-
-# G: under the default namespace a save reads back other ids than it holds
-# (debug check, document/canonicalize.rs:611-639): #663.
-
-[[known]]
-input = "*.docx"
-writing = "default-namespace"
-operation = "save"
-issue = 663
-message = "reads other identifiers than it holds"
-debug_assertions = true
-
-[[known]]
-input = "*.docx"
-writing = "default-namespace"
-operation = "validate"
-issue = 663
-message = "reads other identifiers than it holds"
-debug_assertions = true
 
 # O: the original fails too: no writing is to blame: the original refuses the
 # comparison otherwise.

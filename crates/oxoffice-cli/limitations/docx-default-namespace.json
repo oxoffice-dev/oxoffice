@@ -1,9 +1,0 @@
-{
-  "id": "docx-default-namespace",
-  "format": "docx",
-  "area": "editing",
-  "title": "A document written with WordprocessingML as its default namespace cannot be edited",
-  "symptom": "a document whose main part writes its elements without a prefix (`<document xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">`) opens, reads and saves unchanged, but every edit is refused with \"cannot serialize a modified document with a shadowed `default` namespace\"",
-  "workaround": "open and save the document in Word or LibreOffice, which write the `w:` prefix, then edit the saved copy",
-  "issue": 663
-}

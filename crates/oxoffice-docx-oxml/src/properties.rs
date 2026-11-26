@@ -421,7 +421,9 @@ pub(crate) fn modeled_toggle_attributes<'a>(
                 quick_xml::events::attributes::Attributes::new(header, source.name().as_ref().len())
             {
                 let attribute = attribute?;
-                if is_word_attribute(attribute.key.as_ref(), b"val", &prefixes) {
+                if is_word_attribute(attribute.key.as_ref(), b"val", &prefixes)
+                    || binds_word(&attribute, source.decoder())?
+                {
                     continue;
                 }
                 let name = match renamed(attribute.key.0, &prefixes) {
@@ -437,7 +439,9 @@ pub(crate) fn modeled_toggle_attributes<'a>(
             // Keep that exact acceptance/error path instead of validating it.
             for attribute in source.attributes() {
                 let attribute = attribute?;
-                if is_word_attribute(attribute.key.as_ref(), b"val", &prefixes) {
+                if is_word_attribute(attribute.key.as_ref(), b"val", &prefixes)
+                    || binds_word(&attribute, source.decoder())?
+                {
                     continue;
                 }
                 let name = match renamed(attribute.key.as_ref(), &prefixes) {
@@ -457,12 +461,58 @@ pub(crate) fn modeled_toggle_attributes<'a>(
     Ok(preserved)
 }
 
+/// Whether `attribute` declares a binding to WordprocessingML: a carrier's
+/// Word attributes are written under the modelled element's prefix, so such
+/// a declaration binds nothing the modelled element writes.
+fn binds_word(
+    attribute: &quick_xml::events::attributes::Attribute<'_>,
+    decoder: quick_xml::encoding::Decoder,
+) -> Result<bool> {
+    let key = attribute.key.as_ref();
+    if key != b"xmlns" && !key.starts_with(b"xmlns:") {
+        return Ok(false);
+    }
+    Ok(attribute
+        .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)?
+        .as_bytes()
+        == W_NS.as_bytes())
+}
+
+/// The bindings the retained source of a modelled Word element `element`
+/// declares: those of `owner_bindings` it uses and, for an element written
+/// without a prefix (its part's default namespace is WordprocessingML,
+/// #663), the default namespace and the other prefixes `word_prefixes`
+/// binds to WordprocessingML. Such a carrier then names its own Word
+/// attributes, which no prefix of its element tells
+/// ([`carrier_word_prefixes`]).
+pub(crate) fn carrier_bindings<'a>(
+    element: &BytesStart<'_>,
+    word_prefixes: &[String],
+    owner_bindings: &'a [(String, String)],
+) -> std::borrow::Cow<'a, [(String, String)]> {
+    if element.name().prefix().is_some() {
+        return std::borrow::Cow::Borrowed(owner_bindings);
+    }
+    let mut bindings = owner_bindings.to_vec();
+    for prefix in word_prefixes {
+        if !prefix.starts_with('\0') && !bindings.iter().any(|(bound, _)| bound == prefix) {
+            bindings.push((prefix.clone(), W_NS.to_owned()));
+        }
+    }
+    if !bindings.iter().any(|(bound, _)| bound.is_empty()) {
+        bindings.push((String::new(), W_NS.to_owned()));
+    }
+    std::borrow::Cow::Owned(bindings)
+}
+
 /// The prefixes that name WordprocessingML on `carrier`, the retained source
 /// of a modelled Word element: `w`, those it declares, and its own prefix
 /// when it does not declare it, since the reader took it for a Word element
 /// under the binding of its part (a document that names WordprocessingML
-/// `ox0` carries `ox0:cnfStyle ox0:val="..."`).
-fn carrier_word_prefixes(carrier: &BytesStart<'_>) -> Result<Vec<String>> {
+/// `ox0` carries `ox0:cnfStyle ox0:val="..."`). A carrier without a prefix
+/// declares its own ([`carrier_bindings`]).
+#[doc(hidden)]
+pub fn carrier_word_prefixes(carrier: &BytesStart<'_>) -> Result<Vec<String>> {
     let mut prefixes = word_prefixes_at(carrier, &["w".to_owned()])?.into_owned();
     let name = carrier.name();
     if let Some(prefix) = name.prefix() {

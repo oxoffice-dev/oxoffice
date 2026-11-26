@@ -2954,7 +2954,7 @@ fn holds_field(xml: &str) -> bool {
 #[test]
 fn a_paragraph_with_a_simple_field_added_to_a_word_2019_file_is_compared() {
     // Word 2019 declares a default namespace on the document root that no
-    // name uses, and an oxoffice save of the edited copy leaves it out: the
+    // name uses, and the edited copy, from another producer, does not: the
     // inserted field's facts are read under the bindings they use only.
     let without = format!("{}{}", plain("Before."), plain("After."));
     let with = format!("{}{PAGE_LINE}{}", plain("Before."), plain("After."));

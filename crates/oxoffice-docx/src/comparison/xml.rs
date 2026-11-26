@@ -490,7 +490,7 @@ pub(super) fn paragraph_close_start(xml: &str) -> Result<usize> {
 }
 
 pub(super) fn paragraph_run_spans(xml: &str) -> Result<Vec<Range<usize>>> {
-    let open = format!(r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:w="{W_NS}">"#);
+    let open = scan_root_start("w");
     let wrapped = format!("{open}{xml}</rdocxcmp:root>");
     let offset = open.len();
     let mut reader = NsReader::from_reader(wrapped.as_bytes());

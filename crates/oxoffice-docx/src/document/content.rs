@@ -148,7 +148,6 @@ impl Document {
         if let Some(prefix) = unsafe_serializer_namespace_prefix(
             &self.root_namespace_declarations,
             &self.body_namespace_declarations,
-            Some(xml),
         ) {
             return Some(shadowed_namespace_diagnostic(&prefix));
         }
