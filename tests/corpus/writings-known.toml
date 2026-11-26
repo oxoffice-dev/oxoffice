@@ -10,7 +10,7 @@
 # keeps it raw or skips it: a tab or break leaves the text (oxoffice-docx
 # document/story_paragraphs.rs:332-347), bold, italic and paragraph toggles
 # are not modelled (oxoffice-docx-oxml run_properties.rs:791 against :1157,
-# which models only rtl and lang).
+# which models only rtl and lang). Its own issue: #664.
 
 [[known]]
 input = "*.docx"
@@ -81,38 +81,6 @@ message = "gives another result"
 # text/paragraph_write.rs:789-795); debug assertions see it first as ids the
 # saved package does not read back.
 
-[[known]]
-input = "google/contract.docx"
-writing = "other-prefixes"
-operation = "edit"
-issue = 658
-message = "reads other identifiers than it holds"
-debug_assertions = true
-
-[[known]]
-input = "word/contract.docx"
-writing = "other-prefixes"
-operation = "edit"
-issue = 658
-message = "reads other identifiers than it holds"
-debug_assertions = true
-
-[[known]]
-input = "google/contract.docx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "the prefix of r:id is not bound"
-debug_assertions = false
-
-[[known]]
-input = "word/contract.docx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "the prefix of r:id is not bound"
-debug_assertions = false
-
 # D2: a fragment the comparison cuts out is read without the bindings of the
 # part: ox0:history is not w:history (oxoffice-docx
 # comparison/fields.rs:1203-1253).
@@ -120,20 +88,6 @@ debug_assertions = false
 # D3: a namespace is looked up on three elements only, the prefix `a` assumed:
 # a:alphaModFix under another prefix is kept raw, its opacity unread
 # (oxoffice-drawing fill.rs:724-745).
-
-[[known]]
-input = "google/deck.pptx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "alphaModFix"
-
-[[known]]
-input = "google/pitch.pptx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "alphaModFix"
 
 # D4: a document whose root binds the default namespace refuses every edit
 # (document/namespaces.rs:219-229): limitation docx-default-namespace, #663.
@@ -148,37 +102,9 @@ message = "shadowed `default` namespace"
 # D5: the replay of nested namespace owners cannot match an owner written
 # another way: oxoffice-docx document/namespace_replay.rs:206-280.
 
-[[known]]
-input = "authored/newsletter.docx"
-writing = "other-prefixes"
-operation = "edit"
-issue = 658
-message = "nested namespace owner after mutation"
-
-[[known]]
-input = "libreoffice/newsletter.docx"
-writing = "other-prefixes"
-operation = "edit"
-issue = 658
-message = "nested namespace owner after mutation"
-
-[[known]]
-input = "authored/manual.docx"
-writing = "tag-spacing"
-operation = "edit"
-issue = 658
-message = "nested namespace owner after mutation"
-
 # D6: a paragraph's w:cnfStyle under another prefix is kept raw where the
 # original's is rewritten from the model: the edit writes it otherwise
 # (oxoffice-docx-oxml paragraph properties).
-
-[[known]]
-input = "word/manual.docx"
-writing = "other-prefixes"
-operation = "edit xml"
-issue = 658
-message = "reads otherwise"
 
 # G: under the default namespace a save reads back other ids than it holds
 # (debug check, document/canonicalize.rs:611-639): #663.
@@ -204,22 +130,6 @@ debug_assertions = true
 
 # H: compare after an edit D1 (`r:id` unbound) or D6 (`w:cnfStyle` kept raw)
 # broke: these go with their class.
-
-[[known]]
-input = "word/contract.docx"
-writing = "other-prefixes"
-operation = "compare"
-issue = 658
-message = "comparison acceptance does not reproduce the edited stories"
-debug_assertions = false
-
-[[known]]
-input = "google/contract.docx"
-writing = "other-prefixes"
-operation = "compare"
-issue = 658
-message = "comparison acceptance does not reproduce the edited stories"
-debug_assertions = false
 
 [[known]]
 input = "word/manual.docx"

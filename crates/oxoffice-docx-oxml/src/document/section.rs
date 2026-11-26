@@ -1116,7 +1116,8 @@ impl CT_SectPr {
         for attribute in element.attributes() {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             let measurement = || parse_twips_measure(element.name().as_ref(), key, value);
             if is_word_attribute(key, b"w", word_prefixes) {
                 sect.page_width = Some(Twips(measurement()?));
@@ -1158,7 +1159,8 @@ impl CT_SectPr {
             } else {
                 continue;
             };
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             *field = Some(Twips(parse_twips_measure(
                 element.name().as_ref(),
                 key,
@@ -1372,7 +1374,8 @@ impl CT_SectPr {
         for attribute in e.attributes() {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             let modeled = if is_word_attribute(key, b"type", word_prefixes) {
                 match ST_DocGrid::from_str(value) {
                     Some(grid_type) => {
@@ -1401,8 +1404,10 @@ impl CT_SectPr {
                 false
             };
             if !modeled {
-                grid.extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+                grid.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attribute.value)?.to_owned(),
+                ));
             }
         }
         Ok(grid)
@@ -1413,7 +1418,8 @@ impl CT_SectPr {
         for attribute in e.attributes() {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             if is_word_attribute(key, b"first", word_prefixes) {
                 store_unsigned_attribute(
                     value,
@@ -1429,9 +1435,10 @@ impl CT_SectPr {
                     &mut source.extra_attributes,
                 )?;
             } else {
-                source
-                    .extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+                source.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attribute.value)?.to_owned(),
+                ));
             }
         }
         Ok(source)
@@ -1442,7 +1449,8 @@ impl CT_SectPr {
         for attribute in e.attributes() {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             if is_word_attribute(key, b"countBy", word_prefixes) {
                 store_unsigned_attribute(
                     value,
@@ -1460,21 +1468,24 @@ impl CT_SectPr {
             } else if is_word_attribute(key, b"distance", word_prefixes) {
                 match parse_twips_measure(e.name().as_ref(), key, value) {
                     Ok(parsed) => numbering.distance = Some(Twips(parsed)),
-                    Err(_) => numbering
-                        .extra_attributes
-                        .push((std::str::from_utf8(key)?.to_owned(), value.to_owned())),
+                    Err(_) => numbering.extra_attributes.push((
+                        std::str::from_utf8(key)?.to_owned(),
+                        std::str::from_utf8(&attribute.value)?.to_owned(),
+                    )),
                 }
             } else if is_word_attribute(key, b"restart", word_prefixes) {
                 match ST_LineNumberRestart::from_str(value) {
                     Some(parsed) => numbering.restart = Some(parsed),
-                    None => numbering
-                        .extra_attributes
-                        .push((std::str::from_utf8(key)?.to_owned(), value.to_owned())),
+                    None => numbering.extra_attributes.push((
+                        std::str::from_utf8(key)?.to_owned(),
+                        std::str::from_utf8(&attribute.value)?.to_owned(),
+                    )),
                 }
             } else {
-                numbering
-                    .extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+                numbering.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attribute.value)?.to_owned(),
+                ));
             }
         }
         Ok(numbering)
@@ -1485,7 +1496,8 @@ impl CT_SectPr {
         for attribute in e.attributes() {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             let retained = if is_word_attribute(key, b"zOrder", word_prefixes) {
                 borders.z_order = ST_PageBorderZOrder::from_str(value);
                 borders.z_order.is_none()
@@ -1499,9 +1511,10 @@ impl CT_SectPr {
                 true
             };
             if retained {
-                borders
-                    .extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+                borders.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attribute.value)?.to_owned(),
+                ));
             }
         }
         Ok(borders)
@@ -1668,7 +1681,7 @@ impl CT_SectPr {
                                 is_word_attribute(attribute.key.as_ref(), b"id", &prefixes)
                             })
                             .and_then(|attribute| {
-                                std::str::from_utf8(&attribute.value)
+                                oxoffice_core::xml::attribute_text(&attribute)
                                     .ok()
                                     .and_then(|value| value.parse::<i32>().ok())
                             })
@@ -1710,7 +1723,8 @@ impl CT_SectPr {
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
-            let val_str = std::str::from_utf8(&attr.value)?;
+            let val_str = oxoffice_core::xml::attribute_text(&attr)?;
+            let val_str: &str = &val_str;
             if is_word_attribute(key, b"num", word_prefixes) {
                 cols.num = Some(SectionScalar::count(val_str)?);
             } else if is_word_attribute(key, b"space", word_prefixes) {
@@ -1749,7 +1763,8 @@ impl CT_SectPr {
                     for attr in e.attributes() {
                         let attr = attr?;
                         let key = attr.key.as_ref();
-                        let value = std::str::from_utf8(&attr.value)?;
+                        let value = oxoffice_core::xml::attribute_text(&attr)?;
+                        let value: &str = &value;
                         let measurement = || parse_twips_measure(e.name().as_ref(), key, value);
                         if is_word_attribute(key, b"w", &prefixes) {
                             width = Some(Twips(measurement()?));
@@ -2795,7 +2810,8 @@ fn page_size_attributes_are_modeled(
         if namespace_declaration(key) {
             continue;
         }
-        let value = std::str::from_utf8(&attribute.value)?;
+        let value = oxoffice_core::xml::attribute_text(&attribute)?;
+        let value: &str = &value;
         if is_word_attribute(key, b"w", word_prefixes)
             || is_word_attribute(key, b"h", word_prefixes)
         {
@@ -2836,7 +2852,8 @@ fn page_margin_attributes_are_modeled(
         ]
         .iter()
         .any(|local| is_word_attribute(key, local, word_prefixes));
-        let value = std::str::from_utf8(&attribute.value)?;
+        let value = oxoffice_core::xml::attribute_text(&attribute)?;
+        let value: &str = &value;
         if !modeled || parse_twips_measure::<i32>(element.name().as_ref(), key, value).is_err() {
             return Ok(false);
         }
@@ -2950,7 +2967,8 @@ fn story_reference_attributes_are_modeled(
         if namespace_declaration(key) {
             continue;
         }
-        let value = std::str::from_utf8(&attribute.value)?;
+        let value = oxoffice_core::xml::attribute_text(&attribute)?;
+        let value: &str = &value;
         if is_word_attribute(key, b"type", word_prefixes) {
             type_count += 1;
             if type_count > 1 || !matches!(value, "default" | "first" | "even") {

@@ -537,7 +537,10 @@ fn capture_picture_child(
         }
         (Some(P_NS), b"blipFill") if *state == 1 && blip_fill.is_none() && !*has_alternate_blip => {
             validate_blip_fill(&raw, namespaces)?;
-            *blip_fill = Some(BlipFill::from_xml(&raw).map_err(drawing_error)?);
+            *blip_fill = Some(
+                BlipFill::from_xml_with_inherited_namespaces(&raw, &namespaces.entries())
+                    .map_err(drawing_error)?,
+            );
             *state = 2;
         }
         (Some(MC_NS), b"AlternateContent")

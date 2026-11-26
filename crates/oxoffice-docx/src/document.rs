@@ -519,6 +519,10 @@ struct NestedNamespaceOwner {
     ambiguous_without_namespace: bool,
     same_marker_structural_alternate: bool,
     same_namespace_structural_alternate: bool,
+    /// How many elements of the owner's name come before it in its part,
+    /// and how many the part holds.
+    ordinal: usize,
+    peers: usize,
 }
 
 #[derive(Clone, Debug)]

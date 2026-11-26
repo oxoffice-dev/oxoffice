@@ -801,7 +801,9 @@ fn namespace_marker_without_owner_declarations(
                                 }
                             }
                             return Ok(NamespaceMarker {
-                                raw: strip_marker_root_namespace_declarations(raw, &removable)?,
+                                raw: as_captured(strip_marker_root_namespace_declarations(
+                                    raw, &removable,
+                                )?),
                                 namespace_facts: closure_facts,
                             });
                         }
@@ -899,14 +901,36 @@ fn namespace_marker_without_owner_declarations(
         )?);
         normalized.extend_from_slice(&raw[end..]);
         return Ok(NamespaceMarker {
-            raw: normalized,
+            raw: as_captured(normalized),
             namespace_facts: closure_facts,
         });
     }
     Ok(NamespaceMarker {
-        raw: strip_marker_root_namespace_declarations(raw, declarations)?,
+        raw: as_captured(strip_marker_root_namespace_declarations(raw, declarations)?),
         namespace_facts: Vec::new(),
     })
+}
+
+/// `raw`, retained XML, as verbatim capture writes it back
+/// (`oxoffice_core::raw_xml::capture_element`): each event written again, so
+/// that an end tag spelled `</a:graphic\n>` in the source reads `</a:graphic>`
+/// as it does in the serialized part a marker is looked for in. Start tags
+/// keep their spelling. XML the reader refuses is kept as it is.
+fn as_captured(raw: Vec<u8>) -> Vec<u8> {
+    let mut reader = quick_xml::Reader::from_reader(raw.as_slice());
+    reader.config_mut().trim_text(false);
+    let mut writer = quick_xml::Writer::new(Vec::with_capacity(raw.len()));
+    loop {
+        match reader.read_event() {
+            Ok(Event::Eof) => return writer.into_inner(),
+            Ok(event) => {
+                if writer.write_event(event).is_err() {
+                    return raw;
+                }
+            }
+            Err(_) => return raw,
+        }
+    }
 }
 
 fn strip_marker_root_namespace_declarations(
@@ -1277,6 +1301,14 @@ pub(super) fn namespace_owners_from_spans(
         declarations.retain(|(name, _)| used_prefixes.contains(namespace_prefix(name).as_str()));
         let snapshot =
             logical_owner_snapshot(&xml[span.start..span.end], &span.bindings, &declarations)?;
+        let peers = spans
+            .iter()
+            .filter(|candidate| candidate.local_name == span.local_name);
+        let ordinal = peers
+            .clone()
+            .filter(|candidate| candidate.start < span.start)
+            .count();
+        let peers = peers.count();
         let ambiguous_without_namespace = spans.iter().any(|candidate| {
             if candidate.start == span.start || candidate.local_name != span.local_name {
                 return false;
@@ -1358,6 +1390,8 @@ pub(super) fn namespace_owners_from_spans(
             ambiguous_without_namespace,
             same_marker_structural_alternate,
             same_namespace_structural_alternate,
+            ordinal,
+            peers,
         });
     }
     Ok(owners)

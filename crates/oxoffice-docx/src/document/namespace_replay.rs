@@ -260,23 +260,50 @@ pub(super) fn replay_nested_namespace_declarations_in(
                 }
             }
             candidates => {
-                if owner.ambiguous_without_namespace && owner.same_namespace_structural_alternate {
+                let semantic_candidates = candidates
+                    .iter()
+                    .filter(|candidate| candidate.1.semantic == owner.snapshot.semantic)
+                    .collect::<Vec<_>>();
+                if let ([candidate], false) = (
+                    semantic_candidates.as_slice(),
+                    owner.ambiguous_without_namespace && owner.same_namespace_structural_alternate,
+                ) {
+                    candidate.0
+                } else if let Some(peer) = spans
+                    .iter()
+                    .filter(|span| span.local_name == owner.local_name)
+                    .nth(owner.ordinal)
+                    .filter(|_| {
+                        spans
+                            .iter()
+                            .filter(|span| span.local_name == owner.local_name)
+                            .count()
+                            == owner.peers
+                    })
+                    && let Some(candidate) = semantic_candidates
+                        .iter()
+                        .find(|candidate| candidate.0.start == peer.start)
+                    && owner.declarations.iter().all(|(name, namespace)| {
+                        inherited_namespace(&peer.bindings, &namespace_prefix(name))
+                            == Some(namespace.as_str())
+                    })
+                {
+                    // Owners written again alike, only their declarations
+                    // told them apart, and those declarations say what the
+                    // scope around the element says already (an edited
+                    // paragraph's own `w` in a part that names Word
+                    // otherwise): where they go changes no name, and an
+                    // edit keeps the elements of the part in their order,
+                    // so they go back to the element at the owner's place
+                    // among its peers. Declarations that bind a name
+                    // otherwise tell the owners apart: never guessed.
+                    candidate.0
+                } else {
                     return Err(Error::Other(format!(
                         "cannot identify retained `{}` nested namespace owner after mutation",
                         owner.local_name
                     )));
                 }
-                let semantic_candidates = candidates
-                    .iter()
-                    .filter(|candidate| candidate.1.semantic == owner.snapshot.semantic)
-                    .collect::<Vec<_>>();
-                let [candidate] = semantic_candidates.as_slice() else {
-                    return Err(Error::Other(format!(
-                        "cannot identify retained `{}` nested namespace owner after mutation",
-                        owner.local_name
-                    )));
-                };
-                candidate.0
             }
         };
         // This is the selected live serialized span from the candidate scan

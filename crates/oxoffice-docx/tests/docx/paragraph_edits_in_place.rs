@@ -292,3 +292,189 @@ fn a_reread_block_leaves_the_save_to_give_its_pictures_their_drawing_ids() {
         "the save gives each picture its own drawing id"
     );
 }
+
+#[test]
+fn an_edited_paragraph_binds_every_prefix_it_writes_when_the_document_names_them_otherwise() {
+    use oxoffice_xml_test::{Writing, canonical, rewrite_package};
+
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship("https://example.com/schedule");
+    let mut paragraph = doc.add_paragraph("Read the delivery ");
+    paragraph.add_hyperlink("schedule", &relationship);
+    paragraph.add_run(" before the meeting.");
+    let bytes = doc.to_bytes().expect("saves");
+    // The main namespaces under other prefixes (`ox0:p`, `ox3:id`), as a
+    // generated writer names them: no `w` or `r` binding left in the part.
+    let bytes = rewrite_package(&bytes, Writing::OtherPrefixes)
+        .expect("rewrites")
+        .0;
+    let mut doc = Document::from_bytes(&bytes).expect("opens");
+    let paragraphs = doc.story_paragraphs().expect("reads");
+    let edited = paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text.contains("delivery"))
+        .expect("the paragraph");
+    assert_eq!(
+        doc.try_replace_text_at(&edited.location, "delivery", "DELIVERY", Some(1))
+            .expect("edits"),
+        Ok(1)
+    );
+    let saved = doc.to_bytes().expect("saves");
+    let part = crate::support::package_parts(&saved)
+        .remove("word/document.xml")
+        .expect("main part");
+    // Every prefix the edited paragraph writes is bound: the part is XML.
+    canonical(&part).expect("the edited part binds every prefix it uses");
+    let mut reopened = Document::from_bytes(&saved).expect("reopens");
+    let text = reopened
+        .story_paragraphs()
+        .expect("reads")
+        .into_iter()
+        .map(|paragraph| paragraph.text)
+        .collect::<Vec<_>>();
+    assert!(
+        text.iter().any(|text| text.contains("DELIVERY schedule")),
+        "{text:?}"
+    );
+    let reopened = reopened.to_bytes().expect("saves again");
+    assert!(
+        String::from_utf8_lossy(
+            &crate::support::package_parts(&reopened)["word/_rels/document.xml.rels"]
+        )
+        .contains("https://example.com/schedule"),
+        "the hyperlink keeps its target"
+    );
+}
+
+#[test]
+fn an_edit_keeps_a_paragraph_that_declares_its_own_namespace_whatever_the_spacing_of_its_tags() {
+    // A paragraph declaring a namespace for markup it keeps as read, whose
+    // end tags carry a line break before `>`, as a hand edit leaves them.
+    let body = concat!(
+        r#"<w:p><w:r><w:t>Handheld terminal guide</w:t></w:r></w:p>"#,
+        r#"<w:p xmlns:x="urn:example"><w:r><w:t>Note </w:t></w:r>"#,
+        "<w:r><x:note x:kind=\"a\"><x:inner x:v=\"1\"/></x:note\n></w:r></w:p>",
+        r#"<w:p xmlns:x="urn:example"><w:r><w:t>Note </w:t></w:r>"#,
+        "<w:r><x:note x:kind=\"b\"><x:inner x:v=\"2\"/></x:note\n></w:r></w:p>",
+    );
+    let mut doc = crate::support::doc_with_body(body);
+    let paragraphs = doc.story_paragraphs().expect("reads");
+    let edited = paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text.contains("Handheld"))
+        .expect("the paragraph");
+    assert_eq!(
+        doc.try_replace_text_at(&edited.location, "Handheld", "HANDHELD", Some(1))
+            .expect("edits"),
+        Ok(1)
+    );
+    let saved = doc.to_bytes().expect("saves");
+    let part = String::from_utf8(
+        crate::support::package_parts(&saved)
+            .remove("word/document.xml")
+            .expect("main part"),
+    )
+    .expect("UTF-8");
+    assert!(part.contains("HANDHELD terminal guide"));
+    assert_eq!(
+        part.matches(r#"xmlns:x="urn:example""#).count(),
+        2,
+        "{part}"
+    );
+    assert!(part.contains(r#"x:kind="a""#) && part.contains(r#"x:kind="b""#));
+}
+
+#[test]
+fn an_edit_after_another_keeps_twin_paragraphs_apart_when_the_document_names_word_otherwise() {
+    use oxoffice_docx::Alignment;
+    use oxoffice_xml_test::{Writing, rewrite_package};
+
+    let mut doc = Document::new();
+    for text in ["Northwind Logistics", "NORTHWIND Logistics"] {
+        doc.add_paragraph("")
+            .alignment(Alignment::Center)
+            .add_run(text)
+            .bold(true)
+            .color("FFFFFF");
+    }
+    doc.add_paragraph("The team was challenged by the schedule.");
+    let bytes = doc.to_bytes().expect("saves");
+    // WordprocessingML as `ox0`: an edited paragraph declares `w` for its
+    // own names, and the first edit makes it the twin of the second
+    // paragraph but for that declaration.
+    let bytes = rewrite_package(&bytes, Writing::OtherPrefixes)
+        .expect("rewrites")
+        .0;
+    let mut doc = Document::from_bytes(&bytes).expect("opens");
+    for (word, replacement) in [("Northwind", "NORTHWIND"), ("challenged", "CHALLENGED")] {
+        let paragraphs = doc.story_paragraphs().expect("reads");
+        let paragraph = paragraphs
+            .iter()
+            .find(|paragraph| paragraph.text.contains(word))
+            .expect("the paragraph");
+        assert_eq!(
+            doc.try_replace_text_at(&paragraph.location, word, replacement, Some(1))
+                .expect("edits"),
+            Ok(1),
+            "{word}"
+        );
+    }
+    let saved = doc.to_bytes().expect("saves");
+    let part = crate::support::package_parts(&saved)
+        .remove("word/document.xml")
+        .expect("main part");
+    oxoffice_xml_test::canonical(&part).expect("the part binds every prefix it uses");
+    let text = Document::from_bytes(&saved)
+        .expect("reopens")
+        .story_paragraphs()
+        .expect("reads")
+        .into_iter()
+        .map(|paragraph| paragraph.text)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        text,
+        [
+            "NORTHWIND Logistics",
+            "NORTHWIND Logistics",
+            "The team was CHALLENGED by the schedule."
+        ]
+    );
+}
+
+#[test]
+fn paragraphs_told_apart_only_by_their_namespaces_keep_them_when_swapped() {
+    // Two paragraphs alike but for the namespace their kept markup is in.
+    let twin = |namespace: &str| {
+        format!(
+            r#"<w:p xmlns:x="{namespace}"><w:r><w:t>Twin</w:t></w:r><w:r><x:mark x:v="1"/></w:r></w:p>"#
+        )
+    };
+    let mut doc = crate::support::doc_with_body(&format!(
+        "{}{}<w:p><w:r><w:t>Closing</w:t></w:r></w:p>",
+        twin("urn:one"),
+        twin("urn:two")
+    ));
+    let first = doc.body_children()[0].clone();
+    let second = doc.swap_body_block(1, first).expect("swaps");
+    doc.swap_body_block(0, second).expect("swaps");
+    let paragraphs = doc.story_paragraphs().expect("reads");
+    let closing = paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text == "Closing")
+        .expect("the closing paragraph");
+    let edited = doc.try_replace_text_at(&closing.location, "Closing", "CLOSING", Some(1));
+    // The swap is kept, or refused: never undone.
+    if let Ok(Ok(1)) = edited
+        && let Ok(saved) = doc.to_bytes()
+    {
+        let part = String::from_utf8(
+            crate::support::package_parts(&saved)
+                .remove("word/document.xml")
+                .expect("main part"),
+        )
+        .expect("UTF-8");
+        let one = part.find("urn:one").expect("urn:one is kept");
+        let two = part.find("urn:two").expect("urn:two is kept");
+        assert!(two < one, "the swap is undone: {part}");
+    }
+}

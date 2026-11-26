@@ -192,7 +192,8 @@ impl CT_FramePr {
         for attribute in e.attributes() {
             let attribute = attribute?;
             let key = attribute.key.as_ref();
-            let value = std::str::from_utf8(&attribute.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attribute)?;
+            let value: &str = &value;
             let local = attribute.key.local_name();
             let text = || oxoffice_core::xml::attribute_text(&attribute).map(Cow::into_owned);
             if is_word_attribute(key, local.as_ref(), word_prefixes)
@@ -219,9 +220,10 @@ impl CT_FramePr {
             } else if is_word_attribute(key, b"anchorLock", word_prefixes) {
                 frame.anchor_lock = Some(ST_OnOff::from_str_or_default(Some(value)).is_on());
             } else {
-                frame
-                    .extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+                frame.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attribute.value)?.to_owned(),
+                ));
             }
         }
         Ok(frame)
@@ -937,7 +939,8 @@ impl CT_PPr {
                         for attr in e.attributes() {
                             let attr = attr?;
                             let key = attr.key.as_ref();
-                            let val_str = std::str::from_utf8(&attr.value)?;
+                            let val_str = oxoffice_core::xml::attribute_text(&attr)?;
+                            let val_str: &str = &val_str;
                             let local = attr.key.local_name();
                             if is_word_attribute(key, local.as_ref(), &prefixes)
                                 && let Some(measurement) = ParagraphMeasurement::for_names(

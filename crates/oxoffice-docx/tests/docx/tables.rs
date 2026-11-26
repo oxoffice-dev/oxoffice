@@ -1566,3 +1566,88 @@ fn table_twips_measures_written_with_a_unit_open_and_a_percent_cell_margin_is_ig
         assert!(error.to_string().contains(refused), "{refused}: {error}");
     }
 }
+
+/// Every attribute of every element of `xml`, by namespace and local name,
+/// is written once.
+fn each_attribute_once(xml: &[u8]) -> Result<(), String> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::NsReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|e| e.to_string())?
+        {
+            Event::Start(element) | Event::Empty(element) => {
+                let mut names = Vec::new();
+                for attribute in element.attributes() {
+                    let attribute = attribute.map_err(|e| e.to_string())?;
+                    let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
+                    let name = format!("{namespace:?} {:?}", local.as_ref());
+                    if names.contains(&name) {
+                        return Err(format!(
+                            "{} holds {name} twice",
+                            String::from_utf8_lossy(element.name().as_ref())
+                        ));
+                    }
+                    names.push(name);
+                }
+            }
+            Event::Eof => return Ok(()),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+#[test]
+fn an_edited_cell_paragraph_writes_its_conditional_formatting_once_under_any_prefix() {
+    use oxoffice_xml_test::{Writing, rewrite_package};
+
+    // Word writes a cell paragraph's conditional formatting with its value
+    // and the same value as one attribute per table part.
+    let cnf = concat!(
+        r#"<w:cnfStyle w:val="100000000000" w:firstRow="1" w:lastRow="0" "#,
+        r#"w:firstColumn="0" w:lastColumn="0" w:oddVBand="0" w:evenVBand="0" "#,
+        r#"w:oddHBand="0" w:evenHBand="0" w:firstRowFirstColumn="0" "#,
+        r#"w:firstRowLastColumn="0" w:lastRowFirstColumn="0" w:lastRowLastColumn="0"/>"#,
+    );
+    let body = format!(
+        concat!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>"#,
+            r#"<w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>"#,
+            r#"<w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr>"#,
+            r#"<w:p><w:pPr>{cnf}</w:pPr><w:r><w:t>Quarterly delivery figures</w:t></w:r></w:p>"#,
+            r#"</w:tc></w:tr></w:tbl><w:p/>"#,
+        ),
+        cnf = cnf
+    );
+    let bytes = crate::support::docx_with_body(&body);
+    let mut parts = Vec::new();
+    for bytes in [
+        bytes.clone(),
+        // WordprocessingML as `ox0`, as a generated writer names it.
+        rewrite_package(&bytes, Writing::OtherPrefixes)
+            .expect("rewrites")
+            .0,
+    ] {
+        let mut doc = Document::from_bytes(&bytes).expect("opens");
+        let paragraphs = doc.story_paragraphs().expect("reads");
+        let cell = paragraphs
+            .iter()
+            .find(|paragraph| paragraph.text.contains("delivery"))
+            .expect("the cell paragraph");
+        assert_eq!(
+            doc.try_replace_text_at(&cell.location, "delivery", "DELIVERY", Some(1))
+                .expect("edits"),
+            Ok(1)
+        );
+        let saved = doc.to_bytes().expect("saves");
+        let part = crate::support::package_parts(&saved)
+            .remove("word/document.xml")
+            .expect("main part");
+        each_attribute_once(&part).expect("each attribute once");
+        parts.push(oxoffice_xml_test::canonical(&part).expect("XML"));
+    }
+    assert_eq!(parts[0], parts[1], "both writings write the same cell");
+}

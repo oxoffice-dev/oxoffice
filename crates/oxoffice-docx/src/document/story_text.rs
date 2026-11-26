@@ -494,7 +494,7 @@ pub(super) fn resize_story_pictures(
                                 reader.resolver().resolve_attribute(attribute.key);
                             matches!(attribute_namespace, ResolveResult::Bound(Namespace(uri)) if uri == drawing_ns::R.as_bytes())
                                 && matches!(name.as_ref(), b"embed" | b"link")
-                                && attribute.value.as_ref() == relationship_id.as_bytes()
+                                && oxoffice_core::xml::attribute_text(&attribute).is_ok_and(|value| value == relationship_id)
                         });
                     } else if namespace == A
                         && local == b"ext"

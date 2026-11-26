@@ -132,7 +132,8 @@ impl CT_BorderEdge {
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
-            let v = std::str::from_utf8(&attr.value)?;
+            let v = oxoffice_core::xml::attribute_text(&attr)?;
+            let v: &str = &v;
             if matches_local_name(key, b"val") {
                 edge.val = ST_Border::from_str(v).unwrap_or(edge.val);
             } else if let Some(measurement) =
@@ -144,8 +145,10 @@ impl CT_BorderEdge {
             } else if matches_local_name(key, b"color") {
                 edge.color = Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
             } else {
-                edge.extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), v.to_owned()));
+                edge.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attr.value)?.to_owned(),
+                ));
             }
         }
 
@@ -161,7 +164,8 @@ impl CT_BorderEdge {
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
-            let value = std::str::from_utf8(&attr.value)?;
+            let value = oxoffice_core::xml::attribute_text(&attr)?;
+            let value: &str = &value;
             if is_word_attribute(key, b"val", word_prefixes) {
                 edge.val = ST_Border::from_str(value).unwrap_or(edge.val);
             } else if let Some(measurement) =
@@ -175,8 +179,10 @@ impl CT_BorderEdge {
             } else if is_word_attribute(key, b"color", word_prefixes) {
                 edge.color = Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
             } else {
-                edge.extra_attributes
-                    .push((std::str::from_utf8(key)?.to_owned(), value.to_owned()));
+                edge.extra_attributes.push((
+                    std::str::from_utf8(key)?.to_owned(),
+                    std::str::from_utf8(&attr.value)?.to_owned(),
+                ));
             }
         }
 
@@ -649,7 +655,8 @@ impl CT_TabStop {
         for attr in e.attributes() {
             let attr = attr?;
             let key = attr.key.as_ref();
-            let v = std::str::from_utf8(&attr.value)?;
+            let v = oxoffice_core::xml::attribute_text(&attr)?;
+            let v: &str = &v;
             if is_word_attribute(key, b"val", &prefixes) {
                 val = ST_TabJc::from_str(v).unwrap_or(val);
             } else if let Some(measurement) =

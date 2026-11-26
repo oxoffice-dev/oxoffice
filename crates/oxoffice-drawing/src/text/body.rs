@@ -718,9 +718,9 @@ fn get_body_attr(start: &BytesStart<'_>, name: &[u8]) -> Option<String> {
         .flatten()
         .find(|attribute| attribute.key.as_ref() == name)
         .and_then(|attribute| {
-            std::str::from_utf8(&attribute.value)
+            oxoffice_core::xml::attribute_text(&attribute)
                 .ok()
-                .map(str::to_owned)
+                .map(std::borrow::Cow::into_owned)
         })
 }
 

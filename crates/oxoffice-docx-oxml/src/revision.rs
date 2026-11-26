@@ -421,7 +421,7 @@ fn raw_name_prefixes(raw: &[u8]) -> Option<std::collections::HashSet<String>> {
                             | b"PreserveElements"
                             | b"PreserveAttributes"
                     ) {
-                        for token in std::str::from_utf8(&attribute.value)
+                        for token in oxoffice_core::xml::attribute_text(&attribute)
                             .ok()?
                             .split_whitespace()
                         {

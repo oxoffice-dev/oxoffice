@@ -2962,14 +2962,12 @@ pub(crate) fn try_replace_in_block_with_constructors_in(
         unreachable!("root ownership validated above")
     };
     if count > 0 {
-        // These concrete typed publishers generate canonical Word names when
-        // the source has no w binding. The snapshot's conventional fallback
-        // is not a physical declaration in a standalone fragment. Close that
-        // generated binding explicitly, while an actual foreign w still wins.
-        let mut publication_bindings = bindings;
-        if !publication_bindings.iter().any(|(prefix, _)| prefix == "w") {
-            publication_bindings.push(("w".into(), W_NS.into()));
-        }
+        // These concrete typed publishers generate canonical names (`w:p`,
+        // `r:id`...) when the source has no binding for them. The snapshot's
+        // conventional fallback is not a physical declaration in a standalone
+        // fragment. Close those generated bindings explicitly, while an actual
+        // binding of the prefix, foreign or not, still wins.
+        let publication_bindings = crate::text::with_publication_bindings(bindings);
         let rewritten =
             with_source_namespaces(raw, &writer.into_inner(), &publication_bindings, &[])
                 .ok_or_else(|| {
