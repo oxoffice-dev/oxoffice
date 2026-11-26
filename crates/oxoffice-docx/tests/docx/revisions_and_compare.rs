@@ -5097,6 +5097,7 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         ("alternate content", "edited", notes, false, false),
         ("alternate content", "resized", notes, true, false),
         ("alternate content", "deleted", body, false, true),
+        ("alternate content", "nested", body, false, true),
         ("vml", "run formatted", body, true, true),
     ] {
         let case = format!(
@@ -5130,9 +5131,21 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
             .map(|rest| rest.split('"').next().unwrap())
             .collect::<Vec<_>>();
         let drawings = ids.len();
+        assert!(form == "vml" || drawings > 0, "{case}: {xml}");
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), drawings, "{case}: {xml}");
+        // The route a row pins: a box compared inside keeps its one
+        // alternate content, one replaced whole is deleted and inserted.
+        let alternate_contents = match (change, ignore_formatting) {
+            ("nested", _) => Some(1),
+            ("run formatted", false) => Some(2),
+            _ => None,
+        };
+        if let Some(expected) = alternate_contents {
+            let written = xml.matches("<mc:AlternateContent").count();
+            assert_eq!(written, expected, "{case}: {xml}");
+        }
         if !boxes_ignored {
             let deleted = count(&mut doc, &format!(">{inside}</w:delText>"));
             assert_eq!(deleted, copies, "{case}: {}", part_xml(&mut doc, part));
@@ -5141,7 +5154,10 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         let texts = |doc: &Document| {
             story_texts(doc)
                 .into_iter()
-                .filter(|(_, text)| !boxes_ignored || ![inside, within].contains(&text.as_str()))
+                .filter(|(_, text)| {
+                    !boxes_ignored
+                        || ![inside, within, "Inner", "Inner box"].contains(&text.as_str())
+                })
                 .collect::<Vec<_>>()
         };
         let (mut accepted, mut rejected) = (accepted(&mut doc), rejected(&mut doc));
