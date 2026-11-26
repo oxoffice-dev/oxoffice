@@ -1664,6 +1664,10 @@ pub(super) fn scan_story_items(
                         sdt_context,
                     });
                 }
+                // An owner with nothing inside (`<w:endnote w:id="3"/>`) holds no item.
+                if after == owner.full.end {
+                    break;
+                }
             }
             Event::End(_) => {
                 let Some(frame) = stack.pop() else {
