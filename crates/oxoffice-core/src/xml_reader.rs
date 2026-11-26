@@ -77,6 +77,29 @@ pub struct NsReader<R> {
 /// whitespace. Reads a copy of `source`, which stays where it was.
 fn closes_at_once<R: BufRead + Clone>(source: &R, name: &[u8]) -> bool {
     let mut probe = source.clone();
+    // One look at the buffer settles nearly every element, so the reader
+    // costs little even in a build without optimisations: most hold
+    // something, and the end tag of one that holds nothing is in the buffer
+    // too. Only an end tag cut by the end of the buffer is read byte by byte.
+    let buffer = match probe.fill_buf() {
+        Ok(buffer) => buffer,
+        Err(_) => return false,
+    };
+    if let [first, second, rest @ ..] = buffer {
+        if (*first, *second) != (b'<', b'/') {
+            return false;
+        }
+        if rest.len() >= name.len() && !rest.starts_with(name) {
+            return false;
+        }
+        let after = rest.get(name.len()..).unwrap_or_default();
+        if let Some(&byte) = after
+            .iter()
+            .find(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+        {
+            return byte == b'>';
+        }
+    }
     let mut next = || {
         let byte = *probe.fill_buf().ok()?.first()?;
         probe.consume(1);
@@ -148,7 +171,12 @@ impl<R: BufRead + Clone> Reader<R> {
     pub fn read_event_into<'b>(&mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
         self.writing = EmptyWriting::SelfClosed;
         self.end_tag = None;
-        let event = self.inner.read_event_into(buf)?;
+        // Only a start tag collapses: any other event, or an error, is
+        // returned as read, at the cost of one match.
+        let event = match self.inner.read_event_into(buf) {
+            Ok(event @ Event::Start(_)) => event,
+            other => return other,
+        };
         if !collapses(&event, self.inner.config(), self.inner.get_ref()) {
             return Ok(event);
         }
@@ -173,7 +201,12 @@ impl<'i> Reader<&'i [u8]> {
     pub fn read_event(&mut self) -> Result<Event<'i>> {
         self.writing = EmptyWriting::SelfClosed;
         self.end_tag = None;
-        let event = self.inner.read_event()?;
+        // Only a start tag collapses: any other event, or an error, is
+        // returned as read, at the cost of one match.
+        let event = match self.inner.read_event() {
+            Ok(event @ Event::Start(_)) => event,
+            other => return other,
+        };
         if !collapses(&event, self.inner.config(), self.inner.get_ref()) {
             return Ok(event);
         }
@@ -187,12 +220,16 @@ impl<'i> Reader<&'i [u8]> {
 impl<R> Deref for Reader<R> {
     type Target = quick_xml::Reader<R>;
 
+    // Inlined even without optimisations: every quick-xml call of a model
+    // goes through it.
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
 impl<R> DerefMut for Reader<R> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
@@ -239,7 +276,12 @@ impl<R: BufRead + Clone> NsReader<R> {
     pub fn read_event_into<'b>(&mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
         self.writing = EmptyWriting::SelfClosed;
         self.end_tag = None;
-        let event = self.inner.read_event_into(buf)?;
+        // Only a start tag collapses: any other event, or an error, is
+        // returned as read, at the cost of one match.
+        let event = match self.inner.read_event_into(buf) {
+            Ok(event @ Event::Start(_)) => event,
+            other => return other,
+        };
         if !collapses(&event, self.inner.config(), self.inner.get_ref()) {
             return Ok(event);
         }
@@ -275,7 +317,12 @@ impl<'i> NsReader<&'i [u8]> {
     pub fn read_event(&mut self) -> Result<Event<'i>> {
         self.writing = EmptyWriting::SelfClosed;
         self.end_tag = None;
-        let event = self.inner.read_event()?;
+        // Only a start tag collapses: any other event, or an error, is
+        // returned as read, at the cost of one match.
+        let event = match self.inner.read_event() {
+            Ok(event @ Event::Start(_)) => event,
+            other => return other,
+        };
         if !collapses(&event, self.inner.config(), self.inner.get_ref()) {
             return Ok(event);
         }
@@ -297,12 +344,16 @@ impl<'i> NsReader<&'i [u8]> {
 impl<R> Deref for NsReader<R> {
     type Target = quick_xml::NsReader<R>;
 
+    // Inlined even without optimisations: every quick-xml call of a model
+    // goes through it.
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
 impl<R> DerefMut for NsReader<R> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
@@ -322,9 +373,33 @@ mod tests {
         }
     }
 
+    /// A source that gives at most `.1` bytes at a time.
+    #[derive(Clone)]
+    struct Chunks<'a>(&'a [u8], usize);
+
+    impl std::io::Read for Chunks<'_> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            let length = out.len().min(self.1).min(self.0.len());
+            out[..length].copy_from_slice(&self.0[..length]);
+            self.0 = &self.0[length..];
+            Ok(length)
+        }
+    }
+
+    impl BufRead for Chunks<'_> {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Ok(&self.0[..self.1.min(self.0.len())])
+        }
+
+        fn consume(&mut self, amount: usize) {
+            self.0 = &self.0[amount..];
+        }
+    }
+
     /// The first event of `xml`: its kind, its writing, where its end tag
     /// starts if it was collapsed and where the reader is after it, the same
-    /// by `read_event` and by `read_event_into`.
+    /// by `read_event` and by `read_event_into`, from the whole input and
+    /// two bytes at a time, which cuts every end tag.
     fn first_event(xml: &str, expand: bool) -> (&'static str, EmptyWriting, Option<u64>, u64) {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().expand_empty_elements = expand;
@@ -335,17 +410,19 @@ mod tests {
             reader.empty_end_tag_position(),
             reader.buffer_position(),
         );
-        let mut reader = Reader::from_reader(xml.as_bytes());
-        reader.config_mut().expand_empty_elements = expand;
-        let mut buf = Vec::new();
-        let event = reader.read_event_into(&mut buf).unwrap();
-        let read_into = (
-            kind(&event),
-            reader.empty_writing(),
-            reader.empty_end_tag_position(),
-            reader.buffer_position(),
-        );
-        assert_eq!(read, read_into, "{xml}");
+        for capacity in [xml.len(), 2] {
+            let mut reader = Reader::from_reader(Chunks(xml.as_bytes(), capacity));
+            reader.config_mut().expand_empty_elements = expand;
+            let mut buf = Vec::new();
+            let event = reader.read_event_into(&mut buf).unwrap();
+            let read_into = (
+                kind(&event),
+                reader.empty_writing(),
+                reader.empty_end_tag_position(),
+                reader.buffer_position(),
+            );
+            assert_eq!(read, read_into, "{xml} {capacity}");
+        }
         read
     }
 
