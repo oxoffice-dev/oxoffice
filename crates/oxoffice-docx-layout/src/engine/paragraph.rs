@@ -2505,7 +2505,7 @@ fn push_targeted_bookmark_markers(
             RevisionView::Accepted => marker.projected_run_index(),
             RevisionView::Tracked => marker.tracked_run_index(),
         };
-        marker.is_start()
+        opens_bookmark(input, marker)
             && marker_run_index == projected_run_index
             && marker.name().is_some_and(|name| {
                 document_has_page_ref(input, name) && bookmark_exists(input, name)

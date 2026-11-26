@@ -395,15 +395,15 @@ fn story_marker_source_position(
         .ok_or_else(|| Error::Other("story marker position is outside its source span".to_owned()))
 }
 
-/// Bookmark-start names from the projected paragraphs.
+/// Bookmark-start names and identifiers from the projected paragraphs.
 ///
 /// This is the legacy `CT_P` count. It includes starts the marker scan hides,
 /// and it does not depend on scanning or pairing those paragraphs.
 #[allow(clippy::type_complexity)]
-fn bookmark_start_name_counts(
+fn bookmark_start_names(
     paragraphs: &[(usize, usize, Range<usize>, ContentLocation, Vec<u8>)],
-) -> HashMap<String, usize> {
-    let mut name_counts = HashMap::<String, usize>::new();
+) -> Vec<(String, Option<i32>)> {
+    let mut names = Vec::new();
     for (_, _, _, _, xml) in paragraphs {
         if let Ok(paragraph) = CT_P::from_xml_fragment(xml) {
             for marker in paragraph
@@ -412,12 +412,25 @@ fn bookmark_start_name_counts(
                 .filter(|marker| marker.is_start())
             {
                 if let Some(name) = marker.name() {
-                    *name_counts.entry(name.to_owned()).or_default() += 1;
+                    names.push((name.to_owned(), marker.id()));
                 }
             }
         }
     }
-    name_counts
+    names
+}
+
+/// The bookmark starts of the story sources, counted by name.
+#[derive(Debug, Default)]
+pub(crate) struct BookmarkStartNames {
+    /// Every start, one with no end included: the names a new bookmark
+    /// cannot take.
+    pub(crate) taken: HashMap<String, usize>,
+    /// The starts whose identifier has an end somewhere in the sources
+    /// (all of them when the end scan fails): the bookmarks a field finds
+    /// by name. A start with no end, as LibreOffice writes beside a copied
+    /// form field, is no bookmark to Word.
+    pub(crate) closed: HashMap<String, usize>,
 }
 
 /// The identifiers of every bookmark end of the story sources.
@@ -446,7 +459,7 @@ fn sources_block_bookmarks(
 fn block_bookmark_start_names(
     paragraphs: &[(usize, usize, Range<usize>, ContentLocation, Vec<u8>)],
     blocks: &[Vec<crate::document::SourceBlockMarker>],
-) -> Vec<String> {
+) -> Vec<(String, Option<i32>)> {
     let read = paragraphs
         .iter()
         .map(|(source_index, _, span, _, _)| (*source_index, span.start))
@@ -457,7 +470,7 @@ fn block_bookmark_start_names(
             markers
                 .iter()
                 .filter(|marker| marker.start && read.contains(&(source_index, marker.paragraph)))
-                .map(|marker| marker.name.clone()),
+                .map(|marker| (marker.name.clone(), Some(marker.id))),
         );
     }
     names
@@ -856,13 +869,14 @@ impl Document {
     /// Add a bookmark across one checked story owner.
     pub fn add_story_bookmark(&mut self, name: &str, range: StoryRunRange) -> Result<i32> {
         validate_bookmark_name(name)?;
-        let (paired, name_counts) = self.story_range_metadata()?;
+        let (paired, start_names) = self.story_range_metadata()?;
         let (ranges, across) = paired?;
         // Every bookmark start names a bookmark, those left out of the
         // ranges included.
         if ranges.iter().map(StoryRangeRef::kind).chain(&across).any(|kind| {
             matches!(kind, StoryRangeKind::Bookmark { name: existing, .. } if oxoffice_docx_oxml::text::same_bookmark_name(existing, name))
-        }) || name_counts
+        }) || start_names
+            .taken
             .keys()
             .any(|existing| oxoffice_docx_oxml::text::same_bookmark_name(existing, name))
         {
@@ -1355,7 +1369,7 @@ impl Document {
     ///
     /// The outer result fails only when the paragraph projection fails. Name
     /// counts still return when marker scanning or pairing fails. They are the
-    /// legacy `CT_P` bookmark-start counts. Owner-grouped paragraph order still
+    /// legacy `CT_P` bookmark-start counts, see [`BookmarkStartNames`]. Owner-grouped paragraph order still
     /// assigns ordinals and the returned range order. Validation order is the
     /// source index and the translated raw byte position.
     #[allow(clippy::type_complexity)]
@@ -1363,22 +1377,33 @@ impl Document {
         &self,
     ) -> Result<(
         Result<(Vec<StoryRangeRef>, Vec<StoryRangeKind>)>,
-        HashMap<String, usize>,
+        BookmarkStartNames,
     )> {
         let (sources, paragraphs) = self.story_range_located_paragraphs_with_sources()?;
         let sources = sources.iter().map(AsRef::as_ref).collect::<Vec<_>>();
-        let mut name_counts = bookmark_start_name_counts(&paragraphs);
         // A bookmark start between the blocks of any story names a bookmark
         // too.
         let blocks = sources_block_bookmarks(&sources)?;
-        for name in block_bookmark_start_names(&paragraphs, &blocks) {
-            *name_counts.entry(name).or_default() += 1;
+        let bookmark_end_ids = sources_bookmark_end_ids(&sources);
+        let mut names = BookmarkStartNames::default();
+        for (name, id) in bookmark_start_names(&paragraphs)
+            .into_iter()
+            .chain(block_bookmark_start_names(&paragraphs, &blocks))
+        {
+            let closed = match (&bookmark_end_ids, id) {
+                (Ok(end_ids), Some(id)) => end_ids.contains(&id),
+                _ => true,
+            };
+            *names.taken.entry(name.clone()).or_default() += 1;
+            if closed {
+                *names.closed.entry(name).or_default() += 1;
+            }
         }
-        let paired = sources_bookmark_end_ids(&sources).and_then(|bookmark_end_ids| {
+        let paired = bookmark_end_ids.and_then(|bookmark_end_ids| {
             let (located, identity_counts) = located_story_markers(&paragraphs, &blocks)?;
             pair_located_story_markers(&located, &identity_counts, &bookmark_end_ids)
         });
-        Ok((paired, name_counts))
+        Ok((paired, names))
     }
 
     /// Whether the bookmark markers with this identifier that sit between

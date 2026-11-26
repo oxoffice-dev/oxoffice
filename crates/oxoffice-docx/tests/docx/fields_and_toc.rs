@@ -732,6 +732,41 @@ fn a_ref_draws_its_bookmark_as_a_reader_sees_it() {
 }
 
 #[test]
+fn a_bookmark_start_with_no_end_is_no_bookmark_to_a_field() {
+    // LibreOffice writes a start with no end beside a copied form field,
+    // next to the whole bookmark of the same name (libreoffice/form.docx):
+    // a field finds the whole bookmark, updated and drawn.
+    let unclosed = format!(
+        r#"<w:p><w:bookmarkStart w:id="9" w:name="Total"/>{}</w:p>"#,
+        plain("Copy")
+    );
+    for instruction in ["REF total", r"REF total \f"] {
+        let body = format!(
+            "{unclosed}{}<w:p>{}</w:p>",
+            bookmarked(0, "total", &plain("Total: 5")),
+            complex_field(instruction, "old")
+        );
+        for round in texts_over_updates(&body) {
+            assert_eq!(round, ["Copy", "Total: 5", "Total: 5"], "{instruction}");
+        }
+        assert_eq!(
+            drawn_text(&doc_with_body(&body)),
+            "CopyTotal: 5Total: 5",
+            "{instruction}"
+        );
+    }
+    // A page reference lands on the whole bookmark, not on the start with
+    // no end a page later.
+    let mut doc = doc_with_body(&format!(
+        r#"<w:p>{}</w:p>{}<w:p><w:r><w:br w:type="page"/></w:r></w:p>{unclosed}"#,
+        complex_field("PAGEREF total", "?"),
+        bookmarked(0, "total", &plain("Total: 5")),
+    ));
+    doc.update_layout_backed_fields().unwrap();
+    assert_eq!(texts(&reopen(&mut doc))[0], "1");
+}
+
+#[test]
 fn a_reference_written_in_another_case_reaches_its_bookmark() {
     // Word compares bookmark names without regard to case.
     let body = format!(

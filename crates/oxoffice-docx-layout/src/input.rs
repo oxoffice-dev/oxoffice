@@ -344,6 +344,8 @@ pub(crate) struct BookmarkNames {
     /// The first spelling of each bookmark that starts in the input, by
     /// folded name.
     pub(crate) spellings: HashMap<String, String>,
+    /// The identifier of every bookmark end of the input's stories.
+    pub(crate) end_ids: std::collections::HashSet<i32>,
 }
 
 impl Clone for BookmarkNameCache {

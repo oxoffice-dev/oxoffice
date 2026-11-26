@@ -42,6 +42,7 @@ fn bookmark_names(input: &LayoutInput) -> std::borrow::Cow<'_, crate::input::Boo
             page_targets,
             page_target_ids,
             spellings: read_bookmark_spellings(input),
+            end_ids: read_bookmark_end_ids(input),
         }
     };
     let (cached_owner, cached) = input.bookmark_names.0.get_or_init(|| (owner, read()));
@@ -50,6 +51,33 @@ fn bookmark_names(input: &LayoutInput) -> std::borrow::Cow<'_, crate::input::Boo
     } else {
         std::borrow::Cow::Owned(read())
     }
+}
+
+/// The identifier of every bookmark end of the stories of the input.
+fn read_bookmark_end_ids(input: &LayoutInput) -> HashSet<i32> {
+    let block_bookmarks = input.block_bookmarks();
+    let mut ids = HashSet::new();
+    for paragraph in input_story_paragraphs(input).iter().flatten() {
+        let (before, after) = block_bookmarks.markers(paragraph);
+        for marker in paragraph.bookmark_markers.iter().chain(before).chain(after) {
+            if !marker.is_start()
+                && let Some(id) = marker.id()
+            {
+                ids.insert(id);
+            }
+        }
+    }
+    ids
+}
+
+/// Whether a bookmark start opens a bookmark a field can find by name: one
+/// whose identifier has no end in any story, as LibreOffice writes beside a
+/// copied form field, is no bookmark to Word.
+pub(super) fn opens_bookmark(input: &LayoutInput, marker: &BookmarkMarker) -> bool {
+    marker.is_start()
+        && marker
+            .id()
+            .is_none_or(|id| bookmark_names(input).end_ids.contains(&id))
 }
 
 /// The first spelling of each bookmark that starts in the stories of the
@@ -750,6 +778,7 @@ fn bookmark_range_in_paragraphs(
 fn bookmark_value_runs(input: &LayoutInput, name: &str) -> Option<Vec<Vec<CT_R>>> {
     let stories = input_story_paragraphs(input);
     let block_bookmarks = input.block_bookmarks();
+    let names = bookmark_names(input);
     let named_starts = stories
         .iter()
         .flatten()
@@ -759,6 +788,7 @@ fn bookmark_value_runs(input: &LayoutInput, name: &str) -> Option<Vec<Vec<CT_R>>
         })
         .filter(|marker| {
             marker.is_start()
+                && marker.id().is_none_or(|id| names.end_ids.contains(&id))
                 && marker
                     .name()
                     .is_some_and(|marker| same_bookmark_name(marker, name))

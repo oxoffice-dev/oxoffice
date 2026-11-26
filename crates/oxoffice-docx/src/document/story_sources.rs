@@ -130,6 +130,15 @@ impl Document {
         Ok(self.spanned_story_sources()?.0)
     }
 
+    /// The identifiers of every bookmark end of the story sources.
+    pub(crate) fn story_bookmark_end_ids(&self) -> Result<std::collections::HashSet<i32>> {
+        let mut ids = std::collections::HashSet::new();
+        for source in self.story_sources()? {
+            ids.extend(super::source_bookmark_end_ids(&source.xml)?);
+        }
+        Ok(ids)
+    }
+
     #[allow(clippy::type_complexity)]
     pub(super) fn spanned_story_sources(
         &self,

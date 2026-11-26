@@ -1409,7 +1409,7 @@ pub(super) fn ref_bookmark_runs(
     target: &str,
 ) -> Result<Option<RefBookmarkCache>> {
     let bookmarks = document.bookmarks();
-    let matching = bookmarks
+    let mut matching = bookmarks
         .iter()
         .filter(|bookmark| {
             bookmark
@@ -1417,6 +1417,12 @@ pub(super) fn ref_bookmark_runs(
                 .is_some_and(|name| same_bookmark_name(name, target))
         })
         .collect::<Vec<_>>();
+    // A start whose identifier has no end anywhere in the document is no
+    // bookmark to Word: a field does not find it by name.
+    if matching.iter().any(|bookmark| bookmark.issue().is_some()) {
+        let end_ids = document.story_bookmark_end_ids()?;
+        matching.retain(|bookmark| bookmark.id().is_none_or(|id| end_ids.contains(&id)));
+    }
     if !matching.is_empty() {
         if matching.len() != 1 || matching[0].issue().is_some() {
             return Err(Error::Other(
