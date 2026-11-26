@@ -2212,7 +2212,7 @@ fn note_reference_counts(document: &Document) -> Result<HashMap<(String, i32), u
                         let (namespace, name) = reader.resolver().resolve_attribute(attribute.key);
                         if name.as_ref() == b"id"
                             && matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
-                            && let Ok(id) = std::str::from_utf8(&attribute.value)
+                            && let Ok(id) = oxoffice_core::xml::attribute_text(&attribute)
                                 .unwrap_or_default()
                                 .parse::<i32>()
                         {
@@ -2360,11 +2360,11 @@ fn rewrite_word_ids(xml: &[u8], local: &str, ids: &HashMap<i32, i32>) -> Result<
             continue;
         }
         let updated = rewritten_opening(&tree, xml, index, |name, value| {
-            let id = std::str::from_utf8(value).ok()?.parse::<i32>().ok()?;
+            let id = value.parse::<i32>().ok()?;
             (name == "id")
                 .then(|| ids.get(&id))
                 .flatten()
-                .map(|id| id.to_string().into_bytes())
+                .map(i32::to_string)
         })?;
         if let Some(updated) = updated {
             edits.push((node.start..node.open_end, updated));

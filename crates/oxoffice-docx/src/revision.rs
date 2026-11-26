@@ -2847,7 +2847,9 @@ impl<'a> XmlTree<'a> {
             let key = attribute.key.as_ref();
             (key.rsplit(|byte| *byte == b':').next() == Some(b"id".as_slice())
                 && !key.starts_with(b"xmlns"))
-            .then(|| String::from_utf8_lossy(&attribute.value).into_owned())
+            .then(|| oxoffice_core::xml::attribute_text(&attribute).ok())
+            .flatten()
+            .map(std::borrow::Cow::into_owned)
         })
     }
 

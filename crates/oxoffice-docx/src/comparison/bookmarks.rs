@@ -738,10 +738,10 @@ fn raw_bookmark(raw: &[u8]) -> Option<(bool, Option<i32>, Option<String>)> {
     let mut id = None;
     let mut name = None;
     for attribute in element.attributes().flatten() {
-        let value = std::str::from_utf8(&attribute.value).ok();
+        let value = oxoffice_core::xml::attribute_text(&attribute).ok();
         match attribute.key.local_name().as_ref() {
             b"id" => id = value.and_then(|value| value.parse().ok()),
-            b"name" => name = value.map(str::to_owned),
+            b"name" => name = value.map(std::borrow::Cow::into_owned),
             _ => {}
         }
     }
@@ -801,8 +801,9 @@ pub(super) fn word_attributes(
         if let Some((prefix, local)) = key.split_once(':')
             && scope.get(prefix).is_some_and(|uri| uri == W_NS)
         {
-            let value = std::str::from_utf8(&attribute.value).map_err(utf8_error)?;
-            attributes.insert(local.to_owned(), value.to_owned());
+            let value = oxoffice_core::xml::attribute_text(&attribute)
+                .map_err(|error| Error::Other(error.to_string()))?;
+            attributes.insert(local.to_owned(), value.into_owned());
         }
     }
     Ok(attributes)
@@ -848,7 +849,8 @@ fn rewrite_body_bookmarks(
 ) -> Result<Option<Vec<u8>>> {
     let tree = crate::revision::XmlTree::parse(xml)?;
     let names = folded_names(names);
-    let renamed = |value: &[u8]| -> Option<Vec<u8>> {
+    let renamed = |value: &str| -> Option<String> {
+        let value = value.as_bytes();
         let mut output = Vec::new();
         let mut at = 0;
         for range in name_token_ranges(value) {
@@ -861,12 +863,12 @@ fn rewrite_body_bookmarks(
         }
         (at > 0).then(|| {
             output.extend_from_slice(&value[at..]);
-            output
+            String::from_utf8(output).expect("names replace ASCII tokens")
         })
     };
-    let renumbered = |value: &[u8]| {
-        let id = std::str::from_utf8(value).ok()?.parse::<i32>().ok()?;
-        ids.get(&id).map(|id| id.to_string().into_bytes())
+    let renumbered = |value: &str| {
+        let id = value.parse::<i32>().ok()?;
+        ids.get(&id).map(i32::to_string)
     };
     let mut edits = Vec::new();
     // The instruction elements of each open complex field, while its
@@ -968,7 +970,11 @@ fn rewrite_body_bookmarks(
                 ("bookmarkStart" | "bookmarkEnd", "id") => renumbered(value),
                 ("bookmarkStart", "name") => renamed(value),
                 ("hyperlink", "anchor") if !external_link => renamed(value),
-                ("fldSimple", "instr") if !links_another_file(value) => renamed(value),
+                ("fldSimple", "instr")
+                    if !oxoffice_docx_oxml::text::hyperlink_has_address(value) =>
+                {
+                    renamed(value)
+                }
                 _ => None,
             }
         })?;
@@ -1031,12 +1037,13 @@ fn links_another_file(instruction: &[u8]) -> bool {
 
 /// The opening tag of an element with some Word attribute values replaced,
 /// or None when `value` replaces none. `value` takes the local name and the
-/// raw value, and returns the raw replacement.
+/// value as read, its references resolved, and returns the replacement,
+/// written escaped; the other attributes are kept as written.
 pub(super) fn rewritten_opening(
     tree: &crate::revision::XmlTree<'_>,
     xml: &[u8],
     index: usize,
-    value: impl Fn(&str, &[u8]) -> Option<Vec<u8>>,
+    value: impl Fn(&str, &str) -> Option<String>,
 ) -> Result<Option<Vec<u8>>> {
     let node = &tree.elements[index];
     let scope = tree
@@ -1055,14 +1062,21 @@ pub(super) fn rewritten_opening(
     for attribute in start.attributes() {
         let attribute = attribute.map_err(|error| Error::Other(error.to_string()))?;
         let key = std::str::from_utf8(attribute.key.as_ref()).map_err(utf8_error)?;
-        let replacement = key
+        let replacement = match key
             .split_once(':')
             .filter(|(prefix, _)| scope.get(*prefix).is_some_and(|uri| uri == W_NS))
-            .and_then(|(_, local)| value(local, &attribute.value));
+        {
+            Some((_, local)) => value(
+                local,
+                &oxoffice_core::xml::attribute_text(&attribute)
+                    .map_err(|error| Error::Other(error.to_string()))?,
+            ),
+            None => None,
+        };
         match replacement {
             Some(replacement) => {
                 changed = true;
-                updated.push_attribute((key.as_bytes(), replacement.as_slice()));
+                oxoffice_core::xml::push_escaped_attribute(&mut updated, key, &replacement);
             }
             None => oxoffice_core::xml::push_raw_attribute(&mut updated, attribute),
         }
@@ -1147,7 +1161,7 @@ mod tests {
             .position(|element| element.local == "bookmarkStart")
             .unwrap();
         let rewritten = rewritten_opening(&tree, xml.as_bytes(), index, |local, _| {
-            (local == "name").then(|| b"_Toc1".to_vec())
+            (local == "name").then(|| "_Toc1".to_owned())
         })
         .unwrap()
         .expect("the name is rewritten");

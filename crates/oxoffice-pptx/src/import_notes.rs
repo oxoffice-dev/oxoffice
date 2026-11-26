@@ -119,7 +119,8 @@ fn holds_only_a_creation_id(raw: &[u8]) -> bool {
                             && local == b"ext"
                             && start.attributes().flatten().any(|attribute| {
                                 attribute.key.as_ref() == b"uri"
-                                    && attribute.value.as_ref() == CREATION_ID_EXTENSION
+                                    && oxoffice_core::xml::attribute_text(&attribute)
+                                        .is_ok_and(|uri| uri.as_bytes() == CREATION_ID_EXTENSION)
                             })
                     }
                     2 => {
@@ -703,7 +704,9 @@ fn substitute_notes_placeholder_color(
                     .collect::<std::result::Result<Vec<_>, _>>()
                     .map_err(|error| footer_malformed(part, error.to_string()))?;
                 let placeholder = attributes.iter().any(|attribute| {
-                    attribute.key.as_ref() == b"val" && attribute.value.as_ref() == b"phClr"
+                    attribute.key.as_ref() == b"val"
+                        && oxoffice_core::xml::attribute_text(attribute)
+                            .is_ok_and(|value| value == "phClr")
                 });
                 if !placeholder {
                     continue;

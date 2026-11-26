@@ -1822,7 +1822,8 @@ fn page_numbering_is_not_decimal(xml: &[u8]) -> bool {
             ) => {
                 return element.attributes().flatten().any(|attribute| {
                     match attribute.key.local_name().as_ref() {
-                        b"fmt" => attribute.value.as_ref() != b"decimal",
+                        b"fmt" => oxoffice_core::xml::attribute_text(&attribute)
+                            .is_ok_and(|value| value != "decimal"),
                         b"chapStyle" | b"chapSep" => true,
                         _ => false,
                     }

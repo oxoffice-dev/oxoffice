@@ -1423,14 +1423,14 @@ impl CT_SectPr {
             if is_word_attribute(key, b"first", word_prefixes) {
                 store_unsigned_attribute(
                     value,
-                    key,
+                    &attribute,
                     &mut source.first,
                     &mut source.extra_attributes,
                 )?;
             } else if is_word_attribute(key, b"other", word_prefixes) {
                 store_unsigned_attribute(
                     value,
-                    key,
+                    &attribute,
                     &mut source.other,
                     &mut source.extra_attributes,
                 )?;
@@ -1454,14 +1454,14 @@ impl CT_SectPr {
             if is_word_attribute(key, b"countBy", word_prefixes) {
                 store_unsigned_attribute(
                     value,
-                    key,
+                    &attribute,
                     &mut numbering.count_by,
                     &mut numbering.extra_attributes,
                 )?;
             } else if is_word_attribute(key, b"start", word_prefixes) {
                 store_unsigned_attribute(
                     value,
-                    key,
+                    &attribute,
                     &mut numbering.start,
                     &mut numbering.extra_attributes,
                 )?;
@@ -2531,15 +2531,20 @@ impl CT_PageNumberType {
 
 /// Store a parsed unsigned attribute, or retain it verbatim when the source
 /// value falls outside what the field models, so nothing is dropped on write.
+/// Stores `value`, `attribute` read, in `field`, or keeps `attribute` as
+/// written in `retained`, which is written back raw.
 fn store_unsigned_attribute(
     value: &str,
-    key: &[u8],
+    attribute: &quick_xml::events::attributes::Attribute<'_>,
     field: &mut Option<u32>,
     retained: &mut Vec<(String, String)>,
 ) -> Result<()> {
     match value.parse() {
         Ok(parsed) => *field = Some(parsed),
-        Err(_) => retained.push((std::str::from_utf8(key)?.to_owned(), value.to_owned())),
+        Err(_) => retained.push((
+            std::str::from_utf8(attribute.key.as_ref())?.to_owned(),
+            std::str::from_utf8(&attribute.value)?.to_owned(),
+        )),
     }
     Ok(())
 }

@@ -769,11 +769,8 @@ pub(super) fn qualify_constructor_failures(
                         if matches_local_name(attribute.key.as_ref(), b"val")
                             && word_name(attribute.key.as_ref(), true)
                         {
-                            value = Some(
-                                std::str::from_utf8(&attribute.value)
-                                    .map_err(OxmlError::from)?
-                                    .to_owned(),
-                            );
+                            value =
+                                Some(oxoffice_core::xml::attribute_text(&attribute)?.into_owned());
                             break;
                         }
                     }
@@ -815,10 +812,11 @@ pub(super) fn qualify_constructor_failures(
                             }
                             // Spacing/indent/frame construction decodes every attribute's
                             // UTF-8, while val-only leaves stop at their first value.
-                            let Ok(value) = std::str::from_utf8(&attribute.value) else {
+                            let Ok(value) = oxoffice_core::xml::attribute_text(&attribute) else {
                                 failed = true;
                                 break;
                             };
+                            let value: &str = &value;
                             if let Some(measurement) = measurement {
                                 failed = measurement
                                     .decode(start.name().as_ref(), key, Some(value))
@@ -872,10 +870,11 @@ pub(super) fn qualify_constructor_failures(
                         let mut failed = false;
                         for attribute in start.attributes() {
                             let attribute = attribute.map_err(OxmlError::from)?;
-                            let Ok(value) = std::str::from_utf8(&attribute.value) else {
+                            let Ok(value) = oxoffice_core::xml::attribute_text(&attribute) else {
                                 failed = true;
                                 break;
                             };
+                            let value: &str = &value;
                             if !word_name(attribute.key.as_ref(), true) {
                                 continue;
                             }
@@ -1014,10 +1013,11 @@ pub(super) fn qualify_constructor_failures(
                             if selected_only && table_scalar.is_none() && section_scalar.is_none() {
                                 continue;
                             }
-                            let Ok(value) = std::str::from_utf8(&attribute.value) else {
+                            let Ok(value) = oxoffice_core::xml::attribute_text(&attribute) else {
                                 failed = true;
                                 break;
                             };
+                            let value: &str = &value;
                             if let Some(scalar) = table_scalar {
                                 failed = scalar.decode(start.name().as_ref(), key, value).is_err();
                             } else if let Some(scalar) = section_scalar {

@@ -777,7 +777,7 @@ pub(super) fn word_ids(xml: &[u8]) -> Result<HashSet<i32>> {
                     let (namespace, local) = reader.resolver().resolve_attribute(attribute.key);
                     if local.as_ref() == b"id"
                         && matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
-                        && let Ok(value) = std::str::from_utf8(&attribute.value)
+                        && let Ok(value) = oxoffice_core::xml::attribute_text(&attribute)
                         && let Ok(id) = value.parse::<i32>()
                     {
                         ids.insert(id);

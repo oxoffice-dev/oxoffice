@@ -890,10 +890,7 @@ fn note_is_normal(element: &BytesStart<'_>, resolver: &NamespaceResolver) -> boo
             continue;
         }
         if local.as_ref() == b"id" {
-            let Ok(raw) = std::str::from_utf8(&attribute.value) else {
-                return false;
-            };
-            let Ok(value) = quick_xml::escape::unescape(raw) else {
+            let Ok(value) = oxoffice_core::xml::attribute_text(&attribute) else {
                 return false;
             };
             let Ok(value) = value.parse::<i32>() else {
@@ -903,10 +900,7 @@ fn note_is_normal(element: &BytesStart<'_>, resolver: &NamespaceResolver) -> boo
                 return false;
             }
         } else if local.as_ref() == b"type" {
-            let Ok(raw) = std::str::from_utf8(&attribute.value) else {
-                return false;
-            };
-            let Ok(value) = quick_xml::escape::unescape(raw) else {
+            let Ok(value) = oxoffice_core::xml::attribute_text(&attribute) else {
                 return false;
             };
             if note_type.replace(value.into_owned()).is_some() {

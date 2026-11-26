@@ -688,7 +688,7 @@ fn validate_color_attributes(element: &BytesStart<'_>) -> Result<()> {
             return Err(invalid(
                 &String::from_utf8_lossy(local_name(element.name().as_ref())),
                 &String::from_utf8_lossy(name),
-                &String::from_utf8_lossy(attribute.value.as_ref()),
+                &oxoffice_core::xml::attribute_text(&attribute).unwrap_or_default(),
             ));
         }
     }
