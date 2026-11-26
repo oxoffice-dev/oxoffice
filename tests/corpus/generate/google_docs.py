@@ -1,6 +1,7 @@
 """Documents written in Google Docs itself, exported as .docx, into files/google-docs/.
 
     OXOFFICE_GOOGLE_TOKEN=<access token> python3 tests/corpus/generate/google_docs.py [family ...]
+    python3 tests/corpus/generate/google_docs.py --neutral <file.docx> "<account name>"
 
 The google/ copies are sources python-docx wrote, converted by Google. These
 are written in Google Docs, through the Docs API (documents.batchUpdate),
@@ -119,6 +120,64 @@ def neutral_authors(path: Path, account: str) -> int:
     return changed
 
 
+CUSTOM_DATA = re.compile(rb'(<go:docsCustomData\b[^>]*>)([A-Za-z0-9+/=]+)(</go:docsCustomData>)')
+ACCOUNT_ID = re.compile(rb"\d{15,25}")
+# a length-delimited protobuf string (tag byte, length byte) holding a Drive file id
+DRIVE_ID = re.compile(rb"[\x00-\xff]([\x19-\x40])")
+ID_BYTES = re.compile(rb"[A-Za-z0-9_-]+")
+
+
+def neutral_drive_ids(data: bytes) -> bytes:
+    out, at = bytearray(data), 0
+    while (match := DRIVE_ID.search(data, at)) is not None:
+        length, begin = match.group(1)[0], match.end()
+        value = data[begin : begin + length]
+        if len(value) == length and value[:1] == b"1" and ID_BYTES.fullmatch(value):
+            out[begin : begin + length] = b"1" + b"x" * (length - 1)
+            at = begin + length
+        else:
+            at = match.start() + 1
+    return bytes(out)
+
+
+def neutral_custom_data(path: Path) -> int:
+    """Replace, in Google's round-trip data (`go:docsCustomData`, base64
+    protobuf), the account's numeric id by zeros and Drive file ids (a string
+    field starting with `1`, as long as its length byte says) by a placeholder
+    of the same length, so the data stays well formed, and return how many
+    parts changed; fail if a numeric id is left. Every other byte is kept.
+    `roundtripDataSignature` is kept as written: Google may ignore the
+    rewritten data on a new upload, which oxoffice never does."""
+    import base64
+
+    def neutral(match: re.Match) -> bytes:
+        data = base64.b64decode(match.group(2))
+        data = neutral_drive_ids(ACCOUNT_ID.sub(lambda m: b"0" * len(m.group(0)), data))
+        if re.search(rb"[1-9]\d{14,}", data):
+            raise SystemExit(f"{path}: a numeric id is left in Google's round-trip data")
+        return match.group(1) + base64.b64encode(data) + match.group(3)
+
+    with zipfile.ZipFile(path) as package:
+        infos = package.infolist()
+        parts = {info.filename: package.read(info) for info in infos}
+    changed = 0
+    for name, data in parts.items():
+        if name.endswith(".xml") and b"docsCustomData" in data:
+            new = CUSTOM_DATA.sub(neutral, data)
+            if new != data:
+                parts[name] = new
+                changed += 1
+    if changed:
+        with zipfile.ZipFile(path, "w") as package:
+            for info in infos:
+                package.writestr(info, parts[info.filename])
+    return changed
+
+
+def neutral_file(path: Path, account: str) -> None:
+    """The two neutral passes on a file exported by hand (see the README)."""
+    print(f"{path}: {neutral_authors(path, account)} author tags, {neutral_custom_data(path)} data parts")
+
 def write(family: str, spec: dict, token: str, folder: str) -> Path:
     metadata = {"name": family, "mimeType": "application/vnd.google-apps.document", "parents": [folder]}
     if "source" in spec:
@@ -141,10 +200,13 @@ def write(family: str, spec: dict, token: str, folder: str) -> Path:
     path.write_bytes(call("GET", f"{DRIVE}/{document_id}/export?" + urllib.parse.urlencode({"mimeType": DOCX}), token))
     account = call_json("GET", "https://www.googleapis.com/drive/v3/about?fields=user", token)["user"]["displayName"]
     neutral_authors(path, account)
+    neutral_custom_data(path)
     return path
 
 
 def main() -> None:
+    if sys.argv[1:2] == ["--neutral"] and len(sys.argv) == 4:
+        return neutral_file(Path(sys.argv[2]), sys.argv[3])
     token = os.environ.get("OXOFFICE_GOOGLE_TOKEN") or sys.exit("set OXOFFICE_GOOGLE_TOKEN (see the docstring)")
     families = json.loads((HERE / "google_docs.json").read_text())
     started = time.time()

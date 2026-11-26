@@ -272,9 +272,14 @@ pub(super) fn nested_destination(
         return paragraph_parent_range(document, destination);
     }
     if !Document::location_is_end(destination) && destination.item_kind() == StoryItemKind::Table {
-        return match destination.index_path().len() {
-            1 => table_parent_range(document, destination),
-            2 => row_parent_range(document, destination),
+        // A table: `[t]`, or table `k` of block control `c`, `[c, k]`. A row:
+        // its table's location and the row index, `[t, r]` or `[c, k, r]`.
+        return match destination.index_path() {
+            [_] => table_parent_range(document, destination),
+            [control, _] if names_block_control(document, destination, *control) => {
+                table_parent_range(document, destination)
+            }
+            [_, _] | [_, _, _] => row_parent_range(document, destination),
             _ => Err(Error::Other(
                 "content control placement does not match its parent".to_owned(),
             )),
@@ -283,6 +288,16 @@ pub(super) fn nested_destination(
     Err(Error::Other(
         "content control placement does not match its parent".to_owned(),
     ))
+}
+
+/// Whether story item `index` of `location`'s story is a content control.
+fn names_block_control(document: &Document, location: &ContentLocation, index: usize) -> bool {
+    let control = ContentLocation::new(
+        location.story().clone(),
+        StoryItemKind::ContentControl,
+        vec![index],
+    );
+    document.copy_indexed_story_item(&control, &[index]).is_ok()
 }
 
 pub(super) fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {

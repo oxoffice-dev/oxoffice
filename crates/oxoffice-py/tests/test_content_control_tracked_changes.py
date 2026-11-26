@@ -1,5 +1,6 @@
 """A content control's value replaces its content with the tracked changes in it, in Python as in the Rust facade, as
-an edit made with track changes off. One holding the mark of a comment is refused and the document left as it was."""
+an edit made with track changes off. One holding the mark of a comment is refused and the document left as it was.
+Accepting the suggestions Google Docs wraps in content controls resolves them."""
 
 import io
 import zipfile
@@ -65,3 +66,27 @@ def test_a_value_over_a_tracked_change_holding_a_comment_mark_is_refused():
         doc.set_content_control_value_by_tag("t", "X")
     assert [control.text for control in doc.content_controls()] == ["BC"]
     assert body_xml(doc) == before
+
+
+def google_control(n, content):
+    """A content control tagged `goog_rdk_<n>` holding `content`, as Google Docs wraps a suggestion."""
+    return (
+        f'<w:sdt><w:sdtPr><w:id w:val="{n}"/><w:tag w:val="goog_rdk_{n}"/></w:sdtPr>'
+        f"<w:sdtContent>{content}</w:sdtContent></w:sdt>"
+    )
+
+
+def test_google_suggestions_deleting_a_last_paragraph_or_a_wrapped_one_are_accepted():
+    mark = f'<w:pPr><w:rPr><w:del w:id="1" {TRACKED}/></w:rPr></w:pPr>'
+    deleted = f'<w:del w:id="2" {TRACKED}><w:r><w:delText>gone</w:delText></w:r></w:del>'
+    before, after = "<w:p><w:r><w:t>Before.</w:t></w:r></w:p>", "<w:p><w:r><w:t>After.</w:t></w:r></w:p>"
+    wrapped = google_control(100, f"<w:p>{mark}{google_control(101, deleted)}</w:p>")
+    for body, text in (
+        # The body's last mark stays, its deleted text goes.
+        (f"{before}<w:p>{mark}{deleted}</w:p>", "Before.\n\n"),
+        # The inline control emptied by the deletion goes with its paragraph and the block control.
+        (f"{before}{wrapped}{after}", "Before.\nAfter.\n"),
+    ):
+        doc = with_body(body)
+        assert doc.accept_all() == 2
+        assert oxdocx.Document.from_bytes(doc.to_bytes()).text() == text

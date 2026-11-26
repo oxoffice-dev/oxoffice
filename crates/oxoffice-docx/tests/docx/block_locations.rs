@@ -61,7 +61,8 @@ fn google_table(n: usize, table: &str) -> String {
 /// Every container a location can name: block controls three levels deep,
 /// a cell holding a control and one whose only paragraph is in a control, a
 /// text box, a plain text control, a repeating section, an empty control, an
-/// inline control, a table alone in a locked control; a header whose only
+/// inline control, a table alone in a locked control, a table then a
+/// paragraph in one control, a table in a nested control; a header whose only
 /// block is a control; a footnote and a comment.
 fn fixture() -> Document {
     static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
@@ -85,6 +86,8 @@ fn fixture() -> Document {
              <w:sdtContent><w:r><w:t>!</w:t></w:r></w:sdtContent></w:sdt></w:p>"
                 .to_owned(),
             google_table(1, &table(&p("Boxed"))),
+            sdt("tpara", "", &[table(&p("Tab")), p("Para")].concat()),
+            sdt("outer", "", &sdt("nest", "", &table(&p("Nested")))),
         ]
         .concat();
             let mut doc = doc_with_body(&body);
@@ -397,7 +400,7 @@ fn shapes() -> Vec<Shape> {
     let section_end = refusals(&INSERTS[..4], SECTION, &[(Op::CloneTo, SECTION), (Op::MoveTo, SECTION), (Op::RangeTo, ITEM)]);
     let section_end = refusals(&[], "", &[section_end, ENDS].concat());
     // Body blocks: Before, Box 1, Inner 1, Deep 1, Box 2, After, four cell tables, Holder, Plain, Item 1, Item 2,
-    // Tail!, the table Boxed.
+    // Tail!, the tables Boxed and Tab, Para, the table Nested.
     vec![
         ("a body paragraph [i]", "p:After", "body", 5, Some((5, 6)), Some(("c:box", 1, 5)), Some("after:After"), &[]),
         ("a paragraph [c, k] of a body control", "c:box/1", "body", 4, Some((4, 5)), Some(("c:inner", 2, 4)), Some("e:box"), &[]),
@@ -408,7 +411,7 @@ fn shapes() -> Vec<Shape> {
         ("a control three levels deep [i]", "c:deep", "body", 3, Some((3, 4)), Some(("c:inner/0", 2, 3)), Some("e:inner"), &[]),
         ("a paragraph of a control three levels deep", "c:deep/0", "body", 3, Some((3, 4)), None, Some("e:deep"), only),
         ("the end of a control three levels deep", "e:deep", "body", 4, None, Some(("c:deep/0", 3, 4)), None, ENDS),
-        ("the end of the body", "end@Before", "body", 16, None, Some(("c:goog_rdk_1", 15, 16)), None, ENDS),
+        ("the end of the body", "end@Before", "body", 19, None, Some(("c:outer", 18, 19)), None, ENDS),
         ("[c, n] past a control's paragraphs", "c:box/2", "body", 0, None, None, None, &[(Op::All, "control_end(story, ")]),
         ("a cell paragraph [i]", "p:Cell", "@Cell", 0, Some((0, 1)), None, Some("c:cellbox"), &[]),
         ("a paragraph of a control in a cell", "c:cellbox/0", "@Cell", 1, Some((1, 2)), None, Some("e:cellbox"), only),
@@ -431,6 +434,8 @@ fn shapes() -> Vec<Shape> {
         ("[c, k] of an inline control", "c:inline/0", "body", 0, None, None, None, &[(Op::All, "inside a paragraph and holds no block")]),
         ("an inline control [i]", "c:inline", "body", 0, None, None, None, &[(Op::All, "not a block")]),
         ("a table [c, k] alone in a locked control", "t:goog_rdk_1/0", "body", 15, Some((15, 16)), None, Some("e:goog_rdk_1"), only),
+        ("a table [c, k] then a paragraph in one control", "t:tpara/0", "body", 16, Some((16, 17)), None, Some("c:tpara/0"), &[]),
+        ("a table [c, k] of a control nested in a control", "t:nest/0", "body", 18, Some((18, 19)), None, Some("e:nest"), only),
         ("[c, n] of kind table past a control's tables", "t:box/0", "body", 0, None, None, None, &[(Op::All, "control_end(story, ")]),
     ]
 }
@@ -987,9 +992,9 @@ fn a_table_of_authorities_in_a_block_control_keeps_its_categories_in_order() {
 #[test]
 fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
     // Paragraph [c, 0] and table [c, 0] are both there: a reader counting
-    // the wrong kind edits "Under".
-    let body = format!(
-        "{}{}",
+    // the wrong kind edits "Under". A direct table follows.
+    let fixture = format!(
+        "{}{}{}",
         p("Before"),
         sdt(
             "box",
@@ -1001,10 +1006,11 @@ fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
                 p("Boxed"),
                 p("Two")
             )
-        )
+        ),
+        table(&p("Direct"))
     );
     type Edit = fn(&mut Document, &ContentLocation) -> oxoffice_docx::Result<()>;
-    let cases: [(&str, Edit, &str); 9] = [
+    let cases: [(&str, Edit, &str); 13] = [
         (
             "read",
             |doc, at| {
@@ -1082,9 +1088,81 @@ fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
             },
             "<w:tag w:val=\"placed\"/>",
         ),
+        (
+            "row control clone",
+            |doc, at| {
+                doc.insert_content_control(at, control_spec(ContentControlPlacement::Row))?;
+                let source = location(doc, "c:placed");
+                doc.clone_content_control(&source, &location(doc, "t:box/0"))
+            },
+            "</w:sdtContent></w:sdt><w:sdt",
+        ),
+        (
+            "cell control clone into a row, [c, k, r]",
+            |doc, _| {
+                let row = |doc: &Document| {
+                    let table = location(doc, "t:box/0");
+                    ContentLocation::new(
+                        body(doc),
+                        StoryItemKind::Table,
+                        [table.index_path(), &[0]].concat(),
+                    )
+                };
+                doc.insert_content_control(&row(doc), control_spec(ContentControlPlacement::Cell))?;
+                let source = location(doc, "c:placed");
+                doc.clone_content_control(&source, &row(doc))
+            },
+            "</w:sdtContent></w:sdt><w:sdt",
+        ),
+        (
+            "row control moved in from a direct table",
+            |doc, _| {
+                let direct = doc
+                    .story_tables(&body(doc))?
+                    .last()
+                    .cloned()
+                    .expect("a table");
+                doc.insert_content_control(&direct, control_spec(ContentControlPlacement::Row))?;
+                let source = location(doc, "c:placed");
+                doc.move_content_control(&source, &location(doc, "t:box/0"))
+            },
+            "<w:tag w:val=\"placed\"/>",
+        ),
+        (
+            "cell control cloned to a direct table's row, [t, r]",
+            |doc, at| {
+                let row = ContentLocation::new(
+                    body(doc),
+                    StoryItemKind::Table,
+                    [at.index_path(), &[0]].concat(),
+                );
+                doc.insert_content_control(&row, control_spec(ContentControlPlacement::Cell))?;
+                let source = location(doc, "c:placed");
+                let direct = doc
+                    .story_tables(&body(doc))?
+                    .last()
+                    .cloned()
+                    .expect("a table");
+                let row = ContentLocation::new(
+                    body(doc),
+                    StoryItemKind::Table,
+                    [direct.index_path(), &[0]].concat(),
+                );
+                doc.clone_content_control(&source, &row)?;
+                let direct = doc
+                    .story_tables(&body(doc))?
+                    .last()
+                    .cloned()
+                    .expect("a table");
+                let xml = String::from_utf8(doc.table_element_xml(&direct)?).unwrap();
+                assert!(xml.contains("<w:tag w:val=\"placed\"/>"), "{xml}");
+                Ok(())
+            },
+            "<w:tag w:val=\"placed\"/>",
+        ),
     ];
     for (name, edit, expected) in cases {
-        let mut doc = doc_with_body(&body);
+        let mut doc = doc_with_body(&fixture);
         let at = location(&doc, "t:box/0");
         edit(&mut doc, &at).unwrap_or_else(|error| panic!("{name}: {error}"));
         let doc = reopen(&mut doc);
@@ -1094,7 +1172,7 @@ fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
         assert_eq!(body_texts(&doc)[1], "Under", "{name}");
     }
     // A row is its table's location and the row index.
-    let mut doc = doc_with_body(&body);
+    let mut doc = doc_with_body(&fixture);
     let error = refusal(doc.insert_content_control(
         &location(&doc, "t:box/0"),
         control_spec(ContentControlPlacement::Cell),

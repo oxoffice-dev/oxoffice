@@ -11,7 +11,7 @@ use oxoffice_docx::{
     StoryParagraph, StyleBuilder, ValidationSeverity,
 };
 
-use crate::support::{doc_with, doc_with_body, reopen, texts};
+use crate::support::{doc_with, doc_with_body, reopen, texts, with_body};
 
 const AUTHOR: &str = "Reviewer";
 const DATE: &str = "2026-11-21T09:00:00Z";
@@ -4563,6 +4563,293 @@ fn a_range_ending_in_a_removed_final_control_still_ends_after_it_starts() {
     let end = xml.find("<w:bookmarkEnd").expect("the bookmark ends");
     assert!(start < end, "{xml}");
     assert_eq!(bookmark_names(&accepted), ["span"]);
+}
+
+/// A content control tagged `goog_rdk_<n>` holding `content`, as Google Docs
+/// wraps a suggestion's runs or a comment's start (inline), or paragraphs
+/// (block, locked).
+fn google_control(n: u32, content: &str) -> String {
+    let lock = if content.starts_with("<w:p>") {
+        r#"<w:lock w:val="contentLocked"/>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<w:sdt><w:sdtPr>{lock}<w:id w:val="{n}"/><w:tag w:val="goog_rdk_{n}"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#
+    )
+}
+
+/// A shape to resolve: its name, its story (`body`, `header` or `footnote`),
+/// its XML there, the revision id resolved alone if any, and the text
+/// report it gives or the refusal it meets.
+type ResolutionRow = (
+    &'static str,
+    &'static str,
+    String,
+    Option<i32>,
+    Result<String, &'static str>,
+);
+
+#[test]
+fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_controls() {
+    // Google Docs suggestions that remove paragraph marks, as deletions to
+    // accept and as insertions to reject, in the body, a header or a
+    // footnote, by every revision or by the mark's id alone. The last mark
+    // of a story stays and its removed content goes; a paragraph that goes
+    // whole takes the inline controls the resolution leaves empty, leaves the
+    // comment marks they or its removed text hold at block level, and takes
+    // a comment it holds whole.
+    let deleted = |content: &str| {
+        format!(r#"<w:del w:id="2" w:author="A" w:date="{DATE}">{content}</w:del>"#)
+    };
+    let removed = |content: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" w:author="A" w:date="{DATE}"/></w:rPr></w:pPr>{content}</w:p>"#
+        )
+    };
+    let gone = "<w:r><w:delText>gone</w:delText></w:r>";
+    let start =
+        |id: u32| google_control(200 + id, &format!(r#"<w:commentRangeStart w:id="{id}"/>"#));
+    let end = |id: u32| {
+        format!(r#"<w:commentRangeEnd w:id="{id}"/><w:r><w:commentReference w:id="{id}"/></w:r>"#)
+    };
+    let (before, after) = (plain("Before."), plain("After."));
+    // After., where the comments 0 and 1 end.
+    let after_ends = format!(
+        "<w:p><w:r><w:t>After.</w:t></w:r>{}{}</w:p>",
+        end(0),
+        end(1)
+    );
+    let wrapped = google_control(101, &deleted(gone));
+    let final_paragraph = format!("{before}{}", removed(&deleted(gone)));
+    let kept_and_removed = format!("{}{}", plain("Kept."), removed(&deleted(gone)));
+    let report = |body: &str, comments: usize| {
+        format!(
+            "{body}--- comment (/word/comments.xml) ---\n{}",
+            "Note\n".repeat(comments)
+        )
+    };
+    let rows: Vec<ResolutionRow> = vec![
+        (
+            "the body's last paragraph",
+            "body",
+            final_paragraph.clone(),
+            None,
+            Ok("Before.\n\n".into()),
+        ),
+        (
+            "the body's last mark alone, by its id",
+            "body",
+            final_paragraph,
+            Some(1),
+            Ok("Before.\n\n".into()),
+        ),
+        (
+            "the last paragraph of a block control ending the body",
+            "body",
+            format!("{before}{}", google_control(100, &kept_and_removed)),
+            None,
+            Ok("Before.\nKept.\n\n".into()),
+        ),
+        (
+            "the last paragraph of a control in a control ending the body",
+            "body",
+            format!(
+                "{before}{}",
+                google_control(100, &google_control(105, &kept_and_removed))
+            ),
+            None,
+            Ok("Before.\nKept.\n\n".into()),
+        ),
+        (
+            "the last paragraph of a cell",
+            "body",
+            format!("{before}{}{after}", one_cell_table(&kept_and_removed)),
+            None,
+            Ok("Before.\nKept.\t\t\nAfter.\n".into()),
+        ),
+        (
+            "the last paragraph of a header",
+            "header",
+            kept_and_removed.clone(),
+            None,
+            Ok("Before.\n--- header (/word/header1.xml) ---\nKept.\n\n".into()),
+        ),
+        (
+            "the last paragraph of a footnote",
+            "footnote",
+            kept_and_removed,
+            None,
+            Ok("Before.\n--- footnote (/word/footnotes.xml) ---\nKept.\n\n".into()),
+        ),
+        (
+            "a block control's last mark before a table, its text kept",
+            "body",
+            format!(
+                "{before}{}{}{after}",
+                google_control(100, &removed("<w:r><w:t>Kept.</w:t></w:r>")),
+                one_cell_table(&plain("Cell.")),
+            ),
+            None,
+            Err("only a paragraph right after the control whose mark stays can take the merge"),
+        ),
+        (
+            "a block control's only paragraph, its text in an inline control",
+            "body",
+            format!("{before}{}{after}", google_control(100, &removed(&wrapped))),
+            None,
+            Ok("Before.\nAfter.\n".into()),
+        ),
+        (
+            "inline controls outside and inside the deletion",
+            "body",
+            format!(
+                "{before}{}{after}",
+                google_control(
+                    100,
+                    &removed(&google_control(101, &deleted(&google_control(102, gone))))
+                )
+            ),
+            None,
+            Ok("Before.\nAfter.\n".into()),
+        ),
+        (
+            "comment starts in inline controls, outside and inside the deletion",
+            "body",
+            format!(
+                "{before}{}{after_ends}",
+                google_control(
+                    100,
+                    &removed(&format!(
+                        "{}{}",
+                        start(0),
+                        google_control(101, &deleted(&format!("{}{gone}", start(1))))
+                    )),
+                )
+            ),
+            None,
+            Ok(report("Before.\nAfter.\n", 2)),
+        ),
+        (
+            "a comment whose end and mark the deletion holds",
+            "body",
+            format!(
+                "{before}{}{after}",
+                google_control(
+                    100,
+                    &removed(&format!(
+                        "{}{}",
+                        start(0),
+                        deleted(&format!("{gone}{}", end(0)))
+                    )),
+                )
+            ),
+            None,
+            Ok("Before.\nAfter.\n".into()),
+        ),
+        (
+            "a comment ending in a link the deletion holds",
+            "body",
+            format!(
+                concat!(
+                    r#"<w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Before.</w:t></w:r></w:p>{}"#,
+                    r#"<w:p><w:r><w:t>After.</w:t></w:r><w:r><w:commentReference w:id="0"/></w:r></w:p>"#
+                ),
+                google_control(
+                    100,
+                    &removed(&deleted(&format!(
+                        r#"<w:hyperlink w:anchor="_top">{gone}<w:commentRangeEnd w:id="0"/></w:hyperlink>"#
+                    ))),
+                )
+            ),
+            None,
+            Ok(report("Before.\nAfter.\n", 1)),
+        ),
+        (
+            "a block control ending the body",
+            "body",
+            format!("{before}{}", google_control(100, &removed(&wrapped))),
+            None,
+            Ok("Before.\n".into()),
+        ),
+        (
+            "a paragraph before a table",
+            "body",
+            format!(
+                "{before}{}{}{after_ends}",
+                removed(&format!("{}{}{wrapped}", start(0), start(1))),
+                one_cell_table(&plain("Cell.")),
+            ),
+            None,
+            Ok(report("Before.\nCell.\t\nAfter.\n", 2)),
+        ),
+    ];
+    for (name, story, xml, scope, outcome) in rows {
+        let inserted = xml
+            .replace("w:delText", "w:t")
+            .replace("<w:del ", "<w:ins ")
+            .replace("</w:del>", "</w:ins>");
+        for (xml, accept) in [(xml, true), (inserted, false)] {
+            let mut doc = match story {
+                "body" => {
+                    let mut base = doc_with(&["x"]);
+                    for _ in 0..xml.matches("<w:commentReference ").count() {
+                        base.add_comment_on_text("x", "A", "Note", Default::default())
+                            .unwrap();
+                    }
+                    Document::from_bytes(&with_body(base.to_bytes().unwrap(), &xml)).unwrap()
+                }
+                "header" => {
+                    let mut doc = doc_with(&["Before."]);
+                    doc.set_header("Head.");
+                    with_part(&mut doc, "header1.xml", |part| {
+                        let open = part.find("<w:hdr").unwrap();
+                        let open = open + part[open..].find('>').unwrap() + 1;
+                        let close = part.rfind("</w:hdr>").unwrap();
+                        format!("{}{xml}{}", &part[..open], &part[close..])
+                    })
+                }
+                _ => {
+                    let mut doc = Document::new();
+                    let id = doc.add_footnote("Note.");
+                    doc.add_paragraph("Before.").add_footnote_ref(id);
+                    with_part(&mut doc, "footnotes.xml", |part| {
+                        with_note_edited(part, "footnote", id, |_| xml.clone())
+                    })
+                }
+            };
+            let resolved = match (scope, accept) {
+                (Some(id), true) => doc.accept_revision_id(id),
+                (Some(id), false) => doc.reject_revision_id(id),
+                (None, true) => doc.accept_all(),
+                (None, false) => doc.reject_all(),
+            };
+            let text = match (resolved, &outcome) {
+                (Err(error), Err(refusal)) => {
+                    assert!(error.to_string().contains(refusal), "{name}: {error}");
+                    continue;
+                }
+                (Err(error), Ok(_)) => panic!("{name}: {error}"),
+                (Ok(_), Err(_)) => panic!("{name}: resolved"),
+                (Ok(_), Ok(text)) => text,
+            };
+            let mut doc = reopen(&mut doc);
+            if scope.is_some() {
+                // The mark alone: its paragraph keeps its content tracked.
+                assert_eq!(ids(&doc), [2], "{name}");
+                if accept {
+                    doc.accept_all()
+                } else {
+                    doc.reject_all()
+                }
+                .unwrap();
+            }
+            let doc = reopen(&mut doc);
+            assert_eq!(&doc.text_report().text, text, "{name}");
+            assert!(doc.revisions().is_empty(), "{name}");
+            assert_eq!(validation_errors(&doc), Vec::<String>::new(), "{name}");
+        }
+    }
 }
 
 /// Two numbered items and a third in a table cell, saved with each one's
