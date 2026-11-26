@@ -68,6 +68,10 @@ fn contains_private_text_box_marker(xml: &str, word_prefix: &str, local: &str) -
     }
 }
 
+/// `xml` with each host of a text box (the run child holding it) written as
+/// a private marker naming its frame: the host without the content of its
+/// boxes. Two markers are alike when their hosts differ only inside their
+/// boxes. Also the hosts, in order.
 pub(super) fn mask_text_box_subtrees(
     xml: &str,
     word_prefix: &str,
@@ -80,34 +84,162 @@ pub(super) fn mask_text_box_subtrees(
         .map(|span| xml[span.clone()].to_owned())
         .collect::<Vec<_>>();
     let mut masked = xml.to_owned();
-    for (index, span) in spans.into_iter().enumerate().rev() {
+    for (span, host) in spans.into_iter().zip(&preserved).rev() {
+        let frame = box_frame(host, &text_box_spans(host, word_prefix)?)?;
+        let frame = Sha256::digest(frame.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         masked.replace_range(
             span,
             &format!(
-                r#"<rdocxcmp:{marker_local} xmlns:rdocxcmp="urn:rdocx:comparison:private" rdocxcmp:index="{index}"/>"#
+                r#"<rdocxcmp:{marker_local} xmlns:rdocxcmp="urn:rdocx:comparison:private" rdocxcmp:frame="{frame}"/>"#
             ),
         );
     }
     Ok((masked, preserved))
 }
 
+/// Which host a marker the masked comparison wrote stands for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkerRole {
+    /// Kept: the host both inputs hold, as the comparison resolved it.
+    Kept,
+    /// Inside a deletion or a move source the comparison wrote: the
+    /// original's host.
+    Deleted,
+    /// Inside an insertion or a move destination it wrote: the edited one's.
+    Inserted,
+}
+
+/// The hosts that take the place of the markers in `xml`, a masked story the
+/// comparison wrote: the `original` host for a marker it deleted (whose
+/// boxes [`deleted_text_box_contents`] marks deleted), the `edited` host for
+/// one it inserted, and for one it kept the `compared` host (one for each
+/// original host, compared with the edited host of the same rank) or, with
+/// none, the original host. The markers of each input come in its order.
+/// `written` tells the ids of the revisions the comparison wrote from those
+/// an input holds.
 pub(super) fn restore_text_box_subtrees(
     xml: &mut String,
-    preserved: &[String],
+    [original, edited]: [&[String]; 2],
+    compared: Option<&[String]>,
+    written: impl Fn(i32) -> bool,
     word_prefix: &str,
     marker_local: &str,
     location: &str,
 ) -> Result<()> {
-    let spans = private_text_box_host_spans(xml, word_prefix, marker_local)?;
-    if spans.len() != preserved.len() {
-        return Err(Error::Other(format!(
-            "comparison lost an ignored text-box subtree at {location}"
-        )));
+    let markers = private_text_box_host_roles(xml, word_prefix, marker_local, written)?;
+    let lost = || Error::Other(format!("comparison lost a text-box host at {location}"));
+    let (mut left, mut right) = (0usize, 0usize);
+    let mut replacements = Vec::with_capacity(markers.len());
+    for (span, role) in markers {
+        let host = match role {
+            MarkerRole::Kept => {
+                left += 1;
+                right += 1;
+                match compared {
+                    // A kept host compared box by box pairs the same rank.
+                    Some(compared) if left == right => compared.get(left - 1),
+                    Some(_) => None,
+                    None => original.get(left - 1),
+                }
+            }
+            MarkerRole::Deleted => {
+                left += 1;
+                original.get(left - 1)
+            }
+            MarkerRole::Inserted => {
+                right += 1;
+                edited.get(right - 1)
+            }
+        };
+        replacements.push((span, host.ok_or_else(lost)?));
     }
-    for (index, span) in spans.into_iter().enumerate().rev() {
-        xml.replace_range(span, &preserved[index]);
+    if left != original.len() || right != edited.len() {
+        return Err(lost());
+    }
+    for (span, host) in replacements.into_iter().rev() {
+        xml.replace_range(span, host);
     }
     Ok(())
+}
+
+/// The markers of `xml` in order, each with the role [`MarkerRole`] the
+/// revision around it gives it.
+fn private_text_box_host_roles(
+    xml: &str,
+    word_prefix: &str,
+    marker_local: &str,
+    written: impl Fn(i32) -> bool,
+) -> Result<Vec<(Range<usize>, MarkerRole)>> {
+    let open = format!(
+        r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}">"#
+    );
+    let wrapped = format!("{open}{xml}</rdocxcmp:root>");
+    let offset = open.len();
+    let mut reader = NsReader::from_reader(wrapped.as_bytes());
+    reader.config_mut().trim_text(false);
+    let mut markers = Vec::new();
+    // The role of each open element, and where it starts if it is a marker.
+    let mut open_elements = Vec::<(MarkerRole, Option<usize>)>::new();
+    let mut buffer = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("comparison XML scan failed: {error}")))?;
+        let private = matches!(
+            namespace,
+            ResolveResult::Bound(Namespace(uri)) if uri == b"urn:rdocx:comparison:private"
+        );
+        let after = reader.buffer_position() as usize;
+        let role = open_elements.last().map_or(MarkerRole::Kept, |open| open.0);
+        let span = |start: usize| start.saturating_sub(offset)..after.saturating_sub(offset);
+        let empty = matches!(event, Event::Empty(_));
+        match event {
+            Event::Start(element) | Event::Empty(element)
+                if private && element.local_name().as_ref() == marker_local.as_bytes() =>
+            {
+                if empty {
+                    markers.push((span(before), role));
+                } else {
+                    open_elements.push((role, Some(before)));
+                }
+            }
+            Event::Start(element) => {
+                let written_id = element
+                    .attributes()
+                    .flatten()
+                    .find(|attribute| {
+                        attribute.key.local_name().as_ref() == b"id"
+                            && attribute.key.prefix().is_some()
+                    })
+                    .and_then(|attribute| {
+                        oxoffice_core::xml::attribute_text(&attribute)
+                            .ok()?
+                            .parse()
+                            .ok()
+                    })
+                    .is_some_and(&written);
+                let role = match element.local_name().as_ref() {
+                    b"del" | b"moveFrom" if written_id => MarkerRole::Deleted,
+                    b"ins" | b"moveTo" if written_id => MarkerRole::Inserted,
+                    _ => role,
+                };
+                open_elements.push((role, None));
+            }
+            Event::End(_) => {
+                if let Some((role, Some(start))) = open_elements.pop() {
+                    markers.push((span(start), role));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(markers)
 }
 
 pub(super) fn text_box_host_spans(xml: &str, boxes: &[Range<usize>]) -> Result<Vec<Range<usize>>> {
@@ -128,15 +260,35 @@ pub(super) fn text_box_host_spans(xml: &str, boxes: &[Range<usize>]) -> Result<V
     Ok(hosts)
 }
 
-pub(super) fn text_box_host_skeletons(xml: &str, boxes: &[Range<usize>]) -> Result<Vec<String>> {
-    text_box_host_spans(xml, boxes)?
-        .into_iter()
-        .map(|host| {
-            let host = &xml[host];
-            let boxes = text_box_spans(host, "w")?;
-            Ok(story_skeleton(host, &boxes))
+/// The runs holding the `boxes` of `xml` (outermost ones, see
+/// [`text_box_spans`]), each without the content of its boxes and its
+/// drawing ids (see [`box_frame`]): alike in two versions when the boxes
+/// changed only inside.
+pub(super) fn text_box_run_skeletons(xml: &str, boxes: &[Range<usize>]) -> Result<Vec<String>> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for text_box in boxes {
+        let run = containing_run(xml, text_box.start)?;
+        if runs.last() != Some(&run) {
+            runs.push(run);
+        }
+    }
+    runs.into_iter()
+        .map(|(start, end)| {
+            let run = &xml[start..end];
+            box_frame(run, &text_box_spans(run, "w")?)
         })
         .collect()
+}
+
+/// `host` without the content of its `boxes` and without its drawing ids, in
+/// a canonical writing: what a box's frame says. A drawing id is no part of
+/// it: a box replaced whole keeps its id on both sides, and the redline
+/// renumbers one of them.
+fn box_frame(host: &str, boxes: &[Range<usize>]) -> Result<String> {
+    let skeleton = story_skeleton(host, boxes);
+    let skeleton =
+        String::from_utf8(without_drawing_ids(skeleton.as_bytes())).map_err(utf8_error)?;
+    Ok(oxoffice_core::xml_element::canonical_fragment(&skeleton).unwrap_or(skeleton))
 }
 
 pub(super) fn replace_text_boxes_in_hosts(
@@ -266,7 +418,7 @@ pub(super) fn text_boxes_changed_inside(
     let right = text_box_spans(edited, word_prefix)?;
     if left.is_empty()
         || left.len() != right.len()
-        || text_box_host_skeletons(original, &left)? != text_box_host_skeletons(edited, &right)?
+        || text_box_run_skeletons(original, &left)? != text_box_run_skeletons(edited, &right)?
     {
         return Ok(false);
     }
@@ -276,6 +428,170 @@ pub(super) fn text_boxes_changed_inside(
         .any(|(left, right)| original[left.clone()] != edited[right.clone()]))
 }
 
+/// `xml`, a story part the comparison wrote, with the content of each text
+/// box inside a deletion it wrote (`written` tells its ids from an input's)
+/// marked deleted too: each run of the box, in each copy an alternate content
+/// holds and in a box nested in it, in a deletion of its own with its text as
+/// deleted text, as the deletion around the box needs. Accepting removes the
+/// box with its run, rejecting gives back its text. A run an input already
+/// holds deleted inside the box is left as it is.
+pub(super) fn deleted_text_box_contents(
+    xml: &[u8],
+    written: impl Fn(i32) -> bool,
+    metadata: &mut Metadata<'_>,
+) -> Result<Vec<u8>> {
+    #[derive(Clone, Copy, Default)]
+    struct Frame {
+        /// Inside a deletion this comparison wrote.
+        deleted: bool,
+        /// Inside the content of a box in such a deletion.
+        boxed: bool,
+        /// Inside a deletion or a move source an input holds in that box.
+        held: bool,
+        /// A run of that box, marked deleted.
+        marked: bool,
+    }
+    if !xml
+        .windows(b"txbxContent".len())
+        .any(|window| window == b"txbxContent")
+    {
+        return Ok(xml.to_vec());
+    }
+    let source = std::str::from_utf8(xml).map_err(utf8_error)?;
+    let author = oxoffice_core::xml::escape_attribute_value(metadata.author);
+    let date = oxoffice_core::xml::escape_attribute_value(metadata.timestamp);
+    let unbalanced = || Error::Other("comparison XML is unbalanced".into());
+    let mut reader = NsReader::from_str(source);
+    reader.config_mut().trim_text(false);
+    let mut stack = Vec::<Frame>::new();
+    // Text written in place of a byte range, in document order.
+    let mut edits = Vec::<(Range<usize>, String)>::new();
+    // The end tag of each marked run open, and the start and new name of
+    // the text open in one.
+    let mut closings = Vec::<String>::new();
+    let mut text = None::<(usize, String)>;
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map_err(|error| Error::Other(format!("comparison XML scan failed: {error}")))?;
+        let word =
+            matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes());
+        let after = reader.buffer_position() as usize;
+        match event {
+            Event::Start(ref element) | Event::Empty(ref element) => {
+                let empty = matches!(event, Event::Empty(_));
+                let parent = stack.last().copied().unwrap_or_default();
+                let local = element.local_name();
+                let local = local.as_ref();
+                let name = std::str::from_utf8(element.name().as_ref())
+                    .map_err(utf8_error)?
+                    .to_owned();
+                let prefix = name.rsplit_once(':').map(|(prefix, _)| prefix.to_owned());
+                if word && parent.marked && matches!(local, b"t" | b"instrText") {
+                    let target = if local == b"t" {
+                        "delText"
+                    } else {
+                        "delInstrText"
+                    };
+                    let renamed = prefix
+                        .as_ref()
+                        .map_or(target.to_owned(), |prefix| format!("{prefix}:{target}"));
+                    if empty {
+                        let element = &source[before..after];
+                        edits.push((
+                            before..after,
+                            oxoffice_core::xml_element::rename(element, &renamed)?,
+                        ));
+                    } else {
+                        text = Some((before, renamed));
+                    }
+                }
+                let written_deletion = word
+                    && local == b"del"
+                    && element
+                        .attributes()
+                        .flatten()
+                        .find(|attribute| {
+                            attribute.key.local_name().as_ref() == b"id"
+                                && attribute.key.prefix().is_some()
+                        })
+                        .and_then(|attribute| {
+                            oxoffice_core::xml::attribute_text(&attribute)
+                                .ok()?
+                                .parse()
+                                .ok()
+                        })
+                        .is_some_and(&written);
+                let mut frame = Frame {
+                    deleted: parent.deleted || written_deletion,
+                    boxed: parent.boxed || (parent.deleted && word && local == b"txbxContent"),
+                    held: parent.held
+                        || (parent.boxed && word && matches!(local, b"del" | b"moveFrom")),
+                    marked: false,
+                };
+                if word && local == b"r" && frame.boxed && !frame.held {
+                    frame.marked = true;
+                    let id = metadata.ids.allocate()?;
+                    let (opening, closing) = match &prefix {
+                        Some(prefix) => (
+                            format!(
+                                r#"<{prefix}:del {prefix}:id="{id}" {prefix}:author="{author}" {prefix}:date="{date}">"#
+                            ),
+                            format!("</{prefix}:del>"),
+                        ),
+                        None => (
+                            format!(
+                                r#"<w:del xmlns:w="{W_NS}" w:id="{id}" w:author="{author}" w:date="{date}">"#
+                            ),
+                            "</w:del>".to_owned(),
+                        ),
+                    };
+                    edits.push((before..before, opening));
+                    if empty {
+                        edits.push((after..after, closing));
+                    } else {
+                        closings.push(closing);
+                    }
+                }
+                if !empty {
+                    stack.push(frame);
+                }
+            }
+            Event::End(ref element) => {
+                let frame = stack.pop().ok_or_else(unbalanced)?;
+                let parent = stack.last().copied().unwrap_or_default();
+                let local = element.local_name();
+                if word && frame.marked && local.as_ref() == b"r" {
+                    edits.push((after..after, closings.pop().ok_or_else(unbalanced)?));
+                } else if word && parent.marked && matches!(local.as_ref(), b"t" | b"instrText") {
+                    let (start, renamed) = text.take().ok_or_else(unbalanced)?;
+                    edits.push((
+                        start..after,
+                        oxoffice_core::xml_element::rename(&source[start..after], &renamed)?,
+                    ));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if edits.is_empty() {
+        return Ok(xml.to_vec());
+    }
+    let mut output = String::with_capacity(source.len() + edits.len() * 96);
+    let mut cursor = 0;
+    for (range, replacement) in edits {
+        output.push_str(&source[cursor..range.start]);
+        output.push_str(&replacement);
+        cursor = range.end;
+    }
+    output.push_str(&source[cursor..]);
+    Ok(output.into_bytes())
+}
+
+/// The outermost text boxes of `xml` (each `txbxContent`, a copy an
+/// alternate content holds included), in order.
 pub(super) fn text_box_spans(xml: &str, word_prefix: &str) -> Result<Vec<Range<usize>>> {
     let open = format!(
         r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}">"#
@@ -317,6 +633,14 @@ pub(super) fn text_box_spans(xml: &str, word_prefix: &str) -> Result<Vec<Range<u
         }
         buffer.clear();
     }
+    // A box inside another is part of it: its span would overlap the outer
+    // one, which callers replace or cut without knowing it.
+    let outer = spans.clone();
+    spans.retain(|span| {
+        !outer
+            .iter()
+            .any(|other| other != span && other.start <= span.start && span.end <= other.end)
+    });
     Ok(spans)
 }
 
@@ -415,6 +739,23 @@ pub(super) fn paired_run_replacement(
     let mut inserted = edited.clone();
     let mut projected = false;
     if metadata.options.ignore_formatting {
+        // The raw children keep their place after the properties the
+        // inserted copy takes from the original.
+        match (inserted.properties.is_some(), original.properties.is_some()) {
+            (true, false) => {
+                for position in &mut inserted.extra_xml_positions {
+                    let shifted = CT_R::raw_child_position(*position).saturating_sub(1);
+                    CT_R::set_raw_child_position(position, shifted);
+                }
+            }
+            (false, true) => {
+                for position in &mut inserted.extra_xml_positions {
+                    let shifted = CT_R::raw_child_position(*position) + 1;
+                    CT_R::set_raw_child_position(position, shifted);
+                }
+            }
+            _ => {}
+        }
         inserted.properties = original.properties.clone();
         if let (Some(left), Some(right)) = (left_source.as_ref(), right_source.as_mut()) {
             projected = project_paired_textboxes(
@@ -439,18 +780,8 @@ pub(super) fn paired_run_replacement(
     }
     // A box changed only inside is compared box by box before this point
     // ([`text_boxes_changed_inside`]). Replaced whole, the deleted copy of a
-    // box would keep its text as inserted text: no valid redline holds it.
-    let holds_box = |run: &CT_R| {
-        run.extra_xml.iter().any(|raw| {
-            raw.windows(b"txbxContent".len())
-                .any(|window| window == b"txbxContent")
-        })
-    };
-    if !projected && (holds_box(original) || holds_box(edited)) {
-        return Err(Error::Other(format!(
-            "comparison cannot track a change to a run holding a text box at {location}: the run or its box changed outside the box text, or the story adds or removes a box, so the box would be replaced whole (#666)"
-        )));
-    }
+    // box has its content marked deleted once the story is written
+    // ([`deleted_text_box_contents`]).
     let inserted_xml = publish_run_source(
         original,
         &inserted,
@@ -780,10 +1111,26 @@ fn project_paired_textboxes(
     if hosts.iter().all(Vec::is_empty) {
         return Ok(false);
     }
+    // Boxes added or removed, or a box whose frame changed, are replaced
+    // whole with their run, as when formatting is compared (#666).
+    let frame = |host: &(RunHostRole, usize, Range<usize>, String, Vec<_>)| {
+        let boxes = host
+            .4
+            .iter()
+            .map(|text_box: &(Range<usize>, _, _, _)| text_box.0.clone());
+        box_frame(&host.3, &boxes.collect::<Vec<_>>())
+    };
     if hosts[0].len() != hosts[1].len() {
-        return Err(Error::Other(format!(
-            "comparison cannot pair textbox source slots at {location}"
-        )));
+        return Ok(false);
+    }
+    for (left, right) in hosts[0].iter().zip(&hosts[1]) {
+        if std::mem::discriminant(&left.0) != std::mem::discriminant(&right.0)
+            || left.1 != right.1
+            || left.4.len() != right.4.len()
+            || frame(left)? != frame(right)?
+        {
+            return Ok(false);
+        }
     }
     let mut replacements = Vec::new();
     for (left_host, right_host) in hosts[0].iter().zip(&hosts[1]) {

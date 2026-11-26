@@ -509,73 +509,58 @@ pub(super) fn compare_story_inner_impl(
     } else {
         Vec::new()
     };
-    if !original_text_boxes.is_empty() || !edited_text_boxes.is_empty() {
-        if text_box_host_skeletons(original, &original_text_boxes)?
-            != text_box_host_skeletons(edited, &edited_text_boxes)?
-        {
-            return Err(Error::Other(format!(
-                "comparison cannot change nested text-box host shells at {location}"
-            )));
-        }
-        if story_ignored(metadata.options, ComparisonStoryKind::TextBox) {
-            let marker = text_box_marker_local(original, edited, word_prefix)?;
-            let (masked_original, preserved) =
-                mask_text_box_subtrees(original, word_prefix, &marker)?;
-            let (masked_edited, _) = mask_text_box_subtrees(edited, word_prefix, &marker)?;
-            let mut tracked = compare_story_inner_impl(
-                &masked_original,
-                &masked_edited,
-                location,
-                word_prefix,
-                original_bindings,
-                edited_bindings,
-                metadata,
-                diagnostics,
-                false,
-            )?;
-            restore_text_box_subtrees(&mut tracked, &preserved, word_prefix, &marker, location)?;
-            return Ok(tracked);
-        }
-        if original_text_boxes.len() != edited_text_boxes.len() {
-            return Err(Error::Other(format!(
-                "comparison cannot change nested text-box hosts at {location}"
-            )));
-        }
-        let text_box_coordinates = text_box_coordinates(original, &original_text_boxes)?;
-        let mut tracked_boxes = Vec::with_capacity(original_text_boxes.len());
-        for ((run_ordinal, box_ordinal), (left, right)) in text_box_coordinates
-            .into_iter()
-            .zip(original_text_boxes.iter().zip(&edited_text_boxes))
-        {
-            let left_box = &original[left.clone()];
-            let right_box = &edited[right.clone()];
-            let left_inner = element_inner_range_any_prefix(left_box, "txbxContent")?;
-            let right_inner = element_inner_range_any_prefix(right_box, "txbxContent")?;
-            let left_bindings =
-                root_namespace_bindings(left_box, "txbxContent", original_bindings)?;
-            let right_bindings =
-                root_namespace_bindings(right_box, "txbxContent", edited_bindings)?;
-            let tracked_inner = compare_story_inner(
-                &left_box[left_inner],
-                &right_box[right_inner],
-                &format!("{location}/text-box[{run_ordinal}:{box_ordinal}]"),
-                word_prefix,
-                &left_bindings,
-                &right_bindings,
-                metadata,
-                diagnostics,
-            )?;
-            tracked_boxes.push(replace_owner_inner(left_box, "txbxContent", &tracked_inner)?.0);
-        }
-        let tracked_hosts = replace_text_boxes_in_hosts(
-            original,
-            &original_text_boxes,
-            &tracked_boxes,
-            word_prefix,
-        )?;
+    let ignored = story_ignored(metadata.options, ComparisonStoryKind::TextBox);
+    // The boxes are compared box by box when both inputs hold the same
+    // boxes in the same frames; otherwise the runs holding them are
+    // compared as any run, a box deleted or inserted with its run (#666).
+    if (!original_text_boxes.is_empty() || !edited_text_boxes.is_empty())
+        && (ignored
+            || original_text_boxes.len() == edited_text_boxes.len()
+                && text_box_run_skeletons(original, &original_text_boxes)?
+                    == text_box_run_skeletons(edited, &edited_text_boxes)?)
+    {
         let marker = text_box_marker_local(original, edited, word_prefix)?;
-        let (masked_original, _) = mask_text_box_subtrees(original, word_prefix, &marker)?;
-        let (masked_edited, _) = mask_text_box_subtrees(edited, word_prefix, &marker)?;
+        let (masked_original, original_hosts) =
+            mask_text_box_subtrees(original, word_prefix, &marker)?;
+        let (masked_edited, edited_hosts) = mask_text_box_subtrees(edited, word_prefix, &marker)?;
+        // Ignored, a box both inputs hold keeps the original's content.
+        let compared = if ignored {
+            None
+        } else {
+            let text_box_coordinates = text_box_coordinates(original, &original_text_boxes)?;
+            let mut tracked_boxes = Vec::with_capacity(original_text_boxes.len());
+            for ((run_ordinal, box_ordinal), (left, right)) in text_box_coordinates
+                .into_iter()
+                .zip(original_text_boxes.iter().zip(&edited_text_boxes))
+            {
+                let left_box = &original[left.clone()];
+                let right_box = &edited[right.clone()];
+                let left_inner = element_inner_range_any_prefix(left_box, "txbxContent")?;
+                let right_inner = element_inner_range_any_prefix(right_box, "txbxContent")?;
+                let left_bindings =
+                    root_namespace_bindings(left_box, "txbxContent", original_bindings)?;
+                let right_bindings =
+                    root_namespace_bindings(right_box, "txbxContent", edited_bindings)?;
+                let tracked_inner = compare_story_inner(
+                    &left_box[left_inner],
+                    &right_box[right_inner],
+                    &format!("{location}/text-box[{run_ordinal}:{box_ordinal}]"),
+                    word_prefix,
+                    &left_bindings,
+                    &right_bindings,
+                    metadata,
+                    diagnostics,
+                )?;
+                tracked_boxes.push(replace_owner_inner(left_box, "txbxContent", &tracked_inner)?.0);
+            }
+            Some(replace_text_boxes_in_hosts(
+                original,
+                &original_text_boxes,
+                &tracked_boxes,
+                word_prefix,
+            )?)
+        };
+        let before = metadata.ids.used.clone();
         let mut tracked = compare_story_inner_impl(
             &masked_original,
             &masked_edited,
@@ -587,7 +572,15 @@ pub(super) fn compare_story_inner_impl(
             diagnostics,
             false,
         )?;
-        restore_text_box_subtrees(&mut tracked, &tracked_hosts, word_prefix, &marker, location)?;
+        restore_text_box_subtrees(
+            &mut tracked,
+            [&original_hosts, &edited_hosts],
+            compared.as_deref(),
+            |id| !before.contains(&id),
+            word_prefix,
+            &marker,
+            location,
+        )?;
         return Ok(tracked);
     }
     let original_spans = story_content_spans(original, original_bindings)?;

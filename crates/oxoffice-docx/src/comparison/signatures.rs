@@ -107,6 +107,9 @@ pub(super) fn run_signature(run: &CT_R) -> String {
     )
 }
 
+/// The raw children of `run`, each with its place among the run's typed
+/// content: the run properties, which come first, are not counted, so that
+/// a format change moves no raw child.
 pub(super) fn semantic_run_raw(run: &CT_R) -> Vec<(&[u8], usize)> {
     if run.extra_xml.len() != run.extra_xml_positions.len() {
         return run
@@ -121,7 +124,14 @@ pub(super) fn semantic_run_raw(run: &CT_R) -> Vec<(&[u8], usize)> {
         .iter()
         .zip(&run.extra_xml_positions)
         .filter(|(_, position)| !CT_R::raw_child_is_root_attributes(**position))
-        .map(|(raw, position)| (raw.as_slice(), *position))
+        .map(|(raw, position)| {
+            let mut position = *position;
+            if run.properties.is_some() {
+                let place = CT_R::raw_child_position(position).saturating_sub(1);
+                CT_R::set_raw_child_position(&mut position, place);
+            }
+            (raw.as_slice(), position)
+        })
         .collect()
 }
 
@@ -613,7 +623,14 @@ fn paragraph_tokens(paragraph: &CT_P, options: &ComparisonOptions) -> Vec<String
             continue;
         }
         for unit in signature_run_units(run, options) {
-            if unit_is_empty(&unit) {
+            // Formatting ignored, the properties a unit holds alone (before a
+            // raw child that follows them) say nothing.
+            if unit_is_empty(&unit)
+                || options.ignore_formatting
+                    && unit.run.content.is_empty()
+                    && semantic_run_raw(&unit.run).is_empty()
+                    && unit.run.alt_drawings.is_empty()
+            {
                 continue;
             }
             if let Some(text) = signature_scalars(&unit, options) {

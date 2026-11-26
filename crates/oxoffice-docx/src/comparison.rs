@@ -84,7 +84,7 @@ use bookmarks::{
 use field_conversions::{restore_whole_hyperlinks, validate_field_conversion_role};
 use guard::{
     guard_mask_coordinates, guard_source_body_at, guard_story_owners, guard_story_part,
-    normalized_story_part,
+    normalized_story_part, without_drawing_ids,
 };
 use move_pairs::{crossing_reply_additions, pair_moves, share_trailing_move};
 use namespaces::{
@@ -118,10 +118,10 @@ use stories::{
     validate_comparison_options,
 };
 use text_boxes::{
-    RunHostRole, comparison_text_box_markers, mask_text_box_subtrees,
+    RunHostRole, comparison_text_box_markers, deleted_text_box_contents, mask_text_box_subtrees,
     modeled_revision_count_with_options, paired_run_replacement, policy_textbox_intervals,
     private_text_box_host_spans, replace_text_boxes_in_hosts, restore_text_box_subtrees,
-    text_box_coordinates, text_box_host_skeletons, text_box_host_spans, text_box_marker_local,
+    text_box_coordinates, text_box_host_spans, text_box_marker_local, text_box_run_skeletons,
     text_box_spans, text_boxes_changed_inside, without_text_box_subtrees, word_ids_with_options,
 };
 
@@ -931,8 +931,8 @@ impl Document {
             let edited_source = std::str::from_utf8(edited_xml).map_err(utf8_error)?;
             let (_, original_bindings) = main_body_source(original_source.as_bytes())?;
             let (_, edited_bindings) = main_body_source(edited_source.as_bytes())?;
-            // Box by box, whatever the formatting policy: replaced whole, the
-            // deleted copy of a box would keep its text as text (#666).
+            // Box by box, whatever the formatting policy: an edit inside a box
+            // is tracked inside it, not as the box replaced whole.
             compare_story_inner_impl(
                 extract_body_inner(original_xml)?,
                 extract_body_inner(edited_xml)?,
@@ -995,6 +995,8 @@ impl Document {
         )?;
         tracked_xml =
             crate::document::close_content_fragment_namespaces(&tracked_xml, &generated_bindings)?;
+        let written = |id: i32| !input_ids.contains(&id);
+        tracked_xml = deleted_text_box_contents(&tracked_xml, written, &mut metadata)?;
         // Content from the edited document can use the `w14` its own root
         // declares, which the original root may not.
         declare_w14_on_part_root(&mut tracked_xml)?;
@@ -1025,6 +1027,7 @@ impl Document {
                     &mut diagnostics,
                 )?
             };
+            let tracked_story = deleted_text_box_contents(&tracked_story, written, &mut metadata)?;
             // A picture deleted and inserted again keeps its drawing id on
             // both sides, as in the body.
             let tracked_story = crate::document::uniquify_drawing_ids_in_xml(&tracked_story)?;
@@ -1068,6 +1071,18 @@ impl Document {
             };
             *again = Some((next, ids));
             return Ok(Vec::new());
+        }
+        for kind in NoteKind::ALL {
+            if let Some(name) = NotePart::name_of(&candidate, kind)?
+                && let Some(xml) = candidate.package.get_part(&name)
+            {
+                let marked = deleted_text_box_contents(xml, written, &mut metadata)?;
+                // A box replaced whole keeps its drawing id on both sides.
+                let marked = crate::document::uniquify_drawing_ids_in_xml(&marked)?;
+                if marked != xml {
+                    crate::document::set_story_source_xml(&mut candidate, &name, marked)?;
+                }
+            }
         }
         refuse_shared_note_references(
             &original,
@@ -1218,8 +1233,9 @@ impl Document {
                 &new_ids,
             )?;
         }
+        // The notes too: a deletion there holds its text as deleted text.
         let parts = std::iter::once(&candidate.doc_part_name)
-            .chain(original_stories.iter().map(|story| &story.part_name));
+            .chain(field_stories.iter().map(|story| &story.part_name));
         for part in parts {
             if candidate
                 .package
@@ -1227,7 +1243,7 @@ impl Document {
                 .is_some_and(text_in_deletions)
             {
                 return Err(Error::Other(format!(
-                    "comparison would write text inside a deletion of {part}, as a run holding a text box deleted or replaced whole does (#666)"
+                    "comparison would write text inside a deletion of {part}"
                 )));
             }
         }

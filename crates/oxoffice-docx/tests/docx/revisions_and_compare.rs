@@ -536,6 +536,49 @@ fn a_format_change_is_recorded_unless_formatting_is_ignored() {
 }
 
 #[test]
+fn a_format_change_of_a_run_holding_a_raw_child_is_recorded_unless_formatting_is_ignored() {
+    // Properties added or removed do not move the raw child after them (a
+    // VML picture, kept as written): a format change, or none with
+    // formatting ignored.
+    let picture = r#"<w:pict xmlns:v="urn:schemas-microsoft-com:vml"><v:rect style="width:9pt;height:9pt"/></w:pict>"#;
+    let version = |properties: &str| {
+        doc_with_body(&format!(
+            "<w:p><w:r><w:t>Picture </w:t></w:r><w:r>{properties}{picture}</w:r></w:p>"
+        ))
+    };
+    // Whether the run holding the picture, which stays in it, is bold.
+    let bold = |doc: &mut Document| {
+        let xml = main_xml(doc);
+        let at = xml.find("<w:pict").unwrap();
+        let run = &xml[xml[..at].rfind("<w:r>").unwrap()..at];
+        assert!(!run.contains("</w:r>") && !run.contains("Picture"), "{xml}");
+        run.contains("<w:b/>")
+    };
+    for (from, to) in [("", "<w:rPr><w:b/></w:rPr>"), ("<w:rPr><w:b/></w:rPr>", "")] {
+        for ignore_formatting in [false, true] {
+            let case = format!("{from} to {to}, ignore formatting {ignore_formatting}");
+            let options = ComparisonOptions {
+                ignore_formatting,
+                ..ComparisonOptions::default()
+            };
+            let mut doc = version(from);
+            doc.compare_with_options(&version(to), AUTHOR, DATE, &options)
+                .unwrap_or_else(|error| panic!("{case}: {error}"));
+            let mut doc = reopen(&mut doc);
+            assert!(doc.validate().unwrap().is_valid(), "{case}");
+            if ignore_formatting {
+                assert_eq!(kinds(&doc), [], "{case}");
+                assert_eq!(bold(&mut doc), !from.is_empty(), "{case}");
+            } else {
+                assert_eq!(kinds(&doc), [RevisionKind::RunPropertyChange], "{case}");
+                assert_eq!(bold(&mut accepted(&mut doc)), !to.is_empty(), "{case}");
+                assert_eq!(bold(&mut rejected(&mut doc)), !from.is_empty(), "{case}");
+            }
+        }
+    }
+}
+
+#[test]
 fn alignment_and_style_changes_are_recorded_as_paragraph_property_changes() {
     let mut edited = doc_with(&["centre me", "style me"]);
     edited
@@ -4948,41 +4991,196 @@ fn a_text_box_edited_inside_is_tracked_inside_each_copy_of_the_box() {
 }
 
 #[test]
-fn a_text_box_changed_whole_is_refused_never_written_as_an_invalid_redline() {
-    // Replaced or deleted whole, a box's deleted copy would keep its text as
-    // text to insert (#666): a box deleted, and a box changed outside its
-    // text as well as inside. An edit beside the box compares.
-    let word_box = |text: &str| {
-        crate::support::text_box_run(7, &format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"))
-    };
-    let version = |boxed: &str, tail: &str| {
-        doc_with_body(&format!(
-            r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{boxed}</w:p>{}"#,
-            plain(tail)
-        ))
-    };
-    for (case, from, to) in [
-        ("box deleted", word_box("Inside the box"), String::new()),
-        (
-            "box resized and edited",
-            word_box("Inside the box"),
-            word_box("Within the box").replace(r#"cy="914400""#, r#"cy="1828800""#),
-        ),
-    ] {
-        let mut doc = version(&from, "Tail.");
-        match doc.compare(&version(&to, "Tail."), AUTHOR, DATE) {
-            Err(error) => assert!(error.to_string().contains("#666"), "{case}: {error}"),
-            Ok(_) => panic!(
-                "{case}: compared, valid {}",
-                doc.validate().unwrap().is_valid()
+fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_inside() {
+    // A box deleted or replaced, or whose frame or run changed as well as
+    // its text, is deleted and inserted whole: each copy of the deleted box
+    // holds its text deleted inside, as the deletion around it needs. The
+    // redline is valid and resolves to either version, in each copy, in the
+    // body, a header or a note, formatting compared or ignored, the text box
+    // story compared or ignored.
+    let paragraph = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let (inside, within) = ("Inside the box", "Within the box");
+    let anchored = |run: String| {
+        run.replacen(
+            r#"<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="914400"/>"#,
+            concat!(
+                r#"<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" "#,
+                r#"relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">"#,
+                r#"<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>0</wp:posOffset>"#,
+                r#"</wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset>"#,
+                r#"</wp:positionV><wp:extent cx="914400" cy="914400"/><wp:wrapSquare wrapText="bothSides"/>"#,
             ),
+            1,
+        )
+        .replacen("</wp:inline>", "</wp:anchor>", 1)
+    };
+    // The original box run, the edited one and the edited tail paragraph.
+    let shape = |form: &str, shape: &str| -> (String, String, String) {
+        let from = text_box_of_form(form, &paragraph(inside));
+        let to = text_box_of_form(form, &paragraph(within));
+        let tail = "Tail.".to_owned();
+        match shape {
+            "deleted" => (from, String::new(), "Tails.".to_owned()),
+            "replaced by text" => (from, "<w:r><w:t>Instead</w:t></w:r>".to_owned(), tail),
+            "resized" => (
+                from,
+                to.replace(r#"cy="914400""#, r#"cy="1828800""#).replace(
+                    r#"<v:shape id="tb7">"#,
+                    r#"<v:shape id="tb7" style="height:144pt">"#,
+                ),
+                tail,
+            ),
+            "anchored" => (from, anchored(to), tail),
+            "run formatted" => (
+                from,
+                to.replacen("<w:r>", "<w:r><w:rPr><w:b/></w:rPr>", 1),
+                tail,
+            ),
+            "text beside" => (
+                from.replacen("<w:r>", "<w:r><w:t>A</w:t>", 1),
+                to.replacen("<w:r>", "<w:r><w:t>B</w:t>", 1),
+                tail,
+            ),
+            "moved" => (
+                from,
+                String::new(),
+                format!("Tail.</w:t></w:r>{to}<w:r><w:t>"),
+            ),
+            "nested" => {
+                // A box holding a VML box, both edited inside.
+                let nested = |outer: &str, inner: &str| {
+                    let inner = text_box_of_form("vml", &paragraph(inner)).replace("tb7", "tb8");
+                    text_box_of_form(form, &format!("{}<w:p>{inner}</w:p>", paragraph(outer)))
+                };
+                (nested(inside, "Inner"), nested(within, "Inner box"), tail)
+            }
+            _ => (from, to, tail),
+        }
+    };
+    let version = |part: &str, boxed: &str, tail: &str| {
+        if part == "document.xml" {
+            return doc_with_body(&format!(
+                r#"<w:p><w:r><w:t xml:space="preserve">Before </w:t></w:r>{boxed}</w:p>{}"#,
+                plain(tail)
+            ));
+        }
+        let mut doc = if part == "header1.xml" {
+            let mut doc = doc_with(&[tail]);
+            doc.set_header("Before");
+            doc
+        } else {
+            doc_with_notes(&[(tail, Some("Before"))])
+        };
+        if boxed.is_empty() {
+            return reopen(&mut doc);
+        }
+        with_part(&mut doc, part, |xml| {
+            let at = xml.rfind("<w:r>").unwrap();
+            format!("{}{boxed}{}", &xml[..at], &xml[at..])
+        })
+    };
+    let (body, header, notes) = ("document.xml", "header1.xml", "footnotes.xml");
+    for (form, change, part, ignore_formatting, boxes_ignored) in [
+        ("alternate content", "deleted", body, false, false),
+        ("alternate content", "replaced by text", body, true, false),
+        ("alternate content", "resized", body, false, false),
+        ("alternate content", "anchored", body, true, false),
+        ("alternate content", "run formatted", body, true, false),
+        ("alternate content", "text beside", body, true, false),
+        ("alternate content", "moved", body, false, false),
+        ("alternate content", "run formatted", body, false, false),
+        ("alternate content", "nested", body, false, false),
+        ("drawing", "deleted", body, false, false),
+        ("drawing", "anchored", body, false, false),
+        ("vml", "resized", body, false, false),
+        ("alternate content", "deleted", header, false, false),
+        ("alternate content", "edited", notes, false, false),
+        ("alternate content", "resized", notes, true, false),
+        ("alternate content", "deleted", body, false, true),
+        ("alternate content", "nested", body, false, true),
+        ("vml", "run formatted", body, true, true),
+    ] {
+        let case = format!(
+            "{form}, {change}, {part}, ignore formatting {ignore_formatting}, boxes ignored {boxes_ignored}"
+        );
+        let (from, to, tail) = shape(form, change);
+        let original = version(part, &from, "Tail.");
+        let edited = version(part, &to, &tail);
+        let mut options = ComparisonOptions {
+            ignore_formatting,
+            ..ComparisonOptions::default()
+        };
+        if boxes_ignored {
+            options.ignored_stories.push(ComparisonStoryKind::TextBox);
+        }
+        let mut doc = version(part, &from, "Tail.");
+        let diagnostics = doc
+            .compare_with_options(&edited, AUTHOR, DATE, &options)
+            .unwrap_or_else(|error| panic!("{case}: {error}"));
+        assert!(diagnostics.is_empty(), "{case}: {diagnostics:?}");
+        let mut doc = reopen(&mut doc);
+        let report = doc.validate().unwrap();
+        assert!(report.is_valid(), "{case}: {:?}", report.findings);
+        let copies = if form == "alternate content" { 2 } else { 1 };
+        let count = |doc: &mut Document, text: &str| part_xml(doc, part).matches(text).count();
+        // A box deleted and inserted whole has a drawing id of its own.
+        let xml = part_xml(&mut doc, part);
+        let mut ids = xml
+            .split(r#"<wp:docPr id=""#)
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect::<Vec<_>>();
+        let drawings = ids.len();
+        assert!(form == "vml" || drawings > 0, "{case}: {xml}");
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), drawings, "{case}: {xml}");
+        // The route a row pins: a box compared inside keeps its one
+        // alternate content, one replaced whole is deleted and inserted.
+        let alternate_contents = match (change, ignore_formatting) {
+            ("nested", _) => Some(1),
+            ("run formatted", false) => Some(2),
+            _ => None,
+        };
+        if let Some(expected) = alternate_contents {
+            let written = xml.matches("<mc:AlternateContent").count();
+            assert_eq!(written, expected, "{case}: {xml}");
+        }
+        if !boxes_ignored {
+            let deleted = count(&mut doc, &format!(">{inside}</w:delText>"));
+            assert_eq!(deleted, copies, "{case}: {}", part_xml(&mut doc, part));
+        }
+        // Ignored, a box both versions hold keeps the original's text.
+        let texts = |doc: &Document| {
+            story_texts(doc)
+                .into_iter()
+                .filter(|(_, text)| {
+                    !boxes_ignored
+                        || ![inside, within, "Inner", "Inner box"].contains(&text.as_str())
+                })
+                .collect::<Vec<_>>()
+        };
+        let (mut accepted, mut rejected) = (accepted(&mut doc), rejected(&mut doc));
+        assert_eq!(texts(&accepted), texts(&edited), "{case}");
+        assert_eq!(texts(&rejected), texts(&original), "{case}");
+        let mut edited = edited;
+        let mut original = original;
+        for text in [inside, within] {
+            let text = format!(">{text}<");
+            if !boxes_ignored {
+                assert_eq!(
+                    count(&mut accepted, &text),
+                    count(&mut edited, &text),
+                    "{case}"
+                );
+            }
+            assert_eq!(
+                count(&mut rejected, &text),
+                count(&mut original, &text),
+                "{case}"
+            );
         }
     }
-    let edited = version(&word_box("Inside the box"), "Tails.");
-    let mut doc = redline(version(&word_box("Inside the box"), "Tail."), &edited);
-    let report = doc.validate().unwrap();
-    assert!(report.is_valid(), "{:?}", report.findings);
-    assert_eq!(story_texts(&accepted(&mut doc)), story_texts(&edited));
 }
 
 #[test]
