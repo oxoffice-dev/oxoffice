@@ -2242,6 +2242,10 @@ fn write_ppr_with_positioned_raw<W: std::io::Write>(
                     &ppr.revision_xml,
                     &ppr.revision_xml_positions,
                     slot,
+                    element
+                        .name()
+                        .prefix()
+                        .and_then(|prefix| std::str::from_utf8(prefix.into_inner()).ok()),
                 )?;
                 let mut element = crate::text::FieldXmlStart::from_start(element, emission)?;
                 for (name, value) in attributes {

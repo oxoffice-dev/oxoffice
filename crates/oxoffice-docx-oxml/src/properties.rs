@@ -379,11 +379,22 @@ pub(crate) fn toggle_has_unsupported_attributes(
     Ok(false)
 }
 
+/// The attributes the retained carriers of `slot` hold beside `w:val`, to
+/// write on the modelled element. One that names WordprocessingML on its
+/// carrier is written under `word_prefix`, the modelled element's own
+/// prefix, so the element says the same whatever prefix the source used.
 pub(crate) fn modeled_toggle_attributes<'a>(
     raw_xml: &'a [Vec<u8>],
     positions: &[(u8, usize)],
     slot: u8,
+    word_prefix: Option<&str>,
 ) -> Result<Vec<(std::borrow::Cow<'a, str>, std::borrow::Cow<'a, str>)>> {
+    let renamed = |key: &[u8], prefixes: &[String]| -> Option<String> {
+        let (prefix, local) = std::str::from_utf8(key).ok()?.split_once(':')?;
+        let word_prefix = word_prefix?;
+        (prefix != word_prefix && prefixes.iter().any(|known| known == prefix))
+            .then(|| format!("{word_prefix}:{local}"))
+    };
     let mut preserved = Vec::new();
     for (raw, position) in raw_xml.iter().zip(positions) {
         if position.0 != slot || !raw_is_modeled_attribute_carrier(*position) {
@@ -408,10 +419,13 @@ pub(crate) fn modeled_toggle_attributes<'a>(
                 if is_word_attribute(attribute.key.as_ref(), b"val", &prefixes) {
                     continue;
                 }
-                let name = std::str::from_utf8(attribute.key.0)?;
+                let name = match renamed(attribute.key.0, &prefixes) {
+                    Some(name) => std::borrow::Cow::Owned(name),
+                    None => std::borrow::Cow::Borrowed(std::str::from_utf8(attribute.key.0)?),
+                };
                 let value = attribute
                     .decoded_and_normalized_value(XmlVersion::Implicit1_0, source.decoder())?;
-                preserved.push((std::borrow::Cow::Borrowed(name), value));
+                preserved.push((name, value));
             }
         } else {
             // An invalid outer QName was not decoded by the legacy helper.
@@ -421,7 +435,10 @@ pub(crate) fn modeled_toggle_attributes<'a>(
                 if is_word_attribute(attribute.key.as_ref(), b"val", &prefixes) {
                     continue;
                 }
-                let name = std::str::from_utf8(attribute.key.as_ref())?.to_owned();
+                let name = match renamed(attribute.key.as_ref(), &prefixes) {
+                    Some(name) => name,
+                    None => std::str::from_utf8(attribute.key.as_ref())?.to_owned(),
+                };
                 let value = attribute
                     .decoded_and_normalized_value(XmlVersion::Implicit1_0, source.decoder())?
                     .into_owned();

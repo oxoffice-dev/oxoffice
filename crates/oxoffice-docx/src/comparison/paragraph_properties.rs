@@ -337,10 +337,29 @@ pub(super) fn modeled_paragraph_properties(properties: Option<&CT_PPr>) -> Optio
 /// change of formatting.
 pub(super) fn same_retained_xml(left: &[Vec<u8>], right: &[Vec<u8>]) -> bool {
     left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .all(|(left, right)| left == right || same_xml_fragment(left, right))
+        && left.iter().zip(right).all(|(left, right)| {
+            left == right
+                || matches!(
+                    (retained_canonical(left), retained_canonical(right)),
+                    (Some(left), Some(right)) if left == right
+                )
+        })
+}
+
+/// The canonical form of a retained property element, its own prefix read
+/// as WordprocessingML when the element does not declare it: the reader took
+/// it for a Word element under the binding of its part, and a save writes a
+/// modelled one (`w:cnfStyle` with its region attributes) again under the
+/// prefix of its own writing.
+fn retained_canonical(xml: &[u8]) -> Option<String> {
+    let xml = std::str::from_utf8(xml).ok()?;
+    let span = oxoffice_core::xml_element::element_span(xml).ok()?;
+    let bindings = span
+        .name
+        .split_once(':')
+        .map(|(prefix, _)| vec![(prefix.to_owned(), W_NS.to_owned())])
+        .unwrap_or_default();
+    oxoffice_core::xml_element::canonical_fragment_in(xml, &bindings).ok()
 }
 
 /// Whether two written properties (or their absence) say the same, one
