@@ -42,6 +42,18 @@ pub(super) fn root_prefix(xml: &str, local: &str) -> Result<String> {
     }
 }
 
+/// The prefix `bindings`, the scope a fragment is read in, give
+/// WordprocessingML, else `fallback`: a fragment of a part another writer
+/// wrote with another prefix (`ox0:r`) is scanned under that one.
+pub(super) fn bound_word_prefix(bindings: &[(String, String)], fallback: &str) -> String {
+    bindings
+        .iter()
+        .rev()
+        .find_map(|(key, uri)| key.strip_prefix("xmlns:").filter(|_| uri == W_NS))
+        .unwrap_or(fallback)
+        .to_owned()
+}
+
 /// The start tag of the root a fragment of a Word part is scanned under:
 /// WordprocessingML bound to `word_prefix` and as the default namespace, so
 /// that an element its part writes without a prefix under a default
@@ -79,9 +91,11 @@ pub(super) fn drawing_signature(
         inline.raw_xml = None;
     }
     if let Some(anchor) = &mut signature.anchor {
-        // The bindings the anchor reads, wherever they are declared: out of
-        // the anchor (its inherited scope) or in it, as a writer that
+        // The namespaces the anchor reads, wherever they are declared: out
+        // of the anchor (its inherited scope) or in it, as a writer that
         // declares a prefix on the anchor rather than on the drawing does.
+        // A namespace the scope already binds is no new one under a second
+        // prefix (`w` beside `ox4`, both WordprocessingML).
         for (prefix, uri) in anchor
             .raw_xml
             .as_deref()
@@ -91,7 +105,7 @@ pub(super) fn drawing_signature(
             if !anchor
                 .source_namespace_bindings
                 .iter()
-                .any(|(known, _)| *known == prefix)
+                .any(|(known, bound)| *known == prefix || *bound == uri)
             {
                 anchor.source_namespace_bindings.push((prefix, uri));
             }

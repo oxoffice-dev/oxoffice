@@ -260,7 +260,11 @@ pub(super) fn text_box_host_spans(xml: &str, boxes: &[Range<usize>]) -> Result<V
 /// [`text_box_spans`]), each without the content of its boxes and its
 /// drawing ids (see [`box_frame`]): alike in two versions when the boxes
 /// changed only inside.
-pub(super) fn text_box_run_skeletons(xml: &str, boxes: &[Range<usize>]) -> Result<Vec<String>> {
+pub(super) fn text_box_run_skeletons(
+    xml: &str,
+    boxes: &[Range<usize>],
+    word_prefix: &str,
+) -> Result<Vec<String>> {
     let mut runs: Vec<(usize, usize)> = Vec::new();
     for text_box in boxes {
         let run = containing_run(xml, text_box.start)?;
@@ -271,7 +275,7 @@ pub(super) fn text_box_run_skeletons(xml: &str, boxes: &[Range<usize>]) -> Resul
     runs.into_iter()
         .map(|(start, end)| {
             let run = &xml[start..end];
-            box_frame(run, &text_box_spans(run, "w")?)
+            box_frame(run, &text_box_spans(run, word_prefix)?)
         })
         .collect()
 }
@@ -402,17 +406,20 @@ pub(super) fn word_ids_with_options(
 /// Whether the text boxes of a story changed only inside: the same boxes in
 /// the same hosts, one at least holding other content. Such a story is
 /// compared box by box, so that an edit is tracked inside its box, in each
-/// copy an alternate content holds, rather than the box replaced whole.
+/// copy an alternate content holds, rather than the box replaced whole. Each
+/// input is read under its own WordprocessingML prefix (`word_prefixes`).
 pub(super) fn text_boxes_changed_inside(
     original: &str,
     edited: &str,
-    word_prefix: &str,
+    word_prefixes: [&str; 2],
 ) -> Result<bool> {
-    let left = text_box_spans(original, word_prefix)?;
-    let right = text_box_spans(edited, word_prefix)?;
+    let [original_prefix, edited_prefix] = word_prefixes;
+    let left = text_box_spans(original, original_prefix)?;
+    let right = text_box_spans(edited, edited_prefix)?;
     if left.is_empty()
         || left.len() != right.len()
-        || text_box_run_skeletons(original, &left)? != text_box_run_skeletons(edited, &right)?
+        || text_box_run_skeletons(original, &left, original_prefix)?
+            != text_box_run_skeletons(edited, &right, edited_prefix)?
     {
         return Ok(false);
     }

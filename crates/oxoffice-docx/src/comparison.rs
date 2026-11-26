@@ -88,8 +88,9 @@ use guard::{
 };
 use move_pairs::{crossing_reply_additions, pair_moves, share_trailing_move};
 use namespaces::{
-    actual_root_bindings, declared_prefixes, drawing_signature, element_inner_range_any_prefix,
-    foreign_word_binding, required_external_bindings, root_prefix, scan_root_start,
+    actual_root_bindings, bound_word_prefix, declared_prefixes, drawing_signature,
+    element_inner_range_any_prefix, foreign_word_binding, required_external_bindings, root_prefix,
+    scan_root_start,
 };
 pub(crate) use postconditions::reopen_staged;
 use postconditions::{
@@ -916,6 +917,12 @@ impl Document {
             &original,
             &original.doc_part_name,
         )?);
+        // Each body is scanned for its text boxes under the prefix its part
+        // binds to WordprocessingML.
+        let main_prefixes = [
+            bound_word_prefix(&main_body_source(original_xml)?.1, "w"),
+            bound_word_prefix(&main_body_source(edited_xml)?.1, "w"),
+        ];
         let tracked_body = if !added_reply_ids.is_empty() {
             extract_body_inner(edited_xml)?.to_owned()
         } else if story_ignored(options, ComparisonStoryKind::Main) {
@@ -924,7 +931,7 @@ impl Document {
             || text_boxes_changed_inside(
                 extract_body_inner(original_xml)?,
                 extract_body_inner(edited_xml)?,
-                "w",
+                [&main_prefixes[0], &main_prefixes[1]],
             )?
         {
             let original_source = std::str::from_utf8(original_xml).map_err(utf8_error)?;
