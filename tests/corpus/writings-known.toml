@@ -130,10 +130,3 @@ debug_assertions = true
 
 # H: compare after an edit D1 (`r:id` unbound) or D6 (`w:cnfStyle` kept raw)
 # broke: these go with their class.
-
-[[known]]
-input = "word/manual.docx"
-writing = "other-prefixes"
-operation = "compare"
-issue = 658
-message = "formatting differs and the original formatting was retained"

@@ -138,7 +138,13 @@ fn paragraph_properties_xml_impl(
     // own change in a `w:rPrChange`, as Word writes it.
     let (original_base, original_mark) = split_paragraph_mark(original_modeled);
     let (edited_base, edited_mark) = split_paragraph_mark(edited_modeled);
-    if original_mark != edited_mark {
+    let said = |mark: &Option<oxoffice_docx_oxml::properties::CT_RPr>| {
+        mark.clone().map(|mut mark| {
+            mark_as_said(&mut mark);
+            mark
+        })
+    };
+    if said(&original_mark) != said(&edited_mark) {
         let previous = run_property_xml(original_mark.as_ref())?;
         let change =
             metadata
@@ -337,10 +343,29 @@ pub(super) fn modeled_paragraph_properties(properties: Option<&CT_PPr>) -> Optio
 /// change of formatting.
 pub(super) fn same_retained_xml(left: &[Vec<u8>], right: &[Vec<u8>]) -> bool {
     left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .all(|(left, right)| left == right || same_xml_fragment(left, right))
+        && left.iter().zip(right).all(|(left, right)| {
+            left == right
+                || matches!(
+                    (retained_canonical(left), retained_canonical(right)),
+                    (Some(left), Some(right)) if left == right
+                )
+        })
+}
+
+/// The canonical form of a retained property element, its own prefix read
+/// as WordprocessingML when the element does not declare it: the reader took
+/// it for a Word element under the binding of its part, and a save writes a
+/// modelled one (`w:cnfStyle` with its region attributes) again under the
+/// prefix of its own writing.
+fn retained_canonical(xml: &[u8]) -> Option<String> {
+    let xml = std::str::from_utf8(xml).ok()?;
+    let span = oxoffice_core::xml_element::element_span(xml).ok()?;
+    let bindings = span
+        .name
+        .split_once(':')
+        .map(|(prefix, _)| vec![(prefix.to_owned(), W_NS.to_owned())])
+        .unwrap_or_default();
+    oxoffice_core::xml_element::canonical_fragment_in(xml, &bindings).ok()
 }
 
 /// Whether two written properties (or their absence) say the same, one
@@ -423,12 +448,21 @@ fn retained_xml_as_said(properties: &mut CT_PPr) {
         canonical(raw, &[]);
     }
     if let Some(mark) = properties.rpr.as_mut() {
-        for raw in &mut mark.revision_xml {
-            canonical(raw, &[]);
-        }
-        mark.font_extra_attributes.sort();
-        mark.language_extra_attributes.sort();
+        mark_as_said(mark);
     }
+}
+
+/// The paragraph mark's retained XML as what it says: its toggle carriers,
+/// which a save writes again under the prefix of its own writing, in
+/// [`retained_canonical`] form, and its kept attributes in one order.
+fn mark_as_said(mark: &mut oxoffice_docx_oxml::properties::CT_RPr) {
+    for raw in &mut mark.revision_xml {
+        if let Some(canonical) = retained_canonical(raw) {
+            *raw = canonical.into_bytes();
+        }
+    }
+    mark.font_extra_attributes.sort();
+    mark.language_extra_attributes.sort();
 }
 
 pub(super) fn nonempty_paragraph_properties(mut properties: CT_PPr) -> Option<CT_PPr> {

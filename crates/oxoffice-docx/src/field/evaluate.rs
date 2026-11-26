@@ -153,7 +153,7 @@ impl<'a> Evaluator<'a> {
         // Paragraph inventory keeps the legacy body map and its name filter.
         // Pairing failure blocks only extra related admission.
         let mut cross_owner_bookmarks = HashSet::new();
-        if let Ok((paired, name_counts)) = document.story_range_metadata() {
+        if let Ok((paired, start_names)) = document.story_range_metadata() {
             if let Ok((ranges, across)) = paired {
                 for kind in across {
                     if let crate::StoryRangeKind::Bookmark { name, .. } = kind
@@ -183,9 +183,10 @@ impl<'a> Evaluator<'a> {
                     }
                 }
             }
-            // Two names in different cases are one name to Word.
+            // Two names in different cases are one name to Word. A start
+            // with no end anywhere is no bookmark to Word.
             let mut counts = HashMap::<String, usize>::new();
-            for (name, count) in &name_counts {
+            for (name, count) in &start_names.closed {
                 *counts.entry(bookmark_name_key(name)).or_default() += count;
             }
             bookmarks.retain(|key, _| counts.get(key).is_some_and(|count| *count == 1));

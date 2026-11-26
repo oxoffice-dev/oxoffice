@@ -313,10 +313,12 @@ fn the_canonical_form_tells_apart_two_parts_that_say_different_things() {
     assert!(refused.is_err_and(|error| error.contains("names a renamed prefix")));
 }
 
-// A table paragraph's `w:cnfStyle` is kept as written: written again in
-// another attribute order it is no change, with another region it is one.
+// A table paragraph's `w:cnfStyle`, or a paragraph mark's toggle, is kept
+// as written: written again in another attribute order, or under another
+// prefix and saved again after an edit, it is no change; with another region
+// it is one.
 #[test]
-fn a_kept_table_paragraph_property_counts_only_when_what_it_says_changes() {
+fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
     let cell = |cnf: &str, text: &str| {
         docx_with_body(&format!(
             r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:cnfStyle {cnf}/></w:pPr><w:r><w:t>{text} totals.</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
@@ -332,5 +334,47 @@ fn a_kept_table_paragraph_property_counts_only_when_what_it_says_changes() {
                 .unwrap()
                 .compare(&open(&cell(edited, "Yearly")).unwrap(), AUTHOR, DATE);
         assert_eq!(found.unwrap().is_empty(), same, "{edited}");
+    }
+    let other_prefixes =
+        |bytes: Vec<u8>| rewrite_package(&bytes, Writing::OtherPrefixes).unwrap().0;
+    let mark = |extra: &str| {
+        docx_with_body(&format!(
+            r#"<w:p><w:pPr><w:rPr><w:rtl w:val="false" w:extra="{extra}"/></w:rPr></w:pPr><w:r><w:t>Quarterly totals.</w:t></w:r></w:p>"#
+        ))
+    };
+    for (row, (original, edited, same)) in [
+        (
+            &original,
+            cell(r#"w:val="100000000000" w:firstRow="1""#, "Quarterly"),
+            true,
+        ),
+        (
+            &original,
+            cell(r#"w:val="100000000000" w:firstRow="0""#, "Quarterly"),
+            false,
+        ),
+        (&mark("x"), mark("x"), true),
+        (&mark("x"), mark("y"), false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut doc = open(&other_prefixes(edited)).unwrap();
+        assert_eq!(doc.replace_text("Quarterly", "Yearly"), 1);
+        let saved = open(&doc.to_bytes().unwrap()).unwrap();
+        let mut redline = open(&other_prefixes(original.clone())).unwrap();
+        let found = redline.compare(&saved, AUTHOR, DATE).unwrap();
+        // A kept mark property that says the same is no run property change.
+        let tracked = package_parts(&redline.to_bytes().unwrap())
+            .unwrap()
+            .into_iter()
+            .any(|(name, xml)| {
+                name.ends_with("document.xml") && xml.windows(9).any(|w| w == b"rPrChange")
+            });
+        assert_eq!(
+            found.is_empty() && !tracked,
+            same,
+            "other prefixes, row {row}"
+        );
     }
 }

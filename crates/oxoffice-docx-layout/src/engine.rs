@@ -131,7 +131,7 @@ use input_scan::{
     bookmark_exists, bookmark_spelling, bookmark_text, document_has_page_ref,
     document_has_ref_projection, document_has_section_fields, document_has_sequence_fields,
     field_has_switch, field_link, field_text_argument, input_uses_page_note_restart, note_labels,
-    note_reference_pages, numbered_ref_text, page_ref_id, visit_input_paragraphs,
+    note_reference_pages, numbered_ref_text, opens_bookmark, page_ref_id, visit_input_paragraphs,
 };
 pub(crate) use note_cache::paragraph_note_references;
 use note_cache::{body_note_references, content_note_references, stored_note_cache_runs};

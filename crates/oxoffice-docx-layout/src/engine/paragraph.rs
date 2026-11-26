@@ -441,7 +441,7 @@ fn layout_paragraph_with_source_and_table(
             .iter()
             .chain(block_before)
             .chain(block_after)
-            .filter(|bookmark| bookmark.is_start())
+            .filter(|bookmark| opens_bookmark(input, bookmark))
             .filter_map(|bookmark| bookmark.name())
         {
             num_state.record_bookmark_source(name, source_node);
@@ -459,7 +459,7 @@ fn layout_paragraph_with_source_and_table(
                     .iter()
                     .chain(block_before)
                     .chain(block_after)
-                    .filter(|bookmark| bookmark.is_start())
+                    .filter(|bookmark| opens_bookmark(input, bookmark))
                     .filter_map(|bookmark| bookmark.name())
                 {
                     num_state.record_bookmark(name, source_node, &marker);
@@ -2505,7 +2505,7 @@ fn push_targeted_bookmark_markers(
             RevisionView::Accepted => marker.projected_run_index(),
             RevisionView::Tracked => marker.tracked_run_index(),
         };
-        marker.is_start()
+        opens_bookmark(input, marker)
             && marker_run_index == projected_run_index
             && marker.name().is_some_and(|name| {
                 document_has_page_ref(input, name) && bookmark_exists(input, name)
