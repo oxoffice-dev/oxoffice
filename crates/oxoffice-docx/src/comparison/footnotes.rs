@@ -2212,7 +2212,7 @@ fn note_reference_counts(document: &Document) -> Result<HashMap<(String, i32), u
                         let (namespace, name) = reader.resolver().resolve_attribute(attribute.key);
                         if name.as_ref() == b"id"
                             && matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes())
-                            && let Ok(id) = std::str::from_utf8(&attribute.value)
+                            && let Ok(id) = oxoffice_core::xml::attribute_text(&attribute)
                                 .unwrap_or_default()
                                 .parse::<i32>()
                         {

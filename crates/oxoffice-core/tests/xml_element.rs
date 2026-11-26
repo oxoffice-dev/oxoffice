@@ -1,6 +1,8 @@
 //! The parts of an element read whatever its writing
-//! (`oxoffice_core::xml_element`), and the check that no code searches for
-//! an end tag as text instead (`specs/2026-11-25-equivalent-xml-writings.md`).
+//! (`oxoffice_core::xml_element`), the check that no code searches for an
+//! end tag as text instead (`specs/2026-11-25-equivalent-xml-writings.md`),
+//! and the check that no code reads an attribute value from its raw bytes,
+//! its references unresolved, but to write it back as read.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -361,6 +363,198 @@ fn no_code_searches_for_an_end_tag_as_text() {
     assert!(
         refused.is_empty(),
         "find an element's parts with oxoffice_core::xml_element instead:\n{}",
+        refused.join("\n")
+    );
+}
+
+/// Files that read attribute values from their raw bytes, by how many reads
+/// and why: `preserved`, a value written back as read (by `push_raw` or a
+/// lexical copy), which must keep its references; `namespace`, a namespace
+/// declaration, which quick-xml's resolver also reads as written;
+/// `declaration`, the XML declaration, which holds no reference; `strict`,
+/// a value that resolves its references itself and refuses a malformed one;
+/// `reader`, a reader of attribute values itself; `test`, a test module.
+/// Every other value is read with `oxoffice_core::xml::attribute_text`.
+const RAW_READS: [(&str, usize, &str); 19] = [
+    ("crates/oxoffice-core/src/xml.rs", 1, "reader"),
+    ("crates/oxoffice-core/src/xml.rs", 1, "declaration"),
+    ("crates/oxoffice-docx-oxml/src/borders.rs", 2, "preserved"),
+    (
+        "crates/oxoffice-docx-oxml/src/document/section.rs",
+        7,
+        "preserved",
+    ),
+    ("crates/oxoffice-docx-oxml/src/glossary.rs", 1, "strict"),
+    (
+        "crates/oxoffice-docx-oxml/src/paragraph_properties.rs",
+        2,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/properties.rs",
+        4,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/run_properties.rs",
+        4,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/run_properties.rs",
+        1,
+        "strict",
+    ),
+    ("crates/oxoffice-docx-oxml/src/styles.rs", 2, "namespace"),
+    (
+        "crates/oxoffice-docx-oxml/src/text/emission.rs",
+        1,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/field_legacy_form.rs",
+        1,
+        "strict",
+    ),
+    ("crates/oxoffice-docx-oxml/src/text/run.rs", 1, "namespace"),
+    (
+        "crates/oxoffice-docx/src/bibliography/oracle_tests.rs",
+        2,
+        "test",
+    ),
+    (
+        "crates/oxoffice-docx/src/comparison/fields.rs",
+        2,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_text.rs",
+        1,
+        "namespace",
+    ),
+    ("crates/oxoffice-docx/src/field/fragment.rs", 4, "strict"),
+    ("crates/oxoffice-docx/src/redaction.rs", 1, "declaration"),
+    ("crates/oxoffice-xml-test/src/canonical.rs", 1, "reader"),
+];
+
+/// The lines of `source`, but its `#[cfg(test)]` items, that read an
+/// attribute value from its raw bytes: `from_utf8(&attribute.value)` (or
+/// `_lossy`, `.as_ref()`, `.to_vec()`), and the value compared with a byte
+/// string (`attr.value.as_ref() == b"preserve"`), however the code is laid
+/// out.
+fn raw_attribute_reads(source: &str) -> Vec<usize> {
+    let code = without_test_items(source);
+    // The code without white space, each character with its line.
+    let (mut compact, mut lines) = (String::new(), Vec::new());
+    let mut line = 1;
+    for c in code.chars() {
+        if c == '\n' {
+            line += 1;
+        }
+        if !c.is_whitespace() {
+            compact.push(c);
+            lines.push(line);
+        }
+    }
+    let identifier = |text: &str| {
+        text.chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .count()
+    };
+    // `attribute.value` at the start of `text`, not `attribute.value_of`.
+    let value_field = |text: &str| {
+        let name = identifier(text);
+        name > 0
+            && text[name..]
+                .strip_prefix(".value")
+                .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+    };
+    let mut found = Vec::new();
+    for call in ["from_utf8(", "from_utf8_lossy("] {
+        for (at, _) in compact.match_indices(call) {
+            let argument = &compact[at + call.len()..];
+            if value_field(argument.strip_prefix('&').unwrap_or(argument)) {
+                found.push(lines[at]);
+            }
+        }
+    }
+    for comparison in [
+        ".value.as_ref()==b\"",
+        ".value.as_ref()!=b\"",
+        ".value==b\"",
+        ".value!=b\"",
+    ] {
+        found.extend(compact.match_indices(comparison).map(|(at, _)| lines[at]));
+    }
+    for (at, _) in compact.match_indices("matches!(") {
+        let argument = &compact[at + "matches!(".len()..];
+        let name = identifier(argument);
+        if name > 0 && argument[name..].starts_with(".value.as_ref(),b\"") {
+            found.push(lines[at]);
+        }
+    }
+    found.sort_unstable();
+    found
+}
+
+#[test]
+fn the_check_finds_an_attribute_value_read_from_its_raw_bytes() {
+    let source = concat!(
+        "let a = std::str::from_utf8(&attr.value)?;\n",
+        "let b = String::from_utf8_lossy(\n    &attribute.value,\n);\n",
+        "let c = std::str::from_utf8(attribute.value.as_ref());\n",
+        "let d = attribute.value.as_ref() == b\"preserve\";\n",
+        "let e = matches!(attribute.value.as_ref(), b\"0\" | b\"false\");\n",
+        "let f = oxoffice_core::xml::attribute_text(&attribute)?;\n",
+        "let g = std::str::from_utf8(attribute.key.as_ref())?;\n",
+        "let h = std::str::from_utf8(&run.value_text)?;\n",
+        "#[cfg(test)]\nmod tests { fn t() { std::str::from_utf8(&attr.value); } }\n",
+        "let i = String::from_utf8(attr\n    .value\n    .to_vec());\n",
+    );
+    assert_eq!(raw_attribute_reads(source), [1, 2, 5, 6, 7, 13]);
+}
+
+// A value read from its raw bytes ignores its character references, as #668
+// had it: `w:before="&#50;40"` did not open, and ids and style ids written
+// with references read wrong. A value is read with
+// `oxoffice_core::xml::attribute_text`, or kept raw only to be written back
+// as read.
+#[test]
+fn no_code_reads_an_attribute_value_from_its_raw_bytes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for entry in fs::read_dir(root.join("crates")).expect("crates/ is readable") {
+        let src = entry.expect("a crate entry is readable").path().join("src");
+        if src.is_dir() {
+            rust_files(&src, &mut files);
+        }
+    }
+    assert!(files.len() > 100, "the walk found {} files", files.len());
+    let mut refused = Vec::new();
+    for path in files {
+        let relative = path
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source = fs::read_to_string(&path).expect("a source file is UTF-8");
+        let reads = raw_attribute_reads(&source);
+        let allowed: usize = RAW_READS
+            .iter()
+            .filter(|(file, ..)| *file == relative)
+            .map(|(_, count, _)| count)
+            .sum();
+        if reads.len() != allowed {
+            refused.push(format!(
+                "{relative} reads {} raw values (lines {reads:?}), {allowed} allowed",
+                reads.len()
+            ));
+        }
+    }
+    assert!(
+        refused.is_empty(),
+        "read a value with oxoffice_core::xml::attribute_text, or list a value \
+         written back as read in RAW_READS:\n{}",
         refused.join("\n")
     );
 }

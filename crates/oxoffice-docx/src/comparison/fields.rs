@@ -506,7 +506,9 @@ fn used_name_prefixes(xml: &str) -> Result<HashSet<String>> {
                     | b"PreserveElements"
                     | b"PreserveAttributes"
             ) {
-                for token in text(attribute.value.as_ref()).split_whitespace() {
+                let value = oxoffice_core::xml::attribute_text(&attribute)
+                    .map_err(|error| Error::Other(error.to_string()))?;
+                for token in value.split_whitespace() {
                     prefixes.insert(token.split(':').next().unwrap_or(token).to_owned());
                 }
             }

@@ -127,7 +127,9 @@ fn math_value(start: &quick_xml::events::BytesStart<'_>, local: &str) -> Option<
     let name: &[u8] = if local == "brk" { b"alnAt" } else { b"val" };
     start.attributes().flatten().find_map(|attribute| {
         (attribute.key.local_name().as_ref() == name)
-            .then(|| String::from_utf8_lossy(&attribute.value).into_owned())
+            .then(|| oxoffice_core::xml::attribute_text(&attribute).ok())
+            .flatten()
+            .map(std::borrow::Cow::into_owned)
     })
 }
 

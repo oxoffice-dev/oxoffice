@@ -1104,7 +1104,8 @@ fn without_whitespace_between_elements(xml: &[u8]) -> Vec<u8> {
                 let name = element.name();
                 let preserve = element.attributes().flatten().any(|attribute| {
                     attribute.key.as_ref() == b"xml:space"
-                        && attribute.value.as_ref() == b"preserve"
+                        && oxoffice_core::xml::attribute_text(&attribute)
+                            .is_ok_and(|value| value == "preserve")
                 });
                 let text_element =
                     TEXT_ELEMENTS.contains(&name.local_name().as_ref()) || name.as_ref() == b"m:t";

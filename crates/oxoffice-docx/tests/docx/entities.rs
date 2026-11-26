@@ -8,7 +8,7 @@ use std::io::Cursor;
 use oxoffice_docx::{Document, Length};
 use oxoffice_opc::OpcPackage;
 
-use crate::support::{doc_with, doc_with_body, reopen, texts};
+use crate::support::{doc_with, doc_with_body, docx_with_body, reopen, texts};
 
 /// A one-pixel PNG.
 const PNG: &[u8] = &[
@@ -150,4 +150,90 @@ fn a_property_value_written_with_character_references_reads_as_its_characters() 
     let plain = read(body("center", "240", "4000"));
     assert_eq!(plain.0, Some(Alignment::Center));
     assert_eq!(read(body("&#99;enter", "&#50;40", "&#52;000")), plain);
+}
+
+/// `bytes` with `children` written into the final section properties, after
+/// the page margins.
+fn with_section_children(bytes: Vec<u8>, children: &str) -> Vec<u8> {
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
+    let part = package.main_document_part().unwrap();
+    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
+    let margins = xml.find("<w:pgMar").expect("the page margins");
+    let after = margins + xml[margins..].find("/>").expect("an empty element") + 2;
+    let xml = format!("{}{children}{}", &xml[..after], &xml[after..]);
+    package.set_part(&part, xml.into_bytes());
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    out.into_inner()
+}
+
+#[test]
+fn a_value_written_with_character_references_reads_as_its_characters_everywhere() {
+    let equation = |begin: &str| {
+        format!(
+            concat!(
+                r#"<w:p><m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">"#,
+                r#"<m:d><m:dPr><m:begChr m:val="{begin}"/></m:dPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:d>"#,
+                r#"</m:oMath></w:p>"#,
+            ),
+            begin = begin
+        )
+    };
+    let rtf = |body: &str, section: &str| {
+        let bytes = with_section_children(docx_with_body(body), section);
+        let result = Document::from_bytes(&bytes)
+            .unwrap()
+            .to_rtf_bytes()
+            .unwrap();
+        (
+            String::from_utf8(result.bytes).unwrap(),
+            format!("{:?}", result.diagnostics),
+        )
+    };
+    // Each case: a value written with a reference, and whether the reader
+    // found its characters.
+    let numbering = rtf("<w:p/>", r#"<w:pgNumType w:fmt="&#100;ecimal"/>"#);
+    let delimiter = rtf(&equation("&#60;"), "");
+    for (what, found, read) in [
+        (
+            "a decimal page numbering, which RTF keeps",
+            !numbering.1.contains("page numbering"),
+            &numbering,
+        ),
+        (
+            "the delimiter of an equation",
+            delimiter.0.contains("{\\mbegChr <}"),
+            &delimiter,
+        ),
+    ] {
+        assert!(found, "{what}: {read:?}");
+    }
+}
+
+#[test]
+fn a_value_kept_as_written_keeps_its_references_through_an_edit() {
+    // Values the section model does not type are written back as read: a
+    // reference resolved and written raw would leave `&` bare in the part.
+    let bytes = with_section_children(
+        docx_with_body("<w:p/>"),
+        concat!(
+            r#"<w:paperSrc w:first="&#49;" w:other="a&amp;b"/>"#,
+            r#"<w:lnNumType w:countBy="x&lt;y" w:start="&#50;"/>"#,
+        ),
+    );
+    let mut doc = Document::from_bytes(&bytes).unwrap();
+    doc.set_margins(
+        Length::pt(36.0),
+        Length::pt(36.0),
+        Length::pt(36.0),
+        Length::pt(36.0),
+    );
+    let doc = reopen(&mut doc);
+    let xml = doc.part_xml("word/document.xml").unwrap();
+    for kept in [r#"w:other="a&amp;b""#, r#"w:countBy="x&lt;y""#] {
+        assert!(xml.contains(kept), "{kept}: {xml}");
+    }
+    for read in [r#"w:first="1""#, r#"w:start="2""#] {
+        assert!(xml.contains(read), "{read}: {xml}");
+    }
 }

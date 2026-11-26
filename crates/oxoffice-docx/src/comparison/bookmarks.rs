@@ -738,10 +738,10 @@ fn raw_bookmark(raw: &[u8]) -> Option<(bool, Option<i32>, Option<String>)> {
     let mut id = None;
     let mut name = None;
     for attribute in element.attributes().flatten() {
-        let value = std::str::from_utf8(&attribute.value).ok();
+        let value = oxoffice_core::xml::attribute_text(&attribute).ok();
         match attribute.key.local_name().as_ref() {
             b"id" => id = value.and_then(|value| value.parse().ok()),
-            b"name" => name = value.map(str::to_owned),
+            b"name" => name = value.map(std::borrow::Cow::into_owned),
             _ => {}
         }
     }
@@ -801,8 +801,9 @@ pub(super) fn word_attributes(
         if let Some((prefix, local)) = key.split_once(':')
             && scope.get(prefix).is_some_and(|uri| uri == W_NS)
         {
-            let value = std::str::from_utf8(&attribute.value).map_err(utf8_error)?;
-            attributes.insert(local.to_owned(), value.to_owned());
+            let value = oxoffice_core::xml::attribute_text(&attribute)
+                .map_err(|error| Error::Other(error.to_string()))?;
+            attributes.insert(local.to_owned(), value.into_owned());
         }
     }
     Ok(attributes)

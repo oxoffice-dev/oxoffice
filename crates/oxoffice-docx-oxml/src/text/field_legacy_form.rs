@@ -417,7 +417,12 @@ pub(super) fn complex_outer_result_present(raw: crate::document::WordXmlInput<'_
                             .key
                             .as_ref()
                             .ends_with(b"fldCharType")
-                            .then(|| String::from_utf8_lossy(&attribute.value).into_owned())
+                            .then(|| {
+                                oxoffice_core::xml::attribute_text(&attribute)
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            })
+                            .flatten()
                     });
                     match kind.as_deref() {
                         Some("begin") => depth += 1,

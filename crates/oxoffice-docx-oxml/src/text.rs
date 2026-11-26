@@ -6265,14 +6265,9 @@ pub(crate) fn optional_word_attribute(
                 .iter()
                 .any(|prefix| prefix.as_bytes() == &key[..separator])
         {
-            let value = oxoffice_core::xml::normalize_attribute_white_space(
-                std::str::from_utf8(&attribute.value).ok()?,
-            );
-            return Some(
-                quick_xml::escape::unescape(&value)
-                    .map(|value| value.into_owned())
-                    .unwrap_or_else(|_| value.into_owned()),
-            );
+            return oxoffice_core::xml::attribute_text(&attribute)
+                .ok()
+                .map(std::borrow::Cow::into_owned);
         }
     }
     None

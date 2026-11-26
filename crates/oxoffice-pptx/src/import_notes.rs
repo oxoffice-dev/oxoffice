@@ -703,7 +703,9 @@ fn substitute_notes_placeholder_color(
                     .collect::<std::result::Result<Vec<_>, _>>()
                     .map_err(|error| footer_malformed(part, error.to_string()))?;
                 let placeholder = attributes.iter().any(|attribute| {
-                    attribute.key.as_ref() == b"val" && attribute.value.as_ref() == b"phClr"
+                    attribute.key.as_ref() == b"val"
+                        && oxoffice_core::xml::attribute_text(attribute)
+                            .is_ok_and(|value| value == "phClr")
                 });
                 if !placeholder {
                     continue;

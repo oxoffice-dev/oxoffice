@@ -447,7 +447,11 @@ fn local_attribute(element: &BytesStart<'_>, local: &[u8]) -> Vec<u8> {
         .attributes()
         .flatten()
         .find(|attribute| attribute.key.local_name().as_ref() == local)
-        .map(|attribute| attribute.value.into_owned())
+        .and_then(|attribute| {
+            oxoffice_core::xml::attribute_text(&attribute)
+                .ok()
+                .map(|value| value.into_owned().into_bytes())
+        })
         .unwrap_or_default()
 }
 
