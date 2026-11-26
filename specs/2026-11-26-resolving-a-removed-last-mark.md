@@ -25,12 +25,17 @@ removed marks before it merge into it. The Word check of 2026-11-23 found Word c
 other producers' redlines hold one.
 
 **Chains across block controls.** The removed last mark of a block control merges, as Word's merge rule does, with the
-paragraph after the control, which joins the control (Word check of 2026-11-23); that paragraph may be the first one
-of the next block control, nested ones too, or follow the end of an enclosing control. While the marks it meets are
+paragraph after the control, which joins the control (Word check of 2026-11-23); that paragraph may be the first one of
+the next block control, nested ones too, or follow the end of an enclosing control. While the marks it meets are
 removed, the merge goes on, across tables the resolution removes whole, until a paragraph whose mark stays, or rule A.
-The merged paragraph takes the properties of the last one and stays in the first control; a control the merge leaves
-with no owner goes, as one whose content all goes does. Google Docs writes a suggestion that deletes across paragraphs
-this way, each paragraph in its own `goog_rdk` control (up to 165 a file, in the body and in cells).
+The walk starts after what the chain already crossed in its container. The merged paragraph takes the properties of the
+last one and stays in the first control; a control the merge leaves with no owner goes, as one whose content all goes
+does. Google Docs writes a suggestion that deletes across paragraphs this way, each paragraph in its own `goog_rdk`
+control (up to 165 a file, in the body and in cells). The merge only enters a plain wrapper control: properties holding
+nothing but an id, a tag, a lock and run properties, as Google writes them. The lock does not stop it: Google writes
+`contentLocked` on its block wrappers, and oxoffice keeps a lock without enforcing it in any edit (spec of 2026-11-26 on
+block control tables). A typed, data-bound or titled control, one showing a placeholder, or a building block (a table of
+contents, a cover page) refuses the merge: its paragraph would leave it.
 
 **B. A paragraph removed whole takes the wrappers the resolution empties.** Where a paragraph goes whole (a block
 control removed whole, a paragraph before a table or block control that stays, the end of the body after one), an
@@ -53,6 +58,7 @@ ones that keep content merge into the last, whose mark stays (rule A). Before pr
 
 - a paragraph outside block controls whose mark is removed and whose text stays, before a block control that stays:
   merging it into the control's first paragraph is not decided (see question 5);
+- a block control's removed last mark whose merge would enter a control that is not a plain wrapper (above);
 - a paragraph removed whole holding the reference of a comment that starts or ends outside the content removed with it;
 - a simple field emptied by the resolution follows the retiring-field rule, as before.
 
@@ -69,6 +75,8 @@ ones that keep content merge into the last, whose mark stays (rule A). Before pr
 5. Which control keeps a merge across two controls. We keep it in the first, as Word keeps the paragraph after a
    control in that control; Word may keep it in the next one instead (the text is the same). Recommendation: keep the
    first, and decide the paragraph-before-a-control case with the same Word check.
+6. Rule A before a table that stays: the Word check covers the body's last mark only. A paragraph that keeps text and
+   whose mark is removed before a table keeps that mark here, as Word cannot merge a paragraph into a table; to check.
 
 ## Plan
 
@@ -78,6 +86,8 @@ ones that keep content merge into the last, whose mark stays (rule A). Before pr
 2. The chains (`merge_after_control`), after a rerun of the real files left 7 of 13 failing: rows for a chain of
    controls in the body, in a cell and ending a cell, a control's last mark and a paragraph's before a table, a
    paragraph's ending the body after one, and the nested comment starts of two of the files (resolved by #686).
+   Review of #688: the walk starts after the chain's crossed siblings (a marker or a control removed whole was taken
+   twice); the rows read the controls, bookmarks and balanced range markers; the merge enters plain wrappers only.
 
 ## Links
 

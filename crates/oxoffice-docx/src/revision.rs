@@ -3099,7 +3099,10 @@ impl<'a> XmlTree<'a> {
                         // remove a story's last mark either. Google Docs
                         // writes a deleted last paragraph this way.
                         let last = *paragraphs.last().expect("paragraph chain exists");
-                        for paragraph in self.merge_after_control(last, state, &mut joins) {
+                        let crossed = *siblings.last().expect("paragraph chain exists");
+                        for paragraph in
+                            self.merge_after_control(last, crossed, state, &mut joins)?
+                        {
                             paragraphs.push(paragraph);
                             state.absorbed.insert(paragraph);
                         }
@@ -3173,11 +3176,20 @@ impl<'a> XmlTree<'a> {
                 // with: the last mark of the chain stays, as at the end of
                 // a story, and the chain merges into its paragraph.
                 if before_table
-                    && !before_control
                     && paragraphs
                         .iter()
                         .any(|paragraph| !self.paragraph_content_all_removes(*paragraph, state))
                 {
+                    // Before a block control that stays, the text would
+                    // have to move into the control's first paragraph,
+                    // which is not decided (spec of 2026-11-26).
+                    if before_control {
+                        return Err(Error::Other(
+                            "cannot remove the mark of a paragraph that keeps text before a block content \
+                             control: the text would have to move into the control"
+                                .to_owned(),
+                        ));
+                    }
                     before_table = false;
                 }
                 // A crossed table leaves nothing, so a comparison leaf in it
@@ -3567,30 +3579,34 @@ impl<'a> XmlTree<'a> {
     }
 
     /// The paragraphs that the removed mark of `last`, the last paragraph of
-    /// a block content control, merges with: past the control's end, the
-    /// owners that follow in the story, down into the block controls they
-    /// are and out of the controls that end, across the tables the
-    /// resolution removes whole, up to the first paragraph whose mark stays.
-    /// The walk stops before a table that stays, preserved XML or the end of
-    /// the story, and the last paragraph it took then keeps its mark. The
-    /// range markers between the paragraphs it takes join the merged
-    /// paragraph where they were crossed (`joins`).
+    /// a block content control, merges with: after `crossed`, the last
+    /// element its chain crossed in its container, the owners that follow in
+    /// the story, down into the plain block controls they are (see
+    /// `plain_wrapper_control`) and out of the controls that end, across the
+    /// tables the resolution removes whole, up to the first paragraph whose
+    /// mark stays. The walk stops before a table that stays, preserved XML
+    /// or the end of the story, and the last paragraph it took then keeps
+    /// its mark. The range markers between the paragraphs it takes join the
+    /// merged paragraph where they were crossed (`joins`). A block control
+    /// with properties of its own on the way refuses the merge: its
+    /// paragraph would leave it.
     fn merge_after_control(
         &self,
         last: usize,
+        crossed: usize,
         state: &mut RenderState<'_>,
         joins: &mut HashMap<usize, Vec<usize>>,
-    ) -> Vec<usize> {
+    ) -> Result<Vec<usize>> {
         let mut merge = vec![last];
         let mut pending = Vec::new();
-        let mut at = last;
+        let mut at = crossed;
         while let Some(parent) = self.elements[at].parent {
             let from = self.elements[parent]
                 .children
                 .iter()
                 .position(|child| *child == at)
                 .map_or(usize::MAX, |position| position + 1);
-            if self.merge_from(parent, from, state, &mut merge, &mut pending, joins) {
+            if self.merge_from(parent, from, state, &mut merge, &mut pending, joins)? {
                 break;
             }
             // The owners of a block control ran out: go on after the
@@ -3607,7 +3623,7 @@ impl<'a> XmlTree<'a> {
                 _ => break,
             }
         }
-        merge.split_off(1)
+        Ok(merge.split_off(1))
     }
 
     /// [`Self::merge_after_control`] over the children of `container` from
@@ -3620,7 +3636,7 @@ impl<'a> XmlTree<'a> {
         merge: &mut Vec<usize>,
         pending: &mut Vec<usize>,
         joins: &mut HashMap<usize, Vec<usize>>,
-    ) -> bool {
+    ) -> Result<bool> {
         let children = &self.elements[container].children;
         for &next in children.get(from..).unwrap_or_default() {
             let element = &self.elements[next];
@@ -3632,7 +3648,7 @@ impl<'a> XmlTree<'a> {
                 if element.word && matches!(element.local.as_str(), "proofErr" | "sectPr") {
                     continue;
                 }
-                return true;
+                return Ok(true);
             }
             match element.local.as_str() {
                 "p" => {
@@ -3643,12 +3659,12 @@ impl<'a> XmlTree<'a> {
                     }
                     merge.push(next);
                     if !self.paragraph_mark_removes(next, state) {
-                        return true;
+                        return Ok(true);
                     }
                 }
                 "tbl" => {
                     if !self.owned_rows_all_remove(next, state) {
-                        return true;
+                        return Ok(true);
                     }
                 }
                 _ => {
@@ -3656,17 +3672,47 @@ impl<'a> XmlTree<'a> {
                         self.elements[*child].word && self.elements[*child].local == "sdtContent"
                     });
                     match content {
-                        Some(content) if self.block_control_owners(next).is_some() => {
-                            if self.merge_from(content, 0, state, merge, pending, joins) {
-                                return true;
+                        Some(content)
+                            if self.block_control_owners(next).is_some()
+                                && self.plain_wrapper_control(next) =>
+                        {
+                            if self.merge_from(content, 0, state, merge, pending, joins)? {
+                                return Ok(true);
                             }
                         }
-                        _ => return true,
+                        _ => {
+                            return Err(Error::Other(
+                                "cannot remove the last paragraph mark of a block content control: the \
+                                 block content control after it has properties of its own (a type, a \
+                                 placeholder, a data binding, a building block or a title), and its \
+                                 paragraph would have to leave it"
+                                    .to_owned(),
+                            ));
+                        }
                     }
                 }
             }
         }
-        false
+        Ok(false)
+    }
+
+    /// Whether a block content control is a plain wrapper, as Google Docs
+    /// writes one around a paragraph of a suggestion: its properties hold
+    /// nothing but an id, a tag, a lock (which oxoffice keeps and does not
+    /// enforce in any edit) and run properties. A merge may take its
+    /// paragraphs out of it; a typed, data-bound or titled control, a
+    /// building block (a table of contents, a cover page) or one showing a
+    /// placeholder keeps them.
+    fn plain_wrapper_control(&self, index: usize) -> bool {
+        self.elements[index].children.iter().all(|&child| {
+            let element = &self.elements[child];
+            element.local != "sdtPr"
+                || element.children.iter().all(|&property| {
+                    let property = &self.elements[property];
+                    property.word
+                        && matches!(property.local.as_str(), "id" | "tag" | "lock" | "rPr")
+                })
+        })
     }
 
     /// The paragraphs, tables and block controls a block content control
@@ -4295,8 +4341,8 @@ impl<'a> XmlTree<'a> {
         for paragraph in paragraphs {
             if !self.collect_removed_paragraph_markers(*paragraph, state, &group, &mut markers)? {
                 return Err(Error::Other(
-                    "paragraph mark removal next to a table or block content control requires a paragraph with no \
-                     content left"
+                    "a paragraph that goes whole with its mark must keep no content but range markers: a comment \
+                     reference or a field it holds needs a paragraph"
                         .to_owned(),
                 ));
             }
