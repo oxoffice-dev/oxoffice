@@ -309,10 +309,10 @@ impl CT_Body {
     /// joining paragraph with no accepted content leaves nothing. The next
     /// body item must be a paragraph, the adjacency `Document::accept_all`
     /// requires before it merges a paragraph. `accept_all` refuses a removed
-    /// mark before a table, a content control, preserved XML or the end of
-    /// the body, and those paragraphs keep their marks here. A paragraph that
-    /// ends a section also keeps its mark here, although `accept_all` merges
-    /// its section break away.
+    /// mark before a table, a content control or preserved XML, and keeps
+    /// the body's last mark; those paragraphs keep their marks here. A
+    /// paragraph that ends a section also keeps its mark here, although
+    /// `accept_all` merges its section break away.
     #[doc(hidden)]
     pub fn accepted_paragraph_joins_next(&self, index: usize) -> bool {
         let Some(BodyContent::Paragraph(paragraph)) = self.content.get(index) else {

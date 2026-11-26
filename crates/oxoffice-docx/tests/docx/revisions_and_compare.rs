@@ -11,7 +11,7 @@ use oxoffice_docx::{
     StoryParagraph, StyleBuilder, ValidationSeverity,
 };
 
-use crate::support::{doc_with, doc_with_body, reopen, texts};
+use crate::support::{doc_with, doc_with_body, reopen, texts, with_body};
 
 const AUTHOR: &str = "Reviewer";
 const DATE: &str = "2026-11-21T09:00:00Z";
@@ -4563,6 +4563,142 @@ fn a_range_ending_in_a_removed_final_control_still_ends_after_it_starts() {
     let end = xml.find("<w:bookmarkEnd").expect("the bookmark ends");
     assert!(start < end, "{xml}");
     assert_eq!(bookmark_names(&accepted), ["span"]);
+}
+
+/// A content control tagged `goog_rdk_<n>` holding `content`, as Google Docs
+/// wraps a suggestion's runs or a comment's start (inline), or paragraphs
+/// (block, locked).
+fn google_control(n: u32, content: &str) -> String {
+    let lock = if content.starts_with("<w:p>") {
+        r#"<w:lock w:val="contentLocked"/>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<w:sdt><w:sdtPr>{lock}<w:id w:val="{n}"/><w:tag w:val="goog_rdk_{n}"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#
+    )
+}
+
+#[test]
+fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_controls() {
+    // Google Docs suggestions that remove paragraph marks, as deletions to
+    // accept and as insertions to reject. The last mark of a story stays and
+    // its removed content goes; a paragraph that goes whole takes the inline
+    // controls the resolution leaves empty, and leaves the comment starts
+    // they or its removed text hold at block level.
+    let deleted = |content: &str| {
+        format!(r#"<w:del w:id="2" w:author="A" w:date="{DATE}">{content}</w:del>"#)
+    };
+    let removed = |content: &str| {
+        format!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" w:author="A" w:date="{DATE}"/></w:rPr></w:pPr>{content}</w:p>"#
+        )
+    };
+    let gone = "<w:r><w:delText>gone</w:delText></w:r>";
+    let start =
+        |id: u32| google_control(200 + id, &format!(r#"<w:commentRangeStart w:id="{id}"/>"#));
+    let (before, after) = (plain("Before."), plain("After."));
+    // After., where the comments 0 and 1 end.
+    let after_ends = concat!(
+        r#"<w:p><w:r><w:t>After.</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r>"#,
+        r#"<w:commentRangeEnd w:id="1"/><w:r><w:commentReference w:id="1"/></w:r></w:p>"#
+    );
+    let wrapped = google_control(101, &deleted(gone));
+    let rows = [
+        (
+            "the body's last paragraph",
+            format!("{before}{}", removed(&deleted(gone))),
+            "Before.\n\n",
+        ),
+        (
+            "the last paragraph of a block control ending the body",
+            format!(
+                "{before}{}",
+                google_control(
+                    100,
+                    &format!("{}{}", plain("Kept."), removed(&deleted(gone)))
+                )
+            ),
+            "Before.\nKept.\n\n",
+        ),
+        (
+            "a block control's only paragraph, its text in an inline control",
+            format!("{before}{}{after}", google_control(100, &removed(&wrapped))),
+            "Before.\nAfter.\n",
+        ),
+        (
+            "inline controls outside and inside the deletion",
+            format!(
+                "{before}{}{after}",
+                google_control(
+                    100,
+                    &removed(&google_control(101, &deleted(&google_control(102, gone))))
+                )
+            ),
+            "Before.\nAfter.\n",
+        ),
+        (
+            "comment starts in inline controls, outside and inside the deletion",
+            format!(
+                "{before}{}{after_ends}",
+                google_control(
+                    100,
+                    &removed(&format!(
+                        "{}{}",
+                        start(0),
+                        google_control(101, &deleted(&format!("{}{gone}", start(1))))
+                    )),
+                )
+            ),
+            "Before.\nAfter.\n",
+        ),
+        (
+            "a block control ending the body",
+            format!("{before}{}", google_control(100, &removed(&wrapped))),
+            "Before.\n",
+        ),
+        (
+            "a paragraph before a table",
+            format!(
+                "{before}{}{}{after_ends}",
+                removed(&format!("{}{}{wrapped}", start(0), start(1))),
+                one_cell_table(&plain("Cell.")),
+            ),
+            "Before.\nCell.\t\nAfter.\n",
+        ),
+    ];
+    for (name, body, text) in rows {
+        let inserted = body
+            .replace("w:delText", "w:t")
+            .replace("<w:del ", "<w:ins ")
+            .replace("</w:del>", "</w:ins>");
+        for (body, resolve) in [
+            (body, Document::accept_all as fn(&mut Document) -> _),
+            (inserted, Document::reject_all),
+        ] {
+            let comments = if body.contains("commentReference") {
+                2
+            } else {
+                0
+            };
+            let mut base = doc_with(&["x"]);
+            for _ in 0..comments {
+                base.add_comment_on_text("x", "A", "Note", Default::default())
+                    .unwrap();
+            }
+            let mut doc =
+                Document::from_bytes(&with_body(base.to_bytes().unwrap(), &body)).unwrap();
+            resolve(&mut doc).unwrap_or_else(|error| panic!("{name}: {error}"));
+            let doc = reopen(&mut doc);
+            assert_eq!(doc.text(), text, "{name}");
+            assert_eq!(
+                (doc.revisions().len(), doc.comments().len()),
+                (0, comments),
+                "{name}"
+            );
+            assert_eq!(validation_errors(&doc), Vec::<String>::new(), "{name}");
+        }
+    }
 }
 
 /// Two numbered items and a third in a table cell, saved with each one's

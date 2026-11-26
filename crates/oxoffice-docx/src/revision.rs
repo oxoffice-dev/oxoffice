@@ -2742,18 +2742,7 @@ impl<'a> XmlTree<'a> {
             )
         } else {
             self.validate_selected_descendants(index, state)?;
-            // A comment goes whole when this resolution removes its
-            // reference and all of its range, whichever wrappers hold them.
-            let mut ids = HashSet::new();
-            let mut pending = self.elements[index].children.clone();
-            while let Some(descendant) = pending.pop() {
-                let node = &self.elements[descendant];
-                if node.word && is_comment_marker(&node.local) {
-                    ids.extend(self.element_id(descendant));
-                }
-                pending.extend(node.children.iter().copied());
-            }
-            ids.retain(|id| self.comment_goes_whole(id, state));
+            let whole = self.comments_going_whole(index, state);
             let mut kept = Vec::new();
             for &child in &self.elements[index].children {
                 let node = &self.elements[child];
@@ -2764,30 +2753,55 @@ impl<'a> XmlTree<'a> {
                 {
                     kept.extend(self.render_with_namespaces(child, state, false, destination)?);
                 } else {
-                    self.keep_surviving_comment_marks(child, &ids, state, destination, &mut kept)?;
+                    let mut marks = Vec::new();
+                    self.surviving_comment_marks(child, &whole, &mut marks);
+                    for mark in marks {
+                        kept.extend(self.render_with_namespaces(
+                            mark,
+                            state,
+                            false,
+                            destination,
+                        )?);
+                    }
                 }
             }
             Ok(kept)
         }
     }
 
-    /// Keep, from content the resolution removes, the comment range markers
-    /// and reference runs of the comments that do not go whole: they stay at
-    /// the place the text collapses to, as Word keeps a comment on a tracked
-    /// change it accepts or rejects, and as LibreOffice writes the end and
-    /// mark of a comment inside a deletion. Wrappers in the removed content
-    /// are searched too.
-    fn keep_surviving_comment_marks(
+    /// The comments that go whole with the revision wrapper at `index`,
+    /// whose content this resolution removes: a comment goes whole when the
+    /// resolution removes its reference and all of its range, whichever
+    /// wrappers hold them.
+    fn comments_going_whole(&self, index: usize, state: &RenderState<'_>) -> HashSet<String> {
+        let mut ids = HashSet::new();
+        let mut pending = self.elements[index].children.clone();
+        while let Some(descendant) = pending.pop() {
+            let node = &self.elements[descendant];
+            if node.word && is_comment_marker(&node.local) {
+                ids.extend(self.element_id(descendant));
+            }
+            pending.extend(node.children.iter().copied());
+        }
+        ids.retain(|id| self.comment_goes_whole(id, state));
+        ids
+    }
+
+    /// The comment range markers and reference runs that content the
+    /// resolution removes keeps, in order: those of the comments that do not
+    /// go whole (`whole`). They stay at the place the text collapses to, as
+    /// Word keeps a comment on a tracked change it accepts or rejects, and as
+    /// LibreOffice writes the end and mark of a comment inside a deletion.
+    /// Wrappers in the removed content are searched too.
+    fn surviving_comment_marks(
         &self,
         index: usize,
         whole: &HashSet<String>,
-        state: &mut RenderState<'_>,
-        destination: &[(String, String)],
-        kept: &mut Vec<u8>,
-    ) -> Result<()> {
+        kept: &mut Vec<usize>,
+    ) {
         let node = &self.elements[index];
         if !node.word {
-            return Ok(());
+            return;
         }
         let survives = |id: Option<String>| id.is_none_or(|id| !whole.contains(&id));
         let marker = matches!(node.local.as_str(), "commentRangeStart" | "commentRangeEnd")
@@ -2808,16 +2822,15 @@ impl<'a> XmlTree<'a> {
                         || survives(self.element_id(child))
                 })
         {
-            kept.extend(self.render_with_namespaces(index, state, false, destination)?);
+            kept.push(index);
         } else if matches!(
             node.local.as_str(),
             "del" | "ins" | "moveFrom" | "moveTo" | "smartTag" | "customXml" | "sdt" | "sdtContent"
         ) {
             for &child in &node.children {
-                self.keep_surviving_comment_marks(child, whole, state, destination, kept)?;
+                self.surviving_comment_marks(child, whole, kept);
             }
         }
-        Ok(())
     }
 
     /// Whether this resolution removes the reference and every range marker
@@ -3058,8 +3071,18 @@ impl<'a> XmlTree<'a> {
                             state.absorbed.insert(after);
                             break;
                         }
+                        // The last mark of a story has nothing after it to
+                        // merge with, and Word cannot remove it: it stays,
+                        // untracked, and the chain merges into its
+                        // paragraph, whose removed content goes. Google Docs
+                        // writes a deleted last paragraph this way.
+                        if self.ends_story(index) {
+                            break;
+                        }
                         return Err(Error::Other(
-                            "cannot remove the final paragraph mark".to_owned(),
+                            "cannot remove the last paragraph mark of a block content control: only a \
+                             paragraph right after the control whose mark stays can take the merge"
+                                .to_owned(),
                         ));
                     }
                     let next = element.children[next_index];
@@ -3138,6 +3161,14 @@ impl<'a> XmlTree<'a> {
                         "comparison leaf transport does not admit a crossed table".into(),
                     ));
                 }
+                // Paragraphs that go and merge into nothing leave their range
+                // markers where they were: the starts before what the chain
+                // crossed, the ends after it.
+                if before_table {
+                    let (starts, ends) = self.render_removed_paragraphs(&paragraphs, state)?;
+                    output.extend_from_slice(&starts);
+                    crossed_ends.extend_from_slice(&ends);
+                }
                 for pair in siblings.windows(2) {
                     output.extend_from_slice(
                         &self.source[self.elements[pair[0]].end..self.elements[pair[1]].start],
@@ -3162,9 +3193,7 @@ impl<'a> XmlTree<'a> {
                         output.extend_from_slice(&self.render(pair[1], state, false)?);
                     }
                 }
-                if before_table {
-                    self.validate_removed_paragraphs(&paragraphs, state)?;
-                } else {
+                if !before_table {
                     let leaf_mark = state.leaf_updates.len();
                     let merged =
                         self.render_merged_paragraphs(&paragraphs, &joins, state, destination)?;
@@ -3526,6 +3555,30 @@ impl<'a> XmlTree<'a> {
         (self.elements[next].local == "p").then_some(next)
     }
 
+    /// Whether nothing comes after the owners of `container` in its story:
+    /// it is the story itself (the body, a cell, a header, a note, a
+    /// comment, a text box), or the content of a block content control
+    /// that no owner follows, in a container that ends its story too.
+    fn ends_story(&self, container: usize) -> bool {
+        let element = &self.elements[container];
+        if !(element.word && element.local == "sdtContent") {
+            return true;
+        }
+        let Some(control) = element.parent else {
+            return true;
+        };
+        let Some(parent) = self.elements[control].parent else {
+            return true;
+        };
+        let siblings = &self.elements[parent].children;
+        siblings
+            .iter()
+            .skip_while(|child| **child != control)
+            .skip(1)
+            .all(|child| !self.story_owner(*child))
+            && self.ends_story(parent)
+    }
+
     /// The paragraphs, tables and block controls a block content control
     /// holds, in order. `None` for any other element, and for a control
     /// that holds runs, rows, cells or markup between its owners other than
@@ -3656,12 +3709,9 @@ impl<'a> XmlTree<'a> {
     }
 
     /// Resolve a block content control that goes whole, into the range
-    /// markers it leaves at block level where it was. Nothing of its
-    /// paragraphs but proofing marks and range markers may remain. A
-    /// bookmark whose both ends it holds goes with it, as Word drops a
-    /// bookmark whose whole range is deleted; every other marker stays, so
-    /// that a bookmark, comment or permission range that only starts or ends
-    /// in it keeps both ends.
+    /// markers it leaves at block level where it was (see
+    /// `render_left_markers`). Its paragraphs go whole (see
+    /// `collect_removed_paragraph_markers`).
     fn render_removed_control(&self, index: usize, state: &mut RenderState<'_>) -> Result<Vec<u8>> {
         let (mut markers, ends) = self.render_control_markers(index, None, state)?;
         markers.extend_from_slice(&ends);
@@ -3680,6 +3730,20 @@ impl<'a> XmlTree<'a> {
     ) -> Result<(Vec<u8>, Vec<u8>)> {
         let mut markers = Vec::new();
         self.collect_removed_control_markers(index, merged, state, &mut markers)?;
+        self.render_left_markers(markers, state)
+    }
+
+    /// Render the range markers that content removed whole leaves, split
+    /// into starts and ends. A bookmark whose both ends it holds goes with
+    /// it, as Word drops a bookmark whose whole range is deleted (a
+    /// heading's `_Toc` bookmark, `_GoBack`); every other marker stays, so
+    /// that a bookmark, comment or permission range that only starts or
+    /// ends in it keeps both ends.
+    fn render_left_markers(
+        &self,
+        markers: Vec<usize>,
+        state: &mut RenderState<'_>,
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
         let bookmark_ids = |local: &str| -> HashSet<String> {
             markers
                 .iter()
@@ -3712,8 +3776,8 @@ impl<'a> XmlTree<'a> {
     }
 
     /// The range markers of a block content control that goes whole, in
-    /// order, after checking that nothing else of its paragraphs but proofing
-    /// marks remains.
+    /// order, its paragraphs going whole (see
+    /// `collect_removed_paragraph_markers`).
     fn collect_removed_control_markers(
         &self,
         index: usize,
@@ -3737,31 +3801,7 @@ impl<'a> XmlTree<'a> {
             }
             match element.local.as_str() {
                 "p" if element.word => {
-                    let mut cursor = element.open_end;
-                    for &grandchild in &element.children {
-                        let inner = &self.elements[grandchild];
-                        if !self.source[cursor..inner.start]
-                            .iter()
-                            .all(u8::is_ascii_whitespace)
-                        {
-                            return Err(refusal());
-                        }
-                        cursor = inner.end;
-                        if inner.word && inner.local == "pPr" {
-                            self.validate_selected_descendants(grandchild, state)?;
-                        } else if inner.word && range_marker(&inner.local) {
-                            markers.push(grandchild);
-                        } else if !self.render(grandchild, state, false)?.is_empty()
-                            && !(inner.word && inner.local == "proofErr")
-                        {
-                            return Err(refusal());
-                        }
-                    }
-                    if !element.empty
-                        && !self.source[cursor..element.close_start]
-                            .iter()
-                            .all(u8::is_ascii_whitespace)
-                    {
+                    if !self.collect_removed_paragraph_markers(child, state, markers)? {
                         return Err(refusal());
                     }
                 }
@@ -3776,6 +3816,93 @@ impl<'a> XmlTree<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Resolve a paragraph the resolution removes whole, mark and content,
+    /// into the range markers it leaves, in order: false when anything else
+    /// of it would stay but its properties and proofing marks. An inline
+    /// content control, hyperlink, smart tag or custom XML element left with
+    /// nothing inside (see `inline_content_removes`) goes with it, as Google
+    /// Docs wraps the runs of a suggestion and the start of a comment in
+    /// inline controls; so do the comment range markers that content it
+    /// removes keeps (see `surviving_comment_marks`).
+    fn collect_removed_paragraph_markers(
+        &self,
+        index: usize,
+        state: &mut RenderState<'_>,
+        markers: &mut Vec<usize>,
+    ) -> Result<bool> {
+        let element = &self.elements[index];
+        let mut cursor = element.open_end;
+        for &child in &element.children {
+            let inner = &self.elements[child];
+            if !self.source[cursor..inner.start]
+                .iter()
+                .all(u8::is_ascii_whitespace)
+            {
+                return Ok(false);
+            }
+            cursor = inner.end;
+            let removed_revision = self.semantic_element(child)
+                && inner.revision.as_ref().is_some_and(|metadata| {
+                    state.scope.matches(metadata)
+                        && removes_content(state.resolution, metadata.kind)
+                });
+            if inner.word && inner.local == "proofErr" {
+                continue;
+            }
+            if inner.word
+                && matches!(
+                    inner.local.as_str(),
+                    "pPr" | "sdtPr" | "sdtEndPr" | "smartTagPr" | "customXmlPr"
+                )
+            {
+                self.validate_selected_descendants(child, state)?;
+            } else if inner.word && range_marker(&inner.local) {
+                markers.push(child);
+            } else if removed_revision {
+                if self.render(child, state, false)?.is_empty() {
+                    continue;
+                }
+                // Only comment range markers may stay of it: a reference
+                // run or a custody pair needs a paragraph.
+                if state
+                    .custody_pairs
+                    .iter()
+                    .any(|pair| pair.start < inner.end && inner.start < pair.end)
+                {
+                    return Ok(false);
+                }
+                let whole = self.comments_going_whole(child, state);
+                let mut marks = Vec::new();
+                for &descendant in &inner.children {
+                    self.surviving_comment_marks(descendant, &whole, &mut marks);
+                }
+                if !marks
+                    .iter()
+                    .all(|mark| range_marker(&self.elements[*mark].local))
+                {
+                    return Ok(false);
+                }
+                markers.extend(marks);
+            } else if inner.word
+                && matches!(
+                    inner.local.as_str(),
+                    "sdt" | "sdtContent" | "hyperlink" | "smartTag" | "customXml"
+                )
+                && self.inline_content_removes(child, state)
+            {
+                if !self.collect_removed_paragraph_markers(child, state, markers)? {
+                    return Ok(false);
+                }
+            } else if !self.render(child, state, false)?.is_empty() {
+                return Ok(false);
+            }
+        }
+        Ok(element.empty
+            || self.source[cursor..element.close_start]
+                .iter()
+                .all(u8::is_ascii_whitespace))
     }
 
     /// Whether the resolution removes every child of a hyperlink, each a
@@ -3998,52 +4125,25 @@ impl<'a> XmlTree<'a> {
 
     /// Resolve paragraphs whose marks are removed next to a table or block
     /// content control that stays, before it or ending the body after it,
-    /// ending the body after one that goes, or inside a control that goes
-    /// whole, and which go. Nothing of them but proofing marks may remain.
-    fn validate_removed_paragraphs(
+    /// or ending the body after one that goes, and which go, into the range
+    /// markers they leave at block level where they were (see
+    /// `collect_removed_paragraph_markers`): the starts, then the ends.
+    fn render_removed_paragraphs(
         &self,
         paragraphs: &[usize],
         state: &mut RenderState<'_>,
-    ) -> Result<()> {
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        let mut markers = Vec::new();
         for paragraph in paragraphs {
-            let owner = &self.elements[*paragraph];
-            let mut cursor = owner.open_end;
-            for child in &owner.children {
-                let element = &self.elements[*child];
-                if !self.source[cursor..element.start]
-                    .iter()
-                    .all(u8::is_ascii_whitespace)
-                {
-                    return Err(Error::Other(
-                        "paragraph mark removal next to a table or block content control requires a paragraph with no content left".to_owned(),
-                    ));
-                }
-                cursor = element.end;
-            }
-            if !self.source[cursor..owner.close_start]
-                .iter()
-                .all(u8::is_ascii_whitespace)
-            {
+            if !self.collect_removed_paragraph_markers(*paragraph, state, &mut markers)? {
                 return Err(Error::Other(
-                    "paragraph mark removal next to a table or block content control requires a paragraph with no content left".to_owned(),
+                    "paragraph mark removal next to a table or block content control requires a paragraph with no \
+                     content left"
+                        .to_owned(),
                 ));
             }
-            for child in &owner.children {
-                let child_element = &self.elements[*child];
-                if child_element.word && child_element.local == "pPr" {
-                    self.validate_selected_descendants(*child, state)?;
-                } else if !self.render(*child, state, false)?.is_empty()
-                    && !(child_element.word && child_element.local == "proofErr")
-                {
-                    return Err(Error::Other(
-                        "paragraph mark removal next to a table or block content control requires a paragraph with no \
-                         content left"
-                            .to_owned(),
-                    ));
-                }
-            }
         }
-        Ok(())
+        self.render_left_markers(markers, state)
     }
 
     fn render_merged_paragraphs(
