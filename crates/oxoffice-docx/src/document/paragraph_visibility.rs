@@ -17,19 +17,18 @@ fn paragraph_visibility_owners(
     document: &Document,
     scope: ParagraphVisibilityScope,
 ) -> ParagraphVisibilityOwners<'_> {
+    // The body's block controls: tables stay opaque in them, as in the body,
+    // so no row or cell is entered.
     fn control<'a>(
         sdt: &'a CT_Sdt,
-        owner: &'static [u8],
         path: &[(&'static [u8], usize)],
         out: &mut ParagraphVisibilityOwners<'a>,
     ) {
         let mut slot = 0;
         for child in &sdt.content {
             let name: &'static [u8] = match child {
-                SdtContent::Paragraph(_) if matches!(owner, b"body" | b"tc") => b"p",
-                SdtContent::Table(_) if matches!(owner, b"body" | b"tc") => b"tbl",
-                SdtContent::Row(_) if owner == b"tbl" => b"tr",
-                SdtContent::Cell(_) if owner == b"tr" => b"tc",
+                SdtContent::Paragraph(_) => b"p",
+                SdtContent::Table(_) => b"tbl",
                 SdtContent::ContentControl(_) => b"sdt",
                 _ => continue,
             };
@@ -38,54 +37,8 @@ fn paragraph_visibility_owners(
             slot += 1;
             match child {
                 SdtContent::Paragraph(p) => out.push((next, p)),
-                // A table written in the control stays opaque, as a direct
-                // table does: its cells are no paragraphs of the story.
-                SdtContent::Table(_) => {}
-                SdtContent::Row(r) => row(r, &next, out),
-                SdtContent::Cell(c) => cell(c, &next, out),
-                SdtContent::ContentControl(c) => control(c, owner, &next, out),
+                SdtContent::ContentControl(c) => control(c, &next, out),
                 _ => {}
-            }
-        }
-    }
-    fn row<'a>(
-        r: &'a CT_Row,
-        path: &[(&'static [u8], usize)],
-        out: &mut ParagraphVisibilityOwners<'a>,
-    ) {
-        let mut slot = 0;
-        for index in 0..=r.cells.len() {
-            for (_, _, c) in r.content_controls.iter().filter(|(at, _, _)| *at == index) {
-                let mut next = path.to_vec();
-                next.push((b"sdt", slot));
-                slot += 1;
-                control(c, b"tr", &next, out);
-            }
-            if let Some(c) = r.cells.get(index) {
-                let mut next = path.to_vec();
-                next.push((b"tc", slot));
-                slot += 1;
-                cell(c, &next, out);
-            }
-        }
-    }
-    fn cell<'a>(
-        c: &'a CT_Tc,
-        path: &[(&'static [u8], usize)],
-        out: &mut ParagraphVisibilityOwners<'a>,
-    ) {
-        for (slot, child) in c.content.iter().enumerate() {
-            let name: &'static [u8] = match child {
-                CellContent::Paragraph(_) => b"p",
-                CellContent::Table(_) => b"tbl",
-                CellContent::ContentControl(_) => b"sdt",
-            };
-            let mut next = path.to_vec();
-            next.push((name, slot));
-            match child {
-                CellContent::Paragraph(p) => out.push((next, p)),
-                CellContent::ContentControl(c) => control(c, b"tc", &next, out),
-                CellContent::Table(_) => {}
             }
         }
     }
@@ -105,7 +58,7 @@ fn paragraph_visibility_owners(
             BodyContent::ContentControl(c)
                 if scope == ParagraphVisibilityScope::FacadeRecursive =>
             {
-                control(c, b"body", &path, &mut out)
+                control(c, &path, &mut out)
             }
             _ => {}
         }
@@ -318,8 +271,6 @@ pub(super) fn paragraph_visibility_from_main_source(
                         b"sdtContent" => first_content,
                         // A table, in a control too, stays opaque.
                         b"tbl" => false,
-                        b"tr" => admitted_parent && container == Some(b"tbl"),
-                        b"tc" => admitted_parent && container == Some(b"tr"),
                         b"p" if admitted_parent && matches!(container, Some(b"body" | b"tc")) => {
                             visible.push(false);
                             paragraph = true;
@@ -344,10 +295,6 @@ pub(super) fn paragraph_visibility_from_main_source(
                         {
                             Some(b"tbl")
                         }
-                        b"tr" if word && admitted_parent && container == Some(b"tbl") => {
-                            Some(b"tr")
-                        }
-                        b"tc" if word && admitted_parent && container == Some(b"tr") => Some(b"tc"),
                         _ => None,
                     }
                 } else {
