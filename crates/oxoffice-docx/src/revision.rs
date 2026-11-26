@@ -2742,7 +2742,7 @@ impl<'a> XmlTree<'a> {
             )
         } else {
             self.validate_selected_descendants(index, state)?;
-            let whole = self.comments_going_whole(index, state);
+            let whole = self.comments_going_whole(index, state, &[]);
             let mut kept = Vec::new();
             for &child in &self.elements[index].children {
                 let node = &self.elements[child];
@@ -2770,10 +2770,13 @@ impl<'a> XmlTree<'a> {
     }
 
     /// The comments that go whole with the revision wrapper at `index`,
-    /// whose content this resolution removes: a comment goes whole when the
-    /// resolution removes its reference and all of its range, whichever
-    /// wrappers hold them.
-    fn comments_going_whole(&self, index: usize, state: &RenderState<'_>) -> HashSet<String> {
+    /// whose content this resolution removes (see `comment_goes_whole`).
+    fn comments_going_whole(
+        &self,
+        index: usize,
+        state: &RenderState<'_>,
+        group: &[Range<usize>],
+    ) -> HashSet<String> {
         let mut ids = HashSet::new();
         let mut pending = self.elements[index].children.clone();
         while let Some(descendant) = pending.pop() {
@@ -2783,7 +2786,7 @@ impl<'a> XmlTree<'a> {
             }
             pending.extend(node.children.iter().copied());
         }
-        ids.retain(|id| self.comment_goes_whole(id, state));
+        ids.retain(|id| self.comment_goes_whole(id, state, group));
         ids
     }
 
@@ -2825,7 +2828,15 @@ impl<'a> XmlTree<'a> {
             kept.push(index);
         } else if matches!(
             node.local.as_str(),
-            "del" | "ins" | "moveFrom" | "moveTo" | "smartTag" | "customXml" | "sdt" | "sdtContent"
+            "del"
+                | "ins"
+                | "moveFrom"
+                | "moveTo"
+                | "smartTag"
+                | "customXml"
+                | "sdt"
+                | "sdtContent"
+                | "hyperlink"
         ) {
             for &child in &node.children {
                 self.surviving_comment_marks(child, whole, kept);
@@ -2834,8 +2845,16 @@ impl<'a> XmlTree<'a> {
     }
 
     /// Whether this resolution removes the reference and every range marker
-    /// of comment `id`.
-    fn comment_goes_whole(&self, id: &str, state: &RenderState<'_>) -> bool {
+    /// of comment `id`, whichever wrappers hold them: each lies in a revision
+    /// wrapper whose content it removes, or in content it removes whole,
+    /// `group` (the source spans of the paragraphs and tables that go whole
+    /// with a block content control or before a table).
+    fn comment_goes_whole(
+        &self,
+        id: &str,
+        state: &RenderState<'_>,
+        group: &[Range<usize>],
+    ) -> bool {
         let mut referenced = false;
         for (index, node) in self.elements.iter().enumerate() {
             if !(node.word && is_comment_marker(&node.local))
@@ -2843,7 +2862,11 @@ impl<'a> XmlTree<'a> {
             {
                 continue;
             }
-            if !self.removed_by_resolution(index, state) {
+            if !self.removed_by_resolution(index, state)
+                && !group
+                    .iter()
+                    .any(|span| span.start <= node.start && node.end <= span.end)
+            {
                 return false;
             }
             referenced |= node.local == "commentReference";
@@ -3728,9 +3751,36 @@ impl<'a> XmlTree<'a> {
         merged: Option<usize>,
         state: &mut RenderState<'_>,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
+        // The owners that go whole with the control, nested controls whole.
+        let group = self.elements[index]
+            .children
+            .iter()
+            .filter(|child| {
+                self.elements[**child].word && self.elements[**child].local == "sdtContent"
+            })
+            .flat_map(|content| &self.elements[*content].children)
+            .filter(|owner| self.story_owner(**owner) && Some(**owner) != merged)
+            .map(|owner| self.elements[*owner].start..self.elements[*owner].end)
+            .collect::<Vec<_>>();
         let mut markers = Vec::new();
-        self.collect_removed_control_markers(index, merged, state, &mut markers)?;
+        self.collect_removed_control_markers(index, merged, state, &group, &mut markers)?;
         self.render_left_markers(markers, state)
+    }
+
+    /// Whether the element at `index` is a comment range marker whose
+    /// comment goes whole with `group` (see `comment_goes_whole`).
+    fn comment_marker_goes(
+        &self,
+        index: usize,
+        state: &RenderState<'_>,
+        group: &[Range<usize>],
+    ) -> bool {
+        matches!(
+            self.elements[index].local.as_str(),
+            "commentRangeStart" | "commentRangeEnd"
+        ) && self
+            .element_id(index)
+            .is_some_and(|id| self.comment_goes_whole(&id, state, group))
     }
 
     /// Render the range markers that content removed whole leaves, split
@@ -3776,13 +3826,14 @@ impl<'a> XmlTree<'a> {
     }
 
     /// The range markers of a block content control that goes whole, in
-    /// order, its paragraphs going whole (see
+    /// order, its paragraphs going whole with the owners in `group` (see
     /// `collect_removed_paragraph_markers`).
     fn collect_removed_control_markers(
         &self,
         index: usize,
         merged: Option<usize>,
         state: &mut RenderState<'_>,
+        group: &[Range<usize>],
         markers: &mut Vec<usize>,
     ) -> Result<()> {
         let refusal = || {
@@ -3801,7 +3852,7 @@ impl<'a> XmlTree<'a> {
             }
             match element.local.as_str() {
                 "p" if element.word => {
-                    if !self.collect_removed_paragraph_markers(child, state, markers)? {
+                    if !self.collect_removed_paragraph_markers(child, state, group, markers)? {
                         return Err(refusal());
                     }
                 }
@@ -3809,9 +3860,15 @@ impl<'a> XmlTree<'a> {
                     self.render(child, state, false)?;
                 }
                 "sdt" if element.word => {
-                    self.collect_removed_control_markers(child, None, state, markers)?
+                    self.collect_removed_control_markers(child, None, state, group, markers)?
                 }
-                local if element.word && range_marker(local) => markers.push(child),
+                local
+                    if element.word
+                        && range_marker(local)
+                        && !self.comment_marker_goes(child, state, group) =>
+                {
+                    markers.push(child)
+                }
                 _ => {}
             }
         }
@@ -3825,11 +3882,14 @@ impl<'a> XmlTree<'a> {
     /// nothing inside (see `inline_content_removes`) goes with it, as Google
     /// Docs wraps the runs of a suggestion and the start of a comment in
     /// inline controls; so do the comment range markers that content it
-    /// removes keeps (see `surviving_comment_marks`).
+    /// removes keeps (see `surviving_comment_marks`). A comment whose every
+    /// marker and reference goes with `group`, the content removed whole with
+    /// this paragraph, or with the revisions removed in it, goes whole.
     fn collect_removed_paragraph_markers(
         &self,
         index: usize,
         state: &mut RenderState<'_>,
+        group: &[Range<usize>],
         markers: &mut Vec<usize>,
     ) -> Result<bool> {
         let element = &self.elements[index];
@@ -3859,7 +3919,9 @@ impl<'a> XmlTree<'a> {
             {
                 self.validate_selected_descendants(child, state)?;
             } else if inner.word && range_marker(&inner.local) {
-                markers.push(child);
+                if !self.comment_marker_goes(child, state, group) {
+                    markers.push(child);
+                }
             } else if removed_revision {
                 if self.render(child, state, false)?.is_empty() {
                     continue;
@@ -3873,7 +3935,7 @@ impl<'a> XmlTree<'a> {
                 {
                     return Ok(false);
                 }
-                let whole = self.comments_going_whole(child, state);
+                let whole = self.comments_going_whole(child, state, group);
                 let mut marks = Vec::new();
                 for &descendant in &inner.children {
                     self.surviving_comment_marks(descendant, &whole, &mut marks);
@@ -3892,7 +3954,7 @@ impl<'a> XmlTree<'a> {
                 )
                 && self.inline_content_removes(child, state)
             {
-                if !self.collect_removed_paragraph_markers(child, state, markers)? {
+                if !self.collect_removed_paragraph_markers(child, state, group, markers)? {
                     return Ok(false);
                 }
             } else if !self.render(child, state, false)?.is_empty() {
@@ -4133,9 +4195,13 @@ impl<'a> XmlTree<'a> {
         paragraphs: &[usize],
         state: &mut RenderState<'_>,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
+        let group = paragraphs
+            .iter()
+            .map(|paragraph| self.elements[*paragraph].start..self.elements[*paragraph].end)
+            .collect::<Vec<_>>();
         let mut markers = Vec::new();
         for paragraph in paragraphs {
-            if !self.collect_removed_paragraph_markers(*paragraph, state, &mut markers)? {
+            if !self.collect_removed_paragraph_markers(*paragraph, state, &group, &mut markers)? {
                 return Err(Error::Other(
                     "paragraph mark removal next to a table or block content control requires a paragraph with no \
                      content left"
