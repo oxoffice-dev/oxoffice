@@ -337,9 +337,11 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
     }
     let other_prefixes =
         |bytes: Vec<u8>| rewrite_package(&bytes, Writing::OtherPrefixes).unwrap().0;
-    let mark = docx_with_body(
-        r#"<w:p><w:pPr><w:rPr><w:rtl w:val="false" w:extra="x"/></w:rPr></w:pPr><w:r><w:t>Quarterly totals.</w:t></w:r></w:p>"#,
-    );
+    let mark = |extra: &str| {
+        docx_with_body(&format!(
+            r#"<w:p><w:pPr><w:rPr><w:rtl w:val="false" w:extra="{extra}"/></w:rPr></w:pPr><w:r><w:t>Quarterly totals.</w:t></w:r></w:p>"#
+        ))
+    };
     for (row, (original, edited, same)) in [
         (
             &original,
@@ -351,7 +353,8 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
             cell(r#"w:val="100000000000" w:firstRow="0""#, "Quarterly"),
             false,
         ),
-        (&mark, mark.clone(), true),
+        (&mark("x"), mark("x"), true),
+        (&mark("x"), mark("y"), false),
     ]
     .into_iter()
     .enumerate()
@@ -359,14 +362,18 @@ fn a_kept_paragraph_property_counts_only_when_what_it_says_changes() {
         let mut doc = open(&other_prefixes(edited)).unwrap();
         assert_eq!(doc.replace_text("Quarterly", "Yearly"), 1);
         let saved = open(&doc.to_bytes().unwrap()).unwrap();
-        let found = open(&other_prefixes(original.clone()))
+        let mut redline = open(&other_prefixes(original.clone())).unwrap();
+        let found = redline.compare(&saved, AUTHOR, DATE).unwrap();
+        // A kept mark property that says the same is no run property change.
+        let tracked = package_parts(&redline.to_bytes().unwrap())
             .unwrap()
-            .compare(&saved, AUTHOR, DATE);
+            .into_iter()
+            .any(|(name, xml)| {
+                name.ends_with("document.xml") && xml.windows(9).any(|w| w == b"rPrChange")
+            });
         assert_eq!(
-            found
-                .map(|found| found.is_empty())
-                .map_err(|error| error.to_string()),
-            Ok(same),
+            found.is_empty() && !tracked,
+            same,
             "other prefixes, row {row}"
         );
     }

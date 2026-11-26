@@ -138,7 +138,13 @@ fn paragraph_properties_xml_impl(
     // own change in a `w:rPrChange`, as Word writes it.
     let (original_base, original_mark) = split_paragraph_mark(original_modeled);
     let (edited_base, edited_mark) = split_paragraph_mark(edited_modeled);
-    if original_mark != edited_mark {
+    let said = |mark: &Option<oxoffice_docx_oxml::properties::CT_RPr>| {
+        mark.clone().map(|mut mark| {
+            mark_as_said(&mut mark);
+            mark
+        })
+    };
+    if said(&original_mark) != said(&edited_mark) {
         let previous = run_property_xml(original_mark.as_ref())?;
         let change =
             metadata
@@ -442,16 +448,21 @@ fn retained_xml_as_said(properties: &mut CT_PPr) {
         canonical(raw, &[]);
     }
     if let Some(mark) = properties.rpr.as_mut() {
-        // The mark's toggle carriers, which a save writes again under the
-        // prefix of its own writing.
-        for raw in &mut mark.revision_xml {
-            if let Some(canonical) = retained_canonical(raw) {
-                *raw = canonical.into_bytes();
-            }
-        }
-        mark.font_extra_attributes.sort();
-        mark.language_extra_attributes.sort();
+        mark_as_said(mark);
     }
+}
+
+/// The paragraph mark's retained XML as what it says: its toggle carriers,
+/// which a save writes again under the prefix of its own writing, in
+/// [`retained_canonical`] form, and its kept attributes in one order.
+fn mark_as_said(mark: &mut oxoffice_docx_oxml::properties::CT_RPr) {
+    for raw in &mut mark.revision_xml {
+        if let Some(canonical) = retained_canonical(raw) {
+            *raw = canonical.into_bytes();
+        }
+    }
+    mark.font_extra_attributes.sort();
+    mark.language_extra_attributes.sort();
 }
 
 pub(super) fn nonempty_paragraph_properties(mut properties: CT_PPr) -> Option<CT_PPr> {
