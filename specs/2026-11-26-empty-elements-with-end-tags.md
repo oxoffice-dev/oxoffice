@@ -1,6 +1,6 @@
 ---
 date: 2026-11-26
-status: draft
+status: accepted
 scope: core, docx, pptx, tests
 ---
 
@@ -250,13 +250,13 @@ One commit per crate for 1 and 2 (mechanical), one per family for 3.
   each, main against the branch: no copy more than 3 % slower by its median,
   the numbers in the pull request. The QUICK scaling set runs as usual.
 
-## Open questions
+## Decided with the maintainer
 
-1. `raw_xml::capture_empty_element` is public in `oxoffice-core`, which is
-   published: removing it breaks that crate's API (at 0.x). Proposed:
-   remove it, the facades being the API and `oxoffice-core` their plumbing;
-   the other way is to deprecate it for one release, at the cost of a
-   function that loses the writing staying callable.
+1. `raw_xml::capture_empty_element`, public in the published `oxoffice-core`,
+   is removed (not deprecated): the facades are the API and `oxoffice-core`
+   their plumbing, the crate is at 0.x, and a deprecated function that loses
+   the writing would stay callable. The pull request that removes it is
+   marked breaking (`!` and a `BREAKING CHANGE:` footer).
 
 ## Links
 
