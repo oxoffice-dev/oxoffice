@@ -1,15 +1,17 @@
 //! The parts of an element read whatever its writing
 //! (`oxoffice_core::xml_element`), the check that no code searches for an
 //! end tag as text instead (`specs/2026-11-25-equivalent-xml-writings.md`),
-//! and the check that no code reads an attribute value from its raw bytes,
-//! its references unresolved, but to write it back as read.
+//! the check that no code takes a tag's close as `/>`
+//! (`specs/2026-11-26-empty-elements-with-end-tags.md`), and the check that
+//! no code reads an attribute value from its raw bytes, its references
+//! unresolved, but to write it back as read.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use oxoffice_core::xml_element::{
     append_content, canonical_fragment, element_span, find_element, rename, replace_content,
-    root_element_span,
+    root_element_span, start_tag,
 };
 
 #[test]
@@ -36,6 +38,38 @@ fn an_element_reads_the_same_parts_whatever_its_writing() {
 }
 
 #[test]
+fn a_start_tag_says_where_its_attributes_end_whatever_its_writing() {
+    for (xml, end, attributes_end, self_closing) in [
+        ("<x/>", 4, 2, true),
+        ("<x />", 5, 3, true),
+        ("<x a='1'\n/>", 11, 9, true),
+        ("<x>", 3, 2, false),
+        (r#"<x a="1" >"#, 10, 9, false),
+        ("<x></x>", 3, 2, false),
+    ] {
+        let tag = start_tag(xml).unwrap();
+        assert_eq!(
+            (
+                tag.name.as_str(),
+                tag.range.clone(),
+                tag.attributes_end,
+                tag.self_closing
+            ),
+            ("x", 0..end, attributes_end, self_closing),
+            "{xml}"
+        );
+        assert_eq!(start_tag(xml.as_bytes()).unwrap(), tag, "{xml}");
+        let marked = start_tag(&format!("\u{feff}{xml}")).unwrap();
+        assert_eq!(
+            (marked.range, marked.attributes_end),
+            (3..end + 3, attributes_end + 3),
+            "{xml}"
+        );
+    }
+    assert!(start_tag(" <x/>").is_err());
+}
+
+#[test]
 fn content_written_into_a_self_closed_element_gets_an_end_tag() {
     assert_eq!(
         replace_content("<w:sdtContent/>", "<w:r/>").unwrap(),
@@ -52,6 +86,11 @@ fn content_written_into_a_self_closed_element_gets_an_end_tag() {
     assert_eq!(
         append_content("<w:pPr/>", "<w:jc/>").unwrap(),
         "<w:pPr><w:jc/></w:pPr>"
+    );
+    // Bytes give bytes back, the start tag kept as written.
+    assert_eq!(
+        replace_content(b"<w:pPr />".as_slice(), "<w:jc/>").unwrap(),
+        (b"<w:pPr ><w:jc/></w:pPr>".to_vec(), 8)
     );
     assert_eq!(
         append_content("<w:pPr><w:b/></w:pPr\n>", "<w:jc/>").unwrap(),
@@ -729,6 +768,429 @@ fn no_code_reads_an_attribute_value_from_its_raw_bytes() {
         refused.is_empty(),
         "read a value with oxoffice_core::xml::attribute_text, or list a value \
          written back as read in RAW_READS:\n{}",
+        refused.join("\n")
+    );
+}
+
+/// `line` without white space but between two words.
+fn compact(line: &str) -> String {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut compact = String::new();
+    let mut spaced = false;
+    for c in line.chars() {
+        if c.is_whitespace() {
+            spaced = true;
+            continue;
+        }
+        if spaced && compact.ends_with(word) && word(c) {
+            compact.push(' ');
+        }
+        spaced = false;
+        compact.push(c);
+    }
+    compact
+}
+
+/// Whether `code`, compacted, ending just before `- 2` or `.saturating_sub(2)`,
+/// ends with a tag's end: a name `after`, `end` or `*_end`, or the reader's
+/// position.
+fn ends_with_a_tag_end(code: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let name = &code[code.trim_end_matches(word).len()..];
+    name == "after"
+        || name == "end"
+        || name.ends_with("_end")
+        || code.ends_with("buffer_position()as usize")
+        || code.ends_with("buffer_position()as usize)")
+}
+
+/// `code` before the path (`a.b.c`) it ends with, not before the `..` of a
+/// range.
+fn before_path(code: &str) -> &str {
+    let mut rest = code;
+    loop {
+        rest = rest.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_');
+        match rest.strip_suffix('.') {
+            Some(shorter) if !shorter.ends_with('.') => rest = shorter,
+            _ => return rest,
+        }
+    }
+}
+
+/// Whether one line of code takes two bytes from a tag's end: `after - 2`,
+/// `buffer_position() as usize - 2`, `end.saturating_sub(2)`,
+/// `truncate(x.len() - 2)`, `[..x.len() - 2]`, `x.len() - 2..`.
+fn takes_two_from_a_tag_end(line: &str) -> bool {
+    let code = compact(line);
+    // `code` before a path (`a.b.c`), not before the `..` of a range.
+    for (at, _) in code.match_indices("-2") {
+        let (before, after) = (&code[..at], &code[at + 2..]);
+        let mut next = after.chars();
+        let number = match next.next() {
+            Some(c) if c.is_ascii_digit() => true,
+            Some('.') => next.next().is_some_and(|c| c.is_ascii_digit()),
+            _ => false,
+        };
+        if number {
+            continue;
+        }
+        if ends_with_a_tag_end(before) {
+            return true;
+        }
+        if let Some(receiver) = before.strip_suffix(".len()") {
+            let outside = before_path(receiver);
+            if after.starts_with("..")
+                || (outside.ends_with("truncate(") && after.starts_with(')'))
+                || (outside.ends_with("[..") && after.starts_with(']'))
+            {
+                return true;
+            }
+        }
+    }
+    ["saturating_sub(2)", "checked_sub(2)", "wrapping_sub(2)"]
+        .iter()
+        .any(|call| {
+            code.match_indices(&format!(".{call}"))
+                .any(|(at, _)| ends_with_a_tag_end(&code[..at]))
+        })
+}
+
+/// Whether one line of code assumes that an empty element's bytes end with
+/// `/>`: a two-character literal `"/>"`, a byte compared with `b'/'` at an
+/// offset, the last `/` taken for the close, a tag's close taken as two
+/// bytes or one, or two bytes taken from a tag's end.
+fn assumes_self_closing(line: &str) -> bool {
+    let line = line.trim_start();
+    if line.starts_with("//") {
+        return false;
+    }
+    let literal = line.match_indices("\"/>\"").any(|(at, _)| {
+        let before = &line[..at];
+        let before = before
+            .strip_suffix("br")
+            .or_else(|| before.strip_suffix('b'))
+            .or_else(|| before.strip_suffix('r'))
+            .unwrap_or(before);
+        before.is_empty()
+            || before.ends_with(|c: char| c.is_whitespace() || "(,=[{&!|:".contains(c))
+    });
+    let code = compact(line);
+    let at_offset = [
+        "-1]==b'/'",
+        "-2]==b'/'",
+        "-1]!=b'/'",
+        "-2]!=b'/'",
+        "==Some(&b'/')",
+        "!=Some(&b'/')",
+    ]
+    .iter()
+    .any(|pattern| code.contains(pattern));
+    // `.rposition(|byte| *byte == b'/')`: the last slash taken for the close.
+    let last_slash = code.contains("rposition(|") && code.contains("==b'/')");
+    let one_or_two = ((code.contains("-if ") || code.contains("_sub(if "))
+        && code.contains("{2}else{1}"))
+        || code.contains("Empty(_)=>2");
+    literal || at_offset || last_slash || one_or_two || takes_two_from_a_tag_end(line)
+}
+
+/// The lines of `source`, but its `#[cfg(test)]` items, that assume an empty
+/// element's bytes end with `/>`.
+fn self_closing_assumptions(source: &str) -> Vec<usize> {
+    without_test_items(source)
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| assumes_self_closing(line))
+        .map(|(index, _)| index + 1)
+        .collect()
+}
+
+/// Files that write `/>` or count a tag's close, by how many lines and why:
+/// `helper`, the one place that knows a tag's close (`xml_element`) and the
+/// verbatim capture (`raw_xml`); `writes`, an element the code builds, not
+/// one it read; `not a document part`, HTML, EPUB, SVG or RTF; `not a tag`,
+/// arithmetic on something else; `verbatim reader`, a crate whose readers
+/// deliver elements as written (packages, spreadsheets, test support);
+/// `to move`, a site this pull request moves onto `xml_element`. Every other
+/// line takes where a tag ends from `oxoffice_core::xml_element`.
+const SELF_CLOSING: [(&str, usize, &str); 70] = [
+    ("crates/oxoffice-chart/src/authoring.rs", 2, "to move"),
+    ("crates/oxoffice-core/src/raw_xml.rs", 1, "helper"),
+    ("crates/oxoffice-core/src/xml_element.rs", 2, "helper"),
+    (
+        "crates/oxoffice-docx-layout/src/engine/cache_accounting.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/content_control.rs",
+        4,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/document/source/fragments.rs",
+        1,
+        "to move",
+    ),
+    ("crates/oxoffice-docx-oxml/src/glossary.rs", 5, "to move"),
+    (
+        "crates/oxoffice-docx-oxml/src/header_footer.rs",
+        1,
+        "to move",
+    ),
+    ("crates/oxoffice-docx-oxml/src/math.rs", 2, "writes"),
+    ("crates/oxoffice-docx-oxml/src/settings.rs", 2, "to move"),
+    (
+        "crates/oxoffice-docx-oxml/src/text/bindings.rs",
+        4,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/bindings.rs",
+        1,
+        "writes",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/field_complex.rs",
+        3,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/field_legacy_form.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/field_rewrite.rs",
+        3,
+        "to move",
+    ),
+    ("crates/oxoffice-docx/src/bibliography.rs", 2, "to move"),
+    (
+        "crates/oxoffice-docx/src/bibliography/paragraph_properties.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/bibliography/source.rs",
+        3,
+        "to move",
+    ),
+    ("crates/oxoffice-docx/src/building_block.rs", 1, "to move"),
+    ("crates/oxoffice-docx/src/comments.rs", 5, "to move"),
+    (
+        "crates/oxoffice-docx/src/comparison/controls.rs",
+        1,
+        "to move",
+    ),
+    ("crates/oxoffice-docx/src/comparison/fields.rs", 1, "writes"),
+    (
+        "crates/oxoffice-docx/src/comparison/leaf_publications.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/comparison/paragraphs.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/comparison/text_boxes.rs",
+        1,
+        "to move",
+    ),
+    ("crates/oxoffice-docx/src/comparison/xml.rs", 1, "to move"),
+    (
+        "crates/oxoffice-docx/src/content_control/data_binding.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/content_control/element_index.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/content_control/namespaces.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/block_locations.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/edited_paragraph.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/fragment_checks.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/namespaces.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_scopes.rs",
+        2,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_source_edits.rs",
+        1,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_text.rs",
+        1,
+        "not a tag",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_text.rs",
+        3,
+        "to move",
+    ),
+    ("crates/oxoffice-docx/src/epub.rs", 2, "not a document part"),
+    (
+        "crates/oxoffice-docx/src/field/bibliography.rs",
+        2,
+        "to move",
+    ),
+    (
+        "crates/oxoffice-docx/src/field/merge_package.rs",
+        2,
+        "to move",
+    ),
+    ("crates/oxoffice-docx/src/field/ref_copy.rs", 1, "to move"),
+    ("crates/oxoffice-docx/src/field/scan.rs", 4, "to move"),
+    (
+        "crates/oxoffice-docx/src/field/story_sources.rs",
+        1,
+        "to move",
+    ),
+    ("crates/oxoffice-docx/src/field/toc.rs", 1, "to move"),
+    ("crates/oxoffice-docx/src/html.rs", 1, "not a document part"),
+    ("crates/oxoffice-docx/src/revision.rs", 3, "to move"),
+    ("crates/oxoffice-docx/src/rtf.rs", 1, "not a document part"),
+    ("crates/oxoffice-docx/src/svg.rs", 2, "not a document part"),
+    ("crates/oxoffice-drawing/src/text/body.rs", 1, "to move"),
+    (
+        "crates/oxoffice-drawing/src/text/paragraph.rs",
+        2,
+        "to move",
+    ),
+    ("crates/oxoffice-media/src/lib.rs", 1, "verbatim reader"),
+    (
+        "crates/oxoffice-opc/src/relationship.rs",
+        5,
+        "verbatim reader",
+    ),
+    ("crates/oxoffice-pptx-oxml/src/comments.rs", 2, "to move"),
+    ("crates/oxoffice-pptx-oxml/src/comments.rs", 2, "writes"),
+    ("crates/oxoffice-pptx-oxml/src/namespace.rs", 3, "to move"),
+    ("crates/oxoffice-pptx-oxml/src/picture.rs", 1, "to move"),
+    ("crates/oxoffice-pptx-oxml/src/picture.rs", 1, "writes"),
+    (
+        "crates/oxoffice-pptx-oxml/src/presentation.rs",
+        2,
+        "to move",
+    ),
+    ("crates/oxoffice-pptx-oxml/src/shape_tree.rs", 1, "to move"),
+    ("crates/oxoffice-pptx-oxml/src/slide_parts.rs", 2, "to move"),
+    ("crates/oxoffice-pptx-oxml/src/timing.rs", 3, "to move"),
+    ("crates/oxoffice-pptx/src/hyperlinks.rs", 2, "to move"),
+    ("crates/oxoffice-pptx/src/import_notes.rs", 3, "to move"),
+    ("crates/oxoffice-pptx/src/import_tables.rs", 4, "to move"),
+    ("crates/oxoffice-pptx/src/masters.rs", 1, "to move"),
+    ("crates/oxoffice-pptx/src/properties.rs", 2, "to move"),
+    ("crates/oxoffice-pptx/src/themes.rs", 3, "to move"),
+    (
+        "crates/oxoffice-render-test/src/xml.rs",
+        1,
+        "verbatim reader",
+    ),
+    ("crates/oxoffice-sml/src/lib.rs", 6, "verbatim reader"),
+    (
+        "crates/oxoffice-xml-test/src/writing.rs",
+        4,
+        "verbatim reader",
+    ),
+];
+
+#[test]
+fn the_check_finds_a_tag_close_taken_as_two_bytes() {
+    let source = concat!(
+        "let a = xml[..after].ends_with(b\"/>\");\n",
+        "let b = xml.get(end - 2) == Some(&b'/');\n",
+        "let c = after - if empty { 2 } else { 1 };\n",
+        "let d = match event { Event::Empty(_) => 2, _ => 1 };\n",
+        "let e = xml[..head_end - 2].to_vec();\n",
+        "let f = (reader.buffer_position() as usize).saturating_sub(2);\n",
+        "opening.truncate(opening.len() - 2);\n",
+        "let g = &raw[..raw.len() - 2];\n",
+        "tag.splice(tag.len() - 2.., *b\">\");\n",
+        "let h = tag[end - 1] == b'/';\n",
+        "let i = format!(r#\"<a:x val=\"{v}\"/>\"#);\n",
+        "let j = stack[stack.len() - 2];\n",
+        "let k = (width - 2.0 * margin).max(0.0);\n",
+        "let l = raw[cursor] == b'/';\n",
+        "#[cfg(test)]\nmod tests { fn t() { xml.ends_with(\"/>\"); } }\n",
+        "// A comment on \"/>\".\n",
+        "let m = if double { 2 } else { 1 };\n",
+        "let n = open_end.checked_sub(if empty { 2 } else { 1 });\n",
+        "let o = tag.iter().rposition(|byte| *byte == b'/');\n",
+        "let p = tag.iter().rposition(|byte| *byte != b'/');\n",
+    );
+    assert_eq!(
+        self_closing_assumptions(source),
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 19, 20]
+    );
+}
+
+// An empty element's bytes end with `/>` only when it is written
+// self-closing: `<w:b></w:b>` says the same, and source surgery that takes
+// two bytes off its end writes `</w: xmlns:...p>` (#664). Where a tag ends,
+// and where its attributes end, comes from `oxoffice_core::xml_element`.
+#[test]
+fn no_code_takes_a_tag_close_as_two_bytes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for entry in fs::read_dir(root.join("crates")).expect("crates/ is readable") {
+        let src = entry.expect("a crate entry is readable").path().join("src");
+        if src.is_dir() {
+            rust_files(&src, &mut files);
+        }
+    }
+    assert!(files.len() > 100, "the walk found {} files", files.len());
+    let mut refused = Vec::new();
+    for path in files {
+        let relative = path
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let source = fs::read_to_string(&path).expect("a source file is UTF-8");
+        let lines = self_closing_assumptions(&source);
+        let allowed: usize = SELF_CLOSING
+            .iter()
+            .filter(|(file, ..)| *file == relative)
+            .map(|(_, count, _)| count)
+            .sum();
+        if lines.len() != allowed {
+            refused.push(format!(
+                "{relative} assumes `/>` on {} lines ({lines:?}), {allowed} allowed",
+                lines.len()
+            ));
+        }
+    }
+    assert!(
+        refused.is_empty(),
+        "take where a tag or its attributes end from oxoffice_core::xml_element, \
+         or list code that writes an element it builds in SELF_CLOSING:\n{}",
         refused.join("\n")
     );
 }
