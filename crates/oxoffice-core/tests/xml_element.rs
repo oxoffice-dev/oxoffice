@@ -912,8 +912,7 @@ fn self_closing_assumptions(source: &str) -> Vec<usize> {
 /// deliver elements as written (packages, spreadsheets, test support);
 /// `to move`, a site this pull request moves onto `xml_element`. Every other
 /// line takes where a tag ends from `oxoffice_core::xml_element`.
-const SELF_CLOSING: [(&str, usize, &str); 61] = [
-    ("crates/oxoffice-chart/src/authoring.rs", 2, "to move"),
+const SELF_CLOSING: [(&str, usize, &str); 60] = [
     ("crates/oxoffice-core/src/raw_xml.rs", 1, "helper"),
     ("crates/oxoffice-core/src/xml_element.rs", 2, "helper"),
     (

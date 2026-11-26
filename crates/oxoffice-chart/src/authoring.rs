@@ -1379,13 +1379,9 @@ fn insert_chart_child(
     let mut reader = Reader::from_reader(&xml[node.start..node.end]);
     let event = reader.read_event().map_err(OxmlError::from)?;
     let mut result = xml.to_vec();
-    if let Event::Empty(element) = event {
-        let end = node.start + reader.buffer_position() as usize;
-        let name = element_name(&element);
-        let mut replacement = xml[node.start..end - 2].to_vec();
-        replacement.push(b'>');
-        replacement.extend_from_slice(bytes);
-        replacement.extend_from_slice(format!("</{name}>").as_bytes());
+    if let Event::Empty(_) = event {
+        let (replacement, _) =
+            oxoffice_core::xml_element::replace_content(&xml[node.start..node.end], bytes)?;
         result.splice(node.start..node.end, replacement);
     } else {
         result.splice(position..position, bytes.iter().copied());
@@ -1454,13 +1450,14 @@ pub fn set_chart_legend(
             let event = reader.read_event().map_err(OxmlError::from)?;
             let end = node.start + reader.buffer_position() as usize;
             let mut writer = Writer::new(Vec::new());
+            let empty = matches!(event, Event::Empty(_));
             match event {
                 Event::Start(element) | Event::Empty(element) => {
                     let mut start = BytesStart::new(element_name(&element));
                     push_attributes(&mut start, &capture_attributes_except(&element, b"val")?);
                     start.push_attribute(("val", value.as_str()));
                     writer
-                        .write_event(if result[end - 2..end] == *b"/>" {
+                        .write_event(if empty {
                             Event::Empty(start)
                         } else {
                             Event::Start(start)
