@@ -2705,6 +2705,8 @@ impl PyCell {
     fn text(&self, py: Python<'_>) -> PyResult<String> {
         self.read(py, |cell| cell.text())
     }
+    /// The tables of the cell, those written in its block content controls
+    /// too.
     #[getter]
     fn tables<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let (table, row, cell) = self.validate(py)?;

@@ -992,9 +992,9 @@ fn a_table_of_authorities_in_a_block_control_keeps_its_categories_in_order() {
 #[test]
 fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
     // Paragraph [c, 0] and table [c, 0] are both there: a reader counting
-    // the wrong kind edits "Under".
-    let body = format!(
-        "{}{}",
+    // the wrong kind edits "Under". A direct table follows.
+    let fixture = format!(
+        "{}{}{}",
         p("Before"),
         sdt(
             "box",
@@ -1006,10 +1006,11 @@ fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
                 p("Boxed"),
                 p("Two")
             )
-        )
+        ),
+        table(&p("Direct"))
     );
     type Edit = fn(&mut Document, &ContentLocation) -> oxoffice_docx::Result<()>;
-    let cases: [(&str, Edit, &str); 10] = [
+    let cases: [(&str, Edit, &str); 13] = [
         (
             "read",
             |doc, at| {
@@ -1096,9 +1097,72 @@ fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
             },
             "</w:sdtContent></w:sdt><w:sdt",
         ),
+        (
+            "cell control clone into a row, [c, k, r]",
+            |doc, _| {
+                let row = |doc: &Document| {
+                    let table = location(doc, "t:box/0");
+                    ContentLocation::new(
+                        body(doc),
+                        StoryItemKind::Table,
+                        [table.index_path(), &[0]].concat(),
+                    )
+                };
+                doc.insert_content_control(&row(doc), control_spec(ContentControlPlacement::Cell))?;
+                let source = location(doc, "c:placed");
+                doc.clone_content_control(&source, &row(doc))
+            },
+            "</w:sdtContent></w:sdt><w:sdt",
+        ),
+        (
+            "row control moved in from a direct table",
+            |doc, _| {
+                let direct = doc
+                    .story_tables(&body(doc))?
+                    .last()
+                    .cloned()
+                    .expect("a table");
+                doc.insert_content_control(&direct, control_spec(ContentControlPlacement::Row))?;
+                let source = location(doc, "c:placed");
+                doc.move_content_control(&source, &location(doc, "t:box/0"))
+            },
+            "<w:tag w:val=\"placed\"/>",
+        ),
+        (
+            "cell control cloned to a direct table's row, [t, r]",
+            |doc, at| {
+                let row = ContentLocation::new(
+                    body(doc),
+                    StoryItemKind::Table,
+                    [at.index_path(), &[0]].concat(),
+                );
+                doc.insert_content_control(&row, control_spec(ContentControlPlacement::Cell))?;
+                let source = location(doc, "c:placed");
+                let direct = doc
+                    .story_tables(&body(doc))?
+                    .last()
+                    .cloned()
+                    .expect("a table");
+                let row = ContentLocation::new(
+                    body(doc),
+                    StoryItemKind::Table,
+                    [direct.index_path(), &[0]].concat(),
+                );
+                doc.clone_content_control(&source, &row)?;
+                let direct = doc
+                    .story_tables(&body(doc))?
+                    .last()
+                    .cloned()
+                    .expect("a table");
+                let xml = String::from_utf8(doc.table_element_xml(&direct)?).unwrap();
+                assert!(xml.contains("<w:tag w:val=\"placed\"/>"), "{xml}");
+                Ok(())
+            },
+            "<w:tag w:val=\"placed\"/>",
+        ),
     ];
     for (name, edit, expected) in cases {
-        let mut doc = doc_with_body(&body);
+        let mut doc = doc_with_body(&fixture);
         let at = location(&doc, "t:box/0");
         edit(&mut doc, &at).unwrap_or_else(|error| panic!("{name}: {error}"));
         let doc = reopen(&mut doc);
@@ -1108,7 +1172,7 @@ fn a_table_of_a_block_control_is_read_and_edited_by_its_location() {
         assert_eq!(body_texts(&doc)[1], "Under", "{name}");
     }
     // A row is its table's location and the row index.
-    let mut doc = doc_with_body(&body);
+    let mut doc = doc_with_body(&fixture);
     let error = refusal(doc.insert_content_control(
         &location(&doc, "t:box/0"),
         control_spec(ContentControlPlacement::Cell),
