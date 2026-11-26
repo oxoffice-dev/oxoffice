@@ -22,8 +22,9 @@ for the tests that read real documents (round trips, edits, performance). See
   (headings, lists, links to headings, chips, a footnote, a header and a
   footer, a table, a page break, then suggestions) and `comments` (a source
   with comments in every anchor shape, converted, then suggestions over
-  them), and `toc` and `reply`, made from them by hand in the browser. See
-  [Written in Google Docs](#written-in-google-docs).
+  them), and `toc` and `reply`, made from them by hand in the browser, and
+  `office-comment` and its Word copy, made by hand from a `.docx` edited
+  without conversion. See [Written in Google Docs](#written-in-google-docs).
 - [`manifest.toml`](manifest.toml): one entry per file, written by
   [`generate/manifest.py`](generate/manifest.py) from the files themselves:
   producer, size, and the features found in the XML. Only `known_failure`
@@ -101,7 +102,9 @@ OXOFFICE_GOOGLE_TOKEN=$(gcloud auth print-access-token) python3 tests/corpus/gen
 
 Author names are replaced after export: Google writes the Drive account's
 name on every suggestion, and the files carry `Corpus Author` instead
-(`neutral_authors`, which changes those attributes only).
+(`neutral_authors`, which changes those attributes only); the account's
+numeric id and Drive file ids in Google's round-trip data are replaced too
+(`neutral_custom_data`, same lengths).
 
 What Google writes from them, and the `google/` copies do not hold:
 suggestions as `w:ins` and `w:del` whose runs carry a `w:rPrChange`, a
@@ -127,11 +130,27 @@ them again:
 - `reply.docx`: the comments with a reply written in Google Docs to one of
   them (`w15:paraIdParent` in `commentsExtended.xml`).
 
-None of these files holds the empty inline controls tagged `goog_rdk_<n>`
-written `<w:sdtContent/>` that documents edited in the browser carry
-(#656): suggestions, person and date chips, a drop-down chip, links to
-headings, a table of contents inserted in Google Docs, a reply written there,
-and comments in a run, across cells, rows, a table's edge or a link's edge
-do not make Google write them, nor do the `google/` copies' converted
-comments and Word contents. What does is unknown, so that shape is tested on
-synthetic documents.
+None of these files holds the inline controls tagged `goog_rdk_<n>` that
+documents edited in the browser carry (#656): suggestions, person and date
+chips, a drop-down chip, links to headings, a table of contents inserted in
+Google Docs, a reply written there, and comments in a run, across cells,
+rows, a table's edge or a link's edge do not make Google write them in a
+converted document, nor do the `google/` copies' converted comments and Word
+contents. Google writes them when it exports a `.docx` edited without
+conversion, and Word leaves them empty, `<w:sdtContent/>`, when it deletes
+the comment inside. Two files show it, made by hand from a python-docx
+source (a heading, three paragraphs, a two by two table):
+
+- `office-comment.docx`: the source uploaded to Drive, opened in Google Docs
+  without conversion, a comment added on a word, then File, Download,
+  Microsoft Word: the comment's `w:commentRangeStart` alone in an inline
+  control tagged `goog_rdk_0`, and a `customXML` part with Google's
+  round-trip data. The `.docx` kept in Drive holds neither: Google keeps the
+  comments of such a file in Drive, and deleting or resolving them there
+  leaves no control in the next download.
+- `office-comment-deleted-in-word.docx`: that download opened in Word for
+  Mac 16.115.2, its comment deleted, saved without embedding fonts (Google's
+  copy asks for them, 5 MB; AppleScript `save as ... embed truetype fonts
+  false`): the control stays, `<w:sdtEndPr/>` and an
+  empty `<w:sdtContent/>`. Word's user name in `cp:lastModifiedBy` is
+  replaced too.

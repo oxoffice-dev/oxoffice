@@ -1,0 +1,10 @@
+{
+  "file": "google-docs/office-comment-deleted-in-word.docx",
+  "reason": "new corpus files: a Google Docs office-mode comment export and its Word copy",
+  "resources": "159c2f2efb290e4f5438ed4e9ea771de5d9a3154fedc8adba41c7143b3c6b633",
+  "outline_and_tags": "0eba14326d9298fb6b98513d853c521980f60ce62961081dd095f8539652c694",
+  "catalog": "b24b661eb0df4c8143ed04a9aab784925f349c408ed856fba525c3837bf26a56",
+  "pages": [
+    {"page": 1, "pixels": "00d17277afc69fa5d8c0f8a482be4191b002d14661778170f6a28de8969b935c", "content": "77d56757da152193fcefcb584d1b72ed2081b4ec0a3e8fa57ff8601ffd6b4709", "annotations": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "dictionary": "5536f92fae914c9ed45070fc5f8fd801f97a76cc5cdd29688b0c2dc78c2de5b9"}
+  ]
+}

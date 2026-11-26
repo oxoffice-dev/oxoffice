@@ -119,6 +119,41 @@ def neutral_authors(path: Path, account: str) -> int:
     return changed
 
 
+CUSTOM_DATA = re.compile(rb'(<go:docsCustomData\b[^>]*>)([A-Za-z0-9+/=]+)(</go:docsCustomData>)')
+ACCOUNT_ID = re.compile(rb"\d{15,25}")
+DRIVE_ID = re.compile(rb"(?<=r!)[A-Za-z0-9_-]{25,}")
+
+
+def neutral_custom_data(path: Path) -> int:
+    """Replace, in Google's round-trip data (`go:docsCustomData`, base64), the
+    account's numeric id by zeros and Drive file ids by a placeholder of the
+    same length, so the data stays well formed; return how many payloads
+    changed. Every other byte of each part is kept."""
+    import base64
+
+    def neutral(match: re.Match) -> bytes:
+        data = base64.b64decode(match.group(2))
+        data = ACCOUNT_ID.sub(lambda m: b"0" * len(m.group(0)), data)
+        data = DRIVE_ID.sub(lambda m: b"1" + b"x" * (len(m.group(0)) - 1), data)
+        return match.group(1) + base64.b64encode(data) + match.group(3)
+
+    with zipfile.ZipFile(path) as package:
+        infos = package.infolist()
+        parts = {info.filename: package.read(info) for info in infos}
+    changed = 0
+    for name, data in parts.items():
+        if name.endswith(".xml") and b"docsCustomData" in data:
+            new = CUSTOM_DATA.sub(neutral, data)
+            if new != data:
+                parts[name] = new
+                changed += 1
+    if changed:
+        with zipfile.ZipFile(path, "w") as package:
+            for info in infos:
+                package.writestr(info, parts[info.filename])
+    return changed
+
+
 def write(family: str, spec: dict, token: str, folder: str) -> Path:
     metadata = {"name": family, "mimeType": "application/vnd.google-apps.document", "parents": [folder]}
     if "source" in spec:
@@ -141,6 +176,7 @@ def write(family: str, spec: dict, token: str, folder: str) -> Path:
     path.write_bytes(call("GET", f"{DRIVE}/{document_id}/export?" + urllib.parse.urlencode({"mimeType": DOCX}), token))
     account = call_json("GET", "https://www.googleapis.com/drive/v3/about?fields=user", token)["user"]["displayName"]
     neutral_authors(path, account)
+    neutral_custom_data(path)
     return path
 
 
