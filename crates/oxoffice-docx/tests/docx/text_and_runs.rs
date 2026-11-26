@@ -1494,3 +1494,42 @@ fn a_header_image_background_drops_a_character_xml_cannot_carry() {
     );
     doc.to_bytes().expect("the document saves");
 }
+
+#[test]
+fn an_unmodelled_empty_element_keeps_its_end_tag_through_a_save_and_an_edit() {
+    let kept = r#"<x:k xmlns:x="urn:oxoffice:test"></x:k>"#;
+    let page = "<w:lastRenderedPageBreak></w:lastRenderedPageBreak>";
+    for (paragraph, element) in [
+        (
+            format!("<w:p><w:r><w:t>Alpha</w:t>{kept}</w:r></w:p>"),
+            kept,
+        ),
+        (
+            format!("<w:p><w:r><w:rPr>{kept}</w:rPr><w:t>Alpha</w:t></w:r></w:p>"),
+            kept,
+        ),
+        (
+            format!("<w:p><w:pPr>{kept}</w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>"),
+            kept,
+        ),
+        (
+            format!("<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>{kept}"),
+            kept,
+        ),
+        (
+            format!("<w:p><w:r><w:t>Alpha</w:t>{page}<w:t>beta</w:t></w:r></w:p>"),
+            page,
+        ),
+    ] {
+        let body = format!("{paragraph}<w:p><w:r><w:t>Omega</w:t></w:r></w:p>");
+        // A save, an edit of the other paragraph, an edit of its own.
+        for edited in [None, Some("Omega"), Some("Alpha")] {
+            let mut doc = doc_with_body(&body);
+            if let Some(edited) = edited {
+                assert_eq!(doc.replace_text(edited, "Edited"), 1, "{paragraph}");
+            }
+            let xml = doc.part_xml("word/document.xml").unwrap();
+            assert!(xml.contains(element), "{paragraph} {edited:?}: {xml}");
+        }
+    }
+}

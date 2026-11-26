@@ -22,7 +22,10 @@ const SAMPLE: [&str; 2] = ["google/form.docx", "libreoffice/contract.docx"];
 /// The shapes behind #656 and #413 in a few lines, written as Word would: an
 /// empty inline content control (Google Docs leaves them in paragraphs), a
 /// page field with empty run properties (LibreOffice), text outside ASCII, a
-/// footnote and a header.
+/// footnote and a header; and the leaves #664 reads in both writings: a
+/// heading style, run toggles, tabs, breaks and hyphens in the body, the
+/// footnote and the header, an empty text, a table style region kept as
+/// Word writes it (`w:firstRow` beside `w:val`).
 fn producer_shapes() -> Vec<u8> {
     let mut doc = doc_with_body(concat!(
         r#"<w:p><w:r><w:t xml:space="preserve">Alpha beta </w:t></w:r>"#,
@@ -34,12 +37,39 @@ fn producer_shapes() -> Vec<u8> {
         r#"<w:r><w:rPr></w:rPr><w:fldChar w:fldCharType="end"></w:fldChar></w:r>"#,
         r#"<w:r><w:t xml:space="preserve"> of the delivery schedule.</w:t></w:r></w:p>"#,
         r#"<w:p><w:r><w:t>Ångström café naïve résumé.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Delivery terms</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>Bold italic</w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:strike/></w:rPr><w:t xml:space="preserve"> struck</w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:vanish/></w:rPr><w:t xml:space="preserve"> hidden</w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve"> right</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Tab</w:t><w:tab/><w:t>break</w:t><w:br/><w:t>return</w:t><w:cr/>"#,
+        r#"<w:t>non</w:t><w:noBreakHyphen/><w:t>breaking</w:t>"#,
+        r#"<w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/><w:t>end</w:t></w:r>"#,
+        r#"<w:r><w:t/></w:r></w:p>"#,
+        r#"<w:p><w:pPr><w:cnfStyle w:val="100000000000" w:firstRow="1"/></w:pPr><w:r><w:t>First row style</w:t></w:r></w:p>"#,
     ));
     let id = doc.add_footnote("Footnote sentence about suppliers.");
     doc.add_paragraph("Closing paragraph with a reference.")
         .add_footnote_ref(id);
     doc.set_header("Running header of the contract");
-    doc.to_bytes().expect("the producer shapes save")
+    let bytes = doc.to_bytes().expect("the producer shapes save");
+    let split = |data: &[u8], words: &str, leaf: &str| {
+        let text = String::from_utf8(data.to_vec()).expect("a part is UTF-8");
+        let (first, second) = words.split_once(' ').expect("two words");
+        let leaf = format!(r#"{first}</w:t>{leaf}<w:t xml:space="preserve">{second}"#);
+        assert!(text.contains(words), "{words}");
+        text.replace(words, &leaf).into_bytes()
+    };
+    let parts = package_parts(&bytes).expect("the producer shapes read");
+    let parts = parts.into_iter().map(|(name, data)| {
+        let data = match name.as_str() {
+            "word/footnotes.xml" => split(&data, "sentence about", "<w:tab/>"),
+            name if name.starts_with("word/header") => split(&data, "header of", "<w:br/>"),
+            _ => data,
+        };
+        (name, data)
+    });
+    write_package(&parts.collect::<Vec<_>>())
 }
 
 fn inputs() -> Vec<Input> {
