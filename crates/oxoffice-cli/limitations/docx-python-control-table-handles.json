@@ -3,7 +3,7 @@
   "format": "docx",
   "area": "python",
   "title": "Python: a handle of a table in a block content control reads its location at each call",
-  "symptom": "a Table or Cell handle of a table written in a block content control (as Google Docs writes one) has no owner record: it reads its location at each call (one scan of its story), and every edit through it that changes the table or a cell (Table.replace_xml, Table.add_row and the other row and column edits, Cell.text, Cell.add_table, a cell's replace_xml) retires every other handle of the document; Cell.tables of a cell that holds a block content control reads the cell's story at each call",
-  "workaround": "fetch handles again after such an edit (doc.paragraphs, doc.tables, Cell.tables); copy, move or remove such a table by its location, ContentLocation(story, \"table\", (c, k)) with c the control's story item index, in clone_content, move_content, pop_content and insert_content",
+  "symptom": "a Table or Cell handle of a table written in a block content control (as Google Docs writes one) has no owner record: it reads its location at each call (one scan of its story), and every edit through it that changes the table's rows, columns, cells or XML (Table.replace_xml, Table.add_row and the other row and column edits, Cell.text, Cell.add_table, a cell's replace_xml) retires every other handle of the document; Cell.tables of a cell that holds a block content control reads the cell's story at each call",
+  "workaround": "fetch handles again after such an edit (doc.paragraphs, doc.tables, Cell.tables); copy, move or remove such a table by its location, ContentLocation(story, \"table\", (c, k)) with c the control's story item index, in clone_content, move_content, pop_content and insert_content; a control holding only that table (Google's shape) refuses to move it or remove it alone, so remove_content_control removes both",
   "issue": 660
 }
