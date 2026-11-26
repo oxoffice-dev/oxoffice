@@ -402,15 +402,16 @@ pub(crate) fn modeled_toggle_attributes<'a>(
             continue;
         }
         let mut reader = Reader::from_reader(raw.as_slice());
-        let (source, close) = match reader.read_event()? {
-            Event::Start(source) => (source, 1),
-            Event::Empty(source) => (source, 2),
+        let source = match reader.read_event()? {
+            Event::Start(source) | Event::Empty(source) => source,
             _ => continue,
         };
         let prefixes = carrier_word_prefixes(&source)?;
-        // Actual reader positions select the borrowed physical header. The
-        // UTF8 probe selects borrowing only, it never refuses a legacy input.
-        let end = reader.buffer_position() as usize - close;
+        // The start tag as written selects the borrowed physical header: a
+        // carrier written `<x></x>` reads as one empty event, the reader past
+        // its end tag. The UTF8 probe selects borrowing only, it never
+        // refuses a legacy input.
+        let end = oxoffice_core::xml_element::start_tag(raw.as_slice())?.attributes_end;
         let header = &raw[end - source.as_ref().len()..end];
         if let Ok(header) = std::str::from_utf8(header) {
             for attribute in

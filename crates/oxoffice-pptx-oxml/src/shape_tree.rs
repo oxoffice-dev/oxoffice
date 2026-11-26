@@ -2423,10 +2423,18 @@ fn direct_shape_child_ranges(xml: &[u8]) -> Result<Vec<Range<usize>>> {
 }
 
 fn shape_start_tag_range(xml: &[u8], end: usize) -> Result<Range<usize>> {
-    let start = xml[..end]
-        .iter()
-        .rposition(|byte| *byte == b'<')
-        .ok_or_else(|| OxmlError::InvalidValue("shape child start tag is missing".to_owned()))?;
+    let last_tag = |end: usize| {
+        xml[..end]
+            .iter()
+            .rposition(|byte| *byte == b'<')
+            .ok_or_else(|| OxmlError::InvalidValue("shape child start tag is missing".to_owned()))
+    };
+    let mut start = last_tag(end)?;
+    // A child read as one empty event may be written `<x></x>`: its range is
+    // the whole element, from its start tag.
+    if xml[start..].starts_with(b"</") {
+        start = last_tag(start)?;
+    }
     Ok(start..end)
 }
 
