@@ -123,10 +123,14 @@ and the probe's notes, comments, styles and list edits give the prefixed
 writing's result in both forms; the implementation checks each root writer
 all the same.
 `unsafe_serializer_namespace_prefix` loses its default-namespace branch and
-`root_default_namespace_is_used` goes; `shadowed_namespace_diagnostic` loses
-the #663 text. A default namespace declared on `w:body` or below keeps
-today's handling (body declarations refused, nested owners replayed): no
-writing or producer declares one there.
+`root_default_namespace_is_used` goes. A default namespace declared below
+the root keeps today's handling: no writing or producer declares one there.
+A paragraph, a run, a row, a cell or a link declaring it is replayed and
+edits as any writing; the body (every body declaration is refused) and a
+table or a block control (the replay cannot find the owner again, as for
+WordprocessingML under another prefix there) are refused. Their refusals
+now name the narrowed limitation `docx-default-namespace-below-root`
+(#663) instead of "a shadowed `` namespace".
 
 ### 2. Attributes are WordprocessingML's by namespace
 
@@ -180,20 +184,24 @@ written under the modelled element's prefix.
 DrawingML or PresentationML as the default namespace below a part's root
 (inside a slide's shapes, a drawing in a Word part): no writing of the
 harness and no producer seen; the pptx readers pass on the root's
-namespace. A default namespace declared below a Word part's root (section
-1).
+namespace. A default namespace declared below a Word part's root on the
+body, a table or a block control (section 1): fixing it means keeping body
+declarations and replaying a table or control that binds WordprocessingML
+otherwise, a wider change than this class.
 
 ## Plan
 
 One pull request, `fix(docx): a word part written with the default
-namespace can be edited`, closing #663:
+namespace can be edited`, `Refs #663` (the refusal below the root is left
+there):
 
 1. `docx-oxml`: the two roots keep `xmlns`; carriers read their attributes
    by namespace (section 2).
 2. `docx`: the refusal and its helper removed; the comparison changes of
    section 3.
 3. The limitation `crates/oxoffice-cli/limitations/docx-default-namespace.json`
-   and the three `*.docx` `default-namespace` entries removed;
+   narrowed to `docx-default-namespace-below-root.json`, and the three
+   `*.docx` `default-namespace` entries removed;
    `docs/ARCHITECTURE.md`, model conventions: a part's root keeps its
    declarations, the default namespace included, and raw XML its writing.
 
@@ -226,6 +234,14 @@ differences fixed) and the compare walks with `OXOFFICE_WORKFLOWS=full`.
 - `main_part_root.rs` asserted the old writer: a root declaring a default
   namespace was written anew after an edit. It now stays as the producer
   wrote it (`a_root_with_a_default_namespace_is_kept`).
+- `a_default_namespace_below_the_root_is_edited_or_refused_by_name`: the
+  default namespace on a run, a cell or a link edits; on the body, a table
+  or a block control the refusal names the limitation.
+- The in-place edit tests that ran `other-prefixes`
+  (`paragraph_edits_in_place.rs`, `tables.rs`) run `default-namespace` too,
+  and over `other-prefixes` where the attributes' prefix matters; the cell
+  test's "each attribute once" catches the doubled `w:val`. `root_prefix`
+  has a unit table of its branches.
 - No Python test: the bindings are not touched.
 
 ## Decided with the maintainer

@@ -480,3 +480,78 @@ fn a_header_written_again_keeps_its_default_namespace() {
         .0;
     assert_eq!(header(written), header(original));
 }
+
+// WordprocessingML declared as the default namespace below the root, its
+// elements unprefixed there: a paragraph, a run, a row, a cell or a link is
+// edited as any writing; the body, a table or a block control is refused,
+// naming the limitation that is left of #663.
+#[test]
+fn a_default_namespace_below_the_root_is_edited_or_refused_by_name() {
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let cell = r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let control = r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Control.</w:t></w:r></w:p></w:sdtContent></w:sdt>"#;
+    let link = r#"<w:p><w:hyperlink w:anchor="b"><w:r><w:t>Link.</w:t></w:r></w:hyperlink></w:p>"#;
+    let lead = r#"<w:p><w:r><w:t>Quarterly totals.</w:t></w:r></w:p>"#;
+    for (owner, shape, refused) in [
+        ("body", lead, true),
+        ("tbl", cell, true),
+        ("sdt", control, true),
+        ("r", lead, false),
+        ("tc", cell, false),
+        ("hyperlink", link, false),
+    ] {
+        // The owner's elements unprefixed, the default namespace declared on it.
+        let body = format!("{lead}{shape}");
+        let (start, end) = match owner {
+            "body" => (0, body.len()),
+            _ => {
+                let tag = |end: &str| body.rfind(&format!("<w:{owner}{end}"));
+                let start = tag(">").or_else(|| tag(" ")).unwrap();
+                let close = format!("</w:{owner}>");
+                (start, body.rfind(&close).unwrap() + close.len())
+            }
+        };
+        let inner = body[start..end].replace("<w:", "<").replace("</w:", "</");
+        let inner = match owner {
+            "body" => inner,
+            _ => inner.replacen(&format!("<{owner}"), &format!(r#"<{owner} xmlns="{w}""#), 1),
+        };
+        let mut bytes = docx_with_body(&format!("{}{inner}{}", &body[..start], &body[end..]));
+        if owner == "body" {
+            let parts = package_parts(&bytes)
+                .unwrap()
+                .into_iter()
+                .map(|(name, xml)| {
+                    let xml = match name == "word/document.xml" {
+                        true => String::from_utf8(xml)
+                            .unwrap()
+                            .replacen("<w:body>", &format!(r#"<w:body xmlns="{w}">"#), 1)
+                            .replace("<w:sectPr", "<sectPr")
+                            .replace("</w:sectPr>", "</sectPr>")
+                            .replace("<w:pgSz", "<pgSz")
+                            .replace("<w:pgMar", "<pgMar")
+                            .into_bytes(),
+                        false => xml,
+                    };
+                    (name, xml)
+                });
+            bytes = write_package(&parts.collect::<Vec<_>>());
+        }
+        let mut doc = open(&bytes).unwrap();
+        let saved = doc
+            .try_replace_text("Quarterly", "Yearly")
+            .and_then(|_| doc.to_bytes());
+        match refused {
+            true => assert!(
+                saved.is_err_and(|error| error
+                    .to_string()
+                    .contains("limitation docx-default-namespace-below-root")),
+                "{owner}"
+            ),
+            false => {
+                let texts = story_texts(&open(&saved.unwrap()).unwrap()).unwrap();
+                assert!(texts.contains("Yearly totals."), "{owner}: {texts}");
+            }
+        }
+    }
+}

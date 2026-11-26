@@ -389,7 +389,8 @@ pub(super) fn actual_field_is_complex(xml: &str, bindings: &NamespaceBindings) -
 
 /// The namespace bindings of `xml`'s root that its names use, but the Word
 /// binding: Word 2019 declares a default namespace on the document root that
-/// no name uses, and a save leaves it out, which is no change.
+/// no name uses, and a version from another producer does not, which is no
+/// change.
 pub(super) fn conversion_namespace_facts(
     bindings: NamespaceBindings,
     xml: &str,

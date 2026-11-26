@@ -695,9 +695,7 @@ impl Document {
             None
         } else {
             if let Some(prefix) = unsafe_prefix {
-                return Err(Error::Other(format!(
-                    "cannot serialize a modified document with a shadowed `{prefix}` namespace"
-                )));
+                return Err(Error::Other(shadowed_namespace_diagnostic(&prefix)));
             }
             // The previous flush's record, whose pieces under a kept producer
             // root carry over where the body did not change.

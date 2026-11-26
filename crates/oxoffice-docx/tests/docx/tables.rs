@@ -1630,6 +1630,19 @@ fn an_edited_cell_paragraph_writes_its_conditional_formatting_once_under_any_pre
         rewrite_package(&bytes, Writing::OtherPrefixes)
             .expect("rewrites")
             .0,
+        // As the default namespace, its attributes under `w`, then under
+        // `ox0` with no `w` bound.
+        rewrite_package(&bytes, Writing::DefaultNamespace)
+            .expect("rewrites")
+            .0,
+        rewrite_package(
+            &rewrite_package(&bytes, Writing::OtherPrefixes)
+                .expect("rewrites")
+                .0,
+            Writing::DefaultNamespace,
+        )
+        .expect("rewrites")
+        .0,
     ] {
         let mut doc = Document::from_bytes(&bytes).expect("opens");
         let paragraphs = doc.story_paragraphs().expect("reads");
@@ -1649,5 +1662,8 @@ fn an_edited_cell_paragraph_writes_its_conditional_formatting_once_under_any_pre
         each_attribute_once(&part).expect("each attribute once");
         parts.push(oxoffice_xml_test::canonical(&part).expect("XML"));
     }
-    assert_eq!(parts[0], parts[1], "both writings write the same cell");
+    assert!(
+        parts.iter().all(|part| part == &parts[0]),
+        "every writing writes the same cell"
+    );
 }

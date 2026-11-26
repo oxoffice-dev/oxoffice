@@ -35,6 +35,24 @@ pub(super) fn plain_local_edit_facts(
     }
 }
 
+/// The refusal of a retained owner the replay cannot find again after an
+/// edit. One that declares WordprocessingML as its default namespace (a
+/// table, a block content control) is a known limitation (#663).
+fn unidentified_owner(owner: &NestedNamespaceOwner) -> Error {
+    let message = format!(
+        "cannot identify retained `{}` nested namespace owner after mutation",
+        owner.local_name
+    );
+    if owner
+        .declarations
+        .iter()
+        .any(|(name, namespace)| name == "xmlns" && namespace == WORD_NAMESPACE)
+    {
+        return Error::Other(format!("{message}: {DEFAULT_NAMESPACE_BELOW_ROOT}"));
+    }
+    Error::Other(message)
+}
+
 pub(super) fn replay_unsavable_body_edit(
     document_xml: &[u8],
     document: &CT_Document,
@@ -249,12 +267,7 @@ pub(super) fn replay_nested_namespace_declarations_in(
                     [] if candidates.len() == 1 && !owner.same_marker_structural_alternate => {
                         candidates[0].0
                     }
-                    _ => {
-                        return Err(Error::Other(format!(
-                            "cannot identify retained `{}` nested namespace owner after mutation",
-                            owner.local_name
-                        )));
-                    }
+                    _ => return Err(unidentified_owner(owner)),
                 }
             }
             candidates => {
@@ -297,10 +310,7 @@ pub(super) fn replay_nested_namespace_declarations_in(
                     // otherwise tell the owners apart: never guessed.
                     candidate.0
                 } else {
-                    return Err(Error::Other(format!(
-                        "cannot identify retained `{}` nested namespace owner after mutation",
-                        owner.local_name
-                    )));
+                    return Err(unidentified_owner(owner));
                 }
             }
         };

@@ -304,3 +304,37 @@ pub(super) fn actual_root_bindings(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // New markup goes under the root's prefix, under the first prefix a root
+    // written with the default namespace binds to WordprocessingML, else
+    // under `w`, which the writer declares; never under a `w` bound to
+    // another namespace.
+    #[test]
+    fn new_markup_takes_the_prefix_the_root_binds_to_wordprocessingml() {
+        let w = W_NS;
+        for (root, expected) in [
+            (format!(r#"<w:hdr xmlns:w="{w}"/>"#), Ok("w")),
+            (format!(r#"<ox0:hdr xmlns:ox0="{w}"/>"#), Ok("ox0")),
+            (format!(r#"<hdr xmlns="{w}" xmlns:w="{w}"/>"#), Ok("w")),
+            (format!(r#"<hdr xmlns="{w}" xmlns:p1="{w}"/>"#), Ok("p1")),
+            (format!(r#"<hdr xmlns="{w}"/>"#), Ok("w")),
+            (
+                format!(r#"<hdr xmlns="{w}" xmlns:w="urn:x"/>"#),
+                Err("binds no prefix"),
+            ),
+        ] {
+            let found = root_prefix(&root, "hdr");
+            match expected {
+                Ok(prefix) => assert_eq!(found.ok().as_deref(), Some(prefix), "{root}"),
+                Err(message) => assert!(
+                    found.is_err_and(|error| error.to_string().contains(message)),
+                    "{root}"
+                ),
+            }
+        }
+    }
+}
