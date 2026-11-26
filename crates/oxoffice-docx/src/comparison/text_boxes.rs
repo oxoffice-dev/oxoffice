@@ -554,6 +554,7 @@ pub(super) fn policy_textbox_intervals(
         let (namespace, event) = reader
             .read_resolved_event()
             .map_err(|error| Error::Other(error.to_string()))?;
+        let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(element) | Event::Empty(element) => {
                 let local = std::str::from_utf8(element.local_name().as_ref())
@@ -570,7 +571,6 @@ pub(super) fn policy_textbox_intervals(
                         ));
                     }
                 };
-                let empty = xml[..reader.buffer_position() as usize].ends_with("/>");
                 let ordinal = *children.last().unwrap();
                 *children.last_mut().unwrap() += 1;
                 path.push((uri.clone(), local.clone(), ordinal));

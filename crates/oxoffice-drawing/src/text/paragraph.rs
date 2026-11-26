@@ -4685,8 +4685,9 @@ pub(crate) fn text_inherit_property_xml(
 ) -> Result<Vec<u8>> {
     let read = |xml: &[u8], scope: &[(String, String)]| -> Result<_> {
         let mut reader = Reader::from_reader(xml);
-        let start = match reader.read_event().map_err(OxmlError::from)? {
-            Event::Start(start) | Event::Empty(start) => start.into_owned(),
+        let (start, empty) = match reader.read_event().map_err(OxmlError::from)? {
+            Event::Start(start) => (start.into_owned(), false),
+            Event::Empty(start) => (start.into_owned(), true),
             _ => {
                 return Err(invalid_attribute(
                     "inherit text properties",
@@ -4695,7 +4696,6 @@ pub(crate) fn text_inherit_property_xml(
                 ));
             }
         };
-        let empty = xml[reader.buffer_position() as usize - 2] == b'/';
         let scope = text_fragment_scope(&start, &TextNamespaceScope::inherited(scope))?;
         let root_name = local_name(start.name().as_ref()).to_vec();
         let mut children = Vec::new();
@@ -4703,9 +4703,9 @@ pub(crate) fn text_inherit_property_xml(
         if !empty {
             loop {
                 let event = reader.read_event().map_err(OxmlError::from)?;
+                let child_empty = matches!(event, Event::Empty(_));
                 let raw = match event {
                     Event::Start(child) | Event::Empty(child) => {
-                        let child_empty = xml[reader.buffer_position() as usize - 2] == b'/';
                         let name = text_owned_name(&child, &scope)?;
                         let slot = if is_character_property_tag(&root_name) {
                             character_property_slot(&name)

@@ -763,12 +763,12 @@ fn namespace_marker_without_owner_declarations(
     let mut qualified = true;
     loop {
         let before = reader.buffer_position() as usize;
-        match reader
+        let event = reader
             .read_event()
-            .map_err(|error| Error::Other(format!("invalid namespace marker XML: {error}")))?
-        {
+            .map_err(|error| Error::Other(format!("invalid namespace marker XML: {error}")))?;
+        let empty = matches!(event, Event::Empty(_));
+        match event {
             Event::Start(element) | Event::Empty(element) => {
-                let empty = raw[before..reader.buffer_position() as usize].ends_with(b"/>");
                 if depth == 0 {
                     if direct_drawing_child
                         && matches!(element.local_name().as_ref(), b"inline" | b"anchor")

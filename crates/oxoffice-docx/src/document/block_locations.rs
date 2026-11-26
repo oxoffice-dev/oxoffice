@@ -254,7 +254,13 @@ pub(super) fn resolve_block_location(
                     })?,
                 block.start,
             ),
-            None if empty => (0, owner.full.end - 2),
+            // The content of an empty owner goes where its attributes end.
+            None if empty => (
+                0,
+                owner.full.start
+                    + oxoffice_core::xml_element::start_tag(&xml[owner.full.start..])?
+                        .attributes_end,
+            ),
             None => (items.len(), story_owner_content_end(xml, &owner)?),
         };
         Ok(BlockSlot {

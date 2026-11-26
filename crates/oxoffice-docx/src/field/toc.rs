@@ -2791,7 +2791,9 @@ fn toc_overlay_entry_properties(
     let mut output = original[..start].to_vec();
     let empty = opening_end == end && closing_start == start;
     if empty {
-        output.extend_from_slice(&original[start..opening_end - 2]);
+        let attributes_end =
+            oxoffice_core::xml_element::start_tag(&original[start..])?.attributes_end;
+        output.extend_from_slice(&original[start..start + attributes_end]);
         output.push(b'>');
     } else {
         output.extend_from_slice(&original[start..opening_end]);
@@ -2927,13 +2929,15 @@ fn toc_overlay_tab_particles(
         .property_root
         .as_ref()
         .ok_or_else(|| Error::Other("generated TOC tabs have no owned root".to_owned()))?;
-    let _ = (start, new_start);
+    let _ = new_start;
     let replacement =
         toc_close_fragment_namespaces(&generated[*new_opening..*new_closing], &canonical)?;
     let empty = *opening == *end && *closing == *start;
     let mut output = Vec::new();
     if empty {
-        output.extend_from_slice(&original[..*opening - 2]);
+        let attributes_end =
+            *start + oxoffice_core::xml_element::start_tag(&original[*start..])?.attributes_end;
+        output.extend_from_slice(&original[..attributes_end]);
         output.push(b'>');
     } else {
         output.extend_from_slice(&original[..*opening]);

@@ -422,13 +422,11 @@ pub(super) fn expand_empty_element(
     let raw = xml
         .get(selection.element_start..selection.element_end)
         .ok_or_else(|| Error::Other("custom XML selection is out of bounds".to_owned()))?;
-    let slash = raw
-        .iter()
-        .rposition(|byte| *byte == b'/')
-        .filter(|slash| raw.get(slash + 1) == Some(&b'>'))
-        .ok_or_else(|| Error::Other("custom XML empty element is malformed".to_owned()))?;
+    let attributes_end = oxoffice_core::xml_element::start_tag(raw)
+        .map_err(|_| Error::Other("custom XML empty element is malformed".to_owned()))?
+        .attributes_end;
     let mut expanded = Vec::new();
-    expanded.extend_from_slice(&raw[..slash]);
+    expanded.extend_from_slice(&raw[..attributes_end]);
     expanded.push(b'>');
     expanded.extend_from_slice(quick_xml::escape::escape(value).as_bytes());
     expanded.extend_from_slice(b"</");

@@ -560,16 +560,10 @@ fn paragraph_fragment_with_bindings(
     start_len: usize,
     bindings: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>> {
-    // Declarations go before the `>` of a start tag, or the `/>` of an
-    // empty paragraph.
-    let close = if raw[..start_len].ends_with(b"/>") {
-        2
-    } else {
-        1
-    };
-    let insert_at = start_len
-        .checked_sub(close)
-        .ok_or_else(|| Error::Other("package story paragraph start tag is missing".to_owned()))?;
+    // Declarations go where the attributes of the start tag end.
+    let insert_at = oxoffice_core::xml_element::start_tag(raw)
+        .map_err(|_| Error::Other("package story paragraph start tag is missing".to_owned()))?
+        .attributes_end;
     let mut output = raw[..insert_at].to_vec();
     for (key, value) in bindings {
         if start_tag_has_raw_attribute(&raw[..start_len], key.as_bytes()) {

@@ -528,26 +528,9 @@ impl CT_Slide {
             if start == end {
                 rewritten.extend_from_slice(extension.as_bytes());
             } else {
-                let empty = &xml[start..end];
-                let slash = empty
-                    .windows(2)
-                    .rposition(|window| window == b"/>")
-                    .ok_or_else(|| {
-                        OxmlError::InvalidValue("malformed empty p:extLst".to_owned())
-                    })?;
-                let name_end = empty[1..]
-                    .iter()
-                    .position(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'>'))
-                    .map(|index| index + 1)
-                    .ok_or_else(|| {
-                        OxmlError::InvalidValue("malformed empty p:extLst".to_owned())
-                    })?;
-                rewritten.extend_from_slice(&empty[..slash]);
-                rewritten.extend_from_slice(b">");
-                rewritten.extend_from_slice(extension.as_bytes());
-                rewritten.extend_from_slice(b"</");
-                rewritten.extend_from_slice(&empty[1..name_end]);
-                rewritten.extend_from_slice(b">");
+                let (opened, _) =
+                    oxoffice_core::xml_element::replace_content(&xml[start..end], &extension)?;
+                rewritten.extend_from_slice(&opened);
             }
             rewritten.extend_from_slice(&xml[end..]);
             rewritten
@@ -1100,13 +1083,7 @@ impl CT_SlideMaster {
                         if list.is_some() {
                             return Err(duplicate("sldLayoutIdLst"));
                         }
-                        list = Some((
-                            begin,
-                            finish,
-                            finish,
-                            empty,
-                            String::from_utf8_lossy(start.name().as_ref()).into_owned(),
-                        ));
+                        list = Some((begin, finish, finish, empty));
                         if !empty {
                             list_depth = Some(depth + 1);
                         }
@@ -1165,7 +1142,7 @@ impl CT_SlideMaster {
             }
             buffer.clear();
         }
-        let (start, head_end, close, empty, name) = list.ok_or_else(|| {
+        let (start, head_end, close, empty) = list.ok_or_else(|| {
             OxmlError::InvalidValue("qualified master layout list is absent".into())
         })?;
         let generated = append.map(|(id, relationship)| format!("<p:sldLayoutId xmlns:p=\"{P_NS}\" xmlns:r=\"{R_NS}\" id=\"{id}\" r:id=\"{}\"/>", quick_xml::escape::escape(relationship))).unwrap_or_default();
@@ -1174,10 +1151,10 @@ impl CT_SlideMaster {
             if remove.is_some() {
                 return Err(OxmlError::InvalidValue("empty master layout list".into()));
             }
-            result.extend_from_slice(&xml[..head_end - 2]);
-            result.push(b'>');
-            result.extend_from_slice(generated.as_bytes());
-            result.extend_from_slice(format!("</{name}>").as_bytes());
+            result.extend_from_slice(&xml[..start]);
+            let (opened, _) =
+                oxoffice_core::xml_element::replace_content(&xml[start..head_end], &generated)?;
+            result.extend_from_slice(&opened);
             result.extend_from_slice(&xml[head_end..]);
         } else {
             let insertion = entries

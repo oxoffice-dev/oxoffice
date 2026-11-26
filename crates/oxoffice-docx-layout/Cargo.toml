@@ -18,6 +18,7 @@ system-fonts = ["oxoffice-layout/system-fonts"]
 
 [dependencies]
 oxoffice-chart = { workspace = true }
+oxoffice-core = { workspace = true }
 oxoffice-drawing = { workspace = true }
 oxoffice-layout = { workspace = true, default-features = false }
 oxoffice-docx-oxml = { workspace = true }

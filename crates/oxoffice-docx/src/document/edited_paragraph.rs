@@ -378,7 +378,8 @@ fn edited_paragraph_admission(
                     // copy for the same semantic model used by paired elements.
                     let mut section = raw.to_vec();
                     if matches!(event, Event::Empty(_)) {
-                        section.truncate(section.len() - 2);
+                        section
+                            .truncate(oxoffice_core::xml_element::start_tag(raw)?.attributes_end);
                         section.extend_from_slice(b"></");
                         section.extend_from_slice(element.name().as_ref());
                         section.push(b'>');

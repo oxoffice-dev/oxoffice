@@ -946,12 +946,8 @@ fn set_word_children(xml: &[u8], updates: &[(&str, Vec<u8>)]) -> Result<Vec<u8>>
             return Err(Error::Other("invalid empty property wrapper".to_owned()));
         };
         let name = String::from_utf8_lossy(element.name().as_ref()).into_owned();
-        let mut output = xml[..opening].to_vec();
-        let slash = output
-            .iter()
-            .rposition(|byte| *byte == b'/')
-            .ok_or_else(|| Error::Other("empty property slash missing".to_owned()))?;
-        output.remove(slash);
+        let mut output = xml[..oxoffice_core::xml_element::start_tag(xml)?.attributes_end].to_vec();
+        output.push(b'>');
         for (_, replacement) in updates {
             output.extend_from_slice(replacement);
         }

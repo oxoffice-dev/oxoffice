@@ -901,9 +901,9 @@ impl CT_SdtPr {
             let before = reader.buffer_position() as usize;
             let (namespace, event) = reader.read_resolved_event()?;
             let qualified = matches!(namespace, quick_xml::name::ResolveResult::Bound(ns) if ns.as_ref() == W14);
+            let empty = matches!(event, Event::Empty(_));
             match event {
                 Event::Start(child) | Event::Empty(child) => {
-                    let empty = xml.get(reader.buffer_position() as usize - 2) == Some(&b'/');
                     if depth == 1 && qualified && child.local_name().as_ref() == wanted {
                         if found.is_some() {
                             return Err(OxmlError::InvalidValue(
@@ -913,9 +913,10 @@ impl CT_SdtPr {
                         let mut record = CheckboxChild {
                             value: None,
                             font: None,
-                            insert_attribute: reader.buffer_position() as usize
-                                - offset
-                                - if empty { 2 } else { 1 },
+                            insert_attribute: before
+                                + oxoffice_core::xml_element::start_tag(&xml[before..])?
+                                    .attributes_end
+                                - offset,
                         };
                         for attribute in child.attributes() {
                             let attribute = attribute?;
@@ -1786,12 +1787,9 @@ impl CT_Sdt {
                         let mut buffer = Vec::new();
                         loop {
                             let event = reader.read_event_into(&mut buffer)?;
+                            let empty = matches!(event, Event::Empty(_));
                             match event {
                                 Event::Start(child) | Event::Empty(child) => {
-                                    let empty = replacement.get(
-                                        (reader.buffer_position() as usize).saturating_sub(2)
-                                            ..reader.buffer_position() as usize,
-                                    ) == Some(b"/>");
                                     let scope =
                                         word_prefixes_at(&child, &self.content_word_prefixes)?;
                                     let raw = if empty {

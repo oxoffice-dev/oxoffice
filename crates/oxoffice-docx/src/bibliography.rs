@@ -792,7 +792,9 @@ fn attach_style_metadata(candidate: &mut Document, style: BibliographyStyle) -> 
         }
     }
     if !appended.is_empty() {
-        let insertion = start_end - if root.empty { 2 } else { 1 };
+        let insertion = root.full.start
+            + oxoffice_core::xml_element::start_tag(&collection.xml[root.full.start..])?
+                .attributes_end;
         edits.push((insertion..insertion, appended.into_bytes()));
     }
     if !edits.is_empty() {
@@ -1184,15 +1186,8 @@ fn ensure_bibliography_style(document: &mut Document) -> Result<()> {
     }
     let style = b"<w:style xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" w:type=\"paragraph\" w:styleId=\"Bibliography\"><w:name w:val=\"Bibliography\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:uiPriority w:val=\"37\"/><w:unhideWhenUsed/></w:style>";
     if root.empty {
-        let start = &xml[root.full.start..root.full.end];
-        let close = start
-            .windows(2)
-            .rposition(|bytes| bytes == b"/>")
-            .ok_or_else(|| bibliography_error("empty bibliography styles root changed"))?;
-        let mut replacement = start[..close].to_vec();
-        replacement.push(b'>');
-        replacement.extend_from_slice(style);
-        replacement.extend_from_slice(format!("</{}>", root.name).as_bytes());
+        let (replacement, _) =
+            oxoffice_core::xml_element::replace_content(&xml[root.full.clone()], style)?;
         xml.splice(root.full.clone(), replacement);
     } else {
         xml.splice(root.content.end..root.content.end, style.iter().copied());

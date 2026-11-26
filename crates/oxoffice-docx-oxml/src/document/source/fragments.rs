@@ -11,11 +11,11 @@ impl FragmentNamespaceClosure {
         let invalid = |message: String| OxmlError::InvalidValue(message);
         let mut reader = Reader::from_reader(xml);
         reader.config_mut().trim_text(false);
-        let (opening_end, empty, existing) = loop {
+        let (start, existing) = loop {
+            let start = xml.len() - reader.get_ref().len();
             let event = reader
                 .read_event()
                 .map_err(|error| invalid(format!("content fragment scan failed: {error}")))?;
-            let empty = matches!(event, Event::Empty(_));
             match event {
                 Event::Start(element) | Event::Empty(element) => {
                     let mut existing = std::collections::HashSet::new();
@@ -38,7 +38,7 @@ impl FragmentNamespaceClosure {
                             );
                         }
                     }
-                    break (xml.len() - reader.get_ref().len(), empty, existing);
+                    break (start, existing);
                 }
                 Event::Eof => {
                     return Err(invalid("content fragment has no root element".into()));
@@ -58,9 +58,8 @@ impl FragmentNamespaceClosure {
                 .ok_or_else(|| invalid("content fragment namespace byte overflow".into()))?;
             bindings.push(index);
         }
-        let insertion = opening_end
-            .checked_sub(if empty { 2 } else { 1 })
-            .ok_or_else(|| invalid("content fragment opening tag is incomplete".into()))?;
+        let insertion =
+            start + oxoffice_core::xml_element::start_tag(&xml[start..])?.attributes_end;
         Ok(Self {
             insertion,
             bindings,

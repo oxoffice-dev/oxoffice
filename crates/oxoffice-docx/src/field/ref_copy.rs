@@ -206,10 +206,9 @@ fn ref_comment_companion_entries(
                 "REF f annotation companion XML is malformed: {error}"
             ))
         })?;
-        let end = reader.buffer_position() as usize;
+        let empty = matches!(event, Event::Empty(_));
         match event {
             Event::Start(element) | Event::Empty(element) => {
-                let empty = xml.get(end.saturating_sub(2)..end) == Some(b"/>");
                 let (namespace, local) = reader.resolver().resolve_element(element.name());
                 let owned = namespace_matches(&namespace, kind.namespace());
                 if depth == 0 {

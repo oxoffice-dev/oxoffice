@@ -4338,7 +4338,8 @@ fn insert_first_children(
     let element = &tree.elements[index];
     let mut output = Vec::with_capacity(xml.len() + children.len() + element.name.len() + 3);
     if element.empty {
-        output.extend_from_slice(&xml[..element.open_end - 2]);
+        let tag = oxoffice_core::xml_element::start_tag(&xml[element.start..])?;
+        output.extend_from_slice(&xml[..element.start + tag.attributes_end]);
         output.push(b'>');
         output.extend_from_slice(children);
         output.extend_from_slice(format!("</{}>", element.name).as_bytes());
@@ -4365,22 +4366,12 @@ fn append_children_to_element(element_xml: &[u8], children: &[u8]) -> Result<Vec
             Event::Start(_) => {
                 depth += 1;
             }
-            Event::Empty(element) if depth == 0 => {
-                let end = reader.buffer_position() as usize;
-                let slash = element_xml[..end]
-                    .iter()
-                    .rposition(|byte| *byte == b'/')
-                    .ok_or_else(|| {
-                        Error::Other("empty XML element has no closing slash".to_owned())
-                    })?;
-                let name = element.name();
-                let mut output = element_xml[..slash].to_vec();
-                output.push(b'>');
-                output.extend_from_slice(children);
-                output.extend_from_slice(b"</");
-                output.extend_from_slice(name.as_ref());
-                output.push(b'>');
-                output.extend_from_slice(&element_xml[end..]);
+            Event::Empty(_) if depth == 0 => {
+                let mut output = element_xml[..before].to_vec();
+                output.extend(
+                    oxoffice_core::xml_element::replace_content(&element_xml[before..], children)?
+                        .0,
+                );
                 return Ok(output);
             }
             Event::End(_) => {
@@ -4427,17 +4418,8 @@ fn inject_namespace_declarations(
         return open.to_vec();
     }
 
-    let insertion = open
-        .iter()
-        .rposition(|byte| *byte == b'>')
-        .map(|position| {
-            if position > 0 && open[position - 1] == b'/' {
-                position - 1
-            } else {
-                position
-            }
-        })
-        .unwrap_or(open.len());
+    let insertion =
+        oxoffice_core::xml_element::start_tag(open).map_or(open.len(), |tag| tag.attributes_end);
     let mut output = Vec::with_capacity(open.len() + missing.len() * 24);
     output.extend_from_slice(&open[..insertion]);
     for (prefix, value) in missing {

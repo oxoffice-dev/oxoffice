@@ -558,9 +558,8 @@ fn write_source_autofit<W: Write>(
     autofit.write_xml(&mut validation)?;
     let mut reader = Reader::from_reader(source);
     let event = reader.read_event().map_err(OxmlError::from)?;
-    let (start, empty) = match event {
-        Event::Start(start) => (start, false),
-        Event::Empty(start) => (start, true),
+    let start = match event {
+        Event::Start(start) | Event::Empty(start) => start,
         _ => return Err(TextError::UnexpectedElement("autofit source".to_owned())),
     };
     let old_name = start.name().as_ref().to_vec();
@@ -622,16 +621,11 @@ fn write_source_autofit<W: Write>(
             added.extend_from_slice(b"\"");
         }
     }
-    let start_end = reader.buffer_position() as usize;
-    let insertion = start_end - if empty { 2 } else { 1 };
-    edits.push((insertion, insertion, added));
-    if !empty {
-        let element = std::str::from_utf8(source).map_err(|_| missing_end("autofit"))?;
-        let close = oxoffice_core::xml_element::element_span(element)
-            .map_err(|_| missing_end("autofit"))?
-            .end_tag
-            .start
-            + 2;
+    let span =
+        oxoffice_core::xml_element::element_span(source).map_err(|_| missing_end("autofit"))?;
+    edits.push((span.attributes_end(), span.attributes_end(), added));
+    if !span.is_self_closing() {
+        let close = span.end_tag.start + 2;
         edits.push((close, close + old_name.len(), name));
     }
     edits.sort_by_key(|edit| std::cmp::Reverse(edit.0));

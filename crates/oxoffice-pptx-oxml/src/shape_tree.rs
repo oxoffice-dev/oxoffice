@@ -3914,10 +3914,11 @@ fn relocated_raw(
 ) -> Result<Vec<u8>> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
-    let (declared, end) = loop {
+    let (declared, root_start) = loop {
+        let before = reader.buffer_position() as usize;
         match reader.read_event_into(&mut buffer)? {
             Event::Start(start) | Event::Empty(start) => {
-                break (all_attributes(&start)?, reader.buffer_position() as usize);
+                break (all_attributes(&start)?, before);
             }
             Event::Eof => return Err(OxmlError::MissingElement("relocated raw root".to_owned())),
             _ => {}
@@ -3942,15 +3943,8 @@ fn relocated_raw(
     if declarations.is_empty() {
         return Ok(xml.to_vec());
     }
-    let close = end
-        .checked_sub(1)
-        .filter(|at| xml.get(*at) == Some(&b'>'))
-        .ok_or_else(|| OxmlError::InvalidValue("invalid relocated root span".to_owned()))?;
-    let insert = if close > 0 && xml[close - 1] == b'/' {
-        close - 1
-    } else {
-        close
-    };
+    let insert =
+        root_start + oxoffice_core::xml_element::start_tag(&xml[root_start..])?.attributes_end;
     let mut output = Vec::with_capacity(xml.len() + declarations.len());
     output.extend_from_slice(&xml[..insert]);
     output.extend_from_slice(declarations.as_bytes());

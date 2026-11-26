@@ -3155,10 +3155,10 @@ fn reply_reference_has_only_metadata(
     let mut buffer = Vec::new();
     let mut depth = 0;
     loop {
-        match reader.read_event_into(&mut buffer)? {
+        let event = reader.read_event_into(&mut buffer)?;
+        let empty = matches!(event, Event::Empty(_));
+        match event {
             Event::Start(element) | Event::Empty(element) => {
-                let end = reader.buffer_position() as usize;
-                let empty = xml.get(end.saturating_sub(2)..end) == Some(b"/>");
                 let (namespace, local) = reader.resolver().resolve_element(element.name());
                 let word = matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == oxoffice_docx_oxml::namespace::W_NS.as_bytes());
                 if depth == 1 && (!word || local.as_ref() != b"r") {
@@ -4017,10 +4017,11 @@ pub(crate) fn comment_source_markers(xml: &[u8]) -> Result<Vec<CommentSourceMark
     let mut preceding_run: Option<(usize, usize, Vec<u8>)> = None;
     loop {
         let start = reader.buffer_position() as usize;
-        match reader
+        let event = reader
             .read_event_into(&mut buffer)
-            .map_err(|error| Error::Other(error.to_string()))?
-        {
+            .map_err(|error| Error::Other(error.to_string()))?;
+        let empty = matches!(event, Event::Empty(_));
+        match event {
             Event::Start(element) | Event::Empty(element) => {
                 let preceding = preceding_run.take();
                 let end = reader.buffer_position() as usize;
@@ -4028,7 +4029,7 @@ pub(crate) fn comment_source_markers(xml: &[u8]) -> Result<Vec<CommentSourceMark
                 if matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == oxoffice_docx_oxml::namespace::W_NS.as_bytes())
                 {
                     if local.as_ref() == b"r"
-                        && xml.get(end.saturating_sub(2)..end) != Some(b"/>")
+                        && !empty
                         && element.attributes().all(|attribute| {
                             attribute.is_ok_and(|attribute| {
                                 attribute.key.as_ref() == b"xmlns"
@@ -4044,7 +4045,7 @@ pub(crate) fn comment_source_markers(xml: &[u8]) -> Result<Vec<CommentSourceMark
                         && let Some((run_start, run_end, name)) = preceding.as_ref()
                         && *run_end == start
                     {
-                        if xml.get(end.saturating_sub(2)..end) != Some(b"/>") {
+                        if !empty {
                             reader
                                 .read_to_end_into(element.name(), &mut Vec::new())
                                 .map_err(|error| Error::Other(error.to_string()))?;
@@ -4081,7 +4082,7 @@ pub(crate) fn comment_source_markers(xml: &[u8]) -> Result<Vec<CommentSourceMark
                             .ok_or_else(|| {
                                 Error::Other("comment marker has an invalid qualified id".into())
                             })?;
-                        if xml.get(end.saturating_sub(2)..end) != Some(b"/>") {
+                        if !empty {
                             reader
                                 .read_to_end_into(element.name(), &mut Vec::new())
                                 .map_err(|error| Error::Other(error.to_string()))?;
@@ -4128,13 +4129,12 @@ fn comment_part_entries(
     let mut entries = Vec::new();
     loop {
         let start = reader.buffer_position() as usize;
-        match reader
+        let event = reader
             .read_event_into(&mut buffer)
-            .map_err(|error| Error::Other(error.to_string()))?
-        {
+            .map_err(|error| Error::Other(error.to_string()))?;
+        let empty = matches!(event, Event::Empty(_));
+        match event {
             Event::Start(element) | Event::Empty(element) => {
-                let end = reader.buffer_position() as usize;
-                let empty = xml.get(end.saturating_sub(2)..end) == Some(b"/>");
                 let (resolved, local) = reader.resolver().resolve_element(element.name());
                 let qualified = matches!(resolved, ResolveResult::Bound(Namespace(uri)) if uri == namespace.as_bytes());
                 if depth == 0 {

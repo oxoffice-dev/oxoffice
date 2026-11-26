@@ -2004,13 +2004,7 @@ fn close_classic_element(xml: &[u8], namespaces: &NamespaceBindings) -> Result<V
         .into_iter()
         .map(|(name, _)| name)
         .collect::<std::collections::HashSet<_>>();
-    let end = reader.buffer_position() as usize;
-    let position = end
-        - if xml.get(end - 2) == Some(&b'/') {
-            2
-        } else {
-            1
-        };
+    let position = oxoffice_core::xml_element::start_tag(xml)?.attributes_end;
     let mut declarations = String::new();
     for (prefix, uri) in namespaces.entries() {
         let name = if prefix.is_empty() {

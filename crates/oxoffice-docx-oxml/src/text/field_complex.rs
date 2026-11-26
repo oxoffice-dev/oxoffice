@@ -342,7 +342,9 @@ pub(crate) fn pure_complex_marker_run(
     let mut marker = false;
     let mut properties = false;
     loop {
-        match reader.read_event_into(&mut buffer)? {
+        let event = reader.read_event_into(&mut buffer)?;
+        let is_empty = matches!(event, Event::Empty(_));
+        match event {
             Event::Start(root) if scope.is_none() => {
                 let prefixes = word_prefixes_at(&root, inherited)?;
                 if !is_word_element(root.name().as_ref(), b"r", &prefixes) {
@@ -355,10 +357,6 @@ pub(crate) fn pure_complex_marker_run(
                     return Ok(false);
                 };
                 let prefixes = word_prefixes_at(&child, parent)?;
-                let is_empty = raw.get(
-                    (reader.buffer_position() as usize).saturating_sub(2)
-                        ..reader.buffer_position() as usize,
-                ) == Some(b"/>");
                 if is_word_element(child.name().as_ref(), b"rPr", &prefixes)
                     && !properties
                     && !marker
@@ -3223,12 +3221,13 @@ fn field_span_is_bare(raw: &[u8], word_prefixes: &[String]) -> bool {
     let Some(prefixes) = run_prefixes else {
         return false;
     };
+    let tail = body[last..close].trim_ascii_end();
     matches!(
         reader.read_event_into(&mut buffer),
         Ok(Event::Empty(element))
             if word_prefixes_at(&element, &prefixes)
                 .is_ok_and(|prefixes| marker(&element, &prefixes, "end"))
-    ) && body[last..close].trim_ascii_end().ends_with(b"/>")
+    ) && oxoffice_core::xml_element::start_tag(tail).is_ok_and(|tag| tag.range.end == tail.len())
 }
 
 /// Turn a projected field span into model runs, splitting out the run
