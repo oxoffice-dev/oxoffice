@@ -64,7 +64,7 @@ impl PptXmlOwner<'_> {
 }
 
 fn ppt_xml_close_namespaces(xml: &[u8]) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     loop {
         let event = reader
             .read_event()
@@ -561,7 +561,7 @@ fn ppt_xml_frontier_order(
         .flatten()
 }
 pub(super) fn ppt_xml_frontiers(source: &[u8], names: &mut PptXmlNames) -> Result<PptXmlFrontiers> {
-    let mut reader = quick_xml::Reader::from_reader(source);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source);
     let mut scope = PptXmlScope::default();
     let mut stack: Vec<PptXmlFrame> = Vec::new();
     let mut result = PptXmlFrontiers::default();
@@ -913,7 +913,7 @@ fn ppt_xml_owner_range(
     shape_root: &[u8],
     steps: &[(&str, &str, usize)],
 ) -> Result<std::ops::Range<usize>> {
-    let mut reader = quick_xml::Reader::from_reader(source);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source);
     let mut names = PptXmlNames::default();
     let mut scope = PptXmlScope::default();
     let mut stack: Vec<PptXmlSourceFrame> = Vec::new();

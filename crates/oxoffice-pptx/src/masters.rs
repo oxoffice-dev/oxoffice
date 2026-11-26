@@ -95,7 +95,8 @@ impl Presentation {
         let insertion = oxoffice_core::xml_element::start_tag(&replacement)
             .map_err(|_| footer_malformed(&part, "level source has no start token"))?
             .attributes_end;
-        let mut fragment_reader = quick_xml::Reader::from_reader(replacement.as_slice());
+        let mut fragment_reader =
+            oxoffice_core::xml_reader::Reader::from_reader(replacement.as_slice());
         let start = match fragment_reader.read_event().map_err(OpcError::from)? {
             XmlEvent::Start(start) | XmlEvent::Empty(start) => start,
             _ => return Err(footer_malformed(&part, "level source is not an element")),

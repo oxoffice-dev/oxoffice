@@ -838,7 +838,7 @@ fn patch_custom_property(
                 "unqualified custom owner",
             ));
         }
-        let mut reader = quick_xml::Reader::from_reader(&source[start..end]);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&source[start..end]);
         if let XmlEvent::Start(root) | XmlEvent::Empty(root) = reader
             .read_event()
             .map_err(|e| invalid_shape_mutation("custom properties", e.to_string()))?
@@ -880,7 +880,7 @@ fn patch_custom_property(
     };
     let bytes = if let Some((_, value)) = replacement {
         let owner = &source[start..end];
-        let mut reader = quick_xml::Reader::from_reader(owner);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(owner);
         let mut depth = 0;
         let mut value_start = None;
         let mut value_range = None;
@@ -924,11 +924,11 @@ fn patch_custom_property(
         let (begin, finish) = value_range
             .ok_or_else(|| invalid_shape_mutation("custom properties", "custom value is absent"))?;
         let old_value = &owner[begin..finish];
-        let mut old_reader = quick_xml::Reader::from_reader(old_value);
+        let mut old_reader = oxoffice_core::xml_reader::Reader::from_reader(old_value);
         let old_start = old_reader
             .read_event()
             .map_err(|e| invalid_shape_mutation("custom properties", e.to_string()))?;
-        let mut new_reader = quick_xml::Reader::from_reader(value.as_bytes());
+        let mut new_reader = oxoffice_core::xml_reader::Reader::from_reader(value.as_bytes());
         let new_start = new_reader
             .read_event()
             .map_err(|e| invalid_shape_mutation("custom properties", e.to_string()))?;
@@ -1037,7 +1037,7 @@ fn publish_property_part(
 }
 
 fn edit_property_text(source: &[u8], value: Option<&str>) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(source);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source);
     let mut buffer = Vec::new();
     let mut result = Vec::new();
     let mut opened = false;

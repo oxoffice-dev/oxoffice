@@ -571,7 +571,7 @@ pub(super) fn close_import_table_style(
     xml: &[u8],
     namespaces: &[(String, String)],
 ) -> std::result::Result<Vec<u8>, OxmlError> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let event = reader.read_event()?;
     let empty = matches!(event, XmlEvent::Empty(_));
     let mut start = match event {
@@ -611,7 +611,7 @@ pub(super) fn close_import_table_style(
 }
 
 fn set_import_style_id(xml: &[u8], id: &str) -> std::result::Result<Vec<u8>, OxmlError> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let event = reader.read_event()?;
     let start = match event {
         XmlEvent::Start(start) | XmlEvent::Empty(start) => start,
@@ -674,7 +674,7 @@ fn merge_import_table_root_metadata(
         attributes.push(attribute.raw.clone());
     }
     let origin = usize::from(destination.starts_with(b"\xef\xbb\xbf")) * 3;
-    let mut reader = quick_xml::Reader::from_reader(&destination[origin..]);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&destination[origin..]);
     let (start, begin) = loop {
         let begin = origin + reader.buffer_position() as usize;
         if let XmlEvent::Start(start) | XmlEvent::Empty(start) = reader.read_event()? {
