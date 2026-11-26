@@ -263,8 +263,10 @@ or end tag is reads it with `oxoffice_core::xml_element`, never by searching
 for `</name>`, and where a tag or its attributes end with
 `xml_element::start_tag`, never by taking `/>` as its close:
 `crates/oxoffice-core/tests/xml_element.rs` refuses both in `crates/*/src`
-(an element written `<x></x>` has no `/>`). `--nocapture` prints every
-finding.
+(an element written `<x></x>` has no `/>`). A reader of a document part goes
+through `oxoffice_core::xml_reader`, which reads `<x></x>` as `<x/>`; the
+same file refuses a quick-xml reader in the crates that read them.
+`--nocapture` prints every finding.
 
 ## Known limitations
 
