@@ -290,3 +290,33 @@ fn a_literal_tab_in_an_attribute_reads_as_a_space_and_a_reference_as_a_tab() {
     ));
     assert_eq!(doc.tables()[0].caption(), Some("a b\tc"));
 }
+
+#[test]
+fn a_property_attribute_kept_as_read_with_a_reference_stays_well_formed_after_an_edit() {
+    // A colour tint that is no hex byte is kept as read, `&amp;` included.
+    let body = concat!(
+        r#"<w:p><w:r><w:rPr><w:color w:val="FF0000" w:themeTint="a&amp;b"/></w:rPr>"#,
+        r#"<w:t>Delivery schedule</w:t></w:r></w:p>"#,
+    );
+    let mut edited = doc_with_body(body);
+    let paragraphs = edited.story_paragraphs().expect("reads");
+    assert_eq!(
+        edited
+            .try_replace_text_at(&paragraphs[0].location, "Delivery", "DELIVERY", Some(1))
+            .expect("edits"),
+        Ok(1)
+    );
+    let mut inserted = doc_with_body(body);
+    inserted.insert_paragraph(0, "Before the schedule");
+    for mut doc in [edited, inserted] {
+        let bytes = doc.to_bytes().expect("saves");
+        let part = crate::support::package_parts(&bytes)
+            .remove("word/document.xml")
+            .expect("main part");
+        oxoffice_xml_test::canonical(&part).expect("the saved part is XML");
+        assert_eq!(
+            read_attribute(&mut doc, "/word/document.xml", "w:color", "w:themeTint"),
+            ["a&b"]
+        );
+    }
+}

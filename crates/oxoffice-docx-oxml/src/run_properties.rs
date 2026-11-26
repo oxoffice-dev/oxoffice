@@ -939,7 +939,14 @@ impl CT_RPr {
                         for attr in e.attributes() {
                             let attr = attr?;
                             let key = attr.key.as_ref();
-                            let v = oxoffice_core::xml::attribute_text(&attr)?.into_owned();
+                            let v = oxoffice_core::xml::attribute_text(&attr)?;
+                            // Kept as read, and written back as is.
+                            let raw = || -> Result<(String, String)> {
+                                Ok((
+                                    std::str::from_utf8(key)?.to_owned(),
+                                    std::str::from_utf8(&attr.value)?.to_owned(),
+                                ))
+                            };
                             if is_word_attribute(key, b"val", &prefixes) {
                                 rpr.color =
                                     Some(oxoffice_core::xml::attribute_text(&attr)?.into_owned());
@@ -949,20 +956,15 @@ impl CT_RPr {
                             } else if is_word_attribute(key, b"themeTint", &prefixes) {
                                 match parse_uchar_hex(&v) {
                                     Some(tint) => rpr.color_theme_tint = Some(tint),
-                                    None => rpr
-                                        .color_extra_attributes
-                                        .push((std::str::from_utf8(key)?.to_owned(), v)),
+                                    None => rpr.color_extra_attributes.push(raw()?),
                                 }
                             } else if is_word_attribute(key, b"themeShade", &prefixes) {
                                 match parse_uchar_hex(&v) {
                                     Some(shade) => rpr.color_theme_shade = Some(shade),
-                                    None => rpr
-                                        .color_extra_attributes
-                                        .push((std::str::from_utf8(key)?.to_owned(), v)),
+                                    None => rpr.color_extra_attributes.push(raw()?),
                                 }
                             } else {
-                                rpr.color_extra_attributes
-                                    .push((std::str::from_utf8(key)?.to_owned(), v));
+                                rpr.color_extra_attributes.push(raw()?);
                             }
                         }
                     } else if is_word_element(name.as_ref(), b"highlight", &prefixes) {

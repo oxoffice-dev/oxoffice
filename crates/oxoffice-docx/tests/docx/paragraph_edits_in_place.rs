@@ -440,3 +440,41 @@ fn an_edit_after_another_keeps_twin_paragraphs_apart_when_the_document_names_wor
         ]
     );
 }
+
+#[test]
+fn paragraphs_told_apart_only_by_their_namespaces_keep_them_when_swapped() {
+    // Two paragraphs alike but for the namespace their kept markup is in.
+    let twin = |namespace: &str| {
+        format!(
+            r#"<w:p xmlns:x="{namespace}"><w:r><w:t>Twin</w:t></w:r><w:r><x:mark x:v="1"/></w:r></w:p>"#
+        )
+    };
+    let mut doc = crate::support::doc_with_body(&format!(
+        "{}{}<w:p><w:r><w:t>Closing</w:t></w:r></w:p>",
+        twin("urn:one"),
+        twin("urn:two")
+    ));
+    let first = doc.body_children()[0].clone();
+    let second = doc.swap_body_block(1, first).expect("swaps");
+    doc.swap_body_block(0, second).expect("swaps");
+    let paragraphs = doc.story_paragraphs().expect("reads");
+    let closing = paragraphs
+        .iter()
+        .find(|paragraph| paragraph.text == "Closing")
+        .expect("the closing paragraph");
+    let edited = doc.try_replace_text_at(&closing.location, "Closing", "CLOSING", Some(1));
+    // The swap is kept, or refused: never undone.
+    if let Ok(Ok(1)) = edited
+        && let Ok(saved) = doc.to_bytes()
+    {
+        let part = String::from_utf8(
+            crate::support::package_parts(&saved)
+                .remove("word/document.xml")
+                .expect("main part"),
+        )
+        .expect("UTF-8");
+        let one = part.find("urn:one").expect("urn:one is kept");
+        let two = part.find("urn:two").expect("urn:two is kept");
+        assert!(two < one, "the swap is undone: {part}");
+    }
+}

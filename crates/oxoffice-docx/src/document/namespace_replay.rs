@@ -283,11 +283,20 @@ pub(super) fn replay_nested_namespace_declarations_in(
                     && let Some(candidate) = semantic_candidates
                         .iter()
                         .find(|candidate| candidate.0.start == peer.start)
+                    && owner.declarations.iter().all(|(name, namespace)| {
+                        inherited_namespace(&peer.bindings, &namespace_prefix(name))
+                            == Some(namespace.as_str())
+                    })
                 {
                     // Owners written again alike, only their declarations
-                    // told them apart: an edit keeps the elements of the
-                    // part in their order, so the declarations go back to
-                    // the element at the owner's place among its peers.
+                    // told them apart, and those declarations say what the
+                    // scope around the element says already (an edited
+                    // paragraph's own `w` in a part that names Word
+                    // otherwise): where they go changes no name, and an
+                    // edit keeps the elements of the part in their order,
+                    // so they go back to the element at the owner's place
+                    // among its peers. Declarations that bind a name
+                    // otherwise tell the owners apart: never guessed.
                     candidate.0
                 } else {
                     return Err(Error::Other(format!(
