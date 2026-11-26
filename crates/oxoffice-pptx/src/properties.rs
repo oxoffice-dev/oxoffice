@@ -568,6 +568,19 @@ pub(super) fn property_child_ranges(
                 }
                 depth += 1;
             }
+            XmlEvent::Empty(start) if depth == 0 => {
+                if uri.as_deref() != Some(namespace)
+                    || xml_local_name(start.name().as_ref()) != root.as_bytes()
+                {
+                    return Err(invalid_shape_mutation(
+                        "properties",
+                        "unqualified core owner",
+                    ));
+                }
+                // An owner written with an end tag and nothing inside takes
+                // children before that end tag; a self-closed one has no place.
+                root_end = reader.empty_end_tag_position().map(|at| at as usize);
+            }
             XmlEvent::Empty(start) if depth == 1 => children.push((
                 uri,
                 String::from_utf8_lossy(xml_local_name(start.name().as_ref())).into_owned(),

@@ -4013,10 +4013,18 @@ fn rewrite_first_namespaced_attribute(
 }
 
 fn start_tag_range(xml: &[u8], end: usize) -> Result<std::ops::Range<usize>> {
-    let start = xml[..end]
-        .iter()
-        .rposition(|byte| *byte == b'<')
-        .ok_or_else(|| OxmlError::InvalidValue("missing start-tag boundary".to_owned()))?;
+    let last_tag = |end: usize| {
+        xml[..end]
+            .iter()
+            .rposition(|byte| *byte == b'<')
+            .ok_or_else(|| OxmlError::InvalidValue("missing start-tag boundary".to_owned()))
+    };
+    let mut start = last_tag(end)?;
+    // An element read as one empty event may be written `<x></x>`: the
+    // range is the whole element, from its start tag.
+    if xml[start..].starts_with(b"</") {
+        start = last_tag(start)?;
+    }
     Ok(start..end)
 }
 
@@ -4207,17 +4215,21 @@ fn replace_transition_effect(
                 root_end = reader.buffer_position() as usize;
             }
             Event::Empty(start) if scope.is_none() => {
+                // A transition with nothing inside, in either writing, gets
+                // the effect as its content.
+                inherited.with_start(&start)?;
                 let end = reader.buffer_position() as usize;
                 let name = start.name().as_ref().to_vec();
                 let attributes_end =
                     begin + oxoffice_core::xml_element::start_tag(&xml[begin..])?.attributes_end;
                 let mut expanded = xml[..attributes_end].to_vec();
                 expanded.extend_from_slice(b">");
+                expanded.extend_from_slice(&transition_effect_xml(effect)?);
                 expanded.extend_from_slice(b"</");
                 expanded.extend_from_slice(&name);
                 expanded.extend_from_slice(b">");
                 expanded.extend_from_slice(&xml[end..]);
-                return replace_transition_effect(&expanded, inherited, effect);
+                return Ok(expanded);
             }
             Event::Start(child) | Event::Empty(child) => {
                 let parent = scope.as_ref().expect("transition root");
