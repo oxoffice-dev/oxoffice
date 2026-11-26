@@ -119,7 +119,8 @@ fn holds_only_a_creation_id(raw: &[u8]) -> bool {
                             && local == b"ext"
                             && start.attributes().flatten().any(|attribute| {
                                 attribute.key.as_ref() == b"uri"
-                                    && attribute.value.as_ref() == CREATION_ID_EXTENSION
+                                    && oxoffice_core::xml::attribute_text(&attribute)
+                                        .is_ok_and(|uri| uri.as_bytes() == CREATION_ID_EXTENSION)
                             })
                     }
                     2 => {

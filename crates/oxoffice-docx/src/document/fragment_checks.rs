@@ -255,10 +255,10 @@ pub(super) fn fragment_uses_w14(xml: &[u8]) -> Result<bool> {
                             | b"PreserveAttributes"
                     );
                     if compatibility
-                        && attribute
-                            .value
-                            .split(|byte| byte.is_ascii_whitespace())
-                            .any(|token| token == b"w14" || token.starts_with(b"w14:"))
+                        && oxoffice_core::xml::attribute_text(&attribute)
+                            .map_err(|error| Error::Other(error.to_string()))?
+                            .split_ascii_whitespace()
+                            .any(|token| token == "w14" || token.starts_with("w14:"))
                     {
                         return Ok(true);
                     }

@@ -367,22 +367,38 @@ fn no_code_searches_for_an_end_tag_as_text() {
     );
 }
 
-/// Files that read attribute values from their raw bytes, by how many reads
-/// and why: `preserved`, a value written back as read (by `push_raw` or a
-/// lexical copy), which must keep its references; `namespace`, a namespace
-/// declaration, which quick-xml's resolver also reads as written;
-/// `declaration`, the XML declaration, which holds no reference; `strict`,
-/// a value that resolves its references itself and refuses a malformed one;
-/// `reader`, a reader of attribute values itself; `test`, a test module.
-/// Every other value is read with `oxoffice_core::xml::attribute_text`.
-const RAW_READS: [(&str, usize, &str); 19] = [
+/// Files that use an attribute's raw bytes, by how many uses and why:
+/// `preserved`, a value written back as read (by `push_raw` or a lexical
+/// copy), which must keep its references; `lexical`, a value compared or
+/// kept as written beside its decoded form, where another spelling counts
+/// as a change; `namespace`, a namespace declaration, which quick-xml's
+/// resolver also reads as written; `declaration`, the XML declaration, which
+/// holds no reference; `strict`, a value that resolves its references itself
+/// and refuses a malformed one; `position`, where a value sits in the
+/// source, not what it says; `decoded`, a field of another type that holds
+/// a decoded value; `reader`, a reader of attribute values itself; `test`, a
+/// test module. Every other value is read with
+/// `oxoffice_core::xml::attribute_text`.
+const RAW_READS: [(&str, usize, &str); 57] = [
     ("crates/oxoffice-core/src/xml.rs", 1, "reader"),
+    ("crates/oxoffice-core/src/xml.rs", 1, "preserved"),
+    ("crates/oxoffice-core/src/xml.rs", 1, "namespace"),
     ("crates/oxoffice-core/src/xml.rs", 1, "declaration"),
     ("crates/oxoffice-docx-oxml/src/borders.rs", 2, "preserved"),
     (
         "crates/oxoffice-docx-oxml/src/document/section.rs",
         7,
         "preserved",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/document/source/admission.rs",
+        1,
+        "namespace",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/document/source/qualification.rs",
+        1,
+        "namespace",
     ),
     ("crates/oxoffice-docx-oxml/src/glossary.rs", 1, "strict"),
     (
@@ -391,10 +407,16 @@ const RAW_READS: [(&str, usize, &str); 19] = [
         "preserved",
     ),
     (
+        "crates/oxoffice-docx-oxml/src/placeholder.rs",
+        1,
+        "namespace",
+    ),
+    (
         "crates/oxoffice-docx-oxml/src/properties.rs",
         4,
         "preserved",
     ),
+    ("crates/oxoffice-docx-oxml/src/properties.rs", 1, "lexical"),
     (
         "crates/oxoffice-docx-oxml/src/run_properties.rs",
         4,
@@ -405,7 +427,18 @@ const RAW_READS: [(&str, usize, &str); 19] = [
         1,
         "strict",
     ),
+    ("crates/oxoffice-docx-oxml/src/styles.rs", 1, "lexical"),
     ("crates/oxoffice-docx-oxml/src/styles.rs", 2, "namespace"),
+    (
+        "crates/oxoffice-docx-oxml/src/text/bindings.rs",
+        3,
+        "namespace",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/block_bookmarks.rs",
+        1,
+        "namespace",
+    ),
     (
         "crates/oxoffice-docx-oxml/src/text/emission.rs",
         1,
@@ -416,10 +449,25 @@ const RAW_READS: [(&str, usize, &str); 19] = [
         1,
         "strict",
     ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/field_rewrite.rs",
+        3,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/field_write.rs",
+        1,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/text/field_write.rs",
+        1,
+        "namespace",
+    ),
     ("crates/oxoffice-docx-oxml/src/text/run.rs", 1, "namespace"),
     (
         "crates/oxoffice-docx/src/bibliography/oracle_tests.rs",
-        2,
+        3,
         "test",
     ),
     (
@@ -427,73 +475,170 @@ const RAW_READS: [(&str, usize, &str); 19] = [
         2,
         "preserved",
     ),
+    ("crates/oxoffice-docx/src/comparison/guard.rs", 1, "lexical"),
     (
-        "crates/oxoffice-docx/src/document/story_text.rs",
+        "crates/oxoffice-docx/src/comparison/leaf_publications.rs",
+        1,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx/src/comparison/source_metadata.rs",
         1,
         "namespace",
     ),
+    (
+        "crates/oxoffice-docx/src/comparison/source_snapshots.rs",
+        1,
+        "namespace",
+    ),
+    (
+        "crates/oxoffice-docx/src/content_control/custom_xml.rs",
+        1,
+        "declaration",
+    ),
+    (
+        "crates/oxoffice-docx/src/content_control/custom_xml.rs",
+        1,
+        "strict",
+    ),
+    (
+        "crates/oxoffice-docx/src/content_control/form_state.rs",
+        4,
+        "decoded",
+    ),
+    (
+        "crates/oxoffice-docx/src/content_control/namespaces.rs",
+        1,
+        "position",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/edited_paragraph.rs",
+        1,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/main_part.rs",
+        1,
+        "lexical",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/owner_snapshots.rs",
+        1,
+        "lexical",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_scopes.rs",
+        1,
+        "position",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_text.rs",
+        1,
+        "preserved",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_text.rs",
+        2,
+        "namespace",
+    ),
+    (
+        "crates/oxoffice-docx/src/document/story_xml.rs",
+        1,
+        "lexical",
+    ),
     ("crates/oxoffice-docx/src/field/fragment.rs", 4, "strict"),
+    (
+        "crates/oxoffice-docx/src/field/story_sources.rs",
+        1,
+        "namespace",
+    ),
+    ("crates/oxoffice-docx/src/flat_opc.rs", 2, "namespace"),
     ("crates/oxoffice-docx/src/redaction.rs", 1, "declaration"),
+    ("crates/oxoffice-opc/src/relationship.rs", 4, "decoded"),
+    ("crates/oxoffice-opc/src/signature.rs", 1, "decoded"),
+    ("crates/oxoffice-pptx-oxml/src/diagram.rs", 1, "position"),
+    ("crates/oxoffice-pptx-oxml/src/picture.rs", 2, "position"),
+    ("crates/oxoffice-pptx-oxml/src/relmap.rs", 1, "position"),
+    ("crates/oxoffice-pptx-oxml/src/shape_tree.rs", 1, "position"),
+    ("crates/oxoffice-pptx/src/header_footer.rs", 1, "namespace"),
+    ("crates/oxoffice-pptx/src/import.rs", 1, "position"),
+    ("crates/oxoffice-pptx/src/import_tables.rs", 1, "decoded"),
+    ("crates/oxoffice-pptx/src/xml_owner.rs", 1, "preserved"),
     ("crates/oxoffice-xml-test/src/canonical.rs", 1, "reader"),
 ];
 
-/// The lines of `source`, but its `#[cfg(test)]` items, that read an
-/// attribute value from its raw bytes: `from_utf8(&attribute.value)` (or
-/// `_lossy`, `.as_ref()`, `.to_vec()`), and the value compared with a byte
-/// string (`attr.value.as_ref() == b"preserve"`), however the code is laid
-/// out.
+/// Uses of an attribute's raw bytes that say where it sits, not what it
+/// says, and fields that only a decoded string has (quick-xml's
+/// `Cow<[u8]>` has no `as_str` or `trim`).
+const POSITIONAL: [&str; 8] = [
+    ".len()",
+    ".as_ptr()",
+    ".as_ref().as_ptr()",
+    ".as_ref().len()",
+    ".contains(&b'",
+    ".is_empty()",
+    ".as_str()",
+    ".trim()",
+];
+
+/// The lines of `source`, but its `#[cfg(test)]` items, that use an
+/// attribute's raw bytes: every `attr.value` or `attribute.value` borrowed,
+/// converted, compared or passed on, but its positional uses and an
+/// assignment; and, under any name, a value handed to `from_utf8` (or
+/// `_lossy`) or compared with a byte string. However the code is laid out.
 fn raw_attribute_reads(source: &str) -> Vec<usize> {
     let code = without_test_items(source);
-    // The code without white space, each character with its line.
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    // The code without white space but between two words, each character
+    // with its line.
     let (mut compact, mut lines) = (String::new(), Vec::new());
-    let mut line = 1;
+    let (mut line, mut spaced) = (1, false);
     for c in code.chars() {
         if c == '\n' {
             line += 1;
         }
-        if !c.is_whitespace() {
-            compact.push(c);
+        if c.is_whitespace() {
+            spaced = true;
+            continue;
+        }
+        if spaced && compact.ends_with(word) && word(c) {
+            compact.push(' ');
             lines.push(line);
         }
+        spaced = false;
+        compact.push(c);
+        lines.push(line);
     }
-    let identifier = |text: &str| {
-        text.chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .count()
-    };
-    // `attribute.value` at the start of `text`, not `attribute.value_of`.
-    let value_field = |text: &str| {
-        let name = identifier(text);
-        name > 0
-            && text[name..]
-                .strip_prefix(".value")
-                .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
-    };
     let mut found = Vec::new();
-    for call in ["from_utf8(", "from_utf8_lossy("] {
-        for (at, _) in compact.match_indices(call) {
-            let argument = &compact[at + call.len()..];
-            if value_field(argument.strip_prefix('&').unwrap_or(argument)) {
-                found.push(lines[at]);
-            }
+    for (at, _) in compact.match_indices(".value") {
+        let after = &compact[at + ".value".len()..];
+        if after.starts_with(word) {
+            continue;
+        }
+        let before = &compact[..at];
+        let name = &before[before.trim_end_matches(word).len()..];
+        let start = at - name.len();
+        if name.is_empty() {
+            continue;
+        }
+        let handed = [
+            "from_utf8(",
+            "from_utf8(&",
+            "from_utf8_lossy(",
+            "from_utf8_lossy(&",
+        ]
+        .iter()
+        .any(|call| compact[..start].ends_with(call));
+        let compared = [".as_ref()==b\"", ".as_ref()!=b\"", "==b\"", "!=b\""]
+            .iter()
+            .any(|comparison| after.starts_with(comparison));
+        let attribute = matches!(name, "attr" | "attribute");
+        let positional = POSITIONAL.iter().any(|use_| after.starts_with(use_))
+            || (after.starts_with('=') && !after.starts_with("=="));
+        if handed || compared || (attribute && !positional) {
+            found.push(lines[start]);
         }
     }
-    for comparison in [
-        ".value.as_ref()==b\"",
-        ".value.as_ref()!=b\"",
-        ".value==b\"",
-        ".value!=b\"",
-    ] {
-        found.extend(compact.match_indices(comparison).map(|(at, _)| lines[at]));
-    }
-    for (at, _) in compact.match_indices("matches!(") {
-        let argument = &compact[at + "matches!(".len()..];
-        let name = identifier(argument);
-        if name > 0 && argument[name..].starts_with(".value.as_ref(),b\"") {
-            found.push(lines[at]);
-        }
-    }
-    found.sort_unstable();
     found
 }
 
@@ -502,7 +647,7 @@ fn the_check_finds_an_attribute_value_read_from_its_raw_bytes() {
     let source = concat!(
         "let a = std::str::from_utf8(&attr.value)?;\n",
         "let b = String::from_utf8_lossy(\n    &attribute.value,\n);\n",
-        "let c = std::str::from_utf8(attribute.value.as_ref());\n",
+        "let c = std::str::from_utf8(record.value.as_ref());\n",
         "let d = attribute.value.as_ref() == b\"preserve\";\n",
         "let e = matches!(attribute.value.as_ref(), b\"0\" | b\"false\");\n",
         "let f = oxoffice_core::xml::attribute_text(&attribute)?;\n",
@@ -510,8 +655,20 @@ fn the_check_finds_an_attribute_value_read_from_its_raw_bytes() {
         "let h = std::str::from_utf8(&run.value_text)?;\n",
         "#[cfg(test)]\nmod tests { fn t() { std::str::from_utf8(&attr.value); } }\n",
         "let i = String::from_utf8(attr\n    .value\n    .to_vec());\n",
+        "let j = attribute.value.into_owned();\n",
+        "let k = text(attribute.value.as_ref());\n",
+        "match attr.value.as_ref() { b\"x\" => {} _ => {} }\n",
+        "let l = b\"x\" == attr.value.as_ref();\n",
+        "let v = attr.value.as_ref(); let m = std::str::from_utf8(v);\n",
+        "let n = attribute.value.len() + attribute.value.as_ptr() as usize;\n",
+        "attribute.value = Cow::Owned(quoted);\n",
+        "let o = entry.value.clone() + self.value;\n",
+        "let Cow::Borrowed(raw) = &attribute.value else { return };\n",
     );
-    assert_eq!(raw_attribute_reads(source), [1, 2, 5, 6, 7, 13]);
+    assert_eq!(
+        raw_attribute_reads(source),
+        [1, 3, 5, 6, 7, 13, 16, 17, 18, 19, 20, 24]
+    );
 }
 
 // A value read from its raw bytes ignores its character references, as #668

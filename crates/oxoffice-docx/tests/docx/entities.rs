@@ -237,3 +237,25 @@ fn a_value_kept_as_written_keeps_its_references_through_an_edit() {
         assert!(xml.contains(read), "{read}: {xml}");
     }
 }
+
+#[test]
+fn a_bookmark_id_written_with_a_reference_compares_like_a_plain_one() {
+    let marked = |start: &str, end: &str| {
+        doc_with_body(&format!(
+            concat!(
+                r#"<w:p><w:bookmarkStart w:id="{start}" w:name="mark"/>"#,
+                r#"<w:r><w:t>Text</w:t></w:r><w:bookmarkEnd w:id="{end}"/></w:p>"#,
+            ),
+            start = start,
+            end = end
+        ))
+    };
+    let compared = |edited: Document| {
+        let mut original = marked("7", "7");
+        let found = original.compare(&edited, "Writings", "2026-11-26T00:00:00Z");
+        format!("{found:?}")
+    };
+    let plain = compared(marked("3", "3"));
+    assert!(plain.starts_with("Ok("), "{plain}");
+    assert_eq!(compared(marked("&#51;", "3")), plain);
+}
