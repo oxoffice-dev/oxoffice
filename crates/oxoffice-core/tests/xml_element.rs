@@ -629,9 +629,22 @@ fn raw_attribute_reads(source: &str) -> Vec<usize> {
         ]
         .iter()
         .any(|call| compact[..start].ends_with(call));
-        let compared = [".as_ref()==b\"", ".as_ref()!=b\"", "==b\"", "!=b\""]
+        // Under any name, a value tested against a byte string: compared
+        // either way round, or matched (`matches!` or `match`).
+        let value = after.strip_prefix(".as_ref()").unwrap_or(after);
+        let compared_after = ["==b\"", "!=b\""]
             .iter()
-            .any(|comparison| after.starts_with(comparison));
+            .any(|comparison| value.starts_with(comparison));
+        let compared_before = ["==", "!="].iter().any(|operator| {
+            compact[..start]
+                .strip_suffix(operator)
+                .and_then(|left| left.strip_suffix('"'))
+                .and_then(|left| left.rfind('"').map(|quote| &left[..quote]))
+                .is_some_and(|left| left.ends_with('b'))
+        });
+        let matched = (compact[..start].ends_with("matches!(") && value.starts_with(",b\""))
+            || (compact[..start].ends_with("match ") && value.starts_with("{b\""));
+        let compared = compared_after || compared_before || matched;
         let attribute = matches!(name, "attr" | "attribute");
         let positional = POSITIONAL.iter().any(|use_| after.starts_with(use_))
             || (after.starts_with('=') && !after.starts_with("=="));
@@ -664,10 +677,14 @@ fn the_check_finds_an_attribute_value_read_from_its_raw_bytes() {
         "attribute.value = Cow::Owned(quoted);\n",
         "let o = entry.value.clone() + self.value;\n",
         "let Cow::Borrowed(raw) = &attribute.value else { return };\n",
+        "let p = matches!(a.value.as_ref(), b\"0\" | b\"false\");\n",
+        "let q = b\"x\" == a.value.as_ref();\n",
+        "match a.value.as_ref() { b\"x\" => {} _ => {} }\n",
+        "match option.value { Some(v) => {} None => {} }\n",
     );
     assert_eq!(
         raw_attribute_reads(source),
-        [1, 3, 5, 6, 7, 13, 16, 17, 18, 19, 20, 24]
+        [1, 3, 5, 6, 7, 13, 16, 17, 18, 19, 20, 24, 25, 26, 27]
     );
 }
 
