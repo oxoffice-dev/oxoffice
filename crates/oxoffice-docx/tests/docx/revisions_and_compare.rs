@@ -546,7 +546,14 @@ fn a_format_change_of_a_run_holding_a_raw_child_is_recorded_unless_formatting_is
             "<w:p><w:r><w:t>Picture </w:t></w:r><w:r>{properties}{picture}</w:r></w:p>"
         ))
     };
-    let bold = |doc: &Document| doc.paragraph(0).unwrap().runs().nth(1).unwrap().is_bold();
+    // Whether the run holding the picture, which stays in it, is bold.
+    let bold = |doc: &mut Document| {
+        let xml = main_xml(doc);
+        let at = xml.find("<w:pict").unwrap();
+        let run = &xml[xml[..at].rfind("<w:r>").unwrap()..at];
+        assert!(!run.contains("</w:r>") && !run.contains("Picture"), "{xml}");
+        run.contains("<w:b/>")
+    };
     for (from, to) in [("", "<w:rPr><w:b/></w:rPr>"), ("<w:rPr><w:b/></w:rPr>", "")] {
         for ignore_formatting in [false, true] {
             let case = format!("{from} to {to}, ignore formatting {ignore_formatting}");
@@ -561,11 +568,11 @@ fn a_format_change_of_a_run_holding_a_raw_child_is_recorded_unless_formatting_is
             assert!(doc.validate().unwrap().is_valid(), "{case}");
             if ignore_formatting {
                 assert_eq!(kinds(&doc), [], "{case}");
-                assert_eq!(bold(&doc), !from.is_empty(), "{case}");
+                assert_eq!(bold(&mut doc), !from.is_empty(), "{case}");
             } else {
                 assert_eq!(kinds(&doc), [RevisionKind::RunPropertyChange], "{case}");
-                assert_eq!(bold(&accepted(&mut doc)), !to.is_empty(), "{case}");
-                assert_eq!(bold(&rejected(&mut doc)), !from.is_empty(), "{case}");
+                assert_eq!(bold(&mut accepted(&mut doc)), !to.is_empty(), "{case}");
+                assert_eq!(bold(&mut rejected(&mut doc)), !from.is_empty(), "{case}");
             }
         }
     }
@@ -5039,6 +5046,14 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
                 String::new(),
                 format!("Tail.</w:t></w:r>{to}<w:r><w:t>"),
             ),
+            "nested" => {
+                // A box holding a VML box, both edited inside.
+                let nested = |outer: &str, inner: &str| {
+                    let inner = text_box_of_form("vml", &paragraph(inner)).replace("tb7", "tb8");
+                    text_box_of_form(form, &format!("{}<w:p>{inner}</w:p>", paragraph(outer)))
+                };
+                (nested(inside, "Inner"), nested(within, "Inner box"), tail)
+            }
             _ => (from, to, tail),
         }
     };
@@ -5073,6 +5088,8 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         ("alternate content", "run formatted", body, true, false),
         ("alternate content", "text beside", body, true, false),
         ("alternate content", "moved", body, false, false),
+        ("alternate content", "run formatted", body, false, false),
+        ("alternate content", "nested", body, false, false),
         ("drawing", "deleted", body, false, false),
         ("drawing", "anchored", body, false, false),
         ("vml", "resized", body, false, false),
@@ -5105,6 +5122,17 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         assert!(report.is_valid(), "{case}: {:?}", report.findings);
         let copies = if form == "alternate content" { 2 } else { 1 };
         let count = |doc: &mut Document, text: &str| part_xml(doc, part).matches(text).count();
+        // A box deleted and inserted whole has a drawing id of its own.
+        let xml = part_xml(&mut doc, part);
+        let mut ids = xml
+            .split(r#"<wp:docPr id=""#)
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect::<Vec<_>>();
+        let drawings = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), drawings, "{case}: {xml}");
         if !boxes_ignored {
             let deleted = count(&mut doc, &format!(">{inside}</w:delText>"));
             assert_eq!(deleted, copies, "{case}: {}", part_xml(&mut doc, part));

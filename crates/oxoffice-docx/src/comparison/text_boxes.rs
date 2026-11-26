@@ -260,17 +260,13 @@ pub(super) fn text_box_host_spans(xml: &str, boxes: &[Range<usize>]) -> Result<V
     Ok(hosts)
 }
 
-/// The runs holding the outermost boxes of `xml`, each without the content
-/// of its boxes and its drawing ids (see [`box_frame`]): alike in two
-/// versions when the boxes changed only inside.
+/// The runs holding the `boxes` of `xml` (outermost ones, see
+/// [`text_box_spans`]), each without the content of its boxes and its
+/// drawing ids (see [`box_frame`]): alike in two versions when the boxes
+/// changed only inside.
 pub(super) fn text_box_run_skeletons(xml: &str, boxes: &[Range<usize>]) -> Result<Vec<String>> {
     let mut runs: Vec<(usize, usize)> = Vec::new();
     for text_box in boxes {
-        if boxes.iter().any(|outer| {
-            outer != text_box && outer.start <= text_box.start && text_box.end <= outer.end
-        }) {
-            continue;
-        }
         let run = containing_run(xml, text_box.start)?;
         if runs.last() != Some(&run) {
             runs.push(run);
@@ -594,6 +590,8 @@ pub(super) fn deleted_text_box_contents(
     Ok(output.into_bytes())
 }
 
+/// The outermost text boxes of `xml` (each `txbxContent`, a copy an
+/// alternate content holds included), in order.
 pub(super) fn text_box_spans(xml: &str, word_prefix: &str) -> Result<Vec<Range<usize>>> {
     let open = format!(
         r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:{word_prefix}="{W_NS}">"#
@@ -635,6 +633,14 @@ pub(super) fn text_box_spans(xml: &str, word_prefix: &str) -> Result<Vec<Range<u
         }
         buffer.clear();
     }
+    // A box inside another is part of it: its span would overlap the outer
+    // one, which callers replace or cut without knowing it.
+    let outer = spans.clone();
+    spans.retain(|span| {
+        !outer
+            .iter()
+            .any(|other| other != span && other.start <= span.start && span.end <= other.end)
+    });
     Ok(spans)
 }
 
