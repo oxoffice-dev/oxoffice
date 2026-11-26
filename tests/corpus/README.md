@@ -139,7 +139,10 @@ converted document, nor do the `google/` copies' converted comments and Word
 contents. Google writes them when it exports a `.docx` edited without
 conversion, and Word leaves them empty, `<w:sdtContent/>`, when it deletes
 the comment inside. Two files show it, made by hand from a python-docx
-source (a heading, three paragraphs, a two by two table):
+source (a heading, three paragraphs, a two by two table), each download
+made neutral with `python3 tests/corpus/generate/google_docs.py --neutral
+<file.docx> "<account name>"` (author names, and the ids in Google's
+round-trip data):
 
 - `office-comment.docx`: the source uploaded to Drive, opened in Google Docs
   without conversion, a comment added on a word, then File, Download,
@@ -149,8 +152,8 @@ source (a heading, three paragraphs, a two by two table):
   comments of such a file in Drive, and deleting or resolving them there
   leaves no control in the next download.
 - `office-comment-deleted-in-word.docx`: that download opened in Word for
-  Mac 16.115.2, its comment deleted, saved without embedding fonts (Google's
-  copy asks for them, 5 MB; AppleScript `save as ... embed truetype fonts
+  Mac 16.115.2 (French UI), its comment deleted, saved without embedding
+  fonts (Google's copy asks for them, 5 MB; AppleScript `save as ... embed truetype fonts
   false`): the control stays, `<w:sdtEndPr/>` and an
   empty `<w:sdtContent/>`. Word's user name in `cp:lastModifiedBy` is
   replaced too.
