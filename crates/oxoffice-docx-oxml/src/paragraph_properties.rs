@@ -19,7 +19,7 @@ use crate::properties::{
     modeled_attribute_carrier_occurrence, parse_twips_measure, parse_word_toggle,
     raw_is_modeled_attribute_carrier, raw_occurrence, record_modeled_toggle_candidate,
     remove_redundant_modeled_toggle_candidate, replay_modeled_toggle_raw,
-    toggle_element_is_explicitly_empty, toggle_has_unsupported_attributes, word_prefixes_at,
+    toggle_has_unsupported_attributes, word_prefixes_at,
 };
 use crate::raw_xml::{capture_element, capture_empty};
 
@@ -859,29 +859,14 @@ impl CT_PPr {
                         )?;
                         pending_raw.push(raw);
                     } else if let Some(slot) = ppr_toggle_slot(name.as_ref(), &prefixes) {
-                        let captured = capture_element(reader, e)?;
+                        // A toggle with content stays as written. An empty one,
+                        // in either writing, is read by the Empty arm.
                         let raw = crate::text::raw_with_external_bindings(
-                            &captured,
+                            &capture_element(reader, e)?,
                             &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
                         )?;
-                        if toggle_element_is_explicitly_empty(&captured)? {
-                            let value = parse_word_toggle(e, &prefixes)?;
-                            if let Some(field) = ppr_toggle_field_mut(&mut ppr, slot) {
-                                *field = Some(value);
-                            }
-                            toggle_carrier_required[slot as usize] =
-                                toggle_has_unsupported_attributes(e, &prefixes)?;
-                            record_modeled_toggle_candidate(
-                                &mut ppr.revision_xml,
-                                &mut ppr.revision_xml_positions,
-                                raw,
-                                slot,
-                                occurrences[slot as usize] - 1,
-                            );
-                        } else {
-                            let occurrence = occurrences[slot as usize] - 1;
-                            record_ppr_raw_at(&mut ppr, raw, slot, occurrence);
-                        }
+                        let occurrence = occurrences[slot as usize] - 1;
+                        record_ppr_raw_at(&mut ppr, raw, slot, occurrence);
                     } else {
                         let raw = crate::text::raw_with_external_bindings(
                             &capture_element(reader, e)?,

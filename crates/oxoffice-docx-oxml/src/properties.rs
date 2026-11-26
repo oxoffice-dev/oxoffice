@@ -367,10 +367,6 @@ pub(crate) fn remove_redundant_modeled_toggle_candidate(
     }
 }
 
-pub(crate) fn toggle_element_is_explicitly_empty(xml: &[u8]) -> Result<bool> {
-    language_element_is_explicitly_empty(xml)
-}
-
 pub(crate) fn toggle_has_unsupported_attributes(
     element: &BytesStart<'_>,
     word_prefixes: &[String],

@@ -14,8 +14,7 @@ use crate::properties::{
     parse_integer_measurement, parse_twips_measure, parse_uchar_hex, parse_word_toggle,
     raw_is_modeled_attribute_carrier, raw_occurrence, record_modeled_toggle_candidate,
     remove_redundant_modeled_toggle_candidate, replay_modeled_toggle_raw,
-    toggle_element_is_explicitly_empty, toggle_has_unsupported_attributes, word_prefixes_at,
-    write_toggle,
+    toggle_has_unsupported_attributes, word_prefixes_at, write_toggle,
 };
 use crate::raw_xml::{capture_element, capture_empty};
 use crate::revision::CT_Revision;
@@ -1163,53 +1162,27 @@ impl CT_RPr {
                 }
                 Ok(Event::Start(ref e)) => {
                     let prefixes = word_prefixes_at(e, word_prefixes)?;
+                    // An rtl or lang with content stays as written. An empty
+                    // one, in either writing, is read by the Empty arm.
                     if is_word_element(e.name().as_ref(), b"rtl", &prefixes) {
-                        let captured = capture_element(reader, e)?;
                         let raw = crate::text::raw_with_external_bindings(
-                            &captured,
+                            &capture_element(reader, e)?,
                             &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
                         )?;
-                        if toggle_element_is_explicitly_empty(&captured)? {
-                            record_rpr_modeled(
-                                &mut rpr,
-                                &mut pending_raw,
-                                &mut occurrences,
-                                RPR_RTL_SLOT,
-                            );
-                            rpr.rtl = Some(parse_word_toggle(e, &prefixes)?);
-                            rtl_carrier_required = toggle_has_unsupported_attributes(e, &prefixes)?;
-                            record_modeled_toggle_candidate(
-                                &mut rpr.revision_xml,
-                                &mut rpr.revision_xml_positions,
-                                raw,
-                                RPR_RTL_SLOT,
-                                occurrences[RPR_RTL_SLOT as usize] - 1,
-                            );
-                        } else {
-                            let occurrence = occurrences[RPR_RTL_SLOT as usize];
-                            occurrences[RPR_RTL_SLOT as usize] += 1;
-                            record_rpr_raw_at(&mut rpr, raw, RPR_RTL_SLOT, occurrence);
-                        }
+                        let occurrence = occurrences[RPR_RTL_SLOT as usize];
+                        occurrences[RPR_RTL_SLOT as usize] += 1;
+                        record_rpr_raw_at(&mut rpr, raw, RPR_RTL_SLOT, occurrence);
                     } else if is_word_element(e.name().as_ref(), b"lang", &prefixes) {
-                        let captured = capture_element(reader, e)?;
-                        let raw =
-                            crate::text::raw_with_external_bindings(&captured, owner_bindings)?;
-                        if language_element_is_explicitly_empty(&captured)? {
-                            record_rpr_modeled(
-                                &mut rpr,
-                                &mut pending_raw,
-                                &mut occurrences,
-                                RPR_LANG_SLOT,
-                            );
-                            parse_language_attributes(&mut rpr, e, &prefixes)?;
-                        } else {
-                            record_rpr_raw_at(
-                                &mut rpr,
-                                raw,
-                                RPR_LANG_SLOT,
-                                occurrences[RPR_LANG_SLOT as usize],
-                            );
-                        }
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            owner_bindings,
+                        )?;
+                        record_rpr_raw_at(
+                            &mut rpr,
+                            raw,
+                            RPR_LANG_SLOT,
+                            occurrences[RPR_LANG_SLOT as usize],
+                        );
                     } else if is_word_element(e.name().as_ref(), b"ins", &prefixes)
                         || is_word_element(e.name().as_ref(), b"del", &prefixes)
                     {
@@ -2271,19 +2244,6 @@ fn parse_language_attributes(
         }
     }
     Ok(())
-}
-
-pub(crate) fn language_element_is_explicitly_empty(xml: &[u8]) -> Result<bool> {
-    let mut reader = Reader::from_reader(xml);
-    let mut buffer = Vec::new();
-    if !matches!(reader.read_event_into(&mut buffer)?, Event::Start(_)) {
-        return Ok(false);
-    }
-    buffer.clear();
-    Ok(matches!(
-        reader.read_event_into(&mut buffer)?,
-        Event::End(_)
-    ))
 }
 
 pub(crate) fn write_word_toggle<W: std::io::Write>(
