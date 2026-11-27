@@ -50,21 +50,24 @@ or wants to merge it runs that review or asks for one.
   (and its proof for a minor), in the pull request's follow-up issue, or
   why it is not a defect. A major finding is fixed unless the maintainer
   waives it.
-- **At most two reviews per pull request**: one full review, then at most
-  one delta review, after a major was fixed or after a change no finding
-  asked for that can change behaviour (new code, a conflict resolved by hand
-  in code, tests or workflows). A third review needs the maintainer's
-  agreement; beyond that budget the maintainer decides from the evidence
-  (mutation checks, `git range-diff`), without another round.
-- **A narrow, proved fix after the budget merges without asking.** When
-  the delta review finds a major, the author fixes it and merges without
-  asking the maintainer if the fix is about 30 lines outside tests in the
-  code the review pointed at, a test fails without it (the mutation result
-  shown in the thread), the crate's full suite and clippy are green, and
-  nothing else changed since the reviewed commit but merges of `main` that
-  only resolve conflicts; the merge line says "post-budget fix merged on
-  proof". A larger fix, a change of behaviour nobody asked for, or any
-  doubt goes to the maintainer.
+- **The review is sized by risk.** A **light** review reads the diff and
+  the spec, without building: for a change of about 150 lines or fewer
+  outside tests away from the core edit path, documentation (links,
+  anchors, text agrees with the code and the other docs), CI, tests-only
+  changes and pure code moves (nothing but location changed). A **full** review may build, run the tests and mutation checks: for
+  anything larger, and for any change to the core edit path (owner
+  inventories and snapshots, splices and in-place edits, the redliner,
+  comparison, identifier allocation, readers and writers).
+- **One review per pull request.** A major is fixed with its proof: a test
+  that fails without the fix (the mutation result in the answer), the
+  crate's suite and clippy green, and the author's own reading of the fix
+  diff, stated in the answer. Then it merges without another review. A
+  **delta review** runs only when the fix is a redesign: more than about 150
+  lines outside tests, or a change of behaviour no finding asked for (new
+  code, a conflict resolved by hand in code, tests or workflows); it judges
+  the delta only. A third review needs the maintainer's agreement; beyond
+  that the maintainer decides from the evidence (mutation checks,
+  `git range-diff`).
 - **Minors never trigger a review.** A minor found in review is fixed in
   the pull request when the fix is cheap, with its proof stated in the
   answer (a test that fails without it, or a mutation check). A follow-up
@@ -78,9 +81,6 @@ or wants to merge it runs that review or asks for one.
 - **A delta review judges the delta only**: defects the new commits bring,
   or majors they fail to fix. No new finding on code the delta does not
   touch.
-- **Light review**, still posted, for documentation (links, anchors, text
-  agrees with the code and the other docs) and pure code moves (nothing but
-  location changed). It counts as the full review.
 
 See [the spec](../specs/2026-11-21-independent-review-before-merge.md).
 
