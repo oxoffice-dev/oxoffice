@@ -161,13 +161,15 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
 ```
 
 - **Exclude the Python crates from `cargo test` on the workspace**
-  (`--exclude oxoffice-py --exclude oxoffice-docx-py --exclude oxoffice-pptx-py`).
+  (`--exclude oxoffice-py --exclude oxoffice-docx-py --exclude oxoffice-pptx-py
+  --exclude oxoffice-xlsx-py`).
   PyO3's extension-module feature leaves Python symbols to the host
   interpreter, so a test binary fails to link, on Linux with a confusing
   unresolved-symbol error.
 - The integration tests of a facade crate are one binary, one module per
-  area: `crates/oxoffice-docx/tests/docx/` (`--test docx`) and
-  `crates/oxoffice-pptx/tests/pptx/` (`--test pptx`). A new area is a new
+  area: `crates/oxoffice-docx/tests/docx/` (`--test docx`),
+  `crates/oxoffice-pptx/tests/pptx/` (`--test pptx`) and
+  `crates/oxoffice-xlsx/tests/xlsx/` (`--test xlsx`). A new area is a new
   module, not a new file under `tests/`, so each crate links one binary.
 - Run the tests you touched locally (`cargo test -p <crate>` runs the unit
   tests in `src/` too). CI runs the unit tests (`--lib`), the integration
@@ -258,7 +260,7 @@ the tools whose fit checks may change.
 
 ## Writings tests
 
-The `equivalent_writings` modules of the docx and pptx test binaries write
+The `equivalent_writings` modules of the docx, pptx and xlsx test binaries write
 each input again the way another producer may write the same XML (an empty
 element with an end tag or self-closed, other prefixes, the default
 namespace, indentation, attribute order, quotes and spacing, character

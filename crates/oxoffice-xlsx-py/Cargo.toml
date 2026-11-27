@@ -1,0 +1,18 @@
+[package]
+name = "oxoffice-xlsx-py"
+description = "Native XLSX opening and saving for Python"
+readme = "README.md"
+version.workspace = true
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+oxoffice-core = { workspace = true }
+oxoffice-py-support = { workspace = true }
+oxoffice-xlsx = { workspace = true, features = ["agile-encryption"] }
+pyo3 = { workspace = true }

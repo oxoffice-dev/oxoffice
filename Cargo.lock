@@ -1133,6 +1133,7 @@ dependencies = [
  "oxoffice-opc",
  "oxoffice-pptx",
  "oxoffice-pptx-cli",
+ "oxoffice-xlsx-cli",
  "serde_json",
  "zip",
 ]
@@ -1447,6 +1448,7 @@ dependencies = [
  "oxoffice-cli",
  "oxoffice-docx-py",
  "oxoffice-pptx-py",
+ "oxoffice-xlsx-py",
  "pyo3",
 ]
 
@@ -1479,6 +1481,48 @@ dependencies = [
  "oxoffice-opc",
  "quick-xml",
  "thiserror",
+]
+
+[[package]]
+name = "oxoffice-xlsx"
+version = "0.8.0"
+dependencies = [
+ "cfb",
+ "oxoffice-core",
+ "oxoffice-opc",
+ "oxoffice-xlsx",
+ "oxoffice-xlsx-oxml",
+ "oxoffice-xml-test",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
+name = "oxoffice-xlsx-cli"
+version = "0.8.0"
+dependencies = [
+ "clap",
+ "oxoffice-cli-support",
+ "oxoffice-xlsx",
+ "serde_json",
+]
+
+[[package]]
+name = "oxoffice-xlsx-oxml"
+version = "0.8.0"
+dependencies = [
+ "oxoffice-core",
+ "quick-xml",
+]
+
+[[package]]
+name = "oxoffice-xlsx-py"
+version = "0.8.0"
+dependencies = [
+ "oxoffice-core",
+ "oxoffice-py-support",
+ "oxoffice-xlsx",
+ "pyo3",
 ]
 
 [[package]]

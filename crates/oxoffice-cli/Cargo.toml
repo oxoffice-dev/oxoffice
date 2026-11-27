@@ -1,6 +1,6 @@
 [package]
 name = "oxoffice-cli"
-description = "The oxoffice command line: inspect, convert, edit and render DOCX and PPTX files"
+description = "The oxoffice command line: inspect, convert, edit and render DOCX and PPTX files, inspect XLSX files"
 readme = "README.md"
 version.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-keywords = ["docx", "pptx", "word", "powerpoint", "cli"]
+keywords = ["docx", "pptx", "xlsx", "office", "cli"]
 categories = ["command-line-utilities", "parser-implementations"]
 
 [features]
@@ -31,6 +31,7 @@ serde_json.workspace = true
 oxoffice-cli-support.workspace = true
 oxoffice-docx-cli = { workspace = true, default-features = false }
 oxoffice-pptx-cli = { workspace = true, default-features = false }
+oxoffice-xlsx-cli = { workspace = true }
 
 [build-dependencies]
 serde_json.workspace = true
