@@ -338,9 +338,13 @@ pub(super) fn compare_story_part(
             metadata,
             diagnostics,
         )?;
-        let mut tracked = original.to_owned();
-        tracked.replace_range(original_root, &tracked_inner);
-        tracked
+        // A root written self-closing gets an end tag to hold the content.
+        let root = oxoffice_core::xml_element::root_element_span(original)?;
+        let (rooted, _) = oxoffice_core::xml_element::replace_content(
+            &original[root.start_tag.start..],
+            &tracked_inner,
+        )?;
+        format!("{}{rooted}", &original[..root.start_tag.start])
     };
     let mut tracked = tracked.into_bytes();
     let generated = required_external_bindings(
@@ -427,6 +431,23 @@ fn compare_owned_story(
         let right_inner = element_inner_range_any_prefix(right_xml, owner_local)?;
         let left_bindings = root_namespace_bindings(left_xml, owner_local, original_bindings)?;
         let right_bindings = root_namespace_bindings(right_xml, owner_local, edited_bindings)?;
+        // A comment may hold nothing (`CT_Comment` asks for no block): one
+        // emptied or filled is not read as holding an empty paragraph, the
+        // comment parts are replaced whole instead (see `snapshot_comments`).
+        if story.kind == ComparisonStoryKind::Comment
+            && holds_block(&story_document(
+                &left_xml[left_inner.clone()],
+                &left_bindings,
+            )?) != holds_block(&story_document(
+                &right_xml[right_inner.clone()],
+                &right_bindings,
+            )?)
+        {
+            return Err(Error::Other(format!(
+                "comparison does not revise in place a comment one version leaves empty, in {}[{index}]",
+                story.part_name
+            )));
+        }
         let tracked_inner = compare_story_inner(
             &left_xml[left_inner],
             &right_xml[right_inner],
@@ -606,23 +627,38 @@ pub(super) fn compare_story_inner_impl(
             "comparison could not correlate related-story owners at {location}"
         )));
     }
-    // No tracked change records a header, a footer or a text box itself, and
-    // the last paragraph mark of a story cannot be taken out: a story holding
-    // nothing in one version cannot be marked to hold the other's blocks. A
-    // note goes whole instead (see `reconcile_note_ids`), a comment through
-    // its snapshot.
-    let blocks = |document: &CT_Document| {
-        document.body.content.iter().any(|content| {
-            matches!(
-                content,
-                BodyContent::Paragraph(_) | BodyContent::Table(_) | BodyContent::ContentControl(_)
-            )
-        })
-    };
-    if blocks(&original_document) != blocks(&edited_document) {
-        return Err(Error::Other(format!(
-            "comparison cannot give an empty story content, nor take all of it, at {location} (limitation docx-compare-empty-container)"
-        )));
+    // No tracked change records a header, a footer, a text box or a note
+    // itself, and the last paragraph mark of a story cannot be taken out. A
+    // story holding nothing in one version reads as holding one empty
+    // paragraph, its normal form (see `holds_block`): the other version's
+    // content is compared with that paragraph, and the resolution that gives
+    // the empty version back leaves it.
+    let (original_blocks, edited_blocks) = (
+        holds_block(&original_document),
+        holds_block(&edited_document),
+    );
+    if original_blocks != edited_blocks {
+        let (filled, _) = if original_blocks {
+            with_empty_paragraph(edited, edited_bindings)?
+        } else {
+            with_empty_paragraph(original, original_bindings)?
+        };
+        let (original, edited) = if original_blocks {
+            (original, filled.as_str())
+        } else {
+            (filled.as_str(), edited)
+        };
+        return compare_story_inner_impl(
+            original,
+            edited,
+            location,
+            word_prefix,
+            original_bindings,
+            edited_bindings,
+            metadata,
+            diagnostics,
+            scan_text_boxes,
+        );
     }
     let held_original = HeldRevisions::of(
         original,
@@ -693,6 +729,83 @@ pub(super) fn story_content_spans(
         buffer.clear();
     }
     Ok(spans)
+}
+
+/// Whether a story (a header, a footer, a note, a text box) holds a block.
+///
+/// Their schema types (`CT_HdrFtr`, `CT_FtnEdn`, `CT_TxbxContent`) ask for
+/// at least one block-level element, and every producer of the corpus
+/// writes one paragraph at least, so one holding none reads as holding one
+/// empty paragraph (written by [`with_empty_paragraph`]); a block content
+/// control holding nothing reads so too (see `compare_control_from_xml`).
+pub(super) fn holds_block(document: &CT_Document) -> bool {
+    document.body.content.iter().any(|content| {
+        matches!(
+            content,
+            BodyContent::Paragraph(_) | BodyContent::Table(_) | BodyContent::ContentControl(_)
+        )
+    })
+}
+
+/// The content of a story that holds no block, `inner` read in `bindings`,
+/// with one empty paragraph after what it holds (white space, range marks)
+/// and before the section properties a body ends with; and where that
+/// paragraph starts.
+pub(super) fn with_empty_paragraph(
+    inner: &str,
+    bindings: &[(String, String)],
+) -> Result<(String, usize)> {
+    let (wrapped, offset) = story_wrapper(inner, bindings)?;
+    let mut reader = NsReader::from_reader(wrapped.as_slice());
+    reader.config_mut().trim_text(false);
+    let mut depth = 0usize;
+    let mut at = inner.len();
+    let mut buffer = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("comparison XML scan failed: {error}")))?;
+        let word = matches!(
+            namespace,
+            ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes()
+        );
+        match event {
+            Event::Start(element) | Event::Empty(element)
+                if depth == 2 && word && element.local_name().as_ref() == b"sectPr" =>
+            {
+                at = before.saturating_sub(offset);
+                break;
+            }
+            Event::Start(_) => depth += 1,
+            Event::End(_) => depth = depth.saturating_sub(1),
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    let mut filled = inner.to_owned();
+    filled.insert_str(at, &empty_paragraph(bindings));
+    Ok((filled, at))
+}
+
+/// One empty paragraph written for `bindings`: under the prefix they bind
+/// to WordprocessingML, else in it as the default namespace, else under `w`
+/// declared on it.
+fn empty_paragraph(bindings: &[(String, String)]) -> String {
+    let mut seen = HashSet::new();
+    for (name, uri) in bindings.iter().rev() {
+        if !seen.insert(name.as_str()) {
+            continue;
+        }
+        if uri == W_NS {
+            return match name.strip_prefix("xmlns:") {
+                Some(prefix) => format!("<{prefix}:p/>"),
+                None => "<p/>".to_owned(),
+            };
+        }
+    }
+    format!(r#"<w:p xmlns:w="{W_NS}"/>"#)
 }
 
 pub(super) fn story_document(

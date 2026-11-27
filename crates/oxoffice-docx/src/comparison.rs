@@ -115,9 +115,9 @@ use source_scopes::{
 pub(crate) use stories::revision_story_parts;
 use stories::{
     compare_story_inner, compare_story_inner_impl, compare_story_part, comparison_input,
-    contains_modeled_revisions, reject_cross_story_moves, story_content_spans, story_document,
-    story_ignored, story_parts, story_parts_with_options, story_wrapper, story_xml,
-    validate_comparison_options,
+    contains_modeled_revisions, holds_block, reject_cross_story_moves, story_content_spans,
+    story_document, story_ignored, story_parts, story_parts_with_options, story_wrapper, story_xml,
+    validate_comparison_options, with_empty_paragraph,
 };
 use text_boxes::{
     RunHostRole, comparison_text_box_markers, deleted_text_box_contents, mask_text_box_subtrees,

@@ -2095,11 +2095,12 @@ pub(super) fn reconcile_note_ids(
             .map(|(_, text)| text.clone())
             .collect::<Vec<_>>()
     };
-    // A note with nothing inside cannot be revised in place into one holding
-    // paragraphs, nor the reverse: the last mark of a story cannot be
-    // tracked. Such notes are not paired, so the edited one takes a new id
-    // and the comparison deletes the original note and inserts the edited
-    // one, each whole with its reference.
+    // A note with nothing inside reads as holding one empty paragraph where
+    // it is compared in place (a tracked reference, one referenced twice or
+    // not at all, custody pending). An ordinary one is still not paired, to
+    // keep #681's exact result: the edited one takes a new id and the
+    // comparison deletes the original note and inserts the edited one, each
+    // whole with its reference.
     let empty = |part: &NotePart, normal: &BTreeMap<i32, &NoteOwner>| {
         normal
             .iter()
