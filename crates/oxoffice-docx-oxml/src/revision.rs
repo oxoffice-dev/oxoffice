@@ -205,6 +205,7 @@ impl RevisionSourceFacts {
 
 /// The modeled tracked-change element kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RevisionKind {
     Insertion,
     Deletion,
@@ -214,6 +215,22 @@ pub enum RevisionKind {
     ParagraphPropertyChange,
     TablePropertyChange,
     SectionPropertyChange,
+    /// `w:trPrChange`: a row's properties.
+    RowPropertyChange,
+    /// `w:tcPrChange`: a cell's properties.
+    CellPropertyChange,
+    /// `w:tblPrExChange`: a row's table property exceptions.
+    TablePropertyExceptionChange,
+    /// `w:tblGridChange`: a table's column widths. Word writes it with an
+    /// id alone, no author and no date.
+    TableGridChange,
+    /// `w:numberingChange`: a paragraph's numbering, whose old value is the
+    /// number as it read, not a numbering to restore.
+    NumberingChange,
+    /// `w:cellIns`: a cell inserted.
+    CellInsertion,
+    /// `w:cellDel`: a cell deleted.
+    CellDeletion,
 }
 
 impl RevisionKind {

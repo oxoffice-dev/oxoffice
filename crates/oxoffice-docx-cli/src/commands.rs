@@ -2402,6 +2402,14 @@ fn revision_kind_label(kind: RevisionKind) -> &'static str {
         RevisionKind::ParagraphPropertyChange => "paragraph_property_change",
         RevisionKind::TablePropertyChange => "table_property_change",
         RevisionKind::SectionPropertyChange => "section_property_change",
+        RevisionKind::RowPropertyChange => "row_property_change",
+        RevisionKind::CellPropertyChange => "cell_property_change",
+        RevisionKind::TablePropertyExceptionChange => "table_property_exception_change",
+        RevisionKind::TableGridChange => "table_grid_change",
+        RevisionKind::NumberingChange => "numbering_change",
+        RevisionKind::CellInsertion => "cell_insertion",
+        RevisionKind::CellDeletion => "cell_deletion",
+        _ => "revision",
     }
 }
 

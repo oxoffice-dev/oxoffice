@@ -4,6 +4,7 @@ was. The class table below names the calls a session tracks or leaves untracked;
 scaling registry (test_docx_scaling.TIMED and WHOLE_DOCUMENT) is refused, so that a call added to the API is refused
 until a class names it, and test_every_call_behaves_as_its_class runs each one under a session."""
 import datetime
+from pathlib import Path
 
 import docx
 import pytest
@@ -209,3 +210,12 @@ def test_a_regular_expression_replacement_in_a_text_box_is_refused(tmp_path):
         with pytest.raises(oxdocx.DocxError, match="a replacement in a text box"):
             doc.replace_all_regex([("old (text)", "new $1")])
     assert doc.to_bytes() == before
+
+
+def test_a_google_grid_change_reads_with_its_kind_and_goes_with_every_change():
+    path = Path(__file__).resolve().parents[3] / "tests/corpus/files/google/report.docx"
+    doc = oxdocx.Document.open(path)
+    grids = [r for r in doc.revisions if r.kind == "table_grid_change"]
+    assert grids and all(r.author == "" for r in grids)
+    doc.accept_all()
+    assert doc.revisions == ()

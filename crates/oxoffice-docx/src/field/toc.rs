@@ -1581,6 +1581,7 @@ fn append_accepted_revision_runs<'a>(
         | RevisionKind::ParagraphPropertyChange
         | RevisionKind::TablePropertyChange
         | RevisionKind::SectionPropertyChange => {}
+        _ => {}
     }
 }
 
