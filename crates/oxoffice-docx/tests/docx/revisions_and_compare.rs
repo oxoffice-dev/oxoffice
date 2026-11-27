@@ -7201,3 +7201,129 @@ fn a_google_grid_change_reads_and_goes_with_every_change() {
             .contains("tblGridChange")
     );
 }
+
+/// A grid change with an id alone goes with its table's property change when
+/// that one is resolved by its id, its author or its date, and counts as no
+/// change of its own; alone by its id; and a grid change that records no old
+/// grid keeps the grid.
+#[test]
+fn a_grid_change_with_an_id_alone_goes_with_its_table_change() {
+    let col = |w: u32| format!(r#"<w:gridCol w:w="{w}"/>"#);
+    let body = |grid_change: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:jc w:val="center"/>{}</w:tblPr><w:tblGrid>{}{grid_change}</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+            change("tblPrChange", 1, "<w:tblPr/>"),
+            col(3000)
+        )
+    };
+    let with_old = body(&format!(
+        r#"<w:tblGridChange w:id="2"><w:tblGrid>{}</w:tblGrid></w:tblGridChange>"#,
+        col(2000)
+    ));
+    type Resolve = fn(&mut Document) -> oxoffice_docx::Result<usize>;
+    let rows: [(&str, Resolve, &[&str], &[&str]); 5] = [
+        (
+            "accepted by the table change's id",
+            |doc| doc.accept_revision_id(1),
+            &[r#"w:w="3000""#, "<w:jc"],
+            &["tblGridChange", "tblPrChange"],
+        ),
+        (
+            "rejected by author",
+            |doc| doc.reject_revisions_by_author(AUTHOR),
+            &[r#"w:w="2000""#],
+            &["tblGridChange", "tblPrChange", "<w:jc"],
+        ),
+        (
+            "rejected by date",
+            |doc| {
+                doc.reject_revisions_in_date_range("2026-11-21T00:00:00Z", "2026-11-22T00:00:00Z")
+            },
+            &[r#"w:w="2000""#],
+            &["tblGridChange", "tblPrChange", "<w:jc"],
+        ),
+        (
+            "rejected alone by its id",
+            |doc| doc.reject_revision_id(2),
+            &[r#"w:w="2000""#, "tblPrChange"],
+            &["tblGridChange"],
+        ),
+        (
+            "accepted alone by its id",
+            |doc| doc.accept_revision_id(2),
+            &[r#"w:w="3000""#, "tblPrChange"],
+            &["tblGridChange"],
+        ),
+    ];
+    for (shape, resolve, shows, hides) in rows {
+        let mut doc = doc_with_body(&with_old);
+        assert_eq!(resolve(&mut doc).unwrap(), 1, "{shape}");
+        let xml = reopen(&mut doc).part_xml("/word/document.xml").unwrap();
+        assert!(
+            shows.iter().all(|part| xml.contains(part)),
+            "{shape}: {xml}"
+        );
+        assert!(
+            hides.iter().all(|part| !xml.contains(part)),
+            "{shape}: {xml}"
+        );
+    }
+    let mut doc = doc_with_body(&body(r#"<w:tblGridChange w:id="2"/>"#));
+    doc.reject_all().unwrap();
+    let xml = reopen(&mut doc).part_xml("/word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"w:w="3000""#) && !xml.contains("tblGridChange"),
+        "{xml}"
+    );
+}
+
+/// A cell inserted and rejected, or deleted and accepted, that is its row's
+/// only cell takes the row with it.
+#[test]
+fn a_row_whose_only_cell_goes_goes_with_it() {
+    for (marker, accept) in [("cellIns", false), ("cellDel", true)] {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>kept</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:{marker} w:id="1" w:author="{AUTHOR}" w:date="{DATE}"/></w:tcPr><w:p><w:r><w:t>gone</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        ));
+        let resolved = if accept {
+            doc.accept_all()
+        } else {
+            doc.reject_all()
+        };
+        assert_eq!(resolved.unwrap(), 1, "{marker}");
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("/word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:tr").count(), 1, "{marker}: {xml}");
+        assert!(
+            !xml.contains("gone") && doc.validate().unwrap().is_valid(),
+            "{marker}: {xml}"
+        );
+    }
+}
+
+/// A Google Docs table, which holds a grid change with an id alone, compared
+/// with a copy that changes the table's properties: the comparison resolves to
+/// either version, the grid change left as it was.
+#[test]
+fn a_google_table_with_a_grid_change_compares_with_a_property_change() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/files/google/report.docx");
+    let bytes = std::fs::read(path).unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(&bytes)).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    // The first table's alignment changed in its XML, the grid change kept.
+    let at = xml.find("<w:tblPr>").unwrap();
+    let jc = at + xml[at..].find(r#"<w:jc w:val="center"/>"#).unwrap();
+    let xml = format!(
+        "{}{}{}",
+        &xml[..jc],
+        r#"<w:jc w:val="right"/>"#,
+        &xml[jc + 22..]
+    );
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut written = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut written).unwrap();
+    let edited = Document::from_bytes(&written.into_inner()).unwrap();
+    let mut redlined = Document::from_bytes(&bytes).unwrap();
+    redlined.compare(&edited, AUTHOR, DATE).expect("comparison");
+}

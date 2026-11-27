@@ -446,11 +446,13 @@ What PR 2a settles:
   (`w:cellDel`), named `row_property_change` ... `cell_deletion` in the CLI and Python.
 - **Resolution.** A property change of a row, a cell, a row's exceptions or a grid resolves as the other property
   changes: accepted, it goes; rejected, its old value replaces its owner. A cell insertion rejected, or a cell deletion
-  accepted, removes the cell; the other way, only the mark goes. A numbering change goes both ways: its old value is
+  accepted, removes the cell, and the row with its only cell; the other way, only the mark goes. A numbering change goes both ways: its old value is
   the number as it read (`w:original`), not a numbering to restore. `w:cellMerge` stays unread.
 - **Grid changes with an id alone** (Google Docs, in every table; Word too) read with no author and resolve with their
-  table's property change, by their id, or with every change. Compare leaves them as it leaves other markup: they
-  hold no one's change.
+  table's property change selected by its id, its author or its date, without counting as a change of their own; by
+  their own id; or with every change. Not with the ids comparison names, which are exactly the changes it means.
+  One that records no old grid keeps the grid. Compare leaves them as it leaves other markup: they hold no one's
+  change.
 
 ## Open questions
 

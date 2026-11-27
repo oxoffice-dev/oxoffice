@@ -2666,15 +2666,39 @@ impl<'a> XmlTree<'a> {
             && semantic
             && self.selects(index, metadata, state)
         {
-            state.resolved.insert(index);
+            // A grid change that goes with its table's change is not one of
+            // the changes the caller selected.
+            if state.scope.matches(metadata) {
+                state.resolved.insert(index);
+            }
             return self.render_selected_revision(index, metadata.kind, state, destination);
+        }
+        // A row whose every cell the resolution removes goes whole.
+        if semantic && element.word && element.local == "tr" && self.cells_all_remove(index, state)
+        {
+            self.validate_selected_descendants(index, state)?;
+            return Ok(Vec::new());
         }
 
         if semantic && matches!(state.resolution, Resolution::Reject) {
             let changes = self.selected_property_changes(index, state)?;
+            // A grid change that records no old grid keeps the grid.
+            let changes = match element.local.as_str() {
+                "tblGrid" => changes
+                    .into_iter()
+                    .filter(|(_, prior)| prior.is_some())
+                    .collect(),
+                _ => changes,
+            };
             if let Some((_, prior)) = changes.first().copied() {
                 for (selected, _) in &changes {
-                    state.resolved.insert(*selected);
+                    if self.elements[*selected]
+                        .revision
+                        .as_ref()
+                        .is_some_and(|metadata| state.scope.matches(metadata))
+                    {
+                        state.resolved.insert(*selected);
+                    }
                     self.validate_selected_descendants(*selected, state)?;
                 }
 
@@ -2730,7 +2754,10 @@ impl<'a> XmlTree<'a> {
     ) -> Result<Vec<u8>> {
         if is_property_change(kind) {
             let prior = self.prior_property(index, kind)?;
-            if matches!(state.resolution, Resolution::Accept) {
+            // A grid change that records no old grid goes both ways.
+            if matches!(state.resolution, Resolution::Accept)
+                || kind == RevisionKind::TableGridChange && prior.is_none()
+            {
                 return Ok(Vec::new());
             }
 
@@ -3581,18 +3608,35 @@ impl<'a> XmlTree<'a> {
             self.collect_owned_rows(*child, &mut rows);
         }
         !rows.is_empty()
-            && rows.iter().all(|row| {
-                self.selected_owner_markers(*row, state)
-                    .iter()
-                    .any(|marker| {
-                        let kind = self.elements[*marker]
-                            .revision
-                            .as_ref()
-                            .expect("row marker is a revision")
-                            .kind;
-                        removes_content(state.resolution, kind)
-                    })
+            && rows
+                .iter()
+                .all(|row| self.owner_removes(*row, state) || self.cells_all_remove(*row, state))
+    }
+
+    /// Whether the resolution removes owner `index` (a row, a cell) by the
+    /// marks of its properties.
+    fn owner_removes(&self, index: usize, state: &RenderState<'_>) -> bool {
+        self.selected_owner_markers(index, state)
+            .iter()
+            .any(|marker| {
+                let kind = self.elements[*marker]
+                    .revision
+                    .as_ref()
+                    .expect("owner marker is a revision")
+                    .kind;
+                removes_content(state.resolution, kind)
             })
+    }
+
+    /// Whether the resolution removes every cell of row `row`, which then
+    /// goes whole rather than stay empty.
+    fn cells_all_remove(&self, row: usize, state: &RenderState<'_>) -> bool {
+        let cells = self.elements[row]
+            .children
+            .iter()
+            .filter(|child| self.elements[**child].word && self.elements[**child].local == "tc")
+            .collect::<Vec<_>>();
+        !cells.is_empty() && cells.iter().all(|cell| self.owner_removes(**cell, state))
     }
 
     /// The paragraphs that the removed mark of `last`, the last paragraph of
@@ -4161,7 +4205,12 @@ impl<'a> XmlTree<'a> {
         if state.scope.matches(metadata) {
             return true;
         }
-        if metadata.kind != RevisionKind::TableGridChange || !metadata.author.is_empty() {
+        // Not for the ids a caller names, as comparison names its own: those
+        // are exactly the changes it means.
+        if metadata.kind != RevisionKind::TableGridChange
+            || !metadata.author.is_empty()
+            || matches!(state.scope, RevisionScope::Ids(_))
+        {
             return false;
         }
         let table = self.elements[index]

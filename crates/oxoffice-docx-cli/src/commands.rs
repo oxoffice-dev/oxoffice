@@ -2393,24 +2393,7 @@ fn selector_json(selector: &RevisionSelector<'_>) -> Value {
 }
 
 fn revision_kind_label(kind: RevisionKind) -> &'static str {
-    match kind {
-        RevisionKind::Insertion => "insertion",
-        RevisionKind::Deletion => "deletion",
-        RevisionKind::MoveFrom => "move_from",
-        RevisionKind::MoveTo => "move_to",
-        RevisionKind::RunPropertyChange => "run_property_change",
-        RevisionKind::ParagraphPropertyChange => "paragraph_property_change",
-        RevisionKind::TablePropertyChange => "table_property_change",
-        RevisionKind::SectionPropertyChange => "section_property_change",
-        RevisionKind::RowPropertyChange => "row_property_change",
-        RevisionKind::CellPropertyChange => "cell_property_change",
-        RevisionKind::TablePropertyExceptionChange => "table_property_exception_change",
-        RevisionKind::TableGridChange => "table_grid_change",
-        RevisionKind::NumberingChange => "numbering_change",
-        RevisionKind::CellInsertion => "cell_insertion",
-        RevisionKind::CellDeletion => "cell_deletion",
-        _ => "revision",
-    }
+    kind.name()
 }
 
 fn story_kind_label(kind: StoryKind) -> &'static str {

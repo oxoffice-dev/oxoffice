@@ -153,26 +153,7 @@ impl PyRevision {
 }
 
 pub(super) fn revision_kind_name(kind: oxoffice_docx::RevisionKind) -> &'static str {
-    match kind {
-        oxoffice_docx::RevisionKind::Insertion => "insertion",
-        oxoffice_docx::RevisionKind::Deletion => "deletion",
-        oxoffice_docx::RevisionKind::MoveFrom => "move_from",
-        oxoffice_docx::RevisionKind::MoveTo => "move_to",
-        oxoffice_docx::RevisionKind::RunPropertyChange => "run_property_change",
-        oxoffice_docx::RevisionKind::ParagraphPropertyChange => "paragraph_property_change",
-        oxoffice_docx::RevisionKind::TablePropertyChange => "table_property_change",
-        oxoffice_docx::RevisionKind::SectionPropertyChange => "section_property_change",
-        oxoffice_docx::RevisionKind::RowPropertyChange => "row_property_change",
-        oxoffice_docx::RevisionKind::CellPropertyChange => "cell_property_change",
-        oxoffice_docx::RevisionKind::TablePropertyExceptionChange => {
-            "table_property_exception_change"
-        }
-        oxoffice_docx::RevisionKind::TableGridChange => "table_grid_change",
-        oxoffice_docx::RevisionKind::NumberingChange => "numbering_change",
-        oxoffice_docx::RevisionKind::CellInsertion => "cell_insertion",
-        oxoffice_docx::RevisionKind::CellDeletion => "cell_deletion",
-        _ => "revision",
-    }
+    kind.name()
 }
 
 /// Equality covers the public fields only, so a snapshot equals a record
