@@ -325,10 +325,16 @@ merge variant).
   every merge has its own verdict. See
   [the spec](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
 - **The full sets run on demand** (`full-checks.yml`, "Full checks", about
-  90 minutes, no schedule), on Linux, macOS and Windows alike: the Rust and
-  Python tests under debug assertions with the whole render corpus and every
-  producer's copy in the workflow walks, and every scaling call; on Linux
-  also the stack of a release-profile wheel. Run it before a release
+  an hour, no schedule): on Linux, the Rust tests (three shards side by
+  side) and the Python tests under debug assertions with the whole render
+  corpus and every producer's copy in the workflow walks, and the stack of a
+  release-profile wheel; every scaling call on Linux and Windows. The render
+  is the same bytes on every platform and the walks are platform-free, so
+  macOS and Windows run the tests in the CI of pull requests only.
+- **The full checks do not grow.** Their budget is about an hour, the
+  longest job; a set added to them takes the place of another or runs a
+  sample, and the pull request that adds one says which, with the timings
+  of a run on its branch. Run it before a release
   ([RELEASE.md](RELEASE.md)), and on a pull request whose change the CI of
   pull requests does not cover: a call that leaves or joins `GROWING`, a
   change to the corpus walks, a snapshot, the render. Run it on a branch or

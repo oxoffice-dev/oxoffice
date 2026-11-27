@@ -64,6 +64,23 @@ closed issues keep it, then dispatch `full-checks.yml` on `main` with
 `report=true`. A failing run before the rename would create the new label
 and a second issue; a green one would leave #653 open.
 
+## Amendment 2026-11-27: Linux only, sharded, a fixed budget
+
+The run before 0.8.0 took about two and a half hours (the full Rust tests
+2 h on macOS, 1 h 35 on Linux, the Python tests up to 1 h after them on
+each platform). The maintainer asked for a drastic cut and no more growth.
+
+- The Rust and Python full tests run on Linux only: the render is the same
+  bytes on every platform (ci.yml already skips it on macOS and Windows) and
+  the workflow walks are platform-free; ci.yml runs every test on the three.
+- The Rust tests run as three shards side by side (render and writings,
+  compare, the rest), split by libtest name filters; the Python tests run in
+  their own job, beside them.
+- Scaling runs on Linux and Windows (Windows stands for the other
+  platforms); the macOS runners, the scarcest, run nothing here.
+- Budget: about an hour, the longest job. A set added takes the place of
+  another or runs a sample (docs/DEVELOPMENT.md, CI).
+
 ## Links
 
 - [One CI for pull requests and main](2026-11-22-one-ci-for-pull-requests-and-main.md)
