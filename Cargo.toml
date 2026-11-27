@@ -32,7 +32,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.93"
@@ -44,31 +44,31 @@ categories = ["parser-implementations", "text-processing"]
 
 [workspace.dependencies]
 # Internal crates
-oxoffice-core = { path = "crates/oxoffice-core", version = "0.7.0" }
-oxoffice-opc = { path = "crates/oxoffice-opc", version = "0.7.0" }
-oxoffice-drawing = { path = "crates/oxoffice-drawing", version = "0.7.0" }
-oxoffice-layout = { path = "crates/oxoffice-layout", version = "0.7.0", default-features = false }
-oxoffice-media = { path = "crates/oxoffice-media", version = "0.7.0" }
-oxoffice-pdf = { path = "crates/oxoffice-pdf", version = "0.7.0", default-features = false }
-oxoffice-sml = { path = "crates/oxoffice-sml", version = "0.7.0" }
-oxoffice-chart = { path = "crates/oxoffice-chart", version = "0.7.0" }
-oxoffice-cli-support = { path = "crates/oxoffice-cli-support", version = "0.7.0" }
-oxoffice-cli = { path = "crates/oxoffice-cli", version = "0.7.0", default-features = false }
-oxoffice-py-support = { path = "crates/oxoffice-py-support", version = "0.7.0" }
-oxoffice-render-test = { path = "crates/oxoffice-render-test", version = "0.7.0" }
-oxoffice-xml-test = { path = "crates/oxoffice-xml-test", version = "0.7.0" }
-oxoffice-docx = { path = "crates/oxoffice-docx", version = "0.7.0", default-features = false }
-oxoffice-docx-oxml = { path = "crates/oxoffice-docx-oxml", version = "0.7.0" }
-oxoffice-docx-layout = { path = "crates/oxoffice-docx-layout", version = "0.7.0", default-features = false }
-oxoffice-docx-html = { path = "crates/oxoffice-docx-html", version = "0.7.0" }
-oxoffice-docx-cli = { path = "crates/oxoffice-docx-cli", version = "0.7.0", default-features = false }
-oxoffice-docx-py = { path = "crates/oxoffice-docx-py", version = "0.7.0" }
-oxoffice-pptx = { path = "crates/oxoffice-pptx", version = "0.7.0", default-features = false }
-oxoffice-pptx-oxml = { path = "crates/oxoffice-pptx-oxml", version = "0.7.0" }
-oxoffice-pptx-layout = { path = "crates/oxoffice-pptx-layout", version = "0.7.0" }
-oxoffice-pptx-render = { path = "crates/oxoffice-pptx-render", version = "0.7.0", default-features = false }
-oxoffice-pptx-cli = { path = "crates/oxoffice-pptx-cli", version = "0.7.0", default-features = false }
-oxoffice-pptx-py = { path = "crates/oxoffice-pptx-py", version = "0.7.0" }
+oxoffice-core = { path = "crates/oxoffice-core", version = "0.8.0" }
+oxoffice-opc = { path = "crates/oxoffice-opc", version = "0.8.0" }
+oxoffice-drawing = { path = "crates/oxoffice-drawing", version = "0.8.0" }
+oxoffice-layout = { path = "crates/oxoffice-layout", version = "0.8.0", default-features = false }
+oxoffice-media = { path = "crates/oxoffice-media", version = "0.8.0" }
+oxoffice-pdf = { path = "crates/oxoffice-pdf", version = "0.8.0", default-features = false }
+oxoffice-sml = { path = "crates/oxoffice-sml", version = "0.8.0" }
+oxoffice-chart = { path = "crates/oxoffice-chart", version = "0.8.0" }
+oxoffice-cli-support = { path = "crates/oxoffice-cli-support", version = "0.8.0" }
+oxoffice-cli = { path = "crates/oxoffice-cli", version = "0.8.0", default-features = false }
+oxoffice-py-support = { path = "crates/oxoffice-py-support", version = "0.8.0" }
+oxoffice-render-test = { path = "crates/oxoffice-render-test", version = "0.8.0" }
+oxoffice-xml-test = { path = "crates/oxoffice-xml-test", version = "0.8.0" }
+oxoffice-docx = { path = "crates/oxoffice-docx", version = "0.8.0", default-features = false }
+oxoffice-docx-oxml = { path = "crates/oxoffice-docx-oxml", version = "0.8.0" }
+oxoffice-docx-layout = { path = "crates/oxoffice-docx-layout", version = "0.8.0", default-features = false }
+oxoffice-docx-html = { path = "crates/oxoffice-docx-html", version = "0.8.0" }
+oxoffice-docx-cli = { path = "crates/oxoffice-docx-cli", version = "0.8.0", default-features = false }
+oxoffice-docx-py = { path = "crates/oxoffice-docx-py", version = "0.8.0" }
+oxoffice-pptx = { path = "crates/oxoffice-pptx", version = "0.8.0", default-features = false }
+oxoffice-pptx-oxml = { path = "crates/oxoffice-pptx-oxml", version = "0.8.0" }
+oxoffice-pptx-layout = { path = "crates/oxoffice-pptx-layout", version = "0.8.0" }
+oxoffice-pptx-render = { path = "crates/oxoffice-pptx-render", version = "0.8.0", default-features = false }
+oxoffice-pptx-cli = { path = "crates/oxoffice-pptx-cli", version = "0.8.0", default-features = false }
+oxoffice-pptx-py = { path = "crates/oxoffice-pptx-py", version = "0.8.0" }
 
 # External dependencies
 #

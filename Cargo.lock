@@ -1111,7 +1111,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "oxoffice-chart"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-core",
  "oxoffice-drawing",
@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "oxoffice-cli-support",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-cli-support"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-opc",
  "serde_json",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "quick-xml",
  "thiserror",
@@ -1155,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-docx"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64",
  "encoding_rs",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-docx-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "oxoffice-cli-support",
@@ -1203,7 +1203,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-docx-html"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-docx-layout",
  "oxoffice-docx-oxml",
@@ -1211,7 +1211,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-docx-layout"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-chart",
  "oxoffice-core",
@@ -1224,7 +1224,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-docx-oxml"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "itoa",
  "oxoffice-core",
@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-docx-py"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-core",
  "oxoffice-docx",
@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-docx-wasm"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "js-sys",
  "oxoffice-docx",
@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-drawing"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-core",
  "oxoffice-opc",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-layout"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "fontdb 0.23.0",
  "harfrust",
@@ -1287,11 +1287,11 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-media"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "oxoffice-opc"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "aes",
  "base64",
@@ -1311,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-pdf"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "jpeg-encoder",
  "lopdf",
@@ -1330,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-pptx"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gif",
  "jpeg-encoder",
@@ -1361,7 +1361,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-pptx-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "oxoffice-cli-support",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-pptx-layout"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-chart",
  "oxoffice-drawing",
@@ -1385,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-pptx-oxml"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-core",
  "oxoffice-drawing",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-pptx-py"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-core",
  "oxoffice-drawing",
@@ -1409,7 +1409,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-pptx-render"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-drawing",
  "oxoffice-layout",
@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-pptx-wasm"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "js-sys",
  "oxoffice-opc",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-py"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-cli",
  "oxoffice-docx-py",
@@ -1443,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-py-support"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-core",
  "oxoffice-layout",
@@ -1455,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-render-test"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lopdf",
  "png",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-sml"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "oxoffice-opc",
  "quick-xml",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "oxoffice-xml-test"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "quick-xml",
  "zip",
