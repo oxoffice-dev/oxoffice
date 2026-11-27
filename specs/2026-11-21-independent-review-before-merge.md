@@ -122,7 +122,19 @@ budget amendment above; the budget of reviews is unchanged. Rule 9
 of [CLAUDE.md](../CLAUDE.md) and
 [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#independent-review) say so.
 
+## Amendment 2026-11-27: one review, sized by risk
+
+A delta review after each major fix cost 20 to 30 minutes per pull request
+and, on #696 and #697, found nothing that CI or the author's mutation proofs
+had not already caught; the full reviews kept finding real defects. The
+maintainer decided: one review per pull request, light (read only) or full
+(builds, tests, mutation checks) by size and risk; a major's fix merges on
+its proof; a delta review only for a redesign or an unasked change of
+behaviour. This replaces the budget of two reviews and the post-budget fix
+rule above. Rule 9 of [CLAUDE.md](../CLAUDE.md) and
+[docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md#independent-review) say so.
+
 ## Links
 
 - [docs/DEVELOPMENT.md](../docs/DEVELOPMENT.md), the loop a change follows.
-- #23, this change.
+- #23, this change; #701, one review sized by risk.
