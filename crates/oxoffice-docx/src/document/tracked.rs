@@ -53,6 +53,45 @@ impl TrackedChanges {
 pub(crate) struct Tracking {
     pub(crate) changes: TrackedChanges,
     ids: Arc<Mutex<Vec<i32>>>,
+    /// What the replacement under way searches and writes: Word deletes each
+    /// whole match and inserts the whole replacement (Word check W12).
+    pub(crate) pattern: Option<Arc<ReplacePattern>>,
+}
+
+/// The pair of a replacement made under tracked changes.
+#[derive(Debug)]
+pub(crate) enum ReplacePattern {
+    /// A literal text and the text written for it, line endings read as
+    /// replacement writes them.
+    Literal {
+        placeholder: String,
+        written: String,
+    },
+    /// A regular expression and its replacement, capture groups included.
+    Regex {
+        regex: regex::Regex,
+        replacement: String,
+    },
+}
+
+impl Document {
+    /// Run `replace` with the session under way, if any, told the pattern it
+    /// replaces.
+    pub(crate) fn with_replace_pattern<T>(
+        &mut self,
+        pattern: impl FnOnce() -> ReplacePattern,
+        replace: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let Some(tracking) = &mut self.tracking else {
+            return replace(self);
+        };
+        tracking.pattern = Some(Arc::new(pattern()));
+        let result = replace(self);
+        if let Some(tracking) = &mut self.tracking {
+            tracking.pattern = None;
+        }
+        result
+    }
 }
 
 impl Tracking {
@@ -98,6 +137,7 @@ impl Document {
             tracking: Tracking {
                 changes: changes.clone(),
                 ids: Arc::default(),
+                pattern: None,
             },
         }
     }
@@ -111,6 +151,78 @@ impl Document {
             }
             None => Ok(after),
         }
+    }
+
+    /// Write as tracked changes each body paragraph that differs from the
+    /// same one of `before`, the body content before the edit under way.
+    pub(crate) fn redline_body(&mut self, before: &[BodyContent]) -> Result<()> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(());
+        };
+        let mut originals = Vec::new();
+        visit_body_paragraphs(before, false, &mut |paragraph| originals.push(paragraph));
+        let identifiers = &mut self.identifiers;
+        let mut index = 0;
+        let mut failure = None;
+        visit_body_paragraphs_mut(&mut self.document.body.content, &mut |paragraph| {
+            if failure.is_some() {
+                return;
+            }
+            let Some(original) = originals.get(index) else {
+                failure = Some(super::redline::refused("an edit that adds a paragraph"));
+                return;
+            };
+            index += 1;
+            if *original != paragraph {
+                match super::redline::redline_paragraph(original, paragraph, &tracking, identifiers)
+                {
+                    Ok(redlined) => *paragraph = redlined,
+                    Err(error) => failure = Some(error),
+                }
+            }
+        });
+        match failure {
+            Some(error) => Err(error),
+            None if index != originals.len() => {
+                Err(super::redline::refused("an edit that removes a paragraph"))
+            }
+            None => {
+                self.invalidate_layout();
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Document {
+    /// Write as tracked changes each paragraph of header or footer `after`
+    /// that differs from the same one of `before`, the part before the edit
+    /// under way. A table or a control of the part that changed is refused.
+    pub(crate) fn redline_header_footer(
+        &mut self,
+        before: &oxoffice_docx_oxml::header_footer::CT_HdrFtr,
+        after: &mut oxoffice_docx_oxml::header_footer::CT_HdrFtr,
+    ) -> Result<()> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(());
+        };
+        if before.extra_xml != after.extra_xml || before.paragraphs.len() != after.paragraphs.len()
+        {
+            return Err(super::redline::refused(
+                "a replacement in a header or footer table or control",
+            ));
+        }
+        for (original, paragraph) in before.paragraphs.iter().zip(&mut after.paragraphs) {
+            if original != paragraph {
+                *paragraph = super::redline::redline_paragraph(
+                    original,
+                    paragraph,
+                    &tracking,
+                    &mut self.identifiers,
+                )?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -196,5 +308,70 @@ impl TrackedDocument<'_> {
     /// [`Document::set_story_text`], written as tracked changes.
     pub fn set_story_text(&mut self, location: &ContentLocation, value: &str) -> Result<()> {
         self.edit_paragraph(location, |paragraph| paragraph.set_text(value))
+    }
+
+    /// [`Document::try_replace_text`], written as tracked changes.
+    pub fn try_replace_text(&mut self, placeholder: &str, replacement: &str) -> Result<usize> {
+        self.run(|document| document.try_replace_text(placeholder, replacement))
+    }
+
+    /// [`Document::try_replace_text_at`] on a paragraph, written as tracked
+    /// changes. A table or a block control as the location is refused.
+    pub fn try_replace_text_at(
+        &mut self,
+        location: &ContentLocation,
+        placeholder: &str,
+        replacement: &str,
+        expected: Option<usize>,
+    ) -> Result<std::result::Result<usize, ReplacementCountMismatch>> {
+        if location.item_kind() != StoryItemKind::Paragraph {
+            return Err(super::redline::refused(
+                "a replacement in a whole table or control",
+            ));
+        }
+        oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
+        let mut mismatch = None;
+        let result = self.edit_paragraph(location, |paragraph| {
+            let found = oxoffice_docx_oxml::placeholder::try_replace_in_paragraph(
+                paragraph.inner,
+                placeholder,
+                replacement,
+            )?;
+            match expected {
+                Some(expected) if expected != found => {
+                    mismatch = Some(ReplacementCountMismatch {
+                        index: 0,
+                        placeholder: placeholder.to_owned(),
+                        expected,
+                        found,
+                        unreached: 0,
+                    });
+                    Err(Error::Other("replacement count mismatch".to_owned()))
+                }
+                _ => Ok(found),
+            }
+        });
+        match (result, mismatch) {
+            (_, Some(mismatch)) => Ok(Err(mismatch)),
+            (result, None) => result.map(Ok),
+        }
+    }
+
+    /// [`Document::try_replace_all_checked`], written as tracked changes.
+    pub fn try_replace_all_checked(
+        &mut self,
+        pairs: &[(&str, &str, Option<usize>)],
+        options: ReplaceOptions,
+    ) -> Result<std::result::Result<Vec<usize>, ReplacementRefusal>> {
+        self.run(|document| document.try_replace_all_checked(pairs, options))
+    }
+
+    /// [`Document::try_replace_all_regex_expected`], written as tracked
+    /// changes.
+    pub fn try_replace_all_regex_expected(
+        &mut self,
+        pairs: &[(&str, &str, Option<usize>)],
+    ) -> Result<std::result::Result<Vec<usize>, ReplacementCountMismatch>> {
+        self.run(|document| document.try_replace_all_regex_expected(pairs))
     }
 }

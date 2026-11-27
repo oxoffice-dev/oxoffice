@@ -5,8 +5,8 @@
 //! and reads the same once saved.
 
 use oxoffice_docx::{
-    ComparisonGranularity, ComparisonOptions, Document, RevisionDate, RevisionKind, TrackedChanges,
-    TrackedDocument,
+    ComparisonGranularity, ComparisonOptions, Document, ReplaceOptions, RevisionDate, RevisionKind,
+    TrackedChanges, TrackedDocument,
 };
 
 use crate::support::{doc_with_body, reopen};
@@ -20,6 +20,10 @@ fn changes() -> TrackedChanges {
 
 fn run(text: &str) -> String {
     format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#)
+}
+
+fn bold(text: &str) -> String {
+    format!(r#"<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#)
 }
 
 fn paragraph(content: &str) -> String {
@@ -147,6 +151,67 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             unlike_compare: false,
         },
         Row {
+            shape: "a replacement across two runs keeps the first run's formatting",
+            document: || doc_with_body(&paragraph(&(run("Pay within 30 ") + &bold("days net.")))),
+            tracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "30 days"),
+                (RevisionKind::Insertion, "45 days"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "inside a link",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    r#"{}<w:hyperlink w:anchor="target">{}</w:hyperlink>{}"#,
+                    run("See "),
+                    run("the old section"),
+                    run(".")
+                )))
+            },
+            tracked: |doc| {
+                doc.try_replace_text("old", "new").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("old", "new").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "old"),
+                (RevisionKind::Insertion, "new"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "inside an inline control",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    r#"{}<w:sdt><w:sdtPr><w:tag w:val="party"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>"#,
+                    run("Between "),
+                    run("Acme Ltd")
+                )))
+            },
+            tracked: |doc| {
+                doc.try_replace_text("Acme", "Zenith").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("Acme", "Zenith").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "Acme"),
+                (RevisionKind::Insertion, "Zenith"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
             shape: "a tab added to a run",
             document: || doc_with_body(&paragraph(&run("Name"))),
             tracked: |doc| {
@@ -158,6 +223,46 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             },
             untracked: |doc| doc.paragraph_mut(0).unwrap().run_mut(0).unwrap().add_tab(),
             revisions: &[(RevisionKind::Insertion, "\t")],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a second edit of the session's own insertion",
+            document: || doc_with_body(&paragraph(&run("Ship four units."))),
+            tracked: |doc| {
+                doc.try_replace_text("four", "six").unwrap();
+                doc.try_replace_text("six", "seven").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("four", "six").unwrap();
+                doc.try_replace_text("six", "seven").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "four"),
+                (RevisionKind::Insertion, "seven"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "inside another author's insertion",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    "{}{}",
+                    run("Kept "),
+                    by("Ann", "ins", 1, &run("new words here"))
+                )))
+            },
+            tracked: |doc| {
+                doc.try_replace_text("words", "terms").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("words", "terms").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "words"),
+                (RevisionKind::Insertion, "terms"),
+            ],
             reject_own: true,
             unlike_compare: false,
         },
@@ -215,6 +320,95 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             ],
             reject_own: true,
             unlike_compare: false,
+        },
+        Row {
+            shape: "a header paragraph",
+            document: || {
+                let mut doc = doc_with_body(&paragraph(&run("Body.")));
+                doc.set_header("Draft for review");
+                reopen(&mut doc)
+            },
+            tracked: |doc| {
+                doc.try_replace_text("Draft", "Final").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("Draft", "Final").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "Draft"),
+                (RevisionKind::Insertion, "Final"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a footnote paragraph",
+            document: || {
+                let mut doc = doc_with_body(&paragraph(&run("Body.")));
+                let note = doc.add_footnote("Source: the 2025 survey.");
+                doc.paragraph_mut(0).unwrap().add_footnote_ref(note);
+                reopen(&mut doc)
+            },
+            tracked: |doc| {
+                doc.try_replace_all_checked(
+                    &[("2025", "2026", Some(1))],
+                    ReplaceOptions::default(),
+                )
+                .unwrap()
+                .unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_all_checked(
+                    &[("2025", "2026", Some(1))],
+                    ReplaceOptions::default(),
+                )
+                .unwrap()
+                .unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "2025"),
+                (RevisionKind::Insertion, "2026"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a regular expression replacement",
+            document: || doc_with_body(&paragraph(&run("Invoice 123 and invoice 456."))),
+            tracked: |doc| {
+                doc.try_replace_all_regex_expected(&[(r"\d+", "N", Some(2))])
+                    .unwrap()
+                    .unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_all_regex_expected(&[(r"\d+", "N", Some(2))])
+                    .unwrap()
+                    .unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "123"),
+                (RevisionKind::Insertion, "N"),
+                (RevisionKind::Deletion, "456"),
+                (RevisionKind::Insertion, "N"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a replacement deletes the whole match, the words its value repeats too",
+            document: || doc_with_body(&paragraph(&run("Pay within 30 days net."))),
+            tracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "30 days"),
+                (RevisionKind::Insertion, "45 days"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
         },
         Row {
             shape: "typing inside the author's insertion of an earlier session splits it",

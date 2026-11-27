@@ -234,3 +234,89 @@ fn replace_on_a_document_the_check_cannot_read_points_at_allow_unreached() {
         String::from_utf8_lossy(&allowed.stderr)
     );
 }
+
+/// With `--track-author`, each replacement is written as a deletion and an
+/// insertion by that author at `--track-timestamp`: accepting them gives the
+/// untracked replacement, rejecting them the input.
+#[test]
+fn replace_with_a_track_author_writes_tracked_changes() {
+    let scratch = Scratch::new("tracked");
+    for producer in ["word", "google"] {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/files")
+            .join(producer)
+            .join("report.docx");
+        let source = source.to_str().unwrap();
+        let path = |name: &str| scratch.0.join(format!("{producer}-{name}.docx"));
+        let (tracked, plain, accepted, rejected) = (
+            path("tracked"),
+            path("plain"),
+            path("accepted"),
+            path("rejected"),
+        );
+        let [tracked, plain, accepted, rejected] =
+            [&tracked, &plain, &accepted, &rejected].map(|path| path.to_str().unwrap());
+        let replaced = oxoffice(&[
+            "docx",
+            "replace",
+            source,
+            "-p",
+            "quarter",
+            "-v",
+            "term",
+            "--expect",
+            "3",
+            "--track-author",
+            "Rev",
+            "--track-timestamp",
+            "2026-11-27T10:00:00Z",
+            "--json",
+            "-o",
+            tracked,
+        ]);
+        assert!(
+            replaced.status.success(),
+            "{producer}: {}",
+            String::from_utf8_lossy(&replaced.stderr)
+        );
+        let record: serde_json::Value = serde_json::from_slice(&replaced.stdout).unwrap();
+        let ids = record["revision_ids"].as_array().unwrap().clone();
+        assert_eq!(
+            ids.len(),
+            6,
+            "{producer}: a deletion and an insertion per match"
+        );
+        let listed: serde_json::Value = serde_json::from_slice(
+            &oxoffice(&["docx", "revision", "list", tracked, "--json"]).stdout,
+        )
+        .unwrap();
+        let listed = listed["revisions"].as_array().unwrap();
+        assert!(
+            ids.iter()
+                .all(|id| listed.iter().any(|revision| revision["id"] == *id
+                    && revision["author"] == "Rev"
+                    && revision["timestamp"] == "2026-11-27T10:00:00Z")),
+            "{producer}: {listed:?}"
+        );
+        let text = |path: &str| oxoffice(&["docx", "text", path]).stdout;
+        assert!(
+            oxoffice(&[
+                "docx", "replace", source, "-p", "quarter", "-v", "term", "-o", plain
+            ])
+            .status
+            .success()
+        );
+        assert!(
+            oxoffice(&["docx", "revision", "accept", tracked, "-o", accepted])
+                .status
+                .success()
+        );
+        assert!(
+            oxoffice(&["docx", "revision", "reject", tracked, "-o", rejected])
+                .status
+                .success()
+        );
+        assert_eq!(text(accepted), text(plain), "{producer}: accepted");
+        assert_eq!(text(rejected), text(source), "{producer}: rejected");
+    }
+}

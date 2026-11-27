@@ -858,12 +858,33 @@ impl Document {
         if pairs.is_empty() {
             return Ok(0);
         }
+        if let [(placeholder, replacement)] = pairs {
+            return self.with_replace_pattern(
+                || super::tracked::ReplacePattern::Literal {
+                    placeholder: (*placeholder).to_owned(),
+                    written: replacement.replace("\r\n", "\n").replace('\r', "\n"),
+                },
+                |document| document.replace_batch_with(pairs),
+            );
+        }
+        self.replace_batch_with(pairs)
+    }
 
+    fn replace_batch_with(&mut self, pairs: &[(&str, &str)]) -> Result<usize> {
         let mut count = 0;
 
-        // Typed model: body content, then headers and footers.
+        // Typed model: body content, then headers and footers. Under tracked
+        // changes, each paragraph the replacement changed is written as
+        // tracked changes.
+        let before = self
+            .tracking
+            .is_some()
+            .then(|| self.document.body.content.clone());
         for (placeholder, replacement) in pairs {
             count += self.replace_in_body(placeholder, replacement)?;
+        }
+        if let Some(before) = before {
+            self.redline_body(&before)?;
         }
         count += self.replace_in_headers_footers(pairs)?;
 
@@ -907,12 +928,16 @@ impl Document {
             let Some(mut hf) = self.load_header_footer(&rel_id, is_header) else {
                 continue;
             };
+            let before = self.tracking.is_some().then(|| hf.clone());
             let mut part_count = 0;
             for (placeholder, replacement) in pairs {
                 part_count +=
                     placeholder::try_replace_in_header_footer(&mut hf, placeholder, replacement)?;
             }
             if part_count > 0 {
+                if let Some(before) = before {
+                    self.redline_header_footer(&before, &mut hf)?;
+                }
                 self.save_header_footer(&rel_id, &hf, is_header)?;
                 count += part_count;
             }
@@ -1014,9 +1039,27 @@ impl Document {
         re: &regex::Regex,
         replacement: &str,
     ) -> Result<usize> {
+        self.with_replace_pattern(
+            || super::tracked::ReplacePattern::Regex {
+                regex: re.clone(),
+                replacement: replacement.to_owned(),
+            },
+            |document| document.replace_regex_checked_with(re, replacement),
+        )
+    }
+
+    fn replace_regex_checked_with(
+        &mut self,
+        re: &regex::Regex,
+        replacement: &str,
+    ) -> Result<usize> {
         use oxoffice_docx_oxml::placeholder;
         self.flush_to_package()?;
         let mut count = 0;
+        let before = self
+            .tracking
+            .is_some()
+            .then(|| self.document.body.content.clone());
         let mut failure = None;
         visit_body_paragraphs_mut(&mut self.document.body.content, &mut |paragraph| {
             if failure.is_none() {
@@ -1029,12 +1072,19 @@ impl Document {
         if let Some(error) = failure {
             return Err(error.into());
         }
+        if let Some(before) = before {
+            self.redline_body(&before)?;
+        }
         for (rel_id, is_header) in self.header_footer_rel_ids() {
             let Some(mut hf) = self.load_header_footer(&rel_id, is_header) else {
                 continue;
             };
+            let before = self.tracking.is_some().then(|| hf.clone());
             let n = placeholder::try_replace_regex_in_header_footer(&mut hf, re, replacement)?;
             if n > 0 {
+                if let Some(before) = before {
+                    self.redline_header_footer(&before, &mut hf)?;
+                }
                 self.save_header_footer(&rel_id, &hf, is_header)?;
                 count += n;
             }
@@ -1047,6 +1097,9 @@ impl Document {
                 .ok_or_else(|| Error::Other(format!("required text owner {part_name} is missing")))?
                 .to_vec();
             let (changed, n) = placeholder::replace_regex_in_xml_part(&xml, re, replacement)?;
+            if self.tracking.is_some() && changed != xml {
+                return Err(super::redline::refused("a replacement in a text box"));
+            }
             if changed != xml {
                 if part_name == self.doc_part_name {
                     self.document =
@@ -1062,7 +1115,17 @@ impl Document {
                 .get_part(&part_name)
                 .ok_or_else(|| Error::Other(format!("required note owner {part_name} is missing")))?
                 .to_vec();
-            let (changed, n) = placeholder::replace_regex_in_notes_part(&xml, re, replacement)?;
+            let (mut changed, n) = placeholder::replace_regex_in_notes_part(&xml, re, replacement)?;
+            if let Some(tracking) = &self.tracking
+                && changed != xml
+            {
+                changed = super::redline::redline_part_paragraphs(
+                    &xml,
+                    &changed,
+                    tracking,
+                    &mut self.identifiers,
+                )?;
+            }
             if changed != xml {
                 if self.footnotes_part_name.as_deref() == Some(part_name.as_str()) {
                     self.footnotes =
@@ -1077,11 +1140,25 @@ impl Document {
 
     /// Internal: replace using a pre-compiled regex.
     fn replace_regex_compiled(&mut self, re: &regex::Regex, replacement: &str) -> Result<usize> {
+        self.with_replace_pattern(
+            || super::tracked::ReplacePattern::Regex {
+                regex: re.clone(),
+                replacement: replacement.to_owned(),
+            },
+            |document| document.replace_regex_with(re, replacement),
+        )
+    }
+
+    fn replace_regex_with(&mut self, re: &regex::Regex, replacement: &str) -> Result<usize> {
         use oxoffice_docx_oxml::placeholder;
 
         let mut count = 0;
 
         // Replace in body paragraphs, tables and content controls
+        let before = self
+            .tracking
+            .is_some()
+            .then(|| self.document.body.content.clone());
         let mut failure = None;
         visit_body_paragraphs_mut(&mut self.document.body.content, &mut |paragraph| {
             if failure.is_none() {
@@ -1094,14 +1171,21 @@ impl Document {
         if let Some(error) = failure {
             return Err(error.into());
         }
+        if let Some(before) = before {
+            self.redline_body(&before)?;
+        }
 
         // Replace in headers and footers
         for (rel_id, is_header) in self.header_footer_rel_ids() {
             let Some(mut hf) = self.load_header_footer(&rel_id, is_header) else {
                 continue;
             };
+            let before = self.tracking.is_some().then(|| hf.clone());
             let n = placeholder::try_replace_regex_in_header_footer(&mut hf, re, replacement)?;
             if n > 0 {
+                if let Some(before) = before {
+                    self.redline_header_footer(&before, &mut hf)?;
+                }
                 self.save_header_footer(&rel_id, &hf, is_header)?;
                 count += n;
             }
@@ -1134,6 +1218,9 @@ impl Document {
             // only the uncounted copy of a text box that Word writes twice.
             let (new_xml, n) =
                 oxoffice_docx_oxml::placeholder::replace_regex_in_xml_part(&xml, re, replacement)?;
+            if self.tracking.is_some() && (n > 0 || new_xml != xml) {
+                return Err(super::redline::refused("a replacement in a text box"));
+            }
             if n > 0 || new_xml != xml {
                 self.package.set_part(&part_name, new_xml);
                 count += n;
@@ -1212,9 +1299,17 @@ impl Document {
             let Some(original) = self.package.get_part(&part_name) else {
                 continue;
             };
-            let (xml, n) = rewrite(original)?;
+            let (mut xml, n) = rewrite(original)?;
             if n == 0 {
                 continue;
+            }
+            if let Some(tracking) = &self.tracking {
+                xml = super::redline::redline_part_paragraphs(
+                    original,
+                    &xml,
+                    tracking,
+                    &mut self.identifiers,
+                )?;
             }
             if self.footnotes_part_name.as_deref() == Some(part_name.as_str()) {
                 self.footnotes = oxoffice_docx_oxml::footnotes::CT_Footnotes::from_xml(&xml)?;
@@ -1261,6 +1356,9 @@ impl Document {
                 // reaches only the uncounted copy of a text box that Word
                 // writes twice.
                 let (new_xml, n) = replace_many_in_xml_part(&xml, pairs)?;
+                if self.tracking.is_some() && (n > 0 || new_xml != xml) {
+                    return Err(super::redline::refused("a replacement in a text box"));
+                }
                 if n > 0 || new_xml != xml {
                     self.package.set_part(&part_name, new_xml);
                     count += n;

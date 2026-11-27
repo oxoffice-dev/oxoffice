@@ -11,7 +11,7 @@
 //! new words go into a new insertion after what the edit removed. The result
 //! must resolve as the edit and as the document before it.
 
-use super::tracked::Tracking;
+use super::tracked::{ReplacePattern, Tracking};
 use super::*;
 use crate::revision::{Resolution, RevisionScope, resolve_story_xml};
 
@@ -653,6 +653,175 @@ fn absorb_spaces(ops: Vec<Op>, before: &[&Item]) -> Vec<Op> {
     grouped(ops)
 }
 
+impl Flat {
+    /// The leaves the accepted view reads as content, in order.
+    fn tokens(&self) -> Vec<usize> {
+        (0..self.leaves.len())
+            .filter(|&leaf| self.token(&self.leaves[leaf]))
+            .collect()
+    }
+}
+
+/// A token is the same before and after an edit when its text, its run
+/// properties and its holders are: text that took other formatting or moved
+/// into a link is removed and inserted again.
+fn key(flat: &Flat, leaf: usize) -> (&Item, &str, Vec<&str>) {
+    let leaf = &flat.leaves[leaf];
+    (&leaf.item, flat.run_properties(leaf), flat.holders(leaf))
+}
+
+/// `flat` with each word split into its characters, so that a match may
+/// start or end inside a word.
+fn by_character(flat: &Flat) -> Flat {
+    let mut split = flat.clone();
+    split.leaves = flat
+        .leaves
+        .iter()
+        .flat_map(|leaf| match &leaf.item {
+            Item::Text(text) => text
+                .chars()
+                .map(|character| Leaf {
+                    path: leaf.path.clone(),
+                    item: Item::Text(character.to_string()),
+                })
+                .collect::<Vec<_>>(),
+            _ => vec![leaf.clone()],
+        })
+        .collect();
+    split
+}
+
+/// The text a token reads as for replacement: a tab as `\t`, a break as
+/// `\n`, a non-breaking hyphen as `-`, other content as nothing.
+fn token_text(item: &Item) -> String {
+    match item {
+        Item::Text(text) => text.clone(),
+        Item::Mark(xml) => {
+            let name = oxoffice_core::xml_element::start_tag(xml)
+                .map(|tag| tag.name)
+                .unwrap_or_default();
+            match name.rsplit(':').next().unwrap_or_default() {
+                "tab" | "ptab" => "\t".to_owned(),
+                "br" | "cr" => "\n".to_owned(),
+                "noBreakHyphen" => "-".to_owned(),
+                _ => String::new(),
+            }
+        }
+        Item::Opaque(_) | Item::Marker(_) => String::new(),
+    }
+}
+
+/// The operations of a replacement: the tokens of each whole match deleted,
+/// those of its value inserted, every other token kept. `None` when the
+/// matches found in the text before do not give the text after, as when the
+/// replacement could not reach one of them.
+fn replace_ops(
+    old: &Flat,
+    new: &Flat,
+    old_tokens: &[usize],
+    new_tokens: &[usize],
+    pattern: &ReplacePattern,
+) -> Option<Vec<Op>> {
+    let read = |flat: &Flat, tokens: &[usize]| {
+        let mut text = String::new();
+        let mut spans = Vec::with_capacity(tokens.len());
+        for &leaf in tokens {
+            let piece = token_text(&flat.leaves[leaf].item);
+            spans.push((text.len(), piece.len()));
+            text.push_str(&piece);
+        }
+        (text, spans)
+    };
+    let (old_text, old_spans) = read(old, old_tokens);
+    let (new_text, new_spans) = read(new, new_tokens);
+    let mut matches = Vec::new();
+    match pattern {
+        ReplacePattern::Literal {
+            placeholder,
+            written,
+        } => {
+            if placeholder.is_empty() {
+                return None;
+            }
+            for (at, _) in old_text.match_indices(placeholder.as_str()) {
+                matches.push((at..at + placeholder.len(), written.clone()));
+            }
+        }
+        ReplacePattern::Regex { regex, replacement } => {
+            for captures in regex.captures_iter(&old_text) {
+                let found = captures.get(0)?;
+                if found.is_empty() {
+                    return None;
+                }
+                let mut value = String::new();
+                captures.expand(replacement, &mut value);
+                matches.push((found.range(), value));
+            }
+        }
+    }
+    let mut expected = String::with_capacity(new_text.len());
+    let mut new_ranges = Vec::with_capacity(matches.len());
+    let mut at = 0;
+    for (range, value) in &matches {
+        expected.push_str(&old_text[at..range.start]);
+        let start = expected.len();
+        expected.push_str(value);
+        new_ranges.push(start..expected.len());
+        at = range.end;
+    }
+    expected.push_str(&old_text[at..]);
+    if matches.is_empty() || expected != new_text {
+        return None;
+    }
+    let old_ranges = matches
+        .into_iter()
+        .map(|(range, _)| range)
+        .collect::<Vec<_>>();
+    let classify = |spans: &[(usize, usize)], ranges: &[Range<usize>]| {
+        spans
+            .iter()
+            .map(|&(offset, width)| {
+                ranges.iter().position(|range| {
+                    range.start < offset && offset < range.end
+                        || width > 0 && range.start == offset && offset < range.end
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let (old_class, new_class) = (
+        classify(&old_spans, &old_ranges),
+        classify(&new_spans, &new_ranges),
+    );
+    let mut ops = Vec::new();
+    let (mut a, mut b) = (0, 0);
+    for k in 0..=old_ranges.len() {
+        while a < old_class.len()
+            && b < new_class.len()
+            && old_class[a].is_none()
+            && new_class[b].is_none()
+        {
+            if key(old, old_tokens[a]) != key(new, new_tokens[b]) {
+                return None;
+            }
+            ops.push(Op::Keep(a, b));
+            a += 1;
+            b += 1;
+        }
+        if k == old_ranges.len() {
+            break;
+        }
+        while a < old_class.len() && old_class[a] == Some(k) {
+            ops.push(Op::Delete(a));
+            a += 1;
+        }
+        while b < new_class.len() && new_class[b] == Some(k) {
+            ops.push(Op::Insert(b));
+            b += 1;
+        }
+    }
+    (a == old_class.len() && b == new_class.len()).then_some(ops)
+}
+
 /// Where an insertion goes: right after the leaf of a before token, or right
 /// before it, or at the end of the paragraph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -680,33 +849,38 @@ pub(super) fn redline_xml(
             "an edit that adds, removes or reorders a bookmark or comment mark",
         ));
     }
-    let old_tokens = (0..old.leaves.len())
-        .filter(|&leaf| old.token(&old.leaves[leaf]))
-        .collect::<Vec<_>>();
-    let new_tokens = (0..new.leaves.len())
-        .filter(|&leaf| new.token(&new.leaves[leaf]))
-        .collect::<Vec<_>>();
-    let old_items = old_tokens
-        .iter()
-        .map(|&l| &old.leaves[l].item)
-        .collect::<Vec<_>>();
-    let new_items = new_tokens
-        .iter()
-        .map(|&l| &new.leaves[l].item)
-        .collect::<Vec<_>>();
-    // A token is the same when its text, its run properties and its holders
-    // are: text that took other formatting or moved into a link is removed
-    // and inserted again. An edit of formatting alone is not written yet.
-    fn key(flat: &Flat, leaf: usize) -> (&Item, &str, Vec<&str>) {
-        let leaf = &flat.leaves[leaf];
-        (&leaf.item, flat.run_properties(leaf), flat.holders(leaf))
-    }
-    let old_keys = old_tokens.iter().map(|&l| key(&old, l)).collect::<Vec<_>>();
-    let new_keys = new_tokens.iter().map(|&l| key(&new, l)).collect::<Vec<_>>();
-    if old_items == new_items && old_keys != new_keys {
-        return Err(refused("a change of run properties or links alone"));
-    }
-    let ops = absorb_spaces(grouped(align(&old_keys, &new_keys)), &old_items);
+    // A replacement deletes each whole match and inserts the whole value, as
+    // Word's tracked Replace All does; any other edit, or a replacement whose
+    // matches this reading does not find, is aligned word by word.
+    let replaced = tracking.pattern.as_deref().and_then(|pattern| {
+        let (old, new) = (by_character(&old), by_character(&new));
+        let (old_tokens, new_tokens) = (old.tokens(), new.tokens());
+        replace_ops(&old, &new, &old_tokens, &new_tokens, pattern)
+            .map(|ops| (old, new, old_tokens, new_tokens, ops))
+    });
+    let (old, new, old_tokens, new_tokens, ops) = match replaced {
+        Some(replaced) => replaced,
+        None => {
+            let (old_tokens, new_tokens) = (old.tokens(), new.tokens());
+            let item = |flat: &Flat, leaf: usize| flat.leaves[leaf].item.clone();
+            let old_items = old_tokens
+                .iter()
+                .map(|&l| item(&old, l))
+                .collect::<Vec<_>>();
+            let new_items = new_tokens
+                .iter()
+                .map(|&l| item(&new, l))
+                .collect::<Vec<_>>();
+            let old_keys = old_tokens.iter().map(|&l| key(&old, l)).collect::<Vec<_>>();
+            let new_keys = new_tokens.iter().map(|&l| key(&new, l)).collect::<Vec<_>>();
+            if old_items == new_items && old_keys != new_keys {
+                return Err(refused("a change of run properties or links alone"));
+            }
+            let items = old_items.iter().collect::<Vec<_>>();
+            let ops = absorb_spaces(grouped(align(&old_keys, &new_keys)), &items);
+            (old, new, old_tokens, new_tokens, ops)
+        }
+    };
     let author = tracking.changes.author();
     let own_session = tracking.ids();
     let own = |kind: &ContainerKind| {
@@ -1095,4 +1269,69 @@ pub(super) fn redline_paragraph(
     }
     let redlined = redline_xml(&old, &new, tracking, identifiers)?;
     Ok(CT_P::from_xml_fragment(redlined.as_bytes())?)
+}
+
+/// The outermost paragraphs of a part, as source ranges.
+fn outer_paragraphs(xml: &str) -> Result<Vec<Range<usize>>> {
+    let mut reader = NsReader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    let mut found = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader.read_resolved_event().map_err(xml_error)?;
+        let word =
+            matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes());
+        let after = reader.buffer_position() as usize;
+        let (start, empty) = match event {
+            Event::Start(start) => (start.into_owned(), false),
+            Event::Empty(start) => (start.into_owned(), true),
+            Event::Eof => return Ok(found),
+            _ => continue,
+        };
+        if word && start.local_name().as_ref() == b"p" {
+            found.push(element(&mut reader, xml, &start, true, before..after, empty)?.span());
+        }
+    }
+}
+
+/// Part `after`, an edit of part `before` that keeps its paragraphs, with
+/// each paragraph the edit changed written as tracked changes: the notes
+/// parts, which replacement edits as XML.
+pub(super) fn redline_part_paragraphs(
+    before: &[u8],
+    after: &[u8],
+    tracking: &Tracking,
+    identifiers: &mut DocumentIdentifiers,
+) -> Result<Vec<u8>> {
+    let (old, new) = (
+        std::str::from_utf8(before).map_err(xml_error)?,
+        std::str::from_utf8(after).map_err(xml_error)?,
+    );
+    let (old_spans, new_spans) = (outer_paragraphs(old)?, outer_paragraphs(new)?);
+    if old_spans.len() != new_spans.len() {
+        return Err(refused("an edit that adds or removes a note paragraph"));
+    }
+    let mut output = String::with_capacity(new.len());
+    let mut copied = 0;
+    for (old_span, new_span) in old_spans.into_iter().zip(new_spans) {
+        if old[old_span.clone()] == new[new_span.clone()] {
+            continue;
+        }
+        let fragment = |xml: &str, span: Range<usize>| -> Result<String> {
+            let scope = story_namespace_scope_at(xml.as_bytes(), span.start)?;
+            let closed = close_content_fragment_namespaces(xml[span].as_bytes(), &scope)?;
+            String::from_utf8(closed).map_err(xml_error)
+        };
+        let redlined = redline_xml(
+            &fragment(old, old_span)?,
+            &fragment(new, new_span.clone())?,
+            tracking,
+            identifiers,
+        )?;
+        output.push_str(&new[copied..new_span.start]);
+        output.push_str(&redlined);
+        copied = new_span.end;
+    }
+    output.push_str(&new[copied..]);
+    Ok(output.into_bytes())
 }
