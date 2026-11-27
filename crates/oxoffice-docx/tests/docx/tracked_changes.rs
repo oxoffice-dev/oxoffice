@@ -753,6 +753,28 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             unlike_compare: false,
         },
         Row {
+            shape: "set_story_text in a header, as the untracked call",
+            document: || {
+                let mut doc = doc_with_body(&paragraph(&run("Body.")));
+                doc.set_header("Draft for review");
+                reopen(&mut doc)
+            },
+            tracked: |doc| {
+                let location = located(doc.document(), StoryKind::Header);
+                doc.set_story_text(&location, "Final for review").unwrap()
+            },
+            untracked: |doc| {
+                let location = located(doc, StoryKind::Header);
+                doc.set_story_text(&location, "Final for review").unwrap()
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "Draft"),
+                (RevisionKind::Insertion, "Final"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
             shape: "two edits of one session, the second inside the first's insertion",
             document: || doc_with_body(&paragraph(&run("The quick fox jumps."))),
             tracked: |doc| {
