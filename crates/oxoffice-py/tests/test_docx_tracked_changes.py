@@ -4,6 +4,7 @@ left as it was. The class table below names the calls a session tracks or leaves
 scaling registry (test_docx_scaling.TIMED and WHOLE_DOCUMENT) is refused, so that a call added to the API is refused
 until a class names it, and test_every_call_behaves_as_its_class runs each one under a session."""
 import datetime
+import io
 import re
 import zipfile
 from pathlib import Path
@@ -18,10 +19,22 @@ from builders import edit_cost_docx
 
 AUTHOR, STAMP = "Rev", "2026-11-27T10:00:00Z"
 
-# Run and paragraph property changes (PR 2b), checked on the paragraphs' XML.
-FORMATTING_CLASSES = ("ColorFormat.", "Font.", "ParagraphFormat.", "TabStops.")
-FORMATTING = {"Paragraph.alignment", "Paragraph.numbering", "Paragraph.style", "Run.bold", "Run.italic",
-              "Run.style_id", "Run.underline"}
+# Run, paragraph, table and section property changes (PR 2b, 2c), checked on the XML of the paragraphs, tables
+# and sections.
+FORMATTING_CLASSES = ("ColorFormat.", "Font.", "ParagraphFormat.", "TabStops.", "Row.")
+FORMATTING = {
+    "Paragraph.alignment", "Paragraph.numbering", "Paragraph.style", "Run.bold", "Run.italic", "Run.style_id",
+    "Run.underline", "Cell.set_border", "Cell.set_margins", "Cell.shading", "Cell.vertical_alignment", "Cell.width",
+    "Table.alignment", "Table.autofit", "Table.banded_columns", "Table.banded_rows", "Table.first_column",
+    "Table.first_row", "Table.grid_widths", "Table.indent", "Table.last_column", "Table.last_row", "Table.set_border",
+    "Table.set_borders", "Table.set_cell_margins", "Table.set_column_width", "Table.style", "Table.width",
+    "Document.update_section", "SectionHandle.bottom_margin", "SectionHandle.different_first_page_header_footer",
+    "SectionHandle.footer_distance", "SectionHandle.gutter", "SectionHandle.header_distance",
+    "SectionHandle.left_margin", "SectionHandle.margin_bottom", "SectionHandle.margin_left",
+    "SectionHandle.margin_right", "SectionHandle.margin_top", "SectionHandle.orientation", "SectionHandle.page_height",
+    "SectionHandle.page_width", "SectionHandle.right_margin", "SectionHandle.set_note_policy",
+    "SectionHandle.set_page_border", "SectionHandle.top_margin",
+}
 TRACKED = {
     "Cell.replace_text", "Cell.text", "Document.replace_all", "Document.replace_all_regex",
     "Document.replace_all_regex_expected", "Document.replace_text_at", "Document.set_story_text",
@@ -111,6 +124,11 @@ def kind(name):
     return "untracked" if name in UNTRACKED or name.startswith(UNTRACKED_CLASSES) else "refused"
 
 
+SECTION_FIELDS = ("orientation", "page_width", "page_height", "margin_top", "margin_right", "margin_bottom",
+                  "margin_left", "gutter", "column_count", "column_spacing", "page_number_start", "header_distance",
+                  "footer_distance", "different_first_page", "break_type")
+
+
 def view(data, resolve=None, xml=False):
     """The text of every story paragraph of the document saved as `data`, its revisions resolved by `resolve`; with
     `xml`, the XML of every body paragraph too, which shows their formatting."""
@@ -119,8 +137,17 @@ def view(data, resolve=None, xml=False):
         getattr(doc, resolve)()
     # The redline writes every text it rewrites with xml:space="preserve", which changes nothing it reads, and
     # Run.style_id's recipe names a new style for each document it makes ready.
-    marks = [re.sub(r"Probestyle\d+", "Probestyle", p.xml.replace(' xml:space="preserve"', ""))
-             for p in doc.paragraphs] if xml else []
+    marks = []
+    if xml:
+        with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as z:
+            main = z.read("word/document.xml").decode()
+        marks = [p.xml for p in doc.paragraphs] + [t.xml for t in doc.tables]
+        marks = [re.sub(r"Probestyle\d+", "Probestyle", xml.replace(' xml:space="preserve"', "")) for xml in marks]
+        # Each section by what it reads, and the children of its properties the section calls write, as the XML of a
+        # section saved again writes its other attributes in another order.
+        marks += [tuple(getattr(section, field) for field in SECTION_FIELDS) for section in doc.sections]
+        marks += re.findall(r"<w:(?:pgBorders|footnotePr|endnotePr)[ >].*?</w:(?:pgBorders|footnotePr|endnotePr)>",
+                            main)
     # Every story's paragraphs by their text and style; the XML is read for the body, which the recipes format.
     return [(p.kind, p.text, p.style) for p in doc.story_paragraphs] + marks
 
@@ -162,13 +189,18 @@ def test_every_call_behaves_as_its_class(saved, name):
     if kind(name) not in ("tracked", "formatting"):
         assert session.revision_ids == ()
         return
-    assert session.revision_ids
-    assert {r.author for r in doc.revisions if r.id in session.revision_ids} == {AUTHOR}
+    xml = kind(name) == "formatting"
+    # A call that sets what the document already holds writes nothing.
+    assert session.revision_ids or view(after, None, xml) == view(before, None, xml)
+    # A grid change has an id alone, as Word writes it.
+    authors = {r.author for r in doc.revisions if r.id in session.revision_ids and r.kind != "table_grid_change"}
+    assert authors <= {AUTHOR}
     twin = oxdocx.Document.open(saved)
     ready(twin, name)()
-    xml = kind(name) == "formatting"
     assert view(after, "accept_all", xml) == view(twin.to_bytes(), "accept_all", xml)
-    assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
+    # A row's change keeps the row as it is when rejected, as in Word (W8).
+    if not name.startswith("Row."):
+        assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
 
 
 def test_a_session_runs_until_it_stops():

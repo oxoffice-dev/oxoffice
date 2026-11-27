@@ -462,6 +462,19 @@ What PR 2b settles:
 - **Paragraph properties**: one `w:pPrChange`, last in `w:pPr`, old value as for runs; a style or numbering change is
   one too (W5). A change of the paragraph mark's run properties or of its section is refused.
 
+What PR 2c settles:
+
+- **Tables.** A table, row or cell property edit takes its route in place and writes a `w:tblPrChange`, a
+  `w:tblGridChange` (an id alone, as Word writes it) and a `w:tcPrChange` for each owner that changed. A row's own
+  change takes no `w:trPrChange`: its table, grid and each of its cells take a change holding what they hold now
+  (W8), so rejecting it keeps the row as it is, as in Word. Cell merges and column insertions or deletions stay
+  refused (W8). A table outside the body, or one a route in place does not take, is refused.
+- **Sections.** A section edit writes one `w:sectPrChange`, last, whose old value leaves out the header and footer
+  references; rejecting it keeps them, which the resolver did not do before.
+- **Compare (F4).** A cell's changed properties are written as a `w:tcPrChange`, as Word writes them. A row's keep
+  the original row with a diagnostic: Word's shape for them does not undo on rejection, which compare's
+  postconditions need.
+
 ## Open questions
 
 ### Product (maintainer)

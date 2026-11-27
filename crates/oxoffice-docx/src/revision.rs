@@ -3396,6 +3396,10 @@ impl<'a> XmlTree<'a> {
                 return Ok(output);
             }
         }
+        // The references a section keeps come first, as the schema orders them.
+        if prior_element.word && prior_element.local == "sectPr" && !retained.is_empty() {
+            return prepend_children_to_element(&prior_xml, &retained);
+        }
         append_children_to_element(&prior_xml, &retained)
     }
 
@@ -4763,6 +4767,28 @@ fn insert_first_children(
     Ok(output)
 }
 
+/// `children` written first in the root element of `element_xml`.
+fn prepend_children_to_element(element_xml: &[u8], children: &[u8]) -> Result<Vec<u8>> {
+    let tag = oxoffice_core::xml_element::start_tag(element_xml)?;
+    let close = element_xml[tag.attributes_end..]
+        .iter()
+        .position(|byte| *byte == b'>')
+        .map(|at| tag.attributes_end + at)
+        .ok_or_else(|| Error::Other("property owner XML has no start tag end".to_owned()))?;
+    let mut output = Vec::with_capacity(element_xml.len() + children.len() + tag.name.len() + 3);
+    if tag.self_closing {
+        output.extend_from_slice(&element_xml[..tag.attributes_end]);
+        output.push(b'>');
+        output.extend_from_slice(children);
+        output.extend_from_slice(format!("</{}>", tag.name).as_bytes());
+    } else {
+        output.extend_from_slice(&element_xml[..=close]);
+        output.extend_from_slice(children);
+    }
+    output.extend_from_slice(&element_xml[close + 1..]);
+    Ok(output)
+}
+
 fn append_children_to_element(element_xml: &[u8], children: &[u8]) -> Result<Vec<u8>> {
     if children.is_empty() {
         return Ok(element_xml.to_vec());
@@ -4811,7 +4837,12 @@ fn retained_revision_local(owner: &str, child: &str) -> bool {
         "pPr" => child == "pPrChange",
         "rPr" => matches!(child, "rPrChange" | "ins" | "del"),
         "tblPr" => child == "tblPrChange",
-        "sectPr" => child == "sectPrChange",
+        // A section's references are not in its old value (`CT_SectPrBase`):
+        // they stay, as Word keeps them.
+        "sectPr" => matches!(
+            child,
+            "sectPrChange" | "headerReference" | "footerReference"
+        ),
         "numPr" => matches!(child, "ins" | "numberingChange"),
         "trPr" => matches!(child, "trPrChange" | "ins" | "del"),
         "tcPr" => matches!(child, "tcPrChange" | "cellIns" | "cellDel"),

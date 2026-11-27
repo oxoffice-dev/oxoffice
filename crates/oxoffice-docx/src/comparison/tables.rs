@@ -623,11 +623,6 @@ pub(super) fn compare_cell_from_xml(
                 "comparison cannot revise cell boundary structures at {location}"
             )));
         }
-        if !metadata.options.ignore_formatting
-            && cell_formatting(original)? != cell_formatting(edited)?
-        {
-            formatting_diagnostic(diagnostics, location.to_owned());
-        }
         if aligned_children {
             return compare_aligned_cell_children(
                 original,
@@ -679,6 +674,43 @@ pub(super) fn compare_cell_from_xml(
         )?;
         replace_ranges(original_xml, &children, &replacements)
     })()?;
+    // A cell's properties changed: the edited ones and a `w:tcPrChange` of
+    // the original ones, as Word writes a cell's change (Word check W8).
+    let output = if !metadata.options.ignore_formatting
+        && cell_formatting(original)? != cell_formatting(edited)?
+    {
+        let xml = |cell: &CT_Tc| -> Result<Option<String>> {
+            cell.properties
+                .as_ref()
+                .map(|properties| {
+                    let mut bytes = Vec::new();
+                    properties.to_xml(&mut Writer::new(&mut bytes))?;
+                    String::from_utf8(bytes).map_err(utf8_error)
+                })
+                .transpose()
+        };
+        let previous = xml(original)?.unwrap_or_else(|| "<w:tcPr/>".to_owned());
+        let change =
+            metadata
+                .ids
+                .revision("tcPrChange", metadata.author, metadata.timestamp, &previous)?;
+        let properties = match xml(edited)? {
+            Some(current) => append_word_child(&current, "tcPr", &change)?,
+            None => format!("<w:tcPr>{change}</w:tcPr>"),
+        };
+        let at = match direct_word_element_spans(&output, "tcPr")?.first() {
+            Some(span) => span.clone(),
+            None => {
+                let open = element_opening(&output)?.0;
+                open..open
+            }
+        };
+        let delta = properties.len() as isize - at.len() as isize;
+        shift_leaf_publications(&mut metadata.leaf_publications[leaf_mark..], delta)?;
+        format!("{}{properties}{}", &output[..at.start], &output[at.end..])
+    } else {
+        output
+    };
     let old_open = element_opening(&output)?.0;
     let output = metadata.restore_owner_root(original as *const CT_Tc as usize, output)?;
     shift_leaf_publications(

@@ -46,13 +46,17 @@ impl Document {
         index: usize,
         edit: impl FnOnce(&mut Table<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
-        self.refuse_under_tracked_changes("a change of table properties")?;
         let current = nth_table_in_body_ref(&self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
         let mut edited = current.clone();
         let value = edit(&mut Table { inner: &mut edited })?;
         if !same_table_content(current, &edited) {
             return Ok(None);
+        }
+        // Under tracked changes, the changes are written as them.
+        if self.tracking.is_some() {
+            let current = current.clone();
+            edited = self.redline_edited_table(&current, edited)?;
         }
         *self.table_mut(index).expect("the table read above").inner = edited;
         Ok(Some(value))
@@ -68,7 +72,14 @@ impl Document {
         row: usize,
         edit: impl FnOnce(&mut crate::table::Row<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
-        self.refuse_under_tracked_changes("a change of row properties")?;
+        if self.tracking.is_some() {
+            return self.edit_table_properties_in_place(index, |table| {
+                let mut row = table
+                    .row(row)
+                    .ok_or_else(|| Error::Other("row index out of range".to_owned()))?;
+                edit(&mut row)
+            });
+        }
         let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
         // As the whole-table route compares row controls whole, a table that
@@ -99,7 +110,14 @@ impl Document {
         cell: usize,
         edit: impl FnOnce(&mut crate::table::Cell<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
-        self.refuse_under_tracked_changes("a change of cell properties")?;
+        if self.tracking.is_some() {
+            return self.edit_table_properties_in_place(index, |table| {
+                let mut cell = table
+                    .cell(row, cell)
+                    .ok_or_else(|| Error::Other("cell index out of range".to_owned()))?;
+                edit(&mut cell)
+            });
+        }
         let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
         // Likewise for row and cell controls.

@@ -2258,9 +2258,8 @@ impl PyDocument {
         different_first_page: Option<bool>,
         break_type: Option<&str>,
     ) -> PyResult<PySection> {
-        self.inner
-            .refuse_under_tracked_changes("a change of section properties")
-            .map_err(|error| docx_to_pyerr(py, error))?;
+        // Under tracked changes, the edit is written as a section change.
+        let before = self.inner.section_properties_before_edit(index);
         let length = |value: Option<Bound<'_, PyAny>>, name: &str| {
             crate::length_argument(
                 value.as_ref(),
@@ -2420,6 +2419,11 @@ impl PyDocument {
         if let Err(error) = applied {
             *section.properties_mut() = saved;
             return Err(docx_to_pyerr(py, error));
+        }
+        if let Some(before) = before {
+            self.inner
+                .redline_section_edit(index, before)
+                .map_err(|error| docx_to_pyerr(py, error))?;
         }
         Ok(self
             .inner

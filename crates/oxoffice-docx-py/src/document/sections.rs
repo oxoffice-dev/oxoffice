@@ -351,16 +351,20 @@ impl PySectionHandle {
         // A section property edit, as the geometry setters make: it changes
         // no element a handle names, so it publishes nothing.
         let mut document = self.document.borrow_mut(py);
-        document
-            .inner
-            .refuse_under_tracked_changes("a change of section properties")
-            .map_err(|error| docx_to_pyerr(py, error))?;
+        // Under tracked changes, the edit is written as a section change.
+        let before = document.inner.section_properties_before_edit(self.index);
         document
             .inner
             .section_mut(self.index)
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_note_policy(family, policy)
             .map_err(|error| docx_to_pyerr(py, error))?;
+        if let Some(before) = before {
+            document
+                .inner
+                .redline_section_edit(self.index, before)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+        }
         #[cfg(debug_assertions)]
         assert_section_edit_leaves_body_savable(&document.inner);
         Ok(())
@@ -380,16 +384,20 @@ impl PySectionHandle {
         // A section property edit, as the geometry setters make: it changes
         // no element a handle names, so it publishes nothing.
         let mut document = self.document.borrow_mut(py);
-        document
-            .inner
-            .refuse_under_tracked_changes("a change of section properties")
-            .map_err(|error| docx_to_pyerr(py, error))?;
+        // Under tracked changes, the edit is written as a section change.
+        let before = document.inner.section_properties_before_edit(self.index);
         document
             .inner
             .section_mut(self.index)
             .ok_or_else(|| PyIndexError::new_err("section index out of range"))?
             .set_page_border(edge, style, width, space, color)
             .map_err(|error| docx_to_pyerr(py, error))?;
+        if let Some(before) = before {
+            document
+                .inner
+                .redline_section_edit(self.index, before)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+        }
         #[cfg(debug_assertions)]
         assert_section_edit_leaves_body_savable(&document.inner);
         Ok(())

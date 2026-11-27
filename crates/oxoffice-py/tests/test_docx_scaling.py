@@ -740,6 +740,8 @@ TIMED.update({
         lambda doc, k: item_of(doc, tracked_para(doc, k)), lambda doc, it: doc.set_story_text(it, "omega"))),
     "Run.bold (tracked)": tracked(setter(lambda doc, k: tracked_para(doc, k).runs[0], "bold", True)),
     "Paragraph.alignment (tracked)": tracked(setter(tracked_para, "alignment", WD_ALIGN_PARAGRAPH.CENTER)),
+    "Table.width (tracked)": tracked(setter(table, "width", Inches(5))),
+    "SectionHandle.page_width (tracked)": tracked(setter(section, "page_width", Inches(9))),
     "Paragraph.replace_xml (tracked)": tracked(on_made(
         with_xml(tracked_para, lambda xml, k: xml.replace(f"tracked {k} ", "changed ")),
         lambda doc, made: made[0].replace_xml(made[1]))),

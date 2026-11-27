@@ -353,6 +353,85 @@ impl Document {
     }
 }
 
+impl Document {
+    /// `after`, table `before` with its properties edited, written as tracked
+    /// changes when a session runs.
+    pub(crate) fn redline_edited_table(
+        &mut self,
+        before: &CT_Tbl,
+        after: CT_Tbl,
+    ) -> Result<CT_Tbl> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(after);
+        };
+        let xml = |table: &CT_Tbl| -> Result<String> {
+            String::from_utf8(ContentFragment::table(table.clone())?.xml)
+                .map_err(|error| Error::Other(error.to_string()))
+        };
+        let redlined = super::redline::redline_table_xml(
+            &xml(before)?,
+            &xml(&after)?,
+            &tracking,
+            &mut self.identifiers,
+        )?;
+        Ok(CT_Tbl::from_xml_fragment_checked(redlined.as_bytes())?)
+    }
+
+    /// The properties of section `index`, to give
+    /// [`Self::redline_section_edit`] once they are edited.
+    #[doc(hidden)]
+    pub fn section_properties_before_edit(&mut self, index: usize) -> Option<CT_SectPr> {
+        self.tracking.as_ref()?;
+        self.section_mut(index).map(|section| section.inner.clone())
+    }
+
+    /// Under a session, write the edit of section `index` from `before` as a
+    /// tracked change, or put `before` back and refuse.
+    #[doc(hidden)]
+    pub fn redline_section_edit(&mut self, index: usize, before: CT_SectPr) -> Result<()> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(());
+        };
+        let missing = || Error::Other("section index out of range".to_owned());
+        let after = self.section_mut(index).ok_or_else(missing)?.inner.clone();
+        if after == before {
+            return Ok(());
+        }
+        let xml = |properties: &CT_SectPr| -> Result<String> {
+            let mut written = Vec::new();
+            properties.to_xml(&mut quick_xml::Writer::new(&mut written))?;
+            let written =
+                String::from_utf8(written).map_err(|error| Error::Other(error.to_string()))?;
+            // Declared on its root, as a fragment of its own.
+            let at = written.find([' ', '>', '/']).unwrap_or(written.len());
+            Ok(format!(
+                "{} xmlns:w=\"{}\" xmlns:r=\"{}\"{}",
+                &written[..at],
+                WORD_NAMESPACE,
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                &written[at..]
+            ))
+        };
+        let tracked = xml(&before).and_then(|old| {
+            let new = xml(&after)?;
+            let redlined =
+                super::redline::redline_section_xml(&old, &new, &tracking, &mut self.identifiers)?;
+            Ok(CT_SectPr::from_xml_fragment_checked(redlined.as_bytes())?)
+        });
+        let section = self.section_mut(index).ok_or_else(missing)?;
+        match tracked {
+            Ok(tracked) => {
+                *section.inner = tracked;
+                Ok(())
+            }
+            Err(error) => {
+                *section.inner = before;
+                Err(error)
+            }
+        }
+    }
+}
+
 impl Tracking {
     /// The ids the session wrote so far.
     pub(crate) fn ids(&self) -> Vec<i32> {
