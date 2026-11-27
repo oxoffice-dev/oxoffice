@@ -1,10 +1,11 @@
 """oxoffice: read, write, edit and render Office Open XML documents.
 
-``oxoffice.docx`` is the Word API and ``oxoffice.pptx`` the PowerPoint API.
-Import the one you need::
+``oxoffice.docx`` is the Word API, ``oxoffice.pptx`` the PowerPoint API and
+``oxoffice.xlsx`` the Excel API. Import the one you need::
 
     from oxoffice.docx import Document
     from oxoffice.pptx import Presentation
+    from oxoffice.xlsx import Workbook
 """
 
 from __future__ import annotations
@@ -13,8 +14,9 @@ import json as _json
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _version
 
-# Loading the native extension registers the ``oxoffice.docx._native`` and
-# ``oxoffice.pptx._native`` modules that the two subpackages import from.
+# Loading the native extension registers the ``oxoffice.docx._native``,
+# ``oxoffice.pptx._native`` and ``oxoffice.xlsx._native`` modules that the
+# subpackages import from.
 from . import _oxoffice  # noqa: F401
 
 try:

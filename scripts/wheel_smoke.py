@@ -1,5 +1,5 @@
-"""Open, edit, save and render the Word and PowerPoint files of the corpus with the installed oxoffice package, on
-the main thread, then measure the stack the same work needs.
+"""Open, edit, save and render the Word and PowerPoint files of the corpus, and open and save its workbooks, with the
+installed oxoffice package, on the main thread, then measure the stack the same work needs.
 
 The release workflow runs it on each wheel it built, on a few files (--files), before the GitHub release, PyPI and
 prefix.dev; the full checks (full-checks.yml) run it on the whole corpus of a release-profile Linux wheel, with
@@ -27,6 +27,7 @@ from pathlib import Path
 import oxoffice
 import oxoffice.docx as oxdocx
 import oxoffice.pptx as oxpptx
+import oxoffice.xlsx as oxlsx
 
 # The stack the work must fit in: 1 MiB is what the Windows linker gives a program's main thread by default, so most
 # Windows programs that embed Python run it with that much. python.exe itself reserves 2,000,000 bytes, Linux and
@@ -68,13 +69,21 @@ def presentation(source, out):
     assert saved.to_pdf().startswith(b"%PDF"), "not a PDF"
 
 
+def workbook(source, out):
+    wb = oxlsx.Workbook(source)
+    names = [sheet.name for sheet in wb.sheets]
+    assert names, "no sheet"
+    wb.save(out)
+    assert [sheet.name for sheet in oxlsx.Workbook(out).sheets] == names, "sheets lost on save"
+
+
 # The files of --files, relative to the corpus folder; every file of the corpus when empty.
 ONLY = []
 
 
 def corpus_files(corpus):
     files = ([corpus / name for name in ONLY] if ONLY
-             else sorted(corpus.glob("*/*.docx")) + sorted(corpus.glob("*/*.pptx")))
+             else sorted(corpus.glob("*/*.docx")) + sorted(corpus.glob("*/*.pptx")) + sorted(corpus.glob("*/*.xlsx")))
     assert files and all(f.is_file() for f in files), f"missing corpus files in {corpus}: {files}"
     return files
 
@@ -83,7 +92,8 @@ def work(corpus, quiet=False):
     with tempfile.TemporaryDirectory() as tmp:
         for i, source in enumerate(corpus_files(corpus)):
             start = time.perf_counter()
-            (document if source.suffix == ".docx" else presentation)(source, Path(tmp) / f"{i}{source.suffix}")
+            work_on = {".docx": document, ".pptx": presentation, ".xlsx": workbook}[source.suffix]
+            work_on(source, Path(tmp) / f"{i}{source.suffix}")
             if not quiet:
                 print(f"ok {source.relative_to(corpus)} {time.perf_counter() - start:.2f} s", flush=True)
 
@@ -186,7 +196,8 @@ def main():
     command = subprocess.run(["oxoffice", "--version"], capture_output=True, text=True, check=True).stdout.strip()
     print(f"oxoffice {oxoffice.__version__} from {Path(oxoffice.__file__).parent}, command: {command}")
     work(args.corpus)
-    print(f"{len(corpus_files(args.corpus))} files opened, edited, saved, reopened and rendered on the main thread")
+    print(f"{len(corpus_files(args.corpus))} files opened, edited, saved, reopened and rendered (workbooks opened, saved "
+          "and reopened) on the main thread")
     if args.measure:
         kib = stack_needed(args.corpus)
         need = f"{kib} KiB" if kib else "more than 8 MiB"

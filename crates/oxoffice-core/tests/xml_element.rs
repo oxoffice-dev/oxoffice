@@ -934,7 +934,7 @@ fn self_closing_assumptions(source: &str) -> Vec<usize> {
 /// that answers the same for `<x></x>`, or on a branch an empty element
 /// written so never reaches. Every other line takes where a tag ends from
 /// `oxoffice_core::xml_element`.
-const SELF_CLOSING: [(&str, usize, &str); 24] = [
+const SELF_CLOSING: [(&str, usize, &str); 25] = [
     ("crates/oxoffice-core/src/raw_xml.rs", 1, "helper"),
     ("crates/oxoffice-core/src/xml_element.rs", 2, "helper"),
     ("crates/oxoffice-docx-oxml/src/math.rs", 2, "writes"),
@@ -999,6 +999,7 @@ const SELF_CLOSING: [(&str, usize, &str); 24] = [
         4,
         "verbatim reader",
     ),
+    ("crates/oxoffice-xlsx-oxml/src/xml.rs", 1, "writes"),
 ];
 
 #[test]
@@ -1085,7 +1086,7 @@ fn no_code_takes_a_tag_close_as_two_bytes() {
 /// The crates that read document parts: their readers go through
 /// `oxoffice_core::xml_reader`, which reads an element with nothing inside
 /// the same in both writings.
-const DOCUMENT_READERS: [&str; 7] = [
+const DOCUMENT_READERS: [&str; 9] = [
     "oxoffice-chart",
     "oxoffice-docx",
     "oxoffice-docx-layout",
@@ -1093,6 +1094,8 @@ const DOCUMENT_READERS: [&str; 7] = [
     "oxoffice-drawing",
     "oxoffice-pptx",
     "oxoffice-pptx-oxml",
+    "oxoffice-xlsx",
+    "oxoffice-xlsx-oxml",
 ];
 
 /// Files of `DOCUMENT_READERS` that name quick-xml's reader, by how many

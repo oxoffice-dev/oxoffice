@@ -6,7 +6,8 @@ the code is organised today. Decisions and their history live in `specs/`.
 
 ## Crates
 
-One workspace, three families, and two crates of test support.
+One workspace: shared crates, three document families, the entry points, and
+two crates of test support.
 
 ```
 crates/
@@ -14,7 +15,8 @@ crates/
   oxoffice-core          units, XML helpers, lexical validation, raw XML
                          capture, core / app / custom document properties
   oxoffice-opc           ZIP and OPC package, relationships, content types,
-                         embedded-content and package-signature checks
+                         embedded-content and package-signature checks,
+                         what a compound file holds (legacy or encrypted)
   oxoffice-media         image and media sniffing, dimensions, DPI, MIME
   oxoffice-drawing       DrawingML: colour, transforms, geometry, fills,
                          lines, effects, theme, text body
@@ -51,6 +53,15 @@ crates/
   oxoffice-pptx-py       the `oxoffice.pptx` bindings (library)
   oxoffice-pptx-wasm     WebAssembly bindings
 
+  # SpreadsheetML
+  oxoffice-xlsx-oxml     the parts of a workbook: workbook, shared strings,
+                         styles, worksheets (the row index and the splice
+                         writer), page setup; Strict read as Transitional
+  oxoffice-xlsx          the facade: Workbook, Worksheet; open and save
+                         without loss, refusals told by content
+  oxoffice-xlsx-cli      the `oxoffice xlsx` commands (library)
+  oxoffice-xlsx-py       the `oxoffice.xlsx` bindings (library)
+
   # Entry points
   oxoffice-cli           the `oxoffice` binary
   oxoffice-py            the `oxoffice` Python extension and package
@@ -66,8 +77,10 @@ crates/
 ## The dependency rule
 
 The graph is acyclic and layered. **No `oxoffice-*` shared crate depends on a
-`-docx` or `-pptx` crate.** Format crates depend on shared ones, never the
-other way, and Word and PowerPoint never depend on each other.
+`-docx`, `-pptx` or `-xlsx` crate.** Format crates depend on shared ones,
+never the other way, and Word, PowerPoint and Excel never depend on each
+other. `oxoffice-sml` (the chart workbook writer) and `oxoffice-chart` keep
+no edge to the xlsx family.
 
 The one subtle edge: the Word `Theme` type is an adapter over the DrawingML
 style sheet, and its `From` impl lives in `oxoffice-docx-oxml`, so the edge
@@ -80,6 +93,11 @@ bytes ─→ oxoffice-opc (package, parts, relationships)
       ─→ *-oxml typed models (CT_* types, unmodelled XML kept verbatim)
       ─→ facade (Document / Presentation): reads and edits
       ─→ save: models serialised back, untouched parts copied as they were
+
+workbook: the workbook part read at open; a sheet indexed at its first read
+  (one pass: each row's range, shared formula masters, array ranges); a row
+  read when read or edited; a save copies every part no edit changed and
+  splices the edited rows and children into the sheet's source bytes
 
 render:
   Word        facade ─→ docx-layout (flow, pagination) ─→ layout output
@@ -140,7 +158,10 @@ reads every tracked change and move range at open.
   written again, beside the modelled elements written under `w:`. Comments,
   numbering and styles keep their root's attributes, settings are edited in
   their source, and an existing notes part takes typed additions into its
-  own root.
+  own root. A SpreadsheetML element keeps its start tag as read; a row an
+  edit writes again takes the fixed writing of the attributes the schema
+  types (`1`/`0`, the shortest number), and a new element takes the prefix
+  the part's root binds to the SpreadsheetML namespace.
 - **Unmodelled XML is preserved verbatim** through
   `oxoffice_core::raw_xml::capture_element`. Parse what you use, keep the
   rest.

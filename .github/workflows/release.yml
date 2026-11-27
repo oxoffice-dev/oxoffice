@@ -238,10 +238,11 @@ jobs:
           name: ${{ matrix.wheel }}
           path: conda/dist
       - run: python -m pip install --no-index --find-links conda/dist oxoffice
-      - name: Open, edit, save and render four corpus files
+      - name: Open, edit, save and render four corpus files, open and save a workbook
         run: |
           python -I scripts/wheel_smoke.py tests/corpus/files --version "$VERSION" \
-            --files word/paper.docx google/paper.docx libreoffice/paper.docx powerpoint/deck.pptx
+            --files word/paper.docx google/paper.docx libreoffice/paper.docx powerpoint/deck.pptx \
+            excel/budget.xlsx
       # The conda recipe's tests run `oxoffice --version` in its own
       # environment, which keeps this PATH after its own: the pip-installed
       # command must not answer for a conda package that lacks one.

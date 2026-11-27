@@ -1,0 +1,33 @@
+[package]
+name = "oxoffice-xlsx"
+description = "Open and save Excel-compatible workbooks without loss"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["xlsx", "excel", "ooxml", "spreadsheet"]
+categories = ["parser-implementations"]
+publish = true
+
+[features]
+default = []
+agile-encryption = ["oxoffice-opc/agile-encryption"]
+
+[dependencies]
+oxoffice-core.workspace = true
+oxoffice-opc.workspace = true
+oxoffice-xlsx-oxml.workspace = true
+thiserror.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+cfb.workspace = true
+oxoffice-xml-test.workspace = true
+
+[[test]]
+name = "xlsx"
+path = "tests/xlsx/main.rs"

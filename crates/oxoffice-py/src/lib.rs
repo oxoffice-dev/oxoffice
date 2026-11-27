@@ -2,8 +2,8 @@
 //!
 //! One native module serves the whole `oxoffice` package. It registers the
 //! Word bindings as `oxoffice.docx._native`, the PowerPoint bindings as
-//! `oxoffice.pptx._native`, and exposes `run_cli` for the `oxoffice` console
-//! script.
+//! `oxoffice.pptx._native`, the Excel bindings as `oxoffice.xlsx._native`,
+//! and exposes `run_cli` for the `oxoffice` console script.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -61,6 +61,12 @@ fn _oxoffice(module: &Bound<'_, PyModule>) -> PyResult<()> {
         "oxoffice.pptx._native",
         "pptx",
         oxoffice_pptx_py::register,
+    )?;
+    register_family(
+        module,
+        "oxoffice.xlsx._native",
+        "xlsx",
+        oxoffice_xlsx_py::register,
     )?;
     module.add_function(wrap_pyfunction!(run_cli, module)?)?;
     module.add_function(wrap_pyfunction!(limitations_json, module)?)?;

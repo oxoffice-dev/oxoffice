@@ -1,6 +1,6 @@
-//! The `oxoffice` command line. `oxoffice docx` and `oxoffice pptx` carry the
-//! complete command trees of the two document families, and
-//! `oxoffice limitations` lists what this build cannot do yet.
+//! The `oxoffice` command line. `oxoffice docx`, `oxoffice pptx` and
+//! `oxoffice xlsx` carry the command trees of the three document families,
+//! and `oxoffice limitations` lists what this build cannot do yet.
 //!
 //! The native binary and the Python console script both enter through
 //! [`main`], so they share parsing, exit statuses and output behaviour.
@@ -22,7 +22,7 @@ pub const LIMITATIONS_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/limit
 #[command(
     name = "oxoffice",
     version,
-    about = "Inspect, convert, edit and render Word and PowerPoint files"
+    about = "Inspect, convert, edit and render Word and PowerPoint files, inspect Excel workbooks"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -35,6 +35,8 @@ enum Family {
     Docx(oxoffice_docx_cli::Cli),
     /// PowerPoint presentations (.pptx, .potx)
     Pptx(oxoffice_pptx_cli::Cli),
+    /// Excel workbooks (.xlsx, .xlsm, .xltx, .xltm)
+    Xlsx(oxoffice_xlsx_cli::Cli),
     /// List the known limitations of this build, with their workarounds
     Limitations(LimitationsArgs),
 }
@@ -73,6 +75,7 @@ fn run(args: Vec<OsString>) {
     match Cli::parse_from(args).family {
         Family::Docx(cli) => oxoffice_docx_cli::run(cli),
         Family::Pptx(cli) => oxoffice_pptx_cli::run(cli),
+        Family::Xlsx(cli) => oxoffice_xlsx_cli::run(cli),
         Family::Limitations(args) => limitations(&args),
     }
 }
