@@ -15,6 +15,7 @@ categories.workspace = true
 [dependencies]
 oxoffice-core = { workspace = true }
 oxoffice-drawing = { workspace = true }
+oxoffice-numfmt = { workspace = true }
 quick-xml = { workspace = true }
 thiserror = { workspace = true }
 itoa = { workspace = true }

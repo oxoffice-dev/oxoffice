@@ -79,6 +79,7 @@ fn a_format_keeps_only_its_limitations() {
     let all = limitations(&[]);
     let docx = limitations(&["docx"]);
     let pptx = limitations(&["pptx"]);
+    let xlsx = limitations(&["xlsx"]);
     assert!(
         docx.iter()
             .all(|e| e["format"] == "docx" || e["format"] == "all")
@@ -87,7 +88,11 @@ fn a_format_keeps_only_its_limitations() {
         pptx.iter()
             .all(|e| e["format"] == "pptx" || e["format"] == "all")
     );
-    assert_eq!(docx.len() + pptx.len(), all.len());
+    assert!(
+        xlsx.iter()
+            .all(|e| e["format"] == "xlsx" || e["format"] == "all")
+    );
+    assert_eq!(docx.len() + pptx.len() + xlsx.len(), all.len());
 }
 
 #[test]

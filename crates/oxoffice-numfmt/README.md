@@ -12,6 +12,10 @@ the text Excel displays.
   (engineering included) and fractions, rounded as Excel rounds them.
 - Dates and times in the 1900 and 1904 systems, elapsed `[h]`, `[m]`, `[s]`,
   fractions of a second and `AM/PM`.
+- Month names, day names and day period in the language of a locale tag
+  (`[$-40C]mmmm` is `janvier`): English, French, German, Spanish, Italian,
+  Portuguese and Dutch, by region as Excel writes them; the tables are
+  `oxoffice_numfmt::names`, which Word's date controls share.
 - Built-in format ids and `is_date_format`.
 - The colour of the section, the fill character and the `_x` spaces, for a
   render.
@@ -32,6 +36,7 @@ assert_eq!(shown.text, "January 15, 2024");
 # Ok::<(), oxoffice_numfmt::Error>(())
 ```
 
-The text is en-US (decimal point, comma separator, English names); the
-options carry the locale for others later. See
+The text is en-US (decimal point, comma separator, English names) unless a
+date code names a language with a locale tag; the options carry the locale for
+others later. See
 `specs/2026-11-27-number-format-codes.md`.

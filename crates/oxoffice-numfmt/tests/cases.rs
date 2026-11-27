@@ -134,20 +134,33 @@ fn a_code_as_wide_as_excel_takes_pads_and_a_longer_one_is_general() {
 }
 
 #[test]
-fn month_and_day_names_under_a_tag_of_another_language_are_foreign() {
-    for (code, foreign) in [
+fn names_in_a_language_without_a_table_are_reported() {
+    for (code, unknown) in [
         ("[$-409]mmm-yy", false),
         ("[$-809]dddd", false),
         ("[$-en-US]mmmm", false),
         ("[$-1009]yyyy/mm/dd", false),
-        ("[$-407]dddd", true),
-        ("[$-fr-FR]mmm", true),
-        ("[$-40C]mmmm yyyy", true),
+        ("[$-407]dddd", false),
+        ("[$-fr-FR]mmm", false),
+        ("[$-40C]mmmm yyyy", false),
+        ("[$-411]mmmm", true),
+        ("[$-ja-JP]ddd", true),
+        ("[$-411]h:mm AM/PM", true),
+        ("[$-ru-RU]d mmmm", true),
+        // Excel showed `PM` for Russian and Polish (rows r4o-08, r4o-10),
+        // English for the tag `2040C` (r5h-02), and a tag with no primary
+        // language names none.
+        ("[$-419]h:mm AM/PM", false),
+        ("[$-pl]h:mm AM/PM", false),
+        ("[$-2040C]mmmm", false),
+        ("[$-800]mmm yy", false),
+        // A high word nobody asked.
+        ("[$-3040C]mmmm", true),
         // Numbers in the tag's language need no names.
-        ("[$-40C]dd/mm/yyyy", false),
-        ("#,##0.00 [$€-40C]", false),
+        ("[$-411]dd/mm/yyyy", false),
+        ("#,##0.00 [$€-411]", false),
     ] {
-        assert_eq!(format_of(code).shows_foreign_names(), foreign, "{code}");
+        assert_eq!(format_of(code).shows_unknown_names(), unknown, "{code}");
     }
 }
 

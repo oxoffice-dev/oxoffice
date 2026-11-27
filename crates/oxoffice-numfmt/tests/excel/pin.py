@@ -3,7 +3,9 @@
 Reads from the round directory:
 - cases-rN.tsv, written by cases.py;
 - excel-rN.tsv: id and Excel's `string value` (Range.Text) of column C, one row per case, a header line;
-- excel-csv-rN-1900.csv and excel-csv-rN-1904.csv: the workbooks saved as CSV by Excel, in UTF-8.
+- excel-csv-rN-1900.csv and excel-csv-rN-1904.csv: the workbooks saved as CSV by Excel, in UTF-8;
+- optionally excel-csv-rN-<system>-lossy.txt: the ids of the rows whose CSV text lost characters (a CSV Excel
+  saves in Mac Roman writes `_` for the others); those rows take Range.Text. Lines starting with `#` are notes.
 
 The `excel` column takes Range.Text, or the CSV text where they differ: Range.Text depends on the column
 width for fills, accounting formats and `#####`, the CSV does not. A cell full of `#` is written `#####`.
@@ -24,6 +26,15 @@ def rows(path):
     return [line.rstrip("\n").split("\t") for line in open(path, encoding="utf-8")][1:]
 
 
+def lossy_ids(paths):
+    return {
+        line.strip()
+        for path in paths
+        for line in open(path, encoding="utf-8")
+        if line.strip() and not line.startswith("#")
+    }
+
+
 def csv_texts(paths):
     texts = {}
     for path in paths:
@@ -37,9 +48,10 @@ def main(directory, number):
     cases = rows(directory / f"cases-r{number}.tsv")
     shown = dict(rows(directory / f"excel-r{number}.tsv"))
     exported = csv_texts(sorted(directory.glob(f"excel-csv-r{number}-*.csv")))
+    lossy = lossy_ids(sorted(directory.glob(f"excel-csv-r{number}-*-lossy.txt")))
     table = {row[0]: row for row in rows(TABLE)} if TABLE.exists() else {}
     for case_id, code, value, system, kind in cases:
-        excel = shown[case_id] if shown[case_id] == exported[case_id] else exported[case_id]
+        excel = shown[case_id] if shown[case_id] == exported[case_id] or case_id in lossy else exported[case_id]
         if len(excel) >= 5 and set(excel) == {"#"}:
             excel = "#####"
         ours, why = table[case_id][6:8] if case_id in table else ("", "")

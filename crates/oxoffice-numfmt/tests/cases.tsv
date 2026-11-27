@@ -318,8 +318,8 @@ loc-11	[$-409]h:mm:ss AM/PM	45306.6046875	1900	number	2:30:45 PM
 loc-12	[$-409]m/d/yy h:mm AM/PM;@	45306.6046875	1900	number	1/15/24 2:30 PM		
 loc-13	[$-F800]dddd, mmmm dd, yyyy	45306	1900	number	Monday, January 15, 2024		
 loc-14	[$-F400]h:mm:ss AM/PM	45306.6046875	1900	number	14:30:45	2:30:45 PM	[$-F400] is the system time format: Excel follows the machine's 24-hour clock setting (on for this Mac); we show the en-US default h:mm:ss AM/PM
-loc-15	[$-40C]mmmm	45306	1900	number	janvier	January	[$-40C] asks for French names: English names only for now (en-US output)
-loc-16	[$-407]dddd	45306	1900	number	Montag	Monday	[$-407] asks for German names: English names only for now (en-US output)
+loc-15	[$-40C]mmmm	45306	1900	number	janvier		
+loc-16	[$-407]dddd	45306	1900	number	Montag		
 loc-17	[$-x-sysdate]dddd, mmmm dd, yyyy	45306	1900	number	Monday, January 15, 2024		
 loc-18	[$-en-US]mmmm	45306	1900	number	January		
 loc-19	[$-10409]0.00	5	1900	number	5.00		
@@ -620,3 +620,728 @@ r3limit-03	0"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 r3limit-04	?/100	1E+37	1900	number	#####		
 r3limit-05	# ?/16	1E-39	1900	number	0     		
 r3limit-06	?/16	1E-39	1900	number	0/16		
+r4m-409-01	[$-409]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jan|January|J		
+r4m-409-02	[$-409]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|February|F		
+r4m-409-03	[$-409]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mar|March|M		
+r4m-409-04	[$-409]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r4m-409-05	[$-409]mmm"|"mmmm"|"mmmmm	45427	1900	number	May|May|M		
+r4m-409-06	[$-409]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|June|J		
+r4m-409-07	[$-409]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|July|J		
+r4m-409-08	[$-409]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r4m-409-09	[$-409]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r4m-409-10	[$-409]mmm"|"mmmm"|"mmmmm	45580	1900	number	Oct|October|O		
+r4m-409-11	[$-409]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r4m-409-12	[$-409]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dec|December|D		
+r4d-409-01	[$-409]ddd"|"dddd	45305	1900	number	Sun|Sunday		
+r4d-409-02	[$-409]ddd"|"dddd	45306	1900	number	Mon|Monday		
+r4d-409-03	[$-409]ddd"|"dddd	45307	1900	number	Tue|Tuesday		
+r4d-409-04	[$-409]ddd"|"dddd	45308	1900	number	Wed|Wednesday		
+r4d-409-05	[$-409]ddd"|"dddd	45309	1900	number	Thu|Thursday		
+r4d-409-06	[$-409]ddd"|"dddd	45310	1900	number	Fri|Friday		
+r4d-409-07	[$-409]ddd"|"dddd	45311	1900	number	Sat|Saturday		
+r4p-409-01	[$-409]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-409-02	[$-409]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-809-01	[$-809]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jan|January|J		
+r4m-809-02	[$-809]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|February|F		
+r4m-809-03	[$-809]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mar|March|M		
+r4m-809-04	[$-809]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r4m-809-05	[$-809]mmm"|"mmmm"|"mmmmm	45427	1900	number	May|May|M		
+r4m-809-06	[$-809]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|June|J		
+r4m-809-07	[$-809]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|July|J		
+r4m-809-08	[$-809]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r4m-809-09	[$-809]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r4m-809-10	[$-809]mmm"|"mmmm"|"mmmmm	45580	1900	number	Oct|October|O		
+r4m-809-11	[$-809]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r4m-809-12	[$-809]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dec|December|D		
+r4d-809-01	[$-809]ddd"|"dddd	45305	1900	number	Sun|Sunday		
+r4d-809-02	[$-809]ddd"|"dddd	45306	1900	number	Mon|Monday		
+r4d-809-03	[$-809]ddd"|"dddd	45307	1900	number	Tue|Tuesday		
+r4d-809-04	[$-809]ddd"|"dddd	45308	1900	number	Wed|Wednesday		
+r4d-809-05	[$-809]ddd"|"dddd	45309	1900	number	Thu|Thursday		
+r4d-809-06	[$-809]ddd"|"dddd	45310	1900	number	Fri|Friday		
+r4d-809-07	[$-809]ddd"|"dddd	45311	1900	number	Sat|Saturday		
+r4p-809-01	[$-809]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 am|am|am|am		
+r4p-809-02	[$-809]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 pm|pm|pm|pm		
+r4m-C09-01	[$-C09]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jan|January|J		
+r4m-C09-02	[$-C09]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|February|F		
+r4m-C09-03	[$-C09]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mar|March|M		
+r4m-C09-04	[$-C09]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r4m-C09-05	[$-C09]mmm"|"mmmm"|"mmmmm	45427	1900	number	May|May|M		
+r4m-C09-06	[$-C09]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|June|J		
+r4m-C09-07	[$-C09]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|July|J		
+r4m-C09-08	[$-C09]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r4m-C09-09	[$-C09]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r4m-C09-10	[$-C09]mmm"|"mmmm"|"mmmmm	45580	1900	number	Oct|October|O		
+r4m-C09-11	[$-C09]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r4m-C09-12	[$-C09]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dec|December|D		
+r4d-C09-01	[$-C09]ddd"|"dddd	45305	1900	number	Sun|Sunday		
+r4d-C09-02	[$-C09]ddd"|"dddd	45306	1900	number	Mon|Monday		
+r4d-C09-03	[$-C09]ddd"|"dddd	45307	1900	number	Tue|Tuesday		
+r4d-C09-04	[$-C09]ddd"|"dddd	45308	1900	number	Wed|Wednesday		
+r4d-C09-05	[$-C09]ddd"|"dddd	45309	1900	number	Thu|Thursday		
+r4d-C09-06	[$-C09]ddd"|"dddd	45310	1900	number	Fri|Friday		
+r4d-C09-07	[$-C09]ddd"|"dddd	45311	1900	number	Sat|Saturday		
+r4p-C09-01	[$-C09]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 am|am|am|am		
+r4p-C09-02	[$-C09]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 pm|pm|pm|pm		
+r4m-1009-01	[$-1009]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jan|January|J		
+r4m-1009-02	[$-1009]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|February|F		
+r4m-1009-03	[$-1009]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mar|March|M		
+r4m-1009-04	[$-1009]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r4m-1009-05	[$-1009]mmm"|"mmmm"|"mmmmm	45427	1900	number	May|May|M		
+r4m-1009-06	[$-1009]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|June|J		
+r4m-1009-07	[$-1009]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|July|J		
+r4m-1009-08	[$-1009]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r4m-1009-09	[$-1009]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r4m-1009-10	[$-1009]mmm"|"mmmm"|"mmmmm	45580	1900	number	Oct|October|O		
+r4m-1009-11	[$-1009]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r4m-1009-12	[$-1009]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dec|December|D		
+r4d-1009-01	[$-1009]ddd"|"dddd	45305	1900	number	Sun|Sunday		
+r4d-1009-02	[$-1009]ddd"|"dddd	45306	1900	number	Mon|Monday		
+r4d-1009-03	[$-1009]ddd"|"dddd	45307	1900	number	Tue|Tuesday		
+r4d-1009-04	[$-1009]ddd"|"dddd	45308	1900	number	Wed|Wednesday		
+r4d-1009-05	[$-1009]ddd"|"dddd	45309	1900	number	Thu|Thursday		
+r4d-1009-06	[$-1009]ddd"|"dddd	45310	1900	number	Fri|Friday		
+r4d-1009-07	[$-1009]ddd"|"dddd	45311	1900	number	Sat|Saturday		
+r4p-1009-01	[$-1009]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-1009-02	[$-1009]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-4009-01	[$-4009]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jan|January|J		
+r4m-4009-02	[$-4009]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|February|F		
+r4m-4009-03	[$-4009]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mar|March|M		
+r4m-4009-04	[$-4009]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r4m-4009-05	[$-4009]mmm"|"mmmm"|"mmmmm	45427	1900	number	May|May|M		
+r4m-4009-06	[$-4009]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|June|J		
+r4m-4009-07	[$-4009]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|July|J		
+r4m-4009-08	[$-4009]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r4m-4009-09	[$-4009]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r4m-4009-10	[$-4009]mmm"|"mmmm"|"mmmmm	45580	1900	number	Oct|October|O		
+r4m-4009-11	[$-4009]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r4m-4009-12	[$-4009]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dec|December|D		
+r4d-4009-01	[$-4009]ddd"|"dddd	45305	1900	number	Sun|Sunday		
+r4d-4009-02	[$-4009]ddd"|"dddd	45306	1900	number	Mon|Monday		
+r4d-4009-03	[$-4009]ddd"|"dddd	45307	1900	number	Tue|Tuesday		
+r4d-4009-04	[$-4009]ddd"|"dddd	45308	1900	number	Wed|Wednesday		
+r4d-4009-05	[$-4009]ddd"|"dddd	45309	1900	number	Thu|Thursday		
+r4d-4009-06	[$-4009]ddd"|"dddd	45310	1900	number	Fri|Friday		
+r4d-4009-07	[$-4009]ddd"|"dddd	45311	1900	number	Sat|Saturday		
+r4p-4009-01	[$-4009]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-4009-02	[$-4009]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-40C-01	[$-40C]mmm"|"mmmm"|"mmmmm	45306	1900	number	janv.|janvier|j		
+r4m-40C-02	[$-40C]mmm"|"mmmm"|"mmmmm	45337	1900	number	févr.|février|f		
+r4m-40C-03	[$-40C]mmm"|"mmmm"|"mmmmm	45366	1900	number	mars|mars|m		
+r4m-40C-04	[$-40C]mmm"|"mmmm"|"mmmmm	45397	1900	number	avr.|avril|a		
+r4m-40C-05	[$-40C]mmm"|"mmmm"|"mmmmm	45427	1900	number	mai|mai|m		
+r4m-40C-06	[$-40C]mmm"|"mmmm"|"mmmmm	45458	1900	number	juin|juin|j		
+r4m-40C-07	[$-40C]mmm"|"mmmm"|"mmmmm	45488	1900	number	juil.|juillet|j		
+r4m-40C-08	[$-40C]mmm"|"mmmm"|"mmmmm	45519	1900	number	août|août|a		
+r4m-40C-09	[$-40C]mmm"|"mmmm"|"mmmmm	45550	1900	number	sept.|septembre|s		
+r4m-40C-10	[$-40C]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octobre|o		
+r4m-40C-11	[$-40C]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|novembre|n		
+r4m-40C-12	[$-40C]mmm"|"mmmm"|"mmmmm	45641	1900	number	déc.|décembre|d		
+r4d-40C-01	[$-40C]ddd"|"dddd	45305	1900	number	dim.|dimanche		
+r4d-40C-02	[$-40C]ddd"|"dddd	45306	1900	number	lun.|lundi		
+r4d-40C-03	[$-40C]ddd"|"dddd	45307	1900	number	mar.|mardi		
+r4d-40C-04	[$-40C]ddd"|"dddd	45308	1900	number	mer.|mercredi		
+r4d-40C-05	[$-40C]ddd"|"dddd	45309	1900	number	jeu.|jeudi		
+r4d-40C-06	[$-40C]ddd"|"dddd	45310	1900	number	ven.|vendredi		
+r4d-40C-07	[$-40C]ddd"|"dddd	45311	1900	number	sam.|samedi		
+r4p-40C-01	[$-40C]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-40C-02	[$-40C]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-80C-01	[$-80C]mmm"|"mmmm"|"mmmmm	45306	1900	number	janv.|janvier|j		
+r4m-80C-02	[$-80C]mmm"|"mmmm"|"mmmmm	45337	1900	number	févr.|février|f		
+r4m-80C-03	[$-80C]mmm"|"mmmm"|"mmmmm	45366	1900	number	mars|mars|m		
+r4m-80C-04	[$-80C]mmm"|"mmmm"|"mmmmm	45397	1900	number	avr.|avril|a		
+r4m-80C-05	[$-80C]mmm"|"mmmm"|"mmmmm	45427	1900	number	mai|mai|m		
+r4m-80C-06	[$-80C]mmm"|"mmmm"|"mmmmm	45458	1900	number	juin|juin|j		
+r4m-80C-07	[$-80C]mmm"|"mmmm"|"mmmmm	45488	1900	number	juil.|juillet|j		
+r4m-80C-08	[$-80C]mmm"|"mmmm"|"mmmmm	45519	1900	number	août|août|a		
+r4m-80C-09	[$-80C]mmm"|"mmmm"|"mmmmm	45550	1900	number	sept.|septembre|s		
+r4m-80C-10	[$-80C]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octobre|o		
+r4m-80C-11	[$-80C]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|novembre|n		
+r4m-80C-12	[$-80C]mmm"|"mmmm"|"mmmmm	45641	1900	number	déc.|décembre|d		
+r4d-80C-01	[$-80C]ddd"|"dddd	45305	1900	number	dim.|dimanche		
+r4d-80C-02	[$-80C]ddd"|"dddd	45306	1900	number	lun.|lundi		
+r4d-80C-03	[$-80C]ddd"|"dddd	45307	1900	number	mar.|mardi		
+r4d-80C-04	[$-80C]ddd"|"dddd	45308	1900	number	mer.|mercredi		
+r4d-80C-05	[$-80C]ddd"|"dddd	45309	1900	number	jeu.|jeudi		
+r4d-80C-06	[$-80C]ddd"|"dddd	45310	1900	number	ven.|vendredi		
+r4d-80C-07	[$-80C]ddd"|"dddd	45311	1900	number	sam.|samedi		
+r4p-80C-01	[$-80C]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-80C-02	[$-80C]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-C0C-01	[$-C0C]mmm"|"mmmm"|"mmmmm	45306	1900	number	janv.|janvier|j		
+r4m-C0C-02	[$-C0C]mmm"|"mmmm"|"mmmmm	45337	1900	number	févr.|février|f		
+r4m-C0C-03	[$-C0C]mmm"|"mmmm"|"mmmmm	45366	1900	number	mars|mars|m		
+r4m-C0C-04	[$-C0C]mmm"|"mmmm"|"mmmmm	45397	1900	number	avr.|avril|a		
+r4m-C0C-05	[$-C0C]mmm"|"mmmm"|"mmmmm	45427	1900	number	mai|mai|m		
+r4m-C0C-06	[$-C0C]mmm"|"mmmm"|"mmmmm	45458	1900	number	juin|juin|j		
+r4m-C0C-07	[$-C0C]mmm"|"mmmm"|"mmmmm	45488	1900	number	juill.|juillet|j		
+r4m-C0C-08	[$-C0C]mmm"|"mmmm"|"mmmmm	45519	1900	number	août|août|a		
+r4m-C0C-09	[$-C0C]mmm"|"mmmm"|"mmmmm	45550	1900	number	sept.|septembre|s		
+r4m-C0C-10	[$-C0C]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octobre|o		
+r4m-C0C-11	[$-C0C]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|novembre|n		
+r4m-C0C-12	[$-C0C]mmm"|"mmmm"|"mmmmm	45641	1900	number	déc.|décembre|d		
+r4d-C0C-01	[$-C0C]ddd"|"dddd	45305	1900	number	dim.|dimanche		
+r4d-C0C-02	[$-C0C]ddd"|"dddd	45306	1900	number	lun.|lundi		
+r4d-C0C-03	[$-C0C]ddd"|"dddd	45307	1900	number	mar.|mardi		
+r4d-C0C-04	[$-C0C]ddd"|"dddd	45308	1900	number	mer.|mercredi		
+r4d-C0C-05	[$-C0C]ddd"|"dddd	45309	1900	number	jeu.|jeudi		
+r4d-C0C-06	[$-C0C]ddd"|"dddd	45310	1900	number	ven.|vendredi		
+r4d-C0C-07	[$-C0C]ddd"|"dddd	45311	1900	number	sam.|samedi		
+r4p-C0C-01	[$-C0C]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 a.m.|a.m.|a.m.|a.m.		
+r4p-C0C-02	[$-C0C]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 p.m.|p.m.|p.m.|p.m.		
+r4m-100C-01	[$-100C]mmm"|"mmmm"|"mmmmm	45306	1900	number	janv.|janvier|j		
+r4m-100C-02	[$-100C]mmm"|"mmmm"|"mmmmm	45337	1900	number	févr.|février|f		
+r4m-100C-03	[$-100C]mmm"|"mmmm"|"mmmmm	45366	1900	number	mars|mars|m		
+r4m-100C-04	[$-100C]mmm"|"mmmm"|"mmmmm	45397	1900	number	avr.|avril|a		
+r4m-100C-05	[$-100C]mmm"|"mmmm"|"mmmmm	45427	1900	number	mai|mai|m		
+r4m-100C-06	[$-100C]mmm"|"mmmm"|"mmmmm	45458	1900	number	juin|juin|j		
+r4m-100C-07	[$-100C]mmm"|"mmmm"|"mmmmm	45488	1900	number	juil.|juillet|j		
+r4m-100C-08	[$-100C]mmm"|"mmmm"|"mmmmm	45519	1900	number	août|août|a		
+r4m-100C-09	[$-100C]mmm"|"mmmm"|"mmmmm	45550	1900	number	sept.|septembre|s		
+r4m-100C-10	[$-100C]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octobre|o		
+r4m-100C-11	[$-100C]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|novembre|n		
+r4m-100C-12	[$-100C]mmm"|"mmmm"|"mmmmm	45641	1900	number	déc.|décembre|d		
+r4d-100C-01	[$-100C]ddd"|"dddd	45305	1900	number	dim.|dimanche		
+r4d-100C-02	[$-100C]ddd"|"dddd	45306	1900	number	lun.|lundi		
+r4d-100C-03	[$-100C]ddd"|"dddd	45307	1900	number	mar.|mardi		
+r4d-100C-04	[$-100C]ddd"|"dddd	45308	1900	number	mer.|mercredi		
+r4d-100C-05	[$-100C]ddd"|"dddd	45309	1900	number	jeu.|jeudi		
+r4d-100C-06	[$-100C]ddd"|"dddd	45310	1900	number	ven.|vendredi		
+r4d-100C-07	[$-100C]ddd"|"dddd	45311	1900	number	sam.|samedi		
+r4p-100C-01	[$-100C]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-100C-02	[$-100C]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-407-01	[$-407]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jan|Januar|J		
+r4m-407-02	[$-407]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|Februar|F		
+r4m-407-03	[$-407]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mär|März|M		
+r4m-407-04	[$-407]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r4m-407-05	[$-407]mmm"|"mmmm"|"mmmmm	45427	1900	number	Mai|Mai|M		
+r4m-407-06	[$-407]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|Juni|J		
+r4m-407-07	[$-407]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|Juli|J		
+r4m-407-08	[$-407]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r4m-407-09	[$-407]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r4m-407-10	[$-407]mmm"|"mmmm"|"mmmmm	45580	1900	number	Okt|Oktober|O		
+r4m-407-11	[$-407]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r4m-407-12	[$-407]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dez|Dezember|D		
+r4d-407-01	[$-407]ddd"|"dddd	45305	1900	number	So|Sonntag		
+r4d-407-02	[$-407]ddd"|"dddd	45306	1900	number	Mo|Montag		
+r4d-407-03	[$-407]ddd"|"dddd	45307	1900	number	Di|Dienstag		
+r4d-407-04	[$-407]ddd"|"dddd	45308	1900	number	Mi|Mittwoch		
+r4d-407-05	[$-407]ddd"|"dddd	45309	1900	number	Do|Donnerstag		
+r4d-407-06	[$-407]ddd"|"dddd	45310	1900	number	Fr|Freitag		
+r4d-407-07	[$-407]ddd"|"dddd	45311	1900	number	Sa|Samstag		
+r4p-407-01	[$-407]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-407-02	[$-407]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-C07-01	[$-C07]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jän|Jänner|J		
+r4m-C07-02	[$-C07]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|Februar|F		
+r4m-C07-03	[$-C07]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mär|März|M		
+r4m-C07-04	[$-C07]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r4m-C07-05	[$-C07]mmm"|"mmmm"|"mmmmm	45427	1900	number	Mai|Mai|M		
+r4m-C07-06	[$-C07]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|Juni|J		
+r4m-C07-07	[$-C07]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|Juli|J		
+r4m-C07-08	[$-C07]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r4m-C07-09	[$-C07]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r4m-C07-10	[$-C07]mmm"|"mmmm"|"mmmmm	45580	1900	number	Okt|Oktober|O		
+r4m-C07-11	[$-C07]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r4m-C07-12	[$-C07]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dez|Dezember|D		
+r4d-C07-01	[$-C07]ddd"|"dddd	45305	1900	number	So|Sonntag		
+r4d-C07-02	[$-C07]ddd"|"dddd	45306	1900	number	Mo|Montag		
+r4d-C07-03	[$-C07]ddd"|"dddd	45307	1900	number	Di|Dienstag		
+r4d-C07-04	[$-C07]ddd"|"dddd	45308	1900	number	Mi|Mittwoch		
+r4d-C07-05	[$-C07]ddd"|"dddd	45309	1900	number	Do|Donnerstag		
+r4d-C07-06	[$-C07]ddd"|"dddd	45310	1900	number	Fr|Freitag		
+r4d-C07-07	[$-C07]ddd"|"dddd	45311	1900	number	Sa|Samstag		
+r4p-C07-01	[$-C07]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-C07-02	[$-C07]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-807-01	[$-807]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jan|Januar|J		
+r4m-807-02	[$-807]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|Februar|F		
+r4m-807-03	[$-807]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mär|März|M		
+r4m-807-04	[$-807]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r4m-807-05	[$-807]mmm"|"mmmm"|"mmmmm	45427	1900	number	Mai|Mai|M		
+r4m-807-06	[$-807]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|Juni|J		
+r4m-807-07	[$-807]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|Juli|J		
+r4m-807-08	[$-807]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r4m-807-09	[$-807]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r4m-807-10	[$-807]mmm"|"mmmm"|"mmmmm	45580	1900	number	Okt|Oktober|O		
+r4m-807-11	[$-807]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r4m-807-12	[$-807]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dez|Dezember|D		
+r4d-807-01	[$-807]ddd"|"dddd	45305	1900	number	So|Sonntag		
+r4d-807-02	[$-807]ddd"|"dddd	45306	1900	number	Mo|Montag		
+r4d-807-03	[$-807]ddd"|"dddd	45307	1900	number	Di|Dienstag		
+r4d-807-04	[$-807]ddd"|"dddd	45308	1900	number	Mi|Mittwoch		
+r4d-807-05	[$-807]ddd"|"dddd	45309	1900	number	Do|Donnerstag		
+r4d-807-06	[$-807]ddd"|"dddd	45310	1900	number	Fr|Freitag		
+r4d-807-07	[$-807]ddd"|"dddd	45311	1900	number	Sa|Samstag		
+r4p-807-01	[$-807]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-807-02	[$-807]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-C0A-01	[$-C0A]mmm"|"mmmm"|"mmmmm	45306	1900	number	ene.|enero|e		
+r4m-C0A-02	[$-C0A]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb.|febrero|f		
+r4m-C0A-03	[$-C0A]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar.|marzo|m		
+r4m-C0A-04	[$-C0A]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr.|abril|a		
+r4m-C0A-05	[$-C0A]mmm"|"mmmm"|"mmmmm	45427	1900	number	may.|mayo|m		
+r4m-C0A-06	[$-C0A]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun.|junio|j		
+r4m-C0A-07	[$-C0A]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul.|julio|j		
+r4m-C0A-08	[$-C0A]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago.|agosto|a		
+r4m-C0A-09	[$-C0A]mmm"|"mmmm"|"mmmmm	45550	1900	number	sep.|septiembre|s		
+r4m-C0A-10	[$-C0A]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octubre|o		
+r4m-C0A-11	[$-C0A]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|noviembre|n		
+r4m-C0A-12	[$-C0A]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic.|diciembre|d		
+r4d-C0A-01	[$-C0A]ddd"|"dddd	45305	1900	number	do.|domingo		
+r4d-C0A-02	[$-C0A]ddd"|"dddd	45306	1900	number	lu.|lunes		
+r4d-C0A-03	[$-C0A]ddd"|"dddd	45307	1900	number	ma.|martes		
+r4d-C0A-04	[$-C0A]ddd"|"dddd	45308	1900	number	mi.|miércoles		
+r4d-C0A-05	[$-C0A]ddd"|"dddd	45309	1900	number	ju.|jueves		
+r4d-C0A-06	[$-C0A]ddd"|"dddd	45310	1900	number	vi.|viernes		
+r4d-C0A-07	[$-C0A]ddd"|"dddd	45311	1900	number	sá.|sábado		
+r4p-C0A-01	[$-C0A]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 a. m.|a. m.|a. m.|a. m.		
+r4p-C0A-02	[$-C0A]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 p. m.|p. m.|p. m.|p. m.		
+r4m-80A-01	[$-80A]mmm"|"mmmm"|"mmmmm	45306	1900	number	ene.|enero|e		
+r4m-80A-02	[$-80A]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb.|febrero|f		
+r4m-80A-03	[$-80A]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar.|marzo|m		
+r4m-80A-04	[$-80A]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr.|abril|a		
+r4m-80A-05	[$-80A]mmm"|"mmmm"|"mmmmm	45427	1900	number	may.|mayo|m		
+r4m-80A-06	[$-80A]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun.|junio|j		
+r4m-80A-07	[$-80A]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul.|julio|j		
+r4m-80A-08	[$-80A]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago.|agosto|a		
+r4m-80A-09	[$-80A]mmm"|"mmmm"|"mmmmm	45550	1900	number	sep.|septiembre|s		
+r4m-80A-10	[$-80A]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octubre|o		
+r4m-80A-11	[$-80A]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|noviembre|n		
+r4m-80A-12	[$-80A]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic.|diciembre|d		
+r4d-80A-01	[$-80A]ddd"|"dddd	45305	1900	number	dom.|domingo		
+r4d-80A-02	[$-80A]ddd"|"dddd	45306	1900	number	lun.|lunes		
+r4d-80A-03	[$-80A]ddd"|"dddd	45307	1900	number	mar.|martes		
+r4d-80A-04	[$-80A]ddd"|"dddd	45308	1900	number	mié.|miércoles		
+r4d-80A-05	[$-80A]ddd"|"dddd	45309	1900	number	jue.|jueves		
+r4d-80A-06	[$-80A]ddd"|"dddd	45310	1900	number	vie.|viernes		
+r4d-80A-07	[$-80A]ddd"|"dddd	45311	1900	number	sáb.|sábado		
+r4p-80A-01	[$-80A]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 a. m.|a. m.|a. m.|a. m.		
+r4p-80A-02	[$-80A]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 p. m.|p. m.|p. m.|p. m.		
+r4m-2C0A-01	[$-2C0A]mmm"|"mmmm"|"mmmmm	45306	1900	number	ene|enero|e		
+r4m-2C0A-02	[$-2C0A]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb|febrero|f		
+r4m-2C0A-03	[$-2C0A]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar|marzo|m		
+r4m-2C0A-04	[$-2C0A]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr|abril|a		
+r4m-2C0A-05	[$-2C0A]mmm"|"mmmm"|"mmmmm	45427	1900	number	may|mayo|m		
+r4m-2C0A-06	[$-2C0A]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun|junio|j		
+r4m-2C0A-07	[$-2C0A]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul|julio|j		
+r4m-2C0A-08	[$-2C0A]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago|agosto|a		
+r4m-2C0A-09	[$-2C0A]mmm"|"mmmm"|"mmmmm	45550	1900	number	sept|septiembre|s		
+r4m-2C0A-10	[$-2C0A]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct|octubre|o		
+r4m-2C0A-11	[$-2C0A]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|noviembre|n		
+r4m-2C0A-12	[$-2C0A]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic|diciembre|d		
+r4d-2C0A-01	[$-2C0A]ddd"|"dddd	45305	1900	number	dom|domingo		
+r4d-2C0A-02	[$-2C0A]ddd"|"dddd	45306	1900	number	lun|lunes		
+r4d-2C0A-03	[$-2C0A]ddd"|"dddd	45307	1900	number	mar|martes		
+r4d-2C0A-04	[$-2C0A]ddd"|"dddd	45308	1900	number	mié|miércoles		
+r4d-2C0A-05	[$-2C0A]ddd"|"dddd	45309	1900	number	jue|jueves		
+r4d-2C0A-06	[$-2C0A]ddd"|"dddd	45310	1900	number	vie|viernes		
+r4d-2C0A-07	[$-2C0A]ddd"|"dddd	45311	1900	number	sáb|sábado		
+r4p-2C0A-01	[$-2C0A]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 a. m.|a. m.|a. m.|a. m.		
+r4p-2C0A-02	[$-2C0A]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 p. m.|p. m.|p. m.|p. m.		
+r4m-410-01	[$-410]mmm"|"mmmm"|"mmmmm	45306	1900	number	gen|gennaio|g		
+r4m-410-02	[$-410]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb|febbraio|f		
+r4m-410-03	[$-410]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar|marzo|m		
+r4m-410-04	[$-410]mmm"|"mmmm"|"mmmmm	45397	1900	number	apr|aprile|a		
+r4m-410-05	[$-410]mmm"|"mmmm"|"mmmmm	45427	1900	number	mag|maggio|m		
+r4m-410-06	[$-410]mmm"|"mmmm"|"mmmmm	45458	1900	number	giu|giugno|g		
+r4m-410-07	[$-410]mmm"|"mmmm"|"mmmmm	45488	1900	number	lug|luglio|l		
+r4m-410-08	[$-410]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago|agosto|a		
+r4m-410-09	[$-410]mmm"|"mmmm"|"mmmmm	45550	1900	number	set|settembre|s		
+r4m-410-10	[$-410]mmm"|"mmmm"|"mmmmm	45580	1900	number	ott|ottobre|o		
+r4m-410-11	[$-410]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|novembre|n		
+r4m-410-12	[$-410]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic|dicembre|d		
+r4d-410-01	[$-410]ddd"|"dddd	45305	1900	number	dom|domenica		
+r4d-410-02	[$-410]ddd"|"dddd	45306	1900	number	lun|lunedì		
+r4d-410-03	[$-410]ddd"|"dddd	45307	1900	number	mar|martedì		
+r4d-410-04	[$-410]ddd"|"dddd	45308	1900	number	mer|mercoledì		
+r4d-410-05	[$-410]ddd"|"dddd	45309	1900	number	gio|giovedì		
+r4d-410-06	[$-410]ddd"|"dddd	45310	1900	number	ven|venerdì		
+r4d-410-07	[$-410]ddd"|"dddd	45311	1900	number	sab|sabato		
+r4p-410-01	[$-410]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-410-02	[$-410]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-810-01	[$-810]mmm"|"mmmm"|"mmmmm	45306	1900	number	gen|gennaio|g		
+r4m-810-02	[$-810]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb|febbraio|f		
+r4m-810-03	[$-810]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar|marzo|m		
+r4m-810-04	[$-810]mmm"|"mmmm"|"mmmmm	45397	1900	number	apr|aprile|a		
+r4m-810-05	[$-810]mmm"|"mmmm"|"mmmmm	45427	1900	number	mag|maggio|m		
+r4m-810-06	[$-810]mmm"|"mmmm"|"mmmmm	45458	1900	number	giu|giugno|g		
+r4m-810-07	[$-810]mmm"|"mmmm"|"mmmmm	45488	1900	number	lug|luglio|l		
+r4m-810-08	[$-810]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago|agosto|a		
+r4m-810-09	[$-810]mmm"|"mmmm"|"mmmmm	45550	1900	number	set|settembre|s		
+r4m-810-10	[$-810]mmm"|"mmmm"|"mmmmm	45580	1900	number	ott|ottobre|o		
+r4m-810-11	[$-810]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|novembre|n		
+r4m-810-12	[$-810]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic|dicembre|d		
+r4d-810-01	[$-810]ddd"|"dddd	45305	1900	number	dom|domenica		
+r4d-810-02	[$-810]ddd"|"dddd	45306	1900	number	lun|lunedì		
+r4d-810-03	[$-810]ddd"|"dddd	45307	1900	number	mar|martedì		
+r4d-810-04	[$-810]ddd"|"dddd	45308	1900	number	mer|mercoledì		
+r4d-810-05	[$-810]ddd"|"dddd	45309	1900	number	gio|giovedì		
+r4d-810-06	[$-810]ddd"|"dddd	45310	1900	number	ven|venerdì		
+r4d-810-07	[$-810]ddd"|"dddd	45311	1900	number	sab|sabato		
+r4p-810-01	[$-810]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-810-02	[$-810]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-416-01	[$-416]mmm"|"mmmm"|"mmmmm	45306	1900	number	jan.|janeiro|j		
+r4m-416-02	[$-416]mmm"|"mmmm"|"mmmmm	45337	1900	number	fev.|fevereiro|f		
+r4m-416-03	[$-416]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar.|março|m		
+r4m-416-04	[$-416]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr.|abril|a		
+r4m-416-05	[$-416]mmm"|"mmmm"|"mmmmm	45427	1900	number	mai.|maio|m		
+r4m-416-06	[$-416]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun.|junho|j		
+r4m-416-07	[$-416]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul.|julho|j		
+r4m-416-08	[$-416]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago.|agosto|a		
+r4m-416-09	[$-416]mmm"|"mmmm"|"mmmmm	45550	1900	number	set.|setembro|s		
+r4m-416-10	[$-416]mmm"|"mmmm"|"mmmmm	45580	1900	number	out.|outubro|o		
+r4m-416-11	[$-416]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|novembro|n		
+r4m-416-12	[$-416]mmm"|"mmmm"|"mmmmm	45641	1900	number	dez.|dezembro|d		
+r4d-416-01	[$-416]ddd"|"dddd	45305	1900	number	dom.|domingo		
+r4d-416-02	[$-416]ddd"|"dddd	45306	1900	number	seg.|segunda-feira		
+r4d-416-03	[$-416]ddd"|"dddd	45307	1900	number	ter.|terça-feira		
+r4d-416-04	[$-416]ddd"|"dddd	45308	1900	number	qua.|quarta-feira		
+r4d-416-05	[$-416]ddd"|"dddd	45309	1900	number	qui.|quinta-feira		
+r4d-416-06	[$-416]ddd"|"dddd	45310	1900	number	sex.|sexta-feira		
+r4d-416-07	[$-416]ddd"|"dddd	45311	1900	number	sáb.|sábado		
+r4p-416-01	[$-416]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-416-02	[$-416]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-816-01	[$-816]mmm"|"mmmm"|"mmmmm	45306	1900	number	jan|janeiro|j		
+r4m-816-02	[$-816]mmm"|"mmmm"|"mmmmm	45337	1900	number	fev|fevereiro|f		
+r4m-816-03	[$-816]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar|março|m		
+r4m-816-04	[$-816]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr|abril|a		
+r4m-816-05	[$-816]mmm"|"mmmm"|"mmmmm	45427	1900	number	mai|maio|m		
+r4m-816-06	[$-816]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun|junho|j		
+r4m-816-07	[$-816]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul|julho|j		
+r4m-816-08	[$-816]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago|agosto|a		
+r4m-816-09	[$-816]mmm"|"mmmm"|"mmmmm	45550	1900	number	set|setembro|s		
+r4m-816-10	[$-816]mmm"|"mmmm"|"mmmmm	45580	1900	number	out|outubro|o		
+r4m-816-11	[$-816]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|novembro|n		
+r4m-816-12	[$-816]mmm"|"mmmm"|"mmmmm	45641	1900	number	dez|dezembro|d		
+r4d-816-01	[$-816]ddd"|"dddd	45305	1900	number	domingo|domingo		
+r4d-816-02	[$-816]ddd"|"dddd	45306	1900	number	segunda|segunda-feira		
+r4d-816-03	[$-816]ddd"|"dddd	45307	1900	number	terça|terça-feira		
+r4d-816-04	[$-816]ddd"|"dddd	45308	1900	number	quarta|quarta-feira		
+r4d-816-05	[$-816]ddd"|"dddd	45309	1900	number	quinta|quinta-feira		
+r4d-816-06	[$-816]ddd"|"dddd	45310	1900	number	sexta|sexta-feira		
+r4d-816-07	[$-816]ddd"|"dddd	45311	1900	number	sábado|sábado		
+r4p-816-01	[$-816]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-816-02	[$-816]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-413-01	[$-413]mmm"|"mmmm"|"mmmmm	45306	1900	number	jan|januari|j		
+r4m-413-02	[$-413]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb|februari|f		
+r4m-413-03	[$-413]mmm"|"mmmm"|"mmmmm	45366	1900	number	mrt|maart|m		
+r4m-413-04	[$-413]mmm"|"mmmm"|"mmmmm	45397	1900	number	apr|april|a		
+r4m-413-05	[$-413]mmm"|"mmmm"|"mmmmm	45427	1900	number	mei|mei|m		
+r4m-413-06	[$-413]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun|juni|j		
+r4m-413-07	[$-413]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul|juli|j		
+r4m-413-08	[$-413]mmm"|"mmmm"|"mmmmm	45519	1900	number	aug|augustus|a		
+r4m-413-09	[$-413]mmm"|"mmmm"|"mmmmm	45550	1900	number	sep|september|s		
+r4m-413-10	[$-413]mmm"|"mmmm"|"mmmmm	45580	1900	number	okt|oktober|o		
+r4m-413-11	[$-413]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|november|n		
+r4m-413-12	[$-413]mmm"|"mmmm"|"mmmmm	45641	1900	number	dec|december|d		
+r4d-413-01	[$-413]ddd"|"dddd	45305	1900	number	zo|zondag		
+r4d-413-02	[$-413]ddd"|"dddd	45306	1900	number	ma|maandag		
+r4d-413-03	[$-413]ddd"|"dddd	45307	1900	number	di|dinsdag		
+r4d-413-04	[$-413]ddd"|"dddd	45308	1900	number	wo|woensdag		
+r4d-413-05	[$-413]ddd"|"dddd	45309	1900	number	do|donderdag		
+r4d-413-06	[$-413]ddd"|"dddd	45310	1900	number	vr|vrijdag		
+r4d-413-07	[$-413]ddd"|"dddd	45311	1900	number	za|zaterdag		
+r4p-413-01	[$-413]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-413-02	[$-413]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4m-813-01	[$-813]mmm"|"mmmm"|"mmmmm	45306	1900	number	jan|januari|j		
+r4m-813-02	[$-813]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb|februari|f		
+r4m-813-03	[$-813]mmm"|"mmmm"|"mmmmm	45366	1900	number	mrt|maart|m		
+r4m-813-04	[$-813]mmm"|"mmmm"|"mmmmm	45397	1900	number	apr|april|a		
+r4m-813-05	[$-813]mmm"|"mmmm"|"mmmmm	45427	1900	number	mei|mei|m		
+r4m-813-06	[$-813]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun|juni|j		
+r4m-813-07	[$-813]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul|juli|j		
+r4m-813-08	[$-813]mmm"|"mmmm"|"mmmmm	45519	1900	number	aug|augustus|a		
+r4m-813-09	[$-813]mmm"|"mmmm"|"mmmmm	45550	1900	number	sep|september|s		
+r4m-813-10	[$-813]mmm"|"mmmm"|"mmmmm	45580	1900	number	okt|oktober|o		
+r4m-813-11	[$-813]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|november|n		
+r4m-813-12	[$-813]mmm"|"mmmm"|"mmmmm	45641	1900	number	dec|december|d		
+r4d-813-01	[$-813]ddd"|"dddd	45305	1900	number	zo|zondag		
+r4d-813-02	[$-813]ddd"|"dddd	45306	1900	number	ma|maandag		
+r4d-813-03	[$-813]ddd"|"dddd	45307	1900	number	di|dinsdag		
+r4d-813-04	[$-813]ddd"|"dddd	45308	1900	number	wo|woensdag		
+r4d-813-05	[$-813]ddd"|"dddd	45309	1900	number	do|donderdag		
+r4d-813-06	[$-813]ddd"|"dddd	45310	1900	number	vr|vrijdag		
+r4d-813-07	[$-813]ddd"|"dddd	45311	1900	number	za|zaterdag		
+r4p-813-01	[$-813]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|AM|AM		
+r4p-813-02	[$-813]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4t-01	[$-fr-FR]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mer.|mercredi|sept.|septembre|s		
+r4t-02	[$-fr]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mer.|mercredi|sept.|septembre|s		
+r4t-03	[$-fr-fr]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mer.|mercredi|sept.|septembre|s		
+r4t-04	[$-fr-CA]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mer.|mercredi|sept.|septembre|s		
+r4t-05	[$-de-DE]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Mi|Mittwoch|Sep|September|S		
+r4t-06	[$-de-AT]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Mi|Mittwoch|Sep|September|S		
+r4t-07	[$-de]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Mi|Mittwoch|Sep|September|S		
+r4t-08	[$-es-ES]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mi.|miércoles|sep.|septiembre|s		
+r4t-09	[$-es-MX]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mié.|miércoles|sep.|septiembre|s		
+r4t-10	[$-es]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mié|miércoles|set|septiembre|s		
+r4t-11	[$-it-IT]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mer|mercoledì|set|settembre|s		
+r4t-12	[$-pt-BR]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	qua.|quarta-feira|set.|setembro|s		
+r4t-13	[$-pt-PT]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	quarta|quarta-feira|set|setembro|s		
+r4t-14	[$-nl-NL]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	wo|woensdag|sep|september|s		
+r4t-15	[$-nl]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	wo|woensdag|sep|september|s		
+r4t-16	[$-en-GB]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Wed|Wednesday|Sep|September|S		
+r4t-17	[$-en-US]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Wed|Wednesday|Sep|September|S		
+r4t-18	[$-en]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Wed|Wednesday|Sep|September|S		
+r4o-01	[$-411]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	水|水曜日|9月|9月|9	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-02	[$-411]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 午後|午後|午後|午後	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
+r4o-03	[$-804]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	周三|星期三|9月|九月|九	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-04	[$-804]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 下午|下午|下午|下午	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
+r4o-05	[$-412]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	수|수요일|9월|9월|9	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-06	[$-412]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 오후|오후|오후|오후	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
+r4o-07	[$-419]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Ср|среда|сент.|сентябрь|с	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-08	[$-419]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4o-09	[$-415]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	śr.|środa|wrz|wrzesień|w	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-10	[$-415]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
+r4o-11	[$-41D]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	ons|onsdag|sep.|september|s	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-12	[$-41D]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 em|em|em|em	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
+r4o-13	[$-41F]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Çar|Çarşamba|Eyl|Eylül|E	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-14	[$-41F]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 ÖS|ÖS|ÖS|ÖS	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
+r4o-15	[$-403]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	dc|dimecres|set.|setembre|s	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-16	[$-403]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 p. m.|p. m.|p. m.|p. m.	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
+r4o-17	[$-401]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-18	[$-401]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 م|م|م|م	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
+r4s-01	dddd d mmmm[$-40C]	45306	1900	number	lundi 15 janvier		
+r4s-02	[$-40C][$-407]mmmm	45306	1900	number	45306		
+r4s-03	[$-407][$-40C]mmmm	45306	1900	number	45306		
+r4s-04	[>40000][$-407]mmmm;[$-40C]mmmm	45306	1900	number	Januar		
+r4s-05	[>40000][$-407]mmmm;[$-40C]mmmm	30000	1900	number	Februar		
+r4s-06	[$-40C]mmmm;[$-407]mmmm	45306	1900	number	janvier		
+r4s-07	[$€-40C]mmmm	45306	1900	number	€janvier		
+r5p-409-01	[$-409]h AM/PM	45306.2145833333	1900	number	5 AM		
+r5p-409-02	[$-409]h AM/PM	45306.7119097222	1900	number	5 PM		
+r5p-409-03	[$-409]h am/pm	45306.2145833333	1900	number	5 AM		
+r5p-409-04	[$-409]h am/pm	45306.7119097222	1900	number	5 PM		
+r5p-409-05	[$-409]h A/P	45306.2145833333	1900	number	5 AM		
+r5p-409-06	[$-409]h A/P	45306.7119097222	1900	number	5 PM		
+r5p-409-07	[$-409]h a/p	45306.2145833333	1900	number	5 AM		
+r5p-409-08	[$-409]h a/p	45306.7119097222	1900	number	5 PM		
+r5p-809-01	[$-809]h AM/PM	45306.2145833333	1900	number	5 am		
+r5p-809-02	[$-809]h AM/PM	45306.7119097222	1900	number	5 pm		
+r5p-809-03	[$-809]h am/pm	45306.2145833333	1900	number	5 am		
+r5p-809-04	[$-809]h am/pm	45306.7119097222	1900	number	5 pm		
+r5p-809-05	[$-809]h A/P	45306.2145833333	1900	number	5 am		
+r5p-809-06	[$-809]h A/P	45306.7119097222	1900	number	5 pm		
+r5p-809-07	[$-809]h a/p	45306.2145833333	1900	number	5 am		
+r5p-809-08	[$-809]h a/p	45306.7119097222	1900	number	5 pm		
+r5p-C0C-01	[$-C0C]h AM/PM	45306.2145833333	1900	number	5 a.m.		
+r5p-C0C-02	[$-C0C]h AM/PM	45306.7119097222	1900	number	5 p.m.		
+r5p-C0C-03	[$-C0C]h am/pm	45306.2145833333	1900	number	5 a.m.		
+r5p-C0C-04	[$-C0C]h am/pm	45306.7119097222	1900	number	5 p.m.		
+r5p-C0C-05	[$-C0C]h A/P	45306.2145833333	1900	number	5 a.m.		
+r5p-C0C-06	[$-C0C]h A/P	45306.7119097222	1900	number	5 p.m.		
+r5p-C0C-07	[$-C0C]h a/p	45306.2145833333	1900	number	5 a.m.		
+r5p-C0C-08	[$-C0C]h a/p	45306.7119097222	1900	number	5 p.m.		
+r5p-C0A-01	[$-C0A]h AM/PM	45306.2145833333	1900	number	5 a. m.		
+r5p-C0A-02	[$-C0A]h AM/PM	45306.7119097222	1900	number	5 p. m.		
+r5p-C0A-03	[$-C0A]h am/pm	45306.2145833333	1900	number	5 a. m.		
+r5p-C0A-04	[$-C0A]h am/pm	45306.7119097222	1900	number	5 p. m.		
+r5p-C0A-05	[$-C0A]h A/P	45306.2145833333	1900	number	5 a. m.		
+r5p-C0A-06	[$-C0A]h A/P	45306.7119097222	1900	number	5 p. m.		
+r5p-C0A-07	[$-C0A]h a/p	45306.2145833333	1900	number	5 a. m.		
+r5p-C0A-08	[$-C0A]h a/p	45306.7119097222	1900	number	5 p. m.		
+r5p-80A-01	[$-80A]h AM/PM	45306.2145833333	1900	number	5 a. m.		
+r5p-80A-02	[$-80A]h AM/PM	45306.7119097222	1900	number	5 p. m.		
+r5p-80A-03	[$-80A]h am/pm	45306.2145833333	1900	number	5 a. m.		
+r5p-80A-04	[$-80A]h am/pm	45306.7119097222	1900	number	5 p. m.		
+r5p-80A-05	[$-80A]h A/P	45306.2145833333	1900	number	5 a. m.		
+r5p-80A-06	[$-80A]h A/P	45306.7119097222	1900	number	5 p. m.		
+r5p-80A-07	[$-80A]h a/p	45306.2145833333	1900	number	5 a. m.		
+r5p-80A-08	[$-80A]h a/p	45306.7119097222	1900	number	5 p. m.		
+r5p-none-01	h AM/PM	45306.2145833333	1900	number	5 AM		
+r5p-none-02	h AM/PM	45306.7119097222	1900	number	5 PM		
+r5p-none-03	h am/pm	45306.2145833333	1900	number	5 AM		
+r5p-none-04	h am/pm	45306.7119097222	1900	number	5 PM		
+r5p-none-05	h A/P	45306.2145833333	1900	number	5 A		
+r5p-none-06	h A/P	45306.7119097222	1900	number	5 P		
+r5p-none-07	h a/p	45306.2145833333	1900	number	5 a		
+r5p-none-08	h a/p	45306.7119097222	1900	number	5 p		
+r5p-none-09	h AM/PM"|"am/pm"|"A/P"|"a/p	45306.2145833333	1900	number	5 AM|AM|A|a		
+r5p-none-10	h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|P|p		
+r5p-none-11	h A/P"|"AM/PM	45306.2145833333	1900	number	5 A|AM		
+r5p-none-12	h A/P"|"AM/PM	45306.7119097222	1900	number	5 P|PM		
+r5p-none-13	h AM/PM"|"A/P	45306.2145833333	1900	number	5 AM|A		
+r5p-none-14	h AM/PM"|"A/P	45306.7119097222	1900	number	5 PM|P		
+r5p-1409-01	[$-1409]h AM/PM	45306.2145833333	1900	number	5 AM		
+r5p-1409-02	[$-1409]h AM/PM	45306.7119097222	1900	number	5 PM		
+r5p-1809-01	[$-1809]h AM/PM	45306.2145833333	1900	number	5 am		
+r5p-1809-02	[$-1809]h AM/PM	45306.7119097222	1900	number	5 pm		
+r5p-1C09-01	[$-1C09]h AM/PM	45306.2145833333	1900	number	5 AM		
+r5p-1C09-02	[$-1C09]h AM/PM	45306.7119097222	1900	number	5 PM		
+r5m-40A-01	[$-40A]mmm"|"mmmm"|"mmmmm	45306	1900	number	ene.|enero|e		
+r5m-40A-02	[$-40A]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb.|febrero|f		
+r5m-40A-03	[$-40A]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar.|marzo|m		
+r5m-40A-04	[$-40A]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr.|abril|a		
+r5m-40A-05	[$-40A]mmm"|"mmmm"|"mmmmm	45427	1900	number	may.|mayo|m		
+r5m-40A-06	[$-40A]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun.|junio|j		
+r5m-40A-07	[$-40A]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul.|julio|j		
+r5m-40A-08	[$-40A]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago.|agosto|a		
+r5m-40A-09	[$-40A]mmm"|"mmmm"|"mmmmm	45550	1900	number	sep.|septiembre|s		
+r5m-40A-10	[$-40A]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octubre|o		
+r5m-40A-11	[$-40A]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|noviembre|n		
+r5m-40A-12	[$-40A]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic.|diciembre|d		
+r5d-40A-01	[$-40A]ddd"|"dddd	45305	1900	number	do.|domingo		
+r5d-40A-02	[$-40A]ddd"|"dddd	45306	1900	number	lu.|lunes		
+r5d-40A-03	[$-40A]ddd"|"dddd	45307	1900	number	ma.|martes		
+r5d-40A-04	[$-40A]ddd"|"dddd	45308	1900	number	mi.|miércoles		
+r5d-40A-05	[$-40A]ddd"|"dddd	45309	1900	number	ju.|jueves		
+r5d-40A-06	[$-40A]ddd"|"dddd	45310	1900	number	vi.|viernes		
+r5d-40A-07	[$-40A]ddd"|"dddd	45311	1900	number	sá.|sábado		
+r5p-40A-01	[$-40A]h AM/PM	45306.2145833333	1900	number	5 a. m.		
+r5p-40A-02	[$-40A]h AM/PM	45306.7119097222	1900	number	5 p. m.		
+r5m-240A-01	[$-240A]mmm"|"mmmm"|"mmmmm	45306	1900	number	ene.|enero|e		
+r5m-240A-02	[$-240A]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb.|febrero|f		
+r5m-240A-03	[$-240A]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar.|marzo|m		
+r5m-240A-04	[$-240A]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr.|abril|a		
+r5m-240A-05	[$-240A]mmm"|"mmmm"|"mmmmm	45427	1900	number	may.|mayo|m		
+r5m-240A-06	[$-240A]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun.|junio|j		
+r5m-240A-07	[$-240A]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul.|julio|j		
+r5m-240A-08	[$-240A]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago.|agosto|a		
+r5m-240A-09	[$-240A]mmm"|"mmmm"|"mmmmm	45550	1900	number	sep.|septiembre|s		
+r5m-240A-10	[$-240A]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octubre|o		
+r5m-240A-11	[$-240A]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|noviembre|n		
+r5m-240A-12	[$-240A]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic.|diciembre|d		
+r5d-240A-01	[$-240A]ddd"|"dddd	45305	1900	number	dom.|domingo		
+r5d-240A-02	[$-240A]ddd"|"dddd	45306	1900	number	lun.|lunes		
+r5d-240A-03	[$-240A]ddd"|"dddd	45307	1900	number	mar.|martes		
+r5d-240A-04	[$-240A]ddd"|"dddd	45308	1900	number	mié.|miércoles		
+r5d-240A-05	[$-240A]ddd"|"dddd	45309	1900	number	jue.|jueves		
+r5d-240A-06	[$-240A]ddd"|"dddd	45310	1900	number	vie.|viernes		
+r5d-240A-07	[$-240A]ddd"|"dddd	45311	1900	number	sáb.|sábado		
+r5p-240A-01	[$-240A]h AM/PM	45306.2145833333	1900	number	5 a. m.		
+r5p-240A-02	[$-240A]h AM/PM	45306.7119097222	1900	number	5 p. m.		
+r5m-340A-01	[$-340A]mmm"|"mmmm"|"mmmmm	45306	1900	number	ene.|enero|e		
+r5m-340A-02	[$-340A]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb.|febrero|f		
+r5m-340A-03	[$-340A]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar.|marzo|m		
+r5m-340A-04	[$-340A]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr.|abril|a		
+r5m-340A-05	[$-340A]mmm"|"mmmm"|"mmmmm	45427	1900	number	may.|mayo|m		
+r5m-340A-06	[$-340A]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun.|junio|j		
+r5m-340A-07	[$-340A]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul.|julio|j		
+r5m-340A-08	[$-340A]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago.|agosto|a		
+r5m-340A-09	[$-340A]mmm"|"mmmm"|"mmmmm	45550	1900	number	sept.|septiembre|s		
+r5m-340A-10	[$-340A]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octubre|o		
+r5m-340A-11	[$-340A]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|noviembre|n		
+r5m-340A-12	[$-340A]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic.|diciembre|d		
+r5d-340A-01	[$-340A]ddd"|"dddd	45305	1900	number	dom|domingo		
+r5d-340A-02	[$-340A]ddd"|"dddd	45306	1900	number	lun|lunes		
+r5d-340A-03	[$-340A]ddd"|"dddd	45307	1900	number	mar|martes		
+r5d-340A-04	[$-340A]ddd"|"dddd	45308	1900	number	mié|miércoles		
+r5d-340A-05	[$-340A]ddd"|"dddd	45309	1900	number	jue|jueves		
+r5d-340A-06	[$-340A]ddd"|"dddd	45310	1900	number	vie|viernes		
+r5d-340A-07	[$-340A]ddd"|"dddd	45311	1900	number	sáb|sábado		
+r5p-340A-01	[$-340A]h AM/PM	45306.2145833333	1900	number	5 a. m.		
+r5p-340A-02	[$-340A]h AM/PM	45306.7119097222	1900	number	5 p. m.		
+r5m-540A-01	[$-540A]mmm"|"mmmm"|"mmmmm	45306	1900	number	ene|enero|e		
+r5m-540A-02	[$-540A]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb|febrero|f		
+r5m-540A-03	[$-540A]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar|marzo|m		
+r5m-540A-04	[$-540A]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr|abril|a		
+r5m-540A-05	[$-540A]mmm"|"mmmm"|"mmmmm	45427	1900	number	may|mayo|m		
+r5m-540A-06	[$-540A]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun|junio|j		
+r5m-540A-07	[$-540A]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul|julio|j		
+r5m-540A-08	[$-540A]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago|agosto|a		
+r5m-540A-09	[$-540A]mmm"|"mmmm"|"mmmmm	45550	1900	number	sept|septiembre|s		
+r5m-540A-10	[$-540A]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct|octubre|o		
+r5m-540A-11	[$-540A]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|noviembre|n		
+r5m-540A-12	[$-540A]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic|diciembre|d		
+r5d-540A-01	[$-540A]ddd"|"dddd	45305	1900	number	dom|domingo		
+r5d-540A-02	[$-540A]ddd"|"dddd	45306	1900	number	lun|lunes		
+r5d-540A-03	[$-540A]ddd"|"dddd	45307	1900	number	mar|martes		
+r5d-540A-04	[$-540A]ddd"|"dddd	45308	1900	number	mié|miércoles		
+r5d-540A-05	[$-540A]ddd"|"dddd	45309	1900	number	jue|jueves		
+r5d-540A-06	[$-540A]ddd"|"dddd	45310	1900	number	vie|viernes		
+r5d-540A-07	[$-540A]ddd"|"dddd	45311	1900	number	sáb|sábado		
+r5p-540A-01	[$-540A]h AM/PM	45306.2145833333	1900	number	5 a.m.		
+r5p-540A-02	[$-540A]h AM/PM	45306.7119097222	1900	number	5 p.m.		
+r5m-140C-01	[$-140C]mmm"|"mmmm"|"mmmmm	45306	1900	number	janv.|janvier|j		
+r5m-140C-02	[$-140C]mmm"|"mmmm"|"mmmmm	45337	1900	number	févr.|février|f		
+r5m-140C-03	[$-140C]mmm"|"mmmm"|"mmmmm	45366	1900	number	mars|mars|m		
+r5m-140C-04	[$-140C]mmm"|"mmmm"|"mmmmm	45397	1900	number	avr.|avril|a		
+r5m-140C-05	[$-140C]mmm"|"mmmm"|"mmmmm	45427	1900	number	mai|mai|m		
+r5m-140C-06	[$-140C]mmm"|"mmmm"|"mmmmm	45458	1900	number	juin|juin|j		
+r5m-140C-07	[$-140C]mmm"|"mmmm"|"mmmmm	45488	1900	number	juil.|juillet|j		
+r5m-140C-08	[$-140C]mmm"|"mmmm"|"mmmmm	45519	1900	number	août|août|a		
+r5m-140C-09	[$-140C]mmm"|"mmmm"|"mmmmm	45550	1900	number	sept.|septembre|s		
+r5m-140C-10	[$-140C]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octobre|o		
+r5m-140C-11	[$-140C]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|novembre|n		
+r5m-140C-12	[$-140C]mmm"|"mmmm"|"mmmmm	45641	1900	number	déc.|décembre|d		
+r5d-140C-01	[$-140C]ddd"|"dddd	45305	1900	number	dim.|dimanche		
+r5d-140C-02	[$-140C]ddd"|"dddd	45306	1900	number	lun.|lundi		
+r5d-140C-03	[$-140C]ddd"|"dddd	45307	1900	number	mar.|mardi		
+r5d-140C-04	[$-140C]ddd"|"dddd	45308	1900	number	mer.|mercredi		
+r5d-140C-05	[$-140C]ddd"|"dddd	45309	1900	number	jeu.|jeudi		
+r5d-140C-06	[$-140C]ddd"|"dddd	45310	1900	number	ven.|vendredi		
+r5d-140C-07	[$-140C]ddd"|"dddd	45311	1900	number	sam.|samedi		
+r5p-140C-01	[$-140C]h AM/PM	45306.2145833333	1900	number	5 AM		
+r5p-140C-02	[$-140C]h AM/PM	45306.7119097222	1900	number	5 PM		
+r5m-1007-01	[$-1007]mmm"|"mmmm"|"mmmmm	45306	1900	number	Jan|Januar|J		
+r5m-1007-02	[$-1007]mmm"|"mmmm"|"mmmmm	45337	1900	number	Feb|Februar|F		
+r5m-1007-03	[$-1007]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mär|März|M		
+r5m-1007-04	[$-1007]mmm"|"mmmm"|"mmmmm	45397	1900	number	Apr|April|A		
+r5m-1007-05	[$-1007]mmm"|"mmmm"|"mmmmm	45427	1900	number	Mai|Mai|M		
+r5m-1007-06	[$-1007]mmm"|"mmmm"|"mmmmm	45458	1900	number	Jun|Juni|J		
+r5m-1007-07	[$-1007]mmm"|"mmmm"|"mmmmm	45488	1900	number	Jul|Juli|J		
+r5m-1007-08	[$-1007]mmm"|"mmmm"|"mmmmm	45519	1900	number	Aug|August|A		
+r5m-1007-09	[$-1007]mmm"|"mmmm"|"mmmmm	45550	1900	number	Sep|September|S		
+r5m-1007-10	[$-1007]mmm"|"mmmm"|"mmmmm	45580	1900	number	Okt|Oktober|O		
+r5m-1007-11	[$-1007]mmm"|"mmmm"|"mmmmm	45611	1900	number	Nov|November|N		
+r5m-1007-12	[$-1007]mmm"|"mmmm"|"mmmmm	45641	1900	number	Dez|Dezember|D		
+r5d-1007-01	[$-1007]ddd"|"dddd	45305	1900	number	So|Sonntag		
+r5d-1007-02	[$-1007]ddd"|"dddd	45306	1900	number	Mo|Montag		
+r5d-1007-03	[$-1007]ddd"|"dddd	45307	1900	number	Di|Dienstag		
+r5d-1007-04	[$-1007]ddd"|"dddd	45308	1900	number	Mi|Mittwoch		
+r5d-1007-05	[$-1007]ddd"|"dddd	45309	1900	number	Do|Donnerstag		
+r5d-1007-06	[$-1007]ddd"|"dddd	45310	1900	number	Fr|Freitag		
+r5d-1007-07	[$-1007]ddd"|"dddd	45311	1900	number	Sa|Samstag		
+r5p-1007-01	[$-1007]h AM/PM	45306.2145833333	1900	number	5 AM		
+r5p-1007-02	[$-1007]h AM/PM	45306.7119097222	1900	number	5 PM		
+r5m-es-01	[$-es]mmm"|"mmmm"|"mmmmm	45306	1900	number	ene|enero|e		
+r5m-es-02	[$-es]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb|febrero|f		
+r5m-es-03	[$-es]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar|marzo|m		
+r5m-es-04	[$-es]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr|abril|a		
+r5m-es-05	[$-es]mmm"|"mmmm"|"mmmmm	45427	1900	number	may|mayo|m		
+r5m-es-06	[$-es]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun|junio|j		
+r5m-es-07	[$-es]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul|julio|j		
+r5m-es-08	[$-es]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago|agosto|a		
+r5m-es-09	[$-es]mmm"|"mmmm"|"mmmmm	45550	1900	number	set|septiembre|s		
+r5m-es-10	[$-es]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct|octubre|o		
+r5m-es-11	[$-es]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|noviembre|n		
+r5m-es-12	[$-es]mmm"|"mmmm"|"mmmmm	45641	1900	number	dic|diciembre|d		
+r5d-es-01	[$-es]ddd"|"dddd	45305	1900	number	dom|domingo		
+r5d-es-02	[$-es]ddd"|"dddd	45306	1900	number	lun|lunes		
+r5d-es-03	[$-es]ddd"|"dddd	45307	1900	number	mar|martes		
+r5d-es-04	[$-es]ddd"|"dddd	45308	1900	number	mié|miércoles		
+r5d-es-05	[$-es]ddd"|"dddd	45309	1900	number	jue|jueves		
+r5d-es-06	[$-es]ddd"|"dddd	45310	1900	number	vie|viernes		
+r5d-es-07	[$-es]ddd"|"dddd	45311	1900	number	sáb|sábado		
+r5p-es-01	[$-es]h AM/PM	45306.2145833333	1900	number	5 a. m.		
+r5p-es-02	[$-es]h AM/PM	45306.7119097222	1900	number	5 p. m.		
+r5m-pt-01	[$-pt]mmm"|"mmmm"|"mmmmm	45306	1900	number	jan|janeiro|j		
+r5m-pt-02	[$-pt]mmm"|"mmmm"|"mmmmm	45337	1900	number	fev|fevereiro|f		
+r5m-pt-03	[$-pt]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar|março|m		
+r5m-pt-04	[$-pt]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr|abril|a		
+r5m-pt-05	[$-pt]mmm"|"mmmm"|"mmmmm	45427	1900	number	mai|maio|m		
+r5m-pt-06	[$-pt]mmm"|"mmmm"|"mmmmm	45458	1900	number	jun|junho|j		
+r5m-pt-07	[$-pt]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul|julho|j		
+r5m-pt-08	[$-pt]mmm"|"mmmm"|"mmmmm	45519	1900	number	ago|agosto|a		
+r5m-pt-09	[$-pt]mmm"|"mmmm"|"mmmmm	45550	1900	number	set|setembro|s		
+r5m-pt-10	[$-pt]mmm"|"mmmm"|"mmmmm	45580	1900	number	out|outubro|o		
+r5m-pt-11	[$-pt]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov|novembro|n		
+r5m-pt-12	[$-pt]mmm"|"mmmm"|"mmmmm	45641	1900	number	dez|dezembro|d		
+r5d-pt-01	[$-pt]ddd"|"dddd	45305	1900	number	dom.|domingo		
+r5d-pt-02	[$-pt]ddd"|"dddd	45306	1900	number	seg.|segunda-feira		
+r5d-pt-03	[$-pt]ddd"|"dddd	45307	1900	number	ter.|terça-feira		
+r5d-pt-04	[$-pt]ddd"|"dddd	45308	1900	number	qua.|quarta-feira		
+r5d-pt-05	[$-pt]ddd"|"dddd	45309	1900	number	qui.|quinta-feira		
+r5d-pt-06	[$-pt]ddd"|"dddd	45310	1900	number	sex.|sexta-feira		
+r5d-pt-07	[$-pt]ddd"|"dddd	45311	1900	number	sáb.|sábado		
+r5p-pt-01	[$-pt]h AM/PM	45306.2145833333	1900	number	5 AM		
+r5p-pt-02	[$-pt]h AM/PM	45306.7119097222	1900	number	5 PM		
+r5h-01	[$-1040C]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mer.|mercredi|sept.|septembre|s		
+r5h-02	[$-2040C]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Wed|Wednesday|Sep|September|S		
+r5h-03	[$-10407]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Mi|Mittwoch|Sep|September|S		
+r5h-04	[$-F40C]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	mer.|mercredi|sept.|septembre|s		
+r5s-01	[>40000]mmmm;[$-40C]mmmm	45306	1900	number	January		
+r5s-02	[>40000]mmmm;[$-40C]mmmm	30000	1900	number	February		
+r5s-03	[>40000][$-40C]mmmm;mmmm	45306	1900	number	janvier		
+r5s-04	[>40000][$-40C]mmmm;mmmm	30000	1900	number	février		
+r5s-05	[$-407]mmmm;[$-40C]mmmm;mmmm	45306	1900	number	Januar		
+r5s-06	[<40000][$-407]mmmm;[>=40000][$-40C]mmmm	45306	1900	number	Januar		
+r5s-07	[<40000][$-407]mmmm;[>=40000][$-40C]mmmm	30000	1900	number	Februar		
+r5s-08	[$-40C]d mmmm yyyy;@	45306	1900	number	15 janvier 2024		
+r5s-09	[$-40C]d mmmm yyyy;@	abc	1900	text	abc		
