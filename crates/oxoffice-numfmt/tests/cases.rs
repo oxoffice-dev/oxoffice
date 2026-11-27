@@ -2,7 +2,7 @@
 //! with the text Excel displayed for it (Excel for Mac 16.115, en-US).
 //! `ours` is set where this crate shows something else on purpose, and
 //! `why` says why. `#####` stands for a cell Excel fills with `#`. Built by
-//! `handoff/xlsx/numfmt/pin.py`; see specs/2026-11-27-number-format-codes.md.
+//! the scripts of `tests/excel/` (its README says how a round is run).
 
 use oxoffice_numfmt::{
     Color, DateKind, DateSystem, Fill, FormatOptions, Locale, NumberFormat, Space, builtin_code,

@@ -118,8 +118,8 @@ One pull request (#365, pull request 4):
 - The crate, its unit tests, and one table-driven test over `crates/oxoffice-numfmt/tests/cases.tsv`: 599 cases
   (528 + a second round of 71 for what the first left open), each a code, a value, a date system, Excel's text
   (its CSV export where `Range.Text` depends on the column width) and, where we differ on purpose, our text and
-  why. The table and the workbooks it was read from are built by `handoff/xlsx/numfmt/cases.py` and `pin.py`
-  (outside the repository).
+  why. `tests/excel/` holds the scripts that build each round's workbooks (`cases.py`) and pin Excel's text
+  into the table (`pin.py`); its README says how a round is run.
 - `oxoffice-chart` formats through it: dates, fractions, sections and conditions reach axes and labels, General
   is Excel's, and `c:date1904` of the chart space sets the date system (`CT_ChartSpace::date_system`,
   `render_chart` takes it). The diagnostic "not supported and its labels use General" now names only codes Excel
