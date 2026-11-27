@@ -44,8 +44,9 @@ under the plan. Producer facts come from LibreOffice 26.2 (probed here), a Googl
 
 The dependency rule gains the third family: no shared crate depends on an `-xlsx` crate, and `-xlsx`, `-docx` and
 `-pptx` crates never depend on each other. `oxoffice-sml` and `oxoffice-chart` keep no edge to the xlsx family.
-`oxoffice-drawing` parses the theme and gains one colour function, `apply_hls_tint`, the SpreadsheetML tint (HLS
-luminance, `CT_Color@tint` of ECMA-376 Part 1), beside the DrawingML ones it has. No WebAssembly crate in this set;
+`oxoffice-drawing` gains one colour function, `apply_hls_tint`, the SpreadsheetML tint (HLS luminance, `CT_Color@tint`
+of ECMA-376 Part 1), beside the DrawingML ones it has; the facade reads the theme's colour scheme itself (PR 5: the
+`oxoffice-drawing` theme model refuses the `50%` percentages of a Strict theme). No WebAssembly crate in this set;
 the facade's core uses nothing `wasm32` lacks, as docx and pptx, so bindings can follow when a user asks.
 
 ### 2. The model
@@ -59,7 +60,7 @@ the facade's core uses nothing `wasm32` lacks, as docx and pptx, so bindings can
 | `styles.xml` | `numFmts`, `fonts`, `fills`, `borders`, `cellStyleXfs`, `cellXfs`, `cellStyles`, `colors`; `dxfs`, `tableStyles`, `extLst` as bytes | new records spliced at the end of their list, its `count` updated |
 | worksheets | on demand, see below | source bytes with edited rows and children spliced |
 | comments, threaded comments, `persons/person.xml`, tables (header row), pivot locations | read only | as read |
-| `theme/theme1.xml` | `oxoffice-drawing` theme, read | as read |
+| `theme/theme1.xml` | its colour scheme, read (`srgbClr`, a `sysClr`'s `lastClr`) | as read |
 | `metadata.xml` | PR 6: `metadataTypes`, the `XLDAPR` `futureMetadata`, `cellMetadata`; the rest as bytes | spliced when a spill formula needs its blocks (section 6) |
 | `calcChain.xml` | not read | removed on a save after an edit (section 3) |
 | everything else: drawings, VML, charts, pivot caches, external links, `vbaProject.bin`, `customXml`, `docProps`, printer settings | bytes | as read |
@@ -197,7 +198,12 @@ its cached value), `formula` (`None` or the displayed form), `stored_formula`, `
 `data_table` or `None`), `array_range`, `stale`, `number_format` (the code, built-in ids resolved by
 `oxoffice-numfmt`), `text` (displayed), `style`. Python numbers are `float` (Excel stores doubles; producers write `1`
 and `1.0` alike); an error is a `CellError`, a `str` subclass (`== "#N/A"` works, `isinstance` tells it from text);
-`Cell.datetime` is a `datetime.datetime` for a number under a date or time format, else `None`.
+`Cell.datetime` is a `datetime.datetime` for a number under a date or time format, else `None` (a duration such as
+`[h]:mm` has none, nor has the 1900 system's serial 60, Excel's 1900-02-29; its day 0 is 1899-12-31). `formula`,
+`stored_formula` and `formula_kind` belong to the cell that holds the formula, `array_range` to every cell of an array
+formula's or data table's range, whose cached values are stale when the formula's are. A cell the sheet does not write
+reads as empty, with its row's style when the row has `customFormat`, else its column's. A bulk read of values past
+10,000,000 cells is refused, naming a smaller range.
 
 **Displayed text**: `oxoffice-numfmt`, en-US, as in a column wide enough (no `####`, `General` at 11 characters);
 booleans `TRUE` / `FALSE`, errors their code, text through the format's text section.
@@ -241,8 +247,9 @@ absent attributes.
                  "resolved": false, "replies": []}]}]}
 ```
 
-`cells --json` adds `stored_formula`, `formula_kind`, `array_range`, `number_format`, `style`. Plain `text`: per
-sheet, `# <name>` then each used row's displayed texts joined by tabs. `--markdown`: per sheet, `## <name>` and a
+`cells --json` adds `stored_formula`, `formula_kind`, `array_range`, `number_format`, `style`. `text` and `comments`
+read every worksheet unless `--sheet` names some; `cells` and `csv` the first visible worksheet unless `--sheet` or a
+sheet prefix names one. Plain `text`: per sheet, `# <name>` then each used row's displayed texts joined by tabs. `--markdown`: per sheet, `## <name>` and a
 table headed by the column letters, the row number first, so every value keeps its address for an edit; `|` escaped,
 line breaks `<br>`.
 

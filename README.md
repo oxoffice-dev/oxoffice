@@ -26,7 +26,7 @@ from Rust, the command line or Python.**
 - 🦀 **One engine, three doors**: a Rust API, an `oxoffice` command for everything that makes sense in a
   shell, and an `oxoffice` Python package that covers nearly all of it (a few calls, such as
   encryption, are Rust only for now) for when the shell is not enough.
-- 📄 **Word and PowerPoint as equals**, with Excel workbooks joining them: they open and save today, the rest is on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap).
+- 📄 **Word and PowerPoint as equals**, with Excel workbooks joining them: they open, read and save today, the rest is on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap).
 - ✍️ **Edits that keep the file intact**: unmodelled XML is carried over verbatim, child order follows the
   schema, and text changes keep their formatting.
 - 🔍 **Real review tools**: list, accept and reject tracked changes, compare two versions into a redline,
@@ -159,22 +159,32 @@ with a few that touch whole files: edits and form operations that cost more as a
 
 ### 📗 Excel
 
-Workbooks arrive step by step ([#365](https://github.com/oxoffice-dev/oxoffice/issues/365)): opening and saving first,
-then reading cells, editing them and creating a workbook.
+Workbooks arrive step by step ([#365](https://github.com/oxoffice-dev/oxoffice/issues/365)): opening, saving,
+reading and making a workbook first, then editing cells.
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
-| Workbooks | ⚠️ | ⚠️ | ⚠️ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind), the date system and, from Rust, each sheet's page setup; a save without an edit keeps every part byte for byte (a package signature that already fails verification gets its mark, as in docx and pptx); `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out. A new workbook (the same bytes every time), a sheet added, column widths, row heights and frozen panes |
-| Cells, formulas and styles | ❌ | ❌ | ❌ | next |
+| Workbooks | ✅ | ⚠️ | ⚠️ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind, used range), the date system, each sheet's page setup; a save without an edit keeps every part byte for byte (a package signature that already fails verification gets its mark, as in docx and pptx); `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out. A new workbook (the same bytes every time), a sheet added, column widths, row heights and frozen panes |
+| Cells, formulas and styles | ✅ | ❌ | ❌ | values, formulas as Excel displays them (shared ones moved to each cell) and as stored, cached values marked stale when the file asks for a recalculation, the text Excel displays, dates, merges, the resolved style; the whole workbook as Markdown, a sheet as CSV; editing comes next |
+| Comments | ✅ | ❌ | ❌ | notes and threads with their replies, authors and resolution |
 | Encryption | ✅ | — | ✅ | open and save with a password, from Rust and Python |
 
 ```bash
+oxoffice xlsx text review.xlsx --markdown                 # every sheet as a table, each value at its address
+oxoffice xlsx cells review.xlsx "Orders!F2:F5" --json     # values, formulas, number formats, styles
+oxoffice xlsx csv review.xlsx --sheet Orders -o orders.csv
+oxoffice xlsx comments review.xlsx
 oxoffice xlsx new --sheet Data --sheet Summary -o book.xlsx
 oxoffice xlsx edit book.xlsx --map edits.json -o formatted.xlsx   # [{"columns": "A:C", "width": 20}, {"rows": "1", "height": 30}, {"freeze": "A2"}]
 ```
 
 ```python
 from oxoffice.xlsx import Workbook
+
+ws = Workbook("review.xlsx").sheet("Orders")
+total = ws.cell("F38")
+print(total.formula, total.value, total.text)   # SUM(F2:F37) 206459.11 206,459.11
+rows = ws.values("A1:G37")                      # nested lists, one native call
 
 wb = Workbook()                      # one empty sheet, Calibri 11
 data = wb.add_sheet("Data")
@@ -185,7 +195,15 @@ wb.save("book.xlsx")
 ```
 
 ```rust
-let mut workbook = oxoffice_xlsx::Workbook::new();
+use oxoffice_xlsx::Workbook;
+
+let workbook = Workbook::open("review.xlsx")?;
+let sheet = workbook.sheet("Orders").expect("the Orders sheet");
+for cell in sheet.cells("F2:F5")? {
+    println!("{} {:?} {}", cell.address, cell.formula, cell.text);
+}
+
+let mut workbook = Workbook::new();
 let mut data = workbook.add_sheet("Data")?;
 data.set_column_width("A:C", 20.0)?;
 data.set_row_height("1", 30.0)?;
