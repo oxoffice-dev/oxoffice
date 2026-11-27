@@ -714,10 +714,10 @@ fn token_text(item: &Item) -> String {
     }
 }
 
-/// The operations of a replacement: the tokens of each whole match deleted,
-/// those of its value inserted, every other token kept. `None` when the
-/// matches found in the text before do not give the text after, as when the
-/// replacement could not reach one of them.
+/// The operations of a replacement: the tokens of each whole match the
+/// replacement wrote deleted, those of its value inserted, every other token
+/// kept, a match it could not reach included. `None` when the matches found
+/// in the text before do not explain the text after.
 fn replace_ops(
     old: &Flat,
     new: &Flat,
@@ -869,8 +869,9 @@ pub(super) fn redline_xml(
         ));
     }
     // A replacement deletes each whole match and inserts the whole value, as
-    // Word's tracked Replace All does; any other edit, or a replacement whose
-    // matches this reading does not find, is aligned word by word.
+    // Word's tracked Replace All does, at each match the replacement wrote;
+    // any other edit, or a replacement its matches do not explain, is aligned
+    // word by word.
     let replaced = tracking.pattern.as_deref().and_then(|pattern| {
         let (old, new) = (by_character(&old), by_character(&new));
         let (old_tokens, new_tokens) = (old.tokens(), new.tokens());

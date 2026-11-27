@@ -394,8 +394,8 @@ What PR 1a settles:
   first run's formatting, is written as deleted and inserted. Compare writes that as a formatting change; PR 2 makes
   the session do the same. An edit that changes formatting and nothing else is refused until PR 2.
 - **Session date.** `RevisionDate::Now` is the time the session starts: every revision of a session takes it.
-- **Split insertions.** Text inserted inside another author's insertion splits it; both halves keep its id, as one
-  revision the resolver selects by that id.
+- **Split insertions.** Text inserted inside another author's insertion splits it; each later part takes an id of its
+  own, as Word writes them (W1, W2): one id per revision element.
 - **Refused in PR 1a**, each with the plain message "<what> is not recorded as a tracked change yet":
   - a replacement in a text box, and in a header or footer table or control;
   - `try_replace_text_at` on a table or block control (a paragraph is tracked);
@@ -403,8 +403,9 @@ What PR 1a settles:
   - the removal or insertion of a drawing, a field or a reference, and text put in a new link or control.
 - **Notes** are tracked through their part's XML, paragraph by paragraph, as replacement edits them.
 - **Replacements** (W12): each whole match is deleted and the whole value inserted, read on the paragraph's text
-  character by character; where the matches found there do not give the paragraph after the replacement (one the
-  replacement could not reach), the paragraph is aligned word by word instead, as other edits are.
+  character by character. A match the replacement could not reach stays as it was, and so does one whose value is its
+  own text. Where the matches found there do not explain the paragraph after the replacement, the paragraph is
+  aligned word by word instead, as other edits are.
 
 ## Open questions
 

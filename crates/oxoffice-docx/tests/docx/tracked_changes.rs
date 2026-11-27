@@ -1092,6 +1092,25 @@ fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
             "a replacement in a text box",
         ),
         (
+            "a cell paragraph of a table in a text box, at its location",
+            body(
+                &(run("See ")
+                    + &text_box_run(
+                        1,
+                        &format!(
+                            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>{}"#,
+                            paragraph(&run("Boxed old text")),
+                            paragraph("")
+                        ),
+                    )),
+            ),
+            |doc| {
+                let location = located(doc.document(), StoryKind::TableCell);
+                refused(doc.try_replace_text_at(&location, "old text", "new text", None))
+            },
+            "a replacement in a text box",
+        ),
+        (
             "a table in a header",
             {
                 let mut doc = body(&run("Body."));

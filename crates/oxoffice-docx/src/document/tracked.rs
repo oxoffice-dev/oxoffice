@@ -237,6 +237,26 @@ impl Document {
     }
 }
 
+/// Whether the cell story `story` lies in a text box, as a table a text box
+/// holds: its owner's ancestors read up to its start.
+fn cell_in_text_box(document: &Document, story: &StoryId) -> Result<bool> {
+    let (source, owner) = document.story_source_and_owner(story)?;
+    let mut reader =
+        oxoffice_core::xml_reader::Reader::from_reader(&source.xml[..owner.full.start]);
+    let mut open = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(element)) => open.push(element.local_name().as_ref() == b"txbxContent"),
+            Ok(Event::End(_)) => {
+                open.pop();
+            }
+            Ok(Event::Eof) => return Ok(open.contains(&true)),
+            Ok(_) => {}
+            Err(error) => return Err(Error::Other(format!("cell story XML: {error}"))),
+        }
+    }
+}
+
 impl TrackedDocument<'_> {
     /// Who and when the session's revisions are by.
     pub fn changes(&self) -> &TrackedChanges {
@@ -406,7 +426,10 @@ impl TrackedDocument<'_> {
                 "a replacement in a whole table or control",
             ));
         }
-        if location.story().kind() == StoryKind::TextBox {
+        if location.story().kind() == StoryKind::TextBox
+            || location.story().kind() == StoryKind::TableCell
+                && cell_in_text_box(self.document, location.story())?
+        {
             return Err(super::redline::refused("a replacement in a text box"));
         }
         oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
