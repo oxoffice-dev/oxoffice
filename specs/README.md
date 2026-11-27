@@ -112,4 +112,5 @@ dependency bumps and documentation.
 | 2026-11-26 | [A Word part written with the default namespace can be edited](2026-11-26-word-parts-with-a-default-namespace.md) | shipped |
 | 2026-11-26 | [Resolving a removed last mark and the controls a resolution empties](2026-11-26-resolving-a-removed-last-mark.md) | accepted |
 | 2026-11-27 | [A container empty in one version compares as one empty paragraph](2026-11-27-an-empty-container-compares-as-one-empty-paragraph.md) | accepted |
+| 2026-11-27 | [Workbooks: open and save without loss, read and edit cells, a new workbook](2026-11-27-xlsx-open-read-edit.md) | accepted |
 | 2026-11-27 | [Number format codes to the text Excel displays](2026-11-27-number-format-codes.md) | accepted |
