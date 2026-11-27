@@ -46,6 +46,7 @@ impl Document {
         index: usize,
         edit: impl FnOnce(&mut Table<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
+        self.refuse_under_tracked_changes("a change of table properties")?;
         let current = nth_table_in_body_ref(&self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
         let mut edited = current.clone();
@@ -67,6 +68,7 @@ impl Document {
         row: usize,
         edit: impl FnOnce(&mut crate::table::Row<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
+        self.refuse_under_tracked_changes("a change of row properties")?;
         let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
         // As the whole-table route compares row controls whole, a table that
@@ -97,6 +99,7 @@ impl Document {
         cell: usize,
         edit: impl FnOnce(&mut crate::table::Cell<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
+        self.refuse_under_tracked_changes("a change of cell properties")?;
         let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
             .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
         // Likewise for row and cell controls.
@@ -471,6 +474,9 @@ impl Document {
         cell: usize,
         text: &str,
     ) -> Result<()> {
+        if self.tracking.is_some() {
+            return self.set_cell_text_tracked(table, row, cell, text);
+        }
         let mut candidate = self.clone_for_staging();
         candidate
             .table_mut(table)

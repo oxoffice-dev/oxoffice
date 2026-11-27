@@ -694,6 +694,15 @@ impl Document {
     #[doc(hidden)]
     pub fn replace_paragraph_xml(&mut self, location: &ContentLocation, xml: &str) -> Result<()> {
         self.validate_model_resource_limits()?;
+        // Under tracked changes, the new paragraph written as tracked changes
+        // of the one it replaces.
+        if self.tracking.is_some() {
+            let paragraph = CT_P::from_xml_fragment_checked(xml.as_bytes())?;
+            return self.edit_story_paragraph(location, |edited| {
+                *edited.inner = paragraph;
+                Ok(())
+            });
+        }
         if let Some(slot) = direct_body_paragraph_slot(location) {
             match self.try_replace_plain_body_paragraph(slot, xml)? {
                 None => {}

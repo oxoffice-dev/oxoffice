@@ -854,6 +854,10 @@ impl PyTable {
         let index = self.validate(py)?;
         let related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
+        document
+            .inner
+            .refuse_under_tracked_changes("a change of table properties")
+            .map_err(|e| docx_to_pyerr(py, e))?;
         let mut candidate = document.inner.clone_for_staging();
         let style_id = checked_table_style(py, &mut candidate, value)?;
         TableLocation::new(index, &related)

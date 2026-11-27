@@ -2027,6 +2027,10 @@ impl PyDocument {
         candidate: oxoffice_docx::Document,
         operation: &'static str,
     ) -> PyResult<()> {
+        // Not every route here publishes, so a session refuses it first.
+        self.inner
+            .refuse_under_tracked_changes("a change of table properties")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let (pieces, inventory) = self
             .pieces
             .as_ref()

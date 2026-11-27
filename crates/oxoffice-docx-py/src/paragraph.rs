@@ -251,9 +251,8 @@ impl ParagraphLocation {
         edit: impl FnOnce(&mut oxoffice_docx::Paragraph<'_>) -> oxoffice_docx::Result<T>,
     ) -> oxoffice_docx::Result<T> {
         match self {
-            Self::Body(index) => edit(&mut document.paragraph_mut(*index).ok_or_else(|| {
-                oxoffice_docx::Error::Other("paragraph index out of range".to_owned())
-            })?),
+            // Under tracked changes, the edit is written as revisions.
+            Self::Body(index) => document.edit_paragraph_mut(*index, edit),
             Self::Cell {
                 table,
                 row,
@@ -620,9 +619,15 @@ impl PyParagraph {
                     .map(|appended| {
                         let mut segments = self.current_path(&document).segs;
                         segments.push(PathSeg::Run(appended.0));
+                        // Under tracked changes the run went into an
+                        // insertion, which its path now passes through.
+                        let run_path = match document.inner.tracks_changes() {
+                            true => tracked_run_path(py, &document.inner, &location, appended.0)?,
+                            false => appended.1,
+                        };
                         document
                             .capture_snapshot(segments)
-                            .map(|path| (path, appended.1))
+                            .map(|path| (path, run_path))
                     })
                     .transpose()?
             };
@@ -672,9 +677,12 @@ impl PyParagraph {
                     .expect("the appended run has an accepted source path");
                 Ok((run_index, run_path))
             };
-            let (run_index, run_path) = location
+            let (run_index, mut run_path) = location
                 .edit(&mut candidate, append)
                 .map_err(|error| crate::docx_to_pyerr(py, error))?;
+            if candidate.tracks_changes() {
+                run_path = tracked_run_path(py, &candidate, &location, run_index)?;
+            }
             let route = document
                 .paragraph_route(&location, None)
                 .map_err(|error| crate::docx_to_pyerr(py, error))?;
@@ -1408,4 +1416,18 @@ impl PyParagraphIterator {
         )
         .map(Some)
     }
+}
+
+/// The source path of accepted run `index` of the paragraph at `location`,
+/// read again after a tracked edit wrote the run inside an insertion.
+fn tracked_run_path(
+    py: Python<'_>,
+    document: &oxoffice_docx::Document,
+    location: &ParagraphLocation,
+    index: usize,
+) -> PyResult<oxoffice_docx::AcceptedRunPath> {
+    location
+        .read(document, |paragraph| paragraph.run_path(index))
+        .map_err(|error| crate::docx_to_pyerr(py, error))?
+        .ok_or_else(|| PyValueError::new_err("the appended run has no source path"))
 }
