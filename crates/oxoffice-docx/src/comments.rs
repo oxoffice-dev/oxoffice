@@ -1959,8 +1959,9 @@ impl Document {
                     | crate::StoryKind::TextBox
             )
         {
-            let mut identifiers = self.identifiers.clone();
-            let id = identifiers.reserve_comment_id()?;
+            // Reserved in place: the comment parts, styles and their
+            // relationships this adds reserve in the same registry.
+            let id = self.identifiers.reserve_comment_id()?;
             self.anchor_story_range(&range, RangeAnchor::Comment(id), "comment", false)?;
             self.ensure_comment_models()?;
             let styles = self.prepare_comment_authoring()?;
@@ -1969,7 +1970,6 @@ impl Document {
             self.style_written_comment_reference(range.end.location.story(), id, &styles.1)?;
             self.ensure_comment_relationships()?;
             self.push_comment_definition(id, author, initials, text, date, &styles)?;
-            self.identifiers = identifiers;
             self.comments_dirty = true;
             self.invalidate_layout();
             return Ok(id);
@@ -1994,8 +1994,7 @@ impl Document {
             ));
         }
 
-        let mut identifiers = self.identifiers.clone();
-        let id = identifiers.reserve_comment_id()?;
+        let id = self.identifiers.reserve_comment_id()?;
         self.ensure_comment_models()?;
         let styles = self.prepare_comment_authoring()?;
         if range.start.location == range.end.location {
@@ -2033,7 +2032,6 @@ impl Document {
         // not written yet.
         self.ensure_comment_relationships()?;
         self.push_comment_definition(id, author, initials, text, date, &styles)?;
-        self.identifiers = identifiers;
         self.comments_dirty = true;
         self.invalidate_layout();
         Ok(id)
@@ -2127,8 +2125,7 @@ impl Document {
         }
         self.ensure_comment_models()?;
         self.ensure_comment_relationships()?;
-        let mut identifiers = self.identifiers.clone();
-        let id = identifiers.reserve_comment_id()?;
+        let id = self.identifiers.reserve_comment_id()?;
         let styles = self.prepare_comment_authoring()?;
         self.anchor_existing_comment_on_text(
             id,
@@ -2138,7 +2135,6 @@ impl Document {
             Some(&styles.1),
         )?;
         self.push_comment_definition(id, author, options.initials, text, date, &styles)?;
-        self.identifiers = identifiers;
         self.comments_dirty = true;
         self.invalidate_layout();
         Ok(id)

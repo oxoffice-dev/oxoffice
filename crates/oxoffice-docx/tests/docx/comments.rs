@@ -1614,3 +1614,43 @@ fn removing_a_commented_note_is_left_to_the_staged_route() {
     doc.remove_footnote(note).unwrap();
     assert!(doc.footnotes().iter().all(|(id, _)| *id != note));
 }
+
+/// A package with no styles part gets one with its first comment on text: a
+/// relationship added afterwards takes an id neither the comment's parts nor
+/// the styles part hold.
+#[test]
+fn a_first_comment_on_text_reserves_the_styles_part_it_adds() {
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(doc_with(&["alpha beta"]).to_bytes().unwrap()))
+            .unwrap();
+    package.remove_part("/word/styles.xml");
+    package.content_types.remove_override("/word/styles.xml");
+    let relationships = package.get_part_rels_mut("/word/document.xml").unwrap();
+    relationships
+        .items
+        .retain(|rel| !rel.rel_type.ends_with("/styles"));
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    // A refused comment drops its staged copy: the next one takes the first id.
+    assert!(
+        doc.add_comment_on_text("gamma", "Ada", "x", TextCommentOptions::default())
+            .is_err()
+    );
+    let id = doc
+        .add_comment_on_text("beta", "Ada", "x", TextCommentOptions::default())
+        .unwrap();
+    assert_eq!(id, 0);
+    let link = doc.add_hyperlink_relationship("https://example.com/");
+    let saved = doc.to_bytes().unwrap();
+    let package = OpcPackage::from_reader(Cursor::new(saved.clone())).unwrap();
+    let relationships = &package.get_part_rels("/word/document.xml").unwrap().items;
+    let ids = relationships
+        .iter()
+        .map(|rel| rel.id.as_str())
+        .collect::<Vec<_>>();
+    let distinct = ids.iter().collect::<std::collections::HashSet<_>>();
+    assert_eq!(distinct.len(), ids.len(), "{ids:?}");
+    assert!(ids.contains(&link.as_str()), "{ids:?}");
+    assert_eq!(Document::from_bytes(&saved).unwrap().comments().len(), 1);
+}
