@@ -1,0 +1,57 @@
+# How a stored formula is displayed and written back. both: to_displayed(stored) is displayed, to_stored(displayed)
+# is stored and check_stored(stored) passes; write: to_stored(displayed) is stored (Excel's displayed forms).
+both	_xlfn.XLOOKUP(A1,B:B,C:C)	XLOOKUP(A1,B:B,C:C)
+both	_xlfn._xlws.SORT(B2:B7,,-1)	SORT(B2:B7,,-1)
+both	_xlfn._xlws.FILTER(A2:A9,B2:B9>0)	FILTER(A2:A9,B2:B9>0)
+both	_xlfn.CONCAT("_xlfn.",A1)	CONCAT("_xlfn.",A1)
+# Prefixed names the table lacks keep their prefix (Google, LibreOffice).
+both	_xlws.SORT(B2:B7,,-1)	_xlws.SORT(B2:B7,,-1)
+both	_xlfn.ORG.LIBREOFFICE.REGEX(A1,"x")	_xlfn.ORG.LIBREOFFICE.REGEX(A1,"x")
+both	_xlfn.SUM(A1)	_xlfn.SUM(A1)
+both	ISO.CEILING(A1)	ISO.CEILING(A1)
+both	_xlfn.SINGLE(A1:A10)	@A1:A10
+both	_xlfn.SINGLE(INDEX(A:A,2))*2	@INDEX(A:A,2)*2
+both	_xlfn.SINGLE(A1+B1)	SINGLE(A1+B1)
+both	_xlfn.SINGLE((A1))	@(A1)
+both	_xlfn.SINGLE(A1 )	SINGLE(A1 )
+both	_xlfn.SINGLE(A1) B1	@A1 B1
+# Where @ would take more than the call held.
+both	_xlfn.SINGLE(A1):B2	SINGLE(A1):B2
+both	_xlfn.SINGLE(f)(2)	SINGLE(f)(2)
+both	SUM(_xlfn.ANCHORARRAY(D2))	SUM(D2#)
+both	B1:_xlfn.ANCHORARRAY(D2)	B1:D2#
+both	Data:_xlfn.ANCHORARRAY(Sheet2!D2)	Data:ANCHORARRAY(Sheet2!D2)
+both	_xlfn.ANCHORARRAY(A1:B2)	ANCHORARRAY(A1:B2)
+both	_xlfn.LET(_xlpm.x,2,_xlpm.y,_xlpm.x+1,_xlpm.x*_xlpm.y)	LET(x,2,y,x+1,x*y)
+# A parameter shadows a defined name in its scope only; a LET name is not in scope in its own value.
+both	_xlfn.LET(_xlpm.TaxRate,0.2,A1*_xlpm.TaxRate)+TaxRate	LET(TaxRate,0.2,A1*TaxRate)+TaxRate
+both	_xlfn.LET(_xlpm.x,x+1,_xlpm.x)	LET(x,x+1,x)
+both	_xlfn.LAMBDA(_xlpm.a,_xlpm.b,_xlpm.a+_xlpm.b)(1,a)	LAMBDA(a,b,a+b)(1,a)
+both	_xlfn.MAP(A1:A3,_xlfn.LAMBDA(_xlpm.v,_xlfn.LET(_xlpm.w,_xlpm.v,_xlpm.w+_xlpm.v)))	MAP(A1:A3,LAMBDA(v,LET(w,v,w+v)))
+both	_xlfn.LAMBDA(_xlpm.x,_xlop.y,IF(_xlfn.ISOMITTED(_xlpm.y),_xlpm.x,_xlpm.x+_xlpm.y))	LAMBDA(x,[y],IF(ISOMITTED(y),x,x+y))
+both	_xlpm.x+1	_xlpm.x+1
+both	Expenses[[#This Row],[Quantity]]	Expenses[[#This Row],[Quantity]]
+both	SUM( A1 , B1 )	SUM( A1 , B1 )
+# Stored by Excel for Mac 16.115 (en-US), typed as displayed.
+both	_xlfn.GROUPBY(A20:A22,B20:B22,_xleta.SUM)	GROUPBY(A20:A22,B20:B22,SUM)
+both	_xlfn.PIVOTBY(A20:A22,A20:A22,B20:B22,_xleta.SUM)	PIVOTBY(A20:A22,A20:A22,B20:B22,SUM)
+both	_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2),_xlpm.f(3))	LET(f,LAMBDA(x,x*2),f(3))
+both	_xlfn.LET(_xlpm.x,A20+1,_xlpm.x)	LET(x,A20+1,x)
+both	_xlfn.LET(_xlpm.x,1,_xlfn.LET(_xlpm.x,_xlpm.x+1,_xlpm.x))	LET(x,1,LET(x,x+1,x))
+both	_xlfn.SINGLE((A20+B20))	@(A20+B20)
+both	_xlfn.ANCHORARRAY(B6)	B6#
+# Function values where a function is taken, and nowhere else.
+both	_xlfn.GROUPBY(A1:A3,B1:B3,_xlfn.HSTACK(_xleta.SUM,_xleta.AVERAGE))	GROUPBY(A1:A3,B1:B3,HSTACK(SUM,AVERAGE))
+both	_xlfn.BYROW(A1:B3,_xleta.SUM)	BYROW(A1:B3,SUM)
+both	_xlfn.HSTACK(_xleta.SUM,Rate)*Rate	HSTACK(_xleta.SUM,Rate)*Rate
+both	_xlfn.LET(_xlpm.sum,_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2),_xlfn.MAP(A1:A3,_xlpm.sum))	LET(sum,LAMBDA(x,x*2),MAP(A1:A3,sum))
+# 3D references to month tabs, references to a deleted sheet, names and sheets not in ASCII.
+both	SUM(Jan:Dec!B2)	SUM(Jan:Dec!B2)
+both	_xlfn.XLOOKUP(1,#REF!A1:A9,#REF!$B$1:$B$9)	XLOOKUP(1,#REF!A1:A9,#REF!$B$1:$B$9)
+both	_xlfn.XLOOKUP(Лист1!Итого,'Лист 1'!A:A,合計)	XLOOKUP(Лист1!Итого,'Лист 1'!A:A,合計)
+both	_xlfn.LET(_xlpm.Итог,1,_xlpm.итог*2)	LET(Итог,1,итог*2)
+write	_xlfn.xlookup(A1,B:B,C:C)	=xlookup(A1,B:B,C:C)
+write	Expenses[[#This Row],[Quantity]]*[[#This Row],[Unit price]]	Expenses[@Quantity]*[@[Unit price]]
+write	SUM(Expenses[[#This Row],[Q1]:[Q4]])+COUNTA(Expenses[#This Row])	SUM(Expenses[@[Q1]:[Q4]])+COUNTA(Expenses[@])
+write	_xlfn.SINGLE( A1)	@ A1
+write	[1]!Sales[[#This Row],[Q1]]	[1]!Sales[@Q1]

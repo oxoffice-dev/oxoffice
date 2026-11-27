@@ -55,6 +55,9 @@ crates/
   oxoffice-pptx-wasm     WebAssembly bindings
 
   # SpreadsheetML
+  oxoffice-xlsx-formula  formula tokens, stored and displayed forms, shared
+                         formula members moved, the syntax check and the
+                         function table (prefixes, argument counts)
   oxoffice-xlsx-oxml     the parts of a workbook: workbook, shared strings,
                          styles, worksheets (the row index and the splice
                          writer), page setup; Strict read as Transitional
