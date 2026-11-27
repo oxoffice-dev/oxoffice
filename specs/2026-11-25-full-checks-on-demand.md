@@ -73,9 +73,11 @@ each platform). The maintainer asked for a drastic cut and no more growth.
 - The Rust and Python full tests run on Linux only: the render is the same
   bytes on every platform (ci.yml already skips it on macOS and Windows) and
   the workflow walks are platform-free; ci.yml runs every test on the three.
-- The Rust tests run as three shards side by side (render and writings,
+- The Rust tests run as four shards side by side (render, writings,
   compare, the rest), split by libtest name filters; the Python tests run in
-  their own job, beside them.
+  their own job, beside them. The writings walk alone took 88 minutes under
+  debug assertions (every edit checks the whole document there): it runs
+  with the `scaling` profile, without them, as in the CI of pull requests.
 - Scaling runs on Linux and Windows (Windows stands for the other
   platforms); the macOS runners, the scarcest, run nothing here.
 - Budget: about an hour, the longest job. A set added takes the place of

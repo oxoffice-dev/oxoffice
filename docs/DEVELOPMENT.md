@@ -325,8 +325,9 @@ merge variant).
   every merge has its own verdict. See
   [the spec](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
 - **The full sets run on demand** (`full-checks.yml`, "Full checks", about
-  an hour, no schedule): on Linux, the Rust tests (three shards side by
-  side) and the Python tests under debug assertions with the whole render
+  an hour, no schedule): on Linux, the Rust tests (four shards side by
+  side; the writings walk without debug assertions) and the Python tests
+  under debug assertions with the whole render
   corpus and every producer's copy in the workflow walks, and the stack of a
   release-profile wheel; every scaling call on Linux and Windows. The render
   is the same bytes on every platform and the walks are platform-free, so

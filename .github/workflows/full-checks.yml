@@ -40,20 +40,29 @@ env:
 # save none: the 10 GB of the Actions cache stay for main's. The debug builds
 # compile from scratch; nobody waits for them.
 jobs:
-  # Three shards side by side, each building the tests once; the libtest
+  # Four shards side by side, each building the tests once; the libtest
   # filters split the test names of every binary, the shards' union is all
-  # of them.
+  # of them. The writings walk runs without debug assertions (the `scaling`
+  # profile of the CI of main, whose cache it reuses): under them every edit
+  # checks the whole document, and the walk took 88 minutes of a 95-minute
+  # run (2026-11-27).
   rust:
     name: Full Rust tests (${{ matrix.shard.name }})
     strategy:
       fail-fast: false
       matrix:
         shard:
-          - name: render and writings
-            filter: "render:: equivalent_writings::"
+          - name: render
+            profile: ci
+            filter: "render::"
+          - name: writings
+            profile: scaling
+            filter: "equivalent_writings::"
           - name: compare
+            profile: ci
             filter: "revisions_and_compare::"
           - name: rest
+            profile: ci
             filter: "--skip render:: --skip equivalent_writings:: --skip revisions_and_compare::"
     runs-on: ubuntu-latest
     steps:
@@ -63,17 +72,18 @@ jobs:
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # The test jobs' cache: its downloaded crates; the `ci` profile
-          # itself builds from scratch.
+          # The test jobs' cache: its downloaded crates and the `scaling`
+          # build; the `ci` profile builds from scratch.
           shared-key: test
           save-if: false
       - name: Rust integration tests
         env:
           OXOFFICE_RENDER: full
           OXOFFICE_WORKFLOWS: full
+          PROFILE: ${{ matrix.shard.profile }}
           FILTER: ${{ matrix.shard.filter }}
         # FILTER is split into words on purpose.
-        run: cargo test --profile ci --locked --workspace $PY_CRATES --test '*' -- $FILTER
+        run: cargo test --profile "$PROFILE" --locked --workspace $PY_CRATES --test '*' -- $FILTER
 
   python:
     name: Full Python tests (ubuntu-latest)
