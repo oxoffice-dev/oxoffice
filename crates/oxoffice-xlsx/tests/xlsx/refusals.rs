@@ -16,7 +16,8 @@ fn compound_file(streams: &[&str]) -> Vec<u8> {
     let mut file = cfb::CompoundFile::create(Cursor::new(Vec::new())).expect("compound file");
     for stream in streams {
         if let Some((storage, _)) = stream.rsplit_once('/') {
-            file.create_storage_all(format!("/{storage}")).expect("storage");
+            file.create_storage_all(format!("/{storage}"))
+                .expect("storage");
         }
         file.create_stream(format!("/{stream}"))
             .expect("stream")

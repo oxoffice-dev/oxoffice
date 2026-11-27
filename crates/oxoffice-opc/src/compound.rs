@@ -122,7 +122,11 @@ fn directory_names(bytes: &[u8]) -> Option<Vec<String>> {
                 .chunks_exact(2)
                 .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
                 .collect();
-            let links = [u32_at(entry, 0x44)?, u32_at(entry, 0x48)?, u32_at(entry, 0x4C)?];
+            let links = [
+                u32_at(entry, 0x44)?,
+                u32_at(entry, 0x48)?,
+                u32_at(entry, 0x4C)?,
+            ];
             entries.push(Some((String::from_utf16_lossy(&units), links)));
         }
         current = next(current)?;

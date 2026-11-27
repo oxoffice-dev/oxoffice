@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::namespaces::STRICT_MAIN;
 use crate::part::{Shape, TypedPart};
 use crate::xml::{Element, Result};
+use crate::xstring;
 
 /// The children of a workbook, in schema order.
 pub const WORKBOOK_CHILDREN: [&str; 19] = [
@@ -53,8 +54,9 @@ pub struct WorkbookXml {
 pub struct SheetRecord<'a>(pub &'a Element);
 
 impl SheetRecord<'_> {
+    /// The name, as its tab shows it: `_xHHHH_` escapes read.
     pub fn name(&self) -> String {
-        self.0.tag.get("name").unwrap_or_default()
+        xstring::decode(&self.0.tag.get("name").unwrap_or_default()).into_owned()
     }
 
     pub fn sheet_id(&self) -> Option<u32> {
@@ -186,5 +188,21 @@ impl WorkbookXml {
     /// The prefix new elements are written with.
     pub fn prefix(&self) -> &str {
         self.part.prefix()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sheet_name_reads_its_escapes() {
+        let xml = concat!(
+            r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="urn:r">"#,
+            r#"<sheets><sheet name="Q_x005F_x0031_ data" sheetId="1" r:id="rId1"/></sheets></workbook>"#
+        );
+        let workbook = WorkbookXml::parse(Arc::new(xml.as_bytes().to_vec())).unwrap();
+        let names: Vec<_> = workbook.sheets().map(|sheet| sheet.name()).collect();
+        assert_eq!(names, ["Q_x0031_ data"]);
     }
 }

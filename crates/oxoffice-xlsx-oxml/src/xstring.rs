@@ -8,7 +8,8 @@ use std::borrow::Cow;
 /// Whether `bytes` holds an escape `_xHHHH_` at `at`.
 fn escape_at(bytes: &[u8], at: usize) -> Option<u32> {
     let candidate = bytes.get(at..at + 7)?;
-    if candidate[0] != b'_' || !candidate[1].eq_ignore_ascii_case(&b'x') || candidate[6] != b'_' {
+    // A lowercase `x` only, as Excel, LibreOffice and openpyxl read them.
+    if candidate[0] != b'_' || candidate[1] != b'x' || candidate[6] != b'_' {
         return None;
     }
     let digits = std::str::from_utf8(&candidate[2..6]).ok()?;
@@ -79,6 +80,7 @@ mod tests {
             ("_x0041_", "_x005F_x0041_"),
             ("tab\there", "tab\there"),
             ("_x12_", "_x12_"),
+            ("Ref_X0041_", "Ref_X0041_"),
         ] {
             assert_eq!(encode(text), stored, "{text:?}");
             assert_eq!(decode(stored), text, "{stored:?}");
