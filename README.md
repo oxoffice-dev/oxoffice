@@ -164,7 +164,7 @@ then reading cells, editing them and creating a workbook.
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
-| Workbooks | ⚠️ | ⚠️ | ⚠️ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind), the date system and, from Rust, each sheet's page setup; a save without an edit keeps every part byte for byte; `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out. A new workbook (the same bytes every time), a sheet added, column widths, row heights and frozen panes |
+| Workbooks | ⚠️ | ⚠️ | ⚠️ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind), the date system and, from Rust, each sheet's page setup; a save without an edit keeps every part byte for byte (a package signature that already fails verification gets its mark, as in docx and pptx); `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out. A new workbook (the same bytes every time), a sheet added, column widths, row heights and frozen panes |
 | Cells, formulas and styles | ❌ | ❌ | ❌ | next |
 | Encryption | ✅ | — | ✅ | open and save with a password, from Rust and Python |
 

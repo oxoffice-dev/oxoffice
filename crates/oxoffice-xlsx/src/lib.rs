@@ -7,9 +7,11 @@
 //! XML reads as Transitional and keeps its namespaces.
 //!
 //! What the facade does not model is kept as it was read: a save without an
-//! edit writes every part back byte for byte. A save is staged in a sibling
-//! file and renamed over its path, and refuses the file the workbook was
-//! opened from unless [`SaveOptions::overwrite_source`] is set.
+//! edit writes every part back byte for byte (a package signature that
+//! already fails verification gets its mark, as in docx and pptx). A save is
+//! staged in a sibling file and renamed over its path, and refuses the file
+//! the workbook was opened from unless [`SaveOptions::overwrite_source`] is
+//! set.
 //!
 //! Positions are 0-based, like every index of the oxoffice packages; the
 //! command line counts from 1.

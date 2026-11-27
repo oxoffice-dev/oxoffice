@@ -142,7 +142,8 @@ recalculates on open, Google always does. Only a workbook that holds a formula g
 part, found by one scan of the bytes, kept): one that holds none has no cached value to go stale, its save sets and
 removes nothing and Excel does not ask to save a file it had no need to calculate; an edit that writes a formula sets
 both whatever the scan found. A written formula has no `<v>` and no `t`. An unedited workbook saved
-without `drop_cached_values` (below) is byte for byte the file it was read from.
+without `drop_cached_values` (below) is byte for byte the file it was read from, except that a package signature that
+already fails verification gets its mark (section 8), as in docx and pptx.
 
 LibreOffice ignores `fullCalcOnLoad` by default (probed: "Recalculation on file load" is "never"). It computes the
 formulas without `<v>` and every shared-formula cell, and shows the other old values until a recalculation (that
