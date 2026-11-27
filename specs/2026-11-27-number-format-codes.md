@@ -30,7 +30,8 @@ every rule below was checked in Excel for Mac 16.115 (en-US) on the case table, 
 | `format_text(text)` | through the text section, the text as it is without one |
 | `date_kind()`, `is_date_format(code)` | `Date`, `Time`, `DateTime` or `Duration` (`[h]`) when a positive number shows as one, for a reader that types cells |
 | `builtin_code(id, Locale)` | a built-in id (a style with no `numFmt` record) to its code; `None` shows as General |
-| `shows_foreign_names()` | a section tagged with another language than English shows month or day names, which this crate writes in English for now |
+| `shows_unknown_names()` | the code is tagged with a language `names` holds no table of (`[$-411]mmmm`) and shows month names, day names or a day period: this crate writes them in English, Excel in that language |
+| `names` | the month names, day names and day periods of the languages below, by region, shared with Word's date controls (`oxoffice-docx-oxml` depends on this crate for them) |
 | `FormatOptions` | `date_system` (`Date1900`, `Date1904`), `locale` (`EnUs` only, `non_exhaustive`) |
 
 `Formatted` carries what the text export and a render need, without layout code:
@@ -87,10 +88,13 @@ A literal-only or fraction section shows the minus of a nonzero value even when 
 | after 9999-12-31 (2958465, 2957003): overflow | |
 | the value rounds to the second, or to the decimals shown (`.0` to `.000`), before the date is taken, in decimal (12:00:00.4999999999968 is noon) | `m/d/yyyy`: 45306.9999999 → `1/16/2024` |
 | `m`/`mm` is the minute right after an hour or right before a second (literals between them aside), the month elsewhere | `h "h" m "m"` → `17 h 5 m` |
-| `y`, `yy` two digits; `yyy` and more, and `e`, four; `mmm`, `mmmm`, `mmmmm`, `ddd`, `dddd` English names | |
+| `y`, `yy` two digits; `yyy` and more, and `e`, four; `mmm`, `mmmm`, `mmmmm`, `ddd`, `dddd` the names of the locale (English), or of the tag's language | |
 | `AM/PM` shows `AM`/`PM` whatever its case; `A/P` the letter as written | `a/p` → `p` |
+| under a language tag, every spelling (`AM/PM`, `am/pm`, `A/P`, `a/p`) shows the designator of the tag's region: `AM` (en-US, fr-FR, de-DE...), `am` (en-GB), `a.m.` (fr-CA), `a. m.` (es-MX) | `[$-809]h A/P`: 5 am |
 | `[h]`, `[mm]`, `[ss]`: the whole duration in that unit | `[h]:mm:ss`: 1.5 → `36:00:00` |
 | `[$-F800]`, `[$-x-sysdate]`: the long date `dddd, mmmm d, yyyy`; `[$-F400]`, `[$-x-systime]`: the time `h:mm:ss AM/PM` | |
+| `[$-40C]` or `[$-fr-FR]`: the names and day period of that language and region (next section); the tag may stand anywhere in its section, and only the first section's counts: it speaks for every section, and a tag of another section changes nothing | `[$-407]mmmm;[$-40C]mmmm`: 30000 → `Februar` |
+| two language tags in one section: Excel cannot read the code and shows General | `[$-40C][$-407]mmmm` → `45306` |
 
 ### Built-in ids (en-US)
 
@@ -105,19 +109,42 @@ The text is en-US: a decimal point, a comma between thousands, English names. `F
 `Locale::EnUs` only; another locale adds a variant with its separators, names, short and long date and time
 codes, and built-in codes, with no API change.
 
+A locale tag changes the names of a date code and nothing else (`[$€-40C]#,##0.00` is `€1,234.57`). The tag is an
+LCID in hexadecimal (`40C`; its low word counts, a high word of 0 or 1: `1040C` is French, `2040C` showed English)
+or a language tag (`fr-FR`, `fr`; case does not matter; a language alone, `de`, is no LCID). Excel for Mac, asked
+for 32 tags in rounds 4 and 5 (`tests/cases.tsv`), shows names that depend on the region, not only the language:
+
+| Language | Regions asked, with their own table | Same table as |
+| --- | --- | --- |
+| English | en-US, en-GB (`am`, `pm`), en-AU, en-CA, en-IN, en-NZ, en-IE, en-ZA | en-AU, en-IE: en-GB; the others: en-US |
+| French | fr-FR, fr-CA (`juill.`, `a.m.`) | fr-BE, fr-CH, fr-LU: fr-FR |
+| German | de-DE, de-AT (`Jänner`, `Jän`) | de-CH, de-LU: de-DE |
+| Spanish | es-ES, es-MX, es-AR, es-CO, es-CL, es-US, and `es` | es-ES traditional sort (`40A`): es-ES |
+| Italian | it-IT | it-CH |
+| Portuguese | pt-BR, pt-PT, and `pt` | |
+| Dutch | nl-NL | nl-BE |
+
+The full names agree in every region asked, except `Jänner`, and with the tables of Word's date controls
+(`oxoffice-docx-oxml`, which now reads them from this crate). Short names and the day period differ by region
+(`ene.` in Spain and Colombia, `ene` in Argentina and the United States, `set` for September in `es`; `a.\u{202f}m.`
+in Spain, `a.\u{a0}m.` in Colombia and Chile, `a. m.` in Mexico). Where a language is tagged with a region not
+asked, it takes the table of its most widespread region (en-US, fr-FR, de-DE, es-ES, pt-BR) or, for a tag with no
+region, as asked. The one-letter month is the first letter of the full name, as written (`j`, `s`).
+
 ### What we do not do
 
-- A `[$-40C]` tag that asks for French month names shows English ones; only the currency symbol of a tag is used.
-  `shows_foreign_names()` says so, and the chart keeps such a code unsupported (General, with its diagnostic)
-  until the names of other languages come (the next pull request of the set, with the tables of
-  `oxoffice-docx-oxml/src/date_format.rs`).
+- A tag of a language with no table (`[$-411]`, Japanese: Excel shows `水曜日`, `9月`, `午後`) shows English names and
+  `AM`/`PM`. `shows_unknown_names()` says so, and the chart keeps such a code unsupported (General, with its
+  diagnostic). The xlsx text export shows the English names: the limitation `xlsx-date-names-language`.
+- A region of English, French, German, Spanish or Portuguese that Excel was not asked for takes the table of the
+  widespread region of its language: its short names and day period can differ.
 - `[$-F400]` and id 14 follow the operating system in Excel: the en-US defaults are written above.
 - General narrower than 11 characters (Excel shortens it to the column width): the render asks for it later.
 - `[DBNum]`, `[NatNum]`, `B1`/`B2` calendars, `g` eras: ignored or literal.
 
 ## Plan
 
-One pull request (#365, pull request 4):
+Pull request 4 of #365:
 
 - The crate, its unit tests, and one table-driven test over `crates/oxoffice-numfmt/tests/cases.tsv`: 621 cases
   in three rounds (526, then 71 and 24 for what the rounds before and the review left open), each a code, a
@@ -128,7 +155,16 @@ One pull request (#365, pull request 4):
   is Excel's, and `c:date1904` of the chart space sets the date system: `render_chart` takes the chart space,
   so no caller can forget it, and `NumberFormat::format_value` takes the options. The diagnostic "not
   supported and its labels use General" names the codes Excel cannot read and those that ask for names in
-  another language.
+  a language `names` holds no table of.
+
+Pull request 4b (names under a language tag): the name tables of `oxoffice-docx-oxml` move to `oxoffice-numfmt::names`
+and gain the short names, the day periods and the regions of Excel's own output; Word's date controls read them from
+there and show what they showed (their tests, and the limitation `docx-date-control-names`, are unchanged: short
+names other than English stay refused there on purpose). Two rounds of Excel cases check it: round 4 (484 cases: 21
+LCIDs, each with its twelve months, seven weekdays and day period; 18 text tags; nine languages with no table; the
+position and number of tags) and round 5 (241: each spelling of the day period alone, six more regions, `es` and
+`pt`, the high word of an LCID, which sections a tag speaks for). The chart keeps its diagnostic for a language with
+no table only. The text export says so with the limitation `xlsx-date-names-language`.
 
 ## Links
 

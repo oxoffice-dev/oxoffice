@@ -18,6 +18,11 @@
 //! # Ok::<(), oxoffice_numfmt::Error>(())
 //! ```
 //!
+//! A date code tagged with a language (`[$-40C]mmmm`, `[$-fr-FR]mmmm`) shows
+//! the month names, day names and day period of that language, for the
+//! languages [`names`] holds; any other language shows English ones
+//! ([`NumberFormat::shows_unknown_names`]).
+//!
 //! Booleans and error values are not formatted: Excel shows `TRUE`, `FALSE`
 //! and the error code (`#DIV/0!`) whatever the format, so the caller writes
 //! them as they are.
@@ -25,6 +30,7 @@
 mod builtin;
 mod date;
 mod decimal;
+pub mod names;
 mod number;
 mod parse;
 
@@ -53,6 +59,9 @@ pub enum DateSystem {
 }
 
 /// The language and conventions of the displayed text.
+///
+/// A date code tagged with a language (`[$-40C]mmmm`) shows that language's
+/// names whatever the locale: see [`names`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Locale {
@@ -300,16 +309,18 @@ impl NumberFormat {
         })
     }
 
-    /// Whether a section tagged with a language other than English
-    /// (`[$-40C]mmmm`) shows month or day names: Excel writes them in that
-    /// language, this crate in English for now.
-    pub fn shows_foreign_names(&self) -> bool {
+    /// Whether a section tagged with a language this crate has no names for
+    /// (`[$-411]mmmm`, Japanese) shows month names, day names or a day period:
+    /// Excel writes them in that language, this crate in English. A language
+    /// it knows ([`names`]) is not one.
+    pub fn shows_unknown_names(&self) -> bool {
         self.sections.iter().any(|section| {
-            section.foreign
+            section.language == Some(names::Language::Other)
                 && section.kind == Kind::Date
-                && section.has(
-                    |token| matches!(token, Token::Month(count) | Token::Day(count) if *count >= 3),
-                )
+                && section.has(|token| {
+                    matches!(token, Token::Month(count) | Token::Day(count) if *count >= 3)
+                        || matches!(token, Token::AmPm { .. })
+                })
         })
     }
 

@@ -1,5 +1,6 @@
 //! A format code read into sections of tokens.
 
+use crate::names::Language;
 use crate::{Color, Error};
 
 /// A digit placeholder: `0` shows a zero, `?` a space, `#` nothing.
@@ -139,8 +140,8 @@ pub(crate) struct Section {
     pub(crate) color: Option<Color>,
     pub(crate) condition: Option<Condition>,
     pub(crate) system: Option<SystemFormat>,
-    /// A locale tag names a language other than English (`[$-40C]`).
-    pub(crate) foreign: bool,
+    /// The language of the section's locale tag (`[$-40C]`), if it has one.
+    pub(crate) language: Option<Language>,
 }
 
 impl Section {
@@ -220,8 +221,13 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                         section.system = Some(system);
                         continue;
                     }
-                    Bracket::Locale { symbol, foreign } => {
-                        section.foreign |= foreign;
+                    Bracket::Locale { symbol, language } => {
+                        // Excel reads no code with two language tags in a
+                        // section (`[$-40C][$-407]mmmm` shows as General).
+                        if language.is_some() && section.language.is_some() {
+                            return Err(invalid("a section has two locale tags"));
+                        }
+                        section.language = language.or(section.language);
                         match symbol {
                             Some(symbol) => Token::Literal(symbol),
                             None => continue,
@@ -292,11 +298,20 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
         return Err(invalid("a code has at most four sections"));
     }
     // The fourth section is the text section, whatever it holds.
-    sections
+    let mut sections = sections
         .into_iter()
         .enumerate()
         .map(|(index, raw)| raw.finish(index == 3).map_err(invalid))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    // The locale tag of the first section names the language of every
+    // section, and a tag of another section counts for nothing: Excel shows
+    // `[$-407]mmmm;[$-40C]mmmm` with German names in both, and
+    // `mmmm;[$-40C]mmmm` with English ones in both.
+    let language = sections[0].language;
+    for section in &mut sections {
+        section.language = language;
+    }
+    Ok(sections)
 }
 
 fn starts_with_ignore_case(chars: &[char], word: &str) -> bool {
@@ -312,10 +327,10 @@ enum Bracket {
     Color(Color),
     Condition(Condition),
     System(SystemFormat),
-    /// `[$€-40C]`: the currency symbol, and whether the locale is not English.
+    /// `[$€-40C]`: the currency symbol, and the language of the tag.
     Locale {
         symbol: Option<String>,
-        foreign: bool,
+        language: Option<Language>,
     },
     /// `[DBNum1]`, `[NatNum1]`, a locale with no symbol...: no effect on the
     /// en-US text.
@@ -327,8 +342,15 @@ fn bracket(content: &str) -> Option<Bracket> {
     if let Some(currency) = content.strip_prefix('$') {
         let (symbol, tag) = currency.split_once('-').unwrap_or((currency, ""));
         let tag = tag.to_ascii_lowercase();
-        let lcid = u32::from_str_radix(&tag, 16).map(|lcid| lcid & 0xFFFF).ok();
-        let system = match (tag.as_str(), lcid) {
+        // A language code of two letters (`de`, `ca`, `fa`) is no LCID, though
+        // its letters are hexadecimal digits: a producer writes an LCID with
+        // three digits or more.
+        let lcid = if tag.len() == 2 && tag.bytes().all(|b| b.is_ascii_lowercase()) {
+            None
+        } else {
+            u32::from_str_radix(&tag, 16).ok()
+        };
+        let system = match (tag.as_str(), lcid.map(|lcid| lcid & 0xFFFF)) {
             ("x-sysdate", _) | (_, Some(0xF800)) => Some(SystemFormat::LongDate),
             ("x-systime", _) | (_, Some(0xF400)) => Some(SystemFormat::Time),
             _ => None,
@@ -336,15 +358,13 @@ fn bracket(content: &str) -> Option<Bracket> {
         if let Some(system) = system {
             return Some(Bracket::System(system));
         }
-        // The primary language of an LCID is its low ten bits, English 0x09;
-        // a tag such as `en-US` names it.
-        let foreign = match lcid {
-            Some(lcid) => !matches!(lcid & 0x3FF, 0 | 0x09),
-            None => !(tag.is_empty() || tag == "en" || tag.starts_with("en-")),
+        let language = match lcid {
+            Some(lcid) => Language::of_lcid(lcid),
+            None => Language::of_tag(&tag),
         };
         return Some(Bracket::Locale {
             symbol: (!symbol.is_empty()).then(|| symbol.to_owned()),
-            foreign,
+            language,
         });
     }
     let operators = [
@@ -398,7 +418,7 @@ struct RawSection {
     color: Option<Color>,
     condition: Option<Condition>,
     system: Option<SystemFormat>,
-    foreign: bool,
+    language: Option<Language>,
 }
 
 impl RawSection {
@@ -408,7 +428,7 @@ impl RawSection {
             color,
             condition,
             system,
-            foreign,
+            language,
         } = self;
         let is_date = |token: &Token| {
             matches!(
@@ -444,7 +464,7 @@ impl RawSection {
             color,
             condition,
             system,
-            foreign,
+            language,
         })
     }
 }
