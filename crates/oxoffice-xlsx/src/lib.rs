@@ -7,25 +7,32 @@
 //! XML reads as Transitional and keeps its namespaces.
 //!
 //! What the facade does not model is kept as it was read: a save without an
-//! edit writes every part back byte for byte. A save is staged in a sibling
-//! file and renamed over its path, and refuses the file the workbook was
-//! opened from unless [`SaveOptions::overwrite_source`] is set.
+//! edit writes every part back byte for byte (a package signature that
+//! already fails verification gets its mark, as in docx and pptx). A save is
+//! staged in a sibling file and renamed over its path, and refuses the file
+//! the workbook was opened from unless [`SaveOptions::overwrite_source`] is
+//! set.
 //!
 //! Positions are 0-based, like every index of the oxoffice packages; the
 //! command line counts from 1.
 
+mod edit;
+mod grid;
+mod new_workbook;
 mod open;
 mod page_setup;
 mod save;
 mod sheet;
+mod signature;
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use oxoffice_opc::{OpcError, OpcPackage};
 use oxoffice_xlsx_oxml::workbook::WorkbookXml;
 use thiserror::Error;
 
+pub use edit::WorksheetMut;
 pub use page_setup::{
     CellComments, HeaderFooter, Orientation, PageBreak, PageMargins, PageOrder, PageSetup,
     PrintErrors,
@@ -44,6 +51,12 @@ pub enum Error {
 
     #[error("{part} is not well-formed SpreadsheetML: {message}")]
     MalformedPart { part: String, message: String },
+
+    #[error("{0}")]
+    InvalidArgument(String),
+
+    #[error("{0}")]
+    Refused(String),
 
     #[error("the workbook is password-protected: open it with a password")]
     PasswordProtected,
@@ -130,6 +143,22 @@ pub struct Workbook {
     class: WorkbookClass,
     workbook: WorkbookXml,
     sheets: Vec<sheet::SheetEntry>,
+    /// Whether an edit has changed the workbook since it was opened or
+    /// made: a save writes what edits staged.
+    edited: bool,
+    /// Whether the workbook asks Excel to calculate it on open and has lost
+    /// its calculation chain, which an edit of a workbook that holds a
+    /// formula does.
+    calculates: bool,
+    /// Whether any sheet holds a formula, found by one scan of the sheets as
+    /// read, at the first edit.
+    formulas: OnceLock<bool>,
+    /// Whether the package signature was known invalid when the workbook was
+    /// opened.
+    signature_invalid: bool,
+    /// The package as opened, when it carries a package signature: a save
+    /// that differs from it invalidates the signature.
+    signature_baseline: Option<Arc<OpcPackage>>,
 }
 
 impl Workbook {

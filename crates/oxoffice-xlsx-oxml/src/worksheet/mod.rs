@@ -11,20 +11,25 @@
 //! every other child and every row not edited stay as they were. An edit
 //! costs its rows, not the sheet.
 
+mod cols;
 mod page_setup;
 mod row;
+mod views;
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::xml_element::ElementSpan;
 
+pub use cols::set_width as set_column_width;
 pub use page_setup::{PAGE_SETUP_CHILDREN, PageSetupElements};
 pub use row::{
     CELL_ATTRIBUTES, CT_Cell, CT_CellFormula, CT_Row, CellChild, FORMULA_ATTRIBUTES,
     ROW_ATTRIBUTES, RowChild, TextElement, fixed_attributes,
 };
+pub use views::set_frozen_panes;
 
 use crate::namespaces::MAIN_NAMESPACES;
 use crate::reference::{CellRange, CellRef, MAX_COLUMNS, MAX_ROWS};
@@ -134,6 +139,11 @@ pub struct SheetIndex {
     pub sheet_data_tag: Option<Tag>,
     /// The rows, in the order written.
     pub rows: Vec<RowSpan>,
+    /// Where each row number is first in `rows`, and whether `rows` is in
+    /// ascending order of row number, as every producer writes it: what
+    /// finds a row, and the row after it, without a pass over the sheet.
+    by_row: HashMap<u32, usize>,
+    ascending: bool,
     /// The masters of the shared formula groups, by group (`si`).
     pub shared_formulas: BTreeMap<u32, SharedFormula>,
     /// The array formulas and data tables, in the order written.
@@ -160,6 +170,8 @@ impl SheetIndex {
             sheet_data: None,
             sheet_data_tag: None,
             rows: Vec::new(),
+            by_row: HashMap::new(),
+            ascending: true,
             shared_formulas: BTreeMap::new(),
             range_formulas: Vec::new(),
         };
@@ -188,6 +200,10 @@ impl SheetIndex {
                 Child::End(end) => {
                     index.root.content = root.tag.end..end.start;
                     index.root.end_tag = end;
+                    index.ascending = index.rows.windows(2).all(|rows| rows[0].row < rows[1].row);
+                    for (position, span) in index.rows.iter().enumerate() {
+                        index.by_row.entry(span.row).or_insert(position);
+                    }
                     return Ok(index);
                 }
             }
@@ -335,7 +351,39 @@ impl SheetIndex {
     /// The row with this 0-based index, the first one written when two say
     /// the same.
     pub fn row(&self, row: u32) -> Option<&RowSpan> {
-        self.rows.iter().find(|span| span.row == row)
+        self.by_row.get(&row).map(|&position| &self.rows[position])
+    }
+
+    /// The rows numbered `first..=last` (0-based), in the order written. For
+    /// rows written in ascending order, as every producer writes them, a
+    /// slice of the index found by two binary searches, borrowed: a call
+    /// costs the rows it gives, not the sheet. For a sheet whose rows are out
+    /// of order (or repeat a number), the matching ones, copied after one pass.
+    pub fn rows_in(&self, first: u32, last: u32) -> Cow<'_, [RowSpan]> {
+        if self.ascending {
+            let start = self.rows.partition_point(|span| span.row < first);
+            let end = self.rows.partition_point(|span| span.row <= last);
+            Cow::Borrowed(&self.rows[start..end.max(start)])
+        } else {
+            Cow::Owned(
+                self.rows
+                    .iter()
+                    .filter(|span| (first..=last).contains(&span.row))
+                    .cloned()
+                    .collect(),
+            )
+        }
+    }
+
+    /// The first row written after the row `row` would take, whether or not
+    /// the sheet holds `row`: the one a new row goes before.
+    fn first_row_after(&self, row: u32) -> Option<&RowSpan> {
+        if self.ascending {
+            self.rows
+                .get(self.rows.partition_point(|span| span.row <= row))
+        } else {
+            self.rows.iter().find(|span| span.row > row)
+        }
     }
 
     /// The first child of the root named `local`.
@@ -352,6 +400,33 @@ impl SheetIndex {
             .map(|child| (child.name.as_str(), child.range.start));
         insertion_point(children, self.root.content.end, &WORKSHEET_CHILDREN, local)
     }
+}
+
+/// Whether `xml`, a sheet part, holds a formula: an `f` element under any
+/// prefix, found by one pass over its bytes without reading it. An element
+/// of another name that is spelled `f` after a prefix (the `xm:f` of an
+/// extension) counts too, which only ever asks for more calculation.
+pub fn holds_formula(xml: &[u8]) -> bool {
+    let name_byte =
+        |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':');
+    let mut rest = xml;
+    while let Some(at) = rest.iter().position(|&byte| byte == b'<') {
+        rest = &rest[at + 1..];
+        let length = rest
+            .iter()
+            .position(|byte| !name_byte(byte))
+            .unwrap_or(rest.len());
+        let name = &rest[..length];
+        let local = name.rsplit(|&byte| byte == b':').next().unwrap_or(name);
+        if local == b"f"
+            && rest
+                .get(length)
+                .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/'))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// The edits of one sheet, made at once by [`splice`].
@@ -433,11 +508,7 @@ pub fn splice(xml: &[u8], index: &SheetIndex, edits: &SheetEdits) -> Result<Vec<
         match index.row(number) {
             Some(span) => splice.replace(span.range.clone(), written),
             None if edit.is_some() => {
-                let at = index
-                    .rows
-                    .iter()
-                    .find(|span| span.row > number)
-                    .map(|span| span.range.start);
+                let at = index.first_row_after(number).map(|span| span.range.start);
                 new_rows.push((at.unwrap_or(usize::MAX), written));
             }
             None => {}
@@ -537,6 +608,68 @@ mod tests {
     }
 
     #[test]
+    fn a_formula_is_found_under_any_prefix_and_nothing_else_is_taken_for_one() {
+        for (xml, found) in [
+            (r#"<c r="A1"><f>1+1</f><v>2</v></c>"#, true),
+            (r#"<c r="A1"><f t="shared" si="0"/></c>"#, true),
+            (r#"<c r="A1"><f aca="false">A2</f></c>"#, true),
+            ("<x:c><x:f>1</x:f></x:c>", true),
+            (r#"<c><v>1</v></c><f"#, false),
+            (
+                r#"<c r="f1" s="f"><v>1</v></c><fill/><ff/><x:fx/><formula>1</formula>"#,
+                false,
+            ),
+            ("</f>", false),
+            ("", false),
+        ] {
+            assert_eq!(holds_formula(xml.as_bytes()), found, "{xml}");
+        }
+    }
+
+    #[test]
+    fn the_rows_of_a_range_are_found_without_a_pass_over_the_sheet() {
+        let sheet = |rows: &str| {
+            format!(r#"<worksheet xmlns="urn:x"><sheetData>{rows}</sheetData></worksheet>"#)
+        };
+        let numbers = |index: &SheetIndex, first, last| -> Vec<u32> {
+            index
+                .rows_in(first, last)
+                .iter()
+                .map(|span| span.row)
+                .collect()
+        };
+        // Rows 3, 5, 7 and 9 (2, 4, 6 and 8 from 0) in order: a borrowed slice,
+        // whatever the range.
+        let ascending = sheet(r#"<row r="3"/><row r="5"/><row r="7"/><row r="9"/>"#);
+        let index = SheetIndex::build(ascending.as_bytes()).unwrap();
+        for (first, last, expected) in [
+            (0, 100, vec![2, 4, 6, 8]),
+            (4, 6, vec![4, 6]),
+            (4, 4, vec![4]),
+            (3, 3, vec![]),
+            (9, 1, vec![]),
+            (10, 20, vec![]),
+        ] {
+            let rows = index.rows_in(first, last);
+            assert!(
+                matches!(rows, Cow::Borrowed(_)),
+                "{first}..={last} is a slice"
+            );
+            assert_eq!(numbers(&index, first, last), expected, "{first}..={last}");
+        }
+        // Rows out of order, or a number twice: the same rows, in the order
+        // written, copied.
+        for (rows, expected) in [
+            (r#"<row r="7"/><row r="3"/><row r="5"/>"#, vec![6, 4]),
+            (r#"<row r="3"/><row r="5"/><row r="5"/>"#, vec![4, 4]),
+        ] {
+            let index = SheetIndex::build(sheet(rows).as_bytes()).unwrap();
+            assert!(matches!(index.rows_in(4, 6), Cow::Owned(_)));
+            assert_eq!(numbers(&index, 4, 6), expected, "{rows}");
+        }
+    }
+
+    #[test]
     fn one_pass_indexes_rows_children_and_formula_ranges() {
         let index = SheetIndex::build(SHEET.as_bytes()).unwrap();
         let names: Vec<_> = index
@@ -571,7 +704,7 @@ mod tests {
     #[test]
     fn a_splice_writes_only_what_the_edits_name() {
         let replaced = r#"<row r="3"><c r="B3"><v>9</v></c></row>"#;
-        let cases: [(&str, &str, SheetEdits, &str); 9] = [
+        let cases: [(&str, &str, SheetEdits, &str); 10] = [
             ("nothing", SHEET, SheetEdits::default(), SHEET),
             (
                 "a row replaced, the fixed writing of what it read",
@@ -648,6 +781,15 @@ mod tests {
                     ..SheetEdits::default()
                 },
                 r#"<worksheet xmlns="urn:x"><sheetData><row/><row r="3"><c><v>9</v></c></row></sheetData></worksheet>"#,
+            ),
+            (
+                "a new row goes before the first row written after it, in a sheet whose rows are not in order",
+                r#"<worksheet xmlns="urn:x"><sheetData><row r="3"/><row r="1"/></sheetData></worksheet>"#,
+                SheetEdits {
+                    rows: [(1, Some(row(r#"<row r="2"/>"#)))].into(),
+                    ..SheetEdits::default()
+                },
+                r#"<worksheet xmlns="urn:x"><sheetData><row r="2"/><row r="3"/><row r="1"/></sheetData></worksheet>"#,
             ),
             (
                 "a row in an empty sheetData written with end tags",

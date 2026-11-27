@@ -171,6 +171,9 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
   `crates/oxoffice-pptx/tests/pptx/` (`--test pptx`) and
   `crates/oxoffice-xlsx/tests/xlsx/` (`--test xlsx`). A new area is a new
   module, not a new file under `tests/`, so each crate links one binary.
+  The `libreoffice` module of the xlsx binary opens what the crate makes and
+  edits in LibreOffice and runs where `soffice` is installed, the other
+  machines say they skipped it.
 - Run the tests you touched locally (`cargo test -p <crate>` runs the unit
   tests in `src/` too). CI runs the unit tests (`--lib`), the integration
   tests (`--test '*'`) and the Python tests; the unit tests gated on debug

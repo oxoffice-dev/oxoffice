@@ -16,5 +16,5 @@ publish = true
 [dependencies]
 clap.workspace = true
 oxoffice-cli-support.workspace = true
-oxoffice-xlsx.workspace = true
+oxoffice-xlsx = { workspace = true, features = ["digital-signatures"] }
 serde_json.workspace = true

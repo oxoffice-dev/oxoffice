@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use crate::namespaces::STRICT_MAIN;
+use crate::namespaces::{RELATIONSHIPS, STRICT_MAIN, is_relationships_namespace, strict};
 use crate::part::{Shape, TypedPart};
-use crate::xml::{Element, Result};
+use crate::xml::{Element, Result, qualified};
 use crate::xstring;
 
 /// The children of a workbook, in schema order.
@@ -180,6 +180,60 @@ impl WorkbookXml {
         self.part.list_mut("sheets").push(sheet)
     }
 
+    /// The `sheetId` a new sheet takes: one more than the largest there is.
+    pub fn next_sheet_id(&self) -> u32 {
+        self.sheets()
+            .filter_map(|sheet| sheet.sheet_id())
+            .max()
+            .map_or(1, |largest| largest.saturating_add(1))
+    }
+
+    /// A `sheet` record for `sheets`, written as the part writes its own: the
+    /// elements under the prefix the root binds to SpreadsheetML, `r:id`
+    /// under the one it binds to the relationships namespace (declared on
+    /// the record when the root binds none). `name` is the text as stored,
+    /// its `_xHHHH_` escapes written.
+    pub fn sheet_record(&self, name: &str, sheet_id: u32, relationship_id: &str) -> Element {
+        let mut record = Element::new(&qualified(self.part.prefix(), "sheet"));
+        record.tag.set("name", Some(name));
+        record.tag.set("sheetId", Some(&sheet_id.to_string()));
+        let bound = self
+            .part
+            .root_tag()
+            .namespace_declarations()
+            .into_iter()
+            .find(|(prefix, uri)| !prefix.is_empty() && is_relationships_namespace(uri))
+            .map(|(prefix, _)| prefix);
+        let prefix = bound.unwrap_or_else(|| {
+            let uri = if self.is_strict() {
+                strict(RELATIONSHIPS)
+            } else {
+                RELATIONSHIPS
+            };
+            record.tag.set("xmlns:r", Some(uri));
+            "r".to_owned()
+        });
+        record
+            .tag
+            .set(&qualified(&prefix, "id"), Some(relationship_id));
+        record
+    }
+
+    /// Asks Excel to calculate the workbook when it opens it
+    /// (`calcPr fullCalcOnLoad`): sets it on the `calcPr` there is, else
+    /// writes one. Nothing changes when the workbook asks already.
+    pub fn set_full_calc_on_load(&mut self) {
+        if self.calc_pr().is_some_and(|calc| calc.full_calc_on_load()) {
+            return;
+        }
+        let mut element = match self.part.single("calcPr") {
+            Some(element) => element.clone(),
+            None => Element::new(&qualified(self.part.prefix(), "calcPr")),
+        };
+        element.tag.set_bool("fullCalcOnLoad", Some(true));
+        self.set_calc_pr(element);
+    }
+
     /// The part as it stands. See [`TypedPart::to_xml`].
     pub fn to_xml(&self) -> Vec<u8> {
         self.part.to_xml()
@@ -194,6 +248,78 @@ impl WorkbookXml {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_sheet_takes_the_next_id_and_the_prefixes_of_the_root() {
+        const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        const RELATIONSHIPS: &str =
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        let cases = [
+            (
+                "a default namespace and r",
+                format!(
+                    r#"<workbook xmlns="{MAIN}" xmlns:r="{RELATIONSHIPS}"><sheets><sheet name="A" sheetId="3" r:id="rId1"/><sheet name="B" sheetId="2" r:id="rId2"/></sheets></workbook>"#
+                ),
+                r#"<sheet name="C_x005F_x0041_" sheetId="4" r:id="rId9"/>"#.to_owned(),
+            ),
+            (
+                "a prefix and no prefix for the relationships: declared on the record",
+                format!(r#"<x:workbook xmlns:x="{MAIN}"><x:sheets/></x:workbook>"#),
+                format!(
+                    r#"<x:sheet name="C_x005F_x0041_" sheetId="1" xmlns:r="{RELATIONSHIPS}" r:id="rId9"/>"#
+                ),
+            ),
+            (
+                "Strict, the relationships under another prefix",
+                r#"<ns0:workbook xmlns:ns0="http://purl.oclc.org/ooxml/spreadsheetml/main" xmlns:ns1="http://purl.oclc.org/ooxml/officeDocument/relationships"><ns0:sheets><ns0:sheet name="A" sheetId="7" ns1:id="rId1"/></ns0:sheets></ns0:workbook>"#.to_owned(),
+                r#"<ns0:sheet name="C_x005F_x0041_" sheetId="8" ns1:id="rId9"/>"#.to_owned(),
+            ),
+        ];
+        for (case, xml, expected) in cases {
+            let workbook = WorkbookXml::parse(Arc::new(xml.into_bytes())).unwrap();
+            let record = workbook.sheet_record("C_x005F_x0041_", workbook.next_sheet_id(), "rId9");
+            assert_eq!(
+                String::from_utf8(record.to_xml()).unwrap(),
+                expected,
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_workbook_that_asks_for_a_calculation_is_written_with_it_once() {
+        let part = |calc: &str| {
+            format!(
+                r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets/>{calc}</workbook>"#
+            )
+        };
+        for (case, before, expected) in [
+            ("none", part(""), part(r#"<calcPr fullCalcOnLoad="1"/>"#)),
+            (
+                "empty, as Google writes it",
+                part("<calcPr/>"),
+                part(r#"<calcPr fullCalcOnLoad="1"/>"#),
+            ),
+            (
+                "Excel's, its other attributes kept",
+                part(r#"<calcPr calcId="191029" fullCalcOnLoad="false"/>"#),
+                part(r#"<calcPr calcId="191029" fullCalcOnLoad="1"/>"#),
+            ),
+            (
+                "asked already: not written",
+                part(r#"<calcPr fullCalcOnLoad="true"/>"#),
+                part(r#"<calcPr fullCalcOnLoad="true"/>"#),
+            ),
+        ] {
+            let mut workbook = WorkbookXml::parse(Arc::new(before.into_bytes())).unwrap();
+            workbook.set_full_calc_on_load();
+            assert_eq!(
+                String::from_utf8(workbook.to_xml()).unwrap(),
+                expected,
+                "{case}"
+            );
+        }
+    }
 
     #[test]
     fn a_sheet_name_reads_its_escapes() {

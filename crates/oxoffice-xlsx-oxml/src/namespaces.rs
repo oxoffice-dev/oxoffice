@@ -15,6 +15,15 @@ pub const STRICT_MAIN: &str = "http://purl.oclc.org/ooxml/spreadsheetml/main";
 /// Both writings of the main namespace.
 pub const MAIN_NAMESPACES: [&str; 2] = [MAIN, STRICT_MAIN];
 
+/// The namespace of relationship ids (`r:id`), Transitional.
+pub const RELATIONSHIPS: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+/// Both writings of the namespace of relationship ids.
+pub fn is_relationships_namespace(value: &str) -> bool {
+    transitional(value) == RELATIONSHIPS
+}
+
 /// The relationship types of the parts a workbook reads, Transitional.
 pub mod rel_types {
     pub const OFFICE_DOCUMENT: &str =
@@ -105,6 +114,15 @@ pub fn transitional_relationship_type(value: &str) -> &str {
     transitional(value)
 }
 
+/// The Strict twin of a Transitional namespace or relationship type, or the
+/// value itself.
+pub fn strict(value: &str) -> &str {
+    STRICT_TWINS
+        .iter()
+        .find(|(_, transitional)| *transitional == value)
+        .map_or(value, |(strict, _)| strict)
+}
+
 /// Whether `value` is a Strict namespace or relationship type this table
 /// knows.
 pub fn is_strict(value: &str) -> bool {
@@ -146,6 +164,15 @@ mod tests {
             rel_types::WORKSHEET
         );
         assert_eq!(transitional(MAIN), MAIN);
+        assert_eq!(strict(MAIN), STRICT_MAIN);
+        assert_eq!(
+            strict(rel_types::WORKSHEET),
+            "http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet"
+        );
+        assert_eq!(strict("urn:other"), "urn:other");
+        assert!(is_relationships_namespace(RELATIONSHIPS));
+        assert!(is_relationships_namespace(strict(RELATIONSHIPS)));
+        assert!(!is_relationships_namespace(MAIN));
         assert!(is_strict(STRICT_MAIN) && !is_strict(MAIN));
     }
 }

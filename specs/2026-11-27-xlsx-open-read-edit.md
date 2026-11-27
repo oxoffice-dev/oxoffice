@@ -117,10 +117,15 @@ carriage return as `_xHHHH_`, and a literal `_xHHHH_` as `_x005F_xHHHH_`, as the
 
 **Stored and displayed forms.** Formula text is exchanged without the `=` (a write accepts one) in Excel's displayed
 form, which the lexer maps to the stored form and back: future functions take and lose `_xlfn.` (and `_xlws.`) from
-the complete MS-XLSX table, and a prefixed name the table lacks keeps its prefix on read so it comes back unchanged;
-LET and LAMBDA parameters take `_xlpm.` on their declarations and on every use, scope tracked (nested LET, a parameter
-that shadows a defined name); `_xlfn.ANCHORARRAY(x)` is `x#` and `_xlfn.SINGLE(x)` is `@x`. Reading then writing a
-formula gives back its stored text, for every corpus formula. The stored form is readable in Rust, Python
+the complete MS-XLSX table, with the later functions it lacks (`XMATCH`, `GROUPBY`...), and a prefixed name the table
+lacks keeps its prefix on read so it comes back unchanged; LET and LAMBDA parameters take `_xlpm.` on their
+declarations and on every use, scope tracked (nested LET, a parameter that shadows a defined name), an optional LAMBDA
+parameter `[y]` is `_xlop.y`; a function passed as a value takes `_xleta.` where a function is taken (Excel stores
+`GROUPBY(A2:A9,B2:B9,SUM)` with `_xleta.SUM`); `_xlfn.ANCHORARRAY(x)` is `x#` and `_xlfn.SINGLE(x)` is `@x`
+(`@(A1+B1)` is stored `_xlfn.SINGLE((A1+B1))`, as Excel does). Table references read as stored
+(`Expenses[[#This Row],[Quantity]]`: Excel shows `[@Quantity]` inside the table, which depends on the cell); a written
+`Table[@Column]` is stored `Table[[#This Row],[Column]]`. Reading then writing a formula gives back its stored text,
+for every corpus formula. The stored form is readable in Rust, Python
 (`Cell.stored_formula`) and the CLI (`stored_formula` in `--json`), and writable as is (`stored=True`, section 6).
 
 ### 3. Recalculation and stale values
@@ -138,8 +143,12 @@ Otherwise it is what the producer computed at its last save; without `<v>` there
 
 A save under rule 1 sets `fullCalcOnLoad="1"` on `calcPr` (inserted at its schema position when absent; Google writes
 `<calcPr/>`) and removes `xl/calcChain.xml`, its relationship and its content type; the cached values stay. Excel
-recalculates on open, Google always does. A written formula has no `<v>` and no `t`. An unedited workbook saved
-without `drop_cached_values` (below) is byte for byte the file it was read from.
+recalculates on open, Google always does. Only a workbook that holds a formula gets this (an `f` element in a sheet
+part, found by one scan of the bytes, kept): one that holds none has no cached value to go stale, its save sets and
+removes nothing and Excel does not ask to save a file it had no need to calculate; an edit that writes a formula sets
+both whatever the scan found. A written formula has no `<v>` and no `t`. An unedited workbook saved
+without `drop_cached_values` (below) is byte for byte the file it was read from, except that a package signature that
+already fails verification gets its mark (section 8), as in docx and pptx.
 
 LibreOffice ignores `fullCalcOnLoad` by default (probed: "Recalculation on file load" is "never"). It computes the
 formulas without `<v>` and every shared-formula cell, and shows the other old values until a recalculation (that
@@ -265,9 +274,10 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 - **Formulas**: at most 8,192 characters, and they pass the syntax check of PR 5, the first half of the parser
   (operands, operators, function calls, array constants, `,` between arguments; a `;` outside an array constant is
   refused naming `,`; at most 255 arguments and 64 nested levels). Its function table carries each built-in
-  function's minimum and maximum argument count (the MS-XLS function table), which the evaluator reuses. So a formula
-  Excel would repair (`IF(B2>0;1;0)`, `B2*`, `B2**C2`, `IF(1,2,3,4)`) is refused with a plain message. `stored=True`
-  takes the stored form as is (section 2), still checked.
+  function's minimum and maximum argument count (MS-XLSX's argument rules, checked against the MS-XLS function table,
+  whose maximums are the 30 of `.xls`), which the evaluator reuses. So a formula Excel would repair (`IF(B2>0;1;0)`,
+  `B2*`, `B2**C2`, `IF(1,2,3,4)`) is refused with a plain message. `stored=True` takes the stored form as is
+  (section 2), still checked.
 - **Spill**: `<f t="array" ref>` on the anchor cell alone, as XlsxWriter writes it, Excel spilling it on load; `cm`
   points to a `cellMetadata` block whose `rc` names the `XLDAPR` type of `metadata.xml`, found in place or appended,
   the part created when absent (`cm` and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them).
@@ -275,8 +285,8 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   a refusal naming the zero-based entry, like `replace --map`: `{"sheet": "Data", "cell": "B2", "value": 3}`,
   `{"cell": "D2", "formula": "B2*C2"}`, `{"cell": "E2", "date": "2026-01-05"}`, `{"range": "A1:F1", "style":
   {"bold": true, "fill": "FFFF00"}}`, `{"range": "C2:C8", "number_format": "0.00"}`, `{"range": "A20:B30",
-  "clear": "contents"}`, and in PR 7 widths, heights and freeze. `sheet` defaults to the entry before it, then the
-  first sheet.
+  "clear": "contents"}`, and, from PR 7, `add_sheet`, widths, heights and freeze (section 7). `sheet` is a name or a
+  number from 1 and defaults to the entry before it, then the first sheet.
 - **Shared formulas stay valid.** A content edit (value, formula, clear) of any cell of a shared group dissolves the
   group: every other member becomes a plain formula with its moved text (its row rewritten), the edited cell takes
   its new content. No master moves and no `ref` shrinks, so no reader can place a 1D or 2D group's master wrongly.
@@ -301,24 +311,47 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 
 ### 7. New workbook, sheets and grid (PR 7)
 
-- **`Workbook::new()`**, Python `Workbook()`, CLI `oxoffice xlsx new [--sheet NAME]... -o OUT`: `Sheet1` (or the
-  names given), Calibri 11 under the Office 2013-2022 theme, one font, the `none` and `gray125` fills, one border, one
-  `cellXfs` record, the `Normal` style, `app.xml` naming oxoffice `XX.YYYY` as docx does, a core part with no dates.
-- **Deterministic by construction**: the parts are text files under `crates/oxoffice-xlsx/assets/default/`, assembled
-  into an `OpcPackage` at run time, whose `write_to` sorts entries and stamps the fixed ZIP date: the same build
+- **`Workbook::new()`**, Python `Workbook()`, CLI `oxoffice xlsx new [--sheet NAME]... -o OUT`: `Sheet1` (or the names
+  given: `Workbook::with_sheet_names`, Python `Workbook(sheets=[...])`), Calibri 11 under the Office 2013-2022 theme,
+  one font, the `none` and `gray125` fills, one border, one `cellXfs` record, the `Normal` style, `app.xml` naming
+  oxoffice `XX.YYYY` as docx does, a core part with no dates. `new` never replaces a file unless `--force`.
+- **Deterministic by construction**: the parts are text files under `crates/oxoffice-xlsx/assets/default/` (the
+  workbook, the sheet in view, a sheet added, the styles, the theme), assembled into an `OpcPackage` at run time with
+  its relationships and content types, whose `write_to` sorts entries and stamps the fixed ZIP date: the same build
   writes the same bytes everywhere. No binary `default.xlsx` is committed.
-- **Add a sheet** (`add_sheet(name)`), at the end: a worksheet part (`sheetN.xml`, the first free `N`), its
-  relationship, content type and `<sheet>` with the next `sheetId`; `app.xml` drops `HeadingPairs` and `TitlesOfParts`
-  as the pptx facade does after a slide list change (Excel writes them again). Excel's name rules: 1-31 characters,
-  none of `: \ / ? * [ ]`, no leading or trailing `'`, unique case-insensitively, not `History`. A position renumbers
-  `localSheetId` and `activeTab`: it comes with reorder, rename and remove in the second set.
-- **Column widths** in characters (`set_column_width("A:C", 20.0)`, 0-255): `cols` spans are split as needed,
-  `customWidth="1"`. **Row heights** in points (`set_row_height("2:5", 30.0)`, 0-409): `ht`, `customHeight="1"`, an
-  absent row created. Python takes numbers in these units, not EMU (the one-length-argument rule leaves such
-  arguments alone); a `Length`, an EMU `int`, is refused with `TypeError`.
-- **Frozen panes** (`freeze_panes("B2")`, `None` to remove): the pane written as Excel writes it (`xSplit`, `ySplit`,
-  `topLeftCell`, `activePane` `bottomRight` / `topRight` / `bottomLeft`, `state="frozen"`); selections of panes that
-  no longer exist are dropped.
+- **Add a sheet** (`add_sheet(name)`, which gives the sheet to edit), at the end: a worksheet part (`sheetN.xml`, the
+  first free `N`), its relationship, content type and `<sheet>` with the next `sheetId`; a Strict workbook gets the
+  part in the Strict namespace and the Strict relationship type; `app.xml` drops `HeadingPairs` and `TitlesOfParts`
+  as the pptx facade does after a slide list change (Excel writes them again). Excel's name rules: 1-31 characters
+  (UTF-16 code units), none of `: \ / ? * [ ]`, no control character, no leading or trailing `'`, unique
+  case-insensitively, not `History`. A name that breaks a rule is an invalid argument (Python `ValueError`), one that
+  repeats a sheet's is refused (`XlsxError`). A position renumbers `localSheetId` and `activeTab`: it comes with
+  reorder, rename and remove in the second set.
+- **Column widths** in characters (`set_column_width("A:C", 20.0)`, above 0 to 255): the number Excel's Column Width
+  box shows for the default font, stored as Excel stores it, `width = trunc(pixels / 7 * 256) / 256` with `pixels =
+  trunc(characters * 7 + 0.5) + 5` (`trunc(characters * 12 + 0.5)` under 1 character), the conversion XlsxWriter makes
+  for a 7-pixel digit (Calibri 11, Arial 10); `20` is written `20.7109375`. The digit width of another default font
+  comes with `SheetGeometry`. `cols` spans are cut as needed and keep their style, `hidden` and outline level;
+  `customWidth="1"` is set, `bestFit` goes, spans that came to say the same merge. A width of 0 hides the column and
+  is refused until hiding is written. **Row heights** in points (`set_row_height("2:5", 30.0)`, above 0 to 409.5, at
+  most 100,000 rows a call): `ht`, `customHeight="1"`, an absent row created, a row's cells and other attributes
+  kept; a height of 0 is refused like a width of 0. Python takes numbers in these units, not EMU (the one-length-argument
+  rule leaves such arguments alone); a `Length`, an EMU `int`, and a `bool` are refused with `TypeError`.
+- **Frozen panes** (`freeze_panes("B2")`, `None` to remove): the pane written as Excel writes a freeze at the cursor
+  (`xSplit`, `ySplit`, `topLeftCell`, `activePane` `bottomRight` / `topRight` / `bottomLeft`, `state="frozen"`, the
+  `selection` of each pane with the cursor at the cell). A freeze replaces any pane (a split too), drops every earlier
+  `selection` and the view's `topLeftCell`; removing the panes drops the selections of the panes that go and leaves a
+  split that is not frozen. Every `sheetView` of the sheet takes it; `sheetViews` is made when missing. `A1` has
+  nothing above or left of it and is refused. Python takes `str | tuple[int, int] | None`.
+- **Staged edits.** An edit never rewrites a part in the package: it stages the rows and root children it changed
+  beside the sheet (`SheetEdits`), and a save splices them into the source bytes, writes the workbook part with its new
+  records, and nothing else. The first change of a workbook marks it edited; when the workbook holds a formula that is
+  section 3's rule 1: the save sets `fullCalcOnLoad` and removes the calculation chain. A call that changes nothing (the
+  same width again, panes removed from a sheet with none) stages nothing and marks nothing, so such a workbook saves as
+  it was read. A chartsheet, a dialogsheet or a macrosheet has no columns, rows or panes: refused, naming its kind.
+- **The edit map** takes these entries in PR 7, and PR 6 adds its own: `{"add_sheet": "Summary"}` (the entries after it
+  default to that sheet), `{"columns": "A:C", "width": 20}`, `{"rows": "2:5", "height": 30}`, `{"freeze": "B2"}` (`null`
+  removes); `sheet` is a name or a number from 1.
 
 ### 8. Opening and saving
 
@@ -348,6 +381,12 @@ taking it (`save_with_options`, `to_bytes_with_options`, `save_encrypted_with_op
 encrypted saves with the same keyword; the CLI writes `-o`, never the input, `--force` replacing another file. Python
 errors: `XlsxError`, `PackageError(XlsxError)`, `XmlError(XlsxError, ValueError)`, a refused edit `XlsxError`, a bad
 argument the built-in `ValueError`, `TypeError`, `IndexError` or `KeyError`.
+
+**A package signature** (`_xmlsignatures`) follows the policy of docx and pptx (`oxoffice-opc::embedded`, the
+`digital-signatures` feature of `oxoffice-xlsx`, on in the CLI and Python): a workbook opened with a signature that does
+not verify, or one an earlier save marked, keeps it known invalid; a save whose package differs from the one opened (any
+edit, or another class by extension) keeps the signature parts as evidence and marks the package invalidated, once, by
+a relationship to the signature origin. A save that changes nothing leaves a valid signature valid.
 
 ### 9. Producers
 

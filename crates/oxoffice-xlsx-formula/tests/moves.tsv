@@ -1,0 +1,27 @@
+# A shared formula's master, the member's offset in rows and columns, the member's formula.
+D2*E2	1	0	D3*E3
+SUM(B4:E4)	0	3	SUM(E4:H4)
+F4/$F$12	7	0	F11/$F$12
+$A1+A$1	2	2	$A3+C$1
+Ledger!$D5*Ledger!$E5	3	1	Ledger!$D8*Ledger!$E8
+'Q1 data'!B2+[1]Rates!B2+Sheet1:Sheet3!B2	1	1	'Q1 data'!C3+[1]Rates!C3+Sheet1:Sheet3!C3
+SUM(A:A,3:3)	2	1	SUM(B:B,5:5)
+SUM($A:$A,$3:$3)	2	1	SUM($A:$A,$3:$3)
+a1+b$2	1	1	B2+C$2
+a1+$b$2	0	0	a1+$b$2
+# Not references: texts, names, table references, function names.
+"A1"&TaxRate&Expenses[[#This Row],[Q1]]&LOG10(A1)	1	0	"A1"&TaxRate&Expenses[[#This Row],[Q1]]&LOG10(A2)
+_xlfn.ANCHORARRAY(B2)	1	0	_xlfn.ANCHORARRAY(B3)
+# 3D references to month tabs, a deleted sheet's references, sheets not in ASCII.
+SUM(Jan:Dec!B2)	0	1	SUM(Jan:Dec!C2)
+#REF!A1+#REF!$A$1:$A$10	1	0	#REF!A2+#REF!$A$1:$A$10
+Лист1!A1+'合計 1'!B2	1	0	Лист1!A2+'合計 1'!B3
+# Leaving the grid.
+A1+B2	-1	0	#REF!+B1
+Sheet2!A1:B2*2	0	-1	Sheet2!#REF!*2
+XFD1+A1048576	0	1	#REF!+B1048576
+A1048576	1	0	#REF!
+A:B	0	-1	#REF!
+#REF!+Sheet1!#REF!	1	1	#REF!+Sheet1!#REF!
+B2	9223372036854775807	0	#REF!
+B2	0	-9223372036854775808	#REF!

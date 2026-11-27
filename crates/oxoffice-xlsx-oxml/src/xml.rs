@@ -15,7 +15,7 @@
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::xml::{attribute_text, escape_attribute_value, escape_text, push_raw_attribute};
+use oxoffice_core::xml::{attribute_text, escape_text, push_escaped_attribute, push_raw_attribute};
 use oxoffice_core::xml_element::ElementSpan;
 use oxoffice_core::xml_reader::Reader;
 use oxoffice_core::xml_text::{decode_plain, normalize_line_ends, resolve_entity};
@@ -129,8 +129,8 @@ impl Tag {
     }
 
     /// Sets the attribute written `name` to `value`, in place when the tag
-    /// has it and at the end otherwise, or removes it (`None`). The other
-    /// attributes keep their writing.
+    /// has it and at the end otherwise, or removes it (`None`). The value is
+    /// text, escaped once; the other attributes keep their writing.
     pub fn set(&mut self, name: &str, value: Option<&str>) {
         let mut tag = BytesStart::new(self.name());
         let mut placed = false;
@@ -138,14 +138,38 @@ impl Tag {
             if attribute.key.as_ref() != name.as_bytes() {
                 push_raw_attribute(&mut tag, attribute);
             } else if let Some(value) = value.filter(|_| !placed) {
-                tag.push_attribute((name, escape_attribute_value(value).as_ref()));
+                push_escaped_attribute(&mut tag, name, value);
                 placed = true;
             }
         }
         if let Some(value) = value.filter(|_| !placed) {
-            tag.push_attribute((name, escape_attribute_value(value).as_ref()));
+            push_escaped_attribute(&mut tag, name, value);
         }
         self.0 = tag;
+    }
+
+    /// The attributes as written, each by its name and its value with the
+    /// references resolved, but those named in `skip`: what two tags that
+    /// differ only in `skip` have in common.
+    pub fn attributes_except(&self, skip: &[&str]) -> Vec<(String, String)> {
+        self.0
+            .attributes()
+            .flatten()
+            .filter(|attribute| {
+                !skip
+                    .iter()
+                    .any(|name| attribute.key.as_ref() == name.as_bytes())
+            })
+            .map(|attribute| {
+                let value = attribute_text(&attribute)
+                    .map(|text| text.into_owned())
+                    .unwrap_or_default();
+                (
+                    String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
+                    value,
+                )
+            })
+            .collect()
     }
 
     /// Sets a boolean attribute in the fixed form, `1` or `0`.
@@ -268,6 +292,11 @@ pub fn qualified(prefix: &str, local: &str) -> String {
     } else {
         format!("{prefix}:{local}")
     }
+}
+
+/// The prefix of a qualified name, empty when it has none.
+pub fn prefix_of_name(name: &str) -> &str {
+    name.split_once(':').map_or("", |(prefix, _)| prefix)
 }
 
 /// An element whose content is elements or text, its tags as read. See the
@@ -740,6 +769,41 @@ mod tests {
             assert_eq!(format_f64(value), text);
             assert_eq!(parse_f64(&format_f64(value)), Some(value));
         }
+    }
+
+    #[test]
+    fn a_value_and_a_text_are_escaped_once_and_read_back_as_given() {
+        use crate::shared_strings::CT_Rst;
+        for value in [
+            "R&D",
+            "a<b>\"c\"",
+            "it's",
+            "\u{c9}t\u{e9}",
+            "x&amp;y",
+            "tab\there",
+            "line\nbreak",
+            "",
+        ] {
+            // Set at the end, then in place over another value.
+            let mut tag = Tag::new("sheet");
+            tag.set("name", Some("first"));
+            tag.set("sheetId", Some("1"));
+            tag.set("name", Some(value));
+            let mut out = Vec::new();
+            tag.write_empty(&mut out);
+            let read = Element::parse(&out).unwrap().tag;
+            assert_eq!(read.get("name").as_deref(), Some(value), "{value:?}");
+            assert_eq!(read.get("sheetId").as_deref(), Some("1"));
+
+            let text = CT_Rst::plain("", "si", value);
+            let read = CT_Rst::parse(&text.0.to_xml()).unwrap();
+            assert_eq!(read.plain_text(), value, "{value:?}");
+        }
+        let mut out = Vec::new();
+        let mut tag = Tag::new("sheet");
+        tag.set("name", Some("R&D"));
+        tag.write_empty(&mut out);
+        assert_eq!(out, br#"<sheet name="R&amp;D"/>"#);
     }
 
     #[test]

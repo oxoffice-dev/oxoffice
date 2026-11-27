@@ -1,0 +1,21 @@
+[package]
+name = "oxoffice-xlsx-formula"
+description = "Spreadsheet formulas: tokens, stored and displayed forms, moved references, syntax check"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["xlsx", "excel", "formula", "spreadsheet"]
+categories = ["parser-implementations", "text-processing"]
+publish = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+quick-xml.workspace = true
+zip.workspace = true
