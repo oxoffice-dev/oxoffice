@@ -420,6 +420,18 @@ candidate. JSON success carries schema1, operation, mode, ordered pairs with
 index, placeholder, value, count and nullable expected count, total_count and
 output. Errors go to stderr with a nonzero exit and no success JSON.
 
+`--track-author NAME` writes the replacements as tracked changes by `NAME`, as
+Word's tracked Replace All writes them: each whole match deleted and its whole
+value inserted, the final paragraph mark never marked. The changes are dated
+now, at `--track-timestamp RFC3339`, or not at all with `--track-undated`;
+both need `--track-author` and exclude each other. A value equal to its match
+writes nothing. A later `--map` pair does not match across the edge of an
+earlier pair's insertion, so a pair that searches an earlier value finds fewer
+than without tracking and its `expect` refuses. A match in a text box, a
+header or footer table or control, or an edit the tracked changes cannot
+record refuses the whole edit. JSON success adds `revision_ids`, the ids of
+the revisions written.
+
 ```bash
 oxoffice docx fields update input.docx --now 2026-10-10T08:30:00 -o fields.docx --json
 oxoffice docx fill input.docx --tag client=Ada --tag status=ready -o filled.docx --json

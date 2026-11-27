@@ -55,8 +55,8 @@ pub use bibliography::{
 };
 pub use building_block::{BuildingBlock, BuildingBlockInfo, BuildingBlockKind};
 pub use comments::{
-    BookmarkRef, CommentDate, CommentRef, RunPosition, RunRange, StoryRangeKind, StoryRangeRef,
-    StoryRunPosition, StoryRunRange, TextCommentOptions,
+    BookmarkRef, CommentDate, CommentRef, RevisionDate, RunPosition, RunRange, StoryRangeKind,
+    StoryRangeRef, StoryRunPosition, StoryRunRange, TextCommentOptions,
 };
 pub use comparison::{
     ComparisonDiagnostic, ComparisonGranularity, ComparisonOptions, ComparisonStoryKind,
@@ -83,9 +83,9 @@ pub use document::{
     SectionRef, SectionStory, SlotHit, StoryError, StoryId, StoryItemKind, StoryItemRef,
     StoryItemSnapshot, StoryKind, StoryOwnerSnapshots, StoryParagraph, StoryText, StoryTextItem,
     TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport, TextWatermarkOptions,
-    UncheckedReplacement, UnreachedReplacement, UnsupportedXmlRef, ValidationFinding,
-    ValidationReport, ValidationSeverity, WordCreationProfile, WordPackageClass, derive_font_key,
-    resolved_xml_events, validate_document_bytes, validate_document_file,
+    TrackedChanges, TrackedDocument, UncheckedReplacement, UnreachedReplacement, UnsupportedXmlRef,
+    ValidationFinding, ValidationReport, ValidationSeverity, WordCreationProfile, WordPackageClass,
+    derive_font_key, resolved_xml_events, validate_document_bytes, validate_document_file,
 };
 pub use embedded::{
     EmbeddedContentInfo, EmbeddedContentKind, EmbeddedMutationPolicy, EmbeddedSignatureState,

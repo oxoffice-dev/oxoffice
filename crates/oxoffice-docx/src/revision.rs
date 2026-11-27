@@ -4824,6 +4824,43 @@ fn revision_metadata(
     }))
 }
 
+/// Whether a WordprocessingML element of this local name is a tracked change
+/// or a move range mark, whose `w:id` is an annotation id: the ones the
+/// resolver models and the ones it keeps as written.
+pub(crate) fn is_annotation_revision(local: &[u8]) -> bool {
+    matches!(
+        local,
+        b"ins"
+            | b"del"
+            | b"moveFrom"
+            | b"moveTo"
+            | b"rPrChange"
+            | b"pPrChange"
+            | b"tblPrChange"
+            | b"tblPrExChange"
+            | b"tblGridChange"
+            | b"trPrChange"
+            | b"tcPrChange"
+            | b"sectPrChange"
+            | b"numberingChange"
+            | b"cellIns"
+            | b"cellDel"
+            | b"cellMerge"
+            | b"moveFromRangeStart"
+            | b"moveFromRangeEnd"
+            | b"moveToRangeStart"
+            | b"moveToRangeEnd"
+            | b"customXmlInsRangeStart"
+            | b"customXmlInsRangeEnd"
+            | b"customXmlDelRangeStart"
+            | b"customXmlDelRangeEnd"
+            | b"customXmlMoveFromRangeStart"
+            | b"customXmlMoveFromRangeEnd"
+            | b"customXmlMoveToRangeStart"
+            | b"customXmlMoveToRangeEnd"
+    )
+}
+
 fn is_revision_local(local: &str) -> bool {
     matches!(
         local,

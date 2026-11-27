@@ -13,6 +13,8 @@ pub(super) enum IdentifierDefinition {
     ContentControl(i32),
     /// The `w:id` of a `w:permStart`.
     Permission(i32),
+    /// The `w:id` of a tracked change or a move range mark.
+    Revision(i32),
 }
 
 /// What an in-place edit added to the identifier registry and the package
@@ -52,6 +54,7 @@ enum Reservation {
     },
     ContentControlId(i32),
     PermissionId(i32),
+    RevisionId(i32),
     /// The override stored under `stored`, and the case variants it
     /// replaced with their content types.
     PackageOverride {
@@ -634,6 +637,9 @@ impl Document {
                 Reservation::PermissionId(id) => {
                     identifiers.permission_ids.remove(&id);
                 }
+                Reservation::RevisionId(id) => {
+                    identifiers.revision_ids.remove(&id);
+                }
                 Reservation::PackageOverride { stored, replaced } => {
                     let overrides = &mut self.package.content_types.overrides;
                     overrides.remove(&stored);
@@ -787,6 +793,7 @@ impl DocumentIdentifiers {
             numbering_instance_ids: HashSet::new(),
             content_control_ids: HashSet::new(),
             permission_ids: HashSet::new(),
+            revision_ids: HashSet::new(),
             part_names: package
                 .parts
                 .keys()
@@ -866,6 +873,7 @@ impl DocumentIdentifiers {
                             IdentifierXmlCategory::Drawing,
                             IdentifierXmlCategory::ContentControl,
                             IdentifierXmlCategory::Permission,
+                            IdentifierXmlCategory::Revision,
                         ],
                         rel_types::NUMBERING => &[
                             IdentifierXmlCategory::AbstractNumbering,
@@ -1035,6 +1043,9 @@ impl DocumentIdentifiers {
             IdentifierDefinition::Permission(value) => {
                 self.permission_ids.insert(value);
             }
+            IdentifierDefinition::Revision(value) => {
+                self.revision_ids.insert(value);
+            }
         }
         Ok(())
     }
@@ -1082,6 +1093,8 @@ impl DocumentIdentifiers {
                         Some(IdentifierXmlCategory::NumberingInstance)
                     } else if is_word && local.as_ref() == b"permStart" {
                         Some(IdentifierXmlCategory::Permission)
+                    } else if is_word && crate::revision::is_annotation_revision(local.as_ref()) {
+                        Some(IdentifierXmlCategory::Revision)
                     } else if is_word
                         && local.as_ref() == b"id"
                         && open_sdt_properties.last() == Some(&true)
@@ -1120,7 +1133,8 @@ impl DocumentIdentifiers {
                 }
                 IdentifierXmlCategory::Bookmark
                 | IdentifierXmlCategory::Comment
-                | IdentifierXmlCategory::Permission => {
+                | IdentifierXmlCategory::Permission
+                | IdentifierXmlCategory::Revision => {
                     matches!(namespace, ResolveResult::Bound(value) if value.as_ref() == WORD_NAMESPACE.as_bytes())
                         && local.as_ref() == b"id"
                 }
@@ -1183,6 +1197,10 @@ impl DocumentIdentifiers {
                 },
                 IdentifierXmlCategory::Permission => match value.parse::<i32>() {
                     Ok(value) => IdentifierDefinition::Permission(value),
+                    Err(_) => return Ok(None),
+                },
+                IdentifierXmlCategory::Revision => match value.parse::<i32>() {
+                    Ok(value) => IdentifierDefinition::Revision(value),
                     Err(_) => return Ok(None),
                 },
             };
@@ -1271,14 +1289,23 @@ impl DocumentIdentifiers {
         }
     }
 
+    /// The smallest bookmark id from 0 that no bookmark and no tracked
+    /// change holds: Word numbers bookmarks, comments and revisions in one
+    /// sequence.
     pub(crate) fn reserve_bookmark_id(&mut self) -> Result<i32> {
-        let id = reserve_lowest_i32(&mut self.bookmark_ids, 0, "bookmark")?;
+        let id = (0..=i32::MAX)
+            .find(|id| !self.bookmark_ids.contains(id) && !self.revision_ids.contains(id))
+            .ok_or_else(|| Error::Other("bookmark id range is exhausted".to_owned()))?;
+        self.bookmark_ids.insert(id);
         self.record(|| Reservation::BookmarkId(id));
         Ok(id)
     }
 
     pub(crate) fn reserve_preferred_bookmark_id(&mut self, preferred: i32) -> Result<i32> {
-        if preferred >= 0 && self.bookmark_ids.insert(preferred) {
+        if preferred >= 0
+            && !self.revision_ids.contains(&preferred)
+            && self.bookmark_ids.insert(preferred)
+        {
             self.record(|| Reservation::BookmarkId(preferred));
             Ok(preferred)
         } else {
@@ -1300,7 +1327,15 @@ impl DocumentIdentifiers {
     }
 
     pub(crate) fn reserve_comment_id(&mut self) -> Result<i32> {
-        let id = reserve_i32(&mut self.comment_ids, 0, "comment")?;
+        // The id after the last comment's, or the next no tracked change
+        // holds.
+        let mut id = reserve_i32(&mut self.comment_ids.clone(), 0, "comment")?;
+        while self.revision_ids.contains(&id) || self.comment_ids.contains(&id) {
+            id = id
+                .checked_add(1)
+                .ok_or_else(|| Error::Other("comment id range is exhausted".to_owned()))?;
+        }
+        self.comment_ids.insert(id);
         let authored = self.authored_comment_ids.insert(id);
         self.record(|| Reservation::CommentId { id, authored });
         Ok(id)
@@ -1371,6 +1406,35 @@ impl DocumentIdentifiers {
     /// The id [`Self::reserve_permission_id`] would reserve now.
     pub(crate) fn lowest_free_permission_id(&self) -> Option<i32> {
         (0..=i32::MAX).find(|id| !self.permission_ids.contains(id))
+    }
+
+    /// The `count` smallest ids from 0 that no tracked change, move range,
+    /// comment or bookmark of any story holds, not held yet. Word numbers
+    /// the three kinds in one sequence; no id of a new revision repeats one
+    /// of them.
+    pub(crate) fn free_revision_ids(&self, count: usize) -> Result<Vec<i32>> {
+        let ids = (0..=i32::MAX)
+            .filter(|id| {
+                !self.revision_ids.contains(id)
+                    && !self.comment_ids.contains(id)
+                    && !self.bookmark_ids.contains(id)
+            })
+            .take(count)
+            .collect::<Vec<_>>();
+        if ids.len() < count {
+            return Err(Error::Other("revision id range is exhausted".to_owned()));
+        }
+        Ok(ids)
+    }
+
+    /// Hold `ids`, which [`Self::free_revision_ids`] gave, once the
+    /// revisions that take them are written.
+    pub(crate) fn hold_revision_ids(&mut self, ids: &[i32]) {
+        for &id in ids {
+            if self.revision_ids.insert(id) {
+                self.record(|| Reservation::RevisionId(id));
+            }
+        }
     }
 
     /// The smallest permission range id from 0 no story holds, held until
@@ -1918,14 +1982,16 @@ pub(super) enum IdentifierXmlCategory {
     NumberingInstance,
     ContentControl,
     Permission,
+    Revision,
 }
 
 /// What the scan reads in the main part, a header, a footer and the notes.
-pub(super) const STORY_CATEGORIES: [IdentifierXmlCategory; 4] = [
+pub(super) const STORY_CATEGORIES: [IdentifierXmlCategory; 5] = [
     IdentifierXmlCategory::Bookmark,
     IdentifierXmlCategory::Drawing,
     IdentifierXmlCategory::ContentControl,
     IdentifierXmlCategory::Permission,
+    IdentifierXmlCategory::Revision,
 ];
 
 pub(super) fn reserve_lowest_i32(

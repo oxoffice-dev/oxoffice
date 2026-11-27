@@ -68,11 +68,14 @@ use crate::style::{self, Style, StyleBuilder};
 use crate::table::{Table, TableRef, validate_table_topology};
 
 mod checked_replacement;
+mod redline;
 mod story_paragraphs;
+mod tracked;
 pub use checked_replacement::{
     ReplaceOptions, ReplacementRefusal, UncheckedReplacement, UnreachedReplacement,
 };
 pub use story_paragraphs::StoryParagraph;
+pub use tracked::{TrackedChanges, TrackedDocument};
 
 mod drawing_options;
 mod font_types;
@@ -646,6 +649,10 @@ pub(crate) struct DocumentIdentifiers {
     content_control_ids: HashSet<i32>,
     /// The `w:permStart` ids of every story, held as the control ids are.
     permission_ids: HashSet<i32>,
+    /// The `w:id` of every tracked change and move range of every story,
+    /// held as the control ids are. Producers repeat them (a move's parts,
+    /// Google's grid changes), so a scan accepts that.
+    revision_ids: HashSet<i32>,
     part_names: HashSet<String>,
     content_type_defaults: HashSet<String>,
     content_type_overrides: HashSet<String>,
@@ -890,6 +897,9 @@ pub struct Document {
     /// The opened or saved package retains a shadowed serializer prefix, so a
     /// plain child edit must use the staged transaction instead of a local write.
     plain_local_edit_blocked: bool,
+    /// The tracked changes session a [`TrackedDocument`] call runs in, whose
+    /// edits are written as revisions; `None` outside one.
+    pub(crate) tracking: Option<tracked::Tracking>,
     local_cell_source: Option<LocalCellSource>,
     /// Save failure a checked body edit must return before it changes the model.
     /// Cleared when the typed body or the saved main part changes.
@@ -1663,6 +1673,7 @@ impl Document {
             body_namespace_declarations: Vec::new(),
             body_namespace_bindings: Vec::new(),
             plain_local_edit_blocked: false,
+            tracking: None,
             local_cell_source,
             unsavable_body_edit_cache: OnceLock::from(None),
             styles,

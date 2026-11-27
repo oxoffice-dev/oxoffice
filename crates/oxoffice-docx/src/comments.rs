@@ -60,27 +60,31 @@ pub struct RunRange {
     pub end: RunPosition,
 }
 
-/// The date a new comment or reply carries in `w:date`.
+/// The date a new comment, reply or tracked change carries in `w:date`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum CommentDate<'a> {
+pub enum RevisionDate<'a> {
     /// The current time, in UTC to the second. Word itself writes its local
-    /// time to the minute here, and the UTC time as `w16cex:dateUtc` in the
-    /// extensible comments part (`commentsExtensible.xml`), which oxoffice
-    /// does not write. Refused where the platform has no clock, such
-    /// as WebAssembly in a browser: pass a date or [`CommentDate::Undated`].
+    /// time to the minute here, and for a comment the UTC time as
+    /// `w16cex:dateUtc` in the extensible comments part
+    /// (`commentsExtensible.xml`), which oxoffice does not write. Refused
+    /// where the platform has no clock, such as WebAssembly in a browser:
+    /// pass a date or [`RevisionDate::Undated`].
     #[default]
     Now,
     /// This RFC 3339 timestamp.
     At(&'a str),
-    /// No date, as Word leaves comments once its Document Inspector removes
-    /// personal information.
+    /// No date, as Word leaves comments and tracked changes once its
+    /// Document Inspector removes personal information.
     Undated,
 }
 
-impl CommentDate<'_> {
+/// The date of a new comment or reply: [`RevisionDate`] under its first name.
+pub type CommentDate<'a> = RevisionDate<'a>;
+
+impl RevisionDate<'_> {
     /// The timestamp to write, or `None` for an undated comment. A timestamp
     /// that is not RFC 3339 is refused.
-    fn resolve(self) -> Result<Option<String>> {
+    pub(crate) fn resolve(self) -> Result<Option<String>> {
         match self {
             Self::Now => crate::revision::rfc3339_now().map(Some),
             Self::At(value) => {
@@ -1955,8 +1959,9 @@ impl Document {
                     | crate::StoryKind::TextBox
             )
         {
-            let mut identifiers = self.identifiers.clone();
-            let id = identifiers.reserve_comment_id()?;
+            // Reserved in place: the comment parts, styles and their
+            // relationships this adds reserve in the same registry.
+            let id = self.identifiers.reserve_comment_id()?;
             self.anchor_story_range(&range, RangeAnchor::Comment(id), "comment", false)?;
             self.ensure_comment_models()?;
             let styles = self.prepare_comment_authoring()?;
@@ -1965,7 +1970,6 @@ impl Document {
             self.style_written_comment_reference(range.end.location.story(), id, &styles.1)?;
             self.ensure_comment_relationships()?;
             self.push_comment_definition(id, author, initials, text, date, &styles)?;
-            self.identifiers = identifiers;
             self.comments_dirty = true;
             self.invalidate_layout();
             return Ok(id);
@@ -1990,8 +1994,7 @@ impl Document {
             ));
         }
 
-        let mut identifiers = self.identifiers.clone();
-        let id = identifiers.reserve_comment_id()?;
+        let id = self.identifiers.reserve_comment_id()?;
         self.ensure_comment_models()?;
         let styles = self.prepare_comment_authoring()?;
         if range.start.location == range.end.location {
@@ -2029,7 +2032,6 @@ impl Document {
         // not written yet.
         self.ensure_comment_relationships()?;
         self.push_comment_definition(id, author, initials, text, date, &styles)?;
-        self.identifiers = identifiers;
         self.comments_dirty = true;
         self.invalidate_layout();
         Ok(id)
@@ -2123,8 +2125,7 @@ impl Document {
         }
         self.ensure_comment_models()?;
         self.ensure_comment_relationships()?;
-        let mut identifiers = self.identifiers.clone();
-        let id = identifiers.reserve_comment_id()?;
+        let id = self.identifiers.reserve_comment_id()?;
         let styles = self.prepare_comment_authoring()?;
         self.anchor_existing_comment_on_text(
             id,
@@ -2134,7 +2135,6 @@ impl Document {
             Some(&styles.1),
         )?;
         self.push_comment_definition(id, author, options.initials, text, date, &styles)?;
-        self.identifiers = identifiers;
         self.comments_dirty = true;
         self.invalidate_layout();
         Ok(id)

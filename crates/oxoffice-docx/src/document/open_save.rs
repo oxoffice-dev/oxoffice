@@ -489,6 +489,7 @@ impl Document {
             body_namespace_declarations: namespace_scopes.body_declarations,
             body_namespace_bindings: namespace_scopes.body_bindings,
             plain_local_edit_blocked,
+            tracking: None,
             local_cell_source,
             unsavable_body_edit_cache,
             styles,
