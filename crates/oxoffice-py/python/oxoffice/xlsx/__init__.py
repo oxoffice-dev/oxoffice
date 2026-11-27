@@ -9,6 +9,16 @@ and save it without loss::
     print([sheet.name for sheet in wb.sheets])
     wb.save("copy.xlsx")
 
+Make a workbook, add a sheet, set the widths of columns, the heights of rows
+and the frozen panes::
+
+    wb = Workbook()
+    data = wb.add_sheet("Data")
+    data.set_column_width("A:C", 20)
+    data.set_row_height("1", 30)
+    data.freeze_panes("A2")
+    wb.save("new.xlsx")
+
 Positions are 0-based, like every index of the oxoffice packages.
 """
 
