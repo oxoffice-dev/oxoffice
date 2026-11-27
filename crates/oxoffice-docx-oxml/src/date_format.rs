@@ -15,226 +15,16 @@
 //! English whatever the language; the day period stays the language's.
 
 use crate::error::{OxmlError, Result};
+use oxoffice_numfmt::names::{
+    DUTCH, ENGLISH, FRENCH, GERMAN, GERMAN_AUSTRIA, ITALIAN, Names, PORTUGUESE, SPANISH,
+};
 
-struct Names {
-    months: [&'static str; 12],
-    /// Sunday first.
-    days: [&'static str; 7],
-    short: Option<ShortNames>,
+/// The names a date control shows for a language, and whether the short ones
+/// are known (English only).
+struct WordNames {
+    names: &'static Names,
+    short: bool,
 }
-
-struct ShortNames {
-    months: [&'static str; 12],
-    days: [&'static str; 7],
-}
-
-const ENGLISH: Names = Names {
-    months: [
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-    ],
-    days: [
-        "Sunday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-    ],
-    short: Some(ShortNames {
-        months: [
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-        ],
-        days: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-    }),
-};
-
-const FRENCH: Names = Names {
-    months: [
-        "janvier",
-        "février",
-        "mars",
-        "avril",
-        "mai",
-        "juin",
-        "juillet",
-        "août",
-        "septembre",
-        "octobre",
-        "novembre",
-        "décembre",
-    ],
-    days: [
-        "dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
-    ],
-    short: None,
-};
-
-const GERMAN: Names = Names {
-    months: [
-        "Januar",
-        "Februar",
-        "März",
-        "April",
-        "Mai",
-        "Juni",
-        "Juli",
-        "August",
-        "September",
-        "Oktober",
-        "November",
-        "Dezember",
-    ],
-    days: [
-        "Sonntag",
-        "Montag",
-        "Dienstag",
-        "Mittwoch",
-        "Donnerstag",
-        "Freitag",
-        "Samstag",
-    ],
-    short: None,
-};
-
-/// Austrian German names January "Jänner".
-const AUSTRIAN_GERMAN: Names = Names {
-    months: [
-        "Jänner",
-        "Februar",
-        "März",
-        "April",
-        "Mai",
-        "Juni",
-        "Juli",
-        "August",
-        "September",
-        "Oktober",
-        "November",
-        "Dezember",
-    ],
-    days: GERMAN.days,
-    short: None,
-};
-
-const SPANISH: Names = Names {
-    months: [
-        "enero",
-        "febrero",
-        "marzo",
-        "abril",
-        "mayo",
-        "junio",
-        "julio",
-        "agosto",
-        "septiembre",
-        "octubre",
-        "noviembre",
-        "diciembre",
-    ],
-    days: [
-        "domingo",
-        "lunes",
-        "martes",
-        "miércoles",
-        "jueves",
-        "viernes",
-        "sábado",
-    ],
-    short: None,
-};
-
-const ITALIAN: Names = Names {
-    months: [
-        "gennaio",
-        "febbraio",
-        "marzo",
-        "aprile",
-        "maggio",
-        "giugno",
-        "luglio",
-        "agosto",
-        "settembre",
-        "ottobre",
-        "novembre",
-        "dicembre",
-    ],
-    days: [
-        "domenica",
-        "lunedì",
-        "martedì",
-        "mercoledì",
-        "giovedì",
-        "venerdì",
-        "sabato",
-    ],
-    short: None,
-};
-
-const PORTUGUESE: Names = Names {
-    months: [
-        "janeiro",
-        "fevereiro",
-        "março",
-        "abril",
-        "maio",
-        "junho",
-        "julho",
-        "agosto",
-        "setembro",
-        "outubro",
-        "novembro",
-        "dezembro",
-    ],
-    days: [
-        "domingo",
-        "segunda-feira",
-        "terça-feira",
-        "quarta-feira",
-        "quinta-feira",
-        "sexta-feira",
-        "sábado",
-    ],
-    short: None,
-};
-
-const DUTCH: Names = Names {
-    months: [
-        "januari",
-        "februari",
-        "maart",
-        "april",
-        "mei",
-        "juni",
-        "juli",
-        "augustus",
-        "september",
-        "oktober",
-        "november",
-        "december",
-    ],
-    days: [
-        "zondag",
-        "maandag",
-        "dinsdag",
-        "woensdag",
-        "donderdag",
-        "vrijdag",
-        "zaterdag",
-    ],
-    short: None,
-};
 
 /// The primary language and region subtags of a `w:lid` value: a BCP 47 tag
 /// (`fr-FR`) or a hexadecimal Windows language identifier (`040C`), `None`
@@ -280,21 +70,28 @@ fn subtags(language: &str) -> Option<(&'static str, String)> {
 }
 
 /// The names of a `w:lid` value. No `w:lid` reads as `en-US`.
-fn names_of(language: Option<&str>) -> Option<&'static Names> {
+fn names_of(language: Option<&str>) -> Option<WordNames> {
     let Some(language) = language else {
-        return Some(&ENGLISH);
+        return Some(WordNames {
+            names: &ENGLISH,
+            short: true,
+        });
     };
     let (primary, region) = subtags(language)?;
-    Some(match (primary, region.as_str()) {
+    let names = match (primary, region.as_str()) {
         ("en", _) => &ENGLISH,
         ("fr", _) => &FRENCH,
-        ("de", "at") => &AUSTRIAN_GERMAN,
+        ("de", "at") => &GERMAN_AUSTRIA,
         ("de", _) => &GERMAN,
         ("es", _) => &SPANISH,
         ("it", _) => &ITALIAN,
         ("pt", _) => &PORTUGUESE,
         ("nl", _) => &DUTCH,
         _ => return None,
+    };
+    Some(WordNames {
+        names,
+        short: primary == "en",
     })
 }
 
@@ -466,26 +263,31 @@ pub(crate) fn format_word_date(
     let unsupported =
         |why: &str| OxmlError::InvalidValue(format!("unsupported date format {pattern:?}: {why}"));
     let names = |kind: &str| {
-        names_of(names_language).ok_or_else(|| {
-            unsupported(&format!(
-                "{kind} in language {:?} cannot be shown, numeric formats can",
-                language.unwrap_or_default()
-            ))
-        })
+        names_of(names_language)
+            .map(|word| word.names)
+            .ok_or_else(|| {
+                unsupported(&format!(
+                    "{kind} in language {:?} cannot be shown, numeric formats can",
+                    language.unwrap_or_default()
+                ))
+            })
     };
     let short = |kind: &str| {
-        names(kind)?.short.as_ref().ok_or_else(|| {
-            unsupported(&format!(
-                "{kind} in language {:?} cannot be shown, full names can",
-                language.unwrap_or_default()
-            ))
-        })
+        names(kind)?;
+        names_of(names_language)
+            .filter(|word| word.short)
+            .map(|word| word.names)
+            .ok_or_else(|| {
+                unsupported(&format!(
+                    "{kind} in language {:?} cannot be shown, full names can",
+                    language.unwrap_or_default()
+                ))
+            })
     };
     if pattern.is_empty() {
         return Err(unsupported("empty"));
     }
     let weekday = weekday(year, month, day);
-    let month_index = usize::from(month - 1);
     let chars: Vec<char> = pattern.chars().collect();
     let mut output = String::new();
     let mut index = 0;
@@ -540,12 +342,12 @@ pub(crate) fn format_word_date(
         match (current, count) {
             ('d', 1) => output.push_str(&day.to_string()),
             ('d', 2) => output.push_str(&format!("{day:02}")),
-            ('d', 3) => output.push_str(short("a short day name")?.days[weekday]),
-            ('d', 4) => output.push_str(names("a day name")?.days[weekday]),
+            ('d', 3) => output.push_str(short("a short day name")?.short_weekday(weekday as u32)),
+            ('d', 4) => output.push_str(names("a day name")?.weekday(weekday as u32)),
             ('M', 1) => output.push_str(&month.to_string()),
             ('M', 2) => output.push_str(&format!("{month:02}")),
-            ('M', 3) => output.push_str(short("a short month name")?.months[month_index]),
-            ('M', 4) => output.push_str(names("a month name")?.months[month_index]),
+            ('M', 3) => output.push_str(short("a short month name")?.short_month(u32::from(month))),
+            ('M', 4) => output.push_str(names("a month name")?.month(u32::from(month))),
             ('y', 2) => output.push_str(&format!("{:02}", year % 100)),
             ('y', 4) => output.push_str(&format!("{year:04}")),
             ('h', 1) => output.push_str(&twelve_hour(hour).to_string()),
@@ -861,6 +663,7 @@ mod tests {
             ("040C", "vendredi 2 janvier"),
             ("0407", "Freitag 2 Januar"),
             ("0C07", "Freitag 2 Jänner"),
+            ("es-ES", "viernes 2 enero"),
             ("it-IT", "venerdì 2 gennaio"),
             ("pt-BR", "sexta-feira 2 janeiro"),
             ("nl-NL", "vrijdag 2 januari"),
