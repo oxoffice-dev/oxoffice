@@ -75,7 +75,7 @@ pub use checked_replacement::{
     ReplaceOptions, ReplacementRefusal, UncheckedReplacement, UnreachedReplacement,
 };
 pub use story_paragraphs::StoryParagraph;
-pub use tracked::{TrackedChanges, TrackedDocument};
+pub use tracked::{TrackedChanges, TrackedDocument, TrackedSession};
 
 mod drawing_options;
 mod font_types;

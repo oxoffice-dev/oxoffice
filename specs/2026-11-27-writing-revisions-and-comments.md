@@ -407,6 +407,30 @@ What PR 1a settles:
   own text. Where the matches found there do not explain the paragraph after the replacement, the paragraph is
   aligned word by word instead, as other edits are.
 
+## Amendment: PR 1c in Python (2026-11-27, during PR 1c)
+
+- **Classes.** `test_docx_tracked_changes.py` holds the table: the calls a session tracks (`Run.text`, `Run.remove`,
+  `Run.add_tab`, `Run.add_break`, `Paragraph.text`, `Paragraph.add_run`, `Paragraph.replace_text`,
+  `Paragraph.replace_xml`, `Cell.text`, `Cell.replace_text`, `Document.set_story_text`, `Document.replace_text_at`
+  and the four whole-document replace calls) and those it runs untracked (section 2). Every other mutating call of
+  the scaling registry is refused, so a call added to the API is refused until the table names it. The test runs
+  each call under a session: a tracked one is checked against its untracked twin, accepted, and against the
+  document, rejected.
+- **The guard.** The gate in the handle counter's publication refuses any publication its allow-list does not name.
+  A route that publishes nothing refuses itself under a session: the table, row and cell property routes, the
+  section property routes, the story part routes in place (headers, footers, watermarks, checked first), and the
+  document-level calls of section 2's refused list (content controls, form fill and reset, pictures, page colour,
+  numbering restarts, chart legends, link targets, field, TOC and bibliography updates, compare).
+- **Routes.** Under a session the facade's own routes write tracked changes: `set_story_text` and
+  `try_replace_text_at` (their staged and owned variants included) take the paragraph route; `try_set_cell_text`
+  writes the cell's one paragraph as tracked changes and refuses a cell of more paragraphs, whose others it would
+  remove (PR 3); a whole-cell replacement replaces each paragraph and refuses a nested table; a table outside the
+  body refuses any edit; `replace_paragraph_xml` writes the new paragraph as tracked changes of the old one.
+- **Content-free edits.** An edit that changes no character, its formatting or its holders, such as a run split, is
+  kept as it is: Word records nothing for it.
+- **`revision_ids`** in Python reads the document's parts: the session's ids the document holds. An edit refused after
+  its revisions took ids, on a dropped copy or in place before the paragraph was put back, leaves none.
+
 ## Open questions
 
 ### Product (maintainer)

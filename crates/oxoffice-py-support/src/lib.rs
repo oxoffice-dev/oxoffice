@@ -225,6 +225,19 @@ pub enum RevisionError {
     AlreadyInitialized,
     #[error("unable to allocate the prepared owner inventory")]
     Allocation,
+    /// A publication the document's gate refuses: an edit a tracked changes
+    /// session does not record.
+    #[error(
+        "{} is not recorded as a tracked change yet: end the tracked changes to make it",
+        operation.unwrap_or("this edit")
+    )]
+    Refused {
+        /// The Python module whose `DocxError`-like class the refusal raises.
+        module: &'static str,
+        /// The class of that module the refusal raises.
+        class: &'static str,
+        operation: Option<&'static str>,
+    },
 }
 
 /// Preserve checked overflow and allocation failure before native publication.
@@ -232,6 +245,9 @@ pub fn revision_to_pyerr(error: RevisionError) -> PyErr {
     match error {
         RevisionError::Overflow => PyOverflowError::new_err(error.to_string()),
         RevisionError::Allocation => pyo3::exceptions::PyMemoryError::new_err(error.to_string()),
+        RevisionError::Refused { module, class, .. } => {
+            Python::attach(|py| public_error(py, module, class, error.to_string()))
+        }
         _ => PyValueError::new_err(error.to_string()),
     }
 }
@@ -279,6 +295,25 @@ pub enum RevisionPreparation {
     Replacement,
 }
 
+/// Which publications a document allows while a gate is set: a tracked
+/// changes session lets through only the edits it records and those it
+/// leaves untracked, as Word does.
+#[derive(Clone)]
+pub struct RevisionGate {
+    pub allows: std::sync::Arc<dyn Fn(Option<&'static str>) -> bool + Send + Sync>,
+    /// The module and class a refusal raises.
+    pub module: &'static str,
+    pub class: &'static str,
+}
+
+impl std::fmt::Debug for RevisionGate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RevisionGate")
+            .finish_non_exhaustive()
+    }
+}
+
 /// One document's common committed serial and checked generation allocator.
 #[derive(Debug)]
 pub struct RevisionCounter {
@@ -287,6 +322,7 @@ pub struct RevisionCounter {
     origin: std::sync::Arc<()>,
     document: RevisionState,
     initialized: bool,
+    gate: Option<RevisionGate>,
 }
 
 impl Default for RevisionCounter {
@@ -316,10 +352,29 @@ impl RevisionCounter {
             origin,
             document,
             initialized: false,
+            gate: None,
         }
     }
     pub const fn current(&self) -> u64 {
         self.current
+    }
+
+    /// Set or clear the gate every later publication goes through.
+    pub fn set_gate(&mut self, gate: Option<RevisionGate>) {
+        self.gate = gate;
+    }
+
+    /// Refuse `operation` as the gate refuses its publication: before an
+    /// edit whose route may publish nothing.
+    pub fn check(&self, operation: Option<&'static str>) -> Result<(), RevisionError> {
+        match &self.gate {
+            Some(gate) if !(gate.allows)(operation) => Err(RevisionError::Refused {
+                module: gate.module,
+                class: gate.class,
+                operation,
+            }),
+            _ => Ok(()),
+        }
     }
 
     /// Capture the real document epoch after eager owner initialization.
@@ -453,6 +508,7 @@ impl RevisionCounter {
         born: &[RevisionScope],
         mode: RevisionPreparation,
     ) -> Result<PreparedRevision, RevisionError> {
+        self.check(operation)?;
         let retire_document = mode != RevisionPreparation::Local;
         let owner_successors = mode != RevisionPreparation::Replacement;
         self.current.checked_add(1).ok_or(RevisionError::Overflow)?;

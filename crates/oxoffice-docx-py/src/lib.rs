@@ -222,6 +222,7 @@ pub(crate) fn docx_to_pyerr(py: Python<'_>, error: oxoffice_docx::Error) -> PyEr
 /// Register every class and function of the docx bindings on `module`.
 pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyDocument>()?;
+    module.add_class::<document::PyTrackedChanges>()?;
     // Debug builds check every edit against the whole document, so the
     // tests refuse to time them.
     module.add("_debug_build", cfg!(debug_assertions))?;

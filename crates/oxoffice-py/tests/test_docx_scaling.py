@@ -703,6 +703,46 @@ for name in ("company", "manager", "template", "application", "application_versi
                                             [f"{name} {k}" if name != "application_version" else f"16.{k}000"
                                              for k in range(CALLS)])
 
+# Tracked changes: a session started and stopped, and each call a session writes as tracked changes, made under one
+# on the paragraph "tracked k", which holds a tracked insertion: a tracked edit costs its paragraph, as the untracked
+# one does, also where the paragraph already holds revisions.
+def tracked_para(doc, k):
+    """The paragraph "tracked k " that holds the tracked insertion "inserted k"."""
+    return last(doc.paragraphs, lambda p: p.text == f"tracked {k} inserted {k}")
+
+
+def tracked(setup):
+    """setup's call made under a tracked changes session the setup starts."""
+    def wrapped(doc):
+        doc.track_changes("Reviewer", timestamp=STAMP)
+        return setup(doc)
+    return wrapped
+
+
+TIMED.update({
+    "Document.track_changes": on_made(lambda doc, k: None,
+                                      lambda doc, _: doc.track_changes("Reviewer", timestamp=STAMP).stop()),
+    "TrackedChanges.stop": on_made(lambda doc, k: doc.track_changes("Reviewer", timestamp=STAMP),
+                                   lambda doc, session: session.stop()),
+    "Paragraph.text (tracked)": tracked(setter(tracked_para, "text", "x")),
+    "Paragraph.add_run (tracked)": tracked(method(tracked_para, "add_run", "x")),
+    "Paragraph.replace_text (tracked)": tracked(method(tracked_para, "replace_text", "tracked", "omega")),
+    "Run.text (tracked)": tracked(setter(lambda doc, k: tracked_para(doc, k).runs[0], "text", "x")),
+    "Run.remove (tracked)": tracked(method(lambda doc, k: tracked_para(doc, k).runs[0], "remove")),
+    "Run.add_tab (tracked)": tracked(method(lambda doc, k: tracked_para(doc, k).runs[0], "add_tab")),
+    "Run.add_break (tracked)": tracked(method(lambda doc, k: tracked_para(doc, k).runs[0], "add_break")),
+    "Cell.text (tracked)": tracked(setter(cell, "text", "x")),
+    "Cell.replace_text (tracked)": tracked(method(cell, "replace_text", "alpha", "omega")),
+    "Document.replace_text_at (tracked)": tracked(on_made(
+        lambda doc, k: item_of(doc, tracked_para(doc, k)),
+        lambda doc, it: doc.replace_text_at(it, "tracked", "omega"))),
+    "Document.set_story_text (tracked)": tracked(on_made(
+        lambda doc, k: item_of(doc, tracked_para(doc, k)), lambda doc, it: doc.set_story_text(it, "omega"))),
+    "Paragraph.replace_xml (tracked)": tracked(on_made(
+        with_xml(tracked_para, lambda xml, k: xml.replace(f"tracked {k} ", "changed ")),
+        lambda doc, made: made[0].replace_xml(made[1]))),
+})
+
 # Reads whose cost grew with the body: timed as the edits are.
 READS_TIMED = {
     "Paragraph.xml": on_made(para, lambda doc, p: p.xml),
@@ -828,6 +868,8 @@ GROWING = {
     "SectionHandle.replace_xml", "Table.add_row", "Table.clone_row", "Table.delete_column", "Table.insert_column",
     "Table.remove_row", "Table.replace_xml", "Table.set_cell_grid_span",
 }
+# A tracked call costs what its untracked call does, so it grows only where that one does.
+GROWING |= {f"{name} (tracked)" for name in GROWING if f"{name} (tracked)" in TIMED}
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 
 # A body splice costs its own block (oxoffice-dev/oxoffice#466): these calls are held to SPLICE_RATIO times plus
@@ -843,7 +885,7 @@ QUICK = {
     "Cell.text", "Document.add_paragraph", "Document.add_heading", "Document.add_table", "Document.remove_content",
     "Document.insert_paragraph", "Document.insert_table",
     "Document.add_footnote", "Document.add_comment", "Document.add_picture", "SectionHandle.page_width",
-    "CoreProperties.title", "Settings.track_revisions",
+    "CoreProperties.title", "Settings.track_revisions", "Paragraph.text (tracked)",
 }
 
 

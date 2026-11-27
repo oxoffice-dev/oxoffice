@@ -868,6 +868,21 @@ pub(super) fn redline_xml(
             "an edit that adds, removes or reorders a bookmark or comment mark",
         ));
     }
+    // An edit that changes no content, character by character, such as a
+    // run split, is kept as it is: Word records nothing for it.
+    let characters = |flat: &Flat| {
+        let flat = by_character(flat);
+        flat.tokens()
+            .into_iter()
+            .map(|leaf| {
+                let (item, properties, holders) = key(&flat, leaf);
+                (item.clone(), properties.to_owned(), holders.join("\u{0}"))
+            })
+            .collect::<Vec<_>>()
+    };
+    if characters(&old) == characters(&new) {
+        return Ok(after.to_owned());
+    }
     // A replacement deletes each whole match and inserts the whole value, as
     // Word's tracked Replace All does, at each match the replacement wrote;
     // any other edit, or a replacement its matches do not explain, is aligned
@@ -1372,6 +1387,9 @@ pub(super) fn redline_paragraph(
         return Ok(after.clone());
     }
     let redlined = redline_xml(&old, &new, tracking, identifiers)?;
+    if redlined == new {
+        return Ok(after.clone());
+    }
     Ok(CT_P::from_xml_fragment(redlined.as_bytes())?)
 }
 

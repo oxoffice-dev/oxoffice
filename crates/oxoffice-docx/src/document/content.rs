@@ -310,10 +310,12 @@ impl Document {
                 _ => None,
             })
             .ok_or_else(|| Error::Other(format!("table index {body_slot} is out of range")))?;
-        if !self
-            .local_cell_source
-            .as_ref()
-            .is_some_and(|proof| proof.applies(self))
+        // Under tracked changes, the route that writes them.
+        if self.tracking.is_some()
+            || !self
+                .local_cell_source
+                .as_ref()
+                .is_some_and(|proof| proof.applies(self))
         {
             return Ok(None);
         }
@@ -732,7 +734,7 @@ impl Document {
         slot: usize,
         xml: &str,
     ) -> Result<Option<bool>> {
-        if !self.plain_direct_paragraph(slot) {
+        if !self.plain_direct_paragraph(slot) || self.tracking.is_some() {
             return Ok(None);
         }
         let stored = {

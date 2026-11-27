@@ -52,6 +52,7 @@ impl Document {
         location: &ContentLocation,
         edit: impl FnOnce(&mut Table<'_>) -> Result<T>,
     ) -> Result<T> {
+        self.refuse_under_tracked_changes("an edit of a table outside the body")?;
         let mut table = self.story_table_model(location)?;
         let result = edit(&mut Table { inner: &mut table })?;
         // `Paragraph`'s adders name built-in styles by their English id; a

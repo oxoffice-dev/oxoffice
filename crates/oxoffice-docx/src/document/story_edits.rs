@@ -162,6 +162,9 @@ impl Document {
     }
 
     pub fn set_story_text(&mut self, location: &ContentLocation, value: &str) -> Result<()> {
+        if self.tracking.is_some() {
+            return self.set_story_text_tracked(location, value);
+        }
         let mut candidate = self.clone_for_staging();
         candidate.flush_to_package()?;
         let (source, owner) = candidate.story_source_and_owner(&location.story)?;
@@ -316,6 +319,20 @@ impl Document {
             Self::reparse_body_block(&source.head, source.tail_bytes(), source.block_of(&updated))
         else {
             return Ok(None);
+        };
+        // Under tracked changes, the block's edited paragraph is written as
+        // them; a text box, edited inside its drawing, takes the route that
+        // edits its own paragraph.
+        let parsed = match self.tracking {
+            None => parsed,
+            Some(_) if story.kind == StoryKind::TextBox => return Ok(None),
+            Some(_) => {
+                let before = [self.document.body.content[block.slot].clone()];
+                let mut after = [parsed];
+                self.redline_blocks(&before, &mut after)?;
+                let [parsed] = after;
+                parsed
+            }
         };
         // `body_block_item` answered that the body saves after a typed edit;
         // a text that declares no other namespace keeps that answer, which

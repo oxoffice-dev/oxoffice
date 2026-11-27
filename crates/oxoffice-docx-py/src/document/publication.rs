@@ -796,6 +796,10 @@ impl PyDocument {
         operation: &'static str,
         edit: impl FnOnce(&mut oxoffice_docx::Document) -> oxoffice_docx::Result<T> + Send,
     ) -> PyResult<(T, StoryPartsPublication)> {
+        // The route in place may publish nothing: a session checks first.
+        self.revisions
+            .check(Some(operation))
+            .map_err(revision_to_pyerr)?;
         if self.snapshot_scope.is_none() {
             // No Word authority: no owner and no handle to publish to.
             let inner = &mut self.inner;

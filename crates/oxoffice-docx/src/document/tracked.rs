@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::comments::RevisionDate;
+use oxoffice_docx_oxml::table::CellContent;
 
 /// Who and when the edits of a tracked session are recorded as.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +106,253 @@ impl Document {
     }
 }
 
+impl Document {
+    /// [`Self::set_story_text`] under a session: the untracked edit made on a
+    /// copy, its paragraph then written as tracked changes, so that it keeps
+    /// what the untracked call keeps (the first run's formatting).
+    pub(crate) fn set_story_text_tracked(
+        &mut self,
+        location: &ContentLocation,
+        value: &str,
+    ) -> Result<()> {
+        let mut untracked = self.clone_for_staging();
+        untracked.tracking = None;
+        untracked.set_story_text(location, value)?;
+        // The edit changed the story, and so its fingerprint.
+        let story = untracked
+            .stories()?
+            .into_iter()
+            .find(|story| {
+                story.kind == location.story.kind
+                    && story.part_name == location.story.part_name
+                    && story.owner_index == location.story.owner_index
+            })
+            .ok_or_else(|| Error::Other("the edited story is gone".to_owned()))?;
+        let edited_location = ContentLocation {
+            story,
+            ..location.clone()
+        };
+        let snapshot = untracked.story_range_paragraph_snapshot(&edited_location)?;
+        let edited = CT_P::from_xml_fragment(snapshot.xml())?;
+        self.edit_story_paragraph(location, |paragraph| {
+            *paragraph.inner = edited;
+            Ok(())
+        })
+    }
+
+    /// [`Self::try_replace_text_at`] under a session, on a paragraph: each
+    /// whole match deleted and its value inserted, as the replace calls
+    /// write them. A table or a block control as the location, or a text
+    /// box paragraph, is refused.
+    pub(crate) fn replace_text_at_tracked(
+        &mut self,
+        location: &ContentLocation,
+        placeholder: &str,
+        replacement: &str,
+        expected: Option<usize>,
+    ) -> Result<std::result::Result<usize, ReplacementCountMismatch>> {
+        if location.item_kind() != StoryItemKind::Paragraph {
+            return Err(super::redline::refused(
+                "a replacement in a whole table or control",
+            ));
+        }
+        if location.story().kind() == StoryKind::TextBox
+            || location.story().kind() == StoryKind::TableCell
+                && cell_in_text_box(self, location.story())?
+        {
+            return Err(super::redline::refused("a replacement in a text box"));
+        }
+        oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
+        let mut mismatch = None;
+        let result = self.with_replace_pattern(
+            || ReplacePattern::literal(placeholder, replacement),
+            |document| {
+                document.edit_story_paragraph(location, |paragraph| {
+                    let found = oxoffice_docx_oxml::placeholder::try_replace_in_paragraph(
+                        paragraph.inner,
+                        placeholder,
+                        replacement,
+                    )?;
+                    match expected {
+                        Some(expected) if expected != found => {
+                            mismatch = Some(ReplacementCountMismatch {
+                                index: 0,
+                                placeholder: placeholder.to_owned(),
+                                expected,
+                                found,
+                                unreached: 0,
+                            });
+                            Err(Error::Other("replacement count mismatch".to_owned()))
+                        }
+                        _ => Ok(found),
+                    }
+                })
+            },
+        );
+        match (result, mismatch) {
+            (_, Some(mismatch)) => Ok(Err(mismatch)),
+            (result, None) => result.map(Ok),
+        }
+    }
+
+    /// [`Self::try_set_cell_text`] under a session: the untracked edit made
+    /// on a copy of the cell, its paragraph then written as tracked changes.
+    /// A cell of more than one paragraph, whose others the untracked edit
+    /// removes, is refused.
+    pub(crate) fn set_cell_text_tracked(
+        &mut self,
+        table: usize,
+        row: usize,
+        cell: usize,
+        text: &str,
+    ) -> Result<()> {
+        let mut edited = self.read_cell(table, row, cell, Clone::clone)?;
+        if edited.content.len() != 1 {
+            return Err(super::redline::refused("a change of a cell's paragraphs"));
+        }
+        crate::table::Cell { inner: &mut edited }.try_set_text(text)?;
+        let [CellContent::Paragraph(edited)] = edited.content.as_slice() else {
+            return Err(super::redline::refused("a change of a cell's paragraphs"));
+        };
+        let edited = edited.clone();
+        self.edit_cell_paragraphs_tracked(table, row, cell, 0..1, |paragraph| {
+            *paragraph = edited.clone();
+            Ok(0)
+        })
+        .map(|_| ())
+    }
+
+    /// [`Self::try_replace_text_in_cell`] under a session: each paragraph of
+    /// the cell, or the one given, replaced as [`Self::replace_text_at_tracked`]
+    /// replaces it. A cell that holds a table is refused.
+    pub(crate) fn replace_in_cell_tracked(
+        &mut self,
+        (table, row, cell): (usize, usize, usize),
+        paragraph: Option<usize>,
+        placeholder: &str,
+        replacement: &str,
+        expected: Option<usize>,
+    ) -> Result<std::result::Result<usize, ReplacementCountMismatch>> {
+        let count = self.read_cell(table, row, cell, |cell| {
+            cell.content
+                .iter()
+                .map(|content| match content {
+                    CellContent::Paragraph(_) => Ok(()),
+                    _ => Err(super::redline::refused("a replacement in a nested table")),
+                })
+                .collect::<Result<Vec<_>>>()
+                .map(|paragraphs| paragraphs.len())
+        })??;
+        let paragraphs = match paragraph {
+            Some(paragraph) if paragraph < count => paragraph..paragraph + 1,
+            Some(paragraph) => {
+                return Err(Error::Other(format!(
+                    "cell paragraph {paragraph} is out of range"
+                )));
+            }
+            None => 0..count,
+        };
+        oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
+        let found = self.with_replace_pattern(
+            || ReplacePattern::literal(placeholder, replacement),
+            |document| {
+                document.edit_cell_paragraphs_tracked(table, row, cell, paragraphs, |paragraph| {
+                    Ok(oxoffice_docx_oxml::placeholder::try_replace_in_paragraph(
+                        paragraph,
+                        placeholder,
+                        replacement,
+                    )?)
+                })
+            },
+        )?;
+        Ok(match expected {
+            Some(expected) if expected != found => Err(ReplacementCountMismatch {
+                index: 0,
+                placeholder: placeholder.to_owned(),
+                expected,
+                found,
+                unreached: 0,
+            }),
+            _ => Ok(found),
+        })
+    }
+
+    /// `edit` on each paragraph `paragraphs` of the cell, its result written
+    /// as tracked changes of the paragraph before it, and the cell published
+    /// through one staged transaction, as [`Self::try_set_cell_text`]
+    /// publishes it. The sum of what `edit` returns.
+    fn edit_cell_paragraphs_tracked(
+        &mut self,
+        table: usize,
+        row: usize,
+        cell: usize,
+        paragraphs: Range<usize>,
+        mut edit: impl FnMut(&mut CT_P) -> Result<usize>,
+    ) -> Result<usize> {
+        let before = self.read_cell(table, row, cell, Clone::clone)?;
+        let mut after = before.clone();
+        let mut sum = 0;
+        for index in paragraphs {
+            let (Some(CellContent::Paragraph(old)), Some(CellContent::Paragraph(new))) =
+                (before.content.get(index), after.content.get_mut(index))
+            else {
+                return Err(Error::Other(format!(
+                    "cell paragraph {index} is out of range"
+                )));
+            };
+            sum += edit(new)?;
+            self.localize_run_styles(new);
+            if new != old {
+                *new = self.redline_edited_paragraph(old, new.clone())?;
+            }
+        }
+        if after == before {
+            return Ok(sum);
+        }
+        let mut candidate = self.clone_for_staging();
+        *nth_table_in_body(&mut candidate.document.body.content, &mut table.clone())
+            .and_then(|table| crate::table::table_cell_mut(table, row, cell))
+            .ok_or_else(|| Error::Other(format!("cell {row}:{cell} is out of range")))? = after;
+        let reopened = candidate.prepare_and_reopen_staged()?;
+        self.commit_staged_mutation(reopened);
+        Ok(sum)
+    }
+
+    /// `read` on cell `cell` of row `row` of body table `table`.
+    fn read_cell<T>(
+        &self,
+        table: usize,
+        row: usize,
+        cell: usize,
+        read: impl FnOnce(&oxoffice_docx_oxml::table::CT_Tc) -> T,
+    ) -> Result<T> {
+        // Counted as `table_mut` counts tables, which the edit takes.
+        let table = nth_table_in_body_ref(&self.document.body.content, &mut table.clone())
+            .ok_or_else(|| Error::Other(format!("table index {table} is out of range")))?;
+        let cell = crate::table::table_cell(table, row, cell)
+            .ok_or_else(|| Error::Other(format!("cell {row}:{cell} is out of range")))?;
+        Ok(read(cell))
+    }
+
+    /// [`Self::replace_text_at_tracked`] on a document a caller owns: `None`
+    /// when nothing matched.
+    pub(crate) fn replace_text_at_tracked_owned(
+        mut self,
+        location: &ContentLocation,
+        placeholder: &str,
+        replacement: &str,
+        expected: Option<usize>,
+    ) -> Result<std::result::Result<Option<(Self, usize)>, ReplacementCountMismatch>> {
+        Ok(
+            match self.replace_text_at_tracked(location, placeholder, replacement, expected)? {
+                Err(mismatch) => Err(mismatch),
+                Ok(0) => Ok(None),
+                Ok(count) => Ok(Some((self, count))),
+            },
+        )
+    }
+}
+
 impl Tracking {
     /// The ids the session wrote so far.
     pub(crate) fn ids(&self) -> Vec<i32> {
@@ -167,6 +415,21 @@ impl Document {
     /// Write as tracked changes each body paragraph that differs from the
     /// same one of `before`, the body content before the edit under way.
     pub(crate) fn redline_body(&mut self, before: &[BodyContent]) -> Result<()> {
+        let mut content = std::mem::take(&mut self.document.body.content);
+        let result = self.redline_blocks(before, &mut content);
+        self.document.body.content = content;
+        result?;
+        self.invalidate_layout();
+        Ok(())
+    }
+
+    /// Write as tracked changes each paragraph of `after`, body blocks, that
+    /// differs from the same one of `before`: the blocks before the edit.
+    pub(crate) fn redline_blocks(
+        &mut self,
+        before: &[BodyContent],
+        after: &mut [BodyContent],
+    ) -> Result<()> {
         let Some(tracking) = self.tracking.clone() else {
             return Ok(());
         };
@@ -175,7 +438,7 @@ impl Document {
         let identifiers = &mut self.identifiers;
         let mut index = 0;
         let mut failure = None;
-        visit_body_paragraphs_mut(&mut self.document.body.content, &mut |paragraph| {
+        visit_body_paragraphs_mut(after, &mut |paragraph| {
             if failure.is_some() {
                 return;
             }
@@ -197,10 +460,7 @@ impl Document {
             None if index != originals.len() => {
                 Err(super::redline::refused("an edit that removes a paragraph"))
             }
-            None => {
-                self.invalidate_layout();
-                Ok(())
-            }
+            None => Ok(()),
         }
     }
 }
@@ -374,31 +634,7 @@ impl TrackedDocument<'_> {
     /// [`Document::set_story_text`], written as tracked changes: the same
     /// edit, the first run's formatting kept, then its redline.
     pub fn set_story_text(&mut self, location: &ContentLocation, value: &str) -> Result<()> {
-        self.run(|document| {
-            let mut untracked = document.clone_for_staging();
-            untracked.tracking = None;
-            untracked.set_story_text(location, value)?;
-            // The edit changed the story, and so its fingerprint.
-            let story = untracked
-                .stories()?
-                .into_iter()
-                .find(|story| {
-                    story.kind == location.story.kind
-                        && story.part_name == location.story.part_name
-                        && story.owner_index == location.story.owner_index
-                })
-                .ok_or_else(|| Error::Other("the edited story is gone".to_owned()))?;
-            let edited_location = ContentLocation {
-                story,
-                ..location.clone()
-            };
-            let snapshot = untracked.story_range_paragraph_snapshot(&edited_location)?;
-            let edited = CT_P::from_xml_fragment(snapshot.xml())?;
-            document.edit_story_paragraph(location, |paragraph| {
-                *paragraph.inner = edited;
-                Ok(())
-            })
-        })
+        self.run(|document| document.set_story_text(location, value))
     }
 
     /// [`Document::try_replace_text`], written as tracked changes as Word's
@@ -421,50 +657,9 @@ impl TrackedDocument<'_> {
         replacement: &str,
         expected: Option<usize>,
     ) -> Result<std::result::Result<usize, ReplacementCountMismatch>> {
-        if location.item_kind() != StoryItemKind::Paragraph {
-            return Err(super::redline::refused(
-                "a replacement in a whole table or control",
-            ));
-        }
-        if location.story().kind() == StoryKind::TextBox
-            || location.story().kind() == StoryKind::TableCell
-                && cell_in_text_box(self.document, location.story())?
-        {
-            return Err(super::redline::refused("a replacement in a text box"));
-        }
-        oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
-        let mut mismatch = None;
-        let result = self.run(|document| {
-            document.with_replace_pattern(
-                || ReplacePattern::literal(placeholder, replacement),
-                |document| {
-                    document.edit_story_paragraph(location, |paragraph| {
-                        let found = oxoffice_docx_oxml::placeholder::try_replace_in_paragraph(
-                            paragraph.inner,
-                            placeholder,
-                            replacement,
-                        )?;
-                        match expected {
-                            Some(expected) if expected != found => {
-                                mismatch = Some(ReplacementCountMismatch {
-                                    index: 0,
-                                    placeholder: placeholder.to_owned(),
-                                    expected,
-                                    found,
-                                    unreached: 0,
-                                });
-                                Err(Error::Other("replacement count mismatch".to_owned()))
-                            }
-                            _ => Ok(found),
-                        }
-                    })
-                },
-            )
-        });
-        match (result, mismatch) {
-            (_, Some(mismatch)) => Ok(Err(mismatch)),
-            (result, None) => result.map(Ok),
-        }
+        self.run_refusable(|document| {
+            document.try_replace_text_at(location, placeholder, replacement, expected)
+        })
     }
 
     /// [`Document::try_replace_all_checked`], written as tracked changes.
@@ -483,5 +678,109 @@ impl TrackedDocument<'_> {
         pairs: &[(&str, &str, Option<usize>)],
     ) -> Result<std::result::Result<Vec<usize>, ReplacementCountMismatch>> {
         self.run_refusable(|document| document.try_replace_all_regex_expected(pairs))
+    }
+}
+
+/// A tracked changes session held across calls, for the Python binding: a
+/// handle on the session a document runs its edits in.
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct TrackedSession(Tracking);
+
+impl TrackedSession {
+    pub fn changes(&self) -> &TrackedChanges {
+        &self.0.changes
+    }
+
+    /// The ids of the revisions the session wrote that `document` holds, in
+    /// the order the session wrote them, read from the document's parts: an
+    /// edit refused after its revisions took ids, on a copy it dropped or in
+    /// place before it put the paragraph back, leaves none.
+    pub fn revision_ids(&self, document: &Document) -> Result<Vec<i32>> {
+        let ids = self.0.ids();
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+        let mut staged = document.clone_for_staging();
+        staged.prepare_staged_package()?;
+        let held = DocumentIdentifiers::scan(&staged.package)?.revision_ids;
+        Ok(ids.into_iter().filter(|id| held.contains(id)).collect())
+    }
+
+    /// Whether `other` is a handle on the same session.
+    pub fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0.ids, &other.0.ids)
+    }
+}
+
+impl Document {
+    /// Run every later edit of the paragraph routes and of replacement in a
+    /// tracked changes session by `changes`, until
+    /// [`Self::stop_tracked_changes`]. Refused while one runs.
+    #[doc(hidden)]
+    pub fn start_tracked_changes(&mut self, changes: &TrackedChanges) -> Result<TrackedSession> {
+        if self.tracking.is_some() {
+            return Err(Error::Other(
+                "tracked changes are already on: stop them before starting others".to_owned(),
+            ));
+        }
+        let tracking = Tracking {
+            changes: changes.clone(),
+            ids: Arc::default(),
+            pattern: None,
+        };
+        self.tracking = Some(tracking.clone());
+        Ok(TrackedSession(tracking))
+    }
+
+    /// End the session [`Self::start_tracked_changes`] started, if one runs.
+    #[doc(hidden)]
+    pub fn stop_tracked_changes(&mut self) -> Option<TrackedSession> {
+        self.tracking.take().map(TrackedSession)
+    }
+
+    /// The session the document's edits run in, if one runs.
+    #[doc(hidden)]
+    pub fn tracked_session(&self) -> Option<TrackedSession> {
+        self.tracking.clone().map(TrackedSession)
+    }
+
+    /// Whether a tracked changes session runs.
+    #[doc(hidden)]
+    pub fn tracks_changes(&self) -> bool {
+        self.tracking.is_some()
+    }
+
+    /// Refuse `call`, an edit no tracked changes session records yet, while
+    /// one runs: the error a session's refused call raises.
+    #[doc(hidden)]
+    pub fn refuse_under_tracked_changes(&self, call: &str) -> Result<()> {
+        match self.tracking {
+            Some(_) => Err(Error::Other(format!(
+                "{call} is not recorded as a tracked change yet: end the tracked changes to make it"
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// `edit` on body paragraph `index`, as [`Self::paragraph_mut`] reaches
+    /// it, written as tracked changes when a session runs.
+    #[doc(hidden)]
+    pub fn edit_paragraph_mut<T>(
+        &mut self,
+        index: usize,
+        edit: impl FnOnce(&mut Paragraph<'_>) -> Result<T>,
+    ) -> Result<T> {
+        let missing = || Error::Other("paragraph index out of range".to_owned());
+        if self.tracking.is_none() {
+            return edit(&mut self.paragraph_mut(index).ok_or_else(missing)?);
+        }
+        let before = self.paragraph(index).ok_or_else(missing)?.inner.clone();
+        let mut after = before.clone();
+        let value = edit(&mut Paragraph { inner: &mut after })?;
+        self.localize_run_styles(&mut after);
+        let redlined = self.redline_edited_paragraph(&before, after)?;
+        *self.paragraph_mut(index).ok_or_else(missing)?.inner = redlined;
+        Ok(value)
     }
 }

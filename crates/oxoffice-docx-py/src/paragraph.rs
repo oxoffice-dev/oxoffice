@@ -251,9 +251,8 @@ impl ParagraphLocation {
         edit: impl FnOnce(&mut oxoffice_docx::Paragraph<'_>) -> oxoffice_docx::Result<T>,
     ) -> oxoffice_docx::Result<T> {
         match self {
-            Self::Body(index) => edit(&mut document.paragraph_mut(*index).ok_or_else(|| {
-                oxoffice_docx::Error::Other("paragraph index out of range".to_owned())
-            })?),
+            // Under tracked changes, the edit is written as revisions.
+            Self::Body(index) => document.edit_paragraph_mut(*index, edit),
             Self::Cell {
                 table,
                 row,
@@ -620,9 +619,19 @@ impl PyParagraph {
                     .map(|appended| {
                         let mut segments = self.current_path(&document).segs;
                         segments.push(PathSeg::Run(appended.0));
+                        // Under tracked changes the run went into an
+                        // insertion, which its path now passes through.
+                        let run_path = match document.inner.tracks_changes() {
+                            true => location
+                                .read(&document.inner, |paragraph| paragraph.run_path(appended.0))
+                                .ok()
+                                .flatten()
+                                .unwrap_or(appended.1),
+                            false => appended.1,
+                        };
                         document
                             .capture_snapshot(segments)
-                            .map(|path| (path, appended.1))
+                            .map(|path| (path, run_path))
                     })
                     .transpose()?
             };
@@ -672,9 +681,15 @@ impl PyParagraph {
                     .expect("the appended run has an accepted source path");
                 Ok((run_index, run_path))
             };
-            let (run_index, run_path) = location
+            let (run_index, mut run_path) = location
                 .edit(&mut candidate, append)
                 .map_err(|error| crate::docx_to_pyerr(py, error))?;
+            if candidate.tracks_changes()
+                && let Ok(Some(tracked)) =
+                    location.read(&candidate, |paragraph| paragraph.run_path(run_index))
+            {
+                run_path = tracked;
+            }
             let route = document
                 .paragraph_route(&location, None)
                 .map_err(|error| crate::docx_to_pyerr(py, error))?;

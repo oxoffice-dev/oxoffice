@@ -42,6 +42,8 @@ mod settings;
 mod stories;
 mod styles;
 mod templates;
+mod tracked;
+pub use tracked::PyTrackedChanges;
 
 pub use annotations::{PyComment, PyRevision};
 use annotations::{revision_kind_name, story_link_layout};

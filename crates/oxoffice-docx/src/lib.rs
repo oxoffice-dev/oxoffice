@@ -83,7 +83,7 @@ pub use document::{
     SectionRef, SectionStory, SlotHit, StoryError, StoryId, StoryItemKind, StoryItemRef,
     StoryItemSnapshot, StoryKind, StoryParagraph, StoryText, StoryTextItem, TextBoxDirection,
     TextBoxOptions, TextDiagnostic, TextReport, TextWatermarkOptions, TrackedChanges,
-    TrackedDocument, UncheckedReplacement, UnreachedReplacement, UnsupportedXmlRef,
+    TrackedDocument, TrackedSession, UncheckedReplacement, UnreachedReplacement, UnsupportedXmlRef,
     ValidationFinding, ValidationReport, ValidationSeverity, WordCreationProfile, WordPackageClass,
     derive_font_key, resolved_xml_events, validate_document_bytes, validate_document_file,
 };
