@@ -7,13 +7,16 @@
 //! record 0. A font that leaves out its name, size or colour (Google's
 //! fonts without `sz`) takes it from font 0.
 //!
-//! Only the colour scheme of the theme is read, each colour from its
-//! `srgbClr`, or the `lastClr` of its `sysClr`: a Strict theme (its
-//! percentages written `50%`) reads like a Transitional one.
+//! The theme is read by `oxoffice-drawing`, Strict ones included; a colour
+//! of its scheme is its `srgbClr`, transforms applied, or the `lastClr` of
+//! its `sysClr`.
 
 use std::sync::Arc;
 
-use oxoffice_drawing::color::{RgbColor, apply_hls_tint};
+use oxoffice_drawing::color::{
+    ColorChoice, RgbColor, ThemeColorSlot, apply_color_transforms, apply_hls_tint,
+};
+use oxoffice_drawing::theme::CT_OfficeStyleSheet;
 use oxoffice_numfmt::{DateKind, Locale, NumberFormat, builtin_code};
 use oxoffice_xlsx_oxml::Element;
 use oxoffice_xlsx_oxml::styles::{StyleList, StylesXml, Xf};
@@ -272,28 +275,35 @@ const INDEXED_COLORS: [&str; 64] = [
 /// first, then dark 1, light 2, dark 2, the six accents and the two links.
 pub(crate) type ThemeColors = [Option<RgbColor>; 12];
 
-const THEME_SLOTS: [&str; 12] = [
-    "lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6",
-    "hlink", "folHlink",
+const THEME_SLOTS: [ThemeColorSlot; 12] = [
+    ThemeColorSlot::Light1,
+    ThemeColorSlot::Dark1,
+    ThemeColorSlot::Light2,
+    ThemeColorSlot::Dark2,
+    ThemeColorSlot::Accent1,
+    ThemeColorSlot::Accent2,
+    ThemeColorSlot::Accent3,
+    ThemeColorSlot::Accent4,
+    ThemeColorSlot::Accent5,
+    ThemeColorSlot::Accent6,
+    ThemeColorSlot::Hyperlink,
+    ThemeColorSlot::FollowedHyperlink,
 ];
 
-/// The colour scheme of a theme part; colours it does not give as RGB stay
-/// unresolved.
+/// The colour scheme of a theme part; a colour it gives otherwise than as
+/// RGB or a system colour with its last value stays unresolved.
 pub(crate) fn theme_colors(xml: &[u8]) -> Result<ThemeColors, String> {
-    let theme = Element::parse(xml).map_err(|error| error.to_string())?;
-    let scheme = theme
-        .child("themeElements")
-        .and_then(|elements| elements.child("clrScheme"));
-    Ok(THEME_SLOTS.map(|slot| {
-        let color = scheme?.child(slot)?.elements().next()?;
-        let hex = if color.tag.is("srgbClr") {
-            color.tag.get("val")
-        } else if color.tag.is("sysClr") {
-            color.tag.get("lastClr")
-        } else {
-            None
-        };
-        RgbColor::parse(&hex?).ok()
+    let theme = CT_OfficeStyleSheet::from_xml(xml).map_err(|error| error.to_string())?;
+    let scheme = &theme.theme_elements.color_scheme;
+    Ok(THEME_SLOTS.map(|slot| match scheme.color(slot) {
+        ColorChoice::Srgb {
+            value, transforms, ..
+        } => {
+            let resolved = apply_color_transforms(*value, transforms);
+            Some(RgbColor::new(resolved.red, resolved.green, resolved.blue))
+        }
+        ColorChoice::System { last_color, .. } => *last_color,
+        _ => None,
     }))
 }
 
@@ -534,21 +544,14 @@ mod tests {
 
     #[test]
     fn colours_resolve_through_the_theme_and_the_palette() {
-        let theme = concat!(
-            r#"<a:theme xmlns:a="urn:a"><a:themeElements><a:clrScheme name="x">"#,
-            r#"<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>"#,
-            r#"<a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>"#,
-            r#"<a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2>"#,
-            r#"<a:accent1><a:srgbClr val="4472C4"/></a:accent1>"#,
-            r#"</a:clrScheme></a:themeElements></a:theme>"#
-        );
         let styles = |colors: &str| {
             let xml = format!(
                 r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{colors}</styleSheet>"#
             );
             StylesXml::parse(Arc::new(xml.into_bytes())).unwrap()
         };
-        let theme = theme_colors(theme.as_bytes()).unwrap();
+        // dk1 and lt1 system colours, dk2 0E2841, lt2 E8E8E8, accent1 156082.
+        let theme = theme_colors(oxoffice_drawing::theme::OFFICE_DEFAULT_XML.as_bytes()).unwrap();
         let default = styles("");
         let own = styles(
             r#"<colors><indexedColors><rgbColor rgb="FF112233"/><rgbColor rgb="FF445566"/></indexedColors></colors>"#,
@@ -569,26 +572,26 @@ mod tests {
             (
                 &default,
                 r#"<color theme="2"/>"#,
-                Some("E7E6E6"),
+                Some("E8E8E8"),
                 ColorSource::Theme(2),
             ),
             (
                 &default,
                 r#"<color theme="3"/>"#,
-                Some("44546A"),
+                Some("0E2841"),
                 ColorSource::Theme(3),
             ),
             (
                 &default,
                 r#"<color theme="4" tint="0.5"/>"#,
-                Some("A2B9E2"),
+                Some("64BEE6"),
                 ColorSource::Theme(4),
             ),
             (
                 &default,
-                r#"<color theme="9"/>"#,
+                r#"<color theme="12"/>"#,
                 None,
-                ColorSource::Theme(9),
+                ColorSource::Theme(12),
             ),
             (
                 &default,

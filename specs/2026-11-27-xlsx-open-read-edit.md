@@ -44,9 +44,9 @@ under the plan. Producer facts come from LibreOffice 26.2 (probed here), a Googl
 
 The dependency rule gains the third family: no shared crate depends on an `-xlsx` crate, and `-xlsx`, `-docx` and
 `-pptx` crates never depend on each other. `oxoffice-sml` and `oxoffice-chart` keep no edge to the xlsx family.
-`oxoffice-drawing` gains one colour function, `apply_hls_tint`, the SpreadsheetML tint (HLS luminance, `CT_Color@tint`
-of ECMA-376 Part 1), beside the DrawingML ones it has; the facade reads the theme's colour scheme itself (PR 5: the
-`oxoffice-drawing` theme model refuses the `50%` percentages of a Strict theme). No WebAssembly crate in this set;
+`oxoffice-drawing` parses the theme and gains one colour function, `apply_hls_tint`, the SpreadsheetML tint (HLS
+luminance, `CT_Color@tint` of ECMA-376 Part 1), beside the DrawingML ones it has. Its readers take a percentage in both
+forms, Transitional thousandths (`50000`) and Strict's `50%` (PR 5; angles are integers in both). No WebAssembly crate in this set;
 the facade's core uses nothing `wasm32` lacks, as docx and pptx, so bindings can follow when a user asks.
 
 ### 2. The model
@@ -60,7 +60,7 @@ the facade's core uses nothing `wasm32` lacks, as docx and pptx, so bindings can
 | `styles.xml` | `numFmts`, `fonts`, `fills`, `borders`, `cellStyleXfs`, `cellXfs`, `cellStyles`, `colors`; `dxfs`, `tableStyles`, `extLst` as bytes | new records spliced at the end of their list, its `count` updated |
 | worksheets | on demand, see below | source bytes with edited rows and children spliced |
 | comments, threaded comments, `persons/person.xml`, tables (header row), pivot locations | read only | as read |
-| `theme/theme1.xml` | its colour scheme, read (`srgbClr`, a `sysClr`'s `lastClr`) | as read |
+| `theme/theme1.xml` | `oxoffice-drawing` theme, read | as read |
 | `metadata.xml` | PR 6: `metadataTypes`, the `XLDAPR` `futureMetadata`, `cellMetadata`; the rest as bytes | spliced when a spill formula needs its blocks (section 6) |
 | `calcChain.xml` | not read | removed on a save after an edit (section 3) |
 | everything else: drawings, VML, charts, pivot caches, external links, `vbaProject.bin`, `customXml`, `docProps`, printer settings | bytes | as read |

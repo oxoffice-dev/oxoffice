@@ -7,6 +7,8 @@ depending on a document format.
 
 - Typed colors with theme and color-map resolution; the SpreadsheetML tint
   of a cell style colour (`apply_hls_tint`).
+- Percentages read in their Transitional (`50000`) and Strict (`50%`) forms,
+  written in the Transitional one.
 - Solid, gradient, pattern, image, and no-fill models.
 - Preset and custom geometry, lines, transforms, text bodies, and tables.
 - Schema-ordered writing with ordered preservation of unmodelled children.

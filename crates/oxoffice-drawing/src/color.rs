@@ -651,8 +651,16 @@ fn parse_component(component: &str, full_value: &str) -> Result<u8> {
     u8::from_str_radix(component, 16).map_err(|_| ColorError::InvalidRgb(full_value.to_owned()))
 }
 
+/// A percentage transform value, in either the Transitional or the Strict
+/// form (`50000`, `50%`).
 fn parse_percent(element: &BytesStart<'_>) -> Result<Percent1000> {
-    parse_transform_i32(element).map(Percent1000)
+    let value = required_attr(element, b"val")?;
+    crate::lexical::parse_percentage(&value)
+        .map(Percent1000)
+        .ok_or_else(|| ColorError::InvalidTransformValue {
+            element: String::from_utf8_lossy(local_name(element.name().as_ref())).into_owned(),
+            value,
+        })
 }
 
 fn parse_angle(element: &BytesStart<'_>) -> Result<Angle> {
