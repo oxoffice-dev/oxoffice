@@ -236,11 +236,7 @@ impl<'a> WorksheetMut<'a> {
         let (xml, index) = sheet.index()?;
         let staged = &sheet.entry().edits.rows;
         let mut rows = BTreeMap::new();
-        for span in index
-            .rows
-            .iter()
-            .filter(|span| (first..=last).contains(&span.row))
-        {
+        for span in index.rows_in(first, last).iter() {
             // The first of two rows that say the same number is the row.
             if !rows.contains_key(&span.row) && !staged.contains_key(&span.row) {
                 let row = CT_Row::parse(&xml[span.range.clone()])

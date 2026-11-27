@@ -16,6 +16,7 @@ mod page_setup;
 mod row;
 mod views;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
@@ -353,6 +354,27 @@ impl SheetIndex {
         self.by_row.get(&row).map(|&position| &self.rows[position])
     }
 
+    /// The rows numbered `first..=last` (0-based), in the order written. For
+    /// rows written in ascending order, as every producer writes them, a
+    /// slice of the index found by two binary searches, borrowed: a call
+    /// costs the rows it gives, not the sheet. For a sheet whose rows are out
+    /// of order (or repeat a number), the matching ones, copied after one pass.
+    pub fn rows_in(&self, first: u32, last: u32) -> Cow<'_, [RowSpan]> {
+        if self.ascending {
+            let start = self.rows.partition_point(|span| span.row < first);
+            let end = self.rows.partition_point(|span| span.row <= last);
+            Cow::Borrowed(&self.rows[start..end.max(start)])
+        } else {
+            Cow::Owned(
+                self.rows
+                    .iter()
+                    .filter(|span| (first..=last).contains(&span.row))
+                    .cloned()
+                    .collect(),
+            )
+        }
+    }
+
     /// The first row written after the row `row` would take, whether or not
     /// the sheet holds `row`: the one a new row goes before.
     fn first_row_after(&self, row: u32) -> Option<&RowSpan> {
@@ -601,6 +623,49 @@ mod tests {
             ("", false),
         ] {
             assert_eq!(holds_formula(xml.as_bytes()), found, "{xml}");
+        }
+    }
+
+    #[test]
+    fn the_rows_of_a_range_are_found_without_a_pass_over_the_sheet() {
+        let sheet = |rows: &str| {
+            format!(r#"<worksheet xmlns="urn:x"><sheetData>{rows}</sheetData></worksheet>"#)
+        };
+        let numbers = |index: &SheetIndex, first, last| -> Vec<u32> {
+            index
+                .rows_in(first, last)
+                .iter()
+                .map(|span| span.row)
+                .collect()
+        };
+        // Rows 3, 5, 7 and 9 (2, 4, 6 and 8 from 0) in order: a borrowed slice,
+        // whatever the range.
+        let ascending = sheet(r#"<row r="3"/><row r="5"/><row r="7"/><row r="9"/>"#);
+        let index = SheetIndex::build(ascending.as_bytes()).unwrap();
+        for (first, last, expected) in [
+            (0, 100, vec![2, 4, 6, 8]),
+            (4, 6, vec![4, 6]),
+            (4, 4, vec![4]),
+            (3, 3, vec![]),
+            (9, 1, vec![]),
+            (10, 20, vec![]),
+        ] {
+            let rows = index.rows_in(first, last);
+            assert!(
+                matches!(rows, Cow::Borrowed(_)),
+                "{first}..={last} is a slice"
+            );
+            assert_eq!(numbers(&index, first, last), expected, "{first}..={last}");
+        }
+        // Rows out of order, or a number twice: the same rows, in the order
+        // written, copied.
+        for (rows, expected) in [
+            (r#"<row r="7"/><row r="3"/><row r="5"/>"#, vec![6, 4]),
+            (r#"<row r="3"/><row r="5"/><row r="5"/>"#, vec![4, 4]),
+        ] {
+            let index = SheetIndex::build(sheet(rows).as_bytes()).unwrap();
+            assert!(matches!(index.rows_in(4, 6), Cow::Owned(_)));
+            assert_eq!(numbers(&index, 4, 6), expected, "{rows}");
         }
     }
 
