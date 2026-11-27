@@ -148,6 +148,30 @@ impl Tag {
         self.0 = tag;
     }
 
+    /// The attributes as written, each by its name and its value with the
+    /// references resolved, but those named in `skip`: what two tags that
+    /// differ only in `skip` have in common.
+    pub fn attributes_except(&self, skip: &[&str]) -> Vec<(String, String)> {
+        self.0
+            .attributes()
+            .flatten()
+            .filter(|attribute| {
+                !skip
+                    .iter()
+                    .any(|name| attribute.key.as_ref() == name.as_bytes())
+            })
+            .map(|attribute| {
+                let value = attribute_text(&attribute)
+                    .map(|text| text.into_owned())
+                    .unwrap_or_default();
+                (
+                    String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
+                    value,
+                )
+            })
+            .collect()
+    }
+
     /// Sets a boolean attribute in the fixed form, `1` or `0`.
     pub fn set_bool(&mut self, name: &str, value: Option<bool>) {
         self.set(name, value.map(|value| if value { "1" } else { "0" }));
@@ -268,6 +292,11 @@ pub fn qualified(prefix: &str, local: &str) -> String {
     } else {
         format!("{prefix}:{local}")
     }
+}
+
+/// The prefix of a qualified name, empty when it has none.
+pub fn prefix_of_name(name: &str) -> &str {
+    name.split_once(':').map_or("", |(prefix, _)| prefix)
 }
 
 /// An element whose content is elements or text, its tags as read. See the

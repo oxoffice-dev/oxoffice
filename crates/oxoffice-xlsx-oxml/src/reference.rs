@@ -74,6 +74,31 @@ pub fn parse_column(letters: &str) -> Option<u32> {
     (column <= MAX_COLUMNS).then(|| column - 1)
 }
 
+/// The columns a span of whole columns names, 0-based, both ends included:
+/// `B`, `A:C` or `$A:$C`, letters in any case, the ends in either order.
+pub fn parse_column_span(text: &str) -> Option<(u32, u32)> {
+    let (a, b) = text.split_once(':').unwrap_or((text, text));
+    let column = |end: &str| parse_column(end.strip_prefix('$').unwrap_or(end));
+    let (a, b) = (column(a)?, column(b)?);
+    Some((a.min(b), a.max(b)))
+}
+
+/// The rows a span of whole rows names, 0-based, both ends included: `3`,
+/// `2:5` or `$2:$5`, the ends in either order.
+pub fn parse_row_span(text: &str) -> Option<(u32, u32)> {
+    let (a, b) = text.split_once(':').unwrap_or((text, text));
+    let row = |end: &str| {
+        let digits = end.strip_prefix('$').unwrap_or(end);
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let row: u32 = digits.parse().ok()?;
+        (1..=MAX_ROWS).contains(&row).then(|| row - 1)
+    };
+    let (a, b) = (row(a)?, row(b)?);
+    Some((a.min(b), a.max(b)))
+}
+
 /// A rectangle of cells, its corners ordered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CellRange {
@@ -137,5 +162,29 @@ mod tests {
         let range = CellRange::parse("C4:A2").unwrap();
         assert_eq!(range.to_string(), "A2:C4");
         assert!(range.contains(CellRef::new(2, 1)) && !range.contains(CellRef::new(4, 0)));
+    }
+
+    #[test]
+    fn whole_columns_and_rows_read_as_spans() {
+        for (text, columns, rows) in [
+            ("B", Some((1, 1)), None),
+            ("a:c", Some((0, 2)), None),
+            ("$C:$A", Some((0, 2)), None),
+            ("XFD", Some((16_383, 16_383)), None),
+            ("3", None, Some((2, 2))),
+            ("2:5", None, Some((1, 4))),
+            ("$5:$2", None, Some((1, 4))),
+            ("1048576", None, Some((1_048_575, 1_048_575))),
+            ("", None, None),
+            ("A:", None, None),
+            ("XFE", None, None),
+            ("0:3", None, None),
+            ("1048577", None, None),
+            ("A1", None, None),
+            ("A:3", None, None),
+        ] {
+            assert_eq!(parse_column_span(text), columns, "columns {text:?}");
+            assert_eq!(parse_row_span(text), rows, "rows {text:?}");
+        }
     }
 }

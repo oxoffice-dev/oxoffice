@@ -11,20 +11,24 @@
 //! every other child and every row not edited stay as they were. An edit
 //! costs its rows, not the sheet.
 
+mod cols;
 mod page_setup;
 mod row;
+mod views;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::xml_element::ElementSpan;
 
+pub use cols::set_width as set_column_width;
 pub use page_setup::{PAGE_SETUP_CHILDREN, PageSetupElements};
 pub use row::{
     CELL_ATTRIBUTES, CT_Cell, CT_CellFormula, CT_Row, CellChild, FORMULA_ATTRIBUTES,
     ROW_ATTRIBUTES, RowChild, TextElement, fixed_attributes,
 };
+pub use views::set_frozen_panes;
 
 use crate::namespaces::MAIN_NAMESPACES;
 use crate::reference::{CellRange, CellRef, MAX_COLUMNS, MAX_ROWS};
@@ -134,6 +138,11 @@ pub struct SheetIndex {
     pub sheet_data_tag: Option<Tag>,
     /// The rows, in the order written.
     pub rows: Vec<RowSpan>,
+    /// Where each row number is first in `rows`, and whether `rows` is in
+    /// ascending order of row number, as every producer writes it: what
+    /// finds a row, and the row after it, without a pass over the sheet.
+    by_row: HashMap<u32, usize>,
+    ascending: bool,
     /// The masters of the shared formula groups, by group (`si`).
     pub shared_formulas: BTreeMap<u32, SharedFormula>,
     /// The array formulas and data tables, in the order written.
@@ -160,6 +169,8 @@ impl SheetIndex {
             sheet_data: None,
             sheet_data_tag: None,
             rows: Vec::new(),
+            by_row: HashMap::new(),
+            ascending: true,
             shared_formulas: BTreeMap::new(),
             range_formulas: Vec::new(),
         };
@@ -188,6 +199,10 @@ impl SheetIndex {
                 Child::End(end) => {
                     index.root.content = root.tag.end..end.start;
                     index.root.end_tag = end;
+                    index.ascending = index.rows.windows(2).all(|rows| rows[0].row < rows[1].row);
+                    for (position, span) in index.rows.iter().enumerate() {
+                        index.by_row.entry(span.row).or_insert(position);
+                    }
                     return Ok(index);
                 }
             }
@@ -335,7 +350,18 @@ impl SheetIndex {
     /// The row with this 0-based index, the first one written when two say
     /// the same.
     pub fn row(&self, row: u32) -> Option<&RowSpan> {
-        self.rows.iter().find(|span| span.row == row)
+        self.by_row.get(&row).map(|&position| &self.rows[position])
+    }
+
+    /// The first row written after the row `row` would take, whether or not
+    /// the sheet holds `row`: the one a new row goes before.
+    fn first_row_after(&self, row: u32) -> Option<&RowSpan> {
+        if self.ascending {
+            self.rows
+                .get(self.rows.partition_point(|span| span.row <= row))
+        } else {
+            self.rows.iter().find(|span| span.row > row)
+        }
     }
 
     /// The first child of the root named `local`.
@@ -433,11 +459,7 @@ pub fn splice(xml: &[u8], index: &SheetIndex, edits: &SheetEdits) -> Result<Vec<
         match index.row(number) {
             Some(span) => splice.replace(span.range.clone(), written),
             None if edit.is_some() => {
-                let at = index
-                    .rows
-                    .iter()
-                    .find(|span| span.row > number)
-                    .map(|span| span.range.start);
+                let at = index.first_row_after(number).map(|span| span.range.start);
                 new_rows.push((at.unwrap_or(usize::MAX), written));
             }
             None => {}
@@ -571,7 +593,7 @@ mod tests {
     #[test]
     fn a_splice_writes_only_what_the_edits_name() {
         let replaced = r#"<row r="3"><c r="B3"><v>9</v></c></row>"#;
-        let cases: [(&str, &str, SheetEdits, &str); 9] = [
+        let cases: [(&str, &str, SheetEdits, &str); 10] = [
             ("nothing", SHEET, SheetEdits::default(), SHEET),
             (
                 "a row replaced, the fixed writing of what it read",
@@ -648,6 +670,15 @@ mod tests {
                     ..SheetEdits::default()
                 },
                 r#"<worksheet xmlns="urn:x"><sheetData><row/><row r="3"><c><v>9</v></c></row></sheetData></worksheet>"#,
+            ),
+            (
+                "a new row goes before the first row written after it, in a sheet whose rows are not in order",
+                r#"<worksheet xmlns="urn:x"><sheetData><row r="3"/><row r="1"/></sheetData></worksheet>"#,
+                SheetEdits {
+                    rows: [(1, Some(row(r#"<row r="2"/>"#)))].into(),
+                    ..SheetEdits::default()
+                },
+                r#"<worksheet xmlns="urn:x"><sheetData><row r="2"/><row r="3"/><row r="1"/></sheetData></worksheet>"#,
             ),
             (
                 "a row in an empty sheetData written with end tags",
