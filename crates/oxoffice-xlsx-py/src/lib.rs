@@ -1,21 +1,29 @@
 //! Python bindings for the oxoffice-xlsx facade, published as
 //! `oxoffice.xlsx`.
 
+mod cell;
+mod page_setup;
+mod style;
+
 use std::path::PathBuf;
 
 use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyTuple};
+use pyo3::types::{PyBytes, PyList, PyTuple};
 
-use oxoffice_xlsx::{Error, SaveOptions};
+use oxoffice_xlsx::{CsvOptions, Error, MAX_BULK_CELLS, SaveOptions};
+
+use crate::cell::{PyCell, PyComment, Values};
+use crate::page_setup::PyPageSetup;
 
 const MODULE: &str = "oxoffice.xlsx";
 
 /// The exception an error of the facade raises: a `ValueError` for an
-/// argument that is not valid, else the public exception of `oxoffice.xlsx`:
-/// `XmlError` (also a `ValueError`) for a part that is no well-formed
-/// SpreadsheetML or a character XML cannot carry, `PackageError` for a file
-/// that does not open or cannot be written, `XlsxError` for the rest.
+/// argument that is not valid (a reference that names no cell or range
+/// among them), else the public exception of `oxoffice.xlsx`: `XmlError`
+/// (also a `ValueError`) for a part that is no well-formed SpreadsheetML or a
+/// character XML cannot carry, `PackageError` for a file that does not open
+/// or cannot be written, `XlsxError` for the rest (a refused edit or read).
 fn xlsx_to_pyerr(py: Python<'_>, error: Error) -> PyErr {
     let message = error.to_string();
     let class = if message.contains(oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL) {
@@ -24,7 +32,12 @@ fn xlsx_to_pyerr(py: Python<'_>, error: Error) -> PyErr {
         match error {
             Error::InvalidArgument(_) => return PyValueError::new_err(message),
             Error::MalformedPart { .. } => "XmlError",
-            Error::MacroFreeExtension { .. } | Error::Refused(_) => "XlsxError",
+            Error::InvalidReference { .. }
+            | Error::NotACell { .. }
+            | Error::RangeTooLarge { .. } => return PyValueError::new_err(message),
+            Error::MacroFreeExtension { .. } | Error::Refused(_) | Error::NotAWorksheet { .. } => {
+                "XlsxError"
+            }
             _ => "PackageError",
         }
     };
@@ -214,6 +227,20 @@ impl PyWorkbook {
         self.inner.date_system() == oxoffice_xlsx::DateSystem::Date1904
     }
 
+    /// Whether the cached values of formulas may be out of date: the file
+    /// asks for a recalculation on open.
+    #[getter]
+    fn recalculation_needed(&self) -> bool {
+        self.inner.recalculation_needed()
+    }
+
+    /// The workbook as Markdown: `## <name>` and a table per worksheet,
+    /// headed by the column letters, each row led by its number.
+    fn to_markdown(&self, py: Python<'_>) -> PyResult<String> {
+        py.detach(|| self.inner.to_markdown())
+            .map_err(|error| xlsx_to_pyerr(py, error))
+    }
+
     /// Saves to `path`. A workbook opened from a file refuses to replace that
     /// file unless `overwrite_source` is true.
     #[pyo3(signature = (path, *, overwrite_source = false))]
@@ -275,6 +302,16 @@ pub struct PyWorksheet {
 }
 
 impl PyWorksheet {
+    /// `read` of this sheet of the workbook, its error raised.
+    fn read<T>(
+        &self,
+        py: Python<'_>,
+        read: impl FnOnce(oxoffice_xlsx::Worksheet<'_>) -> Result<T, Error>,
+    ) -> PyResult<T> {
+        self.with(py, read)?
+            .map_err(|error| xlsx_to_pyerr(py, error))
+    }
+
     /// `read` of this sheet of the workbook.
     fn with<T>(
         &self,
@@ -386,14 +423,164 @@ impl PyWorksheet {
         self.edit(py, |sheet| sheet.freeze_panes(cell.as_deref()))
     }
 
+    /// The smallest range holding every cell with a value or a formula
+    /// (`"A1:F16"`), `None` for a sheet without one.
+    #[getter]
+    fn used_range(&self, py: Python<'_>) -> PyResult<Option<String>> {
+        self.read(py, |sheet| {
+            sheet
+                .used_range()
+                .map(|range| range.map(|range| range.to_string()))
+        })
+    }
+
+    /// The cell at `cell`: an A1 reference (`"B3"`) or a 0-based `(row,
+    /// column)`.
+    fn cell(&self, py: Python<'_>, cell: &Bound<'_, PyAny>) -> PyResult<PyCell> {
+        if let Ok(reference) = cell.extract::<String>() {
+            return self.read(py, |sheet| sheet.cell(&reference).map(PyCell::from));
+        }
+        let Ok((row, column)) = cell.extract::<(i64, i64)>() else {
+            return Err(PyTypeError::new_err(
+                "a cell is an A1 reference such as \"B3\" or a 0-based (row, column)",
+            ));
+        };
+        let (Ok(row), Ok(column)) = (u32::try_from(row), u32::try_from(column)) else {
+            return Err(PyIndexError::new_err(format!(
+                "({row}, {column}) is outside the sheet"
+            )));
+        };
+        self.read(py, |sheet| sheet.cell_at(row, column).map(PyCell::from))
+            .map_err(|error| {
+                if error.is_instance_of::<PyValueError>(py) {
+                    PyIndexError::new_err(format!("({row}, {column}) is outside the sheet"))
+                } else {
+                    error
+                }
+            })
+    }
+
+    /// The values of `range` (`"A1:C10"`, `"B3"`, whole columns `"A:C"` or
+    /// rows `"2:5"` clipped to the used range) as one list per row; with
+    /// `text`, the displayed texts.
+    #[pyo3(signature = (range, text = false))]
+    fn values<'py>(
+        &self,
+        py: Python<'py>,
+        range: &str,
+        text: bool,
+    ) -> PyResult<Bound<'py, PyList>> {
+        if text {
+            let rows = self.read(py, |sheet| displayed_texts(sheet, range))?;
+            return PyList::new(py, rows);
+        }
+        let rows = self.read(py, |sheet| sheet.values(range))?;
+        let values = Values::new(py)?;
+        let list = PyList::empty(py);
+        for row in &rows {
+            let converted = row
+                .iter()
+                .map(|value| values.convert(value))
+                .collect::<PyResult<Vec<_>>>()?;
+            list.append(PyList::new(py, converted)?)?;
+        }
+        Ok(list)
+    }
+
+    /// The cells of `range` that hold a value or a formula, row by row.
+    fn cells(&self, py: Python<'_>, range: &str) -> PyResult<Vec<PyCell>> {
+        self.read(py, |sheet| {
+            sheet
+                .cells(range)
+                .map(|cells| cells.into_iter().map(PyCell::from).collect())
+        })
+    }
+
+    /// The merged ranges, `["A1:J1", ...]`.
+    #[getter]
+    fn merged_ranges(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        self.read(py, |sheet| {
+            sheet
+                .merged_ranges()
+                .map(|ranges| ranges.iter().map(ToString::to_string).collect())
+        })
+    }
+
+    /// The notes and comment threads, by cell, row by row.
+    #[getter]
+    fn comments(&self, py: Python<'_>) -> PyResult<Vec<PyComment>> {
+        self.read(py, |sheet| {
+            sheet
+                .comments()
+                .map(|comments| comments.iter().map(PyComment::from).collect())
+        })
+    }
+
+    /// The page setup.
+    #[getter]
+    fn page_setup(&self, py: Python<'_>) -> PyResult<PyPageSetup> {
+        self.read(py, |sheet| {
+            sheet.page_setup().map(|setup| PyPageSetup::from(&setup))
+        })
+    }
+
+    /// The sheet as CSV: displayed texts (or stored values with `raw`) from
+    /// A1 to the end of the used range, CRLF line ends.
+    #[pyo3(signature = (*, raw = false, delimiter = ",", bom = false))]
+    fn to_csv(&self, py: Python<'_>, raw: bool, delimiter: &str, bom: bool) -> PyResult<String> {
+        let mut characters = delimiter.chars();
+        let delimiter = match (characters.next(), characters.next()) {
+            (Some(character), None) if !matches!(character, '"' | '\r' | '\n') => character,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "delimiter is one character other than a quote or a line break, not {delimiter:?}"
+                )));
+            }
+        };
+        let options = CsvOptions {
+            delimiter,
+            raw,
+            bom,
+        };
+        self.read(py, |sheet| sheet.to_csv(&options))
+    }
+
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         self.with(py, |sheet| format!("<Worksheet {:?}>", sheet.name()))
     }
+}
+
+/// The displayed texts of `range`, one list per row, `""` where the sheet
+/// has no value.
+fn displayed_texts(
+    sheet: oxoffice_xlsx::Worksheet<'_>,
+    range: &str,
+) -> Result<Vec<Vec<String>>, Error> {
+    let Some(rectangle) = sheet.range(range)? else {
+        return Ok(Vec::new());
+    };
+    let height = rectangle.last.row - rectangle.first.row + 1;
+    let width = rectangle.last.column - rectangle.first.column + 1;
+    if u64::from(height) * u64::from(width) > MAX_BULK_CELLS {
+        return Err(Error::RangeTooLarge {
+            range: rectangle.to_string(),
+        });
+    }
+    let mut rows = vec![vec![String::new(); width as usize]; height as usize];
+    for cell in sheet.cells(range)? {
+        let (row, column) = (cell.row(), cell.column());
+        rows[(row - rectangle.first.row) as usize][(column - rectangle.first.column) as usize] =
+            cell.text;
+    }
+    Ok(rows)
 }
 
 /// Register every class of the xlsx bindings on `module`.
 pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyWorkbook>()?;
     module.add_class::<PyWorksheet>()?;
+    cell::register(module)?;
+    style::register(module)?;
+    page_setup::register(module)?;
     Ok(())
 }

@@ -1,10 +1,15 @@
 """Type stubs of the native oxoffice.xlsx bindings."""
 
+import datetime
 import os
 from collections.abc import Sequence
 from typing import Literal, overload
 
+from . import CellError
+
 _Path = str | os.PathLike[str]
+_Value = float | str | bool | CellError | None
+_CellAddress = str | tuple[int, int]
 
 class Workbook:
     """An Excel-compatible workbook (``.xlsx``, ``.xlsm``, ``.xltx``, ``.xltm``).
@@ -74,6 +79,17 @@ class Workbook:
     def date1904(self) -> bool:
         """Whether dates count from 1904 rather than 1900."""
 
+    @property
+    def recalculation_needed(self) -> bool:
+        """Whether the cached values of formulas may be out of date: the file asks for a recalculation on open."""
+
+    def to_markdown(self) -> str:
+        """The workbook as Markdown: ``## <name>`` and a table per worksheet, hidden ones included.
+
+        Each table is headed by the column letters and each row led by its number, so every value keeps its
+        address. The texts are the displayed ones; ``|`` is escaped and line breaks are written ``<br>``.
+        """
+
     def save(self, path: _Path, *, overwrite_source: bool = False) -> None:
         """Saves to ``path``, staged and renamed so a failed save changes nothing.
 
@@ -135,3 +151,395 @@ class Worksheet:
         argument is required, so a call without one is a ``TypeError``. ``A1``,
         which has nothing above or left of it, raises ``ValueError``.
         """
+
+    @property
+    def used_range(self) -> str | None:
+        """The smallest range holding every cell with a value or a formula (``"A1:F16"``), ``None`` for none."""
+
+    def cell(self, cell: _CellAddress) -> Cell:
+        """The cell at an A1 reference (``"B3"``) or a 0-based ``(row, column)``.
+
+        A cell the sheet does not write reads as empty. A chartsheet, dialogsheet or macrosheet raises
+        ``XlsxError``; a reference that names no cell ``ValueError``, a position outside the sheet
+        ``IndexError``.
+        """
+
+    def values(self, range: str, text: bool = False) -> list[list[_Value]] | list[list[str]]:
+        """The values of ``range``, one list per row, in one native call.
+
+        ``range`` is ``"A1:C10"``, ``"B3"``, whole columns ``"A:C"`` or rows ``"2:5"`` (clipped to the used
+        range). Numbers are ``float`` (dates too: serial days), errors ``CellError``, an empty cell ``None``.
+        With ``text``, the displayed texts, ``""`` for an empty cell.
+        """
+
+    def cells(self, range: str) -> list[Cell]:
+        """The cells of ``range`` that hold a value or a formula, row by row."""
+
+    @property
+    def merged_ranges(self) -> list[str]:
+        """The merged ranges, ``["A1:J1", ...]``."""
+
+    @property
+    def comments(self) -> list[Comment]:
+        """The notes and comment threads, by cell, row by row."""
+
+    @property
+    def page_setup(self) -> PageSetup:
+        """The page setup: margins, paper, scale, header and footer, breaks, print area and titles."""
+
+    def to_csv(self, *, raw: bool = False, delimiter: str = ",", bom: bool = False) -> str:
+        """The sheet as CSV, from A1 to the end of the used range, CRLF line ends, RFC 4180 quoting.
+
+        The displayed texts (what Excel's CSV export writes), or the stored values with ``raw`` (the
+        shortest number, dates as serials, ``TRUE`` / ``FALSE``, error codes). ``bom`` starts the text with
+        a byte order mark.
+        """
+
+class Cell:
+    """A cell, read by its address: a snapshot an edit does not change, its attributes read only."""
+
+    @property
+    def ref(self) -> str:
+        """The A1 reference, ``"B3"``."""
+
+    @property
+    def row(self) -> int:
+        """The 0-based row."""
+
+    @property
+    def column(self) -> int:
+        """The 0-based column."""
+
+    @property
+    def value(self) -> _Value:
+        """``float``, ``str``, ``bool``, ``CellError`` or ``None``; for a formula, the value its producer cached."""
+
+    @property
+    def formula(self) -> str | None:
+        """The formula as Excel displays it after its ``=`` (``XLOOKUP(...)``, a shared member's moved form)."""
+
+    @property
+    def stored_formula(self) -> str | None:
+        """The formula as the file stores it (``_xlfn.XLOOKUP(...)``)."""
+
+    @property
+    def formula_kind(self) -> Literal["shared", "array", "data_table"] | None:
+        """The kind of the cell's formula, ``None`` for a plain one or none."""
+
+    @property
+    def array_range(self) -> str | None:
+        """The range of the array formula or data table the cell is in."""
+
+    @property
+    def stale(self) -> bool:
+        """Whether the cached value of the formula may be out of date."""
+
+    @property
+    def number_format(self) -> str:
+        """The number format code, a built-in id resolved."""
+
+    @property
+    def text(self) -> str:
+        """The value as Excel displays it in a column wide enough for it, en-US."""
+
+    @property
+    def style(self) -> Style:
+        """The resolved style."""
+
+    @property
+    def datetime(self) -> datetime.datetime | None:
+        """The number as a date and time when its format shows a date, a time or both (not a duration)."""
+
+class Comment:
+    """A note or a comment thread on a cell."""
+
+    @property
+    def ref(self) -> str:
+        """The cell, ``"C3"``."""
+
+    @property
+    def kind(self) -> Literal["note", "thread"]: ...
+    @property
+    def author(self) -> str | None:
+        """Whoever wrote it, ``None`` when the file names nobody."""
+
+    @property
+    def date(self) -> str | None:
+        """When it was written, ISO 8601 as stored: threads only."""
+
+    @property
+    def text(self) -> str: ...
+    @property
+    def resolved(self) -> bool: ...
+    @property
+    def replies(self) -> list[Reply]:
+        """The replies of a thread, by date."""
+
+class Reply:
+    """A reply in a comment thread."""
+
+    @property
+    def author(self) -> str | None: ...
+    @property
+    def date(self) -> str | None: ...
+    @property
+    def text(self) -> str: ...
+
+class Color:
+    """A colour of a style resolved to RGB, with where it comes from."""
+
+    @property
+    def rgb(self) -> str | None:
+        """``"RRGGBB"``, ``None`` for an automatic colour or one that cannot be resolved."""
+
+    @property
+    def source(self) -> Literal["rgb", "theme", "indexed", "auto"]: ...
+    @property
+    def index(self) -> int | None:
+        """The theme index (0 ``lt1``, 1 ``dk1``, 2 ``lt2``, 3 ``dk2``, 4-9 accents, 10-11 links) or palette index."""
+
+    @property
+    def tint(self) -> float:
+        """-1.0 (black) to 1.0 (white), already applied to ``rgb``."""
+
+class Font:
+    @property
+    def name(self) -> str | None: ...
+    @property
+    def size(self) -> float | None:
+        """In points."""
+
+    @property
+    def bold(self) -> bool: ...
+    @property
+    def italic(self) -> bool: ...
+    @property
+    def underline(self) -> str | None:
+        """``"single"``, ``"double"``, ``"singleAccounting"`` or ``"doubleAccounting"``."""
+
+    @property
+    def strike(self) -> bool: ...
+    @property
+    def vertical_align(self) -> Literal["superscript", "subscript"] | None: ...
+    @property
+    def color(self) -> Color | None: ...
+
+class GradientStop:
+    @property
+    def position(self) -> float: ...
+    @property
+    def color(self) -> Color | None: ...
+
+class Fill:
+    """A pattern fill (``kind == "pattern"``) or a gradient (``kind == "gradient"``)."""
+
+    @property
+    def kind(self) -> Literal["pattern", "gradient"]: ...
+    @property
+    def pattern(self) -> str | None:
+        """``"none"``, ``"solid"``, ``"gray125"``...; ``None`` for a gradient."""
+
+    @property
+    def foreground(self) -> Color | None: ...
+    @property
+    def background(self) -> Color | None: ...
+    @property
+    def gradient_type(self) -> Literal["linear", "path"] | None: ...
+    @property
+    def degree(self) -> float: ...
+    @property
+    def left(self) -> float: ...
+    @property
+    def right(self) -> float: ...
+    @property
+    def top(self) -> float: ...
+    @property
+    def bottom(self) -> float: ...
+    @property
+    def stops(self) -> list[GradientStop]: ...
+
+class BorderSide:
+    @property
+    def style(self) -> str:
+        """``"none"``, ``"thin"``, ``"medium"``, ``"double"``..."""
+
+    @property
+    def color(self) -> Color | None: ...
+
+class Border:
+    @property
+    def left(self) -> BorderSide: ...
+    @property
+    def right(self) -> BorderSide: ...
+    @property
+    def top(self) -> BorderSide: ...
+    @property
+    def bottom(self) -> BorderSide: ...
+    @property
+    def diagonal(self) -> BorderSide: ...
+    @property
+    def diagonal_up(self) -> bool: ...
+    @property
+    def diagonal_down(self) -> bool: ...
+
+class Alignment:
+    @property
+    def horizontal(self) -> str:
+        """``"general"``, ``"left"``, ``"center"``, ``"right"``, ``"fill"``, ``"justify"``..."""
+
+    @property
+    def vertical(self) -> str:
+        """``"top"``, ``"center"``, ``"bottom"``, ``"justify"`` or ``"distributed"``."""
+
+    @property
+    def wrap_text(self) -> bool: ...
+    @property
+    def shrink_to_fit(self) -> bool: ...
+    @property
+    def indent(self) -> int: ...
+    @property
+    def text_rotation(self) -> int:
+        """Degrees: 0-90 counterclockwise, 91-180 clockwise (90 less), 255 for vertical text."""
+
+    @property
+    def reading_order(self) -> int:
+        """0 from the content, 1 left to right, 2 right to left."""
+
+class Protection:
+    @property
+    def locked(self) -> bool: ...
+    @property
+    def hidden(self) -> bool: ...
+
+class Style:
+    """The style of a cell, resolved: the theme and indexed colours turned into RGB."""
+
+    @property
+    def number_format(self) -> str: ...
+    @property
+    def font(self) -> Font: ...
+    @property
+    def fill(self) -> Fill: ...
+    @property
+    def border(self) -> Border: ...
+    @property
+    def alignment(self) -> Alignment: ...
+    @property
+    def protection(self) -> Protection: ...
+    @property
+    def style_name(self) -> str | None:
+        """The name of the cell style the record follows (``"Normal"``)."""
+
+class PageMargins:
+    """In inches."""
+
+    @property
+    def left(self) -> float: ...
+    @property
+    def right(self) -> float: ...
+    @property
+    def top(self) -> float: ...
+    @property
+    def bottom(self) -> float: ...
+    @property
+    def header(self) -> float: ...
+    @property
+    def footer(self) -> float: ...
+
+class HeaderFooter:
+    """Each header and footer with its ``&`` codes, as stored."""
+
+    @property
+    def odd_header(self) -> str | None: ...
+    @property
+    def odd_footer(self) -> str | None: ...
+    @property
+    def even_header(self) -> str | None: ...
+    @property
+    def even_footer(self) -> str | None: ...
+    @property
+    def first_header(self) -> str | None: ...
+    @property
+    def first_footer(self) -> str | None: ...
+    @property
+    def different_odd_even(self) -> bool: ...
+    @property
+    def different_first(self) -> bool: ...
+    @property
+    def scale_with_doc(self) -> bool: ...
+    @property
+    def align_with_margins(self) -> bool: ...
+
+class PageBreak:
+    @property
+    def id(self) -> int:
+        """The row or column number (from 1) the break follows."""
+
+    @property
+    def min(self) -> int: ...
+    @property
+    def max(self) -> int: ...
+    @property
+    def manual(self) -> bool: ...
+
+class PageSetup:
+    """The page setup of a sheet, schema defaults filled."""
+
+    @property
+    def margins(self) -> PageMargins | None: ...
+    @property
+    def paper_size(self) -> int: ...
+    @property
+    def paper_width(self) -> str | None: ...
+    @property
+    def paper_height(self) -> str | None: ...
+    @property
+    def orientation(self) -> Literal["default", "portrait", "landscape"]: ...
+    @property
+    def scale(self) -> int: ...
+    @property
+    def fit_to_page(self) -> bool: ...
+    @property
+    def fit_to_width(self) -> int: ...
+    @property
+    def fit_to_height(self) -> int: ...
+    @property
+    def first_page_number(self) -> int: ...
+    @property
+    def use_first_page_number(self) -> bool: ...
+    @property
+    def page_order(self) -> Literal["downThenOver", "overThenDown"]: ...
+    @property
+    def black_and_white(self) -> bool: ...
+    @property
+    def draft(self) -> bool: ...
+    @property
+    def cell_comments(self) -> Literal["none", "asDisplayed", "atEnd"]: ...
+    @property
+    def errors(self) -> Literal["displayed", "blank", "dash", "NA"]: ...
+    @property
+    def horizontal_dpi(self) -> int: ...
+    @property
+    def vertical_dpi(self) -> int: ...
+    @property
+    def copies(self) -> int: ...
+    @property
+    def horizontal_centered(self) -> bool: ...
+    @property
+    def vertical_centered(self) -> bool: ...
+    @property
+    def headings(self) -> bool: ...
+    @property
+    def grid_lines(self) -> bool: ...
+    @property
+    def header_footer(self) -> HeaderFooter: ...
+    @property
+    def row_breaks(self) -> list[PageBreak]: ...
+    @property
+    def column_breaks(self) -> list[PageBreak]: ...
+    @property
+    def print_area(self) -> str | None:
+        """What the sheet's print area name refers to, as stored (``Budget!$A$1:$J$36``)."""
+
+    @property
+    def print_titles(self) -> str | None: ...
