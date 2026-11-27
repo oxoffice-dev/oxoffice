@@ -44,8 +44,10 @@ impl Workbook {
     /// of a file. A workbook that is not password-protected is refused.
     #[cfg(all(feature = "agile-encryption", not(target_arch = "wasm32")))]
     pub fn from_encrypted_bytes(bytes: &[u8], password: &str) -> Result<Self> {
+        // A compound file whose directory does not read as one of the known
+        // kinds may still decrypt: the decryption says what it lacks.
         match refuse_compound_file(bytes) {
-            Err(Error::PasswordProtected) => {}
+            Err(Error::PasswordProtected | Error::CompoundFile) => {}
             Err(error) => return Err(error),
             Ok(()) => return Err(Error::NotPasswordProtected),
         }

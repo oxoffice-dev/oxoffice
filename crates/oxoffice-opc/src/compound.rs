@@ -55,8 +55,8 @@ fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
 }
 
-/// The names of the storages and streams of the directory, or `None` when
-/// the header, the FAT or the directory chain does not read.
+/// The names of the storages and streams directly in the root storage, or
+/// `None` when the header, the FAT or the directory does not read.
 fn directory_names(bytes: &[u8]) -> Option<Vec<String>> {
     let shift = u16_at(bytes, 0x1E)?;
     if !(7..=16).contains(&shift) {
@@ -102,7 +102,9 @@ fn directory_names(bytes: &[u8]) -> Option<Vec<String>> {
         u32_at(fat_sector, 4 * (number as usize % per_sector))
     };
 
-    let mut names = Vec::new();
+    // Every directory entry, in order: its name and its left sibling,
+    // right sibling and child, or `None` for an unused one.
+    let mut entries: Vec<Option<(String, [u32; 3])>> = Vec::new();
     let mut current = u32_at(bytes, 0x30)?;
     let mut steps = 0;
     while current <= MAX_REGULAR_SECTOR {
@@ -113,15 +115,35 @@ fn directory_names(bytes: &[u8]) -> Option<Vec<String>> {
         for entry in sector(current)?.chunks_exact(128) {
             let length = usize::from(u16_at(entry, 0x40)?);
             if entry[0x42] == 0 || !(2..=64).contains(&length) {
+                entries.push(None);
                 continue;
             }
             let units: Vec<u16> = entry[..length - 2]
                 .chunks_exact(2)
                 .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
                 .collect();
-            names.push(String::from_utf16_lossy(&units));
+            let links = [u32_at(entry, 0x44)?, u32_at(entry, 0x48)?, u32_at(entry, 0x4C)?];
+            entries.push(Some((String::from_utf16_lossy(&units), links)));
         }
         current = next(current)?;
+    }
+    // The children of the root storage (entry 0) are the tree its child
+    // starts, walked by the siblings only: a stream inside an embedded
+    // object (`ObjectPool/_1/Workbook` in a `.doc`) is no stream of the
+    // file.
+    let (_, [_, _, child]) = entries.first()?.as_ref()?;
+    let mut names = Vec::new();
+    let mut pending = vec![*child];
+    let mut seen = vec![false; entries.len()];
+    while let Some(id) = pending.pop() {
+        let Some(Some((name, [left, right, _]))) = entries.get(id as usize) else {
+            continue;
+        };
+        if std::mem::replace(&mut seen[id as usize], true) {
+            return None;
+        }
+        names.push(name.clone());
+        pending.extend([*left, *right]);
     }
     Some(names)
 }

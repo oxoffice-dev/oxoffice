@@ -10,14 +10,19 @@ use oxoffice_xlsx_oxml::namespaces::content_types::BINARY_WORKBOOK;
 
 use crate::support::zip_of;
 
-/// A compound file holding one stream named `stream`, as Office writes a
-/// legacy file or a password-protected package.
-fn compound_file(stream: &str) -> Vec<u8> {
+/// A compound file holding these streams (paths from its root), as Office
+/// writes a legacy file or a password-protected package.
+fn compound_file(streams: &[&str]) -> Vec<u8> {
     let mut file = cfb::CompoundFile::create(Cursor::new(Vec::new())).expect("compound file");
-    file.create_stream(format!("/{stream}"))
-        .expect("stream")
-        .write_all(&[0; 4096])
-        .expect("stream bytes");
+    for stream in streams {
+        if let Some((storage, _)) = stream.rsplit_once('/') {
+            file.create_storage_all(format!("/{storage}")).expect("storage");
+        }
+        file.create_stream(format!("/{stream}"))
+            .expect("stream")
+            .write_all(&[0; 4096])
+            .expect("stream bytes");
+    }
     file.flush().expect("flushed");
     file.into_inner().into_inner()
 }
@@ -33,35 +38,40 @@ fn package(main: &str, content_type: &str) -> Vec<u8> {
 
 #[test]
 fn what_is_not_a_workbook_is_refused_by_its_content() {
-    let cases: [(&str, Vec<u8>, &str); 10] = [
+    let cases: [(&str, Vec<u8>, &str); 11] = [
         (
             "password-protected",
-            compound_file("EncryptionInfo"),
+            compound_file(&["EncryptionInfo"]),
             "the workbook is password-protected: open it with a password",
         ),
         (
             "xls",
-            compound_file("Workbook"),
+            compound_file(&["Workbook"]),
             "a legacy Excel 97-2003 workbook (.xls): save it as .xlsx in Excel or LibreOffice first",
         ),
         (
             "Excel 5 xls",
-            compound_file("Book"),
+            compound_file(&["Book"]),
             "a legacy Excel 97-2003 workbook (.xls): save it as .xlsx in Excel or LibreOffice first",
         ),
         (
             "doc",
-            compound_file("WordDocument"),
+            compound_file(&["WordDocument"]),
+            "a legacy Word 97-2003 document (.doc), not a workbook",
+        ),
+        (
+            "doc holding an embedded workbook",
+            compound_file(&["WordDocument", "ObjectPool/_1/Workbook"]),
             "a legacy Word 97-2003 document (.doc), not a workbook",
         ),
         (
             "ppt",
-            compound_file("PowerPoint Document"),
+            compound_file(&["PowerPoint Document"]),
             "a legacy PowerPoint 97-2003 presentation (.ppt), not a workbook",
         ),
         (
             "another compound file",
-            compound_file("Contents"),
+            compound_file(&["Contents"]),
             "a compound file that holds no workbook",
         ),
         (

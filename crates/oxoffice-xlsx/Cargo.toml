@@ -26,6 +26,8 @@ zip.workspace = true
 
 [dev-dependencies]
 cfb.workspace = true
+# The encrypted round trip runs in every test build, CI's included.
+oxoffice-xlsx = { workspace = true, features = ["agile-encryption"] }
 oxoffice-xml-test.workspace = true
 
 [[test]]

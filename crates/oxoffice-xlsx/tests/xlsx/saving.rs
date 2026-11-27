@@ -115,7 +115,6 @@ fn a_workbook_refuses_to_replace_its_source_unless_asked() {
     workbook.save(dir.join("copy.xlsx")).unwrap();
 }
 
-#[cfg(feature = "agile-encryption")]
 #[test]
 fn a_password_protected_workbook_opens_with_its_password_and_saves_protected() {
     let dir = scratch("encrypted");
@@ -136,5 +135,15 @@ fn a_password_protected_workbook_opens_with_its_password_and_saves_protected() {
     assert!(matches!(
         Workbook::from_encrypted_bytes(&workbook.to_bytes().unwrap(), "secret"),
         Err(Error::NotPasswordProtected)
+    ));
+    // A compound file of no known kind is tried, and the decryption says
+    // what it lacks.
+    let mut other = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+    other.create_stream("/Contents").unwrap();
+    other.flush().unwrap();
+    let other = other.into_inner().into_inner();
+    assert!(matches!(
+        Workbook::from_encrypted_bytes(&other, "secret"),
+        Err(Error::Package(_))
     ));
 }

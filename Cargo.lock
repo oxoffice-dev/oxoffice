@@ -1489,6 +1489,7 @@ dependencies = [
  "cfb",
  "oxoffice-core",
  "oxoffice-opc",
+ "oxoffice-xlsx",
  "oxoffice-xlsx-oxml",
  "oxoffice-xml-test",
  "thiserror",
