@@ -102,7 +102,7 @@ impl CT_Chart {
                     } else {
                         Vec::new()
                     };
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     state.parse_child(&name, raw, &namespaces)?;
                 }
                 event @ (Event::Text(_)
@@ -392,7 +392,7 @@ impl CT_ChartSpace {
                     } else {
                         Vec::new()
                     };
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     state.parse_child(&name, raw, &namespaces)?;
                 }
                 event @ (Event::Text(_)

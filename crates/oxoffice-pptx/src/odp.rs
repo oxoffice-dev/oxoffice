@@ -5,10 +5,10 @@ use std::fmt::Write as _;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
+use oxoffice_core::xml_reader::NsReader;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
-use quick_xml::reader::NsReader;
 use zip::read::ZipArchive;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};

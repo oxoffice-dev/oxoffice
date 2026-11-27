@@ -2,14 +2,15 @@ use std::borrow::Cow;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
 use oxoffice_core::xml::{
     escape_attribute_value, escape_text, local_name, matches_local_name, push_escaped_attribute,
 };
+use oxoffice_core::xml_reader::{EmptyWriting, NsReader, Reader};
 use oxoffice_core::xml_text::resolve_entity;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::{NsReader, Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::color::{ColorChoice, ColorTransform};
 use crate::fill::Fill;
@@ -581,7 +582,7 @@ impl PartialEq for TextValue {
 impl Eq for TextValue {}
 
 impl TextValue {
-    fn from_start(start: &BytesStart<'_>) -> Result<Self> {
+    fn from_start(start: &BytesStart<'_>, writing: EmptyWriting) -> Result<Self> {
         if !matches_local_name(start.name().as_ref(), b"t") {
             return Err(unexpected(start));
         }
@@ -595,7 +596,7 @@ impl TextValue {
             value: String::new(),
             space,
             raw_attributes: capture_raw_attributes(start, &[b"xml:space"])?,
-            source_xml: Some(capture_empty_element(start)?),
+            source_xml: Some(capture_empty(start, writing)?),
             source_value: String::new(),
             source_space: space,
             source_namespaces: text_fragment_scope(start, &TextNamespaceScope::default())?.physical,
@@ -609,8 +610,9 @@ impl TextValue {
     fn from_start_with_namespaces(
         start: &BytesStart<'_>,
         inherited: &TextNamespaceScope,
+        writing: EmptyWriting,
     ) -> Result<Self> {
-        let mut value = Self::from_start(start)?;
+        let mut value = Self::from_start(start, writing)?;
         value.source_namespaces = text_fragment_scope(start, inherited)?.physical;
         Ok(value)
     }
@@ -621,7 +623,10 @@ impl TextValue {
         inherited: &TextNamespaceScope,
     ) -> Result<Self> {
         let raw = capture_element(reader, start)?;
-        let mut parsed = parse_complete(&raw, b"t", Self::from_element_model, Self::from_start)?;
+        // An empty text reads as one empty event; `raw` keeps its writing.
+        let mut parsed = parse_complete(&raw, b"t", Self::from_element_model, |start| {
+            Self::from_start(start, EmptyWriting::SelfClosed)
+        })?;
         parsed.source_namespaces = text_fragment_scope(start, inherited)?.physical;
         parsed.source_value = parsed.value.clone();
         parsed.source_space = parsed.space;
@@ -636,7 +641,7 @@ impl TextValue {
     }
 
     fn from_element_model(reader: &mut Reader<&[u8]>, start: &BytesStart<'_>) -> Result<Self> {
-        let mut text = Self::from_start(start)?;
+        let mut text = Self::from_start(start, EmptyWriting::SelfClosed)?;
         let mut buffer = Vec::new();
         loop {
             match reader
@@ -735,7 +740,7 @@ impl TextValue {
         let source = self
             .source_xml
             .clone()
-            .unwrap_or(capture_empty_element(&start)?);
+            .unwrap_or(capture_empty(&start, EmptyWriting::SelfClosed)?);
         for (prefix, uri) in text_owner_closure(&source, &self.source_namespaces)? {
             let key = if prefix.is_empty() {
                 "xmlns".to_owned()
@@ -1255,7 +1260,7 @@ impl TextHyperlink {
                 }
                 Event::Empty(element) => {
                     let name = text_owned_name(&element, &namespaces)?;
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     capture_hyperlink_raw(&mut hyperlink, &name, raw, &mut boundary, &mut seen)?;
                 }
                 Event::End(element) if matches_local_name(element.name().as_ref(), expected) => {
@@ -1714,8 +1719,10 @@ impl CT_TextCharacterProperties {
     ) -> Result<Self> {
         let mut parsed = Self::from_start(start)?;
         parsed.source_namespaces = text_fragment_scope(start, inherited)?.physical;
-        parsed.source_closure =
-            text_owner_closure(&capture_empty_element(start)?, &parsed.source_namespaces)?;
+        parsed.source_closure = text_owner_closure(
+            &capture_empty(start, EmptyWriting::SelfClosed)?,
+            &parsed.source_namespaces,
+        )?;
         Ok(parsed)
     }
 
@@ -1765,7 +1772,7 @@ impl CT_TextCharacterProperties {
                 .to_owned(),
             source_namespaces: text_fragment_scope(start, &TextNamespaceScope::default())?.physical,
             source_closure: text_owner_closure(
-                &capture_empty_element(start)?,
+                &capture_empty(start, EmptyWriting::SelfClosed)?,
                 &text_fragment_scope(start, &TextNamespaceScope::default())?.physical,
             )?,
             source_cap_modeled: matches!(
@@ -1805,7 +1812,7 @@ impl CT_TextCharacterProperties {
                 }
                 Event::Empty(element) => {
                     let name = text_owned_name(&element, &namespaces)?;
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     properties.capture_child(&name, raw, &mut boundary, &mut seen, &namespaces)?;
                 }
                 Event::End(element) if matches_local_name(element.name().as_ref(), &expected) => {
@@ -2937,7 +2944,7 @@ impl CT_TextParagraphProperties {
                 }
                 Event::Empty(element) => {
                     let name = text_owned_name(&element, &namespaces)?;
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     properties.capture_child(&name, raw, &mut boundary, &mut seen, &namespaces)?;
                 }
                 Event::End(element) if matches_local_name(element.name().as_ref(), &expected) => {
@@ -3099,7 +3106,7 @@ impl CT_TextParagraphProperties {
         let source = self
             .source_xml
             .clone()
-            .unwrap_or(capture_empty_element(&start)?);
+            .unwrap_or(capture_empty(&start, EmptyWriting::SelfClosed)?);
         for (prefix, uri) in text_owner_closure(&source, &self.source_namespaces)? {
             let key = if prefix.is_empty() {
                 "xmlns".to_owned()
@@ -3451,6 +3458,7 @@ impl CT_RegularTextRun {
                     text = Some(TextValue::from_start_with_namespaces(
                         &element,
                         &namespaces,
+                        reader.empty_writing(),
                     )?);
                     boundary = boundary.max(2);
                 }
@@ -3458,7 +3466,7 @@ impl CT_RegularTextRun {
                     raw_children.push(boundary, capture_element(reader, &element)?)
                 }
                 Event::Empty(element) => {
-                    raw_children.push(boundary, capture_empty_element(&element)?)
+                    raw_children.push(boundary, capture_empty(&element, reader.empty_writing())?)
                 }
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"r") => break,
                 Event::Eof => return Err(missing_end("r")),
@@ -3550,7 +3558,7 @@ impl CT_TextLineBreak {
                     source_root: text_root_spellings_scoped(
                         start,
                         inherited,
-                        &capture_empty_element(start)?,
+                        &capture_empty(start, EmptyWriting::SelfClosed)?,
                     )?,
                     source_tag: std::str::from_utf8(start.name().as_ref())
                         .map_err(OxmlError::from)?
@@ -3613,7 +3621,7 @@ impl CT_TextLineBreak {
                     .push(boundary, capture_element(reader, &element)?),
                 Event::Empty(element) => line_break
                     .raw_children
-                    .push(boundary, capture_empty_element(&element)?),
+                    .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"br") => {
                     return Ok(line_break);
                 }
@@ -3816,6 +3824,7 @@ impl CT_TextField {
                     field.text = Some(TextValue::from_start_with_namespaces(
                         &element,
                         &namespaces,
+                        reader.empty_writing(),
                     )?);
                     boundary = boundary.max(3);
                 }
@@ -3824,7 +3833,7 @@ impl CT_TextField {
                     .push(boundary, capture_element(reader, &element)?),
                 Event::Empty(element) => field
                     .raw_children
-                    .push(boundary, capture_empty_element(&element)?),
+                    .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"fld") => {
                     return Ok(field);
                 }
@@ -4096,7 +4105,7 @@ impl CT_TextParagraph {
                     source_root: text_root_spellings_scoped(
                         start,
                         inherited,
-                        &capture_empty_element(start)?,
+                        &capture_empty(start, EmptyWriting::SelfClosed)?,
                     )?,
                     source_tag: std::str::from_utf8(start.name().as_ref())
                         .map_err(OxmlError::from)?
@@ -4170,7 +4179,7 @@ impl CT_TextParagraph {
                 }
                 Event::Empty(element) if is_text_run(&text_owned_name(&element, &namespaces)?) => {
                     let name = local_name(element.name().as_ref()).to_vec();
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     paragraph.runs.push(TextRun::from_xml_with_namespaces(
                         &raw,
                         &name,
@@ -4210,7 +4219,7 @@ impl CT_TextParagraph {
                     .push(boundary, capture_element(reader, &element)?),
                 Event::Empty(element) => paragraph
                     .raw_children
-                    .push(boundary, capture_empty_element(&element)?),
+                    .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"p") => {
                     return Ok(paragraph);
                 }
@@ -4730,7 +4739,7 @@ pub(crate) fn text_inherit_property_xml(
                             boundary = boundary.max(slot);
                         }
                         let raw = if child_empty {
-                            capture_empty_element(&child)?
+                            capture_empty(&child, reader.empty_writing())?
                         } else {
                             capture_element(&mut reader, &child)?
                         };

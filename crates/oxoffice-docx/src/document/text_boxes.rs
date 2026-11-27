@@ -8,7 +8,7 @@ pub(super) fn first_text_box_start(xml: &[u8], start: usize) -> Result<Option<us
     let fragment = xml
         .get(start..)
         .ok_or_else(|| Error::Other("story element begins outside its source part".to_owned()))?;
-    let mut reader = quick_xml::Reader::from_reader(fragment);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(fragment);
     reader.config_mut().trim_text(false);
     let mut depth = 0usize;
     let mut buffer = Vec::new();

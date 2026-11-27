@@ -295,7 +295,7 @@ fn a_reread_block_leaves_the_save_to_give_its_pictures_their_drawing_ids() {
 
 #[test]
 fn an_edited_paragraph_binds_every_prefix_it_writes_when_the_document_names_them_otherwise() {
-    use oxoffice_xml_test::{Writing, canonical, rewrite_package};
+    use oxoffice_xml_test::{Writing, rewrite_package};
 
     let mut doc = Document::new();
     let relationship = doc.add_hyperlink_relationship("https://example.com/schedule");
@@ -304,11 +304,25 @@ fn an_edited_paragraph_binds_every_prefix_it_writes_when_the_document_names_them
     paragraph.add_run(" before the meeting.");
     let bytes = doc.to_bytes().expect("saves");
     // The main namespaces under other prefixes (`ox0:p`, `ox3:id`), as a
-    // generated writer names them: no `w` or `r` binding left in the part.
-    let bytes = rewrite_package(&bytes, Writing::OtherPrefixes)
-        .expect("rewrites")
-        .0;
-    let mut doc = Document::from_bytes(&bytes).expect("opens");
+    // generated writer names them: no `w` or `r` binding left in the part;
+    // WordprocessingML as the default namespace, its attributes under `w`,
+    // or under `ox0` with no `w` bound.
+    for writings in [
+        &[Writing::OtherPrefixes][..],
+        &[Writing::DefaultNamespace],
+        &[Writing::OtherPrefixes, Writing::DefaultNamespace],
+    ] {
+        let written = writings.iter().fold(bytes.clone(), |bytes, writing| {
+            rewrite_package(&bytes, *writing).expect("rewrites").0
+        });
+        an_edited_paragraph_binds_every_prefix_it_writes(&written);
+    }
+}
+
+fn an_edited_paragraph_binds_every_prefix_it_writes(bytes: &[u8]) {
+    use oxoffice_xml_test::canonical;
+
+    let mut doc = Document::from_bytes(bytes).expect("opens");
     let paragraphs = doc.story_paragraphs().expect("reads");
     let edited = paragraphs
         .iter()
@@ -401,11 +415,16 @@ fn an_edit_after_another_keeps_twin_paragraphs_apart_when_the_document_names_wor
     let bytes = doc.to_bytes().expect("saves");
     // WordprocessingML as `ox0`: an edited paragraph declares `w` for its
     // own names, and the first edit makes it the twin of the second
-    // paragraph but for that declaration.
-    let bytes = rewrite_package(&bytes, Writing::OtherPrefixes)
-        .expect("rewrites")
-        .0;
-    let mut doc = Document::from_bytes(&bytes).expect("opens");
+    // paragraph but for that declaration. As the default namespace, edited
+    // paragraphs are written under `w` beside unprefixed ones.
+    for writing in [Writing::OtherPrefixes, Writing::DefaultNamespace] {
+        let written = rewrite_package(&bytes, writing).expect("rewrites").0;
+        two_edits_keep_twin_paragraphs_apart(&written);
+    }
+}
+
+fn two_edits_keep_twin_paragraphs_apart(bytes: &[u8]) {
+    let mut doc = Document::from_bytes(bytes).expect("opens");
     for (word, replacement) in [("Northwind", "NORTHWIND"), ("challenged", "CHALLENGED")] {
         let paragraphs = doc.story_paragraphs().expect("reads");
         let paragraph = paragraphs

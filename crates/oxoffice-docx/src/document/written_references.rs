@@ -555,7 +555,7 @@ fn word_attribute_offsets(
 ) -> Result<Vec<usize>> {
     use quick_xml::events::Event;
     use quick_xml::name::{Namespace, ResolveResult};
-    let mut reader = quick_xml::NsReader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut offsets = Vec::new();
     loop {

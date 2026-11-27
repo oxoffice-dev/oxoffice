@@ -3,7 +3,9 @@ use std::io::Write;
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::effect::{CT_EffectList, raw_is_effect_dag};
 use oxoffice_drawing::fill::Fill;
 use oxoffice_drawing::geometry::CT_PresetGeometry2D;
@@ -15,8 +17,7 @@ use oxoffice_drawing::text::CT_TextBody;
 use oxoffice_drawing::xfrm::CT_Transform2D;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::connector::CT_ConnectionShape;
 use crate::graphic_frame::CT_GraphicFrame;
@@ -629,7 +630,7 @@ fn parse_chart_choice(
                 if local_name(child.name().as_ref()) == b"graphicFrame"
                     && child_namespaces.element_uri(child.name().as_ref()) == Some(P_NS)
                 {
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     if graphic_frame_projects_chart(&raw, &child_namespaces)? {
                         let frame =
                             CT_GraphicFrame::from_fragment(&raw, &child_namespaces.entries())?;
@@ -833,7 +834,7 @@ impl CT_ShapeStyle {
                     let child_namespaces = namespaces.with_start(&child)?;
                     let name = local_name(child.name().as_ref()).to_vec();
                     let uri = child_namespaces.element_uri(child.name().as_ref());
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_style_child(
                         &name,
                         uri,
@@ -1072,11 +1073,15 @@ fn prepare_shape_style_for_materialization(
                         prepared.push_attribute((key.as_str(), escaped.as_ref()));
                     }
                 }
-                writer.write_event(if empty {
-                    Event::Empty(prepared)
+                if empty {
+                    oxoffice_core::raw_xml::write_empty(
+                        &mut writer,
+                        &prepared,
+                        reader.empty_writing(),
+                    )?;
                 } else {
-                    Event::Start(prepared)
-                })?;
+                    writer.write_event(Event::Start(prepared))?;
+                }
                 if !empty {
                     scopes.push(scope);
                     roles.push(if reference {
@@ -1536,7 +1541,7 @@ impl CT_Shape {
                     let child_namespaces = namespaces.with_start(&child)?;
                     let name = local_name(child.name().as_ref()).to_vec();
                     let uri = child_namespaces.element_uri(child.name().as_ref());
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_shape_child(
                         &name,
                         uri,
@@ -2137,7 +2142,7 @@ fn parse_non_visual_shape(
                             } else {
                                 None
                             };
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             capture_non_visual_shape_child(
                                 &name,
                                 uri,
@@ -2409,7 +2414,7 @@ fn direct_shape_child_ranges(xml: &[u8]) -> Result<Vec<Range<usize>>> {
                 let name = local_name(child.name().as_ref()).to_vec();
                 let uri = namespaces.element_uri(child.name().as_ref());
                 let range = shape_start_tag_range(xml, reader.buffer_position() as usize)?;
-                let raw = capture_empty_element(&child)?;
+                let raw = capture_empty(&child, reader.empty_writing())?;
                 if parse_shape_tree_child(&name, uri, &raw, &namespaces)?.is_some() {
                     ranges.push(range);
                 }
@@ -2422,10 +2427,18 @@ fn direct_shape_child_ranges(xml: &[u8]) -> Result<Vec<Range<usize>>> {
 }
 
 fn shape_start_tag_range(xml: &[u8], end: usize) -> Result<Range<usize>> {
-    let start = xml[..end]
-        .iter()
-        .rposition(|byte| *byte == b'<')
-        .ok_or_else(|| OxmlError::InvalidValue("shape child start tag is missing".to_owned()))?;
+    let last_tag = |end: usize| {
+        xml[..end]
+            .iter()
+            .rposition(|byte| *byte == b'<')
+            .ok_or_else(|| OxmlError::InvalidValue("shape child start tag is missing".to_owned()))
+    };
+    let mut start = last_tag(end)?;
+    // A child read as one empty event may be written `<x></x>`: its range is
+    // the whole element, from its start tag.
+    if xml[start..].starts_with(b"</") {
+        start = last_tag(start)?;
+    }
     Ok(start..end)
 }
 
@@ -2893,7 +2906,7 @@ fn parse_shape_frames(
                         }
                     } else {
                         let raw = if empty {
-                            capture_empty_element(&start)?
+                            capture_empty(&start, reader.empty_writing())?
                         } else {
                             capture_element(&mut reader, &start)?
                         };
@@ -3130,7 +3143,7 @@ impl NonVisualGroupProperties {
                                 if is_drawing_properties {
                                     non_visual_name = non_visual_drawing_name(&child)?;
                                 }
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 if is_drawing_properties {
                                     non_visual_id = non_visual_drawing_id(&raw);
                                     drawing_properties_index = Some(raw_children.len());
@@ -3236,7 +3249,7 @@ impl GroupProperties {
                 Event::Empty(child) => {
                     let name = local_name(child.name().as_ref()).to_vec();
                     let modelled = is_modelled_group_property(namespaces, &child)?;
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     properties.capture_child(&name, modelled, raw, &mut boundary)?;
                 }
                 Event::End(end) if local_name(end.name().as_ref()) == b"grpSpPr" => break,

@@ -2,11 +2,12 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
 use oxoffice_core::units::{Angle, Percent1000};
 use oxoffice_core::xml::{R_NS, get_attr, local_name, matches_local_name};
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::color::{ColorChoice, ColorError};
 use crate::namespace::{A_NS, reject_conflicting_a_prefix};
@@ -440,7 +441,7 @@ impl GradientFill {
                     .push(boundary, capture_element(reader, &element)?),
                 Event::Empty(element) => fill
                     .raw_children
-                    .push(boundary, capture_empty_element(&element)?),
+                    .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"gradFill") => {
                     break;
                 }
@@ -469,9 +470,10 @@ impl GradientFill {
                 Event::Start(element) => self
                     .stop_list_raw_children
                     .push(self.stops.len(), capture_element(reader, &element)?),
-                Event::Empty(element) => self
-                    .stop_list_raw_children
-                    .push(self.stops.len(), capture_empty_element(&element)?),
+                Event::Empty(element) => self.stop_list_raw_children.push(
+                    self.stops.len(),
+                    capture_empty(&element, reader.empty_writing())?,
+                ),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"gsLst") => {
                     break;
                 }
@@ -583,7 +585,7 @@ impl PatternFill {
                     .push(boundary, capture_element(reader, &element)?),
                 Event::Empty(element) => fill
                     .raw_children
-                    .push(boundary, capture_empty_element(&element)?),
+                    .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"pattFill") => {
                     break;
                 }
@@ -696,7 +698,7 @@ impl Blip {
                     .push(boundary, capture_element(reader, &element)?),
                 Event::Empty(element) => blip
                     .raw_children
-                    .push(boundary, capture_empty_element(&element)?),
+                    .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"blip") => {
                     break;
                 }
@@ -1009,7 +1011,7 @@ impl BlipFill {
                     .push(boundary, capture_element(reader, &element)?),
                 Event::Empty(element) => fill
                     .raw_children
-                    .push(boundary, capture_empty_element(&element)?),
+                    .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"blipFill") => {
                     break;
                 }
@@ -1147,7 +1149,7 @@ fn parse_path(reader: &mut Reader<&[u8]>, start: &BytesStart<'_>) -> Result<Path
                 .push(boundary, capture_element(reader, &element)?),
             Event::Empty(element) => path
                 .raw_children
-                .push(boundary, capture_empty_element(&element)?),
+                .push(boundary, capture_empty(&element, reader.empty_writing())?),
             Event::End(element) if matches_local_name(element.name().as_ref(), b"path") => break,
             Event::Eof => return Err(missing_end("path")),
             _ => {}
@@ -1215,7 +1217,9 @@ fn parse_stretch(reader: &mut Reader<&[u8]>) -> Result<BlipMode> {
             Event::Start(element) => {
                 raw_children.push(boundary, capture_element(reader, &element)?)
             }
-            Event::Empty(element) => raw_children.push(boundary, capture_empty_element(&element)?),
+            Event::Empty(element) => {
+                raw_children.push(boundary, capture_empty(&element, reader.empty_writing())?)
+            }
             Event::End(element) if matches_local_name(element.name().as_ref(), b"stretch") => break,
             Event::Eof => return Err(missing_end("stretch")),
             _ => {}
@@ -1366,7 +1370,7 @@ fn parse_color_container(
                 raw_children.push(boundary, capture_element(reader, &element)?);
             }
             Event::Empty(element) => {
-                raw_children.push(boundary, capture_empty_element(&element)?);
+                raw_children.push(boundary, capture_empty(&element, reader.empty_writing())?);
             }
             Event::End(element) if matches_local_name(element.name().as_ref(), end_name) => break,
             Event::Eof => return Err(missing_end(&String::from_utf8_lossy(end_name))),
@@ -1416,7 +1420,9 @@ fn read_color_children(
             Event::Start(element) => {
                 raw_children.push(boundary, capture_element(reader, &element)?)
             }
-            Event::Empty(element) => raw_children.push(boundary, capture_empty_element(&element)?),
+            Event::Empty(element) => {
+                raw_children.push(boundary, capture_empty(&element, reader.empty_writing())?)
+            }
             Event::End(element) if matches_local_name(element.name().as_ref(), end_name) => break,
             Event::Eof => return Err(missing_end(&String::from_utf8_lossy(end_name))),
             _ => {}
@@ -1435,7 +1441,9 @@ fn capture_all_children(reader: &mut Reader<&[u8]>, end_name: &[u8]) -> Result<O
             .map_err(OxmlError::from)?
         {
             Event::Start(element) => raw_children.push(0, capture_element(reader, &element)?),
-            Event::Empty(element) => raw_children.push(0, capture_empty_element(&element)?),
+            Event::Empty(element) => {
+                raw_children.push(0, capture_empty(&element, reader.empty_writing())?)
+            }
             Event::End(element) if matches_local_name(element.name().as_ref(), end_name) => break,
             Event::Eof => return Err(missing_end(&String::from_utf8_lossy(end_name))),
             _ => {}

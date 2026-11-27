@@ -7,6 +7,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::ops::Range;
 
 use oxoffice_core::xml::xml_ncname_is_valid;
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_opc::OpcPackage;
 use oxoffice_opc::embedded::{
     self as package_embedded, EmbeddedError, EmbeddedHost, OwnerReference, OwnerReferenceKind,
@@ -16,7 +17,6 @@ use oxoffice_opc::embedded::{
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Namespace, QName, ResolveResult};
-use quick_xml::reader::NsReader;
 
 use crate::{Document, Error, Result};
 

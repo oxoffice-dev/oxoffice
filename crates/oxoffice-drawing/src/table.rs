@@ -3,12 +3,13 @@ use std::io::Write;
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
 use oxoffice_core::units::Emu;
 use oxoffice_core::xml::{local_name, matches_local_name, xml_ncname_is_valid};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_core::xml_text::read_element_text;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::fill::Fill;
 use crate::line::CT_LineProperties;
@@ -540,7 +541,7 @@ impl CT_Table {
                     if matches!(name.as_slice(), b"tblPr" | b"tblGrid" | b"tr") {
                         reject_conflicting_a_prefix(&child)?;
                     }
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_table_child(
                         &name,
                         raw,
@@ -1135,7 +1136,9 @@ impl CT_TableProperties {
                 Event::Start(child) => {
                     raw_children.push(boundary, capture_element(reader, &child)?)
                 }
-                Event::Empty(child) => raw_children.push(boundary, capture_empty_element(&child)?),
+                Event::Empty(child) => {
+                    raw_children.push(boundary, capture_empty(&child, reader.empty_writing())?)
+                }
                 Event::End(end) if matches_local_name(end.name().as_ref(), b"tblPr") => break,
                 Event::Eof => return Err(missing("closing a:tblPr")),
                 _ => {}
@@ -1258,9 +1261,10 @@ impl CT_TableGrid {
                 Event::Start(child) => {
                     raw_children.push(columns.len(), capture_element(reader, &child)?)
                 }
-                Event::Empty(child) => {
-                    raw_children.push(columns.len(), capture_empty_element(&child)?)
-                }
+                Event::Empty(child) => raw_children.push(
+                    columns.len(),
+                    capture_empty(&child, reader.empty_writing())?,
+                ),
                 Event::End(end) if matches_local_name(end.name().as_ref(), b"tblGrid") => break,
                 Event::Eof => return Err(missing("closing a:tblGrid")),
                 _ => {}
@@ -1477,7 +1481,9 @@ fn parse_grid_column(xml: &[u8]) -> Result<(Emu, GridColumnRaw)> {
                     buffer.clear();
                     match reader.read_event_into(&mut buffer)? {
                         Event::Start(child) => children.push(capture_element(&mut reader, &child)?),
-                        Event::Empty(child) => children.push(capture_empty_element(&child)?),
+                        Event::Empty(child) => {
+                            children.push(capture_empty(&child, reader.empty_writing())?)
+                        }
                         Event::End(end) if matches_local_name(end.name().as_ref(), b"gridCol") => {
                             break;
                         }
@@ -1549,8 +1555,10 @@ impl CT_TableRow {
                 }
                 Event::Empty(child) if drawingml_child_name(&child, &namespaces)? == b"tc" => {
                     reject_conflicting_a_prefix(&child)?;
-                    let mut cell =
-                        CT_TableCell::from_xml(&capture_empty_element(&child)?, &namespaces)?;
+                    let mut cell = CT_TableCell::from_xml(
+                        &capture_empty(&child, reader.empty_writing())?,
+                        &namespaces,
+                    )?;
                     cell.origin_index = cells.len();
                     cells.push(cell);
                 }
@@ -1558,7 +1566,7 @@ impl CT_TableRow {
                     raw_children.push(cells.len(), capture_element(reader, &child)?)
                 }
                 Event::Empty(child) => {
-                    raw_children.push(cells.len(), capture_empty_element(&child)?)
+                    raw_children.push(cells.len(), capture_empty(&child, reader.empty_writing())?)
                 }
                 Event::End(end) if matches_local_name(end.name().as_ref(), b"tr") => break,
                 Event::Eof => return Err(missing("closing a:tr")),
@@ -1628,7 +1636,9 @@ impl CT_TableCell {
     /// Serializes the cell with a standalone DrawingML namespace.
     pub fn to_xml(&self) -> Result<Vec<u8>> {
         let xml = self.canonical_xml()?;
-        let mut reader = Reader::from_reader(xml.as_slice());
+        // The model's own writing, copied as written.
+        let mut source = Reader::from_reader(xml.as_slice());
+        let reader = source.verbatim();
         let mut writer = Writer::new(Vec::new());
         let first = reader.read_event()?;
         let Event::Start(mut root) = first else {
@@ -1718,7 +1728,7 @@ impl CT_TableCell {
                     if matches!(name.as_slice(), b"txBody" | b"tcPr") {
                         reject_conflicting_a_prefix(&child)?;
                     }
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_cell_child(
                         &name,
                         raw,
@@ -1988,7 +1998,7 @@ impl CT_TableCellProperties {
                 }
                 Event::Empty(child) => {
                     let name = drawingml_child_name(&child, &namespaces)?;
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     properties.capture_child(&name, raw, &mut boundary)?;
                 }
                 Event::End(end) if matches_local_name(end.name().as_ref(), b"tcPr") => break,
@@ -2122,14 +2132,14 @@ impl CT_TableStyleList {
                     styles.push(CT_TableStyle::from_xml(&raw)?);
                 }
                 Event::Empty(child) if matches_local_name(child.name().as_ref(), b"tblStyle") => {
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     styles.push(CT_TableStyle::from_xml(&raw)?);
                 }
                 Event::Start(child) => {
                     raw_children.push(styles.len(), capture_element(reader, &child)?)
                 }
                 Event::Empty(child) => {
-                    raw_children.push(styles.len(), capture_empty_element(&child)?)
+                    raw_children.push(styles.len(), capture_empty(&child, reader.empty_writing())?)
                 }
                 Event::End(end) if matches_local_name(end.name().as_ref(), b"tblStyleLst") => break,
                 Event::Eof => return Err(missing("closing a:tblStyleLst")),
@@ -2245,7 +2255,7 @@ impl CT_TableStyle {
                 }
                 Event::Empty(child) => {
                     let name = local_name(child.name().as_ref()).to_vec();
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     style.capture_child(&name, raw, &mut boundary)?;
                 }
                 Event::End(end) if matches_local_name(end.name().as_ref(), b"tblStyle") => break,
@@ -2363,7 +2373,7 @@ impl CT_TableBackgroundStyle {
                             }
                             Event::Empty(child) => {
                                 let name = local_name(child.name().as_ref()).to_vec();
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 value.capture_child(&name, raw, &mut boundary)?;
                             }
                             Event::End(end)
@@ -2470,7 +2480,7 @@ impl CT_TablePartStyle {
                             }
                             Event::Empty(child) => {
                                 let name = local_name(child.name().as_ref()).to_vec();
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 value.capture_child(&name, raw, &mut boundary)?;
                             }
                             Event::End(end)
@@ -2561,7 +2571,7 @@ impl CT_TableCellStyle {
                             }
                             Event::Empty(child) => {
                                 let name = local_name(child.name().as_ref()).to_vec();
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 value.capture_child(&name, raw, &mut boundary)?;
                             }
                             Event::End(end)
@@ -2697,7 +2707,7 @@ impl CT_TableBorders {
                             }
                             Event::Empty(child) => {
                                 let name = local_name(child.name().as_ref()).to_vec();
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 value.capture_child(&name, raw, &mut boundary)?;
                             }
                             Event::End(end)
@@ -2856,7 +2866,7 @@ impl CT_TableTextStyle {
                             }
                             Event::Empty(child) => {
                                 let name = local_name(child.name().as_ref()).to_vec();
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 value.capture_child(&name, raw, &mut boundary)?;
                             }
                             Event::End(end)
@@ -3531,7 +3541,7 @@ fn parse_fill_wrapper(xml: &[u8]) -> Result<Option<Fill>> {
                 if fill.is_some() {
                     return Ok(None);
                 }
-                fill = Some(parse_fill(&capture_empty_element(&child)?)?);
+                fill = Some(parse_fill(&capture_empty(&child, reader.empty_writing())?)?);
             }
             Event::Start(child) if root_seen => {
                 let _ = capture_element(&mut reader, &child)?;
@@ -3614,7 +3624,10 @@ fn parse_border_wrapper(xml: &[u8]) -> Result<Option<CT_LineProperties>> {
                 if line.is_some() {
                     return Ok(None);
                 }
-                line = Some(parse_named_line(&capture_empty_element(&child)?)?);
+                line = Some(parse_named_line(&capture_empty(
+                    &child,
+                    reader.empty_writing(),
+                )?)?);
             }
             Event::Start(child) if root_seen => {
                 let _ = capture_element(&mut reader, &child)?;
@@ -3654,7 +3667,7 @@ fn border_line_reference(xml: &[u8]) -> Result<Option<StyleMatrixReference>> {
             )),
             Event::Empty(child) if root_seen => Some((
                 matches_local_name(child.name().as_ref(), b"lnRef"),
-                capture_empty_element(&child)?,
+                capture_empty(&child, reader.empty_writing())?,
             )),
             Event::End(_) if root_seen => return Ok(reference),
             Event::Text(text) if !xml_text_is_whitespace(&text) => return Ok(None),

@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_core::{OxmlError, Result};
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::namespace::{NamespaceBindings, R_NS};
 

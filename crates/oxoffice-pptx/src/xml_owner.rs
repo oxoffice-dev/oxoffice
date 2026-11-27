@@ -64,7 +64,7 @@ impl PptXmlOwner<'_> {
 }
 
 fn ppt_xml_close_namespaces(xml: &[u8]) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     loop {
         let event = reader
             .read_event()
@@ -81,13 +81,14 @@ fn ppt_xml_close_namespaces(xml: &[u8]) -> Result<Vec<u8>> {
                     }
                 }
                 let mut writer = XmlWriter::new(Vec::new());
-                writer
-                    .write_event(if empty {
-                        XmlEvent::Empty(root)
-                    } else {
-                        XmlEvent::Start(root)
-                    })
-                    .map_err(|error| invalid_shape_mutation("read XML", error.to_string()))?;
+                if empty {
+                    oxoffice_core::raw_xml::write_empty(&mut writer, &root, reader.empty_writing())
+                } else {
+                    writer
+                        .write_event(XmlEvent::Start(root))
+                        .map_err(oxoffice_core::OxmlError::from)
+                }
+                .map_err(|error| invalid_shape_mutation("read XML", error.to_string()))?;
                 let mut result = writer.into_inner();
                 result.extend_from_slice(&xml[reader.buffer_position() as usize..]);
                 return Ok(result);
@@ -561,7 +562,7 @@ fn ppt_xml_frontier_order(
         .flatten()
 }
 pub(super) fn ppt_xml_frontiers(source: &[u8], names: &mut PptXmlNames) -> Result<PptXmlFrontiers> {
-    let mut reader = quick_xml::Reader::from_reader(source);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source);
     let mut scope = PptXmlScope::default();
     let mut stack: Vec<PptXmlFrame> = Vec::new();
     let mut result = PptXmlFrontiers::default();
@@ -913,7 +914,7 @@ fn ppt_xml_owner_range(
     shape_root: &[u8],
     steps: &[(&str, &str, usize)],
 ) -> Result<std::ops::Range<usize>> {
-    let mut reader = quick_xml::Reader::from_reader(source);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source);
     let mut names = PptXmlNames::default();
     let mut scope = PptXmlScope::default();
     let mut stack: Vec<PptXmlSourceFrame> = Vec::new();

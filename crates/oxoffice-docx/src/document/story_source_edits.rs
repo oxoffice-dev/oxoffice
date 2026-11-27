@@ -20,9 +20,10 @@ pub(super) fn set_story_source_xml_in(
     )>,
 ) -> Result<()> {
     if part_name == document.doc_part_name {
-        // The main-part story source is canonical XML. It drops a root
-        // default namespace and every body declaration, and binds the root
-        // `w`, `r` and `mc` prefixes to their canonical URIs. The save path's
+        // The main-part story source is canonical XML. It keeps the root's
+        // other declarations (a default namespace among them), drops every
+        // body declaration, and binds the root `w`, `r` and `mc` prefixes to
+        // their canonical URIs. The save path's
         // check on those declarations keeps retained content of the replaced
         // part in its namespace. A checked paragraph write emits canonical
         // `w14:paraId` without a local declaration, so the part root binds
@@ -30,19 +31,14 @@ pub(super) fn set_story_source_xml_in(
         let rewritten_root_declarations: Vec<_> = document
             .root_namespace_declarations
             .iter()
-            .filter(|(name, _)| {
-                matches!(name.as_str(), "xmlns" | "xmlns:w" | "xmlns:r" | "xmlns:mc")
-            })
+            .filter(|(name, _)| matches!(name.as_str(), "xmlns:w" | "xmlns:r" | "xmlns:mc"))
             .cloned()
             .collect();
         if let Some(prefix) = unsafe_serializer_namespace_prefix(
             &rewritten_root_declarations,
             &document.body_namespace_declarations,
-            document.package.get_part(part_name),
         ) {
-            return Err(Error::Other(format!(
-                "cannot serialize a modified document with a shadowed `{prefix}` namespace"
-            )));
+            return Err(Error::Other(shadowed_namespace_diagnostic(&prefix)));
         }
         let (xml, mut main_scoped) = if let Some((template, source)) = scoped.take() {
             let source = template.operation.declare_source_w14_on_root(source)?;

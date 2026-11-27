@@ -580,7 +580,7 @@ fn paragraph_fragment_with_bindings(
 }
 
 fn start_tag_has_raw_attribute(start: &[u8], name: &[u8]) -> bool {
-    let mut reader = quick_xml::Reader::from_reader(start);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(start);
     let mut buffer = Vec::new();
     matches!(
         reader.read_event_into(&mut buffer),

@@ -123,10 +123,30 @@ CLI where it makes sense and Python everywhere.
 - Root parts have `from_xml(&[u8])` and `to_xml(&self)`. Nested elements take
   a `&mut Reader` and a `&mut Writer`.
 - **Tolerant on read, fixed on write**: any namespace prefix is accepted, the
-  canonical one is written.
+  canonical one is written. The roots of the main part, headers and footers
+  keep the declarations they were read with, a default namespace included:
+  the unmodelled XML kept without a prefix stays in it when the part is
+  written again, beside the modelled elements written under `w:`. Comments,
+  numbering and styles keep their root's attributes, settings are edited in
+  their source, and an existing notes part takes typed additions into its
+  own root.
 - **Unmodelled XML is preserved verbatim** through
   `oxoffice_core::raw_xml::capture_element`. Parse what you use, keep the
   rest.
+- **An element with nothing inside reads the same in both writings.** Every
+  reader of a document part goes through `oxoffice_core::xml_reader`
+  (`Reader`, `NsReader`), which delivers `<x></x>` as one `Event::Empty`,
+  as it delivers `<x/>`: an `Empty` arm models the element whatever its
+  writing. `empty_writing()` says how it was written;
+  `raw_xml::capture_empty(e, reader.empty_writing())` keeps an unmodelled
+  one in its writing, beside `capture_element`, and a loop that writes back
+  an `Event::Empty` it read uses `raw_xml::write_empty`. A loop that copies
+  events and models none, or that reads XML the model just wrote, reads
+  through `Reader::verbatim()`. Where a tag or its content is, is read with
+  `oxoffice_core::xml_element` (`start_tag`, `element_span`), never by
+  taking `/>` as the close. `crates/oxoffice-core/tests/xml_element.rs`
+  refuses a quick-xml reader in the crates that read document parts, and a
+  `/>` assumption in `crates/*/src`.
 - **Child order is part of the contract.** OOXML schemas use `xsd:sequence`.
   A wrong order makes PowerPoint refuse the file and Word "repair" it.
 - **A bookmark start between blocks belongs to the block after it**, as

@@ -36,30 +36,26 @@ pub(super) fn direct_element_spans(xml: &str) -> Result<Vec<Range<usize>>> {
     Ok(spans)
 }
 
+/// Where the start tag of the element `xml` starts with ends (as written),
+/// whether the element holds nothing (`<x/>` or `<x></x>`), and its name.
 pub(super) fn element_opening(xml: &str) -> Result<(usize, bool, String)> {
     let mut reader = Reader::from_str(xml);
     let event = reader
         .read_event()
         .map_err(|error| Error::Other(format!("comparison owner start failed: {error}")))?;
-    let (element, empty) = match event {
-        Event::Start(element) => (element, false),
-        Event::Empty(element) => (element, true),
+    let empty = match event {
+        Event::Start(_) => false,
+        Event::Empty(_) => true,
         _ => return Err(Error::Other("comparison owner has no start element".into())),
     };
-    let name = std::str::from_utf8(element.name().as_ref())
-        .map_err(utf8_error)?
-        .to_owned();
-    Ok((reader.buffer_position() as usize, empty, name))
+    let tag = oxoffice_core::xml_element::start_tag(xml)?;
+    Ok((tag.range.end, empty, tag.name))
 }
 
 pub(super) fn insert_first_child(xml: &str, child: &str) -> Result<String> {
-    let (end, empty, name) = element_opening(xml)?;
+    let (end, empty, _) = element_opening(xml)?;
     if empty {
-        return Ok(format!(
-            "{}>{child}</{name}>{}",
-            &xml[..oxoffice_core::xml_element::start_tag(xml)?.attributes_end],
-            &xml[end..]
-        ));
+        return Ok(oxoffice_core::xml_element::replace_content(xml, child)?.0);
     }
     Ok(format!("{}{child}{}", &xml[..end], &xml[end..]))
 }
@@ -490,7 +486,7 @@ pub(super) fn paragraph_close_start(xml: &str) -> Result<usize> {
 }
 
 pub(super) fn paragraph_run_spans(xml: &str) -> Result<Vec<Range<usize>>> {
-    let open = format!(r#"<rdocxcmp:root xmlns:rdocxcmp="urn:rdocx-compare" xmlns:w="{W_NS}">"#);
+    let open = scan_root_start("w");
     let wrapped = format!("{open}{xml}</rdocxcmp:root>");
     let offset = open.len();
     let mut reader = NsReader::from_reader(wrapped.as_bytes());
@@ -526,7 +522,7 @@ pub(super) fn paragraph_run_spans(xml: &str) -> Result<Vec<Range<usize>>> {
                     .last()
                     .map(|(local, word, _)| (local.as_slice(), *word));
                 if is_word
-                    && local.as_ref() == b"fldSimple"
+                    && matches!(local.as_ref(), b"r" | b"fldSimple")
                     && parent.is_some_and(|(value, word)| {
                         word && ((value == b"p" && stack.len() == 2)
                             || (value == b"hyperlink" && stack.len() == 3))

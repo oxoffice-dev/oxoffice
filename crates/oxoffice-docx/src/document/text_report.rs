@@ -311,7 +311,7 @@ fn document_story_kind_name(kind: StoryKind) -> &'static str {
 /// Whether `xml` parses and closes every element it opens: a part cut short
 /// is not.
 fn xml_is_complete(xml: &[u8]) -> bool {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut depth = 0usize;
     let mut elements = 0usize;
     loop {

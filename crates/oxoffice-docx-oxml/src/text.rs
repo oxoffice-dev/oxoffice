@@ -7,9 +7,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use oxoffice_core::xml_reader::{NsReader, Reader};
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::{NsReader, Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::content_control::{CT_Sdt, SdtContent, SdtOwner};
 use crate::drawing::CT_Drawing;
@@ -18,7 +19,7 @@ use crate::math::OfficeMath;
 use crate::namespace::{R_NS, matches_local_name};
 use crate::numbering::{namespace_bindings, word_prefixes_at};
 use crate::properties::{CT_PPr, CT_RPr, is_word_attribute, is_word_element};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::revision::{CT_Revision, RevisionKind};
 use crate::ruby::CT_Ruby;
 use crate::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};

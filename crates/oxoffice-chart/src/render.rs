@@ -1393,7 +1393,7 @@ fn parse_point_label_override(
                     .as_ref()
                     .ok_or_else(|| ChartError::UnexpectedElement(element_name(&element)))?;
                 let name = chart_child_local(&element, bindings)?;
-                let raw = capture_empty_element(&element)?;
+                let raw = capture_empty(&element, reader.empty_writing())?;
                 parse_point_label_child(&mut state, name.as_deref(), &raw, bindings, &mut order)?;
             }
             Event::End(element) if matches_local_name(element.name().as_ref(), b"dLbl") => {

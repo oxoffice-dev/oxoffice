@@ -1,8 +1,9 @@
 //! Paragraph properties (`CT_PPr`).
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::escape::escape;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 use std::borrow::Cow;
 
 use crate::borders::{CT_PBdr, CT_Tabs};
@@ -18,9 +19,9 @@ use crate::properties::{
     modeled_attribute_carrier_occurrence, parse_twips_measure, parse_word_toggle,
     raw_is_modeled_attribute_carrier, raw_occurrence, record_modeled_toggle_candidate,
     remove_redundant_modeled_toggle_candidate, replay_modeled_toggle_raw,
-    toggle_element_is_explicitly_empty, toggle_has_unsupported_attributes, word_prefixes_at,
+    toggle_has_unsupported_attributes, word_prefixes_at,
 };
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 
 use crate::revision::CT_Revision;
 use crate::run_properties::CT_RPr;
@@ -858,27 +859,14 @@ impl CT_PPr {
                         )?;
                         pending_raw.push(raw);
                     } else if let Some(slot) = ppr_toggle_slot(name.as_ref(), &prefixes) {
-                        let captured = capture_element(reader, e)?;
-                        let raw =
-                            crate::text::raw_with_external_bindings(&captured, owner_bindings)?;
-                        if toggle_element_is_explicitly_empty(&captured)? {
-                            let value = parse_word_toggle(e, &prefixes)?;
-                            if let Some(field) = ppr_toggle_field_mut(&mut ppr, slot) {
-                                *field = Some(value);
-                            }
-                            toggle_carrier_required[slot as usize] =
-                                toggle_has_unsupported_attributes(e, &prefixes)?;
-                            record_modeled_toggle_candidate(
-                                &mut ppr.revision_xml,
-                                &mut ppr.revision_xml_positions,
-                                raw,
-                                slot,
-                                occurrences[slot as usize] - 1,
-                            );
-                        } else {
-                            let occurrence = occurrences[slot as usize] - 1;
-                            record_ppr_raw_at(&mut ppr, raw, slot, occurrence);
-                        }
+                        // A toggle with content stays as written. An empty one,
+                        // in either writing, is read by the Empty arm.
+                        let raw = crate::text::raw_with_external_bindings(
+                            &capture_element(reader, e)?,
+                            &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
+                        )?;
+                        let occurrence = occurrences[slot as usize] - 1;
+                        record_ppr_raw_at(&mut ppr, raw, slot, occurrence);
                     } else {
                         let raw = crate::text::raw_with_external_bindings(
                             &capture_element(reader, e)?,
@@ -899,7 +887,7 @@ impl CT_PPr {
                     }
                     if is_word_element(name.as_ref(), b"pBdr", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &tabs_bindings,
                         )?;
                         ppr.borders = Some(Box::new(CT_PBdr::from_source_xml(&raw)?));
@@ -912,7 +900,7 @@ impl CT_PPr {
                         );
                     } else if is_word_element(name.as_ref(), b"tabs", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &tabs_bindings,
                         )?;
                         ppr.tabs = Some(CT_Tabs::from_source_xml(&raw)?);
@@ -983,8 +971,8 @@ impl CT_PPr {
                         toggle_carrier_required[slot as usize] =
                             toggle_has_unsupported_attributes(e, &prefixes)?;
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
-                            owner_bindings,
+                            &capture_empty(e, reader.empty_writing())?,
+                            &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
                         )?;
                         record_modeled_toggle_candidate(
                             &mut ppr.revision_xml,
@@ -1017,8 +1005,8 @@ impl CT_PPr {
                         let value = get_word_val_attr(e, &prefixes)?;
                         if value.is_none() || toggle_has_unsupported_attributes(e, &prefixes)? {
                             let raw = crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
-                                owner_bindings,
+                                &capture_empty(e, reader.empty_writing())?,
+                                &crate::properties::carrier_bindings(e, &prefixes, owner_bindings),
                             )?;
                             let occurrence = occurrences[PPR_CNF_STYLE_SLOT as usize] - 1;
                             if value.is_some() {
@@ -1054,7 +1042,7 @@ impl CT_PPr {
                         ppr.rpr.get_or_insert_default();
                     } else if is_word_element(name.as_ref(), b"pPrChange", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
@@ -1070,12 +1058,12 @@ impl CT_PPr {
                         }
                     } else if matches_local_name(name.as_ref(), b"pPrChange") {
                         pending_raw.push(crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?);
                     } else {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         if let Some(slot) = ppr_schema_slot(name.as_ref(), &prefixes) {
@@ -1144,7 +1132,7 @@ impl CT_PPr {
                         let parsed =
                             typed_leaf_value(e, &prefixes)?.and_then(|value| value.parse().ok());
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &child_external_bindings,
                         )?;
                         if let Some((_, previous, _)) =
@@ -1158,7 +1146,7 @@ impl CT_PPr {
                         let parsed =
                             typed_leaf_value(e, &prefixes)?.and_then(|value| value.parse().ok());
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &child_external_bindings,
                         )?;
                         if let Some((_, previous, _)) =
@@ -1173,14 +1161,14 @@ impl CT_PPr {
                             3,
                             source_ordinal,
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &child_external_bindings,
                             )?,
                         ));
                         boundary = 3;
                     } else if is_word_element(name.as_ref(), b"ins", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &child_external_bindings,
                         )?;
                         if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
@@ -1205,7 +1193,7 @@ impl CT_PPr {
                     } else if matches_local_name(name.as_ref(), b"ins") {
                         ppr.numbering_revision_xml
                             .push(crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &child_external_bindings,
                             )?);
                         ppr.numbering_revision_xml_positions
@@ -1216,7 +1204,7 @@ impl CT_PPr {
                             boundary,
                             source_ordinal,
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &child_external_bindings,
                             )?,
                         ));
@@ -2193,7 +2181,9 @@ fn write_ppr_with_positioned_raw<W: std::io::Write>(
     });
     let mut raw_index = 0usize;
     let mut occurrences = [0usize; PPR_END_SLOT as usize + 1];
-    let mut reader = Reader::from_reader(generated);
+    // The model's own writing, read as written: an empty container it wrote
+    // `<x></x>` is still its root, opened and closed.
+    let mut reader = oxoffice_core::xml_reader::Verbatim::from_reader(generated);
     reader.config_mut().trim_text(false);
     let mut inside = false;
     loop {

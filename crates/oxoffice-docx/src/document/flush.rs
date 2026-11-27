@@ -687,7 +687,6 @@ impl Document {
         let unsafe_prefix = unsafe_serializer_namespace_prefix(
             &self.root_namespace_declarations,
             &self.body_namespace_declarations,
-            existing_document_xml,
         )
         .or_else(|| unsafe_nested_namespace_prefix(nested_namespace_owners));
         let kept_xml = existing_document_xml.map(<[u8]>::to_vec);
@@ -696,9 +695,7 @@ impl Document {
             None
         } else {
             if let Some(prefix) = unsafe_prefix {
-                return Err(Error::Other(format!(
-                    "cannot serialize a modified document with a shadowed `{prefix}` namespace"
-                )));
+                return Err(Error::Other(shadowed_namespace_diagnostic(&prefix)));
             }
             // The previous flush's record, whose pieces under a kept producer
             // root carry over where the body did not change.

@@ -1284,7 +1284,7 @@ fn field_identities(package: &OpcPackage, parsed: Option<&Parsed>) -> Result<Has
 /// The identities of the DrawingML text fields of one XML part, uppercase.
 pub(super) fn part_field_identities(name: &str, bytes: &[u8]) -> Result<Vec<String>> {
     let mut ids = Vec::new();
-    let mut reader = quick_xml::Reader::from_reader(bytes);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(bytes);
     // Keep the legacy vendor declaration rules and raw URI matching, while
     // tracking logical depth independently of its u16 namespace level.
     let mut declarations = quick_xml::name::NamespaceResolver::default();

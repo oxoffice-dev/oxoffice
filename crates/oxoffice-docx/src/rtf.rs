@@ -1814,7 +1814,7 @@ fn marker_location(marker: &oxoffice_docx_oxml::text::CommentRangeMarker) -> usi
 /// Whether a `w:pgNumType` names a format other than decimal or chapter
 /// numbering, whatever prefix its attributes take.
 fn page_numbering_is_not_decimal(xml: &[u8]) -> bool {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     loop {
         match reader.read_event() {
             Ok(

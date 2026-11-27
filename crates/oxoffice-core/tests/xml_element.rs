@@ -1081,3 +1081,127 @@ fn no_code_takes_a_tag_close_as_two_bytes() {
         refused.join("\n")
     );
 }
+
+/// The crates that read document parts: their readers go through
+/// `oxoffice_core::xml_reader`, which reads an element with nothing inside
+/// the same in both writings.
+const DOCUMENT_READERS: [&str; 7] = [
+    "oxoffice-chart",
+    "oxoffice-docx",
+    "oxoffice-docx-layout",
+    "oxoffice-docx-oxml",
+    "oxoffice-drawing",
+    "oxoffice-pptx",
+    "oxoffice-pptx-oxml",
+];
+
+/// Files of `DOCUMENT_READERS` that name quick-xml's reader, by how many
+/// lines and why their code must see an empty element's start and end tags.
+const QUICK_XML_READERS: [(&str, usize, &str); 2] = [
+    (
+        "crates/oxoffice-docx-oxml/src/paragraph_properties.rs",
+        1,
+        "rereads the paragraph properties the model just wrote, as written",
+    ),
+    (
+        "crates/oxoffice-docx-oxml/src/run_properties.rs",
+        1,
+        "rereads the run properties the model just wrote, as written",
+    ),
+];
+
+/// The lines of `source`, but its `#[cfg(test)]` items, that name quick-xml's
+/// reader: a `quick_xml::Reader`, `quick_xml::NsReader` or
+/// `quick_xml::reader::` path, a reader built as `Verbatim::from_..`, or
+/// `Reader` or `NsReader` in a `use quick_xml::{..}`.
+fn quick_xml_readers(source: &str) -> Vec<usize> {
+    let code = without_test_items(source);
+    let line_of = |at: usize| code[..at].matches('\n').count() + 1;
+    let mut found = Vec::new();
+    for path in [
+        "quick_xml::Reader",
+        "quick_xml::NsReader",
+        "quick_xml::reader::",
+        "Verbatim::from_",
+    ] {
+        for (at, _) in code.match_indices(path) {
+            let next = code[at + path.len()..].chars().next();
+            let prefix = path.ends_with("::") || path.ends_with('_');
+            if !next.is_some_and(|c| c.is_alphanumeric() || c == '_') || prefix {
+                found.push(line_of(at));
+            }
+        }
+    }
+    for (at, _) in code.match_indices("use quick_xml::{") {
+        let body = &code[at + "use quick_xml::{".len()..];
+        let body = &body[..body.find(';').unwrap_or(body.len())];
+        let names = body.split(|c: char| !(c.is_alphanumeric() || c == '_'));
+        if names
+            .into_iter()
+            .any(|name| name == "Reader" || name == "NsReader")
+        {
+            found.push(line_of(at));
+        }
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+#[test]
+fn the_check_finds_a_quick_xml_reader() {
+    let source = concat!(
+        "let a = quick_xml::Reader::from_reader(xml);\n",
+        "use quick_xml::reader::NsReader;\n",
+        "use quick_xml::{\n    Writer,\n    NsReader,\n};\n",
+        "fn f(reader: &mut quick_xml::NsReader<&[u8]>) {}\n",
+        "use quick_xml::{Writer, events::Event};\n",
+        "let b = oxoffice_core::xml_reader::Reader::from_reader(xml);\n",
+        "let c = quick_xml::ReaderLike::new();\n",
+        "let d = xml_reader::Verbatim::from_reader(xml);\n",
+        "fn g(reader: &mut Verbatim<&[u8]>) {}\n",
+        "#[cfg(test)]\nmod tests { fn t() { quick_xml::Reader::from_str(\"\"); } }\n",
+    );
+    assert_eq!(quick_xml_readers(source), [1, 2, 3, 7, 11]);
+}
+
+// A reader that models an empty element on `Event::Empty` alone drops
+// `<w:b></w:b>` (#664): every reader of a document part goes through
+// `oxoffice_core::xml_reader`, which reads both writings as one empty event.
+// Verbatim reads go through `Reader::verbatim` or `raw_xml::capture_element`;
+// a reader built as `Verbatim::from_..` is listed with its reason.
+#[test]
+fn every_document_reader_reads_both_writings_of_an_empty_element() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut refused = Vec::new();
+    for krate in DOCUMENT_READERS {
+        let mut files = Vec::new();
+        rust_files(&root.join("crates").join(krate).join("src"), &mut files);
+        assert!(!files.is_empty(), "{krate} has no source");
+        for path in files {
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            let source = fs::read_to_string(&path).expect("a source file is UTF-8");
+            let lines = quick_xml_readers(&source);
+            let allowed: usize = QUICK_XML_READERS
+                .iter()
+                .filter(|(file, ..)| *file == relative)
+                .map(|(_, count, _)| count)
+                .sum();
+            if lines.len() != allowed {
+                refused.push(format!(
+                    "{relative} names quick-xml's reader on {} lines ({lines:?}), {allowed} allowed",
+                    lines.len()
+                ));
+            }
+        }
+    }
+    assert!(
+        refused.is_empty(),
+        "read with oxoffice_core::xml_reader instead:\n{}",
+        refused.join("\n")
+    );
+}

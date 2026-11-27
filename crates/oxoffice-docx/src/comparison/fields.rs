@@ -389,7 +389,8 @@ pub(super) fn actual_field_is_complex(xml: &str, bindings: &NamespaceBindings) -
 
 /// The namespace bindings of `xml`'s root that its names use, but the Word
 /// binding: Word 2019 declares a default namespace on the document root that
-/// no name uses, and a save leaves it out, which is no change.
+/// no name uses, and a version from another producer does not, which is no
+/// change.
 pub(super) fn conversion_namespace_facts(
     bindings: NamespaceBindings,
     xml: &str,
@@ -1186,7 +1187,8 @@ fn hyperlink_field_instruction(
     let (_, event) = reader
         .read_resolved_event()
         .map_err(|error| Error::Other(error.to_string()))?;
-    let Event::Start(element) = event else {
+    // The link closed at once reads as one empty element.
+    let (Event::Start(element) | Event::Empty(element)) = event else {
         return Err(Error::Other(
             "whole-paragraph hyperlink has no start tag".into(),
         ));

@@ -144,7 +144,7 @@ fn with_story_body_content(
     xml: &[u8],
     edit: impl FnOnce(&mut Vec<BodyContent>),
 ) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut depth = 0usize;

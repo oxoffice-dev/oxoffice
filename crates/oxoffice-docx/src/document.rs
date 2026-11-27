@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use oxoffice_chart::{CT_ChartSpace, ChartData, ChartKind};
 use oxoffice_core::app_properties::AppProperties;
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_docx_oxml::MathProperties;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent, StorySdtOwner};
 use oxoffice_docx_oxml::document::{
@@ -52,7 +53,6 @@ use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_xml_entity;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Namespace, PrefixDeclaration, ResolveResult};
-use quick_xml::reader::NsReader;
 
 use oxoffice_core::custom_properties::{CustomProperties, CustomProperty};
 use oxoffice_docx_oxml::core_properties::CoreProperties;
@@ -210,9 +210,9 @@ use namespace_replay::{
     replay_unsavable_body_edit,
 };
 use namespaces::{
-    candidate_namespace_owner_markers, document_namespace_scopes, logical_owner_snapshot,
-    marker_multiset_matches, modeled_owner_piece_spans, modeled_owner_spans,
-    namespace_declarations, namespace_owners_from_spans, namespace_prefix,
+    DEFAULT_NAMESPACE_BELOW_ROOT, candidate_namespace_owner_markers, document_namespace_scopes,
+    logical_owner_snapshot, marker_multiset_matches, modeled_owner_piece_spans,
+    modeled_owner_spans, namespace_declarations, namespace_owners_from_spans, namespace_prefix,
     nested_modeled_namespace_owners, retain_styles_root_attributes, root_namespace_declarations,
     shadowed_namespace_diagnostic, unsafe_nested_namespace_prefix,
     unsafe_serializer_namespace_prefix,
@@ -548,7 +548,7 @@ struct NamespaceMarker {
 
 /// Whether `xml` holds an element whose local name is one of `names`.
 fn xml_holds_element_named(xml: &[u8], names: &HashSet<&[u8]>) -> bool {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     loop {
         match reader.read_event() {
             Ok(

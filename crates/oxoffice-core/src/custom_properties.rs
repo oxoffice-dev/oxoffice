@@ -8,8 +8,9 @@ use quick_xml::reader::NsReader;
 use quick_xml::{Reader, Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::xml::{extra_namespace_declarations, local_name};
+use crate::xml_reader::EmptyWriting;
 use crate::xml_text::read_element_text;
 
 const CUSTOM_PROPERTIES_NS: &str =
@@ -369,7 +370,10 @@ fn parse_empty_value(element: &BytesStart<'_>) -> Result<CustomPropertyValue> {
         )),
         b"filetime" => Ok(CustomPropertyValue::FileTime(String::new())),
         b"empty" => Ok(CustomPropertyValue::Empty),
-        _ => Ok(CustomPropertyValue::Raw(capture_empty_element(element)?)),
+        _ => Ok(CustomPropertyValue::Raw(capture_empty(
+            element,
+            EmptyWriting::SelfClosed,
+        )?)),
     }
 }
 

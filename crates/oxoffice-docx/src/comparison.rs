@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
 use base64::Engine;
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
 use oxoffice_docx_oxml::namespace::{R_NS, W_NS};
@@ -15,8 +17,7 @@ use oxoffice_docx_oxml::text::{
 };
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 use sha2::{Digest, Sha256};
 
 use crate::revision::{FieldEvent, paragraph_field_events, validate_revision_timestamp};
@@ -89,7 +90,7 @@ use guard::{
 use move_pairs::{crossing_reply_additions, pair_moves, share_trailing_move};
 use namespaces::{
     actual_root_bindings, declared_prefixes, drawing_signature, element_inner_range_any_prefix,
-    foreign_word_binding, required_external_bindings, root_prefix,
+    foreign_word_binding, required_external_bindings, root_prefix, scan_root_start,
 };
 pub(crate) use postconditions::reopen_staged;
 use postconditions::{

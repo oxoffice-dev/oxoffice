@@ -105,4 +105,5 @@ dependency bumps and documentation.
 | 2026-11-25 | [Equivalent XML writings give the same result](2026-11-25-equivalent-xml-writings.md) | accepted |
 | 2026-11-26 | [An element with nothing inside reads the same in both writings](2026-11-26-empty-elements-with-end-tags.md) | accepted |
 | 2026-11-26 | [A table written in a block content control has a location](2026-11-26-block-control-table-locations.md) | accepted |
+| 2026-11-26 | [A Word part written with the default namespace can be edited](2026-11-26-word-parts-with-a-default-namespace.md) | accepted |
 | 2026-11-26 | [Resolving a removed last mark and the controls a resolution empties](2026-11-26-resolving-a-removed-last-mark.md) | accepted |

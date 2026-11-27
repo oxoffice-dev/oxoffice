@@ -421,7 +421,7 @@ fn stored_lexical_fault(decoded: &str) -> Option<String> {
 /// only valid inside the root, and declarations and document type
 /// declarations only in the prolog.
 fn stored_root_fault(decoded: &str) -> Option<String> {
-    let mut reader = quick_xml::Reader::from_reader(decoded.as_bytes());
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(decoded.as_bytes());
     reader.config_mut().trim_text(false);
     let mut roots = 0usize;
     let mut depth = 0usize;
@@ -554,7 +554,7 @@ fn stored_structural_issues(
     let Some(expected_root) = roles.get(part).copied() else {
         return Ok(Vec::new());
     };
-    let mut reader = quick_xml::Reader::from_reader(decoded.as_bytes());
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(decoded.as_bytes());
     reader.config_mut().trim_text(false);
     let mut scope = PptXmlScope::default();
     let mut issues = Vec::new();

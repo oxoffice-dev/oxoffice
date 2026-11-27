@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, capture_event, emit_raw};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, capture_event, emit_raw};
 use oxoffice_core::xml::{push_escaped_attribute, reject_non_xml_characters};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::text::CT_TextBody;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::namespace::{NamespaceBindings, P_NS, all_attributes};
 
@@ -890,7 +891,7 @@ fn parse_comment_children(
             }
             Event::Empty(child) => {
                 let namespaces = inherited.with_start(&child)?;
-                let raw = capture_empty_element(&child)?;
+                let raw = capture_empty(&child, reader.empty_writing())?;
                 let qualified_name = child.name().as_ref().to_vec();
                 let local = local_name(&qualified_name);
                 let uri = namespaces.element_uri(child.name().as_ref());
@@ -1049,7 +1050,7 @@ fn parse_reply(xml: &[u8], inherited: &NamespaceBindings) -> Result<CommentReply
                         }
                         Event::Empty(child) => {
                             let child_ns = namespaces.with_start(&child)?;
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             if local_name(child.name().as_ref()) == b"extLst"
                                 && child_ns.element_uri(child.name().as_ref()) == Some(P_NS)
                             {
@@ -1321,7 +1322,7 @@ fn parse_ordered_children<T>(
             }
             Event::Empty(child) => {
                 let namespaces = inherited.with_start(&child)?;
-                let raw = capture_empty_element(&child)?;
+                let raw = capture_empty(&child, reader.empty_writing())?;
                 if local_name(child.name().as_ref()) == child_name
                     && namespaces.element_uri(child.name().as_ref()) == Some(P188_NS)
                 {
@@ -1356,7 +1357,7 @@ fn capture_all_children(reader: &mut Reader<&[u8]>, closing: &[u8]) -> Result<Or
     loop {
         match reader.read_event_into(&mut buffer)? {
             Event::Start(child) => children.push(0, capture_element(reader, &child)?),
-            Event::Empty(child) => children.push(0, capture_empty_element(&child)?),
+            Event::Empty(child) => children.push(0, capture_empty(&child, reader.empty_writing())?),
             Event::End(end) if local_name(end.name().as_ref()) == closing => break,
             event @ (Event::Text(_)
             | Event::GeneralRef(_)

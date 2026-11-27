@@ -5,10 +5,11 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty};
 use oxoffice_core::xml::{get_attr, local_name, matches_local_name};
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::order::OrderedRawChildren;
 use crate::preset_shape_data::preset_shape_definition;
@@ -525,7 +526,8 @@ impl CT_CustomGeometry2D {
                         });
                         boundary = boundary.max(6);
                     }
-                    _ => raw_children.push(boundary, capture_empty_element(&element)?),
+                    _ => raw_children
+                        .push(boundary, capture_empty(&element, reader.empty_writing())?),
                 },
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"custGeom") => {
                     break;
@@ -751,7 +753,7 @@ impl CT_PresetGeometry2D {
                     raw_children.push(boundary, capture_element(reader, &element)?)
                 }
                 Event::Empty(element) => {
-                    raw_children.push(boundary, capture_empty_element(&element)?)
+                    raw_children.push(boundary, capture_empty(&element, reader.empty_writing())?)
                 }
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"prstGeom") => {
                     break;
@@ -987,9 +989,10 @@ fn parse_guide_list(
             Event::Start(element) => {
                 raw_children.push(guides.len(), capture_element(reader, &element)?)
             }
-            Event::Empty(element) => {
-                raw_children.push(guides.len(), capture_empty_element(&element)?)
-            }
+            Event::Empty(element) => raw_children.push(
+                guides.len(),
+                capture_empty(&element, reader.empty_writing())?,
+            ),
             Event::End(element) if matches_local_name(element.name().as_ref(), end_name) => break,
             Event::Eof => {
                 return Err(GeometryError::Xml(format!(
@@ -1023,7 +1026,9 @@ fn consume_leaf_children(
             Event::Start(element) => {
                 raw_children.push(boundary, capture_element(reader, &element)?)
             }
-            Event::Empty(element) => raw_children.push(boundary, capture_empty_element(&element)?),
+            Event::Empty(element) => {
+                raw_children.push(boundary, capture_empty(&element, reader.empty_writing())?)
+            }
             Event::End(element) if matches_local_name(element.name().as_ref(), end_name) => break,
             Event::Eof => {
                 return Err(GeometryError::Xml(format!(
@@ -1085,9 +1090,10 @@ fn parse_path_list(
             Event::Start(element) => {
                 raw_children.push(paths.len(), capture_element(reader, &element)?)
             }
-            Event::Empty(element) => {
-                raw_children.push(paths.len(), capture_empty_element(&element)?)
-            }
+            Event::Empty(element) => raw_children.push(
+                paths.len(),
+                capture_empty(&element, reader.empty_writing())?,
+            ),
             Event::End(element) if matches_local_name(element.name().as_ref(), b"pathLst") => {
                 break;
             }
@@ -1139,8 +1145,10 @@ fn parse_path(
                 if let Some(command) = parse_empty_path_command(&element)? {
                     path.commands.push(command);
                 } else {
-                    path.raw_children
-                        .push(path.commands.len(), capture_empty_element(&element)?);
+                    path.raw_children.push(
+                        path.commands.len(),
+                        capture_empty(&element, reader.empty_writing())?,
+                    );
                 }
             }
             Event::End(element) if matches_local_name(element.name().as_ref(), b"path") => break,
@@ -1247,9 +1255,10 @@ fn parse_point_command(
             Event::Start(element) => {
                 raw_children.push(points.len(), capture_element(reader, &element)?)
             }
-            Event::Empty(element) => {
-                raw_children.push(points.len(), capture_empty_element(&element)?)
-            }
+            Event::Empty(element) => raw_children.push(
+                points.len(),
+                capture_empty(&element, reader.empty_writing())?,
+            ),
             Event::End(element) if matches_local_name(element.name().as_ref(), end_name) => break,
             Event::Eof => {
                 return Err(GeometryError::Xml(format!(
@@ -1964,7 +1973,7 @@ impl CT_PresetGeometry2D {
         evaluator.evaluate_guides(definition.guides())?;
 
         let mut sites = Vec::new();
-        let mut reader = quick_xml::NsReader::from_reader(xml);
+        let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(xml);
         let mut buffer = Vec::new();
         let mut in_list = false;
         loop {

@@ -2910,7 +2910,7 @@ impl RangeAnchors {
         };
         let mut xml = Vec::new();
         paragraph.to_xml(&mut quick_xml::Writer::new(&mut xml))?;
-        let mut reader = quick_xml::Reader::from_reader(xml.as_slice());
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml.as_slice());
         let mut anchors = Self::default();
         // One entry per open field, true once its separator has been seen.
         let mut fields: Vec<bool> = Vec::new();

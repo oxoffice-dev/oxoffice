@@ -5,10 +5,11 @@ use crate::text::XmlWriteRole;
 use std::io::Write;
 use std::ops::Range;
 
-use quick_xml::reader::NsReader;
+use oxoffice_core::xml_reader::NsReader;
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
@@ -17,7 +18,7 @@ use crate::numbering::{
     word_prefixes_at,
 };
 use crate::properties::{CT_RPr, is_word_element};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::revision::CT_Revision;
 use crate::table::{CT_Row, CT_Tbl, CT_Tc};
 use crate::text::{
@@ -1016,9 +1017,10 @@ impl CT_SdtPr {
                             });
                         }
                     } else {
-                        properties
-                            .slots
-                            .push(PropertySlot::Raw(capture_empty_element(&child)?));
+                        properties.slots.push(PropertySlot::Raw(capture_empty(
+                            &child,
+                            reader.empty_writing(),
+                        )?));
                     }
                 }
                 Ok(Event::End(end)) if matches_local_name(end.name().as_ref(), b"sdtPr") => break,
@@ -1793,7 +1795,7 @@ impl CT_Sdt {
                                     let scope =
                                         word_prefixes_at(&child, &self.content_word_prefixes)?;
                                     let raw = if empty {
-                                        capture_empty_element(&child)?
+                                        capture_empty(&child, reader.empty_writing())?
                                     } else {
                                         capture_element(&mut reader, &child)?
                                     };
@@ -2903,8 +2905,23 @@ impl CT_Sdt {
                     }
                 }
                 Ok(Event::Empty(child)) => {
-                    sdt.slots
-                        .push(RootSlot::Raw(capture_empty_element(&child)?));
+                    let child_prefixes = word_prefixes_at(&child, &prefixes)?;
+                    if is_word_element(child.name().as_ref(), b"sdtContent", &child_prefixes)
+                        && !sdt
+                            .slots
+                            .iter()
+                            .any(|slot| matches!(slot, RootSlot::Content))
+                    {
+                        // Content holding nothing, in either writing.
+                        sdt.content_attributes = capture_attributes(&child, &child_prefixes, &[])?;
+                        sdt.content_word_prefixes = child_prefixes.to_vec();
+                        sdt.slots.push(RootSlot::Content);
+                    } else {
+                        sdt.slots.push(RootSlot::Raw(capture_empty(
+                            &child,
+                            reader.empty_writing(),
+                        )?));
+                    }
                 }
                 Ok(Event::End(end)) if matches_local_name(end.name().as_ref(), b"sdt") => break,
                 Ok(Event::Eof) => {
@@ -3643,7 +3660,7 @@ fn append_modeled_content_child(
         }
         (b"fldSimple", _) => {
             let raw_xml = if empty {
-                capture_empty_element(child)?
+                capture_empty(child, reader.empty_writing())?
             } else {
                 capture_element(reader, child)?
             };
@@ -3683,7 +3700,7 @@ fn append_modeled_content_child(
                         extra_xml_positions: Vec::new(),
                         alt_drawings: Vec::new(),
                     },
-                    capture_empty_element(child)?,
+                    capture_empty(child, reader.empty_writing())?,
                 )
             } else {
                 let (raw, mapped) = if collect_properties {
@@ -4060,7 +4077,11 @@ fn parse_content(
                 .into_iter()
                 .find(|local| is_word_element(child.name().as_ref(), local, &prefixes));
                 if owned_word_child.is_some_and(|local| !owner.owns(local)) {
-                    append_retained_sdt_content(&mut content, None, capture_empty_element(&child)?);
+                    append_retained_sdt_content(
+                        &mut content,
+                        None,
+                        capture_empty(&child, reader.empty_writing())?,
+                    );
                 } else if owned_word_child.is_some() {
                     append_modeled_content_child(
                         reader,
@@ -4074,7 +4095,7 @@ fn parse_content(
                         source_maps.as_deref_mut(),
                     )?;
                 } else {
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     let mapped = control_facts.as_deref().and_then(|facts| {
                         facts.field_input(reader, event_start..reader.buffer_position(), &raw)
                     });

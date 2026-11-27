@@ -2,11 +2,12 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty};
 use oxoffice_core::units::{Angle, Percent1000};
 use oxoffice_core::xml::{get_attr, local_name, matches_local_name};
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::namespace::reject_conflicting_a_prefix;
 use crate::order::OrderedRawChildren;
@@ -696,7 +697,10 @@ fn capture_children(
                     reject_conflicting_a_prefix(&element)?;
                     transforms.push(transform);
                 } else {
-                    raw_children.push(transforms.len(), capture_empty_element(&element)?);
+                    raw_children.push(
+                        transforms.len(),
+                        capture_empty(&element, reader.empty_writing())?,
+                    );
                 }
             }
             Event::End(element) if matches_local_name(element.name().as_ref(), end_name) => break,

@@ -114,15 +114,14 @@ fn a_root_after_another_declaration_is_written_anew() {
     ));
 }
 
-/// A root default namespace, which the writer does not write: the roots
-/// differ in an attribute, not only in order.
+/// A root default namespace, which the writer writes back as declared: the
+/// roots differ only in order, and the producer's stays.
 #[test]
-fn a_root_with_an_attribute_the_writer_drops_is_written_anew() {
+fn a_root_with_a_default_namespace_is_kept() {
     let mut doc = doc_with_root(|xml| {
         reversed_root(xml).replacen("<w:document ", "<w:document xmlns=\"urn:x\" ", 1)
     });
     let opened = root_prefix(&doc.to_bytes().unwrap());
     doc.add_paragraph("added");
-    let written = root_prefix(&doc.to_bytes().unwrap());
-    assert_ne!(written, opened);
+    assert_eq!(root_prefix(&doc.to_bytes().unwrap()), opened);
 }
