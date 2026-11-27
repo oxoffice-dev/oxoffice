@@ -5,7 +5,8 @@
         tests/corpus/generate/author.py [family ...]
 
 Every family by default. The producers (produce.py) then open and save these
-sources. Families live in docx_families.py and pptx_families.py.
+sources. Families live in docx_families.py, pptx_families.py and
+xlsx_families.py.
 """
 
 import sys
@@ -13,10 +14,12 @@ import time
 
 import docx
 import pptx
+import xlsxwriter
 
 import docx_families  # noqa: F401  (registers the Word families)
 import manifest
 import pptx_families  # noqa: F401  (registers the PowerPoint families)
+import xlsx_families  # noqa: F401  (registers the Excel families)
 from common import AUTHORED, FAMILIES, normalize_zip
 
 
@@ -36,6 +39,7 @@ def main() -> None:
         {
             ("authored", "docx"): f"python-docx {docx.__version__}",
             ("authored", "pptx"): f"python-pptx {pptx.__version__}",
+            ("authored", "xlsx"): f"XlsxWriter {xlsxwriter.__version__}",
         },
         since=started,
     )

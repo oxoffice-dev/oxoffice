@@ -1,21 +1,28 @@
 # Test corpus
 
-Realistic Word and PowerPoint files saved by the editors people actually use,
-for the tests that read real documents (round trips, edits, performance). See
+Realistic Word, PowerPoint and Excel files saved by the editors people
+actually use, for the tests that read real documents (round trips, edits,
+performance). See
 [the test suite spec](../../specs/2026-11-20-test-suite-from-scratch.md) and
 [the corpus spec](../../specs/2026-11-21-corpus-at-scale-and-behaviour-tests.md).
 
 - `files/authored/`: one source per family (a report, a contract, a thesis, a
-  pitch deck...), written by [`generate/author.py`](generate/author.py) with
-  python-docx and python-pptx. The families live in
-  [`docx_families.py`](generate/docx_families.py) and
-  [`pptx_families.py`](generate/pptx_families.py), the raw OOXML the libraries
-  lack in [`ooxml.py`](generate/ooxml.py).
-- `files/word/`, `files/powerpoint/`, `files/libreoffice/`, `files/google/`:
-  the same sources opened and saved by each editor, written by
-  [`generate/produce.py`](generate/produce.py), except `word/toc.docx`, made
-  by hand in Word (see
-  [A table of contents inserted in Word](#a-table-of-contents-inserted-in-word)).
+  pitch deck, a purchase tracker...), written by
+  [`generate/author.py`](generate/author.py) with python-docx, python-pptx and
+  XlsxWriter. The families live in
+  [`docx_families.py`](generate/docx_families.py),
+  [`pptx_families.py`](generate/pptx_families.py) and
+  [`xlsx_families.py`](generate/xlsx_families.py), the raw OOXML the libraries
+  lack in [`ooxml.py`](generate/ooxml.py) (Word) and at the top of
+  `xlsx_families.py` (a shared formula).
+- `files/word/`, `files/powerpoint/`, `files/excel/`, `files/libreoffice/`,
+  `files/google/`: the same sources opened and saved by each editor, written
+  by [`generate/produce.py`](generate/produce.py), except `word/toc.docx`,
+  made by hand in Word (see
+  [A table of contents inserted in Word](#a-table-of-contents-inserted-in-word)),
+  the Google Sheets copies of the workbooks, which are not made by a script
+  here (see [Spreadsheets](#spreadsheets)), and the two workbooks with
+  comment threads, made by hand.
 - `files/google-docs/`: documents written in Google Docs itself, through the
   Docs API, by [`generate/google_docs.py`](generate/google_docs.py) from the requests of
   [`generate/google_docs.json`](generate/google_docs.json): `review`
@@ -30,7 +37,10 @@ for the tests that read real documents (round trips, edits, performance). See
   producer, size, and the features found in the XML. Only `known_failure`
   and `rewritten` are written by hand: the issue that makes a save without an
   edit rewrite some parts of the file, and those parts. The round-trip test
-  then expects exactly those parts to change, and nothing worse.
+  then expects exactly those parts to change, and nothing worse. The files
+  are Word, PowerPoint and Excel files (`.docx`, `.pptx`, `.xlsx`); the
+  Google Sheets copies, which no script of ours writes, get the producer
+  `Google Sheets export`.
 
 ## Rules
 
@@ -55,11 +65,12 @@ for the tests that read real documents (round trips, edits, performance). See
 uv run --no-project --with python-docx==1.2.0 --with python-pptx==1.0.2 \
     --with pillow==13.0.0 --with XlsxWriter==3.3.3 tests/corpus/generate/author.py [family ...]
 
-# LibreOffice (any machine with soffice) and Google (an rclone remote, OXOFFICE_CORPUS_RCLONE, default gdrive:)
+# LibreOffice (any machine with soffice) and Google Docs and Slides (an rclone remote,
+# OXOFFICE_CORPUS_RCLONE, default gdrive:); Google Sheets is not in this route
 python3 tests/corpus/generate/produce.py libreoffice google [--only family ...]
 
-# Word and PowerPoint, on a Mac with Microsoft Office
-uv run --no-project --python 3.12 tests/corpus/generate/produce.py word powerpoint [--only family ...]
+# Word, PowerPoint and Excel, on a Mac with Microsoft Office
+uv run --no-project --python 3.12 tests/corpus/generate/produce.py word powerpoint excel [--only family ...]
 
 # The manifest alone, or a check that it is up to date and within budget
 python3 tests/corpus/generate/manifest.py [--check]
@@ -67,6 +78,90 @@ python3 tests/corpus/generate/manifest.py [--check]
 
 Every producer rewrites the manifest with its version at the end of its run,
 so a run only needs a commit.
+
+## Spreadsheets
+
+Four families, written by `xlsx_families.py` with XlsxWriter 3.3.3, each
+feature once. Every source is saved by LibreOffice (`files/libreoffice/`) and
+Excel for Mac (`files/excel/`, the `excel` route of `produce.py`, which opens
+each file, saves it as Open XML, closes it and quits like the Word and
+PowerPoint routes), and by Google Sheets (`files/google/`).
+
+| family | carries |
+| --- | --- |
+| `review` | the review pass of tensorbee/rdocx#281: a purchase tracker of 36 rows (text, numbers, dates, a status), its amount column written as one shared formula (`F2:F37`), a total row, three legacy notes, a link with a tooltip |
+| `budget` | styles and layout over three sheets: fonts, fills, borders, alignment and wrap, merged cells, a global and a sheet-scoped name, validations (a list, a whole number range), conditional formats (cell value, colour scale, data bar), frozen panes, an auto-filter with an active filter and its hidden rows, widths, heights, a hidden column, print setup (landscape, fit to one page wide, area, titles, header and footer), a picture and a chart; a ledger table with a calculated column and a total row; a gallery of 25 number formats, built in and custom, one value each |
+| `multi` | five sheets (one hidden), formulas across sheets, a legacy and a dynamic array formula, the seven error values, booleans, a formula that returns a string, rich text, a 3,000 character text of ten paragraphs, accents, CJK, Arabic with a right-to-left reading order, an emoji, an internal link |
+| `dates1904` | dates, a time, a date and time and a difference in the 1904 date system |
+
+What to know when reading them:
+
+- Every formula carries its cached value, computed by the generator.
+  XlsxWriter marks every workbook `fullCalcOnLoad`, so Excel and LibreOffice
+  recalculate on open and the copies hold their producer's values (LibreOffice
+  caches `#VALUE!` for `SQRT(-1)` and `#NAME?` for `#REF!`: read cached values
+  of error formulas from the sources and from Excel's copies).
+- XlsxWriter writes every formula alone: `review` is rewritten after the build
+  into the shared group Excel writes for a column filled down. LibreOffice
+  writes every formula alone again, and drops the dynamic array flag of
+  `multi` (a plain array formula) and the calculated column of the ledger
+  table; Google Sheets groups per-cell formulas into shared ones itself.
+- Google Sheets pads every sheet with empty rows up to row 1000 (about 40 KB
+  of XML a sheet, small once zipped), writes an empty persons part and an empty
+  drawing.
+- Excel for Mac writes personal values into every workbook it saves: the
+  folder it saved from (`x15ac:absPath` in `xl/workbook.xml`), the name of
+  whoever saved it (`cp:lastModifiedBy`) and the task pane add-ins it carries
+  (`xl/webextensions/`). The `excel` route makes each copy neutral right after
+  its save (`neutral_excel` in `produce.py`: the url of `absPath` becomes
+  `/Users/user/`, `lastModifiedBy` `Corpus Author`, the add-in parts go with
+  their relationships and content types, no other byte changes), and
+  `python3 tests/corpus/generate/produce.py --neutral-excel <file.xlsx>` does
+  the same to a workbook made by hand in Excel (and replaces the account of its
+  persons part, see below).
+- No file has inline strings (the sources, LibreOffice and Google Sheets write
+  shared strings only): a test that reads them builds its own workbook.
+
+### Google Sheets copies
+
+`files/google/*.xlsx` are uploaded from `files/authored/` through the Google
+Drive connector with conversion to Google Sheets, then exported as xlsx; the
+manifest gives them the producer `Google Sheets export`. `produce.py google`
+leaves the workbooks alone (its rclone route only converts documents and
+decks).
+
+### Comment threads, made by hand
+
+Notes are in `review` (XlsxWriter writes them as Excel does); threaded
+comments need Excel 365 or a browser. Two files, made from `review` and made
+neutral afterwards: `produce.py --neutral-excel` for the Excel one (the
+neutral step of the route above, and the signed-in account of its persons part,
+its comments and its core properties become `Corpus Author`), `python3
+tests/corpus/generate/neutral_xlsx.py <file> ["<account name>"]` for the Google
+one (the same replacement, with the account name when Google wrote it outside
+the persons part):
+
+- `excel/threads.xlsx`: Excel's copy `excel/review.xlsx`, saved under that
+  name, with the same texts typed in Excel 365 for Mac (Review, New Comment)
+  on the Orders sheet: on `C3` a comment and two replies ("The dates should
+  follow the delivery calendar.", "Agreed, I will align them with the
+  supplier.", "Done, see the updated list."), on `F10` a comment and one
+  reply ("The total looks too high.", "It includes the freight.") then the
+  thread resolved (Resolve thread), on `B6` a comment without a reply ("Is
+  this supplier still approved?"), and the three notes of `review` left as
+  they are (`E5`, `G9`, `A14`). Saved as .xlsx, the document closed, Excel
+  quit, `produce.py --neutral-excel` run on it; then the manifest given Excel's version:
+  `python3 -c 'import manifest, os; manifest.update({("excel", "xlsx"): "Microsoft Excel for Mac <version>"}, since=os.path.getmtime("../files/excel/threads.xlsx"))'`
+  from `tests/corpus/generate`. Excel 365 stores the threads in
+  `xl/threadedComments/` with `xl/persons/person.xml`, and each thread as a
+  placeholder note in the legacy comments part; the Mac run replaces this
+  sentence with what the file shows.
+- `google/threads.xlsx`: the Google Sheets conversion of `review`, the same
+  threads written in the browser (comments, replies, Resolve on the second
+  thread), then File, Download, Microsoft Excel (.xlsx) and neutral. Its
+  producer is the default one, `Google Sheets export`. What Google writes for
+  threads and for notes is whatever the file shows: the manifest features
+  (`threaded-comments`, `comment-reply`, `resolved-comment`, `notes`) say it.
 
 ## A table of contents inserted in Word
 
