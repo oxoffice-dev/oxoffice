@@ -28,6 +28,7 @@ members = [
     "crates/oxoffice-pptx-render",
     "crates/oxoffice-pptx-cli",
     "crates/oxoffice-pptx-py",
+    "crates/oxoffice-xlsx-formula",
     "crates/oxoffice-py",
     "crates/oxoffice-pptx-wasm",
 ]
@@ -71,6 +72,7 @@ oxoffice-pptx-layout = { path = "crates/oxoffice-pptx-layout", version = "0.8.0"
 oxoffice-pptx-render = { path = "crates/oxoffice-pptx-render", version = "0.8.0", default-features = false }
 oxoffice-pptx-cli = { path = "crates/oxoffice-pptx-cli", version = "0.8.0", default-features = false }
 oxoffice-pptx-py = { path = "crates/oxoffice-pptx-py", version = "0.8.0" }
+oxoffice-xlsx-formula = { path = "crates/oxoffice-xlsx-formula", version = "0.8.0" }
 
 # External dependencies
 #

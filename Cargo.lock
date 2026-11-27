@@ -1481,6 +1481,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxoffice-xlsx-formula"
+version = "0.8.0"
+dependencies = [
+ "quick-xml",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
 name = "oxoffice-xml-test"
 version = "0.8.0"
 dependencies = [

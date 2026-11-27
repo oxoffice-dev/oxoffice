@@ -51,6 +51,11 @@ crates/
   oxoffice-pptx-py       the `oxoffice.pptx` bindings (library)
   oxoffice-pptx-wasm     WebAssembly bindings
 
+  # SpreadsheetML
+  oxoffice-xlsx-formula  formula tokens, stored and displayed forms, shared
+                         formula members moved, the syntax check and the
+                         function table (prefixes, argument counts)
+
   # Entry points
   oxoffice-cli           the `oxoffice` binary
   oxoffice-py            the `oxoffice` Python extension and package

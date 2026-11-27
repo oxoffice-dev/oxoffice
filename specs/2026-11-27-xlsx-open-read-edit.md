@@ -115,10 +115,13 @@ carriage return as `_xHHHH_`, and a literal `_xHHHH_` as `_x005F_xHHHH_`, as the
 
 **Stored and displayed forms.** Formula text is exchanged without the `=` (a write accepts one) in Excel's displayed
 form, which the lexer maps to the stored form and back: future functions take and lose `_xlfn.` (and `_xlws.`) from
-the complete MS-XLSX table, and a prefixed name the table lacks keeps its prefix on read so it comes back unchanged;
-LET and LAMBDA parameters take `_xlpm.` on their declarations and on every use, scope tracked (nested LET, a parameter
-that shadows a defined name); `_xlfn.ANCHORARRAY(x)` is `x#` and `_xlfn.SINGLE(x)` is `@x`. Reading then writing a
-formula gives back its stored text, for every corpus formula. The stored form is readable in Rust, Python
+the complete MS-XLSX table, with the later functions it lacks (`XMATCH`, `GROUPBY`...), and a prefixed name the table
+lacks keeps its prefix on read so it comes back unchanged; LET and LAMBDA parameters take `_xlpm.` on their
+declarations and on every use, scope tracked (nested LET, a parameter that shadows a defined name);
+`_xlfn.ANCHORARRAY(x)` is `x#` and `_xlfn.SINGLE(x)` is `@x`. Table references read as stored
+(`Expenses[[#This Row],[Quantity]]`: Excel shows `[@Quantity]` inside the table, which depends on the cell); a written
+`Table[@Column]` is stored `Table[[#This Row],[Column]]`. Reading then writing a formula gives back its stored text,
+for every corpus formula. The stored form is readable in Rust, Python
 (`Cell.stored_formula`) and the CLI (`stored_formula` in `--json`), and writable as is (`stored=True`, section 6).
 
 ### 3. Recalculation and stale values
@@ -262,9 +265,10 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 - **Formulas**: at most 8,192 characters, and they pass the syntax check of PR 5, the first half of the parser
   (operands, operators, function calls, array constants, `,` between arguments; a `;` outside an array constant is
   refused naming `,`; at most 255 arguments and 64 nested levels). Its function table carries each built-in
-  function's minimum and maximum argument count (the MS-XLS function table), which the evaluator reuses. So a formula
-  Excel would repair (`IF(B2>0;1;0)`, `B2*`, `B2**C2`, `IF(1,2,3,4)`) is refused with a plain message. `stored=True`
-  takes the stored form as is (section 2), still checked.
+  function's minimum and maximum argument count (MS-XLSX's argument rules, checked against the MS-XLS function table,
+  whose maximums are the 30 of `.xls`), which the evaluator reuses. So a formula Excel would repair (`IF(B2>0;1;0)`,
+  `B2*`, `B2**C2`, `IF(1,2,3,4)`) is refused with a plain message. `stored=True` takes the stored form as is
+  (section 2), still checked.
 - **Spill**: `<f t="array" ref>` on the anchor cell alone, as XlsxWriter writes it, Excel spilling it on load; `cm`
   points to a `cellMetadata` block whose `rc` names the `XLDAPR` type of `metadata.xml`, found in place or appended,
   the part created when absent (`cm` and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them).
