@@ -128,15 +128,16 @@ def test_a_range_of_paragraphs_removed_retires_their_handles_only():
     assert taken["t1"][0].cell(0, 0).text == "t1 a"
 
 
-@pytest.mark.parametrize("removal", ["remove_content_range", "remove_content"])
+@pytest.mark.parametrize("removal", ["remove_content_range", "remove_content", "pop_content"])
 def test_every_block_removed_leaves_an_empty_body_that_fills_again(removal):
-    doc = document(p("a") + p("b") + p("c"), footer=p("foot"))
+    doc = document(p("a") + table2("t") + p("c"), footer=p("foot"))
     foot = doc.section(0).footer.paragraphs[0]
     if removal == "remove_content_range":
         assert doc.remove_content_range(0, 3) == 3
     else:
         for _ in range(3):
-            assert doc.remove_content(0)
+            assert getattr(doc, removal)(0)
+    assert not doc.tables
     assert texts(doc) == []
     assert foot.text == "foot"
     doc.add_paragraph("again")
