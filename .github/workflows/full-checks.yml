@@ -1,15 +1,16 @@
 name: Full checks
 
 # On demand, the full sets that the CI of pull requests and main leaves out
-# (ci.yml): the Rust and Python tests under debug assertions, with the whole
-# render corpus and every producer's copy in the workflow walks, on Linux
-# only (the render is the same bytes on every platform and the walks are
-# platform-free; ci.yml runs the tests on the three); every scaling call on
-# Linux and Windows; the stack a release-profile wheel needs on the whole
-# corpus. Budget: about an hour, the longest job. The full checks do not
-# grow: a set added here takes the place of another, or runs a sample
-# (docs/DEVELOPMENT.md, CI). No schedule: run it on a
-# commit before releasing it (docs/RELEASE.md), and on a pull request whose
+# (ci.yml): the Rust and Python tests under debug assertions (the writings
+# walk apart), with the whole render corpus and every producer's copy in the
+# workflow walks, on Linux only (the render is the same bytes on every
+# platform and the walks are platform-free; ci.yml runs the tests on the
+# three); every scaling call on Linux and Windows; the stack a
+# release-profile wheel needs on the whole corpus. Budget: about an hour,
+# the longest job. The full checks do not grow: a set added here takes the
+# place of another, or runs a sample (docs/DEVELOPMENT.md, CI). No
+# schedule: run it on a commit before releasing it (docs/RELEASE.md), and
+# on a pull request whose
 # change the CI of pull requests does not cover (every scaling call, the
 # whole corpus). `workflow_dispatch` runs it on any branch or tag; on main,
 # with `report`, a failure opens or updates one issue, labelled
@@ -45,7 +46,8 @@ jobs:
   # of them. The writings walk runs without debug assertions (the `scaling`
   # profile of the CI of main, whose cache it reuses): under them every edit
   # checks the whole document, and the walk took 88 minutes of a 95-minute
-  # run (2026-11-27).
+  # run (2026-11-27). A new shard's filter is added to the `--skip` list of
+  # `rest`, so that no test runs twice.
   rust:
     name: Full Rust tests (${{ matrix.shard.name }})
     strategy:
