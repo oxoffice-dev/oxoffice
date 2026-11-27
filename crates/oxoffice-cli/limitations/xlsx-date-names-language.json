@@ -5,5 +5,5 @@
   "title": "A date or time format tagged with a language other than English, French, German, Spanish, Italian, Portuguese or Dutch shows English names",
   "symptom": "a number format code that asks for the language of its tag (`[$-411]dddd` Japanese, `[$-419]mmmm` Russian, `[$-41F]h AM/PM` Turkish) makes Excel show the month names, day names and day period of that language; the displayed text, Markdown and CSV of a workbook show them in English (`Wednesday`, `September`, `PM`), and a chart label or axis with such a code shows its value as General, with a diagnostic. The seven languages above show Excel's own names for the regions Excel for Mac was asked for, and the names of the language's most widespread region for the others (their short names and day period can differ)",
   "workaround": "use the cell's value (its date or its serial number) instead of its displayed text and format it with the language's own conventions",
-  "issue": 0
+  "issue": 707
 }
