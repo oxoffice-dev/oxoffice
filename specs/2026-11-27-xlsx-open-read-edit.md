@@ -275,8 +275,8 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   a refusal naming the zero-based entry, like `replace --map`: `{"sheet": "Data", "cell": "B2", "value": 3}`,
   `{"cell": "D2", "formula": "B2*C2"}`, `{"cell": "E2", "date": "2026-01-05"}`, `{"range": "A1:F1", "style":
   {"bold": true, "fill": "FFFF00"}}`, `{"range": "C2:C8", "number_format": "0.00"}`, `{"range": "A20:B30",
-  "clear": "contents"}`, and in PR 7 widths, heights and freeze. `sheet` defaults to the entry before it, then the
-  first sheet.
+  "clear": "contents"}`, and, from PR 7, `add_sheet`, widths, heights and freeze (section 7). `sheet` is a name or a
+  number from 1 and defaults to the entry before it, then the first sheet.
 - **Shared formulas stay valid.** A content edit (value, formula, clear) of any cell of a shared group dissolves the
   group: every other member becomes a plain formula with its moved text (its row rewritten), the edited cell takes
   its new content. No master moves and no `ref` shrinks, so no reader can place a 1D or 2D group's master wrongly.
@@ -301,24 +301,47 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 
 ### 7. New workbook, sheets and grid (PR 7)
 
-- **`Workbook::new()`**, Python `Workbook()`, CLI `oxoffice xlsx new [--sheet NAME]... -o OUT`: `Sheet1` (or the
-  names given), Calibri 11 under the Office 2013-2022 theme, one font, the `none` and `gray125` fills, one border, one
-  `cellXfs` record, the `Normal` style, `app.xml` naming oxoffice `XX.YYYY` as docx does, a core part with no dates.
-- **Deterministic by construction**: the parts are text files under `crates/oxoffice-xlsx/assets/default/`, assembled
-  into an `OpcPackage` at run time, whose `write_to` sorts entries and stamps the fixed ZIP date: the same build
+- **`Workbook::new()`**, Python `Workbook()`, CLI `oxoffice xlsx new [--sheet NAME]... -o OUT`: `Sheet1` (or the names
+  given: `Workbook::with_sheet_names`, Python `Workbook(sheets=[...])`), Calibri 11 under the Office 2013-2022 theme,
+  one font, the `none` and `gray125` fills, one border, one `cellXfs` record, the `Normal` style, `app.xml` naming
+  oxoffice `XX.YYYY` as docx does, a core part with no dates. `new` never replaces a file unless `--force`.
+- **Deterministic by construction**: the parts are text files under `crates/oxoffice-xlsx/assets/default/` (the
+  workbook, the sheet in view, a sheet added, the styles, the theme), assembled into an `OpcPackage` at run time with
+  its relationships and content types, whose `write_to` sorts entries and stamps the fixed ZIP date: the same build
   writes the same bytes everywhere. No binary `default.xlsx` is committed.
-- **Add a sheet** (`add_sheet(name)`), at the end: a worksheet part (`sheetN.xml`, the first free `N`), its
-  relationship, content type and `<sheet>` with the next `sheetId`; `app.xml` drops `HeadingPairs` and `TitlesOfParts`
-  as the pptx facade does after a slide list change (Excel writes them again). Excel's name rules: 1-31 characters,
-  none of `: \ / ? * [ ]`, no leading or trailing `'`, unique case-insensitively, not `History`. A position renumbers
-  `localSheetId` and `activeTab`: it comes with reorder, rename and remove in the second set.
-- **Column widths** in characters (`set_column_width("A:C", 20.0)`, 0-255): `cols` spans are split as needed,
-  `customWidth="1"`. **Row heights** in points (`set_row_height("2:5", 30.0)`, 0-409): `ht`, `customHeight="1"`, an
-  absent row created. Python takes numbers in these units, not EMU (the one-length-argument rule leaves such
-  arguments alone); a `Length`, an EMU `int`, is refused with `TypeError`.
-- **Frozen panes** (`freeze_panes("B2")`, `None` to remove): the pane written as Excel writes it (`xSplit`, `ySplit`,
-  `topLeftCell`, `activePane` `bottomRight` / `topRight` / `bottomLeft`, `state="frozen"`); selections of panes that
-  no longer exist are dropped.
+- **Add a sheet** (`add_sheet(name)`, which gives the sheet to edit), at the end: a worksheet part (`sheetN.xml`, the
+  first free `N`), its relationship, content type and `<sheet>` with the next `sheetId`; a Strict workbook gets the
+  part in the Strict namespace and the Strict relationship type; `app.xml` drops `HeadingPairs` and `TitlesOfParts`
+  as the pptx facade does after a slide list change (Excel writes them again). Excel's name rules: 1-31 characters
+  (UTF-16 code units), none of `: \ / ? * [ ]`, no control character, no leading or trailing `'`, unique
+  case-insensitively, not `History`. A name that breaks a rule is an invalid argument (Python `ValueError`), one that
+  repeats a sheet's is refused (`XlsxError`). A position renumbers `localSheetId` and `activeTab`: it comes with
+  reorder, rename and remove in the second set.
+- **Column widths** in characters (`set_column_width("A:C", 20.0)`, above 0 to 255): the number Excel's Column Width
+  box shows for the default font, stored as Excel stores it, `width = trunc(pixels / 7 * 256) / 256` with `pixels =
+  trunc(characters * 7 + 0.5) + 5` (`trunc(characters * 12 + 0.5)` under 1 character), the conversion XlsxWriter makes
+  for a 7-pixel digit (Calibri 11, Arial 10); `20` is written `20.7109375`. The digit width of another default font
+  comes with `SheetGeometry`. `cols` spans are cut as needed and keep their style, `hidden` and outline level;
+  `customWidth="1"` is set, `bestFit` goes, spans that came to say the same merge. A width of 0 hides the column and
+  is refused until hiding is written. **Row heights** in points (`set_row_height("2:5", 30.0)`, above 0 to 409.5, at
+  most 100,000 rows a call): `ht`, `customHeight="1"`, an absent row created, a row's cells and other attributes
+  kept; a height of 0 is refused like a width of 0. Python takes numbers in these units, not EMU (the one-length-argument
+  rule leaves such arguments alone); a `Length`, an EMU `int`, and a `bool` are refused with `TypeError`.
+- **Frozen panes** (`freeze_panes("B2")`, `None` to remove): the pane written as Excel writes a freeze at the cursor
+  (`xSplit`, `ySplit`, `topLeftCell`, `activePane` `bottomRight` / `topRight` / `bottomLeft`, `state="frozen"`, the
+  `selection` of each pane with the cursor at the cell). A freeze replaces any pane (a split too), drops every earlier
+  `selection` and the view's `topLeftCell`; removing the panes drops the selections of the panes that go and leaves a
+  split that is not frozen. Every `sheetView` of the sheet takes it; `sheetViews` is made when missing. `A1` has
+  nothing above or left of it and is refused. Python takes `str | tuple[int, int] | None`.
+- **Staged edits.** An edit never rewrites a part in the package: it stages the rows and root children it changed
+  beside the sheet (`SheetEdits`), and a save splices them into the source bytes, writes the workbook part with its new
+  records, and nothing else. The first change of a workbook marks it edited, which is section 3's rule 1: the save sets
+  `fullCalcOnLoad` and removes the calculation chain. A call that changes nothing (the same width again, panes removed
+  from a sheet with none) stages nothing and marks nothing, so such a workbook saves as it was read. A chartsheet, a
+  dialogsheet or a macrosheet has no columns, rows or panes: refused, naming its kind.
+- **The edit map** takes these entries in PR 7, and PR 6 adds its own: `{"add_sheet": "Summary"}` (the entries after it
+  default to that sheet), `{"columns": "A:C", "width": 20}`, `{"rows": "2:5", "height": 30}`, `{"freeze": "B2"}` (`null`
+  removes); `sheet` is a name or a number from 1.
 
 ### 8. Opening and saving
 

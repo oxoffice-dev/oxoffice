@@ -164,9 +164,34 @@ then reading cells, editing them and creating a workbook.
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
-| Workbooks | ⚠️ | — | ❌ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind), the date system and, from Rust, each sheet's page setup; a save without an edit keeps every part byte for byte; `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out |
+| Workbooks | ⚠️ | ⚠️ | ⚠️ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind), the date system and, from Rust, each sheet's page setup; a save without an edit keeps every part byte for byte; `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out. A new workbook (the same bytes every time), a sheet added, column widths, row heights and frozen panes |
 | Cells, formulas and styles | ❌ | ❌ | ❌ | next |
 | Encryption | ✅ | — | ✅ | open and save with a password, from Rust and Python |
+
+```bash
+oxoffice xlsx new --sheet Data --sheet Summary -o book.xlsx
+oxoffice xlsx edit book.xlsx --map edits.json -o formatted.xlsx   # [{"columns": "A:C", "width": 20}, {"rows": "1", "height": 30}, {"freeze": "A2"}]
+```
+
+```python
+from oxoffice.xlsx import Workbook
+
+wb = Workbook()                      # one empty sheet, Calibri 11
+data = wb.add_sheet("Data")
+data.set_column_width("A:C", 20)     # characters, as Excel's Column Width box
+data.set_row_height("1", 30)         # points
+data.freeze_panes("A2")              # the header row stays in view
+wb.save("book.xlsx")
+```
+
+```rust
+let mut workbook = oxoffice_xlsx::Workbook::new();
+let mut data = workbook.add_sheet("Data")?;
+data.set_column_width("A:C", 20.0)?;
+data.set_row_height("1", 30.0)?;
+data.freeze_panes(Some("A2"))?;
+workbook.save("book.xlsx")?;
+```
 
 ### Fillable PDF forms
 
