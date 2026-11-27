@@ -21,7 +21,10 @@ use oxoffice_core::OxmlError;
 use oxoffice_core::xml_element::ElementSpan;
 
 pub use page_setup::{PAGE_SETUP_CHILDREN, PageSetupElements};
-pub use row::{CT_Cell, CT_CellFormula, CT_Row, CellChild, RowChild, TextElement};
+pub use row::{
+    CELL_ATTRIBUTES, CT_Cell, CT_CellFormula, CT_Row, CellChild, FORMULA_ATTRIBUTES,
+    ROW_ATTRIBUTES, RowChild, TextElement, fixed_attributes,
+};
 
 use crate::namespaces::MAIN_NAMESPACES;
 use crate::reference::{CellRange, CellRef, MAX_COLUMNS, MAX_ROWS};

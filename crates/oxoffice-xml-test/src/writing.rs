@@ -571,10 +571,21 @@ mod tests {
             )
         );
         assert_eq!(canonical(&written), canonical(xml.as_bytes()));
-        // Value spellings fold; a literal CR LF reads as LF.
+        // The spellings of the attributes named fold, and no other; a
+        // literal CR LF reads as LF.
+        let typed = |element: &str, attribute: &str| {
+            element == "row" && matches!(attribute, "ht" | "hidden")
+        };
         assert_eq!(
-            canonical_folded(b"<row ht=\"15.0\" hidden=\"true\"><t>a\r\nb</t></row>"),
-            canonical_folded(b"<row ht=\"15\" hidden=\"1\"><t>a\nb</t></row>")
+            canonical_folded(
+                b"<row ht=\"15.0\" hidden=\"true\"><t>a\r\nb</t></row>",
+                &typed
+            ),
+            canonical_folded(b"<row ht=\"15\" hidden=\"1\"><t>a\nb</t></row>", &typed)
+        );
+        assert_ne!(
+            canonical_folded(br#"<numFmt formatCode="0.00"/>"#, &typed),
+            canonical_folded(br#"<numFmt formatCode="0"/>"#, &typed)
         );
         assert_ne!(
             canonical(b"<row hidden=\"true\"/>"),

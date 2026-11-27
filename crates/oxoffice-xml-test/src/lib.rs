@@ -8,5 +8,5 @@ mod canonical;
 pub mod harness;
 mod writing;
 
-pub use canonical::{canonical, canonical_folded, first_difference};
+pub use canonical::{Folded, canonical, canonical_folded, first_difference};
 pub use writing::{Writing, package_parts, rewrite, rewrite_package, write_package};

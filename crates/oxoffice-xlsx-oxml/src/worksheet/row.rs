@@ -14,7 +14,7 @@ use crate::shared_strings::CT_Rst;
 use crate::xml::{Child, Element, Lexical, Opened, Result, Tag, XmlSource};
 
 /// The attributes of a row with one fixed writing.
-const ROW_ATTRIBUTES: [(&str, Lexical); 11] = [
+pub const ROW_ATTRIBUTES: [(&str, Lexical); 11] = [
     ("r", Lexical::UInt),
     ("s", Lexical::UInt),
     ("customFormat", Lexical::Bool),
@@ -29,7 +29,7 @@ const ROW_ATTRIBUTES: [(&str, Lexical); 11] = [
 ];
 
 /// The attributes of a cell with one fixed writing.
-const CELL_ATTRIBUTES: [(&str, Lexical); 4] = [
+pub const CELL_ATTRIBUTES: [(&str, Lexical); 4] = [
     ("s", Lexical::UInt),
     ("cm", Lexical::UInt),
     ("vm", Lexical::UInt),
@@ -37,7 +37,7 @@ const CELL_ATTRIBUTES: [(&str, Lexical); 4] = [
 ];
 
 /// The attributes of a formula with one fixed writing.
-const FORMULA_ATTRIBUTES: [(&str, Lexical); 8] = [
+pub const FORMULA_ATTRIBUTES: [(&str, Lexical); 8] = [
     ("aca", Lexical::Bool),
     ("dt2D", Lexical::Bool),
     ("dtr", Lexical::Bool),
@@ -47,6 +47,17 @@ const FORMULA_ATTRIBUTES: [(&str, Lexical); 8] = [
     ("si", Lexical::UInt),
     ("bx", Lexical::Bool),
 ];
+
+/// The attributes of an element of a row (`row`, `c`, `f`) that take their
+/// fixed writing when read.
+pub fn fixed_attributes(element: &str) -> &'static [(&'static str, Lexical)] {
+    match element {
+        "row" => &ROW_ATTRIBUTES,
+        "c" => &CELL_ATTRIBUTES,
+        "f" => &FORMULA_ATTRIBUTES,
+        _ => &[],
+    }
+}
 
 /// The start tag `opened`, its attributes of `fixed` in their fixed writing.
 fn read_tag(opened: &Opened<'_>, fixed: &[(&str, Lexical)]) -> Tag {

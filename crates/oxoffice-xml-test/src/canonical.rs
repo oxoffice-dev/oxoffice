@@ -86,11 +86,20 @@ fn folded(value: String) -> String {
     }
 }
 
+/// Which attribute values a canonical form folds: given the local names of
+/// an element and of one of its attributes.
+pub type Folded<'a> = &'a dyn Fn(&str, &str) -> bool;
+
+/// The local part of an expanded name, `{namespace}local` or `local`.
+fn local(name: &str) -> &str {
+    name.rsplit_once('}').map_or(name, |(_, local)| local)
+}
+
 fn start(
     open: &mut Vec<Open>,
     lines: &mut Vec<String>,
     element: &BytesStart<'_>,
-    fold: bool,
+    fold: Option<Folded<'_>>,
 ) -> Result<(), String> {
     flush(open, lines, true);
     if let Some(parent) = open.last_mut() {
@@ -140,7 +149,7 @@ fn start(
             .strip_prefix(mc)
             .is_some_and(|local| lists.contains(&local))
             || (key == "Requires" && name == format!("{mc}Choice"));
-        if fold && !listed {
+        if !listed && fold.is_some_and(|fold| fold(local(&name), local(&key))) {
             value = folded(value);
         }
         if listed {
@@ -178,17 +187,20 @@ fn close(open: &mut Vec<Open>, lines: &mut Vec<String>) {
 /// The canonical form of `xml`, or why it is no well-formed, namespace
 /// well-formed part.
 pub fn canonical(xml: &[u8]) -> Result<String, String> {
-    canonical_form(xml, false)
+    canonical_form(xml, None)
 }
 
-/// The canonical form of `xml` with each attribute value in the one
-/// spelling of what it says (`true` and `1`, `1.0` and `1` alike): what a
-/// writer that writes values in a fixed form is compared by.
-pub fn canonical_folded(xml: &[u8]) -> Result<String, String> {
-    canonical_form(xml, true)
+/// The canonical form of `xml`, the value of each attribute `fold` names
+/// (by the local names of its element and its own) in the one spelling of
+/// what it says (`true` and `1`, `1.0` and `1` alike): what a writer that
+/// writes those attributes in a fixed form is compared by. Name only
+/// attributes typed as booleans or numbers: a text that reads as a number
+/// (`formatCode="0.00"`) must keep its spelling.
+pub fn canonical_folded(xml: &[u8], fold: Folded<'_>) -> Result<String, String> {
+    canonical_form(xml, Some(fold))
 }
 
-fn canonical_form(xml: &[u8], fold: bool) -> Result<String, String> {
+fn canonical_form(xml: &[u8], fold: Option<Folded<'_>>) -> Result<String, String> {
     let xml = xml.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(xml);
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);

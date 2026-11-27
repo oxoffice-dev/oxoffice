@@ -8,6 +8,7 @@ use std::io::Cursor;
 
 use oxoffice_opc::OpcPackage;
 use oxoffice_xlsx::Workbook;
+use oxoffice_xlsx_oxml::worksheet::fixed_attributes;
 use oxoffice_xml_test::{canonical_folded, first_difference};
 
 use crate::support::{
@@ -104,7 +105,15 @@ fn written_back(original: &[u8]) -> Result<usize, String> {
         if let Some(at) = first_difference(&before, &after) {
             return Err(format!("{name}: the model read back differs, {at}"));
         }
-        let (before, after) = (canonical_folded(source)?, canonical_folded(&rewritten)?);
+        // The attributes a row, a cell and a formula read in their fixed
+        // writing, and only those, fold.
+        let typed = |element: &str, attribute: &str| {
+            fixed_attributes(element)
+                .iter()
+                .any(|(name, _)| *name == attribute)
+        };
+        let before = canonical_folded(source, &typed)?;
+        let after = canonical_folded(&rewritten, &typed)?;
         if let Some(at) = first_difference(&before, &after) {
             return Err(format!("{name}: the part written says otherwise, {at}"));
         }
