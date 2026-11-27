@@ -124,7 +124,7 @@ with a few that touch whole files: edits and form operations that cost more as a
 | Sections, headers and footers | ✅ | ⚠️ | ✅ | the document-wide header or footer setter reaches the last section only |
 | Footnotes and endnotes | ✅ | ⚠️ | ✅ | removing a paragraph leaves its notes behind, and removing a note leaves its custom mark |
 | Comments and replies | ✅ | ✅ | ⚠️ | anchored on a piece of text, moved, resolved, dated; in a file saved by Word in another language, a new comment does not take the file's comment styles yet |
-| Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields; writing your own edits as tracked changes is on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap) |
+| Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields; text edits written as tracked changes by a given author (Rust `track_changes`); replacements, the CLI, Python, formatting, paragraphs, rows and moves on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap) |
 | Fields and tables of contents | ✅ | ✅ | ✅ | page numbers, page references, dates, sequences, cross-references |
 | Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect in every story, export to fillable PDF fields; a date control shows month and day names in English, French, German, Spanish, Italian, Portuguese and Dutch, numeric dates in any language, and a time where its format shows one |
 | Pictures and watermarks | ✅ | ✅ | ✅ | a replaced picture keeps its frame |
