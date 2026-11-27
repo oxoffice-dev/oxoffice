@@ -78,14 +78,16 @@ jobs:
           # build; the `ci` profile builds from scratch.
           shared-key: test
           save-if: false
-      - name: Rust integration tests
+      # `--lib` adds the unit tests in `src/`, those gated on debug
+      # assertions included (the CI of pull requests runs without them).
+      - name: Rust tests
         env:
           OXOFFICE_RENDER: full
           OXOFFICE_WORKFLOWS: full
           PROFILE: ${{ matrix.shard.profile }}
           FILTER: ${{ matrix.shard.filter }}
         # FILTER is split into words on purpose.
-        run: cargo test --profile "$PROFILE" --locked --workspace $PY_CRATES --test '*' -- $FILTER
+        run: cargo test --profile "$PROFILE" --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*' -- $FILTER
 
   python:
     name: Full Python tests (ubuntu-latest)

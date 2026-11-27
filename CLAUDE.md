@@ -24,8 +24,8 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
 3. **Rust facade first**, then the CLI where it makes sense, then Python. A
    feature is done when it reaches all three.
 4. **Tests come with the change.** Name a test after the behaviour, never
-   after a ticket. Run what you touched locally; CI runs the integration
-   and Python tests, not the unit tests in `src/`.
+   after a ticket. Run what you touched locally; CI runs the unit,
+   integration and Python tests.
 5. **Exclude the Python crates from workspace `cargo test`**, they cannot link
    a test binary.
 6. **Never open documents in Word, PowerPoint or another GUI app** and leave
