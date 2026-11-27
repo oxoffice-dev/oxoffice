@@ -513,10 +513,10 @@ fn a_header_written_again_keeps_its_default_namespace() {
 
 // WordprocessingML declared as the default namespace below the root, its
 // elements unprefixed there: a paragraph, a run, a row, a cell or a link is
-// edited as any writing; the body, a table or a block control is refused,
-// naming the limitation that is left of #663.
+// edited as any writing; the body, a table or a block control (no known
+// producer writes one there) is refused with a plain message.
 #[test]
-fn a_default_namespace_below_the_root_is_edited_or_refused_by_name() {
+fn a_default_namespace_below_the_root_is_edited_or_refused() {
     let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     let cell = r#"<w:tbl><w:tblPr><w:tblW w:w="2000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
     let control = r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent><w:p><w:r><w:t>Control.</w:t></w:r></w:p></w:sdtContent></w:sdt>"#;
@@ -573,9 +573,11 @@ fn a_default_namespace_below_the_root_is_edited_or_refused_by_name() {
             .and_then(|_| doc.to_bytes());
         match refused {
             true => assert!(
-                saved.is_err_and(|error| error
-                    .to_string()
-                    .contains("limitation docx-default-namespace-below-root")),
+                saved.is_err_and(|error| {
+                    let message = error.to_string();
+                    message.contains("declares a default namespace below its root")
+                        && !message.contains("limitation")
+                }),
                 "{owner}"
             ),
             false => {
