@@ -7,8 +7,9 @@
 use std::io::Cursor;
 
 use oxoffice_docx::{
-    ComparisonGranularity, ComparisonOptions, ContentLocation, Document, RevisionDate,
-    RevisionKind, RunPosition, RunRange, StoryKind, StoryRevision, TrackedChanges, TrackedDocument,
+    ComparisonGranularity, ComparisonOptions, ContentLocation, Document, ReplaceOptions,
+    RevisionDate, RevisionKind, RunPosition, RunRange, StoryKind, StoryRevision, TrackedChanges,
+    TrackedDocument,
 };
 use oxoffice_opc::OpcPackage;
 
@@ -23,6 +24,10 @@ fn changes() -> TrackedChanges {
 
 fn run(text: &str) -> String {
     format!(r#"<w:r><w:t xml:space="preserve">{text}</w:t></w:r>"#)
+}
+
+fn bold(text: &str) -> String {
+    format!(r#"<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#)
 }
 
 fn paragraph(content: &str) -> String {
@@ -125,26 +130,16 @@ fn annotated() -> Document {
         },
     };
     doc.add_comment(range, "Ann", None, "a note").unwrap();
-    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
-    let header = package
-        .parts
-        .keys()
-        .find(|name| name.contains("header"))
-        .cloned()
-        .unwrap();
-    let xml = String::from_utf8(package.get_part(&header).unwrap().to_vec()).unwrap();
-    let start = xml.find("<w:r>").expect("a header run");
-    let end = xml[start..].find("</w:r>").unwrap() + start + "</w:r>".len();
-    let xml = format!(
-        "{}{}{}",
-        &xml[..start],
-        by("Ann", "ins", 2, &xml[start..end]),
-        &xml[end..]
-    );
-    package.set_part(&header, xml.into_bytes());
-    let mut bytes = Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
+    let doc = with_header(&mut doc, |xml| {
+        let start = xml.find("<w:r>").expect("a header run");
+        let end = xml[start..].find("</w:r>").unwrap() + start + "</w:r>".len();
+        format!(
+            "{}{}{}",
+            &xml[..start],
+            by("Ann", "ins", 2, &xml[start..end]),
+            &xml[end..]
+        )
+    });
     assert!(
         doc.story_revisions()
             .unwrap()
@@ -153,6 +148,22 @@ fn annotated() -> Document {
         "the header holds Ann's insertion"
     );
     doc
+}
+
+/// `doc` saved with its header part's XML edited.
+fn with_header(doc: &mut Document, edit: impl FnOnce(&str) -> String) -> Document {
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let header = package
+        .parts
+        .keys()
+        .find(|name| name.contains("header"))
+        .cloned()
+        .unwrap();
+    let xml = String::from_utf8(package.get_part(&header).unwrap().to_vec()).unwrap();
+    package.set_part(&header, edit(&xml).into_bytes());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    Document::from_bytes(&bytes.into_inner()).unwrap()
 }
 
 fn run_text(doc: &mut Document, index: usize, text: &'static str) {
@@ -238,6 +249,67 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             unlike_compare: false,
         },
         Row {
+            shape: "a replacement across two runs keeps the first run's formatting",
+            document: || doc_with_body(&paragraph(&(run("Pay within 30 ") + &bold("days net.")))),
+            tracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "30 days"),
+                (RevisionKind::Insertion, "45 days"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "inside a link",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    r#"{}<w:hyperlink w:anchor="target">{}</w:hyperlink>{}"#,
+                    run("Pay "),
+                    run("within 30 days"),
+                    run(".")
+                )))
+            },
+            tracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "30 days"),
+                (RevisionKind::Insertion, "45 days"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "inside an inline control",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    r#"{}<w:sdt><w:sdtPr><w:tag w:val="party"/></w:sdtPr><w:sdtContent>{}</w:sdtContent></w:sdt>"#,
+                    run("Between "),
+                    run("Acme Ltd")
+                )))
+            },
+            tracked: |doc| {
+                doc.try_replace_text("Acme Ltd", "Zenith Ltd").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("Acme Ltd", "Zenith Ltd").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "Acme Ltd"),
+                (RevisionKind::Insertion, "Zenith Ltd"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
             shape: "a tab added to a run",
             document: || doc_with_body(&paragraph(&run("Name"))),
             tracked: |doc| {
@@ -249,6 +321,46 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             },
             untracked: |doc| doc.paragraph_mut(0).unwrap().run_mut(0).unwrap().add_tab(),
             revisions: &[(RevisionKind::Insertion, "\t")],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a second edit of the session's own insertion",
+            document: || doc_with_body(&paragraph(&run("Ship four units."))),
+            tracked: |doc| {
+                doc.try_replace_text("four", "six").unwrap();
+                doc.try_replace_text("six", "seven").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("four", "six").unwrap();
+                doc.try_replace_text("six", "seven").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "four"),
+                (RevisionKind::Insertion, "seven"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "inside another author's insertion",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    "{}{}",
+                    run("Kept "),
+                    by("Ann", "ins", 1, &run("new words here"))
+                )))
+            },
+            tracked: |doc| {
+                doc.try_replace_text("words", "terms").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("words", "terms").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "words"),
+                (RevisionKind::Insertion, "terms"),
+            ],
             reject_own: true,
             unlike_compare: false,
         },
@@ -338,6 +450,160 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             ],
             reject_own: true,
             unlike_compare: false,
+        },
+        Row {
+            shape: "a header paragraph",
+            document: || {
+                let mut doc = doc_with_body(&paragraph(&run("Body.")));
+                doc.set_header("Draft for review");
+                reopen(&mut doc)
+            },
+            tracked: |doc| {
+                doc.try_replace_text("Draft for", "Final for").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("Draft for", "Final for").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "Draft for"),
+                (RevisionKind::Insertion, "Final for"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a footnote paragraph",
+            document: || {
+                let mut doc = doc_with_body(&paragraph(&run("Body.")));
+                let note = doc.add_footnote("Source: the 2025 survey.");
+                doc.paragraph_mut(0).unwrap().add_footnote_ref(note);
+                reopen(&mut doc)
+            },
+            tracked: |doc| {
+                doc.try_replace_all_checked(
+                    &[("2025 survey", "2026 survey", Some(1))],
+                    ReplaceOptions::default(),
+                )
+                .unwrap()
+                .unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_all_checked(
+                    &[("2025 survey", "2026 survey", Some(1))],
+                    ReplaceOptions::default(),
+                )
+                .unwrap()
+                .unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "2025 survey"),
+                (RevisionKind::Insertion, "2026 survey"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a regular expression replacement",
+            document: || doc_with_body(&paragraph(&run("Pay within 30 days, or 60 days late."))),
+            tracked: |doc| {
+                doc.try_replace_all_regex_expected(&[(r"(\d+) days", "$1 weeks", Some(2))])
+                    .unwrap()
+                    .unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_all_regex_expected(&[(r"(\d+) days", "$1 weeks", Some(2))])
+                    .unwrap()
+                    .unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "30 days"),
+                (RevisionKind::Insertion, "30 weeks"),
+                (RevisionKind::Deletion, "60 days"),
+                (RevisionKind::Insertion, "60 weeks"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a replacement at a location deletes the whole match too",
+            document: || doc_with_body(&paragraph(&run("Pay within 30 days net."))),
+            tracked: |doc| {
+                let location = located(doc.document(), StoryKind::Body);
+                doc.try_replace_text_at(&location, "30 days", "45 days", Some(1))
+                    .unwrap()
+                    .unwrap();
+            },
+            untracked: |doc| {
+                let location = located(doc, StoryKind::Body);
+                doc.try_replace_text_at(&location, "30 days", "45 days", Some(1))
+                    .unwrap()
+                    .unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "30 days"),
+                (RevisionKind::Insertion, "45 days"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "each occurrence the replacement reached, the other kept",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    "{}{}{}",
+                    run("Pay 30 days, then 30 "),
+                    by("Ann", "ins", 1, &run("days")),
+                    run(".")
+                )))
+            },
+            tracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "30 days"),
+                (RevisionKind::Insertion, "45 days"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a replacement the matches do not explain, aligned word by word",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    "{}{}{}",
+                    run("Pay 30 "),
+                    by("Ann", "ins", 1, &run("days")),
+                    run(" and 30 days.")
+                )))
+            },
+            tracked: |doc| {
+                doc.try_replace_text("30 days", "30").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("30 days", "30").unwrap();
+            },
+            revisions: &[(RevisionKind::Deletion, " days")],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a replacement deletes the whole match, the words its value repeats too",
+            document: || doc_with_body(&paragraph(&run("Pay within 30 days net."))),
+            tracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            untracked: |doc| {
+                doc.try_replace_text("30 days", "45 days").unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, "30 days"),
+                (RevisionKind::Insertion, "45 days"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
         },
         Row {
             shape: "typing inside the author's insertion of an earlier session splits it",
@@ -753,16 +1019,33 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
 #[test]
 fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
     type Edit = fn(&mut TrackedDocument<'_>) -> oxoffice_docx::Result<()>;
+    fn body(content: &str) -> Document {
+        doc_with_body(&paragraph(content))
+    }
+    fn boxed() -> Document {
+        body(&(run("See ") + &text_box_run(1, &paragraph(&run("Boxed old text")))))
+    }
+    /// A count refusal, as an error.
+    fn refused<T, E: std::fmt::Display>(
+        result: oxoffice_docx::Result<Result<T, E>>,
+    ) -> oxoffice_docx::Result<()> {
+        result.and_then(|counted| {
+            counted
+                .map(|_| ())
+                .map_err(|refusal| oxoffice_docx::Error::Other(refusal.to_string()))
+        })
+    }
     let field = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
     let not_yet = "is not recorded as a tracked change yet";
+    let cannot = "this edit cannot be written as a tracked change";
     let end = |p: &mut oxoffice_docx::Paragraph<'_>| {
         p.add_run(" End.");
         Ok(())
     };
-    let rows: [(&str, String, Edit, &str); 4] = [
+    let rows: Vec<(&str, Document, Edit, &str)> = vec![
         (
             "formatting alone",
-            paragraph(&run("Plain words.")),
+            body(&run("Plain words.")),
             |doc| {
                 doc.edit_body_paragraph(0, |p| {
                     p.run_mut(0).unwrap().set_bold(true);
@@ -773,13 +1056,13 @@ fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
         ),
         (
             "a field removed",
-            paragraph(&(run("Page ") + field)),
+            body(&(run("Page ") + field)),
             |doc| doc.edit_body_paragraph(0, |p| p.set_text("Page")),
             not_yet,
         ),
         (
             "text put in a new link",
-            paragraph(&run("Plain words.")),
+            body(&run("Plain words.")),
             |doc| {
                 doc.edit_body_paragraph(0, |p| {
                     p.add_hyperlink(" More", "https://example.com/");
@@ -790,17 +1073,116 @@ fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
         ),
         (
             "a bookmark start between two deleted words",
-            paragraph(&format!(
+            body(&format!(
                 r#"{}<w:bookmarkStart w:id="0" w:name="tail"/>{}<w:bookmarkEnd w:id="0"/>"#,
                 run("Lead "),
                 run("old tail")
             )),
             |doc| doc.edit_body_paragraph(0, |p| p.set_text("new tail")),
-            "this edit cannot be written as a tracked change",
+            cannot,
+        ),
+        (
+            "a bookmark edge inside a match",
+            body(&format!(
+                r#"{}<w:bookmarkStart w:id="0" w:name="due"/>{}<w:bookmarkEnd w:id="0"/>{}"#,
+                run("Pay 30 "),
+                run("days"),
+                run(" net.")
+            )),
+            |doc| doc.try_replace_text("30 days", "45 days").map(|_| ()),
+            cannot,
+        ),
+        (
+            "a text box, literal",
+            boxed(),
+            |doc| doc.try_replace_text("old text", "new text").map(|_| ()),
+            "a replacement in a text box",
+        ),
+        (
+            "a text box, regular expression",
+            boxed(),
+            |doc| refused(doc.try_replace_all_regex_expected(&[("old (text)", "new $1", None)])),
+            "a replacement in a text box",
+        ),
+        (
+            "a text box, at its location",
+            boxed(),
+            |doc| {
+                let location = located(doc.document(), StoryKind::TextBox);
+                refused(doc.try_replace_text_at(&location, "old text", "new text", None))
+            },
+            "a replacement in a text box",
+        ),
+        (
+            "a cell paragraph of a table in a text box, at its location",
+            body(
+                &(run("See ")
+                    + &text_box_run(
+                        1,
+                        &format!(
+                            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>{}"#,
+                            paragraph(&run("Boxed old text")),
+                            paragraph("")
+                        ),
+                    )),
+            ),
+            |doc| {
+                let location = located(doc.document(), StoryKind::TableCell);
+                refused(doc.try_replace_text_at(&location, "old text", "new text", None))
+            },
+            "a replacement in a text box",
+        ),
+        (
+            "a table in a header",
+            {
+                let mut doc = body(&run("Body."));
+                doc.set_header("Heading line");
+                with_header(&mut doc, |xml| {
+                    let table = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Draft cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+                    xml.replacen("<w:p>", &format!("{table}<w:p>"), 1)
+                })
+            },
+            |doc| doc.try_replace_text("Draft cell", "Final cell").map(|_| ()),
+            "a replacement in a header or footer table or control",
+        ),
+        (
+            "a whole table at its location",
+            doc_with_body(&format!(
+                r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>{}"#,
+                paragraph(&run("Old cell text")),
+                paragraph(&run("Body."))
+            )),
+            |doc| {
+                let story = doc.document().stories().unwrap().remove(0);
+                let table = doc.document().story_tables(&story).unwrap().remove(0);
+                refused(doc.try_replace_text_at(&table, "Old", "New", None))
+            },
+            "a replacement in a whole table or control",
+        ),
+        (
+            "a checked batch whose second pair refuses",
+            body(&run("The quick brown fox.")),
+            |doc| {
+                refused(doc.try_replace_all_checked(
+                    &[("quick", "slow", Some(1)), ("nonexistent", "x", Some(1))],
+                    ReplaceOptions::default(),
+                ))
+            },
+            "expected 1 replacement(s)",
+        ),
+        (
+            "a regular expression batch whose second pair refuses",
+            body(&run("The quick brown fox.")),
+            |doc| {
+                refused(doc.try_replace_all_regex_expected(&[
+                    ("quick", "slow", Some(1)),
+                    ("nonexistent", "x", Some(1)),
+                ]))
+            },
+            "expected 1 replacement(s)",
         ),
     ];
-    for (shape, body, edit, message) in rows {
-        let mut doc = doc_with_body(&body);
+    for (shape, mut doc, edit, message) in rows {
         let before = doc.to_bytes().unwrap();
         let changes = changes();
         let mut session = doc.track_changes(&changes);
@@ -809,12 +1191,13 @@ fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
         assert!(error.to_string().contains(message), "{shape}: {error}");
         // The refusal spent no id: the next edit takes the ids a fresh
         // session would.
-        session.edit_body_paragraph(0, end).unwrap();
+        let paragraph = session.document().paragraphs().len() - 1;
+        session.edit_body_paragraph(paragraph, end).unwrap();
         let after = session.revision_ids();
         drop(session);
         let mut fresh = Document::from_bytes(&before).unwrap();
         let mut again = fresh.track_changes(&changes);
-        again.edit_body_paragraph(0, end).unwrap();
+        again.edit_body_paragraph(paragraph, end).unwrap();
         assert_eq!(
             after,
             again.revision_ids(),

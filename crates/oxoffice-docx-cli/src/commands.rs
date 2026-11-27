@@ -2474,6 +2474,9 @@ pub struct ReplaceInput<'a> {
     pub expect: Option<usize>,
     pub regex: bool,
     pub allow_unreached: bool,
+    /// The author, date and undated flag of tracked changes, when the
+    /// replacements are written as such.
+    pub track: Option<(String, Option<String>, bool)>,
 }
 
 /// Replace one pair or an ordered map through the shared checked transaction.
@@ -2500,29 +2503,58 @@ pub fn replace(
         .map(|pair| (pair.placeholder.as_str(), pair.value.as_str(), pair.expect))
         .collect::<Vec<_>>();
     let mut doc = Document::open(file)?;
+    let changes = input
+        .track
+        .as_ref()
+        .map(|(author, timestamp, undated)| {
+            let date = match (timestamp, undated) {
+                (Some(timestamp), _) => oxoffice_docx::RevisionDate::At(timestamp),
+                (None, true) => oxoffice_docx::RevisionDate::Undated,
+                (None, false) => oxoffice_docx::RevisionDate::Now,
+            };
+            oxoffice_docx::TrackedChanges::new(author, date)
+        })
+        .transpose()?;
     let mismatch_message = |mismatch: ReplacementCountMismatch| {
         format!(
             "pair {}: expected {} replacement(s) of {:?}, found {}",
             mismatch.index, mismatch.expected, mismatch.placeholder, mismatch.found
         )
     };
+    let mut revision_ids = None;
     let counts = if input.regex {
-        doc.try_replace_all_regex_expected(&borrowed)?
-            .map_err(mismatch_message)?
+        match &changes {
+            Some(changes) => {
+                let mut tracked = doc.track_changes(changes);
+                let counts = tracked.try_replace_all_regex_expected(&borrowed)?;
+                revision_ids = Some(tracked.revision_ids());
+                counts
+            }
+            None => doc.try_replace_all_regex_expected(&borrowed)?,
+        }
+        .map_err(mismatch_message)?
     } else {
         let options = ReplaceOptions {
             allow_unreached: input.allow_unreached,
         };
-        doc.try_replace_all_checked(&borrowed, options)?
-            .map_err(|refusal| match refusal {
-                ReplacementRefusal::Count(mismatch) => mismatch_message(mismatch),
-                ReplacementRefusal::Unreached(unreached) => {
-                    format!("{unreached}; pass --allow-unreached once handled")
-                }
-                ReplacementRefusal::Unchecked(unchecked) => {
-                    format!("{unchecked}; pass --allow-unreached to replace without the check")
-                }
-            })?
+        match &changes {
+            Some(changes) => {
+                let mut tracked = doc.track_changes(changes);
+                let counts = tracked.try_replace_all_checked(&borrowed, options)?;
+                revision_ids = Some(tracked.revision_ids());
+                counts
+            }
+            None => doc.try_replace_all_checked(&borrowed, options)?,
+        }
+        .map_err(|refusal| match refusal {
+            ReplacementRefusal::Count(mismatch) => mismatch_message(mismatch),
+            ReplacementRefusal::Unreached(unreached) => {
+                format!("{unreached}; pass --allow-unreached once handled")
+            }
+            ReplacementRefusal::Unchecked(unchecked) => {
+                format!("{unchecked}; pass --allow-unreached to replace without the check")
+            }
+        })?
     };
     let total = counts
         .iter()
@@ -2530,11 +2562,13 @@ pub fn replace(
         .ok_or("replacement total overflow")?;
     publish_document(&mut doc, output)?;
     if json_output {
-        return print_json(
-            json!({"operation":"replace","mode":if input.regex {"regex"} else {"literal"},
+        let mut payload = json!({"operation":"replace","mode":if input.regex {"regex"} else {"literal"},
             "pairs":pairs.iter().zip(&counts).enumerate().map(|(index,(pair,count))|json!({"index":index,"placeholder":pair.placeholder,"value":pair.value,"count":count,"expected":pair.expect})).collect::<Vec<_>>(),
-            "total_count":total,"output":output.display().to_string()}),
-        );
+            "total_count":total,"output":output.display().to_string()});
+        if let Some(ids) = revision_ids {
+            payload["revision_ids"] = json!(ids);
+        }
+        return print_json(payload);
     }
     let mut stdout = io::stdout().lock();
     for (pair, count) in pairs.iter().zip(counts) {
