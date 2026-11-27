@@ -321,17 +321,25 @@ merge variant).
   rendering crates); `Test` on the three platforms, built without debug
   assertions (`--profile scaling`); `Timings` on Linux, the QUICK scaling
   sets. Debug assertions run in every local debug build and `cargo test`, in
-  lint's pptx tests without `render`, and in the full checks. A push to `main` runs in full, beside the runs before it, so
+  lint's pptx tests without `render`, and in the full checks (the writings
+  walk apart). A push to `main` runs in full, beside the runs before it, so
   every merge has its own verdict. See
   [the spec](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
 - **The full sets run on demand** (`full-checks.yml`, "Full checks", about
-  90 minutes, no schedule), on Linux, macOS and Windows alike: the Rust and
-  Python tests under debug assertions with the whole render corpus and every
-  producer's copy in the workflow walks, and every scaling call; on Linux
-  also the stack of a release-profile wheel. Run it before a release
-  ([RELEASE.md](RELEASE.md)), and on a pull request whose change the CI of
-  pull requests does not cover: a call that leaves or joins `GROWING`, a
-  change to the corpus walks, a snapshot, the render. Run it on a branch or
+  an hour, no schedule): on Linux, the Rust tests (four shards side by
+  side; the writings walk without debug assertions) and the Python tests
+  under debug assertions with the whole render corpus and every producer's
+  copy in the workflow walks, and the stack of a release-profile wheel; every scaling call on Linux and Windows. The render
+  is the same bytes on every platform and the walks are platform-free, so
+  macOS and Windows run the tests in the CI of pull requests only.
+- **The full checks do not grow.** Their budget is about an hour, the
+  longest job; a set added to them takes the place of another or runs a
+  sample, and the pull request that adds one says which, with the timings
+  of a run on its branch.
+- **When to run them**: before a release ([RELEASE.md](RELEASE.md)), and
+  on a pull request whose change the CI of pull requests does not cover: a
+  call that leaves or joins `GROWING`, a change to the corpus walks, a
+  snapshot, the render. Run it on a branch or
   a tag with `gh workflow run full-checks.yml --ref BRANCH`; to find the
   commit that broke it, push a branch at each candidate commit and run it
   there. On `main` with `-f report=true`, a failure opens or comments one

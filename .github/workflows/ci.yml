@@ -4,8 +4,9 @@ name: CI
 # included) and on every push to main: lint, the tests on Linux, macOS and
 # Windows, and the timings on Linux.
 # About 10 minutes, bounded by the slowest platform. The full sets (debug
-# assertions everywhere, the whole render corpus, every producer's copy in
-# the workflow walks, every scaling call) run on demand in full-checks.yml.
+# assertions, the whole render corpus, every producer's copy in the
+# workflow walks, on Linux; every scaling call) run on demand in
+# full-checks.yml.
 # See specs/2026-11-22-one-ci-for-pull-requests-and-main.md.
 # The tests build without debug assertions (the `scaling` profile): with
 # them every edit re-checks the whole document, which doubles the Rust
@@ -121,8 +122,8 @@ jobs:
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # full-checks.yml's full scaling job restores this cache (same profile),
-          # its full test job only the downloaded crates (another profile).
+          # full-checks.yml's scaling jobs and writings shard restore this
+          # cache (same profile), its other jobs only the downloaded crates.
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
@@ -144,7 +145,7 @@ jobs:
       # The render tests (specs/2026-11-21-render-fidelity.md) render the
       # corpus without its long files on Linux and skip it on macOS and
       # Windows (the render is the same bytes on every platform); the full
-      # checks render the whole corpus on the three. The workflow tests read one
+      # checks render the whole corpus on Linux. The workflow tests read one
       # corpus file each (specs/2026-11-21-consumer-workflows.md), every
       # producer's copy in the full checks. Under CI an unset OXOFFICE_RENDER fails the
       # render tests.

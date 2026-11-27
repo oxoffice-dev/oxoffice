@@ -9,7 +9,7 @@ One manual workflow, no manual tags, no hand-edited changelog.
    (`gh run list -w full-checks.yml -b main -L 1 --json headSha,conclusion`)
    if it ran on that commit, otherwise
    `gh workflow run full-checks.yml --ref main -f report=true` and wait for
-   it (about 90 minutes). PR CI skips the full corpus walks, so
+   it (about an hour). PR CI skips the full corpus walks, so
    this is where snapshot drift shows. It is a habit, not a gate: the release
    does not check it, and a small change after the last green run (docs, the
    release tooling) needs no new run.
