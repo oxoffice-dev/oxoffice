@@ -389,10 +389,9 @@ three, with the orchestrator's agreement:
 
 What PR 1a settles:
 
-- **Alignment key.** A word is the same before and after an edit when its text, its run properties and its holders
-  (links, controls) are. A word the edit kept but gave other formatting, as a replacement across two runs takes the
-  first run's formatting, is written as deleted and inserted. Compare writes that as a formatting change; PR 2 makes
-  the session do the same. An edit that changes formatting and nothing else is refused until PR 2.
+- **Alignment key.** A word is the same before and after an edit when its text and its holders (links, controls)
+  are. Until PR 2b the key also held its run properties, so that a word the edit kept but gave other formatting was
+  written as deleted and inserted; since 2b it takes a property change, as compare writes it.
 - **Session date.** `RevisionDate::Now` is the time the session starts: every revision of a session takes it.
 - **Split insertions.** Text inserted inside another author's insertion splits it; each later part takes an id of its
   own, as Word writes them (W1, W2): one id per revision element.
@@ -453,6 +452,15 @@ What PR 2a settles:
   their own id; or with every change. Not with the ids comparison names, which are exactly the changes it means.
   One that records no old grid keeps the grid. Compare leaves them as it leaves other markup: they hold no one's
   change.
+
+What PR 2b settles:
+
+- **Alignment** reads a word's text and its holders, not its run properties: a word kept with other properties stays
+  where it is, in a copy of its run with the new properties and a `w:rPrChange` of the old ones, one per run element
+  written, inside an insertion too (W3). The old properties are those an earlier change holds, if any, else the run's
+  before the edit; the change takes the session's author and date (W4).
+- **Paragraph properties**: one `w:pPrChange`, last in `w:pPr`, old value as for runs; a style or numbering change is
+  one too (W5). A change of the paragraph mark's run properties or of its section is refused.
 
 ## Open questions
 

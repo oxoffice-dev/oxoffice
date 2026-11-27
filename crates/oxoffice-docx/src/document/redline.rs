@@ -29,7 +29,7 @@ struct Container {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ContainerKind {
     /// A run, with its properties written after its start tag.
-    Run { properties: String },
+    Run { properties: String, props: Props },
     /// `w:ins` or `w:moveTo`, whose content the accepted view keeps.
     Inserted { author: String, id: Option<i32> },
     /// `w:del` (`w:delText`) or `w:moveFrom` (`w:t`), whose content it removes.
@@ -72,6 +72,8 @@ struct Flat {
     /// The `w:` prefix of the paragraph, which new elements take.
     prefix: String,
     properties: String,
+    /// The paragraph's properties read for a property change.
+    props: Props,
     containers: Vec<Container>,
     leaves: Vec<Leaf>,
 }
@@ -95,7 +97,7 @@ impl Flat {
             .iter()
             .rev()
             .find_map(|&container| match &self.containers[container].kind {
-                ContainerKind::Run { properties } => Some(properties.as_str()),
+                ContainerKind::Run { props, .. } => Some(props.base.as_str()),
                 _ => None,
             })
             .unwrap_or("")
@@ -127,6 +129,86 @@ impl Flat {
             })
             .collect()
     }
+}
+
+/// A property element (`w:rPr`, `w:pPr`) read for a property change: its
+/// tags, its properties, the children it keeps apart from them (a
+/// paragraph's mark properties and section), and the old value an earlier
+/// change of it holds, `Some("")` for one that holds none.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Props {
+    open: String,
+    end: String,
+    base: String,
+    kept: String,
+    prior: Option<String>,
+}
+
+/// Where a new property change's id goes, until the ids are given.
+const ID_MARK: &str = "\u{1}";
+
+fn props(xml: &str, node: &Node, change: &str, kept: &[&str]) -> Result<Props> {
+    let mut read = Props {
+        open: node.open(xml)?,
+        end: node.end_tag(xml),
+        ..Props::default()
+    };
+    for child in &node.children {
+        let Child::Element(element) = child else {
+            continue;
+        };
+        let raw = &xml[element.span()];
+        if element.word && element.local == change {
+            read.prior = Some(
+                element
+                    .children
+                    .iter()
+                    .find_map(|old| match old {
+                        Child::Element(old) => Some(xml[old.span()].to_owned()),
+                        Child::Text(_) => None,
+                    })
+                    .unwrap_or_default(),
+            );
+        } else if element.word && kept.contains(&element.local.as_str()) {
+            read.kept.push_str(raw);
+        } else {
+            read.base.push_str(raw);
+        }
+    }
+    Ok(read)
+}
+
+/// Properties `new` as a property element `local` whose change `change`
+/// holds the old ones, from `old`: the value an earlier change holds, if
+/// any, so that one change holds the properties from before the first, as
+/// Word keeps it (Word check W4). Its id is [`ID_MARK`] until the ids are
+/// given.
+fn changed_props(
+    new: &Props,
+    old: &Props,
+    prefix: &str,
+    local: &str,
+    change: &str,
+    tracking: &Tracking,
+) -> String {
+    let prior = match &old.prior {
+        Some(prior) if !prior.is_empty() => prior.clone(),
+        Some(_) => format!("<{prefix}{local}/>"),
+        None if old.base.is_empty() => format!("<{prefix}{local}/>"),
+        None => format!("<{prefix}{local}>{}</{prefix}{local}>", old.base),
+    };
+    let author = quick_xml::escape::escape(tracking.changes.author());
+    let date = tracking.changes.timestamp().map_or(String::new(), |date| {
+        format!(" {prefix}date=\"{}\"", quick_xml::escape::escape(date))
+    });
+    let (open, end) = match new.open.is_empty() {
+        true => (format!("<{prefix}{local}>"), format!("</{prefix}{local}>")),
+        false => (new.open.clone(), new.end.clone()),
+    };
+    format!(
+        "{open}{}{}<{prefix}{change} {prefix}id=\"{ID_MARK}\" {prefix}author=\"{author}\"{date}>{prior}</{prefix}{change}>{end}",
+        new.base, new.kept
+    )
 }
 
 /// An edit a tracked session cannot write yet, said in plain words.
@@ -371,6 +453,7 @@ fn flatten(xml: &str, paragraph: &Node) -> Result<Flat> {
         end: paragraph.end_tag(xml),
         prefix,
         properties: String::new(),
+        props: Props::default(),
         containers: Vec::new(),
         leaves: Vec::new(),
     };
@@ -378,6 +461,7 @@ fn flatten(xml: &str, paragraph: &Node) -> Result<Flat> {
         match child {
             Child::Element(node) if node.word && node.local == "pPr" => {
                 flat.properties = xml[node.span()].to_owned();
+                flat.props = props(xml, node, "pPrChange", &["rPr", "sectPr"])?;
             }
             _ => flatten_child(xml, child, &mut Vec::new(), &mut flat)?,
         }
@@ -447,6 +531,7 @@ fn flatten_child(xml: &str, child: &Child, path: &mut Vec<usize>, flat: &mut Fla
     let kind = match local {
         "r" => ContainerKind::Run {
             properties: String::new(),
+            props: Props::default(),
         },
         "ins" | "moveTo" => ContainerKind::Inserted {
             author: node.author.clone(),
@@ -485,7 +570,10 @@ fn flatten_child(xml: &str, child: &Child, path: &mut Vec<usize>, flat: &mut Fla
         let raw = xml[item.span()].to_owned();
         match (item.word, item.local.as_str()) {
             (true, "rPr") => {
-                flat.containers[container].kind = ContainerKind::Run { properties: raw };
+                flat.containers[container].kind = ContainerKind::Run {
+                    properties: raw,
+                    props: props(xml, item, "rPrChange", &[])?,
+                };
             }
             (true, "t" | "delText") => {
                 let text = quick_xml::escape::unescape(&xml[item.content()]).map_err(xml_error)?;
@@ -665,12 +753,12 @@ impl Flat {
     }
 }
 
-/// A token is the same before and after an edit when its text, its run
-/// properties and its holders are: text that took other formatting or moved
-/// into a link is removed and inserted again.
-fn key(flat: &Flat, leaf: usize) -> (&Item, &str, Vec<&str>) {
+/// A token is the same before and after an edit when its text and its
+/// holders are: text moved into a link is removed and inserted again, and
+/// text kept with other run properties takes a property change.
+fn key(flat: &Flat, leaf: usize) -> (&Item, Vec<&str>) {
     let leaf = &flat.leaves[leaf];
-    (&leaf.item, flat.run_properties(leaf), flat.holders(leaf))
+    (&leaf.item, flat.holders(leaf))
 }
 
 /// `flat` with each word split into its characters, so that a match may
@@ -860,9 +948,14 @@ pub(super) fn redline_xml(
 ) -> Result<String> {
     let old = flatten_one(before)?;
     let new = flatten_one(after)?;
-    if old.properties != new.properties {
-        return Err(refused("a change of paragraph properties"));
+    if old.props.kept != new.props.kept {
+        return Err(refused(
+            "a change of the paragraph mark's formatting or its section",
+        ));
     }
+    // A change of the paragraph's properties, written as one `w:pPrChange`
+    // (Word check W5): a style or a numbering change included.
+    let paragraph_changed = old.props.base != new.props.base;
     if old.range_markers() != new.range_markers() {
         return Err(refused(
             "an edit that adds, removes or reorders a bookmark or comment mark",
@@ -875,12 +968,16 @@ pub(super) fn redline_xml(
         flat.tokens()
             .into_iter()
             .map(|leaf| {
-                let (item, properties, holders) = key(&flat, leaf);
-                (item.clone(), properties.to_owned(), holders.join("\u{0}"))
+                let leaf = &flat.leaves[leaf];
+                (
+                    leaf.item.clone(),
+                    flat.run_properties(leaf).to_owned(),
+                    flat.holders(leaf).join("\u{0}"),
+                )
             })
             .collect::<Vec<_>>()
     };
-    if characters(&old) == characters(&new) {
+    if !paragraph_changed && characters(&old) == characters(&new) {
         return Ok(after.to_owned());
     }
     // A replacement deletes each whole match and inserts the whole value, as
@@ -909,7 +1006,7 @@ pub(super) fn redline_xml(
             let old_keys = old_tokens.iter().map(|&l| key(&old, l)).collect::<Vec<_>>();
             let new_keys = new_tokens.iter().map(|&l| key(&new, l)).collect::<Vec<_>>();
             if old_items == new_items && old_keys != new_keys {
-                return Err(refused("a change of run properties or links alone"));
+                return Err(refused("text moved into or out of a link or control"));
             }
             let items = old_items.iter().collect::<Vec<_>>();
             let ops = absorb_spaces(grouped(align(&old_keys, &new_keys)), &items);
@@ -1041,7 +1138,16 @@ pub(super) fn redline_xml(
                     return Err(refused("an insertion outside a run"));
                 };
                 let copy = *runs.entry(run).or_insert_with(|| {
-                    output.containers.push(new.containers[run].clone());
+                    // The new run's properties, without a change it took
+                    // from the run it was split from: the insertion records it.
+                    let mut copy = new.containers[run].clone();
+                    if let ContainerKind::Run { properties, props } = &mut copy.kind
+                        && props.prior.take().is_some()
+                    {
+                        *properties =
+                            format!("{}{}{}{}", props.open, props.base, props.kept, props.end);
+                    }
+                    output.containers.push(copy);
                     output.containers.len() - 1
                 });
                 let mut path = base.clone();
@@ -1070,6 +1176,26 @@ pub(super) fn redline_xml(
             }
         }
     };
+    // A kept token whose run took other properties goes into a copy of its
+    // run with those properties and a `w:rPrChange` of the old ones, one
+    // copy per run and new properties: inside an insertion too, even this
+    // author's own (Word check W3).
+    let kept = ops
+        .iter()
+        .filter_map(|op| match *op {
+            Op::Keep(a, b) => Some((a, b)),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    // Each copy, and the run and properties it copies: a copy goes on only
+    // while the leaves before it took it, so that each run element written
+    // has a change, and an id, of its own.
+    let mut changed_runs: HashMap<usize, (usize, String)> = HashMap::new();
+    // The ids of the changes a new change of the same owner replaces.
+    let mut replaced = Vec::new();
+    if paragraph_changed && old.props.prior.is_some() {
+        replaced.push(change_id_marked_in(&old.properties, "pPrChange").1);
+    }
     for (position, leaf) in old.leaves.iter().enumerate() {
         let Some(&token) = token_of.get(&position) else {
             leaves.push(leaf.clone());
@@ -1077,7 +1203,70 @@ pub(super) fn redline_xml(
         };
         take(Place::Before(token), &mut placed, &mut leaves);
         match deleted.get(&token) {
-            None => leaves.push(leaf.clone()),
+            None => {
+                let mut leaf = leaf.clone();
+                let new_leaf = kept.get(&token).map(|&b| &new.leaves[new_tokens[b]]);
+                let run = leaf
+                    .path
+                    .iter()
+                    .rposition(|&c| matches!(old.containers[c].kind, ContainerKind::Run { .. }));
+                if let (Some(new_leaf), Some(at)) = (new_leaf, run) {
+                    let new_run =
+                        new_leaf
+                            .path
+                            .iter()
+                            .rev()
+                            .find_map(|&c| match &new.containers[c].kind {
+                                ContainerKind::Run { props, .. } => Some(props),
+                                _ => None,
+                            });
+                    let old_container = leaf.path[at];
+                    let ContainerKind::Run {
+                        props: old_props, ..
+                    } = &old.containers[old_container].kind
+                    else {
+                        unreachable!("found as a run")
+                    };
+                    let empty = Props::default();
+                    let new_props = new_run.unwrap_or(&empty);
+                    if new_props.base != old_props.base {
+                        let wanted = (old_container, new_props.base.clone());
+                        let previous = leaves
+                            .last()
+                            .and_then(|previous: &Leaf| previous.path.get(at))
+                            .copied()
+                            .filter(|copy| changed_runs.get(copy) == Some(&wanted));
+                        let copy = previous.unwrap_or_else(|| {
+                            if old_props.prior.is_some()
+                                && let ContainerKind::Run { properties, .. } =
+                                    &old.containers[old_container].kind
+                            {
+                                replaced.push(change_id_marked(properties).1);
+                            }
+                            let props = new_props.clone();
+                            output.containers.push(Container {
+                                open: old.containers[old_container].open.clone(),
+                                end: old.containers[old_container].end.clone(),
+                                kind: ContainerKind::Run {
+                                    properties: changed_props(
+                                        new_props,
+                                        old_props,
+                                        &old.prefix,
+                                        "rPr",
+                                        "rPrChange",
+                                        tracking,
+                                    ),
+                                    props,
+                                },
+                            });
+                            changed_runs.insert(output.containers.len() - 1, wanted.clone());
+                            output.containers.len() - 1
+                        });
+                        leaf.path[at] = copy;
+                    }
+                }
+                leaves.push(leaf);
+            }
             Some(None) => {}
             Some(Some(deletion)) => {
                 let run = leaf
@@ -1097,20 +1286,31 @@ pub(super) fn redline_xml(
     }
     take(Place::End, &mut placed, &mut leaves);
     adopt_markers(&mut leaves, &output.containers);
-    one_id_per_element(&mut leaves, &mut output.containers);
+    let remarked = one_id_per_element(&mut leaves, &mut output.containers);
     output.leaves = leaves;
     output.start = new.start.clone();
 
     // Ids in document order, held once the result resolves as it should, so
     // that a refused edit leaves none taken.
     let timestamp = tracking.changes.timestamp();
+    // The paragraph's property change first, as Word numbers a paragraph's
+    // revisions; `usize::MAX` stands for it.
+    let changed = changed_runs
+        .keys()
+        .copied()
+        .chain(remarked.iter().map(|(copy, _)| *copy))
+        .collect::<HashSet<_>>();
     let mut order = Vec::new();
+    if paragraph_changed {
+        order.push(usize::MAX);
+    }
     for leaf in &output.leaves {
         for &container in &leaf.path {
-            if matches!(
+            if (matches!(
                 output.containers[container].kind,
                 ContainerKind::New { .. } | ContainerKind::Split { .. }
-            ) && !order.contains(&container)
+            ) || changed.contains(&container))
+                && !order.contains(&container)
             {
                 order.push(container);
             }
@@ -1119,6 +1319,34 @@ pub(super) fn redline_xml(
     let ids = identifiers.free_revision_ids(order.len())?;
     let mut written = Vec::new();
     for (&container, &id) in order.iter().zip(&ids) {
+        if container == usize::MAX {
+            written.push(id);
+            output.properties = changed_props(
+                &new.props,
+                &old.props,
+                &old.prefix,
+                "pPr",
+                "pPrChange",
+                tracking,
+            )
+            .replace(ID_MARK, &id.to_string());
+            continue;
+        }
+        if changed.contains(&container) {
+            // A later part of a change the session did not write stays the
+            // other author's.
+            if remarked
+                .iter()
+                .find(|(copy, _)| *copy == container)
+                .is_none_or(|(_, old)| own_session.contains(old))
+            {
+                written.push(id);
+            }
+            if let ContainerKind::Run { properties, .. } = &mut output.containers[container].kind {
+                *properties = properties.replace(ID_MARK, &id.to_string());
+            }
+            continue;
+        }
         // A part of an insertion of this session stays the session's.
         if let ContainerKind::Split { of } = output.containers[container].kind
             && own(&output.containers[of].kind)
@@ -1147,6 +1375,7 @@ pub(super) fn redline_xml(
     check(before, after, &redlined)?;
     identifiers.hold_revision_ids(&ids);
     tracking.record(&written);
+    tracking.forget(&replaced);
     Ok(redlined)
 }
 
@@ -1156,17 +1385,27 @@ pub(super) fn redline_xml(
 /// its own, a `Split` or another `New`, which takes a new id (Word checks W1,
 /// W2). An element goes on while the leaves around it share the path up to
 /// it, as [`write`] keeps it open.
-fn one_id_per_element(leaves: &mut [Leaf], containers: &mut Vec<Container>) {
+fn one_id_per_element(leaves: &mut [Leaf], containers: &mut Vec<Container>) -> Vec<(usize, i32)> {
     let mut seen = HashSet::new();
     let mut previous: Vec<usize> = Vec::new();
     let mut alias: HashMap<usize, usize> = HashMap::new();
+    // The later parts of a run that holds a property change, each with the
+    // id of the change it copies: their change takes an id of its own.
+    let mut remarked = Vec::new();
     for leaf in leaves {
         let original = leaf.path.clone();
         for (depth, slot) in leaf.path.iter_mut().enumerate() {
             let container = *slot;
-            let kind = match containers[container].kind {
-                ContainerKind::Inserted { .. } => ContainerKind::Split { of: container },
-                ContainerKind::New { deletion } => ContainerKind::New { deletion },
+            let kind = match &containers[container].kind {
+                ContainerKind::Inserted { .. } => Some(ContainerKind::Split { of: container }),
+                ContainerKind::New { deletion } => Some(ContainerKind::New {
+                    deletion: *deletion,
+                }),
+                ContainerKind::Run { properties, props }
+                    if props.prior.is_some() && !properties.contains(ID_MARK) =>
+                {
+                    None
+                }
                 _ => continue,
             };
             let open = previous.get(..=depth) == original.get(..=depth);
@@ -1175,7 +1414,15 @@ fn one_id_per_element(leaves: &mut [Leaf], containers: &mut Vec<Container>) {
                     container
                 } else {
                     let mut copy = containers[container].clone();
-                    copy.kind = kind;
+                    match (kind, &mut copy.kind) {
+                        (Some(kind), _) => copy.kind = kind,
+                        (None, ContainerKind::Run { properties, .. }) => {
+                            let (marked, id) = change_id_marked(properties);
+                            *properties = marked;
+                            remarked.push((containers.len(), id));
+                        }
+                        (None, _) => unreachable!("a run holding a change"),
+                    }
                     containers.push(copy);
                     containers.len() - 1
                 };
@@ -1185,6 +1432,35 @@ fn one_id_per_element(leaves: &mut [Leaf], containers: &mut Vec<Container>) {
         }
         previous = original;
     }
+    remarked
+}
+
+/// Run properties holding a `w:rPrChange` with its id as [`ID_MARK`], and
+/// the id it had.
+fn change_id_marked(properties: &str) -> (String, i32) {
+    change_id_marked_in(properties, "rPrChange")
+}
+
+/// [`change_id_marked`] for the change element `local`.
+fn change_id_marked_in(properties: &str, local: &str) -> (String, i32) {
+    let Some(change) = properties.find(local) else {
+        return (properties.to_owned(), -1);
+    };
+    let tag_end = properties[change..]
+        .find('>')
+        .map_or(properties.len(), |end| change + end);
+    let Some(id) = properties[change..tag_end]
+        .find("id=\"")
+        .map(|at| change + at + 4)
+    else {
+        return (properties.to_owned(), -1);
+    };
+    let end = properties[id..].find('"').map_or(id, |end| id + end);
+    let old = properties[id..end].parse().unwrap_or(-1);
+    (
+        format!("{}{ID_MARK}{}", &properties[..id], &properties[end..]),
+        old,
+    )
 }
 
 /// A revision start tag, as the paragraph wrote it, with its `w:id` set to
@@ -1275,7 +1551,7 @@ fn write(flat: &Flat) -> String {
         for &container in &leaf.path[common..] {
             let entry = &flat.containers[container];
             out.push_str(&entry.open);
-            if let ContainerKind::Run { properties } = &entry.kind {
+            if let ContainerKind::Run { properties, .. } = &entry.kind {
                 out.push_str(properties);
             }
             open.push(container);

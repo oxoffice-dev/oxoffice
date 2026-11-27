@@ -369,6 +369,15 @@ impl Tracking {
             }
         }
     }
+
+    /// Forget ids of the session's changes a later change of the same owner
+    /// replaced, holding the old value they held.
+    pub(crate) fn forget(&self, replaced: &[i32]) {
+        self.ids
+            .lock()
+            .expect("tracking ids")
+            .retain(|id| !replaced.contains(id));
+    }
 }
 
 /// A document whose edits are written as tracked changes, made by
