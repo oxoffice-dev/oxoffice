@@ -185,6 +185,12 @@ size = 197606
 features = ["bullet-list", "table", "nested-table", "header-footer", "hyperlink", "rsid", "paraId", "embedded-fonts"]
 
 [[file]]
+path = "google/dates1904.xlsx"
+producer = "Google Sheets export"
+size = 8281
+features = ["formulas", "shared-formula", "column-widths", "row-heights", "print-setup", "persons", "number-formats", "fonts", "borders"]
+
+[[file]]
 path = "google/deck.pptx"
 producer = "Google Slides export"
 size = 47502
@@ -227,6 +233,12 @@ size = 200450
 features = ["headings", "title", "bullet-list", "table", "header-footer", "bookmark", "rtl", "cjk", "rsid", "paraId", "embedded-fonts"]
 
 [[file]]
+path = "google/multi.xlsx"
+producer = "Google Sheets export"
+size = 28226
+features = ["multiple-sheets", "hidden-sheet", "formulas", "shared-formula", "array-formula", "cross-sheet-reference", "booleans", "formula-strings", "rich-text", "long-text", "cjk", "rtl", "column-widths", "row-heights", "print-setup", "persons", "hyperlink", "internal-link", "number-formats", "fonts", "borders", "alignment"]
+
+[[file]]
 path = "google/multilingual.pptx"
 producer = "Google Slides export"
 size = 58260
@@ -255,6 +267,12 @@ path = "google/report.docx"
 producer = "Google Docs export"
 size = 203806
 features = ["headings", "title", "bullet-list", "numbered-list", "table", "merged-cells", "picture", "comment", "header-footer", "sections", "landscape", "bookmark", "rsid", "paraId", "embedded-fonts"]
+
+[[file]]
+path = "google/review.xlsx"
+producer = "Google Sheets export"
+size = 11571
+features = ["formulas", "shared-formula", "column-widths", "row-heights", "print-setup", "notes", "persons", "hyperlink", "number-formats", "fonts", "borders"]
 
 [[file]]
 path = "google/thesis.docx"
