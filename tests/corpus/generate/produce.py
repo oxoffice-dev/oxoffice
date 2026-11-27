@@ -98,6 +98,26 @@ end run""",
     end tell
   end timeout
 end run""",
+    # Excel takes HFS paths, made outside its tell block (`POSIX file` inside it fails with -50), and its
+    # dictionary has a `message` property, so the error variables have other names.
+    "excel": f"""on run argv
+  set sourcePath to (POSIX file (item 1 of argv)) as text
+  set targetPath to (POSIX file (item 2 of argv)) as text
+  with timeout of 600 seconds
+    tell application "Microsoft Excel"
+      try
+        open workbook workbook file name sourcePath
+        save workbook as active workbook filename targetPath file format {EXCEL_XLSX_FORMAT}
+      on error errorText number errorNumber
+        try
+          close active workbook saving no
+        end try
+        error errorText number errorNumber
+      end try
+      close active workbook saving no
+    end tell
+  end timeout
+end run""",
 }
 QUIT_SCRIPTS = {
     "word": 'with timeout of 120 seconds\ntell application "Microsoft Word" to quit saving no\nend timeout',

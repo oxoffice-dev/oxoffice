@@ -137,6 +137,36 @@ size = 55781
 features = ["layouts", "placeholders", "bullet-levels", "notes", "group", "connector", "auto-shape", "text-box", "hyperlink", "hidden-slide", "comments", "slide-number", "widescreen"]
 
 [[file]]
+path = "excel/budget.xlsx"
+producer = "Microsoft Excel for Mac 16.115"
+size = 20852
+features = ["multiple-sheets", "calc-chain", "formulas", "shared-formula", "merged-cells", "defined-names", "scoped-name", "table", "calculated-column", "data-validation", "conditional-format", "color-scale", "data-bar", "extensions", "frozen-panes", "auto-filter", "filtered", "hidden-column", "hidden-row", "column-widths", "row-heights", "print-setup", "header-footer", "picture", "chart", "number-formats", "fonts", "fills", "borders", "alignment"]
+
+[[file]]
+path = "excel/dates1904.xlsx"
+producer = "Microsoft Excel for Mac 16.115"
+size = 6935
+features = ["date1904", "calc-chain", "formulas", "column-widths", "number-formats", "fonts", "borders"]
+
+[[file]]
+path = "excel/multi.xlsx"
+producer = "Microsoft Excel for Mac 16.115"
+size = 13471
+features = ["multiple-sheets", "hidden-sheet", "calc-chain", "formulas", "array-formula", "dynamic-array", "cross-sheet-reference", "error-values", "booleans", "formula-strings", "rich-text", "long-text", "cjk", "rtl", "column-widths", "hyperlink", "internal-link", "number-formats", "fonts", "borders", "alignment"]
+
+[[file]]
+path = "excel/review.xlsx"
+producer = "Microsoft Excel for Mac 16.115"
+size = 10786
+features = ["calc-chain", "formulas", "shared-formula", "column-widths", "notes", "hyperlink", "number-formats", "fonts", "borders"]
+
+[[file]]
+path = "excel/threads.xlsx"
+producer = "Microsoft Excel for Mac 16.115"
+size = 12469
+features = ["calc-chain", "formulas", "shared-formula", "column-widths", "notes", "threaded-comments", "comment-reply", "resolved-comment", "persons", "hyperlink", "number-formats", "fonts", "borders"]
+
+[[file]]
 path = "google/contract.docx"
 producer = "Google Docs export"
 size = 17640
@@ -225,6 +255,12 @@ path = "google/thesis.docx"
 producer = "Google Docs export"
 size = 221685
 features = ["headings", "bullet-list", "numbered-list", "multi-level-list", "table", "picture", "footnote", "header-footer", "sections", "landscape", "title-page", "even-odd-headers", "toc", "page-fields", "ref-fields", "seq-fields", "bookmark", "hyperlink", "content-control", "equation", "rsid", "paraId", "embedded-fonts"]
+
+[[file]]
+path = "google/threads.xlsx"
+producer = "Google Sheets export"
+size = 13090
+features = ["formulas", "shared-formula", "column-widths", "row-heights", "print-setup", "notes", "threaded-comments", "comment-reply", "resolved-comment", "persons", "hyperlink", "number-formats", "fonts", "borders"]
 
 [[file]]
 path = "google/training.pptx"

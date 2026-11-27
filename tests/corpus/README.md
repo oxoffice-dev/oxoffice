@@ -105,7 +105,9 @@ What to know when reading them:
   into the shared group Excel writes for a column filled down. LibreOffice
   writes every formula alone again, and drops the dynamic array flag of
   `multi` (a plain array formula) and the calculated column of the ledger
-  table; Google Sheets groups per-cell formulas into shared ones itself.
+  table; Google Sheets groups per-cell formulas into shared ones itself, and
+  so does Excel (`budget`'s Budget sheet: `F4:F11` and `G4:G11` become two
+  shared groups; the ledger table's calculated cells stay alone).
 - Google Sheets pads every sheet with empty rows up to row 1000 (about 40 KB
   of XML a sheet, small once zipped), writes an empty persons part and an empty
   drawing.
@@ -119,6 +121,11 @@ What to know when reading them:
   `python3 tests/corpus/generate/produce.py --neutral-excel <file.xlsx>` does
   the same to a workbook made by hand in Excel (and replaces the account of its
   persons part, see below).
+- The Excel copies were saved by Excel for Mac 16.115 with a French UI: the
+  cached value of `TEXT(C4,"#,##0")` on `multi`'s Summary is `North:
+  45796,150` (French separators read `,` as the decimal point) where the
+  source caches `North: 45,796`, and `docProps/app.xml` names the sheets
+  `Feuilles de calcul`.
 - No file has inline strings (the sources, LibreOffice and Google Sheets write
   shared strings only): a test that reads them builds its own workbook.
 
@@ -141,27 +148,51 @@ tests/corpus/generate/neutral_xlsx.py <file> ["<account name>"]` for the Google
 one (the same replacement, with the account name when Google wrote it outside
 the persons part):
 
-- `excel/threads.xlsx`: Excel's copy `excel/review.xlsx`, saved under that
-  name, with the same texts typed in Excel 365 for Mac (Review, New Comment)
-  on the Orders sheet: on `C3` a comment and two replies ("The dates should
-  follow the delivery calendar.", "Agreed, I will align them with the
-  supplier.", "Done, see the updated list."), on `F10` a comment and one
-  reply ("The total looks too high.", "It includes the freight.") then the
-  thread resolved (Resolve thread), on `B6` a comment without a reply ("Is
-  this supplier still approved?"), and the three notes of `review` left as
-  they are (`E5`, `G9`, `A14`). Saved as .xlsx, the document closed, Excel
-  quit, `produce.py --neutral-excel` run on it; then the manifest given Excel's version:
+- `excel/threads.xlsx`: Excel's copy `excel/review.xlsx` with, on the Orders
+  sheet, on `C3` a comment and two replies ("The dates should follow the
+  delivery calendar.", "Agreed, I will align them with the supplier.", "Done,
+  see the updated list."), on `F10` a comment and one reply ("The total looks
+  too high.", "It includes the freight.") resolved, on `B6` a comment without
+  a reply ("Is this supplier still approved?"), and the three notes of
+  `review` left as they are (`E5`, `G9`, `A14`). Round-tripped, not typed:
+  Excel for Mac's AppleScript has notes but no threaded comments, replies or
+  resolve. So Excel for Mac 16.115 opened `excel/review.xlsx`, added a note on
+  `C3`, `F10` and `B6` (AppleScript `add comment`, which writes their VML
+  shapes) and saved it; the three notes were then turned by hand into thread
+  placeholders, and the threads, the persons part, their relationships and
+  content types written by hand (fixed dates, one person already neutral);
+  Excel then opened that workbook and saved it again, closed it and quit, and
+  `produce.py --neutral-excel` ran on it; the manifest was given Excel's
+  version with
   `python3 -c 'import manifest, os; manifest.update({("excel", "xlsx"): "Microsoft Excel for Mac <version>"}, since=os.path.getmtime("../files/excel/threads.xlsx"))'`
-  from `tests/corpus/generate`. Excel 365 stores the threads in
-  `xl/threadedComments/` with `xl/persons/person.xml`, and each thread as a
-  placeholder note in the legacy comments part; the Mac run replaces this
-  sentence with what the file shows.
-- `google/threads.xlsx`: the Google Sheets conversion of `review`, the same
-  threads written in the browser (comments, replies, Resolve on the second
-  thread), then File, Download, Microsoft Excel (.xlsx) and neutral. Its
-  producer is the default one, `Google Sheets export`. What Google writes for
-  threads and for notes is whatever the file shows: the manifest features
-  (`threaded-comments`, `comment-reply`, `resolved-comment`, `notes`) say it.
+  from `tests/corpus/generate`. Excel kept what was written by hand in
+  `xl/threadedComments/threadedComment1.xml` (unprefixed `threadedComment`
+  elements; ids, `dT`, `parentId` on the replies, `done="1"` on the resolved
+  root and no `done` on the open ones) and in `xl/persons/person.xml` (one
+  `person`, providerId `None`), with a `threadedComment` relationship from the
+  sheet and a `person` one from the workbook; it sorted the threads by cell
+  (`C3`, `B6`, `F10`) and reordered the authors of the legacy comments part.
+  That part keeps the three notes and holds one placeholder per thread
+  (author `tc={root id}`, `xr:uid` the root id), whose text Excel writes
+  again on every save from the threads, in the language of its UI: here the
+  French notice (`[Commentaire a thread]` with an accented a, "Votre version
+  d'Excel..."), then `Commentaire :` and each `Reponse :` (accented, a
+  no-break space before each colon), each text on its own line indented by
+  four spaces, lines ending with CRLF. The English text written by hand did
+  not survive the save.
+- `google/threads.xlsx`: the Google Sheets conversion of `review` (uploaded
+  through the Drive connector), the same threads written in the browser
+  (comments, replies, Resolve on the second thread), then File, Download,
+  Microsoft Excel (.xlsx) and `neutral_xlsx.py` with the account name. Its
+  producer is the default one, `Google Sheets export`. Google writes the
+  threads as `x18tc:threadedComment` (prefixed, with an extra `xltc2`
+  namespace declared), roots with `done="0"` or `done="1"`, replies with
+  `parentId`, `dT` in UTC; one `x18tc:person` with providerId
+  `google-sheets` and no userId, its id new at every download; an empty
+  `documenttasks` part; no `docProps`. In the legacy comments part, the notes
+  lose their author (one empty `<author></author>`) and each thread placeholder
+  has author `tc={root id}` and a shorter text than Excel's: single newlines
+  and a tab before each comment.
 
 ## A table of contents inserted in Word
 
