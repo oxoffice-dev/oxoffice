@@ -685,7 +685,7 @@ fn the_physical_cell_routes_count_rows_of_row_controls_as_the_table_does() {
     );
     let inventory = doc.cell_paragraph_story_locations().unwrap();
     assert!(inventory.contains_key(&(0, 2, 1)) && inventory.contains_key(&(0, 3, 1)));
-    let (_, cells, _, _) = doc.story_owner_snapshots().unwrap();
+    let cells = doc.story_owner_snapshots().unwrap().cells;
     let mut coordinates: Vec<(usize, usize)> = cells
         .iter()
         .map(|(_, row, cell, _)| (*row, *cell))
@@ -809,7 +809,7 @@ fn every_cell_counted_is_addressed_among_the_cells_of_cell_controls() {
         assert!(row.cell(4).is_none());
         assert_eq!(table.cell(0, 2).unwrap().text(), "Y");
         assert_eq!(table.cell(1, 2).unwrap().text(), "G");
-        let (_, cells, _, _) = doc.story_owner_snapshots().unwrap();
+        let cells = doc.story_owner_snapshots().unwrap().cells;
         assert!(
             cells
                 .iter()

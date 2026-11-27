@@ -32,10 +32,7 @@ pub(super) fn word_block_owners(
         return Ok(Some(plain_paragraph_owners(&story, &text, &runs)));
     }
     let oxoffice_docx::BodyItemOwners {
-        snapshots,
-        cells,
-        paragraphs,
-        links,
+        owners,
         cell_stories,
         text_boxes,
         paragraph_routes,
@@ -46,7 +43,8 @@ pub(super) fn word_block_owners(
     let body = |snapshot: &&oxoffice_docx::StoryItemSnapshot| {
         snapshot.location().story().kind() == oxoffice_docx::StoryKind::Body
     };
-    let direct = snapshots
+    let direct = owners
+        .items
         .iter()
         .filter(body)
         .filter(|snapshot| snapshot.is_direct_child())
@@ -55,12 +53,9 @@ pub(super) fn word_block_owners(
     if direct.first() != Some(&Some(0)) || direct.len() != 1 {
         return Ok(None);
     }
-    let body_items = snapshots.iter().filter(body).count();
-    let relationships = link_relationships(&links);
-    let Some(facts) = word_owner_facts((snapshots, cells, paragraphs, links), |snapshot| {
-        word_table_facts(snapshot.xml())
-    })?
-    else {
+    let body_items = owners.items.iter().filter(body).count();
+    let relationships = link_relationships(&owners.links);
+    let Some(facts) = word_owner_facts(owners, |snapshot| word_table_facts(snapshot.xml()))? else {
         return Ok(None);
     };
     Ok(Some(WordBlockOwners {
@@ -342,7 +337,7 @@ impl WordPieces {
                 .story_part_owner_snapshots(kind, &part_name, &xml)
                 .ok()
                 .and_then(|snapshots| {
-                    let relationships = link_relationships(&snapshots.3);
+                    let relationships = link_relationships(&snapshots.links);
                     word_owner_facts(snapshots, |snapshot| word_table_facts(snapshot.xml()))
                         .ok()
                         .flatten()
@@ -390,7 +385,7 @@ impl WordPieces {
         let snapshots = document
             .story_part_owner_snapshots(kind, part_name, xml)
             .ok()?;
-        let relationships = link_relationships(&snapshots.3);
+        let relationships = link_relationships(&snapshots.links);
         let facts = word_owner_facts(snapshots, |snapshot| word_table_facts(snapshot.xml()))
             .ok()
             .flatten()?;
@@ -652,23 +647,42 @@ pub(super) fn word_owner_locations(
 /// The owner inventory of the given snapshots. Sections are those of
 /// `document`, and a snapshot of a detached item has none.
 pub(super) fn word_owner_addresses(
-    (snapshots, cell_snapshots, paragraph_snapshots, link_snapshots): WordOwnerSnapshots,
+    snapshots: WordOwnerSnapshots,
     table_facts: &HashMap<oxoffice_docx::ContentLocation, WordReadFacts>,
     document: Option<&oxoffice_docx::Document>,
     mut form_sources: Option<&mut FormSources>,
 ) -> oxoffice_docx::Result<Vec<WordOwnerAddress>> {
+    let entries = with_control_tables(&snapshots).ok_or_else(|| {
+        oxoffice_docx::Error::Other("a block control table has no place in its story".into())
+    })?;
+    let oxoffice_docx::StoryOwnerSnapshots {
+        items: snapshots,
+        cells: cell_snapshots,
+        paragraphs: paragraph_snapshots,
+        links: link_snapshots,
+        control_tables,
+    } = snapshots;
     let mut result = Vec::new();
     let mut table_ordinals = HashMap::new();
     if let Some(sources) = form_sources.as_deref_mut() {
-        for snapshot in &snapshots {
-            if snapshot.location().item_kind() == oxoffice_docx::StoryItemKind::Table {
-                let key = FormOwnerRoute::Table(form_source_key(snapshot.location()));
-                sources
-                    .xml
-                    .entry(key)
-                    .and_modify(|xml| *xml = None)
-                    .or_insert_with(|| Some(snapshot.xml().to_vec()));
-            }
+        let tables = snapshots
+            .iter()
+            .filter(|snapshot| {
+                snapshot.location().item_kind() == oxoffice_docx::StoryItemKind::Table
+            })
+            .map(|snapshot| (snapshot.location(), snapshot.xml()))
+            .chain(
+                control_tables
+                    .iter()
+                    .map(|(location, _, xml)| (location, xml.as_slice())),
+            );
+        for (location, xml) in tables {
+            let key = FormOwnerRoute::Table(form_source_key(location));
+            sources
+                .xml
+                .entry(key)
+                .and_modify(|xml| *xml = None)
+                .or_insert_with(|| Some(xml.to_vec()));
         }
         // Preserve raw multiplicity before the legacy cell-parent map collapses it.
         for (table, row, cell, story) in &cell_snapshots {
@@ -707,15 +721,35 @@ pub(super) fn word_owner_addresses(
                 oxoffice_docx::StoryItemKind::Paragraph
                     | oxoffice_docx::StoryItemKind::ContentControl
             )
+            && let Some(slot) = snapshot.direct_body_index()
         {
-            body_slots.insert(location.clone(), snapshot.direct_body_index());
+            body_slots.insert(location.clone(), slot);
         }
     }
-    for snapshot in &snapshots {
-        if snapshot.location().item_kind() != oxoffice_docx::StoryItemKind::Table {
-            continue;
-        }
-        let location = snapshot.location().clone();
+    // Every table outside cells of each story, in document order.
+    for entry in entries {
+        let (location, direct, read_facts) = match entry {
+            StoryEntry::Item(index) => {
+                let snapshot = &snapshots[index];
+                if snapshot.location().item_kind() != oxoffice_docx::StoryItemKind::Table {
+                    continue;
+                }
+                let location = snapshot.location().clone();
+                let read_facts = table_facts.get(&location).cloned().unwrap_or_default();
+                let direct = snapshot
+                    .direct_body_index()
+                    .filter(|_| snapshot.is_direct_child());
+                (location, direct, read_facts)
+            }
+            StoryEntry::ControlTable(index) => {
+                let (location, _, xml) = &control_tables[index];
+                (
+                    location.clone(),
+                    None,
+                    word_table_facts(xml).unwrap_or_default(),
+                )
+            }
+        };
         let ordinal = table_ordinals
             .entry(location.story().clone())
             .or_insert(0usize);
@@ -726,12 +760,8 @@ pub(super) fn word_owner_addresses(
             location: WordOwnerLocation::Table(location.clone()),
             parent: None,
             projection_ordinal,
-            read_facts: table_facts.get(&location).cloned().unwrap_or_default(),
-            body_slot: if snapshot.is_direct_child() {
-                snapshot.direct_body_index()
-            } else {
-                None
-            },
+            read_facts,
+            body_slot: content_body_slot(&location, direct, &body_slots),
         });
         for (row, cell, story) in table_cells.remove(&location).unwrap_or_default() {
             result.push(WordOwnerAddress {
@@ -801,20 +831,8 @@ pub(super) fn word_owner_addresses(
         let paragraph = oxoffice_docx_oxml::CT_P::from_xml_fragment(&xml)?;
         // Reuse the containing item's fact from this exact immutable source
         // inventory, matching the native paragraph snapshot's containing route.
-        let body_slot = if location.story().kind() == oxoffice_docx::StoryKind::Body {
-            let containing = match location.index_path() {
-                [_] => Some(location.clone()),
-                [control, _] => Some(oxoffice_docx::ContentLocation::new(
-                    location.story().clone(),
-                    oxoffice_docx::StoryItemKind::ContentControl,
-                    vec![*control],
-                )),
-                _ => None,
-            };
-            containing.and_then(|containing| body_slots.get(&containing).copied().flatten())
-        } else {
-            None
-        };
+        let body_slot =
+            content_body_slot(&location, body_slots.get(&location).copied(), &body_slots);
         result.push(WordOwnerAddress {
             location: WordOwnerLocation::Paragraph(location.clone()),
             parent,

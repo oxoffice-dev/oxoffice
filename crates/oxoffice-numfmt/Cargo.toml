@@ -1,0 +1,17 @@
+[package]
+name = "oxoffice-numfmt"
+description = "Spreadsheet number format codes to the text Excel displays"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["xlsx", "excel", "number-format", "spreadsheet"]
+categories = ["parser-implementations", "text-processing"]
+publish = true
+
+[dependencies]
+thiserror.workspace = true

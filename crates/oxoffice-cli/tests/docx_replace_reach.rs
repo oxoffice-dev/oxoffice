@@ -234,3 +234,177 @@ fn replace_on_a_document_the_check_cannot_read_points_at_allow_unreached() {
         String::from_utf8_lossy(&allowed.stderr)
     );
 }
+
+/// With `--track-author`, each whole match is written as a deletion and its
+/// value as an insertion by that author, dated as the flags say: accepting
+/// them gives the untracked replacement, rejecting them the input. The date
+/// flags need an author and exclude each other; a refusal writes nothing.
+#[test]
+fn replace_with_a_track_author_writes_tracked_changes() {
+    let scratch = Scratch::new("tracked");
+    let map = scratch.0.join("pairs.json");
+    fs::write(
+        &map,
+        r#"[{"placeholder": "previous quarter", "value": "previous term", "expect": 1},
+            {"placeholder": "Support response times", "value": "Support reply times", "expect": 1}]"#,
+    )
+    .unwrap();
+    let map = map.to_str().unwrap();
+    const AT: &str = "2026-11-27T10:00:00Z";
+    // The replacement's own arguments, its tracking flags, and the
+    // revisions written (kind, text) at the date given, or the refusal.
+    type Case<'a> = (
+        &'a [&'a str],
+        &'a [&'a str],
+        Result<&'a [(&'a str, &'a str)], &'a str>,
+    );
+    let cases: [Case; 7] = [
+        (
+            &[
+                "-p",
+                "previous quarter",
+                "-v",
+                "previous term",
+                "--expect",
+                "1",
+            ],
+            &["--track-author", "Rev", "--track-timestamp", AT],
+            Ok(&[
+                ("deletion", "previous quarter"),
+                ("insertion", "previous term"),
+            ]),
+        ),
+        (
+            &[
+                "--regex",
+                "-p",
+                r"grew by (\d+) %",
+                "-v",
+                "grew by $1 percent",
+            ],
+            &["--track-author", "Rev", "--track-undated"],
+            Ok(&[
+                ("deletion", "grew by 12 %"),
+                ("insertion", "grew by 12 percent"),
+            ]),
+        ),
+        (
+            &["--map", map],
+            &["--track-author", "Rev", "--track-timestamp", AT],
+            Ok(&[
+                ("deletion", "Support response times"),
+                ("insertion", "Support reply times"),
+                ("deletion", "previous quarter"),
+                ("insertion", "previous term"),
+            ]),
+        ),
+        (
+            &["-p", "quarter", "-v", "term"],
+            &["--track-author", "Rev", "--track-timestamp", "27/11/2026"],
+            Err("timestamp"),
+        ),
+        (
+            &["-p", "quarter", "-v", "term"],
+            &["--track-timestamp", AT],
+            Err("--track-author"),
+        ),
+        (
+            &["-p", "quarter", "-v", "term"],
+            &["--track-undated"],
+            Err("--track-author"),
+        ),
+        (
+            &["-p", "quarter", "-v", "term"],
+            &[
+                "--track-author",
+                "Rev",
+                "--track-timestamp",
+                AT,
+                "--track-undated",
+            ],
+            Err("cannot be used with"),
+        ),
+    ];
+    for producer in ["word", "google"] {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/files")
+            .join(producer)
+            .join("report.docx");
+        let source = source.to_str().unwrap();
+        for (case, (replace, track, outcome)) in cases.iter().enumerate() {
+            let path = |name: &str| scratch.0.join(format!("{producer}-{case}-{name}.docx"));
+            let (tracked, plain, accepted, rejected) = (
+                path("tracked"),
+                path("plain"),
+                path("accepted"),
+                path("rejected"),
+            );
+            let [tracked, plain, accepted, rejected] =
+                [&tracked, &plain, &accepted, &rejected].map(|path| path.to_str().unwrap());
+            let args = [
+                &["docx", "replace", source][..],
+                replace,
+                track,
+                &["--json", "-o", tracked],
+            ]
+            .concat();
+            let replaced = oxoffice(&args);
+            let stderr = String::from_utf8_lossy(&replaced.stderr);
+            let expected = match outcome {
+                Err(message) => {
+                    assert!(!replaced.status.success(), "{producer} {case}");
+                    assert!(stderr.contains(message), "{producer} {case}: {stderr}");
+                    assert!(!Path::new(tracked).exists(), "{producer} {case}");
+                    continue;
+                }
+                Ok(expected) => expected,
+            };
+            assert!(replaced.status.success(), "{producer} {case}: {stderr}");
+            let record: serde_json::Value = serde_json::from_slice(&replaced.stdout).unwrap();
+            let ids = record["revision_ids"].as_array().unwrap().clone();
+            let listed: serde_json::Value = serde_json::from_slice(
+                &oxoffice(&["docx", "revision", "list", tracked, "--json"]).stdout,
+            )
+            .unwrap();
+            let date = if track.contains(&AT) {
+                serde_json::json!(AT)
+            } else {
+                serde_json::Value::Null
+            };
+            let written = listed["revisions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|revision| ids.contains(&revision["id"]))
+                .map(|revision| {
+                    assert_eq!(revision["author"], "Rev", "{producer} {case}");
+                    assert_eq!(revision["timestamp"], date, "{producer} {case}");
+                    (
+                        revision["kind"].as_str().unwrap().to_owned(),
+                        revision["text"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let expected = expected
+                .iter()
+                .map(|(kind, text)| (kind.to_string(), text.to_string()))
+                .collect::<Vec<_>>();
+            assert_eq!(written, expected, "{producer} {case}");
+            let text = |path: &str| oxoffice(&["docx", "text", path]).stdout;
+            let untracked = [&["docx", "replace", source][..], replace, &["-o", plain]].concat();
+            assert!(oxoffice(&untracked).status.success(), "{producer} {case}");
+            assert!(
+                oxoffice(&["docx", "revision", "accept", tracked, "-o", accepted])
+                    .status
+                    .success()
+            );
+            assert!(
+                oxoffice(&["docx", "revision", "reject", tracked, "-o", rejected])
+                    .status
+                    .success()
+            );
+            assert_eq!(text(accepted), text(plain), "{producer} {case}: accepted");
+            assert_eq!(text(rejected), text(source), "{producer} {case}: rejected");
+        }
+    }
+}

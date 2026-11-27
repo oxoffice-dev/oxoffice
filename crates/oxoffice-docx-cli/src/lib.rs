@@ -258,7 +258,14 @@ enum Command {
     /// writes it. A carriage return or a Windows line ending in a value writes
     /// one line break; a page or column break matched and written back becomes
     /// a line break, a positional tab an ordinary tab and a non-breaking hyphen
-    /// a plain one.
+    /// a plain one. With --track-author, the replacements are written as
+    /// tracked changes by that author, as Word's tracked Replace All writes
+    /// them: each whole match deleted and its whole value inserted; a value
+    /// equal to its match writes nothing. A later --map pair does not match
+    /// across the edge of an earlier pair's insertion, so a pair that
+    /// searches an earlier value finds fewer. A match in a text box, or an
+    /// edit the tracked changes cannot record, is refused and nothing is
+    /// written.
     Replace {
         /// Path to the DOCX file
         file: PathBuf,
@@ -291,6 +298,15 @@ enum Command {
         /// replacement, out of its reach
         #[arg(long, conflicts_with = "regex")]
         allow_unreached: bool,
+        /// Write the replacements as tracked changes by this author
+        #[arg(long, value_name = "NAME")]
+        track_author: Option<String>,
+        /// RFC 3339 date of the tracked changes, the current time when absent
+        #[arg(long, value_name = "RFC3339", requires = "track_author")]
+        track_timestamp: Option<String>,
+        /// Write the tracked changes without a date
+        #[arg(long, requires = "track_author", conflicts_with = "track_timestamp")]
+        track_undated: bool,
         /// Output the count of each pair as JSON
         #[arg(long)]
         json: bool,
@@ -1009,6 +1025,9 @@ pub fn run(cli: Cli) {
             output,
             expect,
             allow_unreached,
+            track_author,
+            track_timestamp,
+            track_undated,
             json,
         } => commands::replace(
             &file,
@@ -1018,6 +1037,7 @@ pub fn run(cli: Cli) {
                 expect,
                 regex,
                 allow_unreached,
+                track: track_author.map(|author| (author, track_timestamp, track_undated)),
             },
             &output,
             json,

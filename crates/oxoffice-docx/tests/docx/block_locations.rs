@@ -1194,23 +1194,33 @@ fn control_spec(placement: ContentControlPlacement) -> oxoffice_docx::ContentCon
 
 #[test]
 fn a_table_in_a_block_control_is_listed_as_a_table_in_every_story() {
-    // Google Docs tables: in the body, in a body table's cell, in a footer.
+    // Google Docs tables: in the body, 2x2 in a body table's cell, in a footer
+    // after a table.
+    let two_by_two = format!(
+        "<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w=\"2000\"/><w:gridCol w:w=\"2000\"/>\
+         </w:tblGrid><w:tr><w:tc>{}</w:tc><w:tc>{}</w:tc></w:tr><w:tr><w:tc>{}</w:tc>\
+         <w:tc>{}</w:tc></w:tr></w:tbl>",
+        p("Inner {name}"),
+        p("B"),
+        p("C"),
+        p("D")
+    );
     let mut doc = doc_with_body(&format!(
         "{}{}{}{}",
         p("Before {name}"),
         google_table(1, &table(&p("A {name}"))),
-        table(&format!(
-            "{}{}",
-            p("Cell"),
-            google_table(2, &table(&p("Inner {name}")))
-        )),
+        table(&format!("{}{}", p("Cell"), google_table(2, &two_by_two))),
         p("After {name}")
     ));
     doc.set_footer("Foot");
     let mut doc = Document::from_bytes(&with_story(
         doc,
         StoryKind::Footer,
-        &google_table(3, &table(&p("F {name}"))),
+        &format!(
+            "{}{}",
+            table(&p("Plain")),
+            google_table(3, &table(&p("F {name}")))
+        ),
     ))
     .expect("reopens");
     // Its cells are no paragraphs of the story around it.
@@ -1231,7 +1241,7 @@ fn a_table_in_a_block_control_is_listed_as_a_table_in_every_story() {
         [
             "Before {name}",
             "table:A {name}",
-            "table:CellInner {name}",
+            "table:CellInner {name}BCD",
             "After {name}"
         ]
     );
@@ -1260,9 +1270,54 @@ fn a_table_in_a_block_control_is_listed_as_a_table_in_every_story() {
         [
             vec![vec![1, 0], vec![2]],
             vec![vec![2, 0]],
-            vec![vec![0, 0]]
+            vec![vec![0], vec![1, 0]]
         ]
     );
+    // The owner snapshots hold each one, placed among its story's tables by the
+    // story-item tables before it, with its own cells (none under the table
+    // around it), and its bytes among the items.
+    let owners = doc.story_owner_snapshots().expect("owner snapshots");
+    let elements = doc.owner_element_xml().expect("owner elements");
+    for story in [&body, &cell, &footer] {
+        let mut before = 0;
+        let mut expected = Vec::new();
+        for table in doc.story_tables(story).expect("tables") {
+            match table.index_path() {
+                [_] => before += 1,
+                path => expected.push((path.to_vec(), before)),
+            }
+        }
+        let held = owners
+            .control_tables
+            .iter()
+            .filter(|(table, _, _)| same_story(table.story(), story))
+            .map(|(table, before, _)| (table.index_path().to_vec(), *before))
+            .collect::<Vec<_>>();
+        assert_eq!(held, expected);
+        for (path, _) in expected {
+            let key = (
+                story.kind(),
+                story.part_name().to_owned(),
+                story.owner_index(),
+                path,
+            );
+            assert!(elements.items[&key].starts_with(b"<w:tbl"));
+        }
+    }
+    let cells_of = |story: &StoryId, path: &[usize]| {
+        owners
+            .cells
+            .iter()
+            .filter(|(table, _, _, _)| {
+                same_story(table.story(), story) && table.index_path() == path
+            })
+            .map(|(_, row, cell, _)| (*row, *cell))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(cells_of(&body, &[2]), [(0, 0)]);
+    assert_eq!(cells_of(&body, &[1, 0]), [(0, 0)]);
+    assert_eq!(cells_of(&cell, &[2, 0]), [(0, 0), (0, 1), (1, 0), (1, 1)]);
+    assert_eq!(cells_of(&footer, &[1, 0]), [(0, 0)]);
     assert_eq!(
         doc.table_story_location(0).unwrap().unwrap().index_path(),
         [1, 0]
@@ -1271,7 +1326,7 @@ fn a_table_in_a_block_control_is_listed_as_a_table_in_every_story() {
         doc.table_story_location(1).unwrap().unwrap().index_path(),
         [2]
     );
-    for (story, path) in [(body, vec![1, 0]), (cell, vec![2, 0]), (footer, vec![0, 0])] {
+    for (story, path) in [(body, vec![1, 0]), (cell, vec![2, 0]), (footer, vec![1, 0])] {
         let at = ContentLocation::new(refreshed(&doc, &story), StoryItemKind::Table, path);
         let replaced = doc.try_replace_text_at(&at, "{name}", "Ada", Some(1));
         assert_eq!(replaced.expect("replaced"), Ok(1));
@@ -1294,7 +1349,7 @@ fn a_table_in_a_block_control_is_listed_as_a_table_in_every_story() {
         [
             "Before {name}",
             "table:A Ada",
-            "table:CellInner Ada",
+            "table:CellInner AdaBCD",
             "After {name}"
         ]
     );

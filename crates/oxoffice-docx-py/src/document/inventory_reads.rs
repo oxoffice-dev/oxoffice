@@ -515,9 +515,9 @@ impl PyDocument {
 
 /// The facade index of `location` in `projection` (facade index to route):
 /// `captured`, the index a handle holds, while it still names that route,
-/// then the projection ordinal of its owner, which equals the facade index
-/// unless an unowned block comes before (a table in a block content
-/// control), then the first entry that names it.
+/// then the projection ordinal of its owner, which is its facade index when
+/// the source and the model list the same tables, then the first entry that
+/// names it.
 fn projected_index(
     projection: &[Option<AnchoredRoute>],
     location: &oxoffice_docx::ContentLocation,

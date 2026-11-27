@@ -68,11 +68,14 @@ use crate::style::{self, Style, StyleBuilder};
 use crate::table::{Table, TableRef, validate_table_topology};
 
 mod checked_replacement;
+mod redline;
 mod story_paragraphs;
+mod tracked;
 pub use checked_replacement::{
     ReplaceOptions, ReplacementRefusal, UncheckedReplacement, UnreachedReplacement,
 };
 pub use story_paragraphs::StoryParagraph;
+pub use tracked::{TrackedChanges, TrackedDocument};
 
 mod drawing_options;
 mod font_types;
@@ -126,7 +129,7 @@ use render_options::{
 pub(crate) use story_types::GeneratedStoryOwner;
 pub use story_types::{
     BodyItemOwners, BodyItemRef, ElementExtent, HeaderFooterKind, OwnerElementXml, StoryError,
-    StoryItemKind, StoryKind,
+    StoryItemKind, StoryKind, StoryOwnerSnapshots,
 };
 use text_report::STORY_TEXT_RELATIONSHIPS;
 pub use text_report::{StoryText, StoryTextItem, TextDiagnostic, TextReport};
@@ -284,8 +287,9 @@ use story_scan::{
     accepted_story_text_visible, bind_text_box_source_owners, complex_field_marker,
     complex_field_text_visible, control_block_name, editable_note_owner, opaque_story_event,
     paired_story_owners, prepare_semantic_paragraph_projection, scan_story_control_blocks,
-    scan_story_control_paragraphs, scan_story_control_paragraphs_with_scope, scan_story_item_links,
-    scan_story_items, story_break_text, story_field_marker_tracked, structural_fingerprint,
+    scan_story_control_blocks_with_scope, scan_story_control_paragraphs,
+    scan_story_control_paragraphs_with_scope, scan_story_item_links, scan_story_items,
+    story_break_text, story_field_marker_tracked, structural_fingerprint,
     update_complex_field_results,
 };
 pub(crate) use story_scan::{
@@ -320,9 +324,9 @@ use story_xml::{
     StoryNamespace, StorySdtContext, changed_story_namespace_scope, comment_move_source_edits,
     comment_reference_run_span, field_instruction_has_name, modeled_story_child,
     scoped_proof_marker, scoped_proof_sentinel, story_element_end, story_element_sdt_context,
-    story_frame_local_name, story_namespace, story_range_paragraph_spans,
-    story_range_paragraph_spans_from_inventory, story_sdt_context, story_word_prefixes_at,
-    word_element, xml_decodes,
+    story_frame_local_name, story_namespace, story_range_block_spans_from_inventory,
+    story_range_paragraph_spans, story_range_paragraph_spans_from_inventory, story_sdt_context,
+    story_word_prefixes_at, word_element, xml_decodes,
 };
 use template_programs::{
     paired_scoped_edits, paired_scoped_ranges, prepare_template_source_programs,
@@ -645,6 +649,10 @@ pub(crate) struct DocumentIdentifiers {
     content_control_ids: HashSet<i32>,
     /// The `w:permStart` ids of every story, held as the control ids are.
     permission_ids: HashSet<i32>,
+    /// The `w:id` of every tracked change and move range of every story,
+    /// held as the control ids are. Producers repeat them (a move's parts,
+    /// Google's grid changes), so a scan accepts that.
+    revision_ids: HashSet<i32>,
     part_names: HashSet<String>,
     content_type_defaults: HashSet<String>,
     content_type_overrides: HashSet<String>,
@@ -889,6 +897,9 @@ pub struct Document {
     /// The opened or saved package retains a shadowed serializer prefix, so a
     /// plain child edit must use the staged transaction instead of a local write.
     plain_local_edit_blocked: bool,
+    /// The tracked changes session a [`TrackedDocument`] call runs in, whose
+    /// edits are written as revisions; `None` outside one.
+    pub(crate) tracking: Option<tracked::Tracking>,
     local_cell_source: Option<LocalCellSource>,
     /// Save failure a checked body edit must return before it changes the model.
     /// Cleared when the typed body or the saved main part changes.
@@ -1662,6 +1673,7 @@ impl Document {
             body_namespace_declarations: Vec::new(),
             body_namespace_bindings: Vec::new(),
             plain_local_edit_blocked: false,
+            tracking: None,
             local_cell_source,
             unsavable_body_edit_cache: OnceLock::from(None),
             styles,

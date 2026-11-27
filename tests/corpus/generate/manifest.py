@@ -26,14 +26,19 @@ FILES = CORPUS / "files"
 MANIFEST = CORPUS / "manifest.toml"
 MAX_FILE = 1024 * 1024
 MAX_TOTAL = 20 * 1024 * 1024
-EXTENSIONS = ("docx", "pptx")
+EXTENSIONS = ("docx", "pptx", "xlsx")
+# The producer of files that no script of ours writes, in a folder whose copies
+# come from a route outside produce.py: the Google Sheets copies are uploaded
+# through the Google Drive connector with conversion, and exported as xlsx.
+DEFAULT_PRODUCERS = {("google", "xlsx"): "Google Sheets export"}
 
 HEADER = """\
 # Written by generate/manifest.py from the files under files/: do not edit by
 # hand, except known_failure and rewritten. Every file is ours: authored by
 # generate/author.py, then opened and saved by the producer named here
-# (generate/produce.py), or written in Google Docs or by hand in Word (see
-# the README). They are released under the repository's licence.
+# (generate/produce.py), or written in Google Docs, uploaded to Google Sheets
+# or made by hand in Word and Excel (see the README). They are released under
+# the repository's licence.
 #
 # features: what the file's XML carries, so a failure points at an area.
 # known_failure: the issue that makes a save without an edit rewrite the parts
@@ -219,9 +224,117 @@ def pptx_features(package: zipfile.ZipFile) -> list[str]:
     return [name for name, present in found.items() if present]
 
 
+def xlsx_features(package: zipfile.ZipFile) -> list[str]:
+    names = package.namelist()
+    workbook = _xml(package, "xl/workbook.xml")
+    sheets = _xml(package, "xl/worksheets/")
+    styles = _xml(package, "xl/styles.xml")
+    strings = _xml(package, "xl/sharedStrings.xml")
+    drawings = _xml(package, "xl/drawings/")
+    tables = _xml(package, "xl/tables/")
+    text = "".join(re.findall(r"<t(?: [^>]*)?>([^<]*)", strings))
+    formulas = [f.replace("#REF!", "") for f in re.findall(r"<f(?: [^>]*)?>([^<]+)</f>", sheets)]
+    names_of_workbook = re.findall(r'<definedName [^>]*name="([^"]*)"', workbook)
+    # Features describe what the file asks for, not what a producer writes whatever the file asks: LibreOffice
+    # writes a full pageSetup and an alignment on every cell format; Google Sheets writes a bare
+    # `<pageSetup orientation="landscape"/>` on every sheet, padded rows with `customHeight` up to row 1000 and
+    # an empty persons part. Nothing in a Google page setup tells a chosen landscape from that default, so a
+    # landscape counts only when its element says more (paper, scale...) and print-setup otherwise needs a
+    # print area, print titles, fit to page, a scale or a header or footer.
+    page_setups = re.findall(r"<pageSetup\b([^>]*)>", sheets)
+    landscape = any('orientation="landscape"' in tag and len(re.findall(r"\w+=", tag)) > 1 for tag in page_setups)
+    scaled = any(re.search(r'\bscale="(?!100")', tag) for tag in page_setups)
+    # Rows that hold a cell and have a height of their own: Google Sheets gives every row from the 21st, with or
+    # without a cell, the height 15.75 and customHeight, so that height says nothing about the file.
+    sized_rows = any(
+        float(height) != 15.75
+        for height in re.findall(r'<row\b[^>]*\bht="([\d.]+)"[^>]*\bcustomHeight="(?:1|true)"[^>]*(?<!/)>\s*<c\b', sheets)
+    )
+    person_list = re.search(r"<(?:\w+:)?person\b", _xml(package, "xl/persons/"))
+    authors_of_notes = [
+        (re.findall(r"<author>([^<]*)</author>", part), re.findall(r'<comment\b[^>]*\bauthorId="(\d+)"', part))
+        for part in re.findall(r"<comments\b.*?</comments>", _xml(package, "xl/comments"), re.S)
+    ]
+    # A note, not the placeholder (`tc={id}` author) a threaded comment leaves in the legacy comments part.
+    notes = any(
+        int(index) >= len(authors) or not authors[int(index)].startswith("tc=")
+        for authors, indexes in authors_of_notes
+        for index in indexes
+    )
+    cell_formats = "".join(re.findall(r"<cellXfs.*?</cellXfs>", styles, re.S))
+
+    found = {
+        "multiple-sheets": workbook.count("<sheet ") > 1,
+        "hidden-sheet": re.search(r'<sheet [^>]*state="(hidden|veryHidden)"', workbook),
+        "date1904": re.search(r'<workbookPr [^>]*date1904="(1|true)"', workbook),
+        "full-calc-on-load": re.search(r'<calcPr [^>]*fullCalcOnLoad="(1|true)"', workbook),
+        "calc-chain": "xl/calcChain.xml" in names,
+        "formulas": re.search(r"<f[ >/]", sheets),
+        "volatile-formula": any(re.search(r"\b(TODAY|NOW|RAND|RANDBETWEEN|OFFSET|INDIRECT)\(", f) for f in formulas),
+        "calc-always": re.search(r'<f [^>]*\bca="(1|true)"', sheets),
+        "shared-formula": re.search(r'<f [^>]*t="shared"', sheets),
+        "array-formula": re.search(r'<f [^>]*t="array"', sheets),
+        "dynamic-array": re.search(r'<c [^>]*\bcm="\d+"', sheets) or "xl/metadata.xml" in names,
+        "cross-sheet-reference": any("!" in formula for formula in formulas),
+        "error-values": re.search(r'<c [^>]*t="e"', sheets),
+        "booleans": re.search(r'<c [^>]*t="b"', sheets),
+        "formula-strings": re.search(r'<c [^>]*t="str"', sheets),
+        "inline-strings": 't="inlineStr"' in sheets,
+        "rich-text": "<r>" in strings or "<is><r>" in sheets,
+        "long-text": any(len(part) > 255 for part in re.findall(r"<t(?: [^>]*)?>([^<]*)", strings)),
+        "cjk": CJK.search(text),
+        "rtl": re.search(r'readingOrder="2"', styles) or re.search(r'<sheetView [^>]*rightToLeft="(1|true)"', sheets),
+        "merged-cells": "<mergeCell " in sheets,
+        "defined-names": any(not name.startswith("_xlnm.") for name in names_of_workbook),
+        "scoped-name": any("localSheetId=" in tag and 'name="_xlnm.' not in tag for tag in re.findall(r"<definedName [^>]*>", workbook)),
+        "table": any(re.match(r"xl/tables/table\d+\.xml$", name) for name in names),
+        "calculated-column": "<calculatedColumnFormula" in tables,
+        "data-validation": "<dataValidation " in sheets,
+        "conditional-format": "<conditionalFormatting" in sheets,
+        "color-scale": "<colorScale" in sheets,
+        "data-bar": "<dataBar" in sheets,
+        "extensions": "<extLst" in sheets,
+        "frozen-panes": re.search(r'<pane [^>]*state="frozen"', sheets),
+        "auto-filter": "<autoFilter" in sheets,
+        "filtered": "<filterColumn" in sheets,
+        "hidden-column": re.search(r'<col [^>]*hidden="(1|true)"', sheets),
+        "hidden-row": re.search(r'<row [^>]*hidden="(1|true)"', sheets),
+        "column-widths": re.search(r'<col [^>]*customWidth="(1|true)"', sheets),
+        "row-heights": sized_rows,
+        "print-setup": landscape
+        or scaled
+        or re.search(r'<pageSetUpPr [^>]*fitToPage="(1|true)"', sheets)
+        or re.search(r"_xlnm\.Print_(Area|Titles)", workbook)
+        or re.search(r"<(odd|even|first)(Header|Footer)>[^<]", sheets),
+        "header-footer": re.search(r"<(odd|even|first)(Header|Footer)>[^<]", sheets),
+        "notes": notes,
+        "threaded-comments": re.search(r"<(?:\w+:)?threadedComment ", _xml(package, "xl/threadedComments/")),
+        "comment-reply": "parentId=" in _xml(package, "xl/threadedComments/"),
+        "resolved-comment": re.search(r'<(?:\w+:)?threadedComment [^>]*done="1"', _xml(package, "xl/threadedComments/")),
+        "persons": person_list,
+        "hyperlink": "<hyperlink " in sheets,
+        "internal-link": re.search(r"<hyperlink [^>]*location=", sheets),
+        "picture": re.search(r"<(\w+:)?pic[ >]", drawings),
+        "chart": any(re.match(r"xl/charts/chart\d+\.xml$", name) for name in names),
+        "number-formats": "<numFmt " in styles,
+        "fonts": styles.count("<font>") + styles.count("<font ") > 1,
+        "fills": styles.count("<fill>") > 2,
+        "borders": re.search(r'<(left|right|top|bottom) style="', styles),
+        "alignment": re.search(
+            r'<alignment [^>]*(wrapText="(1|true)"|horizontal="(?!general")|vertical="(?!bottom")|indent="[1-9]'
+            r'|textRotation="(?!0")|shrinkToFit="(1|true)")',
+            cell_formats,
+        ),
+    }
+    return [name for name, present in found.items() if present]
+
+
+FEATURES = {".docx": docx_features, ".pptx": pptx_features, ".xlsx": xlsx_features}
+
+
 def features(path: Path) -> list[str]:
     with zipfile.ZipFile(path) as package:
-        return docx_features(package) if path.suffix == ".docx" else pptx_features(package)
+        return FEATURES[path.suffix](package)
 
 
 def current() -> dict[str, dict]:
@@ -242,7 +355,8 @@ def entries(versions: dict[tuple[str, str], str] | None = None, since: float = 0
         folder = relative.split("/")[0]
         previous = old.get(relative, {})
         fresh = path.stat().st_mtime >= since
-        producer = (versions.get((folder, path.suffix[1:])) if fresh else None) or previous.get("producer")
+        key = (folder, path.suffix[1:])
+        producer = (versions.get(key) if fresh else None) or previous.get("producer") or DEFAULT_PRODUCERS.get(key)
         if not producer:
             sys.exit(f"{relative}: no producer version, run the producer that wrote it")
         entry = {"path": relative, "producer": producer, "size": path.stat().st_size, "features": features(path)}

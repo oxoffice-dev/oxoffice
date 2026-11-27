@@ -73,6 +73,7 @@ impl Document {
             body_namespace_declarations: self.body_namespace_declarations.clone(),
             body_namespace_bindings: self.body_namespace_bindings.clone(),
             plain_local_edit_blocked: self.plain_local_edit_blocked,
+            tracking: self.tracking.clone(),
             local_cell_source: self.local_cell_source.clone(),
             parsed: self.parsed.clone(),
             main_body_scans: Arc::clone(&self.main_body_scans),

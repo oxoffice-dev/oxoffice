@@ -91,7 +91,7 @@ pub(super) fn render_word_chart(
     };
     let rendered = match input.charts.get(relationship_id) {
         Some(Ok(chart)) => oxoffice_chart::render_chart(
-            &chart.chart,
+            chart,
             bounds,
             &input.chart_theme,
             &input.chart_color_map,

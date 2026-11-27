@@ -872,7 +872,7 @@ fn spliced_table(
     // The detached body holds this table as its only item.
     let table_location = {
         let mut items = snapshots
-            .0
+            .items
             .iter()
             .filter(|item| item.location().story().kind() == oxoffice_docx::StoryKind::Body);
         let item = items.next()?;
@@ -886,11 +886,11 @@ fn spliced_table(
     };
     let piece_facts = word_table_facts(&xml).and_then(|rows| {
         let mut facts = WordOwnerFacts {
-            cells: snapshots.1.clone(),
+            cells: snapshots.cells.clone(),
             ..WordOwnerFacts::default()
         };
         facts.items.push((table_location.clone(), Some(0), rows));
-        for (location, paragraph_xml) in &snapshots.2 {
+        for (location, paragraph_xml) in &snapshots.paragraphs {
             let paragraph = oxoffice_docx_oxml::CT_P::from_xml_fragment(paragraph_xml).ok()?;
             facts.paragraphs.push((
                 location.clone(),

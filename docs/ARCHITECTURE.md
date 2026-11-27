@@ -21,6 +21,7 @@ crates/
   oxoffice-layout        layout output types, font manager, 33 bundled
                          fonts, line breaking and shaping
   oxoffice-pdf           PDF writer and the tiny-skia rasteriser (PNG)
+  oxoffice-numfmt        number format codes to the text Excel displays
   oxoffice-chart         ChartML model and renderer, for Word and PowerPoint
   oxoffice-sml           minimal SpreadsheetML writer for chart workbooks
   oxoffice-cli-support   shared CLI pieces: ranges, JSON output, paths
@@ -114,6 +115,16 @@ empty boxes and named by a diagnostic with the way out of its family.
 The Rust facades are the reference. The CLI crates and the Python crates are
 thin layers over them: a feature lands in the facade first, then reaches the
 CLI where it makes sense and Python everywhere.
+
+Word edits written as tracked changes go through `Document::track_changes`,
+which returns a `TrackedDocument` holding the document mutably, so nothing
+else can edit it while the session lives. Each of its calls makes the edit as
+the untracked call would, then the redliner (`document/redline.rs`) compares
+each paragraph the edit changed with the paragraph before it, word by word,
+and writes the difference as `w:ins` and `w:del` of the session's author;
+resolving the result both ways must give the edit and the paragraph before it,
+or the edit is refused. Revision ids come from the identifier registry, which
+reads every tracked change and move range at open.
 
 ## Model conventions
 
