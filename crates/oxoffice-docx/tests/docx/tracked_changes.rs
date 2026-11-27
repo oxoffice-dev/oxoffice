@@ -178,6 +178,14 @@ fn run_text(doc: &mut Document, index: usize, text: &'static str) {
 }
 
 type Tracked = fn(&mut TrackedDocument<'_>);
+
+/// The session's revisions of a run made bold, then text typed inside it:
+/// the formatting change on each part of the run, the insertion between.
+const REVISIONS_FORMAT_THEN_INSERT: &[(RevisionKind, &str)] = &[
+    (RevisionKind::RunPropertyChange, "Plain "),
+    (RevisionKind::Insertion, "new "),
+    (RevisionKind::RunPropertyChange, "words."),
+];
 type Untracked = fn(&mut Document);
 
 struct Row {
@@ -191,8 +199,8 @@ struct Row {
     reject_own: bool,
     /// Whether the word comparison of the original with the untracked edit
     /// writes other changes: a replacement deletes the whole match where the
-    /// comparison keeps the words a value repeats, and text that took other
-    /// formatting is deleted and inserted where it writes a formatting change.
+    /// comparison keeps the words a value repeats, and a property change is
+    /// written per run element where the comparison writes its own runs.
     unlike_compare: bool,
 }
 
@@ -506,6 +514,55 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             revisions: &[(RevisionKind::RunPropertyChange, "Bold words")],
             // Rejecting the one change brings back the run before Ann's.
             reject_own: false,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a run made bold, then text typed inside it, one id per element",
+            document: || doc_with_body(&paragraph(&run("Plain words."))),
+            tracked: |doc| {
+                doc.edit_body_paragraph(0, |p| {
+                    p.run_mut(0).unwrap().set_bold(true);
+                    Ok(())
+                })
+                .unwrap();
+                doc.edit_body_paragraph(0, |p| {
+                    p.run_mut(0).unwrap().set_text("Plain new words.");
+                    Ok(())
+                })
+                .unwrap();
+            },
+            untracked: |doc| {
+                let mut p = doc.paragraph_mut(0).unwrap();
+                p.run_mut(0).unwrap().set_bold(true);
+                p.run_mut(0).unwrap().set_text("Plain new words.");
+            },
+            revisions: REVISIONS_FORMAT_THEN_INSERT,
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "text typed inside a run another author made bold",
+            document: || {
+                doc_with_body(&paragraph(
+                    r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="1" w:author="Ann" w:date="2026-11-20T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>Plain words.</w:t></w:r>"#,
+                ))
+            },
+            tracked: |doc| {
+                doc.edit_body_paragraph(0, |p| {
+                    p.run_mut(0).unwrap().set_text("Plain new words.");
+                    Ok(())
+                })
+                .unwrap()
+            },
+            untracked: |doc| {
+                doc.paragraph_mut(0)
+                    .unwrap()
+                    .run_mut(0)
+                    .unwrap()
+                    .set_text("Plain new words.")
+            },
+            revisions: &[(RevisionKind::Insertion, "new ")],
+            reject_own: true,
             unlike_compare: true,
         },
         Row {
@@ -1143,6 +1200,17 @@ fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
         Ok(())
     };
     let rows: Vec<(&str, Document, Edit, &str)> = vec![
+        (
+            "the paragraph mark made bold",
+            body(&run("Plain words.")),
+            |doc| {
+                doc.edit_body_paragraph(0, |p| {
+                    p.mark().set_bold(true);
+                    Ok(())
+                })
+            },
+            "a change of the paragraph mark's formatting or its section",
+        ),
         (
             "a field removed",
             body(&(run("Page ") + field)),

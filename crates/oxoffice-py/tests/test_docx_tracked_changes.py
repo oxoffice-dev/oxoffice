@@ -1,9 +1,10 @@
-"""docx: a tracked changes session (Document.track_changes) writes the text edits it records as tracked changes, runs
-the edits Word records no revision for as without a session, and refuses every other edit, the document left as it
-was. The class table below names the calls a session tracks or leaves untracked; every other mutating call of the
+"""docx: a tracked changes session (Document.track_changes) writes the text and property edits it records as tracked
+changes, runs the edits Word records no revision for as without a session, and refuses every other edit, the document
+left as it was. The class table below names the calls a session tracks or leaves untracked; every other mutating call of the
 scaling registry (test_docx_scaling.TIMED and WHOLE_DOCUMENT) is refused, so that a call added to the API is refused
 until a class names it, and test_every_call_behaves_as_its_class runs each one under a session."""
 import datetime
+import re
 import zipfile
 from pathlib import Path
 
@@ -116,9 +117,12 @@ def view(data, resolve=None, xml=False):
     doc = oxdocx.Document.from_bytes(data)
     if resolve:
         getattr(doc, resolve)()
-    # The redline writes every text it rewrites with xml:space="preserve", which changes nothing it reads.
-    marks = [p.xml.replace(' xml:space="preserve"', "") for p in doc.paragraphs] if xml else []
-    return [(p.kind, p.text) for p in doc.story_paragraphs] + marks
+    # The redline writes every text it rewrites with xml:space="preserve", which changes nothing it reads, and
+    # Run.style_id's recipe names a new style for each document it makes ready.
+    marks = [re.sub(r"Probestyle\d+", "Probestyle", p.xml.replace(' xml:space="preserve"', ""))
+             for p in doc.paragraphs] if xml else []
+    # Every story's paragraphs by their text and style; the XML is read for the body, which the recipes format.
+    return [(p.kind, p.text, p.style) for p in doc.story_paragraphs] + marks
 
 
 def ready(doc, name):
@@ -162,8 +166,7 @@ def test_every_call_behaves_as_its_class(saved, name):
     assert {r.author for r in doc.revisions if r.id in session.revision_ids} == {AUTHOR}
     twin = oxdocx.Document.open(saved)
     ready(twin, name)()
-    # Run.style_id's recipe names a new style for each document it makes ready.
-    xml = kind(name) == "formatting" and name != "Run.style_id"
+    xml = kind(name) == "formatting"
     assert view(after, "accept_all", xml) == view(twin.to_bytes(), "accept_all", xml)
     assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
 
