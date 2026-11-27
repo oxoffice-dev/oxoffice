@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 
+use oxoffice_core::xml_reader::NsReader;
 use quick_xml::XmlVersion;
 use quick_xml::events::Event;
-use quick_xml::reader::NsReader;
 
 use super::{
     ContentLocation, Document, StoryId, StoryItemKind, StoryKind, StoryNamespace,

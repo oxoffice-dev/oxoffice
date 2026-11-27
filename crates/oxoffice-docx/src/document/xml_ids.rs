@@ -5,7 +5,7 @@ use super::*;
 /// Every attribute value of an XML part. A relationship named by `r:embed`,
 /// `r:id`, `o:relid` or any other producer attribute counts as referenced.
 pub(super) fn xml_attribute_values(xml: &[u8]) -> Result<HashSet<String>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut values = HashSet::new();
     loop {

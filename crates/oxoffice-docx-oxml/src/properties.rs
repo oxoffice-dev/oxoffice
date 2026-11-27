@@ -1,11 +1,11 @@
 //! Paragraph properties (`CT_PPr`) and run properties (`CT_RPr`).
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
-use crate::run_properties::language_element_is_explicitly_empty;
 use crate::shared::ST_OnOff;
 
 pub use crate::paragraph_properties::{CT_FramePr, CT_PPr};
@@ -367,10 +367,6 @@ pub(crate) fn remove_redundant_modeled_toggle_candidate(
     }
 }
 
-pub(crate) fn toggle_element_is_explicitly_empty(xml: &[u8]) -> Result<bool> {
-    language_element_is_explicitly_empty(xml)
-}
-
 pub(crate) fn toggle_has_unsupported_attributes(
     element: &BytesStart<'_>,
     word_prefixes: &[String],
@@ -406,15 +402,16 @@ pub(crate) fn modeled_toggle_attributes<'a>(
             continue;
         }
         let mut reader = Reader::from_reader(raw.as_slice());
-        let (source, close) = match reader.read_event()? {
-            Event::Start(source) => (source, 1),
-            Event::Empty(source) => (source, 2),
+        let source = match reader.read_event()? {
+            Event::Start(source) | Event::Empty(source) => source,
             _ => continue,
         };
         let prefixes = carrier_word_prefixes(&source)?;
-        // Actual reader positions select the borrowed physical header. The
-        // UTF8 probe selects borrowing only, it never refuses a legacy input.
-        let end = reader.buffer_position() as usize - close;
+        // The start tag as written selects the borrowed physical header: a
+        // carrier written `<x></x>` reads as one empty event, the reader past
+        // its end tag. The UTF8 probe selects borrowing only, it never
+        // refuses a legacy input.
+        let end = oxoffice_core::xml_element::start_tag(raw.as_slice())?.attributes_end;
         let header = &raw[end - source.as_ref().len()..end];
         if let Ok(header) = std::str::from_utf8(header) {
             for attribute in
@@ -869,7 +866,7 @@ pub fn protected_source_residual(
         "rdocxResidual",
     )))?;
     let source = writer.into_inner();
-    let mut reader = quick_xml::NsReader::from_reader(source.as_slice());
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(source.as_slice());
     reader.config_mut().trim_text(false);
     let mut nodes = Vec::<ResidualNode>::new();
     // The prefixes each node's subtree names: the only bindings of its scope

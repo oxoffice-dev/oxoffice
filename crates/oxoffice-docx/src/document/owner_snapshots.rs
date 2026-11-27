@@ -652,7 +652,7 @@ impl Document {
             .map(|item| (item.0.start, item))
             .collect::<HashMap<_, _>>();
         let mut tables = Vec::with_capacity(by_start.len());
-        let mut reader = quick_xml::Reader::from_reader(source.xml.as_ref());
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source.xml.as_ref());
         let mut buffer = Vec::new();
         loop {
             let before = reader.buffer_position() as usize;
@@ -838,7 +838,7 @@ pub fn resolved_xml_events(xml: &[u8]) -> Result<Vec<Vec<u8>>> {
             String::from_utf8_lossy(&prefix)
         ))),
     };
-    let mut reader = quick_xml::NsReader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut events = Vec::new();

@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::io::Cursor;
 use std::sync::Arc;
 
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_opc::OpcPackage;
 use oxoffice_opc::embedded::{
     self as package_embedded, EmbeddedError, EmbeddedHost, OwnerReference, OwnerReferenceKind,
@@ -17,7 +18,6 @@ use oxoffice_pptx_oxml::slide_parts::{CT_Slide, CT_SlideLayout, CT_SlideMaster};
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
 
 use crate::{Error, Presentation, Result};
 

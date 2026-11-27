@@ -6,8 +6,9 @@ use std::collections::HashSet;
 use std::io::Write;
 
 use crate::error::{OxmlError, Result};
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::xml::{extra_namespace_declarations, local_name};
+use crate::xml_reader::EmptyWriting;
 use crate::xml_text::read_element_text;
 
 const EXTENDED_PROPERTIES_NS: &str =
@@ -249,7 +250,9 @@ impl AppProperties {
                         properties.child_order.push(ChildOrder::Known(property));
                     } else {
                         let index = properties.extra_xml.len();
-                        properties.extra_xml.push(capture_empty_element(element)?);
+                        properties
+                            .extra_xml
+                            .push(capture_empty(element, EmptyWriting::SelfClosed)?);
                         properties.child_order.push(ChildOrder::Raw(index));
                     }
                 }

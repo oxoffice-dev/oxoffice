@@ -324,6 +324,98 @@ impl CT_P {
                 .iter()
                 .any(|(_, namespace)| namespace == crate::namespace::W_NS);
 
+        // A run read whole, or written with nothing inside (`<w:r/>`,
+        // `<w:r></w:r>`): `$raw` and `$mapped` are its source.
+        macro_rules! read_run {
+            ($raw:expr, $mapped:expr, $prefixes:expr, $recovered:expr) => {{
+                let raw: Vec<u8> = $raw;
+                let mapped = $mapped;
+                let prefixes = $prefixes;
+                let recovered: bool = $recovered;
+                // A run holding a phonetic guide, as Word writes it,
+                // reads as the guide: its base runs are the
+                // paragraph's, as for a `w:ruby` read in `w:p`.
+                let mut base_texts = Vec::new();
+                let ruby = if recovered {
+                    None
+                } else {
+                    CT_Ruby::from_run(
+                        &raw,
+                        &prefixes,
+                        text_facts.as_ref().map(|_| &mut base_texts),
+                    )?
+                };
+                if let Some((mut ruby, base_runs)) = ruby {
+                    if let Some(maps) = &mut projection_maps
+                        && maps.text_facts_enabled
+                    {
+                        maps.texts.extend(base_texts);
+                    }
+                    ruby.base_start = runs.len();
+                    ruby.base_end = runs.len() + base_runs.len();
+                    projected_run_count += base_runs.len();
+                    tracked_run_count += base_runs.len();
+                    run_sources.extend(base_runs.iter().map(|_| None));
+                    if let Some(facts) = source_facts.as_deref_mut() {
+                        // A tracked insertion's content holds the
+                        // base runs: they are what it adds.
+                        for (index, base) in base_runs.iter().enumerate() {
+                            facts.push_run(base, if index == 0 { &raw } else { &[] })?;
+                        }
+                    }
+                    runs.extend(base_runs);
+                    rubies.push(ruby);
+                } else {
+                    let mut parsed_texts = Vec::new();
+                    let mut property_fact = None;
+                    runs.push(parse_run_raw_with_observation(
+                        &raw,
+                        &prefixes,
+                        text_facts.as_ref().map(|_| &mut parsed_texts),
+                        mapped.as_ref(),
+                        ordinary.as_ref().map(|_| &mut property_fact),
+                    )?);
+                    if let Some(maps) = &mut projection_maps {
+                        let run_map = mapped
+                            .as_ref()
+                            .map(|input| Arc::new(input.projection_parts().0.clone()));
+                        maps.runs.resize_with(runs.len() - 1, || None);
+                        maps.runs.push(run_map.clone());
+                        if maps.collect_properties {
+                            maps.ordinary_runs.resize_with(runs.len() - 1, || None);
+                            maps.ordinary_runs.push(property_fact);
+                        }
+                        if maps.text_facts_enabled {
+                            // This is the successful actual run push,
+                            // including recovered and empty Started runs.
+                            maps.texts.resize_with(runs.len() - 1, || None);
+                            maps.texts
+                                .push(run_map.map(|source_map| ParsedWordRunTexts {
+                                    source: 0..raw.len(),
+                                    source_map: Some(source_map),
+                                    texts: parsed_texts,
+                                }));
+                        }
+                    }
+                    if let Some(facts) = source_facts.as_deref_mut() {
+                        facts.push_run(runs.last().expect("just parsed physical run"), &raw)?;
+                    }
+                    run_sources.push(Some(raw));
+                    projected_run_count += 1;
+                    tracked_run_count += 1;
+                    // Preserve the legacy recovery branch's existing
+                    // projection-boundary policy exactly.
+                    if !recovered {
+                        run_projection_ends.push((
+                            runs.len() - 1,
+                            projected_run_count,
+                            tracked_run_count,
+                        ));
+                    }
+                }
+            }};
+        }
+
         loop {
             let event_start = reader.buffer_position();
             let before = [
@@ -374,90 +466,7 @@ impl CT_P {
                         } else {
                             (capture_element(reader, e)?, None)
                         };
-                        // A run holding a phonetic guide, as Word writes it,
-                        // reads as the guide: its base runs are the
-                        // paragraph's, as for a `w:ruby` read in `w:p`.
-                        let mut base_texts = Vec::new();
-                        let ruby = if recovered {
-                            None
-                        } else {
-                            CT_Ruby::from_run(
-                                &raw,
-                                &prefixes,
-                                text_facts.as_ref().map(|_| &mut base_texts),
-                            )?
-                        };
-                        if let Some((mut ruby, base_runs)) = ruby {
-                            if let Some(maps) = &mut projection_maps
-                                && maps.text_facts_enabled
-                            {
-                                maps.texts.extend(base_texts);
-                            }
-                            ruby.base_start = runs.len();
-                            ruby.base_end = runs.len() + base_runs.len();
-                            projected_run_count += base_runs.len();
-                            tracked_run_count += base_runs.len();
-                            run_sources.extend(base_runs.iter().map(|_| None));
-                            if let Some(facts) = source_facts.as_deref_mut() {
-                                // A tracked insertion's content holds the
-                                // base runs: they are what it adds.
-                                for (index, base) in base_runs.iter().enumerate() {
-                                    facts.push_run(base, if index == 0 { &raw } else { &[] })?;
-                                }
-                            }
-                            runs.extend(base_runs);
-                            rubies.push(ruby);
-                        } else {
-                            let mut parsed_texts = Vec::new();
-                            let mut property_fact = None;
-                            runs.push(parse_run_raw_with_observation(
-                                &raw,
-                                &prefixes,
-                                text_facts.as_ref().map(|_| &mut parsed_texts),
-                                mapped.as_ref(),
-                                ordinary.as_ref().map(|_| &mut property_fact),
-                            )?);
-                            if let Some(maps) = &mut projection_maps {
-                                let run_map = mapped
-                                    .as_ref()
-                                    .map(|input| Arc::new(input.projection_parts().0.clone()));
-                                maps.runs.resize_with(runs.len() - 1, || None);
-                                maps.runs.push(run_map.clone());
-                                if maps.collect_properties {
-                                    maps.ordinary_runs.resize_with(runs.len() - 1, || None);
-                                    maps.ordinary_runs.push(property_fact);
-                                }
-                                if maps.text_facts_enabled {
-                                    // This is the successful actual run push,
-                                    // including recovered and empty Started runs.
-                                    maps.texts.resize_with(runs.len() - 1, || None);
-                                    maps.texts
-                                        .push(run_map.map(|source_map| ParsedWordRunTexts {
-                                            source: 0..raw.len(),
-                                            source_map: Some(source_map),
-                                            texts: parsed_texts,
-                                        }));
-                                }
-                            }
-                            if let Some(facts) = source_facts.as_deref_mut() {
-                                facts.push_run(
-                                    runs.last().expect("just parsed physical run"),
-                                    &raw,
-                                )?;
-                            }
-                            run_sources.push(Some(raw));
-                            projected_run_count += 1;
-                            tracked_run_count += 1;
-                            // Preserve the legacy recovery branch's existing
-                            // projection-boundary policy exactly.
-                            if !recovered {
-                                run_projection_ends.push((
-                                    runs.len() - 1,
-                                    projected_run_count,
-                                    tracked_run_count,
-                                ));
-                            }
-                        }
+                        read_run!(raw, mapped, prefixes, recovered);
                     } else if is_word_element(name.as_ref(), b"sdt", &prefixes) {
                         let (raw, captured_map) = if ordinary.is_some() {
                             if let Some(cursor) = control_facts.as_deref() {
@@ -819,9 +828,22 @@ impl CT_P {
                     let name = e.name();
                     let prefixes = word_prefixes_at(e, word_prefixes)?;
                     if is_word_element(name.as_ref(), b"pPr", &prefixes)
-                        && e.attributes().next().is_none()
+                        && e.attributes().all(|attribute| {
+                            attribute.is_ok_and(|attribute| {
+                                attribute.key.as_namespace_binding().is_some()
+                            })
+                        })
                     {
+                        // Properties holding nothing, in either writing; one
+                        // with another attribute stays raw.
                         properties.get_or_insert_default();
+                    } else if is_word_element(name.as_ref(), b"r", &prefixes) {
+                        // A run with nothing inside is a run, as `<w:r></w:r>` was.
+                        let raw = capture_empty(e, reader.empty_writing())?;
+                        let mapped = control_facts.as_deref().and_then(|facts| {
+                            facts.field_input(reader, event_start..reader.buffer_position(), &raw)
+                        });
+                        read_run!(raw, mapped, prefixes, false);
                     } else if is_word_element(name.as_ref(), b"commentRangeStart", &prefixes)
                         || is_word_element(name.as_ref(), b"commentRangeEnd", &prefixes)
                     {
@@ -836,7 +858,7 @@ impl CT_P {
                         );
                         comment_sources.push((
                             comment_ranges.last().expect("captured marker").clone(),
-                            capture_empty_element(e)?,
+                            capture_empty(e, reader.empty_writing())?,
                         ));
                     } else if is_word_element(name.as_ref(), b"bookmarkStart", &prefixes)
                         || is_word_element(name.as_ref(), b"bookmarkEnd", &prefixes)
@@ -856,9 +878,9 @@ impl CT_P {
                             word_prefixes: prefixes.to_vec(),
                             has_child_content: false,
                         });
-                        extra_xml.push((runs.len(), capture_empty_element(e)?));
+                        extra_xml.push((runs.len(), capture_empty(e, reader.empty_writing())?));
                     } else if is_word_element(name.as_ref(), b"fldSimple", &prefixes) {
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         let mapped = control_facts.as_deref().and_then(|facts| {
                             facts.field_input(reader, event_start..reader.buffer_position(), &raw)
                         });
@@ -882,7 +904,7 @@ impl CT_P {
                         }
                     } else if !matches_local_name(name.as_ref(), b"p") {
                         let raw_before = raw_xml_count_at(&extra_xml, runs.len());
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         if (is_word_element(name.as_ref(), b"ins", &prefixes)
                             || is_word_element(name.as_ref(), b"del", &prefixes)
                             || is_word_element(name.as_ref(), b"moveFrom", &prefixes)

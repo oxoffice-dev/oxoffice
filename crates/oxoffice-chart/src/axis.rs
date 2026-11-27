@@ -414,7 +414,7 @@ impl Axis {
                 }
                 Event::Empty(element) => {
                     let name = chart_child_local(&element, &namespaces)?;
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     state.parse_child(name.as_deref().unwrap_or_default(), raw, &namespaces)?;
                 }
                 event @ (Event::Text(_)
@@ -816,7 +816,7 @@ impl Scaling {
                             }
                             Event::Empty(child) => {
                                 let name = chart_child_local(&child, &namespaces)?;
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 parse_scaling_child(
                                     name.as_deref().unwrap_or_default(),
                                     raw,
@@ -1036,7 +1036,7 @@ impl ChartLines {
                             }
                             Event::Empty(child) => {
                                 let name = chart_child_local(&child, &namespaces)?;
-                                let raw = capture_empty_element(&child)?;
+                                let raw = capture_empty(&child, reader.empty_writing())?;
                                 if name.as_deref() == Some(b"spPr") {
                                     parse_chart_shape_properties(&raw, &namespaces, &mut sp_pr)?;
                                     boundary = 1;

@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use oxoffice_core::xml::is_xml_1_0_character;
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_docx_oxml::math::{
     FractionType, MathAccent, MathArgument, MathBar, MathBorderBox, MathDelimiter,
     MathEquationArray, MathExpression, MathFraction, MathFunction, MathGroupCharacter, MathLimit,
@@ -13,7 +14,6 @@ use oxoffice_docx_oxml::math::{
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
-use quick_xml::reader::NsReader;
 
 use crate::{Error, Result};
 

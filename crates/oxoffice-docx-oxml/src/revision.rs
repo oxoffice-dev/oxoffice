@@ -2,15 +2,16 @@
 
 use std::sync::Arc;
 
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::XmlVersion;
 use quick_xml::events::Event;
-use quick_xml::{Reader, XmlVersion};
 
 use crate::content_control::{CT_Sdt, SdtContent};
 use crate::document::{BodyContent, CT_Document, CT_SectPr};
 use crate::namespace::W_NS;
 use crate::numbering::{parse_scoped_ppr, parse_scoped_rpr, word_prefixes_at};
 use crate::properties::{CT_PPr, CT_RPr, is_word_element};
-use crate::raw_xml::capture_empty_element;
+use crate::raw_xml::capture_empty;
 use crate::table::{CT_Row, CT_Tbl, CT_TblPr, CT_Tc, CellContent};
 use crate::text::{AcceptedRunPath, AcceptedRunPathSegment, CT_P, CT_R, hyperlink_revision_index};
 
@@ -393,7 +394,7 @@ impl CT_Revision {
 /// unprefixed element, and those its markup-compatibility attributes name in
 /// their values; `None` when `raw` does not read as XML.
 fn raw_name_prefixes(raw: &[u8]) -> Option<std::collections::HashSet<String>> {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     let mut used = std::collections::HashSet::new();
     let mut buffer = Vec::new();
     loop {
@@ -2182,7 +2183,7 @@ fn parse_content(
                     true,
                 ) == RevisionContentAction::NestedRevision
                 {
-                    let raw = capture_empty_element(&start)?;
+                    let raw = capture_empty(&start, reader.empty_writing())?;
                     let mapped = cursor.and_then(|cursor| {
                         cursor.field_input(reader, event_start..reader.buffer_position(), &raw)
                     });
@@ -2291,7 +2292,7 @@ fn parse_run_content_container(
                     true,
                 ) == RevisionContentAction::NestedRevision
                 {
-                    let raw = capture_empty_element(&start)?;
+                    let raw = capture_empty(&start, reader.empty_writing())?;
                     let mapped = cursor.and_then(|cursor| {
                         cursor.field_input(reader, event_start..reader.buffer_position(), &raw)
                     });

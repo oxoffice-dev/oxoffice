@@ -1,11 +1,12 @@
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element};
+use oxoffice_core::raw_xml::{capture_element, capture_empty};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::namespace::{
     FIXED_SHAPE_TREE_PREFIXES, MC_NS, NamespaceBindings, P_NS, R_NS, all_attributes,
@@ -165,7 +166,9 @@ impl CT_Placeholder {
         loop {
             match reader.read_event_into(&mut buffer)? {
                 Event::Start(child) => raw_children.push(capture_element(reader, &child)?),
-                Event::Empty(child) => raw_children.push(capture_empty_element(&child)?),
+                Event::Empty(child) => {
+                    raw_children.push(capture_empty(&child, reader.empty_writing())?)
+                }
                 Event::End(end) if local_name(end.name().as_ref()) == b"ph" => break,
                 Event::Eof => return Err(OxmlError::MissingElement("closing p:ph".to_owned())),
                 _ => {}
@@ -333,7 +336,7 @@ pub(crate) fn parse_application_properties(
                             let is_placeholder =
                                 child_namespaces.element_uri(child.name().as_ref()) == Some(P_NS)
                                     && local_name(child.name().as_ref()) == b"ph";
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             capture_application_child(
                                 is_placeholder,
                                 raw,

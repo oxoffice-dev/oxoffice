@@ -1053,7 +1053,11 @@ pub(super) fn update_simple_field_source<'a>(
                         wrote_result = true;
                     } else {
                         if source_plan.is_none() {
-                            writer.write_event(Event::Empty(element))?;
+                            crate::raw_xml::write_empty(
+                                &mut writer,
+                                &element,
+                                reader.empty_writing(),
+                            )?;
                         }
                     }
                 } else if cached_changed
@@ -1072,7 +1076,7 @@ pub(super) fn update_simple_field_source<'a>(
                     }
                 } else {
                     if source_plan.is_none() {
-                        writer.write_event(Event::Empty(element))?;
+                        crate::raw_xml::write_empty(&mut writer, &element, reader.empty_writing())?;
                     }
                 }
             }
@@ -1236,7 +1240,7 @@ pub(super) fn update_complex_instruction_source(
                 {
                     let kind = optional_word_attribute(&element, b"fldCharType", &prefixes);
                     update_complex_phase(kind.as_deref(), &mut field_depth, &mut outer_result);
-                    writer.write_event(Event::Empty(element))?;
+                    crate::raw_xml::write_empty(&mut writer, &element, reader.empty_writing())?;
                 } else if direct_run_child
                     && field_depth == 1
                     && !outer_result
@@ -1251,7 +1255,7 @@ pub(super) fn update_complex_instruction_source(
                     )?;
                     wrote_instruction = true;
                 } else {
-                    writer.write_event(Event::Empty(element))?;
+                    crate::raw_xml::write_empty(&mut writer, &element, reader.empty_writing())?;
                 }
             }
             Event::End(element) => {
@@ -2031,7 +2035,7 @@ pub(super) fn update_complex_field_source(
                             wrote_result = true;
                         }
                     } else {
-                        writer.write_event(Event::Empty(element))?;
+                        crate::raw_xml::write_empty(&mut writer, &element, reader.empty_writing())?;
                     }
                 } else if direct_run_child
                     && cached_changed
@@ -2054,7 +2058,7 @@ pub(super) fn update_complex_field_source(
                         wrote_result = true;
                     }
                 } else {
-                    writer.write_event(Event::Empty(element))?;
+                    crate::raw_xml::write_empty(&mut writer, &element, reader.empty_writing())?;
                 }
             }
             Event::End(element) => {

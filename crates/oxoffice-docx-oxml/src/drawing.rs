@@ -1,9 +1,10 @@
 //! Drawing elements for inline and anchor images: `CT_Drawing`, `CT_Inline`, `CT_Anchor`.
 
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::name::{Namespace, PrefixDeclaration, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::Result;
 use crate::namespace::matches_local_name;
@@ -2122,7 +2123,7 @@ fn capture_ns_element(reader: &mut NsReader<&[u8]>, start: &BytesStart<'_>) -> R
                 }
             }
             Event::Empty(ref element) => {
-                writer.write_event(Event::Empty(element.to_owned()))?;
+                crate::raw_xml::write_empty(&mut writer, element, reader.empty_writing())?;
             }
             Event::Text(ref text) => {
                 writer.write_event(Event::Text(text.to_owned().into_owned()))?;

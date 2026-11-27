@@ -511,7 +511,7 @@ fn source_notes_matrix_property(
     reference: Option<&ColorChoice>,
     part: &str,
 ) -> Result<oxoffice_drawing::shape_props::CT_ShapeProperties> {
-    let mut reader = quick_xml::Reader::from_reader(theme_xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(theme_xml);
     let mut scopes = vec![Vec::<(String, String)>::new()];
     let mut roles = Vec::<String>::new();
     let mut selected = 0u32;
@@ -560,7 +560,7 @@ fn source_notes_matrix_property(
                     selected += 1;
                     if selected == index {
                         let raw = if empty {
-                            oxoffice_core::raw_xml::capture_empty_element(start)
+                            oxoffice_core::raw_xml::capture_empty(start, reader.empty_writing())
                         } else {
                             oxoffice_core::raw_xml::capture_element(&mut reader, start)
                         }
@@ -568,7 +568,8 @@ fn source_notes_matrix_property(
                         let raw = close_import_table_style(&raw, &scope)
                             .map_err(|error| footer_malformed(part, error.to_string()))?;
                         let children = if list == "effectStyleLst" {
-                            let mut elements = quick_xml::Reader::from_reader(raw.as_slice());
+                            let mut elements =
+                                oxoffice_core::xml_reader::Reader::from_reader(raw.as_slice());
                             let first = elements
                                 .read_event()
                                 .map_err(|error| footer_malformed(part, error.to_string()))?;
@@ -610,10 +611,13 @@ fn source_notes_matrix_property(
                                         )?,
                                     ),
                                     XmlEvent::Empty(child) => children.extend_from_slice(
-                                        &oxoffice_core::raw_xml::capture_empty_element(&child)
-                                            .map_err(|error| {
-                                                footer_malformed(part, error.to_string())
-                                            })?,
+                                        &oxoffice_core::raw_xml::capture_empty(
+                                            &child,
+                                            reader.empty_writing(),
+                                        )
+                                        .map_err(
+                                            |error| footer_malformed(part, error.to_string()),
+                                        )?,
                                     ),
                                     XmlEvent::End(_) | XmlEvent::Eof => break,
                                     XmlEvent::Text(text)
@@ -733,11 +737,11 @@ fn substitute_notes_placeholder_color(
                     }
                 }
                 let raw = if empty {
-                    oxoffice_core::raw_xml::capture_empty_element(&start)
+                    oxoffice_core::raw_xml::capture_empty(&start, reader.empty_writing())
                 } else {
                     // NsReader exposes the same slice reader to the owning colour parser.
                     let rest = &xml[begin..];
-                    let mut raw_reader = quick_xml::Reader::from_reader(rest);
+                    let mut raw_reader = oxoffice_core::xml_reader::Reader::from_reader(rest);
                     let XmlEvent::Start(root) = raw_reader
                         .read_event()
                         .map_err(|error| footer_malformed(part, error.to_string()))?
@@ -747,7 +751,8 @@ fn substitute_notes_placeholder_color(
                     oxoffice_core::raw_xml::capture_element(&mut raw_reader, &root)
                 }
                 .map_err(|error| footer_malformed(part, error.to_string()))?;
-                let mut color_reader = quick_xml::Reader::from_reader(raw.as_slice());
+                let mut color_reader =
+                    oxoffice_core::xml_reader::Reader::from_reader(raw.as_slice());
                 let source = match color_reader
                     .read_event()
                     .map_err(|error| footer_malformed(part, error.to_string()))?
@@ -861,7 +866,8 @@ fn materialize_source_notes_styles(
                         let raw = parent
                             .to_xml()
                             .map_err(|error| footer_malformed(part, error.to_string()))?;
-                        let mut owned = quick_xml::Reader::from_reader(raw.as_slice());
+                        let mut owned =
+                            oxoffice_core::xml_reader::Reader::from_reader(raw.as_slice());
                         let root = match owned
                             .read_event()
                             .map_err(|error| footer_malformed(part, error.to_string()))?
@@ -906,7 +912,8 @@ fn materialize_source_notes_styles(
                         let local_xml = local
                             .to_xml()
                             .map_err(|error| footer_malformed(part, error.to_string()))?;
-                        let mut local_reader = quick_xml::Reader::from_reader(local_xml.as_slice());
+                        let mut local_reader =
+                            oxoffice_core::xml_reader::Reader::from_reader(local_xml.as_slice());
                         let (mut local_start, empty) = match local_reader
                             .read_event()
                             .map_err(|error| footer_malformed(part, error.to_string()))?

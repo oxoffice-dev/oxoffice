@@ -7,8 +7,9 @@
 //! what makes a `w:divId` reference checkable without opening HTML division
 //! authoring.
 
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::W_NS;

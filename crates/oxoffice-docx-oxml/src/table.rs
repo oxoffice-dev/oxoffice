@@ -1,8 +1,9 @@
 //! Table elements: `CT_Tbl`, `CT_Row`, `CT_Tc` and related types.
 
 use crate::text::XmlWriteRole;
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::borders::CT_BorderEdge;
 use crate::content_control::{CT_Sdt, SdtContent, SdtOwner};
@@ -16,7 +17,7 @@ use crate::properties::{
     CT_Shd, UNIVERSAL_UNITS, get_word_val_attr, is_word_attribute, is_word_element,
     parse_integer_measurement, parse_twips_measure, parse_word_toggle, scaled_decimal,
 };
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::revision::{CT_Revision, RevisionKind};
 use crate::shared::ST_Jc;
 use crate::text::{
@@ -370,7 +371,7 @@ impl CT_TblBorders {
                         borders
                             .extra_xml
                             .push(crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 owner_bindings,
                             )?);
                     }
@@ -1213,7 +1214,7 @@ impl CT_TblPr {
                         pr.borders = Some(CT_TblBorders::empty_from_source());
                     } else if is_word_element(name.as_ref(), b"tblPrChange", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
@@ -1228,14 +1229,14 @@ impl CT_TblPr {
                     } else if matches_local_name(name.as_ref(), b"tblPrChange") {
                         pr.revision_xml
                             .push(crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 owner_bindings,
                             )?);
                     } else {
                         pr.extra_xml.push((
                             at,
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 owner_bindings,
                             )?,
                         ));
@@ -1535,7 +1536,7 @@ impl CT_TblGrid {
                     if is_word_element(e.name().as_ref(), b"gridCol", &prefixes) {
                         columns.push(Self::parse_grid_column(e, &prefixes)?);
                     } else {
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         extra_xml.push(crate::text::raw_with_external_bindings(
                             &raw,
                             &preserved_table_raw_bindings(&prefixes),
@@ -1846,7 +1847,7 @@ impl CT_TrPr {
                         && let Some(val) = cnf_style_from_booleans(e, &prefixes)?
                     {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         pr.cnf_style_xml = Some((val.clone(), raw));
@@ -1857,7 +1858,7 @@ impl CT_TrPr {
                         || is_word_element(name.as_ref(), b"del", &prefixes)
                     {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
@@ -1868,7 +1869,7 @@ impl CT_TrPr {
                         }
                     } else {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         pr.moved_away |= is_word_element(name.as_ref(), b"moveFrom", &prefixes)
@@ -2217,7 +2218,7 @@ fn read_row_height(e: &BytesStart<'_>, prefixes: &[String], pr: &mut CT_TrPr) ->
 /// attributes or content. Retained XML keeps the prefixes of its part, so a
 /// `w` prefix it does not bind itself is the part's Word prefix.
 fn is_bare_row_height(raw: &[u8]) -> bool {
-    let mut reader = quick_xml::NsReader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(raw);
     let Ok((namespace, Event::Empty(root))) = reader.read_resolved_event() else {
         return false;
     };
@@ -2472,7 +2473,7 @@ impl CT_TcPr {
                         && let Some(val) = cnf_style_from_booleans(e, &prefixes)?
                     {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?;
                         pr.cnf_style_xml = Some((val.clone(), raw));
@@ -2482,7 +2483,7 @@ impl CT_TcPr {
                         pr.extra_xml.push((
                             at,
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 owner_bindings,
                             )?,
                         ));
@@ -3163,7 +3164,7 @@ impl CT_Tc {
                         extra_xml.push((
                             content.len(),
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &raw_owner_bindings,
                             )?,
                         ));
@@ -3569,7 +3570,7 @@ impl CT_Row {
                         && table_property_exception.is_none()
                     {
                         table_property_exception = Some(crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             owner_bindings,
                         )?);
                     } else if is_word_element(name.as_ref(), b"tc", &prefixes) {
@@ -3602,7 +3603,7 @@ impl CT_Row {
                         extra_xml.push((
                             cells.len(),
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 owner_bindings,
                             )?,
                         ));
@@ -4106,7 +4107,7 @@ impl CT_Tbl {
                     } else if is_word_element(name.as_ref(), b"tr", &prefixes) {
                         rows.push(CT_Row::from_empty_root(e, &prefixes)?);
                     } else if matches_local_name(name.as_ref(), b"tblGrid") {
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         let raw_bindings = merged_owner_bindings(
                             owner_bindings,
                             &preserved_table_raw_bindings(&prefixes),
@@ -4119,7 +4120,7 @@ impl CT_Tbl {
                         extra_xml.push((
                             rows.len(),
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &raw_owner_bindings,
                             )?,
                         ));

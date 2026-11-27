@@ -56,7 +56,7 @@ pub(super) fn parse_reference(
                         }
                         Event::Empty(child) => {
                             let name = chart_child_local(&child, &namespaces)?;
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             match name.as_deref().unwrap_or_default() {
                                 b"f" => {
                                     set_once(
@@ -188,7 +188,7 @@ fn parse_cache(
                         }
                         Event::Empty(child) => {
                             let name = chart_child_local(&child, &state.namespaces)?;
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             state.parse_child(name.as_deref().unwrap_or_default(), raw)?;
                         }
                         event @ (Event::Text(_)
@@ -375,7 +375,7 @@ fn parse_point(xml: &[u8], inherited: &NamespaceBindings) -> Result<(u32, String
                         }
                         Event::Empty(child) => {
                             let name = chart_child_local(&child, &namespaces)?;
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             if name.as_deref() == Some(b"v") {
                                 set_once(
                                     &mut value,
@@ -570,7 +570,7 @@ pub(super) fn parse_wrapper(
                         }
                         Event::Empty(child) => {
                             let name = chart_child_local(&child, &namespaces)?;
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             if let Some(name) =
                                 name.filter(|name| choices.contains(&name.as_slice()))
                             {

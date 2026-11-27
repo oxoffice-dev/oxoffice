@@ -2974,7 +2974,7 @@ fn toc_close_fragment_namespaces(
     fragment: &[u8],
     bindings: &BTreeMap<String, String>,
 ) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(fragment);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(fragment);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut depth = 0usize;

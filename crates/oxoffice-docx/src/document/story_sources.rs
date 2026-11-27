@@ -99,7 +99,8 @@ impl Document {
                 {
                     continue;
                 }
-                let mut reader = quick_xml::Reader::from_reader(&xml[owner.full.clone()]);
+                let mut reader =
+                    oxoffice_core::xml_reader::Reader::from_reader(&xml[owner.full.clone()]);
                 let mut buffer = Vec::new();
                 let start = match reader.read_event_into(&mut buffer).map_err(|error| {
                     Error::Other(format!("story owner start scan failed: {error}"))

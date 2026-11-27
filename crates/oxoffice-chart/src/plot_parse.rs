@@ -72,7 +72,7 @@ fn parse_remaining_plot(
                         }
                         Event::Empty(child) => {
                             let name = chart_child_local(&child, &namespaces)?;
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             parse_remaining_plot_child(
                                 local,
                                 name.as_deref().unwrap_or_default(),
@@ -412,7 +412,7 @@ fn parse_bar_plot(xml: &[u8], inherited: &NamespaceBindings) -> Result<(Plot, Pl
                         }
                         Event::Empty(child) => {
                             let name = chart_child_local(&child, &namespaces)?;
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             parse_bar_child(
                                 name.as_deref().unwrap_or_default(),
                                 raw,
@@ -627,7 +627,7 @@ fn parse_line_plot(xml: &[u8], inherited: &NamespaceBindings) -> Result<(Plot, P
                         }
                         Event::Empty(child) => {
                             let name = chart_child_local(&child, &namespaces)?;
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             parse_line_child(
                                 name.as_deref().unwrap_or_default(),
                                 raw,

@@ -2,14 +2,15 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{
-    capture_element, capture_empty_element, capture_event, emit_raw, push_attributes,
+    capture_element, capture_empty, capture_event, emit_raw, push_attributes,
 };
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::color::ColorMap;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::text::CT_TextListStyle;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::namespace::{FIXED_MODEL_PREFIXES, NamespaceBindings, P_NS, R_NS, root_attributes};
 use crate::placeholder::PhType;
@@ -304,7 +305,7 @@ fn parse_root_children(
                 let namespaces = root_namespaces.with_start(&child)?;
                 let name = local_name(child.name().as_ref()).to_vec();
                 let is_p = namespaces.element_uri(child.name().as_ref()) == Some(P_NS);
-                let raw = capture_empty_element(&child)?;
+                let raw = capture_empty(&child, reader.empty_writing())?;
                 parsed.capture_child(&name, is_p, &namespaces, raw, kind)?;
             }
             Event::End(end) if local_name(end.name().as_ref()) == kind.local_name() => {

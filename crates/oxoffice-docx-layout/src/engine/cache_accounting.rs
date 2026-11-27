@@ -112,8 +112,8 @@ fn raw_xml_is_exact_word_bookmark(raw: &[u8], marker: &BookmarkMarker) -> bool {
         .rposition(|byte| !byte.is_ascii_whitespace())
         .expect("non-empty raw XML has a final byte");
     let raw = &raw[start..=end];
-    if !oxoffice_core::xml_element::start_tag(raw)
-        .is_ok_and(|tag| tag.self_closing && tag.range.end == raw.len())
+    if !oxoffice_core::xml_element::element_span(raw)
+        .is_ok_and(|span| span.content.is_empty() && span.range().end == raw.len())
     {
         return false;
     }

@@ -5,69 +5,6 @@
 # `debug_assertions` keeps an entry to builds with or without them. One block
 # per class, never reordered, so branches merge cleanly.
 
-# A: an empty element written with an end tag is read only from an
-# empty-element tag: the Event::Empty arms model it, the Event::Start arm
-# keeps it raw or skips it: a tab or break leaves the text (oxoffice-docx
-# document/story_paragraphs.rs:332-347), bold, italic and paragraph toggles
-# are not modelled (oxoffice-docx-oxml run_properties.rs:791 against :1157,
-# which models only rtl and lang). Its own issue: #664.
-
-[[known]]
-input = "*.docx"
-writing = "empty-with-end-tag"
-operation = "accept xml"
-issue = 664
-message = "reads otherwise"
-
-[[known]]
-input = "*.docx"
-writing = "empty-with-end-tag"
-operation = "compare"
-issue = 664
-message = "gives another result"
-
-[[known]]
-input = "*.docx"
-writing = "empty-with-end-tag"
-operation = "compare xml"
-issue = 664
-message = "reads otherwise"
-
-[[known]]
-input = "*.docx"
-writing = "empty-with-end-tag"
-operation = "edit"
-issue = 664
-message = "gives another result"
-
-[[known]]
-input = "*.docx"
-writing = "empty-with-end-tag"
-operation = "edit xml"
-issue = 664
-message = "reads otherwise"
-
-[[known]]
-input = "*.docx"
-writing = "empty-with-end-tag"
-operation = "markdown"
-issue = 664
-message = "gives another result"
-
-[[known]]
-input = "*.docx"
-writing = "empty-with-end-tag"
-operation = "save"
-issue = 664
-message = "gives another result"
-
-[[known]]
-input = "*.docx"
-writing = "empty-with-end-tag"
-operation = "text"
-issue = 664
-message = "gives another result"
-
 # B: an attribute value is parsed from its raw bytes, its references
 # unresolved: w:w="&#49;2240" is no number (oxoffice-docx-oxml
 # properties.rs:510 fed by raw reads, about 80 `from_utf8(&attr.value)` in

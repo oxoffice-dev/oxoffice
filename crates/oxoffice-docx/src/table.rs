@@ -1180,7 +1180,7 @@ fn inherited_empty_paragraph(source: &CT_Tc) -> CT_P {
         .iter()
         .enumerate()
         .filter_map(|(index, raw)| {
-            let mut reader = quick_xml::NsReader::from_reader(raw.as_slice());
+            let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(raw.as_slice());
             let removed = loop {
                 match reader.read_resolved_event() {
                     Ok((

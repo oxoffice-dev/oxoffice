@@ -1,7 +1,8 @@
 //! Footnote and endnote elements: `CT_Footnotes`, `CT_Footnote`.
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::Result;
 use crate::namespace::{W_NS, matches_local_name};
@@ -118,8 +119,11 @@ impl CT_Footnotes {
         let mut word_prefixes = Vec::new();
 
         loop {
-            match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(ref e)) => {
+            let event = reader.read_event_into(&mut buf);
+            // A note with nothing inside, `<w:footnote w:id="3"/>`, is a note.
+            let empty = matches!(event, Ok(Event::Empty(_)));
+            match event {
+                Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
                     let name = e.name();
                     let prefixes = word_prefixes_at(e, &word_prefixes)?;
                     if is_word_element(name.as_ref(), b"footnote", &prefixes)
@@ -161,12 +165,16 @@ impl CT_Footnotes {
                         // Separators are kept rather than dropped, so a round
                         // trip preserves them.
                         let mut reads = Vec::new();
-                        let paragraphs = parse_footnote_content(
-                            &mut reader,
-                            &prefixes,
-                            controls,
-                            read_output.as_ref().map(|_| &mut reads),
-                        )?;
+                        let paragraphs = if empty {
+                            Vec::new()
+                        } else {
+                            parse_footnote_content(
+                                &mut reader,
+                                &prefixes,
+                                controls,
+                                read_output.as_ref().map(|_| &mut reads),
+                            )?
+                        };
                         retained_reads.push(reads);
                         footnotes.push(CT_Footnote {
                             id,
@@ -178,7 +186,7 @@ impl CT_Footnotes {
                     {
                         // Continue into the root element
                         word_prefixes = prefixes.into_owned();
-                    } else {
+                    } else if !empty {
                         reader.read_to_end_into(name, &mut Vec::new())?;
                     }
                 }

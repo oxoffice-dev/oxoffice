@@ -3,11 +3,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ops::Range;
 
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_opc::OpcPackage;
 use quick_xml::XmlVersion;
 use quick_xml::events::Event;
 use quick_xml::name::ResolveResult;
-use quick_xml::reader::NsReader;
 
 use crate::{Document, Error, Result};
 

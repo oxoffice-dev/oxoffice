@@ -568,6 +568,19 @@ pub(super) fn property_child_ranges(
                 }
                 depth += 1;
             }
+            XmlEvent::Empty(start) if depth == 0 => {
+                if uri.as_deref() != Some(namespace)
+                    || xml_local_name(start.name().as_ref()) != root.as_bytes()
+                {
+                    return Err(invalid_shape_mutation(
+                        "properties",
+                        "unqualified core owner",
+                    ));
+                }
+                // An owner written with an end tag and nothing inside takes
+                // children before that end tag; a self-closed one has no place.
+                root_end = reader.empty_end_tag_position().map(|at| at as usize);
+            }
             XmlEvent::Empty(start) if depth == 1 => children.push((
                 uri,
                 String::from_utf8_lossy(xml_local_name(start.name().as_ref())).into_owned(),
@@ -838,7 +851,7 @@ fn patch_custom_property(
                 "unqualified custom owner",
             ));
         }
-        let mut reader = quick_xml::Reader::from_reader(&source[start..end]);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&source[start..end]);
         if let XmlEvent::Start(root) | XmlEvent::Empty(root) = reader
             .read_event()
             .map_err(|e| invalid_shape_mutation("custom properties", e.to_string()))?
@@ -880,7 +893,7 @@ fn patch_custom_property(
     };
     let bytes = if let Some((_, value)) = replacement {
         let owner = &source[start..end];
-        let mut reader = quick_xml::Reader::from_reader(owner);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(owner);
         let mut depth = 0;
         let mut value_start = None;
         let mut value_range = None;
@@ -924,11 +937,11 @@ fn patch_custom_property(
         let (begin, finish) = value_range
             .ok_or_else(|| invalid_shape_mutation("custom properties", "custom value is absent"))?;
         let old_value = &owner[begin..finish];
-        let mut old_reader = quick_xml::Reader::from_reader(old_value);
+        let mut old_reader = oxoffice_core::xml_reader::Reader::from_reader(old_value);
         let old_start = old_reader
             .read_event()
             .map_err(|e| invalid_shape_mutation("custom properties", e.to_string()))?;
-        let mut new_reader = quick_xml::Reader::from_reader(value.as_bytes());
+        let mut new_reader = oxoffice_core::xml_reader::Reader::from_reader(value.as_bytes());
         let new_start = new_reader
             .read_event()
             .map_err(|e| invalid_shape_mutation("custom properties", e.to_string()))?;
@@ -1037,7 +1050,7 @@ fn publish_property_part(
 }
 
 fn edit_property_text(source: &[u8], value: Option<&str>) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(source);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(source);
     let mut buffer = Vec::new();
     let mut result = Vec::new();
     let mut opened = false;

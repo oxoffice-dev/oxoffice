@@ -3,12 +3,12 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::namespace::matches_local_name;
 use oxoffice_docx_oxml::placeholder;
 use oxoffice_docx_oxml::table::{CT_Row, CT_Tbl, CT_Tc, CellContent};
 use oxoffice_docx_oxml::text::{CT_P, RunContent};
-use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde_json::Value;
 
@@ -1755,9 +1755,9 @@ fn replay_program_blocks<'data>(
                             if let (Some(parent), Some(rendered)) =
                                 (&raw_source, replacement.source.take())
                             {
-                                let original_end = fragment_root_start_tag_end(original_alias)?;
+                                let original_end = fragment_root_attributes_end(original_alias)?;
                                 let rendered_end =
-                                    fragment_root_start_tag_end(rendered.as_bytes())?;
+                                    fragment_root_attributes_end(rendered.as_bytes())?;
                                 let restored = evaluation.operation.compose_sources(&[
                                     (
                                         Some(parent),
@@ -2109,29 +2109,21 @@ fn replay_program_blocks<'data>(
 /// Drop namespace declarations added so a paired copy could be parsed alone.
 /// The copy's original root start tag stays, and the rendered interior stays.
 fn restore_paired_copy_root(original: &[u8], rendered: &[u8]) -> Result<Vec<u8>> {
-    let original_end = fragment_root_start_tag_end(original)?;
-    let rendered_end = fragment_root_start_tag_end(rendered)?;
+    let original_end = fragment_root_attributes_end(original)?;
+    let rendered_end = fragment_root_attributes_end(rendered)?;
     let mut output = Vec::with_capacity(original_end + rendered.len().saturating_sub(rendered_end));
     output.extend_from_slice(&original[..original_end]);
     output.extend_from_slice(&rendered[rendered_end..]);
     Ok(output)
 }
 
-fn fragment_root_start_tag_end(xml: &[u8]) -> Result<usize> {
-    let mut reader = Reader::from_reader(xml);
-    reader.config_mut().trim_text(false);
-    let mut buffer = Vec::new();
-    loop {
-        match reader.read_event_into(&mut buffer) {
-            Ok(Event::Start(_) | Event::Empty(_)) => return Ok(reader.buffer_position() as usize),
-            Ok(Event::Eof) => {
-                return Err(template_error("paired template copy has no root element"));
-            }
-            Ok(_) => {}
-            Err(error) => return Err(template_xml_error(error)),
-        }
-        buffer.clear();
-    }
+/// Where the attributes of the root start tag of `xml` end, before its `/>`
+/// or `>`: the original's head up to there, then the rendered root's own
+/// close, content and end tag, whatever either's writing.
+fn fragment_root_attributes_end(xml: &[u8]) -> Result<usize> {
+    let span = oxoffice_core::xml_element::root_element_span(xml)
+        .map_err(|error| template_error(&format!("paired template copy root: {error}")))?;
+    Ok(span.attributes_end())
 }
 
 fn replay_program<'data>(

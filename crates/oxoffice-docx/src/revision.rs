@@ -3,11 +3,12 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
+use oxoffice_core::xml_reader::Reader;
 pub use oxoffice_docx_oxml::RevisionKind;
 use oxoffice_docx_oxml::text::CT_P;
 use oxoffice_docx_oxml::{CT_Document, CT_Revision};
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
-use quick_xml::{Reader, XmlVersion};
 use sha2::{Digest, Sha256};
 
 use crate::{Document, Error, ParagraphRef, Result, StoryId};
@@ -2894,8 +2895,9 @@ impl<'a> XmlTree<'a> {
     /// The `id` attribute of an element's start tag.
     fn element_id(&self, index: usize) -> Option<String> {
         let element = &self.elements[index];
-        let mut reader =
-            quick_xml::Reader::from_reader(&self.source[element.start..element.open_end]);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(
+            &self.source[element.start..element.open_end],
+        );
         let start = match reader.read_event().ok()? {
             Event::Start(start) | Event::Empty(start) => start,
             _ => return None,

@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
 use base64::Engine;
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Document};
 use oxoffice_docx_oxml::namespace::{R_NS, W_NS};
@@ -15,8 +17,7 @@ use oxoffice_docx_oxml::text::{
 };
 use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 use sha2::{Digest, Sha256};
 
 use crate::revision::{FieldEvent, paragraph_field_events, validate_revision_timestamp};

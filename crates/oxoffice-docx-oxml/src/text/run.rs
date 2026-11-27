@@ -1629,6 +1629,61 @@ impl CT_R {
                         ));
                     }
                 }
+                Ok(Event::Empty(ref e))
+                    if matches!(
+                        RunChildAction::for_element(e, &word_prefixes_at(e, word_prefixes)?, false),
+                        RunChildAction::Text | RunChildAction::DeletedText
+                    ) =>
+                {
+                    // A text with nothing inside, `<w:t></w:t>` or `<w:t/>`:
+                    // an empty text, where the end tag starts when it has one.
+                    let prefixes = word_prefixes_at(e, word_prefixes)?;
+                    let preserve = e.attributes().any(|a| {
+                        a.ok().is_some_and(|a| {
+                            a.key.as_ref() == b"xml:space"
+                                && oxoffice_core::xml::attribute_text(&a)
+                                    .is_ok_and(|value| value == "preserve")
+                        })
+                    });
+                    let text = CT_Text {
+                        text: String::new(),
+                        preserve_space: preserve,
+                    };
+                    if RunChildAction::for_element(e, &prefixes, false)
+                        == RunChildAction::DeletedText
+                    {
+                        content.push(RunContent::DeletedText(text));
+                        continue;
+                    }
+                    let encoded = reader
+                        .empty_end_tag_position()
+                        .map(|at| at as usize..at as usize);
+                    match content.last_mut() {
+                        Some(RunContent::FootnoteRef {
+                            custom_mark: Some(_),
+                            ..
+                        })
+                        | Some(RunContent::EndnoteRef {
+                            custom_mark: Some(_),
+                            ..
+                        }) if mark_was_open => {
+                            // `<w:t/>` has no inside: its mark sits at its end.
+                            let at = reader.buffer_position() as usize;
+                            empty_mark = Some((preserve, encoded.unwrap_or(at..at)));
+                        }
+                        _ => {
+                            if let (Some(facts), Some(encoded)) = (&mut text_facts, encoded) {
+                                facts.push(ParsedWordText {
+                                    drawing: None,
+                                    content: content.len(),
+                                    encoded,
+                                });
+                            }
+                            content.push(RunContent::Text(text));
+                        }
+                    }
+                    modeled_children += 1;
+                }
                 Ok(Event::Empty(ref e)) => {
                     let prefixes = word_prefixes_at(e, word_prefixes)?;
                     let plan = RunChildPlan::read(
@@ -1649,7 +1704,7 @@ impl CT_R {
                         && comment_reference_has_payload_attributes(e, &prefixes)
                     {
                         extra_xml.push(close_comment_reference_source(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &prefixes,
                         )?);
                         extra_xml_positions.push(modeled_children | RAW_COMMENT_REFERENCE_FLAG);
@@ -1684,7 +1739,7 @@ impl CT_R {
                         // capturing it here would move it past <w:t> and
                         // produce schema-invalid output. An empty rPr carries
                         // no formatting, so dropping it loses nothing.
-                        let raw = capture_empty_element(e)?;
+                        let raw = capture_empty(e, reader.empty_writing())?;
                         extra_xml.push(raw);
                         extra_xml_positions.push(modeled_children);
                     }
@@ -2297,7 +2352,7 @@ fn close_comment_reference_source(raw: &[u8], prefixes: &[String]) -> Result<Vec
 }
 
 pub(super) fn retained_comment_reference_id(raw: &[u8]) -> Option<i32> {
-    let mut reader = quick_xml::reader::NsReader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(raw);
     let (ns, event) = reader.read_resolved_event().ok()?;
     if !matches!(ns, ResolveResult::Bound(namespace) if namespace.as_ref() == crate::namespace::W_NS.as_bytes())
     {
@@ -2748,6 +2803,18 @@ pub(crate) fn parse_run_raw_with_observation(
                     Some(&start),
                     text_facts,
                     cursor.as_ref(),
+                    ordinary,
+                );
+            }
+            // A run with nothing inside: its root alone, read to the end.
+            Event::Empty(start) if matches_local_name(start.name().as_ref(), b"r") => {
+                let prefixes = word_prefixes_at(&start, word_prefixes)?;
+                return CT_R::from_xml_with_property_observation(
+                    &mut Reader::from_reader(&b""[..]),
+                    &prefixes,
+                    Some(&start),
+                    text_facts,
+                    None,
                     ordinary,
                 );
             }

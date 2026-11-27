@@ -6,7 +6,7 @@ use super::*;
 pub fn chart_plain_title(chart_xml: &[u8]) -> Result<Option<String>> {
     CT_ChartSpace::from_xml(chart_xml)?;
     use quick_xml::name::ResolveResult;
-    let mut reader = quick_xml::reader::NsReader::from_reader(chart_xml);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(chart_xml);
     let mut path: Vec<(u8, Vec<u8>)> = Vec::new();
     let mut rich = String::new();
     let mut cached = String::new();
@@ -570,8 +570,8 @@ fn chart_literal_name(series: &Series) -> Result<String> {
 
 /// Resolve only the root-owned ChartML externalData relationships attribute.
 pub fn chart_workbook_relationship_id(chart_xml: &[u8]) -> Result<Option<String>> {
+    use oxoffice_core::xml_reader::NsReader;
     use quick_xml::name::ResolveResult;
-    use quick_xml::reader::NsReader;
     CT_ChartSpace::from_xml(chart_xml)?;
     let mut reader = NsReader::from_reader(chart_xml);
     let mut buffer = Vec::new();
@@ -642,8 +642,8 @@ pub(super) struct ChartSourceNode {
 }
 
 pub(super) fn chart_source_nodes(xml: &[u8]) -> Result<Vec<ChartSourceNode>> {
+    use oxoffice_core::xml_reader::NsReader;
     use quick_xml::name::ResolveResult;
-    use quick_xml::reader::NsReader;
     let mut reader = NsReader::from_reader(xml);
     let mut nodes: Vec<ChartSourceNode> = Vec::new();
     let mut stack = Vec::new();

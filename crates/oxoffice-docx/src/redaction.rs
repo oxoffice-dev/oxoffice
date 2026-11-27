@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::io::Cursor;
 
 use oxoffice_core::xml::is_xml_1_0_character;
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_opc::relationship::rel_types;
 use oxoffice_opc::{OpcPackage, PackageReadLimits};
 use quick_xml::events::{BytesDecl, BytesRef, BytesStart, BytesText, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
 use quick_xml::{Writer, XmlVersion};
 
 use crate::{Document, Error, Result};

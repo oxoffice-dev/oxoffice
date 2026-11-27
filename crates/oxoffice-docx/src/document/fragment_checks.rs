@@ -68,7 +68,7 @@ pub(super) fn story_owner_content_end_in(
             }
         }
     }
-    let mut reader = quick_xml::Reader::from_reader(&xml[owner.full.clone()]);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&xml[owner.full.clone()]);
     reader.config_mut().trim_text(false);
     let mut depth = 0usize;
     let mut buffer = Vec::new();
@@ -234,7 +234,7 @@ pub(super) fn fragment_uses_w14(xml: &[u8]) -> Result<bool> {
     if named {
         return Ok(true);
     }
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut buffer = Vec::new();
     loop {
         match reader
@@ -611,7 +611,7 @@ pub(super) fn insert_story_fragment(
     boundary: usize,
     fragment: Vec<u8>,
 ) -> Result<()> {
-    let mut reader = quick_xml::Reader::from_reader(&source[owner.full.clone()]);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&source[owner.full.clone()]);
     let mut buffer = Vec::new();
     let empty_name = loop {
         match reader

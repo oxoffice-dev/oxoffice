@@ -29,6 +29,7 @@ pub use oxoffice_core::core_properties::CoreProperties;
 pub use oxoffice_core::custom_properties::{CustomProperties, CustomProperty, CustomPropertyValue};
 pub use oxoffice_core::units::{Angle, Emu, Percent1000};
 use oxoffice_core::xml::escape_attribute_value;
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_drawing::color::ColorMap;
 pub use oxoffice_drawing::color::{ColorChoice, ColorTransform};
 pub use oxoffice_drawing::effect::{CT_EffectList, CT_OuterShadowEffect, RectAlignment};
@@ -142,7 +143,6 @@ use oxoffice_pptx_render::{
 };
 use quick_xml::events::{BytesStart as XmlBytesStart, Event as XmlEvent};
 use quick_xml::name::{Namespace as XmlNamespace, ResolveResult as XmlResolveResult};
-use quick_xml::reader::NsReader;
 use quick_xml::{Writer as XmlWriter, XmlVersion};
 use thiserror::Error;
 

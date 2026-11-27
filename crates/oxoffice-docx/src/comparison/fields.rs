@@ -1187,7 +1187,8 @@ fn hyperlink_field_instruction(
     let (_, event) = reader
         .read_resolved_event()
         .map_err(|error| Error::Other(error.to_string()))?;
-    let Event::Start(element) = event else {
+    // The link closed at once reads as one empty element.
+    let (Event::Start(element) | Event::Empty(element)) = event else {
         return Err(Error::Other(
             "whole-paragraph hyperlink has no start tag".into(),
         ));

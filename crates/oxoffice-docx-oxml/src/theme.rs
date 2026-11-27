@@ -1,6 +1,6 @@
 //! Theme parsing: extracts color scheme and font scheme from theme1.xml.
 
-use quick_xml::Reader;
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::Event;
 
 use crate::error::Result;

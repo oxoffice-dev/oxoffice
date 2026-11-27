@@ -9,7 +9,7 @@ use oxoffice_docx::{
     ReplacementCountMismatch, RunFontSlot, RunItemRef, StoryItemKind, StoryKind, UnderlineStyle,
 };
 
-use crate::support::{doc_with, doc_with_body, reopen, texts};
+use crate::support::{doc_with, doc_with_body, docx_with_body, reopen, texts};
 
 /// The texts of the runs of body paragraph `index`, in order.
 fn run_texts(doc: &Document, index: usize) -> Vec<String> {
@@ -1493,4 +1493,80 @@ fn a_header_image_background_drops_a_character_xml_cannot_carry() {
         "00\u{7}0000",
     );
     doc.to_bytes().expect("the document saves");
+}
+
+#[test]
+fn an_unmodelled_empty_element_keeps_its_end_tag_through_a_save_and_an_edit() {
+    let kept = r#"<x:k xmlns:x="urn:oxoffice:test"></x:k>"#;
+    let page = "<w:lastRenderedPageBreak></w:lastRenderedPageBreak>";
+    let plain = "<w:p><w:r><w:t>Alpha</w:t></w:r></w:p>";
+    // The first paragraph, what the settings part gains, the part to read.
+    let places = [
+        (
+            format!("<w:p><w:r><w:t>Alpha</w:t>{kept}</w:r></w:p>"),
+            "",
+            "document",
+            kept,
+        ),
+        (
+            format!("<w:p><w:r><w:rPr>{kept}</w:rPr><w:t>Alpha</w:t></w:r></w:p>"),
+            "",
+            "document",
+            kept,
+        ),
+        (
+            format!("<w:p><w:pPr>{kept}</w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p>"),
+            "",
+            "document",
+            kept,
+        ),
+        (format!("{plain}{kept}"), "", "document", kept),
+        (
+            format!("<w:p><w:r><w:t>Alpha</w:t>{page}<w:t>beta</w:t></w:r></w:p>"),
+            "",
+            "document",
+            page,
+        ),
+        (plain.to_owned(), kept, "settings", kept),
+    ];
+    // A save, an edit of the other paragraph, of its own, of the settings,
+    // and a Flat OPC round trip.
+    type Edit = fn(&mut Document);
+    let edits: [(&str, Edit); 5] = [
+        ("save", |_| {}),
+        ("other", |doc| {
+            assert_eq!(doc.replace_text("Omega", "Edited"), 1)
+        }),
+        ("own", |doc| {
+            assert_eq!(doc.replace_text("Alpha", "Edited"), 1)
+        }),
+        ("settings", |doc| doc.set_track_revisions(true).unwrap()),
+        ("flat", |doc| {
+            *doc = Document::from_flat_opc_bytes(&doc.to_flat_opc_bytes().unwrap()).unwrap();
+        }),
+    ];
+    for (paragraph, settings, part, element) in &places {
+        let body = format!("{paragraph}<w:p><w:r><w:t>Omega</w:t></w:r></w:p>");
+        let parts = oxoffice_xml_test::package_parts(&docx_with_body(&body)).unwrap();
+        let parts = parts.into_iter().map(|(name, data)| {
+            let data = match name.as_str() {
+                "word/settings.xml" => String::from_utf8(data)
+                    .unwrap()
+                    .replace("</w:settings>", &format!("{settings}</w:settings>"))
+                    .into_bytes(),
+                _ => data,
+            };
+            (name, data)
+        });
+        let bytes = oxoffice_xml_test::write_package(&parts.collect::<Vec<_>>());
+        for (label, edit) in &edits {
+            let mut doc = Document::from_bytes(&bytes).unwrap();
+            edit(&mut doc);
+            let xml = doc.part_xml(&format!("word/{part}.xml")).unwrap();
+            assert!(
+                xml.contains(element),
+                "{paragraph} {settings} {label}: {xml}"
+            );
+        }
+    }
 }

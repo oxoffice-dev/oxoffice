@@ -2209,7 +2209,7 @@ struct RawMarkerKind {
 }
 
 fn raw_marker_kind(raw: &[u8]) -> Option<RawMarkerKind> {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let name = loop {

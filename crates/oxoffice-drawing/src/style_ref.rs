@@ -2,10 +2,11 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw};
 use oxoffice_core::xml::{get_attr, local_name};
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::color::{ColorChoice, ColorError};
 use crate::order::OrderedRawChildren;
@@ -248,7 +249,7 @@ impl StyleReference {
                 }
                 Event::Empty(element) => {
                     let occupies_color = is_any_color(element.name().as_ref()) && !has_color;
-                    raw_children.push(boundary, capture_empty_element(&element)?);
+                    raw_children.push(boundary, capture_empty(&element, reader.empty_writing())?);
                     if occupies_color {
                         has_color = true;
                         boundary = 1;

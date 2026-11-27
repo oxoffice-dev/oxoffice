@@ -161,7 +161,7 @@ pub(super) fn edited_paragraph_ancestor_context(
     xml: &[u8],
     offset: usize,
 ) -> Result<EditedParagraphContext> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut ancestors = Vec::new();
     loop {
         let before = reader.buffer_position() as usize;
@@ -238,7 +238,7 @@ fn edited_paragraph_island_meaning(
     context: &mut EditedParagraphContext,
     routes: &mut EditedParagraphRoutes,
 ) -> Result<EditedParagraphMeaning> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut scopes = Vec::new();
     let mut meaning = Vec::new();
     let mut complex = false;
@@ -334,7 +334,7 @@ fn edited_paragraph_admission(
     inherited: &EditedParagraphContext,
     routes: &mut EditedParagraphRoutes,
 ) -> Result<EditedParagraphAdmission> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut context = inherited.clone();
     let mut frames = vec![(EditedParagraphScopeChanges::default(), 0usize, 0usize)];
     let mut islands = Vec::new();

@@ -1268,7 +1268,7 @@ pub(super) fn edit_master_layout_relationship(
             "selected ownership does not match source",
         ));
     }
-    let mut reader = quick_xml::NsReader::from_reader(source);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(source);
     let mut buffer = Vec::new();
     let mut depth = 0usize;
     let mut root = None;

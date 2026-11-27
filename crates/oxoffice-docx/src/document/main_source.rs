@@ -419,7 +419,7 @@ impl Document {
         let new_end = xml.len().checked_sub(current.len().checked_sub(end)?)?;
         let replacing = xml.get(start..new_end)?;
         let scopes = document_namespace_scopes(current).ok()?;
-        let mut reader = quick_xml::Reader::from_reader(replacing);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(replacing);
         let mut buffer = Vec::new();
         let mut depth = 0usize;
         let mut element = 0usize;
