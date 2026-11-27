@@ -375,6 +375,12 @@ encrypted saves with the same keyword; the CLI writes `-o`, never the input, `--
 errors: `XlsxError`, `PackageError(XlsxError)`, `XmlError(XlsxError, ValueError)`, a refused edit `XlsxError`, a bad
 argument the built-in `ValueError`, `TypeError`, `IndexError` or `KeyError`.
 
+**A package signature** (`_xmlsignatures`) follows the policy of docx and pptx (`oxoffice-opc::embedded`, the
+`digital-signatures` feature of `oxoffice-xlsx`, on in the CLI and Python): a workbook opened with a signature that does
+not verify, or one an earlier save marked, keeps it known invalid; a save whose package differs from the one opened (any
+edit, or another class by extension) keeps the signature parts as evidence and marks the package invalidated, once, by
+a relationship to the signature origin. A save that changes nothing leaves a valid signature valid.
+
 ### 9. Producers
 
 The model never branches on the producer; these are the shapes its tolerant read and its tests must cover.

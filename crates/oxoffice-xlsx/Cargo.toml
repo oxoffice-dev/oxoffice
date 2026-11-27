@@ -16,6 +16,7 @@ publish = true
 [features]
 default = []
 agile-encryption = ["oxoffice-opc/agile-encryption"]
+digital-signatures = ["oxoffice-opc/digital-signatures"]
 
 [dependencies]
 oxoffice-core.workspace = true
@@ -27,7 +28,7 @@ zip.workspace = true
 [dev-dependencies]
 cfb.workspace = true
 # The encrypted round trip runs in every test build, CI's included.
-oxoffice-xlsx = { workspace = true, features = ["agile-encryption"] }
+oxoffice-xlsx = { workspace = true, features = ["agile-encryption", "digital-signatures"] }
 oxoffice-xml-test.workspace = true
 
 [[test]]

@@ -21,9 +21,10 @@ mod open;
 mod page_setup;
 mod save;
 mod sheet;
+mod signature;
 
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use oxoffice_opc::{OpcError, OpcPackage};
 use oxoffice_xlsx_oxml::workbook::WorkbookXml;
@@ -150,6 +151,12 @@ pub struct Workbook {
     /// Whether any sheet holds a formula, found by one scan of the sheets as
     /// read, at the first edit.
     formulas: OnceLock<bool>,
+    /// Whether the package signature was known invalid when the workbook was
+    /// opened.
+    signature_invalid: bool,
+    /// The package as opened, when it carries a package signature: a save
+    /// that differs from it invalidates the signature.
+    signature_baseline: Option<Arc<OpcPackage>>,
 }
 
 impl Workbook {

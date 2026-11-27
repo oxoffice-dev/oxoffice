@@ -9,4 +9,5 @@ mod new_workbook;
 mod page_setup;
 mod refusals;
 mod saving;
+mod signatures;
 mod support;

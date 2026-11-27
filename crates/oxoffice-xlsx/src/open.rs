@@ -11,6 +11,7 @@ use oxoffice_xlsx_oxml::workbook::WorkbookXml;
 
 use crate::save::WorkbookClass;
 use crate::sheet::SheetEntry;
+use crate::signature;
 use crate::{Error, Result, Workbook};
 
 impl Workbook {
@@ -91,6 +92,8 @@ impl Workbook {
                 message: error.to_string(),
             })?;
         let sheets = SheetEntry::resolve(&package, &workbook_part, &workbook)?;
+        let signature_invalid = signature::known_invalid_on_open(&package);
+        let signature_baseline = signature::baseline(&package);
         Ok(Workbook {
             package,
             source_path: None,
@@ -101,6 +104,8 @@ impl Workbook {
             edited: false,
             calculates: false,
             formulas: OnceLock::new(),
+            signature_invalid,
+            signature_baseline,
         })
     }
 }

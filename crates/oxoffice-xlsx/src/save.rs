@@ -9,6 +9,7 @@ use std::path::Path;
 use oxoffice_opc::{OpcError, OpcPackage, write_atomic_file};
 use oxoffice_xlsx_oxml::namespaces::{content_types, rel_types, transitional_relationship_type};
 
+use crate::signature;
 use crate::{Error, Result, Workbook};
 
 /// What a save does beyond writing the workbook.
@@ -199,23 +200,36 @@ impl Workbook {
 
     /// The package a save writes: the workbook's own while nothing changes
     /// it, else a copy with the changes made ([`Workbook::write_staged_parts`]).
+    /// A package signature the package no longer matches is marked invalidated.
     fn saved_package(
         &self,
         _options: SaveOptions,
         class: Option<WorkbookClass>,
     ) -> Result<Cow<'_, OpcPackage>> {
-        if class.is_none() && !self.edited {
-            return Ok(Cow::Borrowed(&self.package));
+        let saved = if class.is_none() && !self.edited {
+            Cow::Borrowed(&self.package)
+        } else {
+            let mut package = self.package.clone();
+            if self.edited {
+                self.write_staged_parts(&mut package)?;
+            }
+            if let Some(class) = class {
+                package
+                    .content_types
+                    .add_override(&self.workbook_part, class.content_type());
+            }
+            Cow::Owned(package)
+        };
+        let invalidated = self.signature_invalid
+            || self
+                .signature_baseline
+                .as_deref()
+                .is_some_and(|baseline| !signature::unchanged(&saved, baseline));
+        if !invalidated {
+            return Ok(saved);
         }
-        let mut package = self.package.clone();
-        if self.edited {
-            self.write_staged_parts(&mut package)?;
-        }
-        if let Some(class) = class {
-            package
-                .content_types
-                .add_override(&self.workbook_part, class.content_type());
-        }
+        let mut package = saved.into_owned();
+        signature::mark_invalidated(&mut package)?;
         Ok(Cow::Owned(package))
     }
 }
