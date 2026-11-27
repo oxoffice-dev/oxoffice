@@ -844,6 +844,16 @@ impl WordBodyItems {
         self.totals.1 -= counts.1;
         self.totals.2 -= counts.2;
         self.links -= links;
+        self.settle_when_empty();
+    }
+
+    /// With no record left, no body owner is left either: the records are
+    /// then those a walk derives from no owner, none and not ready (no owner
+    /// names the body story), and the next splice takes the whole route.
+    fn settle_when_empty(&mut self) {
+        if self.items.is_empty() {
+            *self = Self::default();
+        }
     }
 
     /// Replace the records of the `old_items` body story items from item
@@ -916,6 +926,7 @@ impl WordBodyItems {
         self.totals.2 = self.totals.2 + added.2 - old.2;
         self.links = self.links + added.3 - old.3;
         self.cell_links_unplaced |= new.cell_links_unplaced;
+        self.settle_when_empty();
     }
 
     /// The records of the items of some body blocks read alone, their
