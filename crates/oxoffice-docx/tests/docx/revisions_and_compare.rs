@@ -5425,6 +5425,7 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         ("alternate content", "edited anchored", body, false, false),
         ("alternate content", "nested", body, false, false),
         ("alternate content", "edited", header, false, false),
+        ("alternate content", "edited", header, true, false),
         ("alternate content", "edited", notes, false, false),
         ("alternate content", "nested", body, false, true),
         ("alternate content", "resized", body, false, false),
@@ -5479,6 +5480,7 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         let alternate_contents = match (change, ignore_formatting) {
             ("nested" | "edited" | "edited anchored", _) => Some(1),
             ("run formatted", false) => Some(2),
+            ("resized", _) if form == "alternate content" => Some(2),
             _ => None,
         };
         if let Some(expected) = alternate_contents {

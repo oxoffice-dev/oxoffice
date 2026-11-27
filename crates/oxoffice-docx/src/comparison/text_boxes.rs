@@ -370,6 +370,7 @@ pub(super) fn private_text_box_host_spans(
 
 pub(super) fn without_text_box_subtrees(xml: &[u8]) -> Result<Vec<u8>> {
     let source = std::str::from_utf8(xml).map_err(utf8_error)?;
+    // A whole part declares its own prefixes: `w` is only the scan root's.
     let boxes = text_box_spans(source, "w")?;
     if boxes.is_empty() {
         return Ok(xml.to_vec());
@@ -663,6 +664,7 @@ pub(super) fn comparison_text_box_markers(
     let original_main = std::str::from_utf8(original_main).map_err(utf8_error)?;
     let edited_main = std::str::from_utf8(edited_main).map_err(utf8_error)?;
     let mut markers = TextBoxMarkers {
+        // Whole parts, which declare their own prefixes.
         main: text_box_marker_local(original_main, edited_main, "w")?,
         related: HashMap::new(),
     };
