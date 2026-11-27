@@ -643,4 +643,28 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn a_file_number_format_overrides_the_built_in_id() {
+        let styles = StylesXml::parse(Arc::new(
+            concat!(
+                r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">"#,
+                r#"<numFmts count="2"><numFmt numFmtId="14" formatCode="dd/mm/yyyy"/>"#,
+                r#"<numFmt numFmtId="164" formatCode="0.0&quot; kg&quot;"/></numFmts></styleSheet>"#
+            )
+            .as_bytes()
+            .to_vec(),
+        ))
+        .unwrap();
+        let resolver = Resolver::new(&styles, &[None; 12]);
+        for (id, code) in [
+            (14, "dd/mm/yyyy"),
+            (164, "0.0\" kg\""),
+            (4, "#,##0.00"),
+            (23, "General"),
+            (300, "General"),
+        ] {
+            assert_eq!(resolver.number_format(id), code, "{id}");
+        }
+    }
 }
