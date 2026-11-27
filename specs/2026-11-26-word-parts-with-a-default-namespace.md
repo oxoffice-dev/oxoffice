@@ -1,6 +1,6 @@
 ---
 date: 2026-11-26
-status: accepted
+status: shipped
 scope: docx
 ---
 
@@ -257,6 +257,14 @@ differences fixed) and the compare walks with `OXOFFICE_WORKFLOWS=full`.
    later, not as a merge gate.
 4. The table rows of the #676 test are edited by an operation that writes
    the row again (`replace_text` does).
+
+## Outcome
+
+Shipped in #687, `Refs #663`. On 2026-11-27 the maintainer ruled that a
+case no real file and no known producer shows is not documented: the
+refusal below the root stays, with a plain message that names no
+limitation, `docx-default-namespace-below-root.json` is removed, and #663
+is closed.
 
 ## Links
 

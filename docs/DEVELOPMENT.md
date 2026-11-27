@@ -20,8 +20,9 @@ How work lands in oxoffice. Short on purpose.
 6. **CI all green**, squash merge: `gh pr checks` shows every check
    passed, `Test (ubuntu-latest)`, `(macos-latest)` and `(windows-latest)`
    among them. A pull request whose base was changed to `main` may have no
-   run on that base: push a new commit, or close and reopen it, first. A documentation-only pull request runs no build, so there is
-   nothing to check. The squash commit takes the title, so
+   run on that base: push a new commit, or close and reopen it, first. A
+   documentation-only pull request runs no build, only the title check.
+   The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so
    that its title can say all of it. Commits on a branch are conventional too.
@@ -106,6 +107,10 @@ Finish what you start.
   becomes a new issue only when it is a different defect the pull request
   cannot carry: at most one per pull request. A major is fixed unless the
   maintainer waives it (see [Independent review](#independent-review)).
+- **Fixed, not documented.** A case a real file or a known producer can hit
+  is fixed; one no real file and no producer shows is refused with a plain
+  message, and its issue is closed. A limitation is the exception (see
+  [Known limitations](#known-limitations)).
 - **One root cause, one issue.** When several issues share a cause (an
   escape, a measurement parser, a text decoder), open one issue for the
   cause, link the others to it, and fix the cause.
@@ -134,7 +139,7 @@ Finish what you start.
 ```
 
 Types: `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `build`, `ci`,
-`chore`, `revert`. Scopes are free but usually one of `docx`, `pptx`,
+`chore`, `style`, `revert`. Scopes are free but usually one of `docx`, `pptx`,
 `xlsx`, `cli`, `python`, `pdf`, `layout`, `opc`. A breaking change adds `!`
 after the type and a `BREAKING CHANGE:` footer. The changelog groups commits
 by type.
@@ -161,7 +166,9 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
   area: `crates/oxoffice-docx/tests/docx/` (`--test docx`) and
   `crates/oxoffice-pptx/tests/pptx/` (`--test pptx`). A new area is a new
   module, not a new file under `tests/`, so each crate links one binary.
-- Run the tests you touched locally. CI runs the whole suite.
+- Run the tests you touched locally (`cargo test -p <crate>` runs the unit
+  tests in `src/` too). CI runs the integration tests (`--test '*'`) and
+  the Python tests, not the unit tests in `src/`.
 - Never `cargo clean` the shared target directory. Use one target
   directory per worktree.
 - Rendering checks use the bundled fonts only (the `*_deterministic`
@@ -270,13 +277,24 @@ same file refuses a quick-xml reader in the crates that read them.
 
 ## Known limitations
 
-A limitation users can hit, with a workaround, gets its own file,
-`crates/oxoffice-cli/limitations/<id>.json` (one JSON object: `id`, the file
-name; `format`, `area`, `title`, `symptom`, `workaround`, and `issue`, an
-issue labelled `limitation`). The pull request that fixes it deletes the
-file and closes the issue. The build joins the files in name order (it fails
-on a file whose `id` is not its name, or not lower-case letters, digits and
-dashes); `oxoffice limitations` lists them, and
+Avoid them (maintainer decision, 2026-11-27):
+
+- **A case a real file or a known producer can hit is fixed**, not
+  documented (Word, LibreOffice, Google Docs and the other producers of
+  `tests/corpus/README.md`).
+- **A case never seen in a real file and written by no known producer is
+  not documented.** The code may keep refusing it, with a plain error
+  message that names no limitation id.
+- **A limitation file stays only for a case that can happen and cannot be
+  fixed now**; the pull request that adds or keeps one says why.
+
+Such a case gets its own file, `crates/oxoffice-cli/limitations/<id>.json`
+(one JSON object: `id`, the file name; `format`, `area`, `title`,
+`symptom`, `workaround`, and `issue`, an issue labelled `limitation`). The
+pull request that fixes it deletes the file and closes the issue. The build
+joins the files in name order (it fails on a file whose `id` is not its
+name, or not lower-case letters, digits and dashes); `oxoffice limitations`
+lists them, and
 the release attaches the page built from the same files
 (`scripts/limitations_doc.py`, which lint runs too). Nothing to regenerate:
 `docs/LIMITATIONS.md` is not committed (`-o docs/LIMITATIONS.md` writes it
@@ -318,7 +336,7 @@ merge variant).
   commit that broke it, push a branch at each candidate commit and run it
   there. On `main` with `-f report=true`, a failure opens or comments one
   issue labelled `ci-full-checks`, closed by the next green reporting run;
-  whoever sees it fixes it the same day. Another workflow calls it with
+  whoever sees it fixes it the same day. Another workflow can call it with
   `workflow_call`, granting `issues: write`.
 - **Merge only once `gh pr checks` is all green**: `main` requires no status
   check, so nothing stops a merge whose macOS or Windows run is red or still

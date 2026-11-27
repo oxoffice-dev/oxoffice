@@ -1352,8 +1352,8 @@ pub(super) fn unsafe_nested_namespace_prefix(owners: &[NestedNamespaceOwner]) ->
 }
 
 /// The refusal of a save that cannot keep the binding of `prefix`. The
-/// empty prefix is a default namespace the body declares (a root's is kept):
-/// a known limitation (#663).
+/// empty prefix is a default namespace the body declares (a root's is kept;
+/// no known producer writes one below the root).
 pub(super) fn shadowed_namespace_diagnostic(prefix: &str) -> String {
     if prefix.is_empty() {
         return format!(
@@ -1364,5 +1364,6 @@ pub(super) fn shadowed_namespace_diagnostic(prefix: &str) -> String {
 }
 
 /// What an edit refused for a default namespace declared below the root
-/// says (#663).
-pub(super) const DEFAULT_NAMESPACE_BELOW_ROOT: &str = "a document that declares a default namespace below its root (on the body, a table or a block content control) cannot be edited yet (limitation docx-default-namespace-below-root, see `oxoffice limitations`)";
+/// says. No known producer writes one there, so the refusal stays, with the
+/// way out.
+pub(super) const DEFAULT_NAMESPACE_BELOW_ROOT: &str = "a document that declares a default namespace below its root (on the body, a table or a block content control) cannot be edited; open and save it in Word or LibreOffice, which write the `w:` prefix, then edit the saved copy";

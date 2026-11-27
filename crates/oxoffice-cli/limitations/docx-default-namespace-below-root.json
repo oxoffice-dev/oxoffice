@@ -1,9 +1,0 @@
-{
-  "id": "docx-default-namespace-below-root",
-  "format": "docx",
-  "area": "editing",
-  "title": "A document that declares WordprocessingML as the default namespace below its root cannot be edited",
-  "symptom": "a document whose body, a table or a block content control declares the default namespace (`<w:body xmlns=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">`, its elements written without a prefix) opens, reads and saves unchanged, but an edit of its main part is refused, naming this limitation; the default namespace on the document root, a paragraph, a run, a row, a cell or a link is edited as any other writing",
-  "workaround": "open and save the document in Word or LibreOffice, which write the `w:` prefix, then edit the saved copy",
-  "issue": 663
-}
