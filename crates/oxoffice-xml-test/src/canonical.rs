@@ -3,7 +3,8 @@
 //! `{namespace}local`, its attributes sorted by expanded name without
 //! namespace declarations and with references resolved (as are the prefixes
 //! the markup compatibility lists name); one line per text, references
-//! resolved. An empty-element tag reads as a start and an end tag; text of
+//! resolved, after the end-of-line handling of every XML reader (a literal
+//! CR LF reads as LF). An empty-element tag reads as a start and an end tag; text of
 //! whitespace only, outside `xml:space="preserve"`, in an element holding
 //! elements is no line (element-only content in these vocabularies). Read
 //! with quick-xml's own attribute reader, independently of the rewrites and
@@ -63,10 +64,33 @@ fn flush(open: &mut [Open], lines: &mut Vec<String>, child_follows: bool) {
     }
 }
 
+/// `text` after XML end-of-line handling: a literal carriage return, alone
+/// or before a line feed, reads as a line feed (one written `&#13;` is a
+/// reference, resolved after this).
+fn line_ends(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// An attribute value in the one spelling of what it says, for a
+/// comparison that does not tell a boolean's or a number's spellings apart:
+/// `true` as `1`, `false` as `0`, a number as the shortest decimal that
+/// reads back the same (`1.0` as `1`).
+fn folded(value: String) -> String {
+    match value.as_str() {
+        "true" => "1".to_owned(),
+        "false" => "0".to_owned(),
+        text => match text.trim().parse::<f64>() {
+            Ok(number) if number.is_finite() && !text.trim().is_empty() => format!("{number}"),
+            _ => value,
+        },
+    }
+}
+
 fn start(
     open: &mut Vec<Open>,
     lines: &mut Vec<String>,
     element: &BytesStart<'_>,
+    fold: bool,
 ) -> Result<(), String> {
     flush(open, lines, true);
     if let Some(parent) = open.last_mut() {
@@ -76,7 +100,7 @@ fn start(
     for attribute in element.attributes() {
         let attribute = attribute.map_err(|error| error.to_string())?;
         let key = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
-        let raw = String::from_utf8_lossy(&attribute.value).replace(['\t', '\n', '\r'], " ");
+        let raw = line_ends(&String::from_utf8_lossy(&attribute.value)).replace(['\t', '\n'], " ");
         let value = text_of(quick_xml::escape::unescape(&raw))?;
         match key.strip_prefix("xmlns") {
             Some(prefix) if prefix.is_empty() || prefix.starts_with(':') => {
@@ -116,6 +140,9 @@ fn start(
             .strip_prefix(mc)
             .is_some_and(|local| lists.contains(&local))
             || (key == "Requires" && name == format!("{mc}Choice"));
+        if fold && !listed {
+            value = folded(value);
+        }
         if listed {
             let tokens = value
                 .split_ascii_whitespace()
@@ -151,6 +178,17 @@ fn close(open: &mut Vec<Open>, lines: &mut Vec<String>) {
 /// The canonical form of `xml`, or why it is no well-formed, namespace
 /// well-formed part.
 pub fn canonical(xml: &[u8]) -> Result<String, String> {
+    canonical_form(xml, false)
+}
+
+/// The canonical form of `xml` with each attribute value in the one
+/// spelling of what it says (`true` and `1`, `1.0` and `1` alike): what a
+/// writer that writes values in a fixed form is compared by.
+pub fn canonical_folded(xml: &[u8]) -> Result<String, String> {
+    canonical_form(xml, true)
+}
+
+fn canonical_form(xml: &[u8], fold: bool) -> Result<String, String> {
     let xml = xml.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(xml);
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -160,11 +198,11 @@ pub fn canonical(xml: &[u8]) -> Result<String, String> {
         let text = match event {
             Event::Eof => break,
             Event::Start(element) => {
-                start(&mut open, &mut lines, &element)?;
+                start(&mut open, &mut lines, &element, fold)?;
                 continue;
             }
             Event::Empty(element) => {
-                start(&mut open, &mut lines, &element)?;
+                start(&mut open, &mut lines, &element, fold)?;
                 close(&mut open, &mut lines);
                 continue;
             }
@@ -172,8 +210,8 @@ pub fn canonical(xml: &[u8]) -> Result<String, String> {
                 close(&mut open, &mut lines);
                 continue;
             }
-            Event::Text(text) => text_of(text.decode())?,
-            Event::CData(data) => text_of(data.decode())?,
+            Event::Text(text) => line_ends(&text_of(text.decode())?),
+            Event::CData(data) => line_ends(&text_of(data.decode())?),
             Event::GeneralRef(reference) => {
                 match reference.resolve_char_ref().map_err(|e| e.to_string())? {
                     Some(c) => c.to_string(),
