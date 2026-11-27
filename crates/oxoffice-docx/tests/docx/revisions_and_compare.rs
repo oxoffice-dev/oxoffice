@@ -5790,6 +5790,15 @@ fn a_container_empty_in_one_version_reads_as_holding_one_empty_paragraph() {
         })
     };
     let header = |content: &str| story(false, content);
+    // A header with the main namespace as its only, default, namespace.
+    let bare_header = |content: &str| {
+        let mut doc = doc_with(&["Body."]);
+        doc.set_header("Head");
+        with_part(&mut doc, "header1.xml", |_| {
+            let main = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+            format!(r#"<hdr xmlns="{main}">{}</hdr>"#, content.replace("w:", ""))
+        })
+    };
     let footer = |content: &str| story(true, content);
     let text_box = |content: &str| {
         doc_with_body(&format!(
@@ -5832,28 +5841,74 @@ fn a_container_empty_in_one_version_reads_as_holding_one_empty_paragraph() {
         })
     };
     let inside = r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Inside</w:t></w:r></w:p>"#;
-    for (case, version, empty) in [
-        ("control", &control as &dyn Fn(&str) -> Document, "<w:p/>"),
-        ("header", &header, "<w:p/>"),
-        ("footer", &footer, "<w:p/>"),
-        ("text box", &text_box, "<w:p/>"),
-        ("note", &note, "<w:p/>"),
-        ("comment", &comment, ""),
+    // The versions as another writer writes them: the fill takes the prefix
+    // (or the default namespace) the container is written with, and a
+    // container written self-closing, or holding white space, is filled.
+    use oxoffice_xml_test::Writing::{DefaultNamespace, EmptySelfClosed, OtherPrefixes};
+    let written = |mut doc: Document, writing: Option<_>| match writing {
+        Some(writing) => {
+            let bytes = doc.to_bytes().unwrap();
+            let rewritten = oxoffice_xml_test::rewrite_package(&bytes, writing)
+                .unwrap()
+                .0;
+            Document::from_bytes(&rewritten).unwrap()
+        }
+        None => doc,
+    };
+    let (plain_only, closed, every) = (
+        &[None][..],
+        &[None, Some(EmptySelfClosed)][..],
+        &[
+            None,
+            Some(OtherPrefixes),
+            Some(DefaultNamespace),
+            Some(EmptySelfClosed),
+        ][..],
+    );
+    for (case, version, empty, writings) in [
+        (
+            "control",
+            &control as &dyn Fn(&str) -> Document,
+            "<w:p/>",
+            every,
+        ),
+        ("header", &header, "<w:p/>", every),
+        ("bare header", &bare_header, "<w:p/>", plain_only),
+        ("footer", &footer, "<w:p/>", plain_only),
+        ("text box", &text_box, "<w:p/>", closed),
+        ("note", &note, "<w:p/>", plain_only),
+        ("comment", &comment, "", plain_only),
     ] {
-        let resolved = |content: &str| version(if content.is_empty() { empty } else { content });
-        for (from, to) in [("", inside), (inside, "")] {
-            let mut doc = redline(version(from), &version(to));
-            assert_eq!(validation_errors(&doc), Vec::<String>::new(), "{case}");
-            assert_eq!(
-                story_texts(&accepted(&mut doc)),
-                story_texts(&resolved(to)),
-                "{case}"
-            );
-            assert_eq!(
-                story_texts(&rejected(&mut doc)),
-                story_texts(&resolved(from)),
-                "{case}"
-            );
+        let resolved = |content: &str| {
+            version(if content.trim().is_empty() {
+                empty
+            } else {
+                content
+            })
+        };
+        for (from, to) in [("", inside), (inside, ""), ("\n ", inside)] {
+            for &writing in writings {
+                // White space holds no empty element to write another way.
+                if from == "\n " && writing.is_some() {
+                    continue;
+                }
+                let case = format!("{case}, {from:?} to {to:?}, {writing:?}");
+                let mut doc = redline(
+                    written(version(from), writing),
+                    &written(version(to), writing),
+                );
+                assert_eq!(validation_errors(&doc), Vec::<String>::new(), "{case}");
+                assert_eq!(
+                    story_texts(&accepted(&mut doc)),
+                    story_texts(&resolved(to)),
+                    "{case}"
+                );
+                assert_eq!(
+                    story_texts(&rejected(&mut doc)),
+                    story_texts(&resolved(from)),
+                    "{case}"
+                );
+            }
         }
     }
     // A control both versions leave empty stays as written, and a field
