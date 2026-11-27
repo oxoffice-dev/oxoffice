@@ -4,7 +4,7 @@
 use std::ops::Range;
 
 use crate::SyntaxError;
-use crate::reference::{is_name_char, is_name_start, target_at};
+use crate::reference::{cell_at, is_name_char, is_name_start, starts_with_ignore_case, target_at};
 
 /// What a token is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -150,6 +150,13 @@ impl Lexer<'_> {
                 self.push(TokenKind::Text, end);
             }
             '#' if self.follows_spillable() => self.push(TokenKind::Operator, at + 1),
+            // A deleted sheet's reference: `#REF!A1`, `#REF!$A$1:$A$10`.
+            '#' if starts_with_ignore_case(self.rest(), "#REF!")
+                && (target_at(self.text, at + 5).is_some()
+                    || self.char_at(at + 5).is_some_and(is_name_start)) =>
+            {
+                self.after_prefix(at + 5)?;
+            }
             '#' => {
                 let end = self.error_value(at).ok_or_else(|| self.unexpected())?;
                 self.push(TokenKind::Error, end);
@@ -215,7 +222,7 @@ impl Lexer<'_> {
     fn error_value(&self, at: usize) -> Option<usize> {
         let rest = &self.text[at..];
         for value in ERROR_VALUES {
-            if rest.len() >= value.len() && rest[..value.len()].eq_ignore_ascii_case(value) {
+            if starts_with_ignore_case(rest, value) {
                 return Some(at + value.len());
             }
         }
@@ -236,7 +243,8 @@ impl Lexer<'_> {
     }
 
     /// The end of an unquoted sheet prefix at `at`, `!` included: `Sheet1!`,
-    /// or `Sheet1:Sheet3!` when its first sheet cannot be read as a cell.
+    /// or `Sheet1:Sheet3!` and `Jan:Dec!` when the first sheet cannot be read
+    /// as a cell (`A1:Sheet2!B1` is a range).
     fn sheet_prefix_end(&self, at: usize) -> Option<usize> {
         let end = self.word_end(at);
         if end == at {
@@ -245,7 +253,7 @@ impl Lexer<'_> {
         if self.text[end..].starts_with('!') {
             return Some(end + 1);
         }
-        if self.text[end..].starts_with(':') && target_at(self.text, at).is_none() {
+        if self.text[end..].starts_with(':') && cell_at(self.text, at).is_none() {
             let last = self.word_end(end + 1);
             if last > end + 1 && self.text[last..].starts_with('!') {
                 return Some(last + 1);
@@ -257,8 +265,7 @@ impl Lexer<'_> {
     /// What follows a sheet or workbook prefix ending at `at`: a reference,
     /// `#REF!`, a name, a function or a table reference.
     fn after_prefix(&mut self, at: usize) -> Result<(), SyntaxError> {
-        let rest = &self.text[at..];
-        if rest.len() >= 5 && rest[..5].eq_ignore_ascii_case("#REF!") {
+        if starts_with_ignore_case(&self.text[at..], "#REF!") {
             self.push(TokenKind::Reference, at + 5);
             return Ok(());
         }
@@ -337,16 +344,17 @@ impl Lexer<'_> {
         Ok(())
     }
 
-    /// At a digit or `.`: whole rows (`2:5`), a sheet prefix that starts with
-    /// a digit (`2024!A1`, as some producers write it), or a number.
+    /// At a digit or `.`: a sheet prefix that starts with a digit (`2024!A1`,
+    /// `1:3!A1`, as some producers write them), whole rows (`2:5`), or a
+    /// number.
     fn number_or_rows(&mut self) -> Result<(), SyntaxError> {
         let at = self.at;
+        if let Some(end) = self.sheet_prefix_end(at) {
+            return self.after_prefix(end);
+        }
         if let Some((end, _)) = target_at(self.text, at) {
             self.push(TokenKind::Reference, end);
             return Ok(());
-        }
-        if let Some(end) = self.sheet_prefix_end(at) {
-            return self.after_prefix(end);
         }
         let bytes = self.text.as_bytes();
         let digits = |from: usize| {

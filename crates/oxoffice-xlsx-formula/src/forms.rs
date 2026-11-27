@@ -10,13 +10,16 @@ use crate::SyntaxError;
 use crate::functions::{Prefix, function, stored_function};
 use crate::lexer::TokenKind;
 use crate::parser::{Node, Parsed, parse};
-use crate::reference::{Target, target};
+use crate::reference::{Target, optional_parameter, target};
 
 /// The prefixes of LET and LAMBDA parameters: `_xlpm.` on declarations and
 /// uses, `_xlop.` on an optional parameter's declaration (MS-XLSX
-/// `lambda-parameter-name`), kept as written.
+/// `lambda-parameter-name`), displayed `[y]`.
 const PARAMETER: &str = "_xlpm.";
 const OPTIONAL_PARAMETER: &str = "_xlop.";
+/// The prefix of a function passed as a value (an eta-reduced LAMBDA): Excel
+/// stores `GROUPBY(A2:A9,B2:B9,SUM)` as `_xlfn.GROUPBY(A2:A9,B2:B9,_xleta.SUM)`.
+const FUNCTION_VALUE: &str = "_xleta.";
 
 /// The displayed form of a stored formula, as Excel shows it after its `=`:
 ///
@@ -24,9 +27,13 @@ const OPTIONAL_PARAMETER: &str = "_xlop.";
 ///   `_xlfn._xlws.SORT` is `SORT`); a prefixed name the function table lacks
 ///   keeps it, so that it comes back unchanged;
 /// - LET and LAMBDA parameters lose `_xlpm.`, where they are declared and
-///   where they are used in their scope;
-/// - `_xlfn.SINGLE(x)` is `@x` (`@(x)` when `x` is not a reference or a
-///   call) and `_xlfn.ANCHORARRAY(x)` is `x#` when `x` is a cell or a name.
+///   where they are used in their scope, and an optional one's `_xlop.y` is
+///   `[y]`;
+/// - a function passed as a value loses `_xleta.` where a function is taken
+///   (`GROUPBY`'s function, `MAP`'s LAMBDA...);
+/// - `_xlfn.SINGLE(x)` is `@x` when `x` is a reference, a call or in
+///   parentheses (Excel stores `@(A1+B1)` as `_xlfn.SINGLE((A1+B1))`), and
+///   `_xlfn.ANCHORARRAY(x)` is `x#` when `x` is a cell or a name.
 ///
 /// Table references stay as stored (`Expenses[[#This Row],[Quantity]]`):
 /// Excel shows `[@Quantity]` inside the table, which depends on where the
@@ -50,7 +57,8 @@ pub fn to_displayed(stored: &str) -> String {
 }
 
 /// The stored form of a displayed formula, after the syntax check: the
-/// conversions of [`to_displayed`] the other way, and `Table[@Column]`
+/// conversions of [`to_displayed`] the other way (`@(A1+B1)` is
+/// `_xlfn.SINGLE((A1+B1))`, as Excel stores it), and `Table[@Column]`
 /// (Excel's displayed form of the current row) written
 /// `Table[[#This Row],[Column]]`. A leading `=` is dropped.
 ///
@@ -159,16 +167,19 @@ fn each(node: &Node, visit: &mut impl FnMut(&Node)) {
     }
 }
 
-/// Whether `node` is what `@` takes in the displayed form without
-/// parentheses: an operand or a range (`@A1:A10`, `@INDEX(...)`). Not a
-/// parenthesized one: `@(x)` gives its parentheses to `_xlfn.SINGLE`.
+/// Whether `node` is what `@` takes in the displayed form: an operand, a
+/// range or a parenthesized expression (`@A1:A10`, `@INDEX(...)`,
+/// `@(A1+B1)`).
 fn is_range_operand(parsed: &Parsed<'_>, node: &Node) -> bool {
     match node {
-        Node::Leaf(_) | Node::Call { .. } | Node::Invoke { .. } | Node::Array { .. } => true,
+        Node::Leaf(_)
+        | Node::Call { .. }
+        | Node::Invoke { .. }
+        | Node::Array { .. }
+        | Node::Paren { .. } => true,
         Node::Postfix { op, .. } => parsed.token(*op) == "#",
         Node::Prefix { op, .. } => parsed.token(*op) == "@",
         Node::Operation { rest, .. } => rest.iter().all(|(op, _)| parsed.token(*op) == ":"),
-        Node::Paren { .. } => false,
     }
 }
 
@@ -207,13 +218,17 @@ fn displayed(parsed: &Parsed<'_>, node: &Node, edits: &mut Edits) {
             || (next == close + 1 && parsed.kind(next) == TokenKind::OpenParen)
     });
     match (function.name, one) {
-        ("SINGLE", Some(arg)) if !joins => {
+        // `@x` gives `_xlfn.SINGLE(x)` back exactly: without whitespace
+        // inside the brackets, for what `@` takes whole.
+        ("SINGLE", Some(arg))
+            if !joins
+                && arg.first() == open + 1
+                && arg.last() + 1 == close
+                && is_range_operand(parsed, arg) =>
+        {
             edits.replace[name] = Some("@".to_owned());
-            let tight = arg.first() == open + 1 && arg.last() + 1 == close;
-            if tight && is_range_operand(parsed, arg) {
-                edits.replace[open] = Some(String::new());
-                edits.replace[close] = Some(String::new());
-            }
+            edits.replace[open] = Some(String::new());
+            edits.replace[close] = Some(String::new());
         }
         // Right after `:`, `Data:Sheet2!B2#` would read as a 3D reference.
         ("ANCHORARRAY", Some(Node::Leaf(leaf)))
@@ -238,15 +253,11 @@ fn displayed(parsed: &Parsed<'_>, node: &Node, edits: &mut Edits) {
 
 fn stored(parsed: &Parsed<'_>, node: &Node, edits: &mut Edits) {
     match node {
-        Node::Prefix { op, operand } if parsed.token(*op) == "@" => match operand.as_ref() {
-            Node::Paren { open, .. } if *open == op + 1 => {
-                edits.replace[*op] = Some("_xlfn.SINGLE".to_owned());
-            }
-            _ => {
-                edits.replace[*op] = Some("_xlfn.SINGLE(".to_owned());
-                edits.after[operand.last()].push(')');
-            }
-        },
+        // As Excel: `@(A1+B1)` is `_xlfn.SINGLE((A1+B1))`, its brackets kept.
+        Node::Prefix { op, operand } if parsed.token(*op) == "@" => {
+            edits.replace[*op] = Some("_xlfn.SINGLE(".to_owned());
+            edits.after[operand.last()].push(')');
+        }
         Node::Postfix { operand, op } if parsed.token(*op) == "#" => {
             edits.before[operand.first()].insert_str(0, "_xlfn.ANCHORARRAY(");
             edits.replace[*op] = Some(")".to_owned());
@@ -317,18 +328,79 @@ fn plain_name(parsed: &Parsed<'_>, index: usize) -> bool {
     parsed.kind(index) == TokenKind::Name && !parsed.token(index).contains('!')
 }
 
+/// Whether the token at `index` declares a LAMBDA parameter: a plain name,
+/// or an optional one displayed `[y]`.
+fn lambda_parameter(parsed: &Parsed<'_>, index: usize) -> bool {
+    plain_name(parsed, index)
+        || (parsed.kind(index) == TokenKind::StructuredReference
+            && optional_parameter(parsed.token(index)).is_some())
+}
+
 /// A declared parameter: `_xlpm.` shown in the displayed form and taken in
-/// the stored one.
+/// the stored one, an optional parameter's `_xlop.y` displayed `[y]`.
 fn declare(parsed: &Parsed<'_>, index: usize, form: Form, edits: &mut Edits) -> String {
-    let (prefix, bare, key) = parameter(parsed.token(index));
+    let text = parsed.token(index);
+    if let Some(name) = optional_parameter(text) {
+        if form == Form::Stored {
+            edits.replace[index] = Some(format!("{OPTIONAL_PARAMETER}{name}"));
+        }
+        return name.to_lowercase();
+    }
+    let (prefix, bare, key) = parameter(text);
     match form {
         Form::Displayed if prefix == PARAMETER => edits.replace[index] = Some(bare.to_owned()),
+        Form::Displayed if prefix == OPTIONAL_PARAMETER => {
+            edits.replace[index] = Some(format!("[{bare}]"))
+        }
         Form::Stored if prefix.is_empty() => {
             edits.replace[index] = Some(format!("{PARAMETER}{bare}"))
         }
         _ => {}
     }
     key
+}
+
+/// Whether argument `index` of `count` of the built-in `function` takes a
+/// function, where a function's bare name is the function as a value.
+fn takes_function(function: &str, index: usize, count: usize) -> bool {
+    match function {
+        "GROUPBY" => index == 2,
+        "PIVOTBY" => index == 3,
+        "BYROW" | "BYCOL" => index == 1,
+        "REDUCE" | "SCAN" | "MAKEARRAY" => index == 2,
+        "MAP" => index > 0 && index + 1 == count,
+        _ => false,
+    }
+}
+
+/// A function value: a built-in function's name, not a parameter in force,
+/// where a function is taken. `_xleta.` shown without, taken by the bare
+/// name; a name stored otherwise stays as written.
+fn function_value(
+    parsed: &Parsed<'_>,
+    index: usize,
+    scope: &[String],
+    form: Form,
+    edits: &mut Edits,
+) {
+    let text = parsed.token(index);
+    if !plain_name(parsed, index) || scope.contains(&parameter(text).2) {
+        return;
+    }
+    let builtin = |name: &str| !name.starts_with("_xl") && function(name).is_some();
+    match form {
+        Form::Displayed => {
+            if let Some(bare) = text.strip_prefix(FUNCTION_VALUE)
+                && builtin(bare)
+            {
+                edits.replace[index] = Some(bare.to_owned());
+            }
+        }
+        Form::Stored if builtin(text) => {
+            edits.replace[index] = Some(format!("{FUNCTION_VALUE}{text}"));
+        }
+        Form::Stored => {}
+    }
 }
 
 /// A name used where `scope` holds the parameters in force.
@@ -346,9 +418,10 @@ fn use_name(parsed: &Parsed<'_>, index: usize, scope: &[String], form: Form, edi
     }
 }
 
-/// The LET and LAMBDA parameters of `node` and their uses. A LET name is in
-/// scope from the value after its own to the calculation; a LAMBDA parameter
-/// in the calculation; a call of the result (`LAMBDA(x,x)(1)`) is outside.
+/// The LET and LAMBDA parameters of `node` and their uses, and the functions
+/// it passes as values. A LET name is in scope from the value after its own
+/// to the calculation; a LAMBDA parameter in the calculation; a call of the
+/// result (`LAMBDA(x,x)(1)`) is outside.
 fn parameters(
     parsed: &Parsed<'_>,
     node: &Node,
@@ -389,7 +462,7 @@ fn parameters(
                     for (index, arg) in args.iter().enumerate() {
                         if index + 1 < count
                             && let Some(Node::Leaf(leaf)) = arg
-                            && plain_name(parsed, *leaf)
+                            && lambda_parameter(parsed, *leaf)
                         {
                             let key = declare(parsed, *leaf, form, edits);
                             scope.push(key);
@@ -405,8 +478,30 @@ fn parameters(
                     if callee.is_none() {
                         use_name(parsed, *name, scope, form, edits);
                     }
-                    for arg in args.iter().flatten() {
+                    for (index, arg) in args.iter().enumerate() {
+                        let Some(arg) = arg else { continue };
                         parameters(parsed, arg, scope, form, edits);
+                        if callee.is_some_and(|callee| takes_function(callee, index, count)) {
+                            // A function, or an array of them: `HSTACK(SUM,AVERAGE)`.
+                            match arg {
+                                Node::Leaf(leaf) => {
+                                    function_value(parsed, *leaf, scope, form, edits)
+                                }
+                                Node::Call { name, args, .. }
+                                    if matches!(
+                                        function(parsed.token(*name)).map(|f| f.name),
+                                        Some("HSTACK" | "VSTACK")
+                                    ) =>
+                                {
+                                    for leaf in args.iter().flatten() {
+                                        if let Node::Leaf(leaf) = leaf {
+                                            function_value(parsed, *leaf, scope, form, edits);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                 }
             }

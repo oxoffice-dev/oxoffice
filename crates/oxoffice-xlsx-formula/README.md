@@ -13,9 +13,10 @@ and as Excel displays them.
   Joined, the tokens give the formula back.
 - The displayed form and back: future functions lose and take `_xlfn.`
   (`_xlfn._xlws.` for `FILTER`, `SORT` and `PY`), LET and LAMBDA parameters
-  `_xlpm.` in their scope, `_xlfn.SINGLE(x)` is `@x` and
-  `_xlfn.ANCHORARRAY(x)` is `x#`. A stored formula comes back to its exact
-  text.
+  `_xlpm.` in their scope (an optional `[y]` is `_xlop.y`), a function passed
+  as a value `_xleta.` (`GROUPBY(A2:A9,B2:B9,SUM)`), `_xlfn.SINGLE(x)` is `@x`
+  and `_xlfn.ANCHORARRAY(x)` is `x#`. A stored formula comes back to its
+  exact text.
 - A shared formula's member: the master's formula with its relative
   references moved; a reference leaving the grid becomes `#REF!`.
 - The syntax check a written formula passes: operands, operators, calls,

@@ -106,8 +106,23 @@ fn row_at(text: &str, at: usize) -> Option<(usize, Part)> {
     })
 }
 
+/// Whether `text` starts with `prefix` (ASCII) in any case, compared byte
+/// by byte so that no character of `text` is cut.
+pub(crate) fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
+    text.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
+}
+
+/// The name an optional LAMBDA parameter is displayed with: `y` in `[y]`.
+pub(crate) fn optional_parameter(text: &str) -> Option<&str> {
+    let name = text.strip_prefix('[')?.strip_suffix(']')?;
+    let mut chars = name.chars();
+    (chars.next().is_some_and(is_name_start) && chars.all(is_name_char)).then_some(name)
+}
+
 /// A cell at `at`, which no name character or `(` follows.
-fn cell_at(text: &str, at: usize) -> Option<(usize, (Part, Part))> {
+pub(crate) fn cell_at(text: &str, at: usize) -> Option<(usize, (Part, Part))> {
     let (end, column) = column_at(text, at)?;
     let (end, row) = row_at(text, end)?;
     match char_at(text, end) {
@@ -157,9 +172,13 @@ pub(crate) fn target_at(text: &str, at: usize) -> Option<(usize, Target)> {
 }
 
 /// Where the target of a reference token starts: after its prefix
-/// (`Sheet1!`, `'Q1 data'!`, `Sheet1:Sheet3!`, `[1]Sheet1!`, `!`), at 0
-/// without one.
+/// (`Sheet1!`, `'Q1 data'!`, `Sheet1:Sheet3!`, `[1]Sheet1!`, `!`, the
+/// `#REF!` of a deleted sheet), at 0 without one.
 pub(crate) fn target_start(token: &str) -> usize {
+    // `#REF!` alone is a target; followed by one, the prefix of a deleted sheet.
+    if starts_with_ignore_case(token, "#REF!") {
+        return if token.len() > 5 { 5 } else { 0 };
+    }
     let mut at = 0;
     if token.starts_with('\'') {
         at = 1;
@@ -171,10 +190,6 @@ pub(crate) fn target_start(token: &str) -> usize {
                 break;
             }
         }
-    }
-    // `#REF!` alone is a target, not a prefix.
-    if token[at..].starts_with('#') {
-        return 0;
     }
     token[at..].find('!').map_or(0, |found| at + found + 1)
 }

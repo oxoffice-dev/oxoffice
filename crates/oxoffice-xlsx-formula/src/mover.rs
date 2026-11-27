@@ -39,13 +39,13 @@ pub fn move_references(formula: &str, rows: i64, columns: i64) -> Result<String,
     Ok(moved)
 }
 
-/// A part moved by `by`, or `None` when it leaves the grid; absolute parts
-/// stay.
+/// A part moved by `by`, or `None` when it leaves the grid (an offset past
+/// `i64` included); absolute parts stay.
 fn moved(part: &Part, by: i64, limit: u32) -> Option<u32> {
     if part.absolute || by == 0 {
         return Some(part.index);
     }
-    let index = i64::from(part.index) + by;
+    let index = i64::from(part.index).checked_add(by)?;
     (0..i64::from(limit))
         .contains(&index)
         .then_some(index as u32)

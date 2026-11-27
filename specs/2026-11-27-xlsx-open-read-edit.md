@@ -119,8 +119,10 @@ carriage return as `_xHHHH_`, and a literal `_xHHHH_` as `_x005F_xHHHH_`, as the
 form, which the lexer maps to the stored form and back: future functions take and lose `_xlfn.` (and `_xlws.`) from
 the complete MS-XLSX table, with the later functions it lacks (`XMATCH`, `GROUPBY`...), and a prefixed name the table
 lacks keeps its prefix on read so it comes back unchanged; LET and LAMBDA parameters take `_xlpm.` on their
-declarations and on every use, scope tracked (nested LET, a parameter that shadows a defined name);
-`_xlfn.ANCHORARRAY(x)` is `x#` and `_xlfn.SINGLE(x)` is `@x`. Table references read as stored
+declarations and on every use, scope tracked (nested LET, a parameter that shadows a defined name), an optional LAMBDA
+parameter `[y]` is `_xlop.y`; a function passed as a value takes `_xleta.` where a function is taken (Excel stores
+`GROUPBY(A2:A9,B2:B9,SUM)` with `_xleta.SUM`); `_xlfn.ANCHORARRAY(x)` is `x#` and `_xlfn.SINGLE(x)` is `@x`
+(`@(A1+B1)` is stored `_xlfn.SINGLE((A1+B1))`, as Excel does). Table references read as stored
 (`Expenses[[#This Row],[Quantity]]`: Excel shows `[@Quantity]` inside the table, which depends on the cell); a written
 `Table[@Column]` is stored `Table[[#This Row],[Column]]`. Reading then writing a formula gives back its stored text,
 for every corpus formula. The stored form is readable in Rust, Python

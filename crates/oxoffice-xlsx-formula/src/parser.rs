@@ -11,7 +11,7 @@
 use crate::SyntaxError;
 use crate::functions::function;
 use crate::lexer::{ERROR_VALUES, Token, TokenKind, tokenize};
-use crate::reference::{Target, target};
+use crate::reference::{Target, optional_parameter, target};
 
 /// At most this many arguments in one call (Excel's limit).
 const MAX_ARGUMENTS: usize = 255;
@@ -568,9 +568,16 @@ impl Parser<'_> {
         if self.check {
             self.check_call(&node)?;
         }
+        // Each call of the result wraps the tree once more: a level each.
+        let mut invocations = 0;
         while let Some(open) = self.peek() {
             if self.kind(open) != TokenKind::OpenParen || self.spaced() {
                 break;
+            }
+            invocations += 1;
+            self.depth += 1;
+            if self.depth > MAX_DEPTH {
+                return Err(self.error_at(open, "the formula nests too deeply"));
             }
             self.advance();
             let (args, close) = self.arguments(name, open)?;
@@ -587,6 +594,7 @@ impl Parser<'_> {
                 close,
             };
         }
+        self.depth -= invocations;
         Ok(node)
     }
 
@@ -684,6 +692,15 @@ impl Parser<'_> {
             }
             _ => false,
         };
+        // A LAMBDA parameter may be optional: `LAMBDA(x,[y],...)`.
+        let declares_optional = |index: usize| match &args[index] {
+            Some(Node::Leaf(leaf)) => {
+                declares(index)
+                    || (self.kind(*leaf) == TokenKind::StructuredReference
+                        && optional_parameter(self.token(*leaf)).is_some())
+            }
+            _ => false,
+        };
         let not_a_name = |index: usize| match &args[index] {
             Some(node) => format!("`{}` is not a name", self.span_text(node)),
             None => "a name is missing".to_owned(),
@@ -700,7 +717,7 @@ impl Parser<'_> {
                 )),
                 None => Ok(()),
             },
-            "LAMBDA" => match (0..count - 1).find(|&index| !declares(index)) {
+            "LAMBDA" => match (0..count - 1).find(|&index| !declares_optional(index)) {
                 Some(index) => Err(self.error_at(
                     *name,
                     format!(

@@ -7,8 +7,9 @@
 //! - its tokens ([`tokenize`]), which joined give the formula back;
 //! - its displayed form ([`to_displayed`]) and back ([`to_stored`]): future
 //!   functions lose and take `_xlfn.` (`_xlfn._xlws.` for `FILTER`, `SORT` and
-//!   `PY`), LET and LAMBDA parameters `_xlpm.`, `_xlfn.SINGLE(x)` is `@x` and
-//!   `_xlfn.ANCHORARRAY(x)` is `x#`;
+//!   `PY`), LET and LAMBDA parameters `_xlpm.` (`_xlop.y` is the optional
+//!   `[y]`), a function passed as a value `_xleta.` (`GROUPBY(...,SUM)`),
+//!   `_xlfn.SINGLE(x)` is `@x` and `_xlfn.ANCHORARRAY(x)` is `x#`;
 //! - the formula of a shared formula's member, moved from its master
 //!   ([`move_references`]);
 //! - the syntax check a written formula passes ([`to_stored`],

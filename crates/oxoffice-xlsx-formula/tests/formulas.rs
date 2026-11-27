@@ -1,5 +1,6 @@
 //! Formulas: every formula of the corpus, and one table per behaviour
-//! (`tests/*.tsv`, a case per line, `#` lines are comments).
+//! (`tests/*.tsv`, a case per line, lines starting with `# ` are comments:
+//! a case may start with `#REF!`).
 
 use std::fs::{self, File};
 use std::io::Read;
@@ -14,7 +15,7 @@ use quick_xml::events::Event;
 fn cases(table: &str) -> impl Iterator<Item = Vec<&str>> {
     table
         .lines()
-        .filter(|line| !line.starts_with('#'))
+        .filter(|line| !line.starts_with("# "))
         .map(|line| line.split('\t').collect())
 }
 
@@ -202,12 +203,23 @@ fn the_syntax_check_refuses_what_excel_would_repair() {
             long,
             "a formula holds at most 8,192 characters (at character 1)",
         ),
+        (
+            format!("SUM(1){}", "()".repeat(300)),
+            "the formula nests too deeply (at character 517)",
+        ),
     ];
     let table = cases(include_str!("refusals.tsv")).map(|case| (case[0].to_owned(), case[1]));
     for (formula, message) in table.chain(generated) {
         let error = to_stored(&formula).expect_err(&formula);
         assert_eq!(error.to_string(), message, "{formula}");
     }
+    // Read from a file, any depth comes back as stored, on a small stack.
+    let chained = format!("SUM(1){}", "()".repeat(100_000));
+    let read = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || to_displayed(&chained) == chained)
+        .unwrap();
+    assert!(read.join().unwrap());
     for formula in [
         nested(64),
         arguments(255),
@@ -234,4 +246,134 @@ fn the_syntax_check_refuses_what_excel_would_repair() {
         ("_xlfn.", 3, 6)
     );
     assert_eq!(function("_xlfn.SUM"), None);
+}
+
+/// A small deterministic generator (xorshift) for the random tests.
+struct Random(u64);
+
+impl Random {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n as u64) as usize
+    }
+
+    fn pick<'a>(&mut self, items: &[&'a str]) -> &'a str {
+        items[self.below(items.len())]
+    }
+}
+
+/// A random displayed formula: references (3D, deleted, not in ASCII),
+/// names, constants, operators, calls, LET and LAMBDA, `@` and `#`.
+fn random_formula(random: &mut Random, depth: usize, parameters: &mut Vec<&'static str>) -> String {
+    const LEAVES: [&str; 22] = [
+        "A1",
+        "$B$2",
+        "C3:D4",
+        "Jan:Dec!B2",
+        "'Лист 1'!B2",
+        "Лист1!Итого",
+        "合計",
+        "#REF!A1",
+        "A:A",
+        "2:3",
+        "Rate",
+        "Tbl[Col]",
+        "Tbl[@Col]",
+        "1",
+        "2.5",
+        "\"тест\"",
+        "TRUE",
+        "#N/A",
+        "{1,2;3,4}",
+        "A1#",
+        "Data#",
+        "SUM",
+    ];
+    if depth == 0 || random.below(4) == 0 {
+        if !parameters.is_empty() && random.below(2) == 0 {
+            return random.pick(parameters).to_owned();
+        }
+        return random.pick(&LEAVES).to_owned();
+    }
+    let depth = depth - 1;
+    match random.below(10) {
+        0 | 1 => {
+            let left = random_formula(random, depth, parameters);
+            let op = random.pick(&["+", "-", "*", "&", "<>", " ", ":", "^"]);
+            format!("{left}{op}{}", random_formula(random, depth, parameters))
+        }
+        2 => format!("-{}", random_formula(random, depth, parameters)),
+        3 => format!("({})", random_formula(random, depth, parameters)),
+        4 => format!("@{}", random_formula(random, depth, parameters)),
+        5 => format!("{}%", random_formula(random, depth, parameters)),
+        6 => {
+            let name = random.pick(&["SUM", "XLOOKUP", "FILTER", "IF", "CONCAT", "MyUdf"]);
+            let count = match name {
+                "XLOOKUP" | "IF" => 3,
+                "FILTER" => 2,
+                _ => 1 + random.below(3),
+            };
+            let args: Vec<String> = (0..count)
+                .map(|_| random_formula(random, depth, parameters))
+                .collect();
+            format!("{name}({})", args.join(","))
+        }
+        7 => {
+            let name = random.pick(&["x", "итог", "Rate"]);
+            let value = random_formula(random, depth, parameters);
+            parameters.push(name);
+            let body = random_formula(random, depth, parameters);
+            parameters.pop();
+            format!("LET({name},{value},{body})")
+        }
+        8 => {
+            parameters.extend(["x", "y"]);
+            let body = random_formula(random, depth, parameters);
+            parameters.truncate(parameters.len() - 2);
+            let argument = random_formula(random, depth, parameters);
+            format!("LAMBDA(x,[y],{body})({argument})")
+        }
+        _ => {
+            let function = random.pick(&["SUM", "AVERAGE", "HSTACK(SUM,MAX)"]);
+            format!("GROUPBY(A1:A3,B1:B3,{function})+BYROW(A1:B3,SUM)")
+        }
+    }
+}
+
+#[test]
+fn random_formulas_come_back_through_their_displayed_form() {
+    let mut random = Random(0x9E37_79B9_7F4A_7C15);
+    let mut checked = 0;
+    for _ in 0..3_000 {
+        let displayed = random_formula(&mut random, 4, &mut Vec::new());
+        let Ok(stored) = to_stored(&displayed) else {
+            continue;
+        };
+        checked += 1;
+        let back = to_stored(&to_displayed(&stored));
+        assert_eq!(back.as_deref(), Ok(stored.as_str()), "{displayed}");
+        assert_eq!(check_stored(&stored), Ok(()), "{displayed}");
+        assert!(move_references(&stored, 3, -2).is_ok(), "{stored}");
+    }
+    assert!(checked > 1_000, "{checked} formulas passed the check");
+}
+
+#[test]
+fn no_text_makes_a_function_panic() {
+    const PIECES: [&str; 30] = [
+        "A", "b", "1", "$", ":", "!", "'", "\"", "[", "]", "#", "@", "(", ")", ",", ";", "{", "}",
+        "+", " ", ".", "_", "Л", "合", "é", "?", "REF!", "_xl", "\n", "%",
+    ];
+    let mut random = Random(0xD1B5_4A32_D192_ED03);
+    for _ in 0..20_000 {
+        let length = 1 + random.below(12);
+        let text: String = (0..length).map(|_| random.pick(&PIECES)).collect();
+        let _ = tokenize(&text);
+        let _ = to_stored(&text);
+        let _ = check_stored(&text);
+        let _ = move_references(&text, 1, -1);
+        let _ = to_displayed(&text);
+    }
 }
