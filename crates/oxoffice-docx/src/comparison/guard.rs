@@ -525,25 +525,42 @@ pub(super) fn guard_source_body_at(
     coordinates: Option<SourceCoordinates>,
 ) -> Result<Vec<GuardItem>> {
     let ordinary_part = coordinates.is_some();
+    let part = document.package.get_part(owner);
+    let mut placement = coordinates.or_else(|| {
+        let part = part?;
+        let start = (source.as_ptr() as usize).checked_sub(part.as_ptr() as usize)?;
+        start
+            .checked_add(source.len())
+            .is_some_and(|end| end <= part.len())
+            .then_some((start, Vec::new()))
+    });
+    // A container holding nothing reads as holding one empty paragraph, as
+    // the comparison reads it, so that the empty version and the one the
+    // resolution gives back with that paragraph read alike.
+    let filled = filled_empty_containers(model, source, bindings)?;
+    let filled_model;
+    let (model, source) = match &filled {
+        Some((filled, edits)) => {
+            if let Some((base, projection)) = &mut placement {
+                *projection = projection_with_edits(*base, std::mem::take(projection), edits);
+            }
+            filled_model = story_document(filled, bindings)?;
+            (&filled_model, filled.as_str())
+        }
+        None => (model, source),
+    };
     let spans = story_content_spans(source, bindings)?;
     let mut snapshots = SourceSnapshots {
         guard_graphs: true,
         story: location.to_owned(),
         ..SourceSnapshots::default()
     };
-    if let Some(part) = document.package.get_part(owner) {
+    if let Some(part) = part {
         snapshots.part_hash = Some(Sha256::digest(part).into());
         snapshots.part_len = Some(part.len());
-        if let Some((base, projection)) = coordinates {
+        if let Some((base, projection)) = placement {
             snapshots.part_base = Some(base);
             snapshots.part_projection = projection;
-        } else {
-            let start = (source.as_ptr() as usize).checked_sub(part.as_ptr() as usize);
-            snapshots.part_base = start.filter(|start| {
-                start
-                    .checked_add(source.len())
-                    .is_some_and(|end| end <= part.len())
-            });
         }
     }
     snapshots.body(model, (source, &spans, bindings), &HeldRevisions::default())?;
@@ -620,6 +637,152 @@ pub(super) fn guard_source_body_at(
             }
         })
         .collect())
+}
+
+/// A story read with pieces replaced, and each piece: its range in the
+/// story read and the length written in its place.
+type FilledSource = (String, Vec<(Range<usize>, usize)>);
+
+/// `source`, a story read in `bindings` and modeled as `model`, with one
+/// empty paragraph in each container it holds that holds nothing: the
+/// story itself (see `holds_block`), a text box, or a block content control
+/// (one in the story, a cell, a text box or another block control). `None`
+/// when no container is empty.
+fn filled_empty_containers(
+    model: &CT_Document,
+    source: &str,
+    bindings: &[(String, String)],
+) -> Result<Option<FilledSource>> {
+    if !holds_block(model) {
+        let (filled, at) = with_empty_paragraph(source, bindings)?;
+        let written = filled.len() - source.len();
+        return Ok(Some((filled, vec![(at..at, written)])));
+    }
+    // Most stories hold neither a content control nor a text box.
+    if !source.contains("sdtContent") && !source.contains("txbxContent") {
+        return Ok(None);
+    }
+    // Each open element: whether its children are blocks, whether it is a
+    // block control, and for a text box or a block control's content,
+    // whether it holds an element yet.
+    struct Open {
+        blocks: bool,
+        block_control: bool,
+        content: Option<bool>,
+        name: Vec<u8>,
+    }
+    let (wrapped, offset) = story_wrapper(source, bindings)?;
+    let mut reader = NsReader::from_reader(wrapped.as_slice());
+    reader.config_mut().trim_text(false);
+    let mut open: Vec<Open> = Vec::new();
+    let mut pieces = Vec::new();
+    let paragraph = |name: &[u8]| -> Result<String> {
+        let name = std::str::from_utf8(name).map_err(utf8_error)?;
+        Ok(match name.split_once(':') {
+            Some((prefix, _)) => format!("<{prefix}:p/>"),
+            None => "<p/>".to_owned(),
+        })
+    };
+    let mut buffer = Vec::new();
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader
+            .read_resolved_event_into(&mut buffer)
+            .map_err(|error| Error::Other(format!("comparison XML scan failed: {error}")))?;
+        let word = matches!(
+            namespace,
+            ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes()
+        );
+        let after = reader.buffer_position() as usize;
+        match event {
+            Event::Start(ref element) | Event::Empty(ref element) => {
+                let parent_blocks = open.last().is_some_and(|parent| parent.blocks);
+                let in_block_control = open.last().is_some_and(|parent| parent.block_control);
+                if let Some(parent) = open.last_mut()
+                    && let Some(holds) = &mut parent.content
+                {
+                    *holds = true;
+                }
+                let local = element.local_name();
+                let content = word
+                    && (in_block_control && local.as_ref() == b"sdtContent"
+                        || local.as_ref() == b"txbxContent");
+                if matches!(event, Event::Start(_)) {
+                    open.push(Open {
+                        blocks: open.len() == 1 || content || (word && local.as_ref() == b"tc"),
+                        block_control: word && parent_blocks && local.as_ref() == b"sdt",
+                        content: content.then_some(false),
+                        name: element.name().as_ref().to_vec(),
+                    });
+                } else if content {
+                    // Written self-closing, or `<x></x>`, which the reader
+                    // reads alike.
+                    let range = before - offset..after - offset;
+                    let written = oxoffice_core::xml_element::append_content(
+                        &source[range.clone()],
+                        &paragraph(element.name().as_ref())?,
+                    )?;
+                    pieces.push((range, written));
+                }
+            }
+            Event::End(_) => {
+                if let Some(closed) = open.pop()
+                    && closed.content == Some(false)
+                {
+                    let at = before - offset;
+                    pieces.push((at..at, paragraph(&closed.name)?));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    if pieces.is_empty() {
+        return Ok(None);
+    }
+    let mut filled = String::with_capacity(source.len() + pieces.len() * 16);
+    let mut cursor = 0;
+    let mut edits = Vec::with_capacity(pieces.len());
+    for (range, written) in pieces {
+        filled.push_str(&source[cursor..range.start]);
+        filled.push_str(&written);
+        cursor = range.end;
+        edits.push((range, written.len()));
+    }
+    filled.push_str(&source[cursor..]);
+    Ok(Some((filled, edits)))
+}
+
+/// `projection`, the part ranges a story read at `base` maps to the ranges
+/// it reads, with the `edits` of [`filled_empty_containers`] (ranges in the
+/// story read, each with the length written in its place) read after it.
+fn projection_with_edits(
+    base: usize,
+    projection: Vec<(Range<usize>, Range<usize>)>,
+    edits: &[(Range<usize>, usize)],
+) -> Vec<(Range<usize>, Range<usize>)> {
+    let growth = |position: usize| {
+        edits
+            .iter()
+            .filter(|(range, _)| base + range.end <= position)
+            .map(|(range, written)| written - range.len())
+            .sum::<usize>()
+    };
+    let mut shifted = projection
+        .into_iter()
+        .map(|(physical, projected)| {
+            let by = growth(projected.start);
+            (physical, projected.start + by..projected.end + by)
+        })
+        .collect::<Vec<_>>();
+    let mut grown = 0;
+    for (range, written) in edits {
+        let start = base + range.start + grown;
+        shifted.push((base + range.start..base + range.end, start..start + written));
+        grown += written - range.len();
+    }
+    shifted
 }
 
 pub(super) fn guard_mask_coordinates(

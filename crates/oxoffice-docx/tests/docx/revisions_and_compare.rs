@@ -5761,27 +5761,36 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
 }
 
 #[test]
-fn a_container_empty_in_one_version_is_refused_with_why() {
-    // No tracked change records a block control, a header or a text box
-    // itself, and the last mark of their content cannot be taken out, as
-    // the body's last cannot: one holding nothing in one version cannot be
-    // marked to hold the other's paragraph.
+fn a_container_empty_in_one_version_reads_as_holding_one_empty_paragraph() {
+    // No tracked change records a block control, a header, a footer, a text
+    // box or a note itself, and the last mark of their content cannot be
+    // taken out: one holding nothing in one version reads as holding one
+    // empty paragraph, which the resolution giving that version back leaves.
+    // A comment may hold nothing: its parts are replaced whole, exactly.
     let control = |content: &str| {
         doc_with_body(&format!(
             r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>{}"#,
             plain("After")
         ))
     };
-    let header = |content: &str| {
+    let story = |footer: bool, content: &str| {
         let mut doc = doc_with(&["Body."]);
-        doc.set_header("Head");
-        with_part(&mut doc, "header1.xml", |xml| {
-            let open = xml.find("<w:hdr").unwrap();
+        let (part, root) = if footer {
+            doc.set_footer("Foot");
+            ("footer1.xml", "w:ftr")
+        } else {
+            doc.set_header("Head");
+            ("header1.xml", "w:hdr")
+        };
+        with_part(&mut doc, part, |xml| {
+            let open = xml.find(&format!("<{root}")).unwrap();
             let open = open + xml[open..].find('>').unwrap() + 1;
-            let close = xml.find("</w:hdr>").unwrap();
+            let close = xml.find(&format!("</{root}>")).unwrap();
             format!("{}{content}{}", &xml[..open], &xml[close..])
         })
     };
+    let header = |content: &str| story(false, content);
+    let footer = |content: &str| story(true, content);
     let text_box = |content: &str| {
         doc_with_body(&format!(
             "<w:p><w:r><w:t>Boxed </w:t></w:r>{}</w:p>{}",
@@ -5808,22 +5817,56 @@ fn a_container_empty_in_one_version_is_refused_with_why() {
             with_note_edited(xml, "footnote", 3, |_| content.to_owned())
         })
     };
-    for version in [
-        &control as &dyn Fn(&str) -> Document,
-        &header,
-        &text_box,
-        &note,
+    let comment = |content: &str| {
+        let mut doc = doc_with(&["Hello brave world"]);
+        doc.add_comment_on_text("brave", "Ada", "Note", Default::default())
+            .unwrap();
+        let mut doc = with_part_edited(&mut doc, "word/commentsExtended.xml", |xml| {
+            xml.replace(r#"<w15:commentEx w15:paraId="00000001"/>"#, "")
+        });
+        with_part_edited(&mut doc, "word/comments.xml", |xml| {
+            let open = xml.find("<w:comment ").unwrap();
+            let open = open + xml[open..].find('>').unwrap() + 1;
+            let close = xml.find("</w:comment>").unwrap();
+            format!("{}{content}{}", &xml[..open], &xml[close..])
+        })
+    };
+    let inside = r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Inside</w:t></w:r></w:p>"#;
+    for (case, version, empty) in [
+        ("control", &control as &dyn Fn(&str) -> Document, "<w:p/>"),
+        ("header", &header, "<w:p/>"),
+        ("footer", &footer, "<w:p/>"),
+        ("text box", &text_box, "<w:p/>"),
+        ("note", &note, "<w:p/>"),
+        ("comment", &comment, ""),
     ] {
-        for (from, to) in [("", plain("Inside")), (&plain("Inside"), String::new())] {
-            let error = version(from)
-                .compare(&version(&to), AUTHOR, DATE)
-                .unwrap_err();
-            assert!(
-                error.to_string().contains("docx-compare-empty-container"),
-                "{error}"
+        let resolved = |content: &str| version(if content.is_empty() { empty } else { content });
+        for (from, to) in [("", inside), (inside, "")] {
+            let mut doc = redline(version(from), &version(to));
+            assert_eq!(validation_errors(&doc), Vec::<String>::new(), "{case}");
+            assert_eq!(
+                story_texts(&accepted(&mut doc)),
+                story_texts(&resolved(to)),
+                "{case}"
+            );
+            assert_eq!(
+                story_texts(&rejected(&mut doc)),
+                story_texts(&resolved(from)),
+                "{case}"
             );
         }
     }
+    // A control both versions leave empty stays as written, and a field
+    // after it, in a paragraph added whole, is read where it sits.
+    let original = control("");
+    let edited = doc_with_body(&format!(
+        r#"<w:sdt><w:sdtPr><w:id w:val="5"/></w:sdtPr><w:sdtContent></w:sdtContent></w:sdt>{PAGE_LINE}{}"#,
+        plain("After")
+    ));
+    let mut doc = redline(control(""), &edited);
+    assert!(main_part_xml(&mut doc).contains("<w:sdtContent></w:sdtContent>"));
+    assert_eq!(story_texts(&accepted(&mut doc)), story_texts(&edited));
+    assert_eq!(story_texts(&rejected(&mut doc)), story_texts(&original));
 }
 
 /// Each body paragraph's text with its references to notes of this kind

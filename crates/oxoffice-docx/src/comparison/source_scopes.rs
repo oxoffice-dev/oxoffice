@@ -311,7 +311,13 @@ pub(super) fn root_inner_range(xml: &str, expected_local: &str) -> Result<Range<
             }
             Event::Empty(element) if depth == 0 => {
                 if element.local_name().as_ref() == expected_local.as_bytes() && is_word {
-                    return Ok(after..after);
+                    // The reader reads a root written `<x></x>` as `<x/>`:
+                    // its content is between its tags.
+                    let content = oxoffice_core::xml_element::element_span(&xml[before..])
+                        .map_err(|error| Error::Other(format!("{expected_local} root: {error}")))?
+                        .content;
+                    debug_assert!(content.end <= after - before);
+                    return Ok(before + content.start..before + content.end);
                 }
                 return Err(Error::Other(format!(
                     "comparison expected a Word {expected_local} root"

@@ -193,9 +193,11 @@ pub(super) fn compare_control_from_xml(
         // No tracked change records a control itself, and the last paragraph
         // mark of a block control's content cannot be taken out: removing it
         // merges the paragraph after the control into it, and a control that
-        // loses all its blocks is removed whole. A control holding nothing in
-        // one version cannot be marked to hold the other's paragraphs. Runs
-        // of an inline one can.
+        // loses all its blocks is removed whole. A block control holding
+        // nothing in one version reads as holding one empty paragraph, as an
+        // empty story does (see `holds_block`): the other version's content
+        // is compared with that paragraph, and the resolution that gives the
+        // empty version back leaves it. Runs of an inline one compare above.
         let blocks = |content: &[&SdtContent]| {
             content
                 .iter()
@@ -204,9 +206,27 @@ pub(super) fn compare_control_from_xml(
         if original_content.is_empty() != edited_content.is_empty()
             && (blocks(&original_content) || blocks(&edited_content))
         {
-            return Err(Error::Other(format!(
-                "comparison cannot give an empty block content control content, nor take all of it, at {location} (limitation docx-compare-empty-container)"
-            )));
+            if original_content.is_empty() {
+                let (filled, filled_xml) = filled_block_control(original, original_xml)?;
+                return compare_control_from_xml(
+                    &filled,
+                    edited,
+                    location,
+                    metadata,
+                    diagnostics,
+                    &filled_xml,
+                );
+            }
+            let mut filled = edited.clone();
+            filled.content.push(SdtContent::Paragraph(CT_P::new()));
+            return compare_control_from_xml(
+                original,
+                &filled,
+                location,
+                metadata,
+                diagnostics,
+                original_xml,
+            );
         }
         let whitespace_slots = control_whitespace_slots(original)?;
         let original_signatures = original_content
@@ -490,6 +510,30 @@ pub(super) fn compare_control_from_xml(
         element_opening(&output)?.0 as isize - old_open as isize,
     )?;
     Ok(output)
+}
+
+/// A block control holding nothing, `control` written as `xml`, given one
+/// empty paragraph: in its model, and at the end of its written content,
+/// under the prefix its content element is written with.
+fn filled_block_control(control: &CT_Sdt, xml: &str) -> Result<(CT_Sdt, String)> {
+    let span = direct_word_element_spans(xml, "sdtContent")?
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::Other("comparison could not find content-control content".into()))?;
+    let content = &xml[span.clone()];
+    let name = oxoffice_core::xml_element::start_tag(content)?.name;
+    let paragraph = match name.split_once(':') {
+        Some((prefix, _)) => format!("<{prefix}:p/>"),
+        None => "<p/>".to_owned(),
+    };
+    let mut filled_xml = xml.to_owned();
+    filled_xml.replace_range(
+        span,
+        &oxoffice_core::xml_element::append_content(content, &paragraph)?,
+    );
+    let mut filled = control.clone();
+    filled.content.push(SdtContent::Paragraph(CT_P::new()));
+    Ok((filled, filled_xml))
 }
 
 fn inline_control_raw_boundaries(
