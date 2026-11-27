@@ -22,7 +22,7 @@ performance). See
   [A table of contents inserted in Word](#a-table-of-contents-inserted-in-word)),
   the Google Sheets copies of the workbooks, which are not made by a script
   here (see [Spreadsheets](#spreadsheets)), and the two workbooks with
-  comment threads, made by hand.
+  comment threads and `excel/strict.xlsx`, made by hand.
 - `files/google-docs/`: documents written in Google Docs itself, through the
   Docs API, by [`generate/google_docs.py`](generate/google_docs.py) from the requests of
   [`generate/google_docs.json`](generate/google_docs.json): `review`
@@ -126,6 +126,13 @@ What to know when reading them:
   45796,150` (French separators read `,` as the decimal point) where the
   source caches `North: 45,796`, and `docProps/app.xml` names the sheets
   `Feuilles de calcul`.
+- `excel/strict.xlsx`: saved by hand as Strict Open XML Spreadsheet from the
+  Excel copy of review (Excel for Mac 16.115, File, Save As, format "Feuille
+  de calcul Open XML Strict"; Excel's AppleScript has no Strict format), then
+  `produce.py --neutral-excel`. Its parts use the `purl.oclc.org/ooxml`
+  namespaces and relationship types (the package parts, core properties and
+  markup compatibility keep theirs), and the workbook says
+  `conformance="strict"`.
 - No file has inline strings (the sources, LibreOffice and Google Sheets write
   shared strings only): a test that reads them builds its own workbook.
 
