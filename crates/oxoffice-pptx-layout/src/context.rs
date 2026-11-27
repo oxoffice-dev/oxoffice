@@ -1308,7 +1308,7 @@ impl<'a> ResolveCtx<'a> {
                     height: bounds.height,
                 };
                 match render_chart(
-                    &chart_space.chart,
+                    chart_space,
                     local_bounds,
                     self.theme,
                     &self.color_map,
