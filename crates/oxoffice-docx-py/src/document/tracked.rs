@@ -115,8 +115,20 @@ impl PyTrackedChanges {
         }
     }
 
-    fn __enter__(slf: Py<Self>) -> Py<Self> {
-        slf
+    /// The session itself; one that has stopped refuses, since the edits of
+    /// the block would run untracked.
+    fn __enter__(slf: Py<Self>, py: Python<'_>) -> PyResult<Py<Self>> {
+        if !slf.borrow(py).active(py) {
+            return Err(docx_to_pyerr(
+                py,
+                oxoffice_docx::Error::Other(
+                    "this tracked changes session has stopped: start another with \
+                     Document.track_changes"
+                        .to_owned(),
+                ),
+            ));
+        }
+        Ok(slf)
     }
 
     #[pyo3(signature = (*_exception))]

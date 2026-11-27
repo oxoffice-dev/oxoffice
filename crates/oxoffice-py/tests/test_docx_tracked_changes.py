@@ -166,6 +166,10 @@ def test_a_session_runs_until_it_stops():
     assert doc.tracked_changes is None and not session.active
     assert [(r.author, r.timestamp, r.text) for r in doc.revisions] == [(AUTHOR, None, "30"), (AUTHOR, None, "45")]
     session.stop()
+    with pytest.raises(oxdocx.DocxError, match="has stopped"):
+        with session:
+            doc.paragraphs[0].text = "Pay within 60 days."
+    assert doc.paragraphs[0].text == "Pay within 45 days."
     doc.add_paragraph("Untracked.")
     assert len(doc.revisions) == 2
     for author, date in [("", {}), (AUTHOR, {"timestamp": "27/11/2026"}),
@@ -181,8 +185,10 @@ def test_a_refused_call_leaves_no_revision_ids():
         with pytest.raises(Exception, match="expected 1"):
             doc.replace_all([("quick", "slow", 1), ("missing", "x", 1)])
         assert session.revision_ids == ()
+    # The ids it took on the copy it dropped are not lent to it by a later session that takes them.
+    with doc.track_changes("Other", timestamp=STAMP) as other:
         doc.replace_all([("quick", "slow", 1)])
-    assert len(session.revision_ids) == 2
+    assert session.revision_ids == () and len(other.revision_ids) == 2
 
 
 def test_a_regular_expression_replacement_in_a_text_box_is_refused(tmp_path):

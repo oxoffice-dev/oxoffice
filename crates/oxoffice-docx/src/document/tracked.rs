@@ -734,9 +734,17 @@ impl Document {
     }
 
     /// End the session [`Self::start_tracked_changes`] started, if one runs.
+    /// The session keeps the ids of the revisions the document holds: those
+    /// a refused call took on a copy it dropped go, so that a later session
+    /// that takes them again does not lend them to this one.
     #[doc(hidden)]
     pub fn stop_tracked_changes(&mut self) -> Option<TrackedSession> {
-        self.tracking.take().map(TrackedSession)
+        let session = TrackedSession(self.tracking.clone()?);
+        if let Ok(held) = session.revision_ids(self) {
+            *session.0.ids.lock().expect("tracking ids") = held;
+        }
+        self.tracking = None;
+        Some(session)
     }
 
     /// The session the document's edits run in, if one runs.

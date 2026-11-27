@@ -622,11 +622,7 @@ impl PyParagraph {
                         // Under tracked changes the run went into an
                         // insertion, which its path now passes through.
                         let run_path = match document.inner.tracks_changes() {
-                            true => location
-                                .read(&document.inner, |paragraph| paragraph.run_path(appended.0))
-                                .ok()
-                                .flatten()
-                                .unwrap_or(appended.1),
+                            true => tracked_run_path(py, &document.inner, &location, appended.0)?,
                             false => appended.1,
                         };
                         document
@@ -684,11 +680,8 @@ impl PyParagraph {
             let (run_index, mut run_path) = location
                 .edit(&mut candidate, append)
                 .map_err(|error| crate::docx_to_pyerr(py, error))?;
-            if candidate.tracks_changes()
-                && let Ok(Some(tracked)) =
-                    location.read(&candidate, |paragraph| paragraph.run_path(run_index))
-            {
-                run_path = tracked;
+            if candidate.tracks_changes() {
+                run_path = tracked_run_path(py, &candidate, &location, run_index)?;
             }
             let route = document
                 .paragraph_route(&location, None)
@@ -1423,4 +1416,18 @@ impl PyParagraphIterator {
         )
         .map(Some)
     }
+}
+
+/// The source path of accepted run `index` of the paragraph at `location`,
+/// read again after a tracked edit wrote the run inside an insertion.
+fn tracked_run_path(
+    py: Python<'_>,
+    document: &oxoffice_docx::Document,
+    location: &ParagraphLocation,
+    index: usize,
+) -> PyResult<oxoffice_docx::AcceptedRunPath> {
+    location
+        .read(document, |paragraph| paragraph.run_path(index))
+        .map_err(|error| crate::docx_to_pyerr(py, error))?
+        .ok_or_else(|| PyValueError::new_err("the appended run has no source path"))
 }

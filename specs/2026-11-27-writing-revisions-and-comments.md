@@ -425,7 +425,9 @@ What PR 1a settles:
   `try_replace_text_at` (their staged and owned variants included) take the paragraph route; `try_set_cell_text`
   writes the cell's one paragraph as tracked changes and refuses a cell of more paragraphs, whose others it would
   remove (PR 3); a whole-cell replacement replaces each paragraph and refuses a nested table; a table outside the
-  body refuses any edit; `replace_paragraph_xml` writes the new paragraph as tracked changes of the old one.
+  body (a header, footer or note table) refuses the `Cell` calls, whose route edits the whole table, while its
+  paragraphs' own calls are tracked; the replace calls refuse a match in a header or footer table and track one in a
+  note's table; `replace_paragraph_xml` writes the new paragraph as tracked changes of the old one.
 - **Content-free edits.** An edit that changes no character, its formatting or its holders, such as a run split, is
   kept as it is: Word records nothing for it.
 - **`revision_ids`** in Python reads the document's parts: the session's ids the document holds. An edit refused after
