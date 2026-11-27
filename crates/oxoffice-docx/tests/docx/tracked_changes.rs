@@ -7,7 +7,7 @@
 use std::io::Cursor;
 
 use oxoffice_docx::{
-    ComparisonGranularity, ComparisonOptions, ContentLocation, Document, ReplaceOptions,
+    Alignment, ComparisonGranularity, ComparisonOptions, ContentLocation, Document, ReplaceOptions,
     RevisionDate, RevisionKind, RunPosition, RunRange, StoryKind, StoryRevision, TrackedChanges,
     TrackedDocument,
 };
@@ -41,8 +41,11 @@ fn by(author: &str, kind: &str, id: i32, content: &str) -> String {
 }
 
 /// What a reader sees of each story: every paragraph's text, and for the
-/// body each character with its bold state.
-fn view(doc: &Document) -> (Vec<String>, Vec<Vec<(char, bool)>>) {
+/// body each paragraph's style and alignment and each character with its
+/// bold and italic states.
+type View = (Vec<String>, Vec<(String, Vec<(char, bool, bool)>)>);
+
+fn view(doc: &Document) -> View {
     let texts = doc
         .story_paragraphs()
         .unwrap()
@@ -53,16 +56,18 @@ fn view(doc: &Document) -> (Vec<String>, Vec<Vec<(char, bool)>>) {
         .paragraphs()
         .iter()
         .map(|paragraph| {
-            paragraph
+            let format = format!("{:?} {:?}", paragraph.style_id(), paragraph.alignment());
+            let characters = paragraph
                 .runs()
                 .flat_map(|run| {
-                    let bold = run.is_bold();
+                    let (bold, italic) = (run.is_bold(), run.is_italic());
                     run.text()
                         .chars()
-                        .map(move |c| (c, bold))
+                        .map(move |c| (c, bold, italic))
                         .collect::<Vec<_>>()
                 })
-                .collect()
+                .collect();
+            (format, characters)
         })
         .collect();
     (texts, body)
@@ -427,6 +432,101 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             ],
             reject_own: true,
             unlike_compare: false,
+        },
+        Row {
+            shape: "a word made bold",
+            document: || doc_with_body(&paragraph(&(run("Plain ") + &run("words.")))),
+            tracked: |doc| {
+                doc.edit_body_paragraph(0, |p| {
+                    p.run_mut(1).unwrap().set_bold(true);
+                    Ok(())
+                })
+                .unwrap()
+            },
+            untracked: |doc| {
+                doc.paragraph_mut(0)
+                    .unwrap()
+                    .run_mut(1)
+                    .unwrap()
+                    .set_bold(true)
+            },
+            revisions: &[(RevisionKind::RunPropertyChange, "words.")],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "the author's own inserted text made bold, inside the insertion (W3)",
+            document: || {
+                doc_with_body(&paragraph(&format!(
+                    "{}{}",
+                    run("Kept "),
+                    by(AUTHOR, "ins", 1, &run("new words"))
+                )))
+            },
+            tracked: |doc| {
+                doc.edit_body_paragraph(0, |p| {
+                    let path = p.run_path(1).unwrap();
+                    p.edit_run(&path, |run| run.set_bold(true))
+                })
+                .unwrap()
+            },
+            untracked: |doc| {
+                let mut p = doc.paragraph_mut(0).unwrap();
+                let path = p.run_path(1).unwrap();
+                p.edit_run(&path, |run| run.set_bold(true)).unwrap()
+            },
+            revisions: &[
+                (RevisionKind::Insertion, "new words"),
+                (RevisionKind::RunPropertyChange, "new words"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a second change of a run's properties keeps the oldest (W4)",
+            document: || {
+                doc_with_body(&paragraph(
+                    r#"<w:r><w:rPr><w:b/><w:rPrChange w:id="1" w:author="Ann" w:date="2026-11-20T09:00:00Z"><w:rPr/></w:rPrChange></w:rPr><w:t>Bold words</w:t></w:r>"#,
+                ))
+            },
+            tracked: |doc| {
+                doc.edit_body_paragraph(0, |p| {
+                    p.run_mut(0).unwrap().set_italic(true);
+                    Ok(())
+                })
+                .unwrap()
+            },
+            untracked: |doc| {
+                doc.paragraph_mut(0)
+                    .unwrap()
+                    .run_mut(0)
+                    .unwrap()
+                    .set_italic(true)
+            },
+            revisions: &[(RevisionKind::RunPropertyChange, "Bold words")],
+            // Rejecting the one change brings back the run before Ann's.
+            reject_own: false,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a paragraph centred and given a style, one change (W5)",
+            document: || doc_with_body(&paragraph(&run("A title"))),
+            tracked: |doc| {
+                doc.edit_body_paragraph(0, |p| {
+                    p.set_alignment(Alignment::Center);
+                    p.set_style("Heading1");
+                    Ok(())
+                })
+                .unwrap()
+            },
+            untracked: |doc| {
+                let mut p = doc.paragraph_mut(0).unwrap();
+                p.set_alignment(Alignment::Center);
+                p.set_style("Heading1");
+            },
+            revisions: &[(RevisionKind::ParagraphPropertyChange, "A title")],
+            reject_own: true,
+            unlike_compare: true,
         },
         Row {
             shape: "a cell paragraph",
@@ -1043,17 +1143,6 @@ fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
         Ok(())
     };
     let rows: Vec<(&str, Document, Edit, &str)> = vec![
-        (
-            "formatting alone",
-            body(&run("Plain words.")),
-            |doc| {
-                doc.edit_body_paragraph(0, |p| {
-                    p.run_mut(0).unwrap().set_bold(true);
-                    Ok(())
-                })
-            },
-            not_yet,
-        ),
         (
             "a field removed",
             body(&(run("Page ") + field)),

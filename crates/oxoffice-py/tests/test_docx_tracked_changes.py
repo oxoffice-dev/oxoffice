@@ -17,6 +17,10 @@ from builders import edit_cost_docx
 
 AUTHOR, STAMP = "Rev", "2026-11-27T10:00:00Z"
 
+# Run and paragraph property changes (PR 2b), checked on the paragraphs' XML.
+FORMATTING_CLASSES = ("ColorFormat.", "Font.", "ParagraphFormat.", "TabStops.")
+FORMATTING = {"Paragraph.alignment", "Paragraph.numbering", "Paragraph.style", "Run.bold", "Run.italic",
+              "Run.style_id", "Run.underline"}
 TRACKED = {
     "Cell.replace_text", "Cell.text", "Document.replace_all", "Document.replace_all_regex",
     "Document.replace_all_regex_expected", "Document.replace_text_at", "Document.set_story_text",
@@ -99,17 +103,22 @@ CALLS = ({name for name in scaling.TIMED if " (" not in name} | set(scaling.WHOL
 
 
 def kind(name):
+    if name in FORMATTING or name.startswith(FORMATTING_CLASSES):
+        return "formatting"
     if name in TRACKED:
         return "tracked"
     return "untracked" if name in UNTRACKED or name.startswith(UNTRACKED_CLASSES) else "refused"
 
 
-def view(data, resolve=None):
-    """The text of every story paragraph of the document saved as `data`, its revisions resolved by `resolve`."""
+def view(data, resolve=None, xml=False):
+    """The text of every story paragraph of the document saved as `data`, its revisions resolved by `resolve`; with
+    `xml`, the XML of every body paragraph too, which shows their formatting."""
     doc = oxdocx.Document.from_bytes(data)
     if resolve:
         getattr(doc, resolve)()
-    return [(p.kind, p.text) for p in doc.story_paragraphs]
+    # The redline writes every text it rewrites with xml:space="preserve", which changes nothing it reads.
+    marks = [p.xml.replace(' xml:space="preserve"', "") for p in doc.paragraphs] if xml else []
+    return [(p.kind, p.text) for p in doc.story_paragraphs] + marks
 
 
 def ready(doc, name):
@@ -146,15 +155,17 @@ def test_every_call_behaves_as_its_class(saved, name):
     after = doc.to_bytes()
     if kind(name) == "refused":
         assert after == before
-    if kind(name) != "tracked":
+    if kind(name) not in ("tracked", "formatting"):
         assert session.revision_ids == ()
         return
     assert session.revision_ids
     assert {r.author for r in doc.revisions if r.id in session.revision_ids} == {AUTHOR}
     twin = oxdocx.Document.open(saved)
     ready(twin, name)()
-    assert view(after, "accept_all") == view(twin.to_bytes(), "accept_all")
-    assert view(after, "reject_all") == view(before, "reject_all")
+    # Run.style_id's recipe names a new style for each document it makes ready.
+    xml = kind(name) == "formatting" and name != "Run.style_id"
+    assert view(after, "accept_all", xml) == view(twin.to_bytes(), "accept_all", xml)
+    assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
 
 
 def test_a_session_runs_until_it_stops():

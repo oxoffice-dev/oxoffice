@@ -454,6 +454,15 @@ What PR 2a settles:
   One that records no old grid keeps the grid. Compare leaves them as it leaves other markup: they hold no one's
   change.
 
+What PR 2b settles:
+
+- **Alignment** reads a word's text and its holders, not its run properties: a word kept with other properties stays
+  where it is, in a copy of its run with the new properties and a `w:rPrChange` of the old ones, one per run element
+  written, inside an insertion too (W3). The old properties are those an earlier change holds, if any, else the run's
+  before the edit; the change takes the session's author and date (W4).
+- **Paragraph properties**: one `w:pPrChange`, last in `w:pPr`, old value as for runs; a style or numbering change is
+  one too (W5). A change of the paragraph mark's run properties or of its section is refused.
+
 ## Open questions
 
 ### Product (maintainer)
