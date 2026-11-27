@@ -127,49 +127,43 @@ QUIT_SCRIPTS = {
 
 
 # What Excel for Mac writes about the machine and the person, replaced in every workbook it saves.
-EXCEL_HOME = "/Users/user/"
-CORPUS_AUTHOR = "Corpus Author"
+EXCEL_HOME = neutral_xlsx.HOME
+ABS_PATH = re.compile(r'(<x15ac:absPath\b[^>]*?\burl=")[^"]*(")')
 
 
 def neutral_excel(path: Path) -> list[str]:
-    """Make a workbook saved by Excel for Mac neutral, changing only these bytes: the folder it was saved
-    from (`x15ac:absPath` in xl/workbook.xml, kept with the url EXCEL_HOME), the name of whoever saved it
-    (`cp:lastModifiedBy`, CORPUS_AUTHOR), the task pane add-ins it carries (xl/webextensions/, with their
-    relationships and content types), and the signed-in account of the persons part of threaded comments
-    (neutral_xlsx). The package keeps its parts' order and entries. Returns what changed."""
-    with zipfile.ZipFile(path) as package:
-        infos = package.infolist()
-        parts = {info.filename: package.read(info) for info in infos}
-    changed = []
-
-    def edit(name: str, pattern: str, replacement: str, what: str) -> None:
-        if name in parts:
-            text = parts[name].decode("utf-8")
-            edited = re.sub(pattern, replacement, text)
-            if edited != text:
-                parts[name] = edited.encode("utf-8")
-                changed.append(what)
-
-    edit("xl/workbook.xml", r'(<x15ac:absPath\b[^>]*?\burl=")[^"]*(")', rf"\g<1>{EXCEL_HOME}\g<2>", "absPath")
-    edit("docProps/core.xml", r"(<cp:lastModifiedBy>)[^<]+(</cp:lastModifiedBy>)", rf"\g<1>{CORPUS_AUTHOR}\g<2>",
-         "lastModifiedBy")
-    extensions = [name for name in parts if name.startswith("xl/webextensions/")]
-    for name in extensions:
+    """Make a workbook saved by Excel for Mac neutral, and check it: the folder it was saved from (`x15ac:absPath`
+    in xl/workbook.xml, kept with the url EXCEL_HOME), the account of the persons part, the creator and the last
+    editor of the core properties and the authors of the notes (neutral_xlsx), and the task pane add-ins it
+    carries (xl/webextensions/, with their relationships and content types) are replaced or dropped, no other
+    byte changes. The result is read again: it raises NotNeutral, and writes nothing, when an account name, an
+    email, a path or an add-in is left, or a pattern does not match what the workbook writes. Returns the parts
+    that changed."""
+    infos, parts = neutral_xlsx.read(path)
+    before = dict(parts)
+    names = neutral_xlsx.neutral_parts(parts, [])
+    name = "xl/workbook.xml"
+    if name in parts:
+        text = neutral_xlsx.replaced(
+            parts[name].decode("utf-8"), "x15ac:absPath", ABS_PATH, rf"\g<1>{EXCEL_HOME}\g<2>", name
+        )
+        parts[name] = text.encode("utf-8")
+    for name in [name for name in parts if name.startswith("xl/webextensions/")]:
         del parts[name]
-    if extensions:
-        for name in parts:
-            if name.endswith(".rels"):
-                edit(name, r"<Relationship\b[^>]*webextension[^>]*/>", "", "webextension relationships")
-        edit("[Content_Types].xml", r'<Override PartName="/xl/webextensions/[^"]*"[^>]*/>', "", "webextension types")
-        changed.append("webextensions")
-    if changed:
-        with zipfile.ZipFile(path, "w") as package:
-            for info in infos:
-                if info.filename in parts:
-                    package.writestr(info, parts[info.filename])
-    if any(name.startswith("xl/persons/") for name in parts) and neutral_xlsx.neutral(path, []):
-        changed.append("persons")
-    return changed
+    for name in parts:
+        if name.endswith(".rels"):
+            text = parts[name].decode("utf-8")
+            parts[name] = re.sub(r"<Relationship\b[^>]*webextension[^>]*/>", "", text).encode("utf-8")
+        elif name == "[Content_Types].xml":
+            text = parts[name].decode("utf-8")
+            parts[name] = re.sub(r'<Override PartName="/xl/webextensions/[^"]*"[^>]*/>', "", text).encode("utf-8")
+    left = [name for name, data in parts.items() if name.endswith((".xml", ".rels")) and b"webextension" in data]
+    if left:
+        raise neutral_xlsx.NotNeutral(f"add-in references left in {left}")
+    neutral_xlsx.check(parts, names)
+    if parts != before:
+        neutral_xlsx.write(path, infos, parts)
+    return sorted(name for name in before if parts.get(name) != before[name])
 
 
 def osascript(script: str, *args: str) -> str:
@@ -213,13 +207,17 @@ def through_office(app: str, only: list[str]) -> dict:
             (out / source.name).unlink(missing_ok=True)
             try:
                 osascript(SAVE_SCRIPTS[app], str(staged), str(saved))
-                shutil.copy(saved, out / source.name)
                 if app == "excel":
-                    neutral_excel(out / source.name)
+                    # `saved` is in the app's container: a copy that is not neutral never reaches files/.
+                    neutral_excel(saved)
+                shutil.copy(saved, out / source.name)
                 print(f"{app}: {source.name}")
             except subprocess.CalledProcessError as error:
                 failures.append(f"{source.name}: {error.stderr.strip()}")
                 print(f"{app}: {source.name} FAILED: {error.stderr.strip()}")
+            except (neutral_xlsx.NotNeutral, zipfile.BadZipFile, UnicodeDecodeError) as error:
+                failures.append(f"{source.name}: not neutral, not kept: {error}")
+                print(f"{app}: {source.name} FAILED, not kept: {error}")
             except subprocess.TimeoutExpired:
                 failures.append(f"{source.name}: no answer after {TIMEOUT} s, a dialog is probably open")
                 print(f"{app}: {source.name} took over {TIMEOUT} s: answer or close the dialog in {application}, "
