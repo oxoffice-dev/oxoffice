@@ -7,7 +7,10 @@
 //! - Navigating parts by URI and resolving relationships
 //! - Checking embedded content (OLE, ActiveX, VBA) and the package
 //!   signature graph around it
+//! - Telling what a compound file holds, so that a facade refuses a legacy
+//!   or password-protected file by name
 
+pub mod compound;
 pub mod content_types;
 pub mod embedded;
 #[cfg(feature = "agile-encryption")]
@@ -18,6 +21,7 @@ pub mod relationship;
 #[cfg(feature = "digital-signatures")]
 mod signature;
 
+pub use compound::{CompoundFile, compound_file};
 pub use content_types::{ContentType, ContentTypes};
 pub use error::OpcError;
 pub use package::{
