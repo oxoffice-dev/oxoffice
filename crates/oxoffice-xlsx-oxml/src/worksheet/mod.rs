@@ -373,6 +373,25 @@ impl SheetEdits {
     }
 }
 
+/// The rows the sheet keeps right after a row `edits` removes, by index.
+fn rows_numbered_after_removals(
+    index: &SheetIndex,
+    edits: &SheetEdits,
+) -> std::collections::BTreeSet<u32> {
+    let removed = |row: u32| matches!(edits.rows.get(&row), Some(None));
+    let mut numbered = std::collections::BTreeSet::new();
+    for (position, span) in index.rows.iter().enumerate() {
+        if removed(span.row)
+            && let Some(next) = index.rows[position + 1..]
+                .iter()
+                .find(|next| !removed(next.row))
+        {
+            numbered.insert(next.row);
+        }
+    }
+    numbered
+}
+
 /// `xml`, the sheet `index` was built from, with `edits` made. See the
 /// [module](self).
 pub fn splice(xml: &[u8], index: &SheetIndex, edits: &SheetEdits) -> Result<Vec<u8>> {
@@ -395,12 +414,21 @@ pub fn splice(xml: &[u8], index: &SheetIndex, edits: &SheetEdits) -> Result<Vec<
     }
 
     // Rows: replaced or removed in place, new ones before the first row
-    // written after them.
+    // written after them. A row written without `r` takes the number after
+    // the row before it: the row kept after a removed one has its number
+    // written, so that it stays where it was.
+    let numbered = rows_numbered_after_removals(index, edits);
     let mut new_rows: Vec<(usize, Vec<u8>)> = Vec::new();
     for (&number, edit) in &edits.rows {
         let mut written = Vec::new();
         if let Some(row) = edit {
-            row.write(&mut written);
+            if numbered.contains(&number) && row.r().is_none() {
+                let mut row = row.clone();
+                row.tag.set("r", Some(&(number + 1).to_string()));
+                row.write(&mut written);
+            } else {
+                row.write(&mut written);
+            }
         }
         match index.row(number) {
             Some(span) => splice.replace(span.range.clone(), written),
@@ -413,6 +441,27 @@ pub fn splice(xml: &[u8], index: &SheetIndex, edits: &SheetEdits) -> Result<Vec<
                 new_rows.push((at.unwrap_or(usize::MAX), written));
             }
             None => {}
+        }
+    }
+    for span in index
+        .rows
+        .iter()
+        .filter(|span| numbered.contains(&span.row) && !edits.rows.contains_key(&span.row))
+    {
+        let row = &xml[span.range.clone()];
+        let mut source = XmlSource::new(row);
+        let opened = source.root()?;
+        let mut tag = Tag::read(&opened.start);
+        if tag.get("r").is_none() {
+            tag.set("r", Some(&(span.row + 1).to_string()));
+            let mut written = Vec::new();
+            if opened.empty {
+                tag.write_empty(&mut written);
+            } else {
+                tag.write_start(&mut written);
+            }
+            let start = span.range.start;
+            splice.replace(start + opened.tag.start..start + opened.tag.end, written);
         }
     }
     if !new_rows.is_empty() {
@@ -522,7 +571,7 @@ mod tests {
     #[test]
     fn a_splice_writes_only_what_the_edits_name() {
         let replaced = r#"<row r="3"><c r="B3"><v>9</v></c></row>"#;
-        let cases: [(&str, &str, SheetEdits, &str); 7] = [
+        let cases: [(&str, &str, SheetEdits, &str); 9] = [
             ("nothing", SHEET, SheetEdits::default(), SHEET),
             (
                 "a row replaced, the fixed writing of what it read",
@@ -581,6 +630,24 @@ mod tests {
                             ..SHEET.find("</worksheet>").unwrap()],
                         "<extLst/>",
                     ),
+            ),
+            (
+                "rows without r keep their numbers when one before them goes",
+                r#"<worksheet xmlns="urn:x"><sheetData><row><c><v>1</v></c></row><row/><row></row><row><c><v>4</v></c></row></sheetData></worksheet>"#,
+                SheetEdits {
+                    rows: [(1, None), (2, None)].into(),
+                    ..SheetEdits::default()
+                },
+                r#"<worksheet xmlns="urn:x"><sheetData><row><c><v>1</v></c></row><row r="4"><c><v>4</v></c></row></sheetData></worksheet>"#,
+            ),
+            (
+                "and so does an edited one",
+                r#"<worksheet xmlns="urn:x"><sheetData><row/><row/><row/></sheetData></worksheet>"#,
+                SheetEdits {
+                    rows: [(1, None), (2, Some(row("<row><c><v>9</v></c></row>")))].into(),
+                    ..SheetEdits::default()
+                },
+                r#"<worksheet xmlns="urn:x"><sheetData><row/><row r="3"><c><v>9</v></c></row></sheetData></worksheet>"#,
             ),
             (
                 "a row in an empty sheetData written with end tags",
