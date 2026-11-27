@@ -380,6 +380,33 @@ impl SheetIndex {
     }
 }
 
+/// Whether `xml`, a sheet part, holds a formula: an `f` element under any
+/// prefix, found by one pass over its bytes without reading it. An element
+/// of another name that is spelled `f` after a prefix (the `xm:f` of an
+/// extension) counts too, which only ever asks for more calculation.
+pub fn holds_formula(xml: &[u8]) -> bool {
+    let name_byte =
+        |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':');
+    let mut rest = xml;
+    while let Some(at) = rest.iter().position(|&byte| byte == b'<') {
+        rest = &rest[at + 1..];
+        let length = rest
+            .iter()
+            .position(|byte| !name_byte(byte))
+            .unwrap_or(rest.len());
+        let name = &rest[..length];
+        let local = name.rsplit(|&byte| byte == b':').next().unwrap_or(name);
+        if local == b"f"
+            && rest
+                .get(length)
+                .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/'))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// The edits of one sheet, made at once by [`splice`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SheetEdits {
@@ -556,6 +583,25 @@ mod tests {
 
     fn row(xml: &str) -> CT_Row {
         CT_Row::parse(xml.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_formula_is_found_under_any_prefix_and_nothing_else_is_taken_for_one() {
+        for (xml, found) in [
+            (r#"<c r="A1"><f>1+1</f><v>2</v></c>"#, true),
+            (r#"<c r="A1"><f t="shared" si="0"/></c>"#, true),
+            (r#"<c r="A1"><f aca="false">A2</f></c>"#, true),
+            ("<x:c><x:f>1</x:f></x:c>", true),
+            (r#"<c><v>1</v></c><f"#, false),
+            (
+                r#"<c r="f1" s="f"><v>1</v></c><fill/><ff/><x:fx/><formula>1</formula>"#,
+                false,
+            ),
+            ("</f>", false),
+            ("", false),
+        ] {
+            assert_eq!(holds_formula(xml.as_bytes()), found, "{xml}");
+        }
     }
 
     #[test]

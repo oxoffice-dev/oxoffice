@@ -372,9 +372,34 @@ pub fn part_text(bytes: &[u8], part: &str) -> String {
 
 /// A new workbook whose only sheet is `xml`, a worksheet part.
 pub fn workbook_with_sheet(xml: &str) -> oxoffice_xlsx::Workbook {
-    let bytes = oxoffice_xlsx::Workbook::new().to_bytes().expect("saves");
+    workbook_with_sheets(&[xml], false)
+}
+
+/// A new workbook with a sheet for each of `xmls`, worksheet parts, and a
+/// calculation chain when asked.
+pub fn workbook_with_sheets(xmls: &[&str], chain: bool) -> oxoffice_xlsx::Workbook {
+    let names: Vec<String> = (1..=xmls.len()).map(|n| format!("Sheet{n}")).collect();
+    let bytes = oxoffice_xlsx::Workbook::with_sheet_names(&names)
+        .expect("names")
+        .to_bytes()
+        .expect("saves");
     let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("a package");
-    package.set_part("/xl/worksheets/sheet1.xml", xml.as_bytes().to_vec());
+    for (number, xml) in (1..).zip(xmls) {
+        package.set_part(
+            &format!("/xl/worksheets/sheet{number}.xml"),
+            xml.as_bytes().to_vec(),
+        );
+    }
+    if chain {
+        package.set_part("/xl/calcChain.xml", b"<calcChain/>".to_vec());
+        package.get_or_create_part_rels("/xl/workbook.xml").add(
+            oxoffice_xlsx_oxml::namespaces::rel_types::CALC_CHAIN,
+            "calcChain.xml",
+        );
+        package
+            .content_types
+            .add_override("/xl/calcChain.xml", content_types::CALC_CHAIN);
+    }
     let mut bytes = Cursor::new(Vec::new());
     package.write_to(&mut bytes).expect("writes");
     oxoffice_xlsx::Workbook::from_bytes(bytes.get_ref()).expect("opens")
@@ -410,4 +435,18 @@ pub fn row_of(xml: &[u8], number: u32) -> Option<CT_Row> {
     let index = SheetIndex::build(xml).expect("an index");
     let span = index.row(number)?;
     Some(CT_Row::parse(&xml[span.range.clone()]).expect("a row"))
+}
+
+/// Whether a package holds a formula, by the text of its worksheet parts
+/// (the corpus writes `f` with no prefix).
+pub fn holds_formula(parts: &BTreeMap<String, Vec<u8>>) -> bool {
+    parts
+        .iter()
+        .filter(|(name, _)| name.starts_with("xl/worksheets/"))
+        .any(|(_, bytes)| {
+            let text = String::from_utf8_lossy(bytes);
+            ["<f>", "<f ", "<f/>"]
+                .iter()
+                .any(|start| text.contains(start))
+        })
 }

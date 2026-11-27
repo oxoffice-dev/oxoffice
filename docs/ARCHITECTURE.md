@@ -105,9 +105,10 @@ workbook: the workbook part read at open; a sheet indexed at its first read
   root it changed beside the sheet (a call that changes nothing stages
   nothing) and the first one marks the workbook edited; a save copies every
   part no edit changed, splices the staged rows and children into the
-  sheet's source bytes, writes the workbook part with its new records, and
-  asks Excel to calculate the workbook on open (`fullCalcOnLoad`), the
-  calculation chain removed; a workbook nobody edited saves as it was read
+  sheet's source bytes, writes the workbook part with its new records and,
+  when the workbook holds a formula, asks Excel to calculate it on open
+  (`fullCalcOnLoad`) with the calculation chain removed; a workbook nobody
+  edited saves as it was read
   new workbook: Workbook::new assembles a package from text files and the
   package writer's sorted entries and fixed ZIP date give the same bytes
   every time

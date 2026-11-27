@@ -9,8 +9,8 @@ use oxoffice_xlsx_oxml::workbook::WorkbookXml;
 use std::sync::Arc;
 
 use crate::support::{
-    child_of, corpus_workbooks, kept_bytes, map_in_parallel, package_parts, part_text, parts_diff,
-    row_of, workbook_with_sheet,
+    child_of, corpus_workbooks, holds_formula, kept_bytes, map_in_parallel, package_parts,
+    part_text, parts_diff, row_of, workbook_with_sheet, workbook_with_sheets,
 };
 
 const MAIN: &str = r#"xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main""#;
@@ -148,6 +148,49 @@ fn each_edit_writes_its_element_at_its_place_in_the_sheet_as_the_sheet_writes_it
 }
 
 #[test]
+fn a_workbook_is_calculated_on_open_only_when_it_holds_a_formula() {
+    let sheet = |cells: &str| {
+        format!(r#"<worksheet {MAIN}><sheetData><row r="1">{cells}</row></sheetData></worksheet>"#)
+    };
+    let plain = sheet(r#"<c r="A1"><v>1</v></c>"#);
+    let prefixed = r#"<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData><x:row r="1"><x:c r="A1"><x:f>1+1</x:f></x:c></x:row></x:sheetData></x:worksheet>"#;
+    let cases = [
+        ("no formula", vec![plain.clone()], false),
+        (
+            "a formula",
+            vec![sheet(r#"<c r="A1"><f>1+1</f><v>2</v></c>"#)],
+            true,
+        ),
+        (
+            "the member of a shared formula",
+            vec![sheet(r#"<c r="A1"><f t="shared" si="0"/></c>"#)],
+            true,
+        ),
+        ("a formula under a prefix", vec![prefixed.to_owned()], true),
+        (
+            "a formula in another sheet than the one edited",
+            vec![plain, sheet(r#"<c r="A1"><f>1+1</f></c>"#)],
+            true,
+        ),
+    ];
+    for (case, sheets, calculates) in cases {
+        let sheets: Vec<&str> = sheets.iter().map(String::as_str).collect();
+        let mut workbook = workbook_with_sheets(&sheets, true);
+        workbook
+            .sheet_at_mut(0)
+            .unwrap()
+            .set_row_height("1", 30.0)
+            .unwrap();
+        let saved = workbook.to_bytes().unwrap();
+        let asks = part_text(&saved, "xl/workbook.xml").contains("fullCalcOnLoad");
+        assert_eq!(asks, calculates, "{case}");
+        // The chain goes with the cached values it described.
+        let chain = package_parts(&saved).contains_key("xl/calcChain.xml");
+        assert_eq!(chain, !calculates, "{case}");
+    }
+}
+
+#[test]
 fn an_edit_that_changes_nothing_marks_nothing() {
     let source = format!(
         r#"<worksheet {MAIN}><sheetViews><sheetView workbookViewId="0"/></sheetViews><cols><col min="1" max="1" width="10.7109375" customWidth="1"/></cols><sheetData><row r="2" ht="30" customHeight="true"/></sheetData></worksheet>"#
@@ -241,7 +284,7 @@ const OPS: [Op; 3] = [
 ];
 
 /// Edits the first worksheet of `original` and checks what changed.
-fn edited_sheet(original: &[u8]) -> Result<bool, String> {
+fn edited_sheet(original: &[u8]) -> Result<(bool, bool), String> {
     let mut workbook = Workbook::from_bytes(original).map_err(|e| e.to_string())?;
     let position = first_worksheet(&workbook);
     let sheet_part = part_of(original, &workbook, position);
@@ -253,17 +296,19 @@ fn edited_sheet(original: &[u8]) -> Result<bool, String> {
     let before = package_parts(original);
     let diff = parts_diff(original, &saved);
     let had_chain = before.contains_key("xl/calcChain.xml");
-    // The workbook is written unless it asked for a calculation already, as
-    // XlsxWriter's do.
+    // A workbook that holds a formula is calculated on open and loses its
+    // chain; the workbook part is written unless it asked already, as
+    // XlsxWriter's does. One that holds none is left as it is.
+    let formula = holds_formula(&before);
     let asks = WorkbookXml::parse(Arc::new(before["xl/workbook.xml"].clone()))
         .map_err(|e| e.to_string())?
         .calc_pr()
         .is_some_and(|calc| calc.full_calc_on_load());
     let mut expected_changed = vec![sheet_part.clone()];
-    if !asks {
+    if formula && !asks {
         expected_changed.push("xl/workbook.xml".to_owned());
     }
-    if had_chain {
+    if formula && had_chain {
         expected_changed.extend([
             "[Content_Types].xml".to_owned(),
             "xl/_rels/workbook.xml.rels".to_owned(),
@@ -280,7 +325,7 @@ fn edited_sheet(original: &[u8]) -> Result<bool, String> {
     if !diff.added.is_empty() {
         return Err(format!("added {:?}", diff.added));
     }
-    let removed: &[String] = if had_chain {
+    let removed: &[String] = if formula && had_chain {
         &["xl/calcChain.xml".to_owned()]
     } else {
         &[]
@@ -289,8 +334,12 @@ fn edited_sheet(original: &[u8]) -> Result<bool, String> {
         return Err(format!("removed {:?}", diff.removed));
     }
     let after = package_parts(&saved);
-    if !part_text(&saved, "xl/workbook.xml").contains(r#"fullCalcOnLoad="1""#) {
-        return Err("the workbook does not ask for a calculation".to_owned());
+    let asked = part_text(&saved, "xl/workbook.xml").contains("fullCalcOnLoad=\"1\"")
+        || part_text(&saved, "xl/workbook.xml").contains("fullCalcOnLoad=\"true\"");
+    if asked != (asks || formula) {
+        return Err(format!(
+            "calculation on open asked: {asked}, formula: {formula}"
+        ));
     }
 
     // In the sheet, the rest is the bytes it was.
@@ -365,7 +414,7 @@ fn edited_sheet(original: &[u8]) -> Result<bool, String> {
     if again.to_bytes().map_err(|e| e.to_string())? != saved {
         return Err("the edits again changed the workbook".to_owned());
     }
-    Ok(had_chain)
+    Ok((formula, had_chain))
 }
 
 #[test]
@@ -373,10 +422,13 @@ fn every_workbook_takes_widths_heights_and_panes_in_its_first_sheet_and_nothing_
     let files = corpus_workbooks();
     let outcomes = map_in_parallel(&files, |file| edited_sheet(&file.bytes()));
     let mut failures = Vec::new();
-    let mut chains = 0;
+    let (mut formulas, mut chains) = (0, 0);
     for (file, outcome) in files.iter().zip(outcomes) {
         match outcome.unwrap_or_else(|| Err("panicked".to_owned())) {
-            Ok(had_chain) => chains += usize::from(had_chain),
+            Ok((formula, had_chain)) => {
+                formulas += usize::from(formula);
+                chains += usize::from(had_chain);
+            }
             Err(error) => failures.push(format!("{}: {error}", file.path)),
         }
     }
@@ -385,4 +437,5 @@ fn every_workbook_takes_widths_heights_and_panes_in_its_first_sheet_and_nothing_
         chains > 0,
         "no workbook of the corpus has a calculation chain"
     );
+    assert!(formulas > 0, "no workbook of the corpus holds a formula");
 }

@@ -13,12 +13,15 @@
 //!   relationship and the content type of a new sheet, the removal of the
 //!   calculation chain.
 //!
-//! The first change of a workbook marks it edited ([`Workbook::mark_edited`]):
-//! a save asks Excel to calculate the workbook when it opens it
-//! (`fullCalcOnLoad`) and writes no calculation chain, since any edit may
-//! change what a formula reads. Every edit goes through that one place, and
-//! a call that changes nothing (the same width again, panes removed from a
-//! sheet that has none) marks nothing.
+//! The first change of a workbook marks it edited ([`Workbook::mark_edited`]),
+//! and a workbook that holds a formula then asks Excel to calculate it when it
+//! opens it (`fullCalcOnLoad`) and writes no calculation chain, since any edit
+//! may change what a formula reads; a workbook with no formula has no cached
+//! value to go stale and is left alone, so Excel does not ask to save a file
+//! it had no need to calculate. An edit that writes a formula asks for the
+//! calculation whatever the sheets held ([`Workbook::require_calculation`]).
+//! Every edit goes through these, and a call that changes nothing (the same
+//! width again, panes removed from a sheet that has none) marks nothing.
 //!
 //! A save writes what edits changed in [`Workbook::write_staged_parts`], on a
 //! copy of the package: a part nobody changed is not written again, and a
@@ -29,7 +32,7 @@ use std::collections::BTreeMap;
 
 use oxoffice_opc::OpcPackage;
 use oxoffice_xlsx_oxml::namespaces::{rel_types, transitional_relationship_type};
-use oxoffice_xlsx_oxml::worksheet::{CT_Row, splice};
+use oxoffice_xlsx_oxml::worksheet::{CT_Row, holds_formula, splice};
 use oxoffice_xlsx_oxml::{Element, OxmlError};
 
 use crate::open::is_external;
@@ -66,11 +69,33 @@ impl Workbook {
         })
     }
 
-    /// Notes that an edit changed the workbook. The first call asks Excel
-    /// to calculate it on open and drops the calculation chain, since any
-    /// edit may change what a formula reads; later calls do nothing.
+    /// Notes that an edit changed the workbook. The save then writes what
+    /// edits staged, and, when a sheet holds a formula, asks Excel to
+    /// calculate the workbook on open ([`Workbook::require_calculation`]).
     pub(crate) fn mark_edited(&mut self) {
-        if std::mem::replace(&mut self.edited, true) {
+        self.edited = true;
+        if self.holds_formula() {
+            self.require_calculation();
+        }
+    }
+
+    /// Whether any sheet holds a formula, as the sheets were read: one scan
+    /// of their bytes, kept. An edit that writes a formula does not wait for
+    /// it to be found there, it calls [`Workbook::require_calculation`].
+    fn holds_formula(&self) -> bool {
+        *self.formulas.get_or_init(|| {
+            self.sheets
+                .iter()
+                .filter(|sheet| sheet.kind != SheetKind::Chartsheet)
+                .filter_map(|sheet| self.package.get_part(&sheet.part))
+                .any(holds_formula)
+        })
+    }
+
+    /// Asks Excel to calculate the workbook on open and drops the
+    /// calculation chain, once.
+    pub(crate) fn require_calculation(&mut self) {
+        if std::mem::replace(&mut self.calculates, true) {
             return;
         }
         self.workbook.set_full_calc_on_load();

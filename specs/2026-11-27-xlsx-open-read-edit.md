@@ -138,7 +138,10 @@ Otherwise it is what the producer computed at its last save; without `<v>` there
 
 A save under rule 1 sets `fullCalcOnLoad="1"` on `calcPr` (inserted at its schema position when absent; Google writes
 `<calcPr/>`) and removes `xl/calcChain.xml`, its relationship and its content type; the cached values stay. Excel
-recalculates on open, Google always does. A written formula has no `<v>` and no `t`. An unedited workbook saved
+recalculates on open, Google always does. Only a workbook that holds a formula gets this (an `f` element in a sheet
+part, found by one scan of the bytes, kept): one that holds none has no cached value to go stale, its save sets and
+removes nothing and Excel does not ask to save a file it had no need to calculate; an edit that writes a formula sets
+both whatever the scan found. A written formula has no `<v>` and no `t`. An unedited workbook saved
 without `drop_cached_values` (below) is byte for byte the file it was read from.
 
 LibreOffice ignores `fullCalcOnLoad` by default (probed: "Recalculation on file load" is "never"). It computes the
@@ -335,10 +338,10 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   nothing above or left of it and is refused. Python takes `str | tuple[int, int] | None`.
 - **Staged edits.** An edit never rewrites a part in the package: it stages the rows and root children it changed
   beside the sheet (`SheetEdits`), and a save splices them into the source bytes, writes the workbook part with its new
-  records, and nothing else. The first change of a workbook marks it edited, which is section 3's rule 1: the save sets
-  `fullCalcOnLoad` and removes the calculation chain. A call that changes nothing (the same width again, panes removed
-  from a sheet with none) stages nothing and marks nothing, so such a workbook saves as it was read. A chartsheet, a
-  dialogsheet or a macrosheet has no columns, rows or panes: refused, naming its kind.
+  records, and nothing else. The first change of a workbook marks it edited; when the workbook holds a formula that is
+  section 3's rule 1: the save sets `fullCalcOnLoad` and removes the calculation chain. A call that changes nothing (the
+  same width again, panes removed from a sheet with none) stages nothing and marks nothing, so such a workbook saves as
+  it was read. A chartsheet, a dialogsheet or a macrosheet has no columns, rows or panes: refused, naming its kind.
 - **The edit map** takes these entries in PR 7, and PR 6 adds its own: `{"add_sheet": "Summary"}` (the entries after it
   default to that sheet), `{"columns": "A:C", "width": 20}`, `{"rows": "2:5", "height": 30}`, `{"freeze": "B2"}` (`null`
   removes); `sheet` is a name or a number from 1.

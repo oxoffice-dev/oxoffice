@@ -3,7 +3,7 @@
 
 use std::io::{Cursor, Read};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use oxoffice_opc::{CompoundFile, OpcError, OpcPackage, compound_file};
 use oxoffice_xlsx_oxml::namespaces::{content_types, rel_types, transitional_relationship_type};
@@ -99,6 +99,8 @@ impl Workbook {
             workbook,
             sheets,
             edited: false,
+            calculates: false,
+            formulas: OnceLock::new(),
         })
     }
 }

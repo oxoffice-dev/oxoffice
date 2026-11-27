@@ -13,7 +13,9 @@ use oxoffice_xlsx_oxml::workbook::WorkbookXml;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use crate::support::{corpus_workbooks, map_in_parallel, package_parts, part_text, parts_diff};
+use crate::support::{
+    corpus_workbooks, holds_formula, map_in_parallel, package_parts, part_text, parts_diff,
+};
 
 fn names(workbook: &Workbook) -> Vec<String> {
     workbook
@@ -187,15 +189,13 @@ fn a_sheet_added_takes_the_next_ids_and_a_refused_name_changes_nothing() {
         diff.added,
         ["xl/worksheets/sheet2.xml", "xl/worksheets/sheet3.xml"]
     );
-    // Excel is asked to calculate the workbook.
-    assert!(
-        part_text(&saved, "xl/workbook.xml")
-            .contains(r#"<calcPr calcId="191029" fullCalcOnLoad="1"/>"#)
-    );
+    // No formula, so nothing to calculate: Excel is not asked to.
+    assert!(part_text(&saved, "xl/workbook.xml").contains(r#"<calcPr calcId="191029"/>"#));
 }
 
-/// Adds a sheet to `original` and checks what changed.
-fn with_sheet_added(original: &[u8]) -> Result<bool, String> {
+/// Adds a sheet to `original` and checks what changed. Gives whether the
+/// workbook holds a formula, and whether it had a calculation chain.
+fn with_sheet_added(original: &[u8]) -> Result<(bool, bool), String> {
     let mut workbook = Workbook::from_bytes(original).map_err(|e| e.to_string())?;
     let before = names(&workbook);
     workbook.add_sheet("Added").map_err(|e| e.to_string())?;
@@ -204,6 +204,7 @@ fn with_sheet_added(original: &[u8]) -> Result<bool, String> {
     let diff = parts_diff(original, &saved);
 
     let had_chain = parts.contains_key("xl/calcChain.xml");
+    let formula = holds_formula(&parts);
     let had_app_lists = parts.get("docProps/app.xml").is_some_and(|app| {
         let app = String::from_utf8_lossy(app);
         app.contains("TitlesOfParts") || app.contains("HeadingPairs")
@@ -222,7 +223,9 @@ fn with_sheet_added(original: &[u8]) -> Result<bool, String> {
     if changed != expected {
         return Err(format!("changed {changed:?}, expected {expected:?}"));
     }
-    let removed: &[&str] = if had_chain {
+    // A workbook that holds a formula is calculated on open and loses its
+    // chain; one that holds none is left as it is.
+    let removed: &[&str] = if formula && had_chain {
         &["xl/calcChain.xml"]
     } else {
         &[]
@@ -285,7 +288,7 @@ fn with_sheet_added(original: &[u8]) -> Result<bool, String> {
     {
         return Err("the content type of the sheet is not a worksheet's".to_owned());
     }
-    if had_chain {
+    if formula && had_chain {
         let chain = |relationship: &oxoffice_opc::Relationship| {
             transitional_relationship_type(&relationship.rel_type) == rel_types::CALC_CHAIN
         };
@@ -296,8 +299,12 @@ fn with_sheet_added(original: &[u8]) -> Result<bool, String> {
             return Err("the calculation chain is not removed whole".to_owned());
         }
     }
-    if !part_text(&saved, "xl/workbook.xml").contains("fullCalcOnLoad") {
-        return Err("the workbook does not ask for a calculation".to_owned());
+    let asked = |bytes: &[u8]| {
+        String::from_utf8_lossy(bytes).contains("fullCalcOnLoad=\"1\"")
+            || String::from_utf8_lossy(bytes).contains("fullCalcOnLoad=\"true\"")
+    };
+    if asked(&after["xl/workbook.xml"]) != (asked(&parts["xl/workbook.xml"]) || formula) {
+        return Err(format!("calculation on open: asked {formula} of a formula"));
     }
     if had_app_lists {
         let app = part_text(&saved, "docProps/app.xml");
@@ -305,7 +312,7 @@ fn with_sheet_added(original: &[u8]) -> Result<bool, String> {
             return Err("app.xml still lists the sheets".to_owned());
         }
     }
-    Ok(had_chain)
+    Ok((formula, had_chain))
 }
 
 #[test]
@@ -313,10 +320,13 @@ fn a_sheet_added_to_every_workbook_changes_the_parts_a_sheet_must_and_no_other()
     let files = corpus_workbooks();
     let outcomes = map_in_parallel(&files, |file| with_sheet_added(&file.bytes()));
     let mut failures = Vec::new();
-    let mut chains = 0;
+    let (mut formulas, mut chains) = (0, 0);
     for (file, outcome) in files.iter().zip(outcomes) {
         match outcome.unwrap_or_else(|| Err("panicked".to_owned())) {
-            Ok(had_chain) => chains += usize::from(had_chain),
+            Ok((formula, had_chain)) => {
+                formulas += usize::from(formula);
+                chains += usize::from(had_chain);
+            }
             Err(error) => failures.push(format!("{}: {error}", file.path)),
         }
     }
@@ -325,4 +335,5 @@ fn a_sheet_added_to_every_workbook_changes_the_parts_a_sheet_must_and_no_other()
         chains > 0,
         "no workbook of the corpus has a calculation chain"
     );
+    assert!(formulas > 0, "no workbook of the corpus holds a formula");
 }

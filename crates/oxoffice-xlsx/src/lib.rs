@@ -141,9 +141,15 @@ pub struct Workbook {
     workbook: WorkbookXml,
     sheets: Vec<sheet::SheetEntry>,
     /// Whether an edit has changed the workbook since it was opened or
-    /// made: the first one asks Excel to calculate it on open and drops the
-    /// calculation chain, and a save writes what edits staged.
+    /// made: a save writes what edits staged.
     edited: bool,
+    /// Whether the workbook asks Excel to calculate it on open and has lost
+    /// its calculation chain, which an edit of a workbook that holds a
+    /// formula does.
+    calculates: bool,
+    /// Whether any sheet holds a formula, found by one scan of the sheets as
+    /// read, at the first edit.
+    formulas: OnceLock<bool>,
 }
 
 impl Workbook {
