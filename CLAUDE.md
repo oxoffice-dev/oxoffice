@@ -44,11 +44,12 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
 9. **An independent review before every merge**, posted on the pull request;
    every finding answered first (fixed, or why it is not a defect; a major
    is fixed unless the maintainer waives it). One review, sized by risk:
-   light (read only) for a small change away from the core edit path, full
-   (builds, tests, mutation checks) otherwise. A major's fix is proved by a
-   test that fails without it, then merges; a delta review only when the
-   fix is a redesign (over about 150 lines, or behaviour no finding asked
-   for). A minor is fixed in the pull request when the fix is cheap,
+   light (read only) for about 150 lines or fewer away from the core edit
+   path, docs, CI and pure moves; full (builds, tests, mutation checks)
+   otherwise. A major's fix is proved (a test that fails without it, suite
+   and clippy green, the fix diff read) and merges; a delta review only when
+   the fix is a redesign (over about 150 lines) or something unasked can
+   change behaviour (new code, a conflict resolved by hand). A minor is fixed in the pull request when the fix is cheap,
    with its proof (a test that fails without it, or a mutation check), and
    not re-reviewed; a follow-up issue only for a
    real defect the pull request cannot carry, at most one per pull request,
