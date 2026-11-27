@@ -81,11 +81,13 @@ so a run only needs a commit.
 
 ## Spreadsheets
 
-Four families, written by `xlsx_families.py` with XlsxWriter 3.3.3, each
-feature once. Every source is saved by LibreOffice (`files/libreoffice/`) and
-Excel for Mac (`files/excel/`, the `excel` route of `produce.py`, which opens
-each file, saves it as Open XML, closes it and quits like the Word and
-PowerPoint routes), and by Google Sheets (`files/google/`).
+Five sources, written by `xlsx_families.py` with XlsxWriter 3.3.3, each feature
+once. Each is saved by LibreOffice (`files/libreoffice/`), by Excel for Mac
+(`files/excel/`, the `excel` route of `produce.py`, which opens each file,
+saves it as Open XML, closes it and quits like the Word and PowerPoint routes)
+and by Google Sheets (`files/google/`), except `stream`, which has no Google
+copy: Google rewrites inline strings as shared strings and recalculates
+volatile formulas whatever the file says, so its copy would show neither.
 
 | family | carries |
 | --- | --- |
@@ -93,48 +95,95 @@ PowerPoint routes), and by Google Sheets (`files/google/`).
 | `budget` | styles and layout over three sheets: fonts, fills, borders, alignment and wrap, merged cells, a global and a sheet-scoped name, validations (a list, a whole number range), conditional formats (cell value, colour scale, data bar), frozen panes, an auto-filter with an active filter and its hidden rows, widths, heights, a hidden column, print setup (landscape, fit to one page wide, area, titles, header and footer), a picture and a chart; a ledger table with a calculated column and a total row; a gallery of 25 number formats, built in and custom, one value each |
 | `multi` | five sheets (one hidden), formulas across sheets, a legacy and a dynamic array formula, the seven error values, booleans, a formula that returns a string, rich text, a 3,000 character text of ten paragraphs, accents, CJK, Arabic with a right-to-left reading order, an emoji, an internal link |
 | `dates1904` | dates, a time, a date and time and a difference in the 1904 date system |
+| `stream` | what a streaming writer produces (XlsxWriter with `constant_memory`): inline strings, a rich string, `_x000D_` and `_x005F_x0041_` in text, and the volatile formulas `TODAY`, `RAND`, `OFFSET` and `INDIRECT` |
 
-What to know when reading them:
+Every formula carries its cached value, computed by the generator, and
+XlsxWriter marks every workbook `fullCalcOnLoad`: Excel and LibreOffice
+recalculate on open and their copies hold their own values (the `TODAY` and
+`RAND` of `stream` are those of the day and the minute of the run). The
+manifest lists what each file carries, read from its XML; a feature is what the
+file asks for, not what a producer writes whatever the file asks.
 
-- Every formula carries its cached value, computed by the generator.
-  XlsxWriter marks every workbook `fullCalcOnLoad`, so Excel and LibreOffice
-  recalculate on open and the copies hold their producer's values (LibreOffice
-  caches `#VALUE!` for `SQRT(-1)` and `#NAME?` for `#REF!`: read cached values
-  of error formulas from the sources and from Excel's copies).
-- XlsxWriter writes every formula alone: `review` is rewritten after the build
-  into the shared group Excel writes for a column filled down. LibreOffice
-  writes every formula alone again, and drops the dynamic array flag of
-  `multi` (a plain array formula) and the calculated column of the ledger
-  table; Google Sheets groups per-cell formulas into shared ones itself, and
-  so does Excel (`budget`'s Budget sheet: `F4:F11` and `G4:G11` become two
-  shared groups; the ledger table's calculated cells stay alone).
-- Google Sheets pads every sheet with empty rows up to row 1000 (about 40 KB
-  of XML a sheet, small once zipped), writes an empty persons part and an empty
-  drawing.
-- Excel for Mac writes personal values into every workbook it saves: the
-  folder it saved from (`x15ac:absPath` in `xl/workbook.xml`), the name of
-  whoever saved it (`cp:lastModifiedBy`) and the task pane add-ins it carries
-  (`xl/webextensions/`). The `excel` route makes each copy neutral right after
-  its save (`neutral_excel` in `produce.py`: the url of `absPath` becomes
-  `/Users/user/`, `lastModifiedBy` `Corpus Author`, the add-in parts go with
-  their relationships and content types, no other byte changes), and
-  `python3 tests/corpus/generate/produce.py --neutral-excel <file.xlsx>` does
-  the same to a workbook made by hand in Excel (and replaces the account of its
-  persons part, see below).
-- The Excel copies were saved by Excel for Mac 16.115 with a French UI: the
-  cached value of `TEXT(C4,"#,##0")` on `multi`'s Summary is `North:
-  45796,150` (French separators read `,` as the decimal point) where the
-  source caches `North: 45,796`, and `docProps/app.xml` names the sheets
-  `Feuilles de calcul`.
-- `excel/strict.xlsx`: saved by hand as Strict Open XML Spreadsheet from the
-  Excel copy of review (Excel for Mac 16.115, File, Save As, format "Feuille
-  de calcul Open XML Strict"; Excel's AppleScript has no Strict format), then
-  `produce.py --neutral-excel`. Its parts use the `purl.oclc.org/ooxml`
-  namespaces and relationship types (the package parts, core properties and
-  markup compatibility keep theirs), and the workbook says
-  `conformance="strict"`.
-- No file has inline strings (the sources, LibreOffice and Google Sheets write
-  shared strings only): a test that reads them builds its own workbook.
+### What the producers change
+
+Read from the files and the manifest features, against the source.
+
+- **Excel for Mac 16.115** (French UI): keeps the shared group of `review`, the
+  dynamic array (`cm="1"` and `metadata.xml`), the array formulas, the x14 data
+  bar, the table with its calculated column, the link tooltip, the 1904 system,
+  the hidden sheet, the filter with its hidden rows, the picture and the chart,
+  and writes the errors as `t="e"` with their own cached values (`#NUM!`,
+  `#REF!`, `#NAME?`). It writes `calcChain.xml`, drops `fullCalcOnLoad`, adds
+  `xr:uid`, and groups per-cell formulas into shared ones (`budget`'s `F4:F11`
+  and `G4:G11`; the ledger table's calculated cells stay alone). Its French
+  separators change the cached value of `TEXT(C4,"#,##0")` on `multi`'s Summary to
+  `North: 45796,150` (the source caches `North: 45,796`), and `docProps/app.xml`
+  names the sheets `Feuilles de calcul`.
+- **LibreOffice 26.2.7.3**: writes every formula alone (no shared group), drops
+  the dynamic array flag (a plain array formula), the calculated column of the
+  ledger table and the link tooltip, and lowercases a table column reference
+  (`SUBTOTAL(109,[quantity])`). It recalculates on load: its cached `#NUM!`
+  becomes `#VALUE!` and `#REF!` becomes `#NAME?`. It writes `aca="false"` on
+  every formula and `aca="true"` on a volatile one, a full `pageSetup` and
+  shared strings only. It keeps the notes, validations, conditional formats
+  (the x14 data bar too), filter and hidden rows, merges, names, panes, print
+  setup, picture, chart, 1904 and the hidden sheet.
+- **Google Sheets** (the files of `files/google/`):
+  - writes no `date1904`: `dates1904` comes back in the 1900 system (serial
+    1462 for 1 January 1904), and no `fullCalcOnLoad`;
+  - groups per-cell formulas into shared ones (`budget`'s `F4:F11`, `G4:G11`,
+    `G12:I12`; `review` keeps its group) and keeps the legacy array formulas;
+  - drops the dynamic array: `Q1 Forecast!F2` is a one-cell array formula
+    `_xlws.SORT(B2:B7,,-1)` cached `#NAME?` as `t="str"`, its spill cells are
+    gone;
+  - writes every formula error as `t="str"` text, so `multi` has no
+    `error-values`, and `#NULL!` as `#ERROR!`;
+  - in `budget`: the whole number validation becomes `decimal` with its error
+    message as the prompt, the data bar and its x14 extension are dropped, the
+    print area and print titles too, the header and footer lose their font code
+    and `&N`, the table keeps its range and total row but its style becomes
+    `Ledger-style`, its total functions `custom`, its calculated column is gone and
+    its cell formulas use A1 references (`Ledger!$D5*Ledger!$E5`), a filter view
+    (`customWorkbookViews`, `customSheetViews`) is added, and the picture and the
+    chart become one-cell anchors;
+  - drops the link tooltip, and writes `D/M/YYYY` for built-in format 14;
+  - writes `<pageSetup orientation="landscape"/>` on every sheet, set or not, an
+    empty persons part, an empty drawing, and pads every sheet with empty rows
+    up to row 1000 (about 40 KB of XML a sheet, small once zipped), the rows from
+    the 21st with `ht="15.75"` and `customHeight="1"` whether they hold a cell
+    or not. The manifest ignores that height, that landscape alone and an empty
+    persons part, and counts notes without the placeholders of threaded comments.
+- Excel's and Google's copies of `review` keep its three notes; Google loses
+  their author (an empty `<author>`).
+- Only `authored/stream.xlsx` holds inline strings: LibreOffice rewrites them
+  as shared strings, and every other copy of the other families has shared
+  strings. `excel/strict.xlsx` is the only Strict Open XML file.
+
+### Excel's personal values
+
+Excel for Mac writes personal values into every workbook it saves: the folder
+it saved from (`x15ac:absPath` in `xl/workbook.xml`), the name of whoever saved
+it (`cp:lastModifiedBy`, and `dc:creator` of a new workbook), the author of the
+notes it adds and the task pane add-ins it carries (`xl/webextensions/`). The
+`excel` route saves each copy in the app's container and makes it neutral there
+(`neutral_excel` in `produce.py`): the url of `absPath` becomes `/Users/user/`,
+the creator and the last editor `Corpus Author`, the account of the persons part,
+the comments and the notes `Corpus Author`, the add-in parts go with their
+relationships and content types, and no other byte changes. The result is read
+again and refused, the copy never reaching `files/`, when it still holds an
+account name, an email other than `corpus.author@example.com`, a path other than
+`/Users/user/` or a note author other than `Corpus Author`, `Reviewer` (the
+notes of `review`) or a `tc=` placeholder, or when a pattern does not match what
+the workbook writes. `python3 tests/corpus/generate/produce.py --neutral-excel
+<file.xlsx>` does the same to a workbook made by hand in Excel, and
+`python3 tests/corpus/generate/neutral_xlsx.py <file.xlsx> ["<account name>"]` to
+one made in Google Sheets (the persons, notes and core properties, the provider
+of a person kept). `excel/strict.xlsx`: saved by hand as Strict Open XML
+Spreadsheet from the Excel copy of review (Excel for Mac 16.115, File, Save As,
+format "Feuille de calcul Open XML Strict"; Excel's AppleScript has no Strict
+format), then `produce.py --neutral-excel`. Its parts use the `purl.oclc.org/ooxml`
+namespaces and relationship types (the package parts, core properties and
+markup compatibility keep theirs), and the workbook says `conformance="strict"`.
 
 ### Google Sheets copies
 
