@@ -259,9 +259,13 @@ enum Command {
     /// one line break; a page or column break matched and written back becomes
     /// a line break, a positional tab an ordinary tab and a non-breaking hyphen
     /// a plain one. With --track-author, the replacements are written as
-    /// tracked changes: each changed word deleted and its replacement
-    /// inserted, by that author; a match in a text box, or an edit the
-    /// tracked changes cannot record, is refused and nothing is written.
+    /// tracked changes by that author, as Word's tracked Replace All writes
+    /// them: each whole match deleted and its whole value inserted; a value
+    /// equal to its match writes nothing. A later --map pair does not match
+    /// across the edge of an earlier pair's insertion, so a pair that
+    /// searches an earlier value finds fewer. A match in a text box, or an
+    /// edit the tracked changes cannot record, is refused and nothing is
+    /// written.
     Replace {
         /// Path to the DOCX file
         file: PathBuf,

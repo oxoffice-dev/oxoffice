@@ -74,6 +74,17 @@ pub(crate) enum ReplacePattern {
     },
 }
 
+impl ReplacePattern {
+    /// A literal pair, its value's line endings read as replacement writes
+    /// them: each one line break.
+    pub(crate) fn literal(placeholder: &str, replacement: &str) -> Self {
+        ReplacePattern::Literal {
+            placeholder: placeholder.to_owned(),
+            written: replacement.replace("\r\n", "\n").replace('\r', "\n"),
+        }
+    }
+}
+
 impl Document {
     /// Run `replace` with the session under way, if any, told the pattern it
     /// replaces.
@@ -244,18 +255,53 @@ impl TrackedDocument<'_> {
     }
 
     fn run<T>(&mut self, call: impl FnOnce(&mut Document) -> Result<T>) -> Result<T> {
+        /// Puts back the document's session when the call returns or
+        /// unwinds, so that a panic leaves no session behind.
+        struct Held<'a> {
+            document: &'a mut Document,
+            tracking: Option<Tracking>,
+        }
+        impl Drop for Held<'_> {
+            fn drop(&mut self) {
+                self.document.tracking = self.tracking.take();
+            }
+        }
         let written = self.tracking.ids().len();
-        self.document.tracking = Some(self.tracking.clone());
-        let result = call(self.document);
-        self.document.tracking = None;
+        let tracking = self.document.tracking.replace(self.tracking.clone());
+        let held = Held {
+            document: self.document,
+            tracking,
+        };
+        let result = call(held.document);
+        drop(held);
         if result.is_err() {
-            self.tracking
-                .ids
-                .lock()
-                .expect("tracking ids")
-                .truncate(written);
+            self.forget_since(written);
         }
         result
+    }
+
+    /// [`Self::run`] for a call that refuses with `Ok(Err(_))`: that refusal
+    /// too leaves the document as it was, and so the session's ids.
+    fn run_refusable<T, E>(
+        &mut self,
+        call: impl FnOnce(&mut Document) -> Result<std::result::Result<T, E>>,
+    ) -> Result<std::result::Result<T, E>> {
+        let written = self.tracking.ids().len();
+        let result = self.run(call);
+        if matches!(result, Ok(Err(_))) {
+            self.forget_since(written);
+        }
+        result
+    }
+
+    /// Forget the ids recorded after the first `written`: the revisions
+    /// that took them were never kept.
+    fn forget_since(&self, written: usize) {
+        self.tracking
+            .ids
+            .lock()
+            .expect("tracking ids")
+            .truncate(written);
     }
 
     /// [`Document::edit_story_paragraph`]: `edit` on the paragraph at
@@ -305,18 +351,49 @@ impl TrackedDocument<'_> {
         self.run(|document| document.edit_cell_paragraph(table, row, cell, paragraph, edit))
     }
 
-    /// [`Document::set_story_text`], written as tracked changes.
+    /// [`Document::set_story_text`], written as tracked changes: the same
+    /// edit, the first run's formatting kept, then its redline.
     pub fn set_story_text(&mut self, location: &ContentLocation, value: &str) -> Result<()> {
-        self.edit_paragraph(location, |paragraph| paragraph.set_text(value))
+        self.run(|document| {
+            let mut untracked = document.clone_for_staging();
+            untracked.tracking = None;
+            untracked.set_story_text(location, value)?;
+            // The edit changed the story, and so its fingerprint.
+            let story = untracked
+                .stories()?
+                .into_iter()
+                .find(|story| {
+                    story.kind == location.story.kind
+                        && story.part_name == location.story.part_name
+                        && story.owner_index == location.story.owner_index
+                })
+                .ok_or_else(|| Error::Other("the edited story is gone".to_owned()))?;
+            let edited_location = ContentLocation {
+                story,
+                ..location.clone()
+            };
+            let snapshot = untracked.story_range_paragraph_snapshot(&edited_location)?;
+            let edited = CT_P::from_xml_fragment(snapshot.xml())?;
+            document.edit_story_paragraph(location, |paragraph| {
+                *paragraph.inner = edited;
+                Ok(())
+            })
+        })
     }
 
-    /// [`Document::try_replace_text`], written as tracked changes.
+    /// [`Document::try_replace_text`], written as tracked changes as Word's
+    /// tracked Replace All writes them: each whole match deleted and its
+    /// whole value inserted. A value equal to its match counts, as in the
+    /// untracked call, and writes nothing. A match in a text box, in a
+    /// header or footer table or control, or one with a bookmark edge inside
+    /// it, refuses the call.
     pub fn try_replace_text(&mut self, placeholder: &str, replacement: &str) -> Result<usize> {
         self.run(|document| document.try_replace_text(placeholder, replacement))
     }
 
     /// [`Document::try_replace_text_at`] on a paragraph, written as tracked
-    /// changes. A table or a block control as the location is refused.
+    /// changes as [`Self::try_replace_text`] writes them. A table or a block
+    /// control as the location, or a text box paragraph, is refused.
     pub fn try_replace_text_at(
         &mut self,
         location: &ContentLocation,
@@ -329,27 +406,37 @@ impl TrackedDocument<'_> {
                 "a replacement in a whole table or control",
             ));
         }
+        if location.story().kind() == StoryKind::TextBox {
+            return Err(super::redline::refused("a replacement in a text box"));
+        }
         oxoffice_core::xml::reject_non_xml_characters("replacement text", replacement)?;
         let mut mismatch = None;
-        let result = self.edit_paragraph(location, |paragraph| {
-            let found = oxoffice_docx_oxml::placeholder::try_replace_in_paragraph(
-                paragraph.inner,
-                placeholder,
-                replacement,
-            )?;
-            match expected {
-                Some(expected) if expected != found => {
-                    mismatch = Some(ReplacementCountMismatch {
-                        index: 0,
-                        placeholder: placeholder.to_owned(),
-                        expected,
-                        found,
-                        unreached: 0,
-                    });
-                    Err(Error::Other("replacement count mismatch".to_owned()))
-                }
-                _ => Ok(found),
-            }
+        let result = self.run(|document| {
+            document.with_replace_pattern(
+                || ReplacePattern::literal(placeholder, replacement),
+                |document| {
+                    document.edit_story_paragraph(location, |paragraph| {
+                        let found = oxoffice_docx_oxml::placeholder::try_replace_in_paragraph(
+                            paragraph.inner,
+                            placeholder,
+                            replacement,
+                        )?;
+                        match expected {
+                            Some(expected) if expected != found => {
+                                mismatch = Some(ReplacementCountMismatch {
+                                    index: 0,
+                                    placeholder: placeholder.to_owned(),
+                                    expected,
+                                    found,
+                                    unreached: 0,
+                                });
+                                Err(Error::Other("replacement count mismatch".to_owned()))
+                            }
+                            _ => Ok(found),
+                        }
+                    })
+                },
+            )
         });
         match (result, mismatch) {
             (_, Some(mismatch)) => Ok(Err(mismatch)),
@@ -363,7 +450,7 @@ impl TrackedDocument<'_> {
         pairs: &[(&str, &str, Option<usize>)],
         options: ReplaceOptions,
     ) -> Result<std::result::Result<Vec<usize>, ReplacementRefusal>> {
-        self.run(|document| document.try_replace_all_checked(pairs, options))
+        self.run_refusable(|document| document.try_replace_all_checked(pairs, options))
     }
 
     /// [`Document::try_replace_all_regex_expected`], written as tracked
@@ -372,6 +459,6 @@ impl TrackedDocument<'_> {
         &mut self,
         pairs: &[(&str, &str, Option<usize>)],
     ) -> Result<std::result::Result<Vec<usize>, ReplacementCountMismatch>> {
-        self.run(|document| document.try_replace_all_regex_expected(pairs))
+        self.run_refusable(|document| document.try_replace_all_regex_expected(pairs))
     }
 }

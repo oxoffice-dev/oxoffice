@@ -1289,14 +1289,23 @@ impl DocumentIdentifiers {
         }
     }
 
+    /// The smallest bookmark id from 0 that no bookmark and no tracked
+    /// change holds: Word numbers bookmarks, comments and revisions in one
+    /// sequence.
     pub(crate) fn reserve_bookmark_id(&mut self) -> Result<i32> {
-        let id = reserve_lowest_i32(&mut self.bookmark_ids, 0, "bookmark")?;
+        let id = (0..=i32::MAX)
+            .find(|id| !self.bookmark_ids.contains(id) && !self.revision_ids.contains(id))
+            .ok_or_else(|| Error::Other("bookmark id range is exhausted".to_owned()))?;
+        self.bookmark_ids.insert(id);
         self.record(|| Reservation::BookmarkId(id));
         Ok(id)
     }
 
     pub(crate) fn reserve_preferred_bookmark_id(&mut self, preferred: i32) -> Result<i32> {
-        if preferred >= 0 && self.bookmark_ids.insert(preferred) {
+        if preferred >= 0
+            && !self.revision_ids.contains(&preferred)
+            && self.bookmark_ids.insert(preferred)
+        {
             self.record(|| Reservation::BookmarkId(preferred));
             Ok(preferred)
         } else {
@@ -1318,7 +1327,15 @@ impl DocumentIdentifiers {
     }
 
     pub(crate) fn reserve_comment_id(&mut self) -> Result<i32> {
-        let id = reserve_i32(&mut self.comment_ids, 0, "comment")?;
+        // The id after the last comment's, or the next no tracked change
+        // holds.
+        let mut id = reserve_i32(&mut self.comment_ids.clone(), 0, "comment")?;
+        while self.revision_ids.contains(&id) || self.comment_ids.contains(&id) {
+            id = id
+                .checked_add(1)
+                .ok_or_else(|| Error::Other("comment id range is exhausted".to_owned()))?;
+        }
+        self.comment_ids.insert(id);
         let authored = self.authored_comment_ids.insert(id);
         self.record(|| Reservation::CommentId { id, authored });
         Ok(id)
@@ -1391,21 +1408,33 @@ impl DocumentIdentifiers {
         (0..=i32::MAX).find(|id| !self.permission_ids.contains(id))
     }
 
-    /// The smallest id from 0 that no tracked change, move range, comment or
-    /// bookmark of any story holds, held until the next reopen and given
-    /// back by the undo of an in-place edit. Word numbers the three kinds
-    /// in one sequence; no id of a new revision repeats one of them.
-    pub(crate) fn reserve_revision_id(&mut self) -> Result<i32> {
-        let id = (0..=i32::MAX)
-            .find(|id| {
+    /// The `count` smallest ids from 0 that no tracked change, move range,
+    /// comment or bookmark of any story holds, not held yet. Word numbers
+    /// the three kinds in one sequence; no id of a new revision repeats one
+    /// of them.
+    pub(crate) fn free_revision_ids(&self, count: usize) -> Result<Vec<i32>> {
+        let ids = (0..=i32::MAX)
+            .filter(|id| {
                 !self.revision_ids.contains(id)
                     && !self.comment_ids.contains(id)
                     && !self.bookmark_ids.contains(id)
             })
-            .ok_or_else(|| Error::Other("revision id range is exhausted".to_owned()))?;
-        self.revision_ids.insert(id);
-        self.record(|| Reservation::RevisionId(id));
-        Ok(id)
+            .take(count)
+            .collect::<Vec<_>>();
+        if ids.len() < count {
+            return Err(Error::Other("revision id range is exhausted".to_owned()));
+        }
+        Ok(ids)
+    }
+
+    /// Hold `ids`, which [`Self::free_revision_ids`] gave, once the
+    /// revisions that take them are written.
+    pub(crate) fn hold_revision_ids(&mut self, ids: &[i32]) {
+        for &id in ids {
+            if self.revision_ids.insert(id) {
+                self.record(|| Reservation::RevisionId(id));
+            }
+        }
     }
 
     /// The smallest permission range id from 0 no story holds, held until

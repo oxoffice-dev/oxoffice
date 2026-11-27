@@ -860,10 +860,7 @@ impl Document {
         }
         if let [(placeholder, replacement)] = pairs {
             return self.with_replace_pattern(
-                || super::tracked::ReplacePattern::Literal {
-                    placeholder: (*placeholder).to_owned(),
-                    written: replacement.replace("\r\n", "\n").replace('\r', "\n"),
-                },
+                || super::tracked::ReplacePattern::literal(placeholder, replacement),
                 |document| document.replace_batch_with(pairs),
             );
         }

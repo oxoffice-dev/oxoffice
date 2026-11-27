@@ -289,7 +289,8 @@ rewrites.
 
 **Round trips.** These hold for every tracked edit T of a document D, with U its untracked twin:
 
-- **I1.** `accept_all(T(D)) == accept_all(U(D))`.
+- **I1.** `accept_all(T(D)) == accept_all(U(D))`, range marks aside: the redline leaves a bookmark or comment
+  range mark where it stood, between the words around it, where the untracked call may move it (Q12).
 - **I2.** `reject_all(T(D)) == reject_all(D)`.
 - **I3.** For D without revisions: `accept_all(T(D)) == U(D)` and `reject_all(T(D)) == D`.
 - **I4.** `reject_revision_ids(session ids)` gives D back, unless the edit dropped text the same author had inserted
@@ -430,6 +431,14 @@ What PR 1a settles:
 - **Q10. Replying to a reply.** Decided after W11: the reply links to the thread root, as Word rewrites it (PR 5).
 - **Q11. Edits under a session that the redliner cannot mark** (section 3, refused by effect). Recommendation: plain
   refusals. A real need becomes an issue.
+- **Q12. Where a range mark goes** (found in the #696 review). `Paragraph::set_text` from `<bs/>old<be/> tail` to
+  `new tail` wraps all of "new tail"; the redline keeps the end mark after "new", where it stood. A start mark between
+  two deleted words would go into the `w:del` and Accept would drop it: that edit is refused, with a plain message.
+  Recommendation: the redline's placement, the mark stays by the words it marked. Open: where Word puts the mark
+  when the text around it is retyped.
+- **Q13. Text box copies.** A text box edit is written in the `mc:Choice` and its `mc:Fallback` copy, the revisions
+  of both with the same ids, as the copy repeats the bookmarks. Word reads the Choice. Open: whether Word renumbers
+  the copy on save.
 
 ### Word checks: results
 
