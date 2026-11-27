@@ -167,6 +167,12 @@ size = 10786
 features = ["calc-chain", "formulas", "shared-formula", "column-widths", "notes", "hyperlink", "number-formats", "fonts", "borders"]
 
 [[file]]
+path = "excel/stream.xlsx"
+producer = "Microsoft Excel for Mac 16.115"
+size = 8640
+features = ["calc-chain", "formulas", "volatile-formula", "calc-always", "rich-text", "column-widths", "number-formats", "fonts", "borders"]
+
+[[file]]
 path = "excel/strict.xlsx"
 producer = "Microsoft Excel for Mac 16.115"
 size = 12805
