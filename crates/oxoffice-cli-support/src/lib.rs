@@ -221,30 +221,41 @@ pub fn ensure_output_paths_allowed(paths: &[PathBuf], input: &Path, force: bool)
                 format!("duplicate output path {}", path.display()),
             ));
         }
-        let Ok(metadata) = fs::symlink_metadata(path) else {
+        if fs::symlink_metadata(path).is_err() {
             continue;
-        };
+        }
         if file_identity(path).is_ok_and(|output| output == input) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("output is the input file: {}", path.display()),
             ));
         }
-        if !metadata.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("output is not a regular file: {}", path.display()),
-            ));
-        }
-        if !force {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!(
-                    "output already exists: {} (pass --force to replace it)",
-                    path.display()
-                ),
-            ));
-        }
+        ensure_new_output_allowed(path, force)?;
+    }
+    Ok(())
+}
+
+/// Fails before publication when `path` exists and is not a regular file,
+/// or exists and `force` is false: the check of a command that makes a file
+/// from nothing, with no input file to compare it with.
+pub fn ensure_new_output_allowed(path: &Path, force: bool) -> io::Result<()> {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("output is not a regular file: {}", path.display()),
+        ));
+    }
+    if !force {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "output already exists: {} (pass --force to replace it)",
+                path.display()
+            ),
+        ));
     }
     Ok(())
 }

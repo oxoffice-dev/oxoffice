@@ -15,6 +15,9 @@ is kept as written.
 - Worksheets: one pass records each row's place, shared formula groups and
   array ranges; a row becomes typed when read or edited, and an edited sheet
   is written as its source bytes with the edited rows and children spliced in.
+- Column widths (the `cols` spans, cut and merged as Excel writes them) and
+  frozen panes (`sheetViews`), written at their place in the sheet.
+- The sheet lists of `docProps/app.xml`, dropped when the sheet list changes.
 - Page setup elements, typed and written as read.
 - Transitional and Strict Open XML.
 

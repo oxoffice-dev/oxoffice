@@ -60,9 +60,13 @@ crates/
                          function table (prefixes, argument counts)
   oxoffice-xlsx-oxml     the parts of a workbook: workbook, shared strings,
                          styles, worksheets (the row index and the splice
-                         writer), page setup; Strict read as Transitional
-  oxoffice-xlsx          the facade: Workbook, Worksheet; open and save
-                         without loss, refusals told by content
+                         writer, column widths, frozen panes), page setup;
+                         Strict read as Transitional
+  oxoffice-xlsx          the facade: Workbook, Worksheet, WorksheetMut; open
+                         and save without loss, refusals told by content, a
+                         new workbook from the text files under
+                         assets/default/, sheets added, column widths, row
+                         heights and frozen panes
   oxoffice-xlsx-cli      the `oxoffice xlsx` commands (library)
   oxoffice-xlsx-py       the `oxoffice.xlsx` bindings (library)
 
@@ -100,8 +104,18 @@ bytes ─→ oxoffice-opc (package, parts, relationships)
 
 workbook: the workbook part read at open; a sheet indexed at its first read
   (one pass: each row's range, shared formula masters, array ranges); a row
-  read when read or edited; a save copies every part no edit changed and
-  splices the edited rows and children into the sheet's source bytes
+  read when read or edited; an edit stages the rows and children of the
+  root it changed beside the sheet (a call that changes nothing stages
+  nothing) and the first one marks the workbook edited; a save copies every
+  part no edit changed, splices the staged rows and children into the
+  sheet's source bytes, writes the workbook part with its new records and,
+  when the workbook holds a formula, asks Excel to calculate it on open
+  (`fullCalcOnLoad`) with the calculation chain removed; a package signature
+  the save no longer matches is marked invalidated, as docx and pptx do; a
+  workbook nobody edited saves as it was read
+  new workbook: Workbook::new assembles a package from text files and the
+  package writer's sorted entries and fixed ZIP date give the same bytes
+  every time
 
 render:
   Word        facade ─→ docx-layout (flow, pagination) ─→ layout output

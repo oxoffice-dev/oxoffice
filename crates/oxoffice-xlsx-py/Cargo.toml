@@ -14,5 +14,5 @@ homepage.workspace = true
 [dependencies]
 oxoffice-core = { workspace = true }
 oxoffice-py-support = { workspace = true }
-oxoffice-xlsx = { workspace = true, features = ["agile-encryption"] }
+oxoffice-xlsx = { workspace = true, features = ["agile-encryption", "digital-signatures"] }
 pyo3 = { workspace = true }

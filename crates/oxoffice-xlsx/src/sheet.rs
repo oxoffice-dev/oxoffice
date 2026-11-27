@@ -7,7 +7,7 @@ use std::sync::Arc;
 use oxoffice_opc::OpcPackage;
 use oxoffice_xlsx_oxml::namespaces::{rel_types, transitional_relationship_type};
 use oxoffice_xlsx_oxml::workbook::WorkbookXml;
-use oxoffice_xlsx_oxml::worksheet::{PageSetupElements, SheetIndex};
+use oxoffice_xlsx_oxml::worksheet::{PageSetupElements, SheetEdits, SheetIndex};
 
 use crate::open::is_external;
 use crate::page_setup::PageSetup;
@@ -80,12 +80,31 @@ impl SheetKind {
 /// A sheet of the workbook and its part.
 #[derive(Clone, Debug)]
 pub(crate) struct SheetEntry {
-    name: String,
-    state: SheetState,
-    kind: SheetKind,
-    relationship_id: String,
-    part: String,
-    index: Lazy<SheetIndex>,
+    pub(crate) name: String,
+    pub(crate) state: SheetState,
+    pub(crate) kind: SheetKind,
+    pub(crate) relationship_id: String,
+    pub(crate) part: String,
+    pub(crate) index: Lazy<SheetIndex>,
+    /// What edits changed in the part, written by the next save: its rows
+    /// and children as they now are, the rest of the part kept as read.
+    pub(crate) edits: SheetEdits,
+}
+
+impl SheetEntry {
+    /// A worksheet the workbook has just been given: its part is in the
+    /// package.
+    pub(crate) fn added(name: &str, relationship_id: String, part: String) -> Self {
+        SheetEntry {
+            name: name.to_owned(),
+            state: SheetState::Visible,
+            kind: SheetKind::Worksheet,
+            relationship_id,
+            part,
+            index: Lazy::new(),
+            edits: SheetEdits::default(),
+        }
+    }
 }
 
 impl SheetEntry {
@@ -133,6 +152,7 @@ impl SheetEntry {
                 relationship_id,
                 part,
                 index: Lazy::new(),
+                edits: SheetEdits::default(),
             });
         }
         Ok(sheets)
@@ -142,8 +162,8 @@ impl SheetEntry {
 /// A sheet of a workbook, by its position.
 #[derive(Clone, Copy, Debug)]
 pub struct Worksheet<'a> {
-    workbook: &'a Workbook,
-    position: usize,
+    pub(crate) workbook: &'a Workbook,
+    pub(crate) position: usize,
 }
 
 impl Workbook {
@@ -181,7 +201,7 @@ impl Workbook {
 }
 
 impl<'a> Worksheet<'a> {
-    fn entry(&self) -> &'a SheetEntry {
+    pub(crate) fn entry(&self) -> &'a SheetEntry {
         &self.workbook.sheets[self.position]
     }
 
@@ -210,7 +230,7 @@ impl<'a> Worksheet<'a> {
     }
 
     /// The sheet's index, built by one pass the first time.
-    fn index(&self) -> Result<(&'a [u8], &'a SheetIndex)> {
+    pub(crate) fn index(&self) -> Result<(&'a [u8], &'a SheetIndex)> {
         let entry = self.entry();
         let xml = self.part_bytes()?;
         let index = entry

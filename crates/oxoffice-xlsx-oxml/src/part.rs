@@ -541,6 +541,8 @@ mod tests {
                 "{case}"
             );
         }
+        // The namespace is text: escaped once, never taken for markup.
+        assert!(SharedStrings::empty("urn:a&b\"c<d").is_empty());
         let mut created = SharedStrings::empty("http://purl.oclc.org/ooxml/spreadsheetml/main");
         assert_eq!(created.push_plain("x"), 0);
         assert!(String::from_utf8(created.to_xml()).unwrap().ends_with(

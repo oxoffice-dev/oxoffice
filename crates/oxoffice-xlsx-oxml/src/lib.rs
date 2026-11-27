@@ -8,6 +8,7 @@
 //! ([`namespaces`]) and keeps its namespaces.
 #![allow(non_camel_case_types)]
 
+pub mod app_properties;
 pub mod namespaces;
 mod part;
 pub mod reference;
@@ -22,5 +23,6 @@ pub use oxoffice_core::OxmlError;
 pub use part::{Located, RecordList, TypedPart};
 pub use reference::{CellRange, CellRef};
 pub use xml::{
-    Element, Lexical, Node, Tag, format_f64, parse_bool, parse_f64, parse_u32, qualified,
+    Element, Lexical, Node, Tag, format_f64, parse_bool, parse_f64, parse_u32, prefix_of_name,
+    qualified,
 };

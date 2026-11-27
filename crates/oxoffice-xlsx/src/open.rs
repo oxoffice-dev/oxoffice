@@ -3,7 +3,7 @@
 
 use std::io::{Cursor, Read};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use oxoffice_opc::{CompoundFile, OpcError, OpcPackage, compound_file};
 use oxoffice_xlsx_oxml::namespaces::{content_types, rel_types, transitional_relationship_type};
@@ -11,6 +11,7 @@ use oxoffice_xlsx_oxml::workbook::WorkbookXml;
 
 use crate::save::WorkbookClass;
 use crate::sheet::SheetEntry;
+use crate::signature;
 use crate::{Error, Result, Workbook};
 
 impl Workbook {
@@ -63,7 +64,7 @@ impl Workbook {
 
     /// The workbook a package holds, or the refusal its main content type
     /// names.
-    fn from_package(package: OpcPackage) -> Result<Self> {
+    pub(crate) fn from_package(package: OpcPackage) -> Result<Self> {
         let workbook_part = package
             .package_rels
             .items
@@ -91,6 +92,8 @@ impl Workbook {
                 message: error.to_string(),
             })?;
         let sheets = SheetEntry::resolve(&package, &workbook_part, &workbook)?;
+        let signature_invalid = signature::known_invalid_on_open(&package);
+        let signature_baseline = signature::baseline(&package);
         Ok(Workbook {
             package,
             source_path: None,
@@ -98,6 +101,11 @@ impl Workbook {
             class,
             workbook,
             sheets,
+            edited: false,
+            calculates: false,
+            formulas: OnceLock::new(),
+            signature_invalid,
+            signature_baseline,
         })
     }
 }
