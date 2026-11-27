@@ -1230,6 +1230,7 @@ dependencies = [
  "itoa",
  "oxoffice-core",
  "oxoffice-drawing",
+ "oxoffice-numfmt",
  "quick-xml",
  "regex",
  "serde_json",

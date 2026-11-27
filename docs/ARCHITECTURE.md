@@ -21,7 +21,8 @@ crates/
   oxoffice-layout        layout output types, font manager, 33 bundled
                          fonts, line breaking and shaping
   oxoffice-pdf           PDF writer and the tiny-skia rasteriser (PNG)
-  oxoffice-numfmt        number format codes to the text Excel displays
+  oxoffice-numfmt        number format codes to the text Excel displays,
+                         with the month and day names Word's date controls share
   oxoffice-chart         ChartML model and renderer, for Word and PowerPoint
   oxoffice-sml           minimal SpreadsheetML writer for chart workbooks
   oxoffice-cli-support   shared CLI pieces: ranges, JSON output, paths
