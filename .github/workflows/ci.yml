@@ -149,11 +149,13 @@ jobs:
       # corpus file each (specs/2026-11-21-consumer-workflows.md), every
       # producer's copy in the full checks. Under CI an unset OXOFFICE_RENDER fails the
       # render tests.
-      - name: Rust integration tests
+      # `--lib` adds the unit tests in `src/`; oxoffice-py-support has no
+      # tests and its test binary needs libpython to link.
+      - name: Rust tests
         shell: bash
         env:
           OXOFFICE_RENDER: ${{ matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
-        run: cargo test --profile scaling --locked --workspace $PY_CRATES --test '*'
+        run: cargo test --profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*'
       # One worker per CPU (pytest-xdist). Tests write only under tmp_path.
       - name: Python tests
         if: ${{ !cancelled() }}
