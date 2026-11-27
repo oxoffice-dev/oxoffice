@@ -36,7 +36,7 @@ under the plan. Producer facts come from LibreOffice 26.2 (probed here), a Googl
 | Crate | Role | Depends on (oxoffice) |
 | --- | --- | --- |
 | `oxoffice-numfmt` (PR 4, shared) | number format code + value -> displayed text, section colour, `_` and `*` hints; built-in ids; date serials 1900 / 1904 | none |
-| `oxoffice-xlsx-formula` | lexer, stored <-> displayed forms, reference mover, syntax check; later the rest of the parser, the dependency graph, the evaluator, reference updates for inserted rows | none |
+| `oxoffice-xlsx-formula` | lexer, stored <-> displayed forms, reference mover, syntax check, function table (prefixes, arity); later the rest of the parser, the dependency graph, the evaluator, reference updates for inserted rows | none |
 | `oxoffice-xlsx-oxml` | the SpreadsheetML types (`CT_*`), the worksheet row index, the splice writer | `core` |
 | `oxoffice-xlsx` | the facade: `Workbook`, `Worksheet`, cells, styles, comments, CSV, the new workbook | `opc`, `core`, `drawing`, `numfmt`, `xlsx-oxml`, `xlsx-formula` |
 | `oxoffice-xlsx-cli` | the `oxoffice xlsx` commands (library) | `xlsx`, `cli-support` |
@@ -73,11 +73,12 @@ each shared formula master (`si` -> cell, text, `ref`) and each array and data t
 `CT_Cell` when read or edited. An edited sheet saves as its source bytes with each edited row re-serialized in its
 span, new rows at their place, and the children an edit changes (`dimension` widened; `cols`, `sheetViews` in PR 7)
 spliced at their schema position; the root start tag (declarations, `mc:Ignorable`), every other child and every
-row not edited stay bytes. An edit costs its rows, not the sheet (the docx lesson of #466). Rows and cells without
-`r` take the next number. Tolerant on read (any prefix, `1`/`true`, `0`/`false`, `1.0`). On write, an element takes
-the prefix the root binds to the main namespace (none under a default namespace, `x:` or `ns0:` when the root binds
-one), never a fixed one (spec 2026-11-26 met the same question in Word); canonical attribute values (`1`/`0`, the
-shortest text that reads back the same double) appear only in what an edit rewrites.
+row not edited stay bytes. An edit costs its rows plus, once per group, the rows of a shared group it dissolves
+(section 6), not the sheet (the docx lesson of #466). Rows and cells without `r` take the next number. Tolerant on
+read (any prefix, `1`/`true`, `0`/`false`, `1.0`). On write, an element takes the prefix the root binds to the main
+namespace (none under a default namespace, `x:` or `ns0:` when the root binds one), never a fixed one (spec
+2026-11-26 met the same question in Word); canonical attribute values (`1`/`0`, the shortest text that reads back the
+same double) appear only in what an edit rewrites.
 
 **Indexes only grow.** Shared strings and `cellXfs` (and the fonts, fills, borders and number formats they point to)
 are appended, never removed or reordered, so the sheets not edited keep valid indexes. A written text reuses an
@@ -135,16 +136,19 @@ Otherwise it is what the producer computed at its last save; without `<v>` there
 
 A save under rule 1 sets `fullCalcOnLoad="1"` on `calcPr` (inserted at its schema position when absent; Google writes
 `<calcPr/>`) and removes `xl/calcChain.xml`, its relationship and its content type; the cached values stay. Excel
-recalculates on open, Google always does. A written formula has no `<v>` and no `t`. An unedited workbook saves byte
-for byte.
+recalculates on open, Google always does. A written formula has no `<v>` and no `t`. An unedited workbook saved
+without `drop_cached_values` (below) is byte for byte the file it was read from.
 
-LibreOffice ignores `fullCalcOnLoad` by default (probed: "Recalculation on file load" is "never") and computes only
-the formulas without `<v>`, so it shows the other old values until a recalculation (that setting, or Ctrl+Shift+F9).
-LibreOffice ranks after Excel and Google (maintainer), so a save option serves it rather than a dependency walk:
-`drop_cached_values` (Rust `SaveOptions`, Python `save(...)`, CLI `--drop-cached-values`) drops the `<v>` and `t` of
-every formula and its array range, rewriting the rows that hold formulas in every sheet, and LibreOffice computes them
-on load. The README says so; it is no known limitation. The dependency graph comes with the evaluator of the second
-set, which writes correct values and makes the option unnecessary.
+LibreOffice ignores `fullCalcOnLoad` by default (probed: "Recalculation on file load" is "never"). It computes the
+formulas without `<v>` and every shared-formula cell, and shows the other old values until a recalculation (that
+setting, or Ctrl+Shift+F9), members of a group an edit dissolved included. LibreOffice ranks after Excel and Google
+(maintainer), so a save option serves it rather than a dependency walk: `drop_cached_values` (Rust `SaveOptions`,
+taken by every save, `to_bytes` and the encrypted ones included; Python the same keyword; CLI `--drop-cached-values`)
+makes the save a recalculating one even without an edit (`fullCalcOnLoad` set, chain removed) and drops the `<v>` and
+`t` of every formula and its array range, rewriting the rows that hold formulas in every sheet; LibreOffice then
+computes them on load, and a function it lacks (`LAMBDA`, `GROUPBY`) shows an error where the cached value was. The
+README says so; it is no known limitation. The dependency graph comes with the evaluator of the second set, which
+writes correct values and makes the option unnecessary.
 
 ### 4. Addressing
 
@@ -242,9 +246,9 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 | --- | --- | --- | --- |
 | value | `set_value(cell, Value)` | `set FILE CELL VALUE [--sheet S] [--text] -o OUT` | `set_value(cell, value)` |
 | formula | `set_formula(cell, text, FormulaOptions::default())` | `set ... --formula [--stored]` | `set_formula(cell, text, *, stored=False)` |
-| spilling formula | `FormulaOptions { spill: true, .. }` | `set ... --formula --spill`; `"spill": true` in the edit map | `set_formula(cell, text, spill=True)` |
+| spilling formula | `FormulaOptions { spill: true, .. }` | `set ... --formula --spill` | `set_formula(cell, text, spill=True)` |
 | clear | `clear(range, Clear::{Contents, Formats, All})` | edit map | `clear(range, *, contents=True, formats=False)` |
-| bulk write | `write(top_left, rows)` | edit map | `write(cell, rows)` |
+| bulk write | `write(top_left, rows)`, a formula as `CellInput::Formula(text, FormulaOptions)` | edit map | `write(cell, rows)`, a formula as `Formula(text, stored=False, spill=False)` |
 | number format | `set_number_format(range, code)` | edit map | `set_number_format(range, code)` |
 | style parts | `set_style(range, StylePatch)` | edit map | `set_style(range, *, bold=None, italic=None, ...)` |
 | CSV import | `import_csv(top_left, text, CsvImport)` | `import-csv FILE CSV [--sheet S] [--at A1] [--text] -o OUT` | `import_csv(source, *, at="A1", infer=True)` |
@@ -253,11 +257,14 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   date or time writes its serial and, when the cell's format is `General`, the code `yyyy-mm-dd`, `yyyy-mm-dd
   hh:mm:ss` or `hh:mm:ss` (locale-independent, unlike built-in 14). Python maps `int`/`float`, `str`, `bool`,
   `CellError`, `None` (clears the content), `datetime`, `date`, `time`, `timedelta` (`[h]:mm:ss`); a formula in a
-  bulk write is an `oxoffice.xlsx.Formula("...")`, so a string is never a formula.
+  bulk write is an `oxoffice.xlsx.Formula(...)`, so a string is never a formula. `stored` and `spill` reach every
+  writer: `set_formula`, the bulk write, the CLI `set` and the edit map (`"stored": true`, `"spill": true`).
 - **Formulas**: at most 8,192 characters, and they pass the syntax check of PR 5, the first half of the parser
   (operands, operators, function calls, array constants, `,` between arguments; a `;` outside an array constant is
-  refused naming `,`), so a formula Excel would repair (`IF(B2>0;1;0)`, `B2*`, `B2**C2`) is refused with a plain
-  message. `stored=True` takes the stored form as is (section 2), still checked.
+  refused naming `,`; at most 255 arguments and 64 nested levels). Its function table carries each built-in
+  function's minimum and maximum argument count (the MS-XLS function table), which the evaluator reuses. So a formula
+  Excel would repair (`IF(B2>0;1;0)`, `B2*`, `B2**C2`, `IF(1,2,3,4)`) is refused with a plain message. `stored=True`
+  takes the stored form as is (section 2), still checked.
 - **Spill**: `<f t="array" ref>` on the anchor cell alone, as XlsxWriter writes it, Excel spilling it on load; `cm`
   points to a `cellMetadata` block whose `rc` names the `XLDAPR` type of `metadata.xml`, found in place or appended,
   the part created when absent (`cm` and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them).
@@ -329,10 +336,10 @@ The package is told by its content, never its extension (today a compound file f
 opened from a file refuses to be saved over it, whatever the spelling of `path` (`Error::OverwritesSource`), unless
 `SaveOptions { overwrite_source: true, .. }`; `drop_cached_values` is the other option (section 3). `.xlsx`, `.xlsm`,
 `.xltx` or `.xltm` selects the main content type; a VBA project cannot be saved under a macro-free extension. Python
-`save(path, *, overwrite_source=False, drop_cached_values=False)`, `to_bytes()`; the CLI writes `-o`, never the
-input, `--force` replacing another file. Python errors: `XlsxError`, `PackageError(XlsxError)`, `XmlError(XlsxError,
-ValueError)`, a refused edit `XlsxError`, a bad argument the built-in `ValueError`, `TypeError`, `IndexError` or
-`KeyError`.
+`save(path, *, overwrite_source=False, drop_cached_values=False)`, `to_bytes(*, drop_cached_values=False)`, the
+encrypted saves with the same keyword; the CLI writes `-o`, never the input, `--force` replacing another file. Python
+errors: `XlsxError`, `PackageError(XlsxError)`, `XmlError(XlsxError, ValueError)`, a refused edit `XlsxError`, a bad
+argument the built-in `ValueError`, `TypeError`, `IndexError` or `KeyError`.
 
 ### 9. Producers
 
@@ -380,9 +387,9 @@ semantics, Python for the binding layer only) and its `docs/` updates.
 
 | PR | Content | Checked by |
 | --- | --- | --- |
-| 3 `feat(xlsx): open and save workbooks without loss` | `oxoffice-xlsx-oxml`, `oxoffice-xlsx`, `-cli`, `-py`; refusals (section 8); typed parts, row index and splice writer; `PageSetup`; atomic save; Agile encryption open and save; `inspect`; Python `Workbook`, `sheets`, `save`, `to_bytes` | every corpus `.xlsx` opens, saves without an edit and reopens with every ZIP entry byte for byte (the docx corpus test); a second walk reads every typed part and every row, writes it through its writer (a test hook) and reads it again: the models are equal; the xlsx parts PR 3 writes join the equivalent-writings walk of `oxoffice-xml-test` (a root binding `x:`, a default namespace, end tags, self-closed elements); one row per refusal and per compound file kind, the files built in the test; encrypted round trip |
-| 5 `feat(xlsx): read cells, formulas, styles and comments` | `oxoffice-xlsx-formula` (lexer, stored and displayed forms, mover, syntax check); cells, stale rule, shared formulas, resolved style (`apply_hls_tint`), displayed text, merges, comments, page setup; `text`, `--json`, `--markdown`, `csv`, `cells`, `comments`; bulk read | one table: for each family, every producer's copy reads the same values, formulas and displayed texts as the authored source at listed cells, producer differences named in the table; reading then writing every corpus formula gives back its stored text; the syntax check accepts every corpus formula and refuses a table of bad ones (`;` separators, a dangling or doubled operator, unbalanced brackets); a mover table; `_xHHHH_` read and written in a table (a carriage return, a control character, a literal `_x0041_`); resolved styles of `budget`; comments of the two `threads` files |
-| 6 `feat(xlsx): edit cells, formulas and styles` | section 6, recalculating save, edit map, `import-csv` | a table per rule (a 1D and a 2D group dissolved, refusals with their messages, style and string reuse, missing containers created, spill blocks in a file with and without `metadata.xml`, chain removal, `drop_cached_values`); a corpus walk editing one cell per file: exactly the expected parts change; the main checks: on the Mac, Excel opens every edited copy without a repair prompt and recalculates the expected values, and Google Sheets imports them with the same values (orchestrator); LibreOffice headless opens every edited copy without an error and, saved with `drop_cached_values`, reads the expected value of a dependent total |
+| 3 `feat(xlsx): open and save workbooks without loss` | `oxoffice-xlsx-oxml`, `oxoffice-xlsx`, `-cli`, `-py`; refusals (section 8); typed parts, row index and splice writer; `PageSetup`; atomic save; Agile encryption open and save; `inspect`; Python `Workbook`, `sheets`, `save`, `to_bytes` | every corpus `.xlsx` opens, saves without an edit and reopens with every ZIP entry byte for byte (the docx corpus test); a second walk reads every typed part and every row, writes it through its writer (a test hook) and checks both that reading it again gives an equal model and that its canonical form (`oxoffice-xml-test`, SpreadsheetML spellings folded: `true`/`1`, `false`/`0`, `1.0`/`1`, shortest double) equals the source's, which catches children out of schema order; the xlsx parts PR 3 writes join the equivalent-writings walk of `oxoffice-xml-test` (a root binding `x:`, a default namespace, end tags, self-closed elements); one row per refusal and per compound file kind, the files built in the test; encrypted round trip |
+| 5 `feat(xlsx): read cells, formulas, styles and comments` | `oxoffice-xlsx-formula` (lexer, stored and displayed forms, mover, syntax check); cells, stale rule, shared formulas, resolved style (`apply_hls_tint`), displayed text, merges, comments, page setup; `text`, `--json`, `--markdown`, `csv`, `cells`, `comments`; bulk read | one table: for each family, every producer's copy reads the same values, formulas and displayed texts as the authored source at listed cells, producer differences named in the table; reading then writing every corpus formula gives back its stored text; the syntax check accepts every corpus formula and refuses a table of bad ones (`;` separators, a dangling or doubled operator, unbalanced brackets, a wrong argument count, 256 arguments, 65 levels); a mover table; `_xHHHH_` read and written in a table (a carriage return, a control character, a literal `_x0041_`); resolved styles of `budget`; comments of the two `threads` files |
+| 6 `feat(xlsx): edit cells, formulas and styles` | section 6, recalculating save, edit map, `import-csv` | a table per rule (a 1D and a 2D group dissolved, refusals with their messages, style and string reuse, missing containers created, spill blocks in a file with and without `metadata.xml`, chain removal, `drop_cached_values` with and without an edit); a corpus walk editing one cell per file: exactly the expected parts change; the main checks: on the Mac, Excel opens every edited copy (each also carrying a style edit that appends a font, a fill, a border and an `xf`) without a repair prompt and recalculates the expected values, and Google Sheets imports them with the same values (orchestrator); LibreOffice headless opens every edited copy without an error and, saved with `drop_cached_values`, reads the expected value of a dependent total |
 | 7 `feat(xlsx): new workbook, sheets, widths, heights, frozen panes` | section 7 | two builds of the new workbook give the same bytes; LibreOffice and, on the Mac, Excel open the new and edited workbooks without a repair prompt; a table per operation |
 
 Docs: PR 3 adds the xlsx family to `docs/ARCHITECTURE.md` (crates, the dependency rule, the flow), the README format
