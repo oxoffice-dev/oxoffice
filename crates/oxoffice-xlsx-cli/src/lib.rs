@@ -1,6 +1,8 @@
 //! The `oxoffice xlsx` command tree: command-line access to the public
-//! `oxoffice-xlsx` facade. Sheets are numbered from 1, like every number of
-//! the command line.
+//! `oxoffice-xlsx` facade. Sheets, rows and columns are numbered from 1,
+//! like every number of the command line; cells are A1 references.
+
+mod json;
 
 mod edit;
 
@@ -9,8 +11,12 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::{Parser, Subcommand};
-use oxoffice_cli_support::{ensure_new_output_allowed, ensure_output_paths_allowed, json_envelope};
-use oxoffice_xlsx::{DateSystem, SheetState, Workbook, WorkbookClass};
+use oxoffice_cli_support::{
+    StagedOutputSet, ensure_new_output_allowed, ensure_output_paths_allowed, json_envelope,
+};
+use oxoffice_xlsx::{
+    CsvOptions, DateSystem, SheetKind, SheetState, Workbook, WorkbookClass, Worksheet,
+};
 use serde_json::json;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -24,10 +30,68 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Print the sheets of a workbook, its date system and class
+    /// Print the sheets of a workbook, their used ranges, the date system and class
     Inspect {
         file: PathBuf,
-        /// Output the workbook as schema-1 JSON
+        /// Output the workbook as schema-1 JSON, each sheet's page setup included
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the cells of each worksheet as Excel displays them
+    Text {
+        file: PathBuf,
+        /// Output schema-1 JSON: values, formulas, merges and comments
+        #[arg(long, conflicts_with = "markdown")]
+        json: bool,
+        /// Output a Markdown table per sheet, headed by the column letters
+        #[arg(long)]
+        markdown: bool,
+        /// A sheet to print, by name or number from 1 (repeatable; every
+        /// worksheet by default)
+        #[arg(long)]
+        sheet: Vec<String>,
+    },
+    /// Write one sheet as CSV: displayed texts from A1 to the end of the used range
+    Csv {
+        file: PathBuf,
+        /// The sheet, by name or number from 1 (the first visible worksheet by default)
+        #[arg(long)]
+        sheet: Option<String>,
+        /// Stored values rather than displayed texts (numbers, dates as serials)
+        #[arg(long)]
+        raw: bool,
+        /// The field separator: one character, or `tab`
+        #[arg(long, default_value = ",")]
+        delimiter: String,
+        /// Start with a UTF-8 byte order mark
+        #[arg(long)]
+        bom: bool,
+        /// Write to this file rather than the standard output
+        #[arg(short = 'o', long)]
+        output: Option<PathBuf>,
+        /// Replace an existing output file
+        #[arg(long)]
+        force: bool,
+    },
+    /// Print the cells of a range: values, formulas, number formats and styles
+    Cells {
+        file: PathBuf,
+        /// A1 reference: B3, A1:C10, A:C or 2:5, with a sheet prefix or not ('Q1 data'!B3)
+        range: String,
+        /// The sheet, by name or number from 1 (the first visible worksheet by default)
+        #[arg(long)]
+        sheet: Option<String>,
+        /// Output schema-1 JSON, each cell with its stored formula and resolved style
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the notes and comment threads of each worksheet
+    Comments {
+        file: PathBuf,
+        /// A sheet, by name or number from 1 (repeatable; every worksheet by default)
+        #[arg(long)]
+        sheet: Vec<String>,
+        /// Output schema-1 JSON
         #[arg(long)]
         json: bool,
     },
@@ -97,6 +161,36 @@ pub fn run(cli: Cli) {
             force,
             json,
         } => edit_workbook(&file, &map, &output, force, json),
+        Command::Text {
+            file,
+            json,
+            markdown,
+            sheet,
+        } => text(&file, json, markdown, &sheet),
+        Command::Csv {
+            file,
+            sheet,
+            raw,
+            delimiter,
+            bom,
+            output,
+            force,
+        } => csv(
+            &file,
+            sheet.as_deref(),
+            raw,
+            &delimiter,
+            bom,
+            output.as_deref(),
+            force,
+        ),
+        Command::Cells {
+            file,
+            range,
+            sheet,
+            json,
+        } => cells(&file, &range, sheet.as_deref(), json),
+        Command::Comments { file, sheet, json } => comments(&file, &sheet, json),
     };
     let flushed = io::stdout().flush();
     if let Err(error) = result.and(flushed.map_err(Into::into)) {
@@ -114,26 +208,71 @@ fn class_name(class: WorkbookClass) -> &'static str {
     }
 }
 
+/// The sheet `spec` names: a name (exact, then in any case), else a number
+/// from 1.
+fn sheet<'a>(workbook: &'a Workbook, spec: &str) -> Result<Worksheet<'a>> {
+    workbook
+        .sheet(spec)
+        .or_else(|| {
+            spec.parse::<usize>()
+                .ok()
+                .and_then(|number| number.checked_sub(1))
+                .and_then(|position| workbook.sheet_at(position))
+        })
+        .ok_or_else(|| format!("no sheet is named or numbered {spec}").into())
+}
+
+/// The sheets `specs` name, or every worksheet when they name none.
+fn sheets<'a>(workbook: &'a Workbook, specs: &[String]) -> Result<Vec<Worksheet<'a>>> {
+    if specs.is_empty() {
+        return Ok(workbook
+            .sheets()
+            .filter(|sheet| sheet.kind() == SheetKind::Worksheet)
+            .collect());
+    }
+    specs.iter().map(|spec| sheet(workbook, spec)).collect()
+}
+
+/// The sheet `spec` names, or the first visible worksheet.
+fn sheet_or_first<'a>(workbook: &'a Workbook, spec: Option<&str>) -> Result<Worksheet<'a>> {
+    match spec {
+        Some(spec) => sheet(workbook, spec),
+        None => workbook
+            .sheets()
+            .find(|sheet| {
+                sheet.kind() == SheetKind::Worksheet && sheet.state() == SheetState::Visible
+            })
+            .ok_or_else(|| "the workbook has no visible worksheet: name one with --sheet".into()),
+    }
+}
+
 fn inspect(file: &Path, as_json: bool) -> Result<()> {
     let workbook = Workbook::open(file)?;
     let date1904 = workbook.date_system() == DateSystem::Date1904;
     let mut out = io::stdout().lock();
     if as_json {
-        let sheets: Vec<_> = workbook
-            .sheets()
-            .map(|sheet| {
-                json!({
-                    "sheet": sheet.position() + 1,
-                    "name": sheet.name(),
-                    "state": sheet.state().as_str(),
-                    "kind": sheet.kind().as_str(),
-                })
-            })
-            .collect();
+        let mut sheets = Vec::new();
+        for sheet in workbook.sheets() {
+            let worksheet = sheet.kind() == SheetKind::Worksheet;
+            let page_setup = if worksheet {
+                json::page_setup(&sheet.page_setup()?)
+            } else {
+                serde_json::Value::Null
+            };
+            sheets.push(json!({
+                "sheet": sheet.position() + 1,
+                "name": sheet.name(),
+                "state": sheet.state().as_str(),
+                "kind": sheet.kind().as_str(),
+                "used_range": sheet.used_range()?.map(|range| range.to_string()),
+                "page_setup": page_setup,
+            }));
+        }
         let record = json_envelope(json!({
             "file": file.display().to_string(),
             "class": class_name(workbook.class()),
             "date1904": date1904,
+            "recalculation_needed": workbook.recalculation_needed(),
             "sheets": sheets,
         }))?;
         writeln!(out, "{}", serde_json::to_string_pretty(&record)?)?;
@@ -146,18 +285,27 @@ fn inspect(file: &Path, as_json: bool) -> Result<()> {
         "Date system: {}",
         if date1904 { "1904" } else { "1900" }
     )?;
-    writeln!(out, "Sheets: {}", workbook.sheets().len())?;
-    for sheet in workbook.sheets() {
-        let state = match sheet.state() {
-            SheetState::Visible => String::new(),
-            state => format!(", {}", state.as_str()),
-        };
+    if workbook.recalculation_needed() {
         writeln!(
             out,
-            "  {}. {} ({}{state})",
+            "Recalculation: asked on open, cached values may be stale"
+        )?;
+    }
+    writeln!(out, "Sheets: {}", workbook.sheets().len())?;
+    for sheet in workbook.sheets() {
+        let mut details = vec![sheet.kind().as_str().to_owned()];
+        if sheet.state() != SheetState::Visible {
+            details.push(sheet.state().as_str().to_owned());
+        }
+        if let Some(used) = sheet.used_range()? {
+            details.push(used.to_string());
+        }
+        writeln!(
+            out,
+            "  {}. {} ({})",
             sheet.position() + 1,
             sheet.name(),
-            sheet.kind().as_str()
+            details.join(", ")
         )?;
     }
     Ok(())
@@ -207,6 +355,220 @@ fn written(operation: &str, detail: serde_json::Value, output: &Path, as_json: b
         )?;
     } else {
         writeln!(out, "Written to {}", output.display())?;
+    }
+    Ok(())
+}
+
+/// A sheet as tab-separated displayed texts: `# <name>`, then each row that
+/// holds a value, from the first column of the used range.
+fn plain_text(sheet: &Worksheet<'_>) -> Result<String> {
+    let mut out = format!("# {}\n", sheet.name());
+    let Some(used) = sheet.used_range()? else {
+        return Ok(out);
+    };
+    let cells = sheet.cells(&used.to_string())?;
+    let mut at = 0;
+    while at < cells.len() {
+        let row = cells[at].row();
+        let end = at
+            + cells[at..]
+                .iter()
+                .take_while(|cell| cell.row() == row)
+                .count();
+        let last = cells[end - 1].column();
+        let mut fields = vec![""; (last - used.first.column + 1) as usize];
+        for cell in &cells[at..end] {
+            fields[(cell.column() - used.first.column) as usize] = &cell.text;
+        }
+        out.push_str(&fields.join("\t"));
+        out.push('\n');
+        at = end;
+    }
+    Ok(out)
+}
+
+fn text(file: &Path, as_json: bool, markdown: bool, specs: &[String]) -> Result<()> {
+    let workbook = Workbook::open(file)?;
+    let sheets = sheets(&workbook, specs)?;
+    let mut out = io::stdout().lock();
+    if as_json {
+        let mut records = Vec::new();
+        for sheet in &sheets {
+            let used = sheet.used_range()?;
+            let cells = match used {
+                Some(used) => sheet.cells(&used.to_string())?,
+                None => Vec::new(),
+            };
+            records.push(json!({
+                "sheet": sheet.position() + 1,
+                "name": sheet.name(),
+                "state": sheet.state().as_str(),
+                "used_range": used.map(|range| range.to_string()),
+                "cells": cells.iter().map(json::text_cell).collect::<Vec<_>>(),
+                "merged": sheet.merged_ranges()?.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "comments": sheet.comments()?.iter().map(json::comment).collect::<Vec<_>>(),
+            }));
+        }
+        let record = json_envelope(json!({
+            "date1904": workbook.date_system() == DateSystem::Date1904,
+            "recalculation_needed": workbook.recalculation_needed(),
+            "sheets": records,
+        }))?;
+        writeln!(out, "{}", serde_json::to_string_pretty(&record)?)?;
+        return Ok(());
+    }
+    let sections = sheets
+        .iter()
+        .map(|sheet| {
+            if markdown {
+                Ok(sheet.to_markdown()?)
+            } else {
+                plain_text(sheet)
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    write!(out, "{}", sections.join("\n"))?;
+    Ok(())
+}
+
+fn csv(
+    file: &Path,
+    spec: Option<&str>,
+    raw: bool,
+    delimiter: &str,
+    bom: bool,
+    output: Option<&Path>,
+    force: bool,
+) -> Result<()> {
+    let delimiter = match delimiter {
+        "tab" => '\t',
+        other => {
+            let mut characters = other.chars();
+            match (characters.next(), characters.next()) {
+                (Some(character), None) if !matches!(character, '"' | '\r' | '\n') => character,
+                _ => {
+                    return Err(format!(
+                        "--delimiter takes one character other than a quote or a line break, or `tab`, not {other:?}"
+                    )
+                    .into());
+                }
+            }
+        }
+    };
+    let workbook = Workbook::open(file)?;
+    let sheet = sheet_or_first(&workbook, spec)?;
+    let text = sheet.to_csv(&CsvOptions {
+        delimiter,
+        raw,
+        bom,
+    })?;
+    match output {
+        Some(output) => {
+            ensure_output_paths_allowed(&[output.to_path_buf()], file, force)?;
+            let mut staged = StagedOutputSet::with_replace_existing(force);
+            staged.stage_bytes(output, text.as_bytes())?;
+            staged.publish()?;
+        }
+        None => io::stdout().lock().write_all(text.as_bytes())?,
+    }
+    Ok(())
+}
+
+/// A range with its sheet prefix, if any: `'Q1 data'!B3` gives `Q1 data`
+/// and `B3`.
+fn split_sheet(range: &str) -> (Option<String>, &str) {
+    let Some((prefix, reference)) = range.rsplit_once('!') else {
+        return (None, range);
+    };
+    let name = match prefix
+        .strip_prefix('\'')
+        .and_then(|quoted| quoted.strip_suffix('\''))
+    {
+        Some(quoted) => quoted.replace("''", "'"),
+        None => prefix.to_owned(),
+    };
+    (Some(name), reference)
+}
+
+fn cells(file: &Path, range: &str, spec: Option<&str>, as_json: bool) -> Result<()> {
+    let workbook = Workbook::open(file)?;
+    let (prefix, reference) = split_sheet(range);
+    let sheet = match (prefix, spec) {
+        (Some(_), Some(_)) => {
+            return Err("the range names its sheet: drop --sheet, or the sheet prefix".into());
+        }
+        (Some(name), None) => workbook
+            .sheet(&name)
+            .ok_or_else(|| format!("no sheet is named {name}"))?,
+        (None, spec) => sheet_or_first(&workbook, spec)?,
+    };
+    let cells = sheet.cells(reference)?;
+    let mut out = io::stdout().lock();
+    if as_json {
+        let rectangle = sheet.range(reference)?;
+        let merged: Vec<String> = sheet
+            .merged_ranges()?
+            .iter()
+            .filter(|merge| rectangle.is_some_and(|range| range.intersects(merge)))
+            .map(ToString::to_string)
+            .collect();
+        let record = json_envelope(json!({
+            "sheet": sheet.position() + 1,
+            "name": sheet.name(),
+            "range": reference,
+            "cells": cells.iter().map(json::full_cell).collect::<Vec<_>>(),
+            "merged": merged,
+        }))?;
+        writeln!(out, "{}", serde_json::to_string_pretty(&record)?)?;
+        return Ok(());
+    }
+    for cell in &cells {
+        match &cell.formula {
+            Some(formula) => writeln!(out, "{}\t{}\t={formula}", cell.address, cell.text)?,
+            None => writeln!(out, "{}\t{}", cell.address, cell.text)?,
+        }
+    }
+    Ok(())
+}
+
+fn comments(file: &Path, specs: &[String], as_json: bool) -> Result<()> {
+    let workbook = Workbook::open(file)?;
+    let sheets = sheets(&workbook, specs)?;
+    let mut out = io::stdout().lock();
+    if as_json {
+        let mut records = Vec::new();
+        for sheet in &sheets {
+            records.push(json!({
+                "sheet": sheet.position() + 1,
+                "name": sheet.name(),
+                "comments": sheet.comments()?.iter().map(json::comment).collect::<Vec<_>>(),
+            }));
+        }
+        let record = json_envelope(json!({ "sheets": records }))?;
+        writeln!(out, "{}", serde_json::to_string_pretty(&record)?)?;
+        return Ok(());
+    }
+    for sheet in &sheets {
+        for comment in sheet.comments()? {
+            let resolved = if comment.resolved { ", resolved" } else { "" };
+            writeln!(
+                out,
+                "{}!{} ({}{resolved}) {}: {}",
+                sheet.name(),
+                comment.address,
+                comment.kind.as_str(),
+                comment.author.as_deref().unwrap_or("unknown"),
+                comment.text
+            )?;
+            for reply in &comment.replies {
+                writeln!(
+                    out,
+                    "  reply {}: {}",
+                    reply.author.as_deref().unwrap_or("unknown"),
+                    reply.text
+                )?;
+            }
+        }
     }
     Ok(())
 }

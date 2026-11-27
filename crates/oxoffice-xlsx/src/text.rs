@@ -98,9 +98,20 @@ impl Worksheet<'_> {
         Ok(out)
     }
 
-    /// The used rows of the sheet as a Markdown table headed by the column
-    /// letters, each row led by its number; `None` for a sheet without a
-    /// used cell.
+    /// The sheet as Markdown: `## <name>`, then a table of its used rows
+    /// headed by the column letters, each row led by its number (no table
+    /// for a sheet without a used cell). See [`Workbook::to_markdown`].
+    pub fn to_markdown(&self) -> Result<String> {
+        let mut out = format!("## {}\n", self.name());
+        if let Some(table) = self.markdown_table()? {
+            out.push('\n');
+            out.push_str(&table);
+        }
+        Ok(out)
+    }
+
+    /// The used rows of the sheet as a Markdown table, `None` for a sheet
+    /// without a used cell.
     fn markdown_table(&self) -> Result<Option<String>> {
         let Some(used) = self.used_range()? else {
             return Ok(None);
@@ -147,18 +158,11 @@ impl Workbook {
     /// keeps its address. The texts are the displayed ones; `|` is escaped
     /// and line breaks are written `<br>`.
     pub fn to_markdown(&self) -> Result<String> {
-        let mut sections = Vec::new();
-        for sheet in self
+        let sections = self
             .sheets()
             .filter(|sheet| sheet.kind() == SheetKind::Worksheet)
-        {
-            let mut section = format!("## {}\n", sheet.name());
-            if let Some(table) = sheet.markdown_table()? {
-                section.push('\n');
-                section.push_str(&table);
-            }
-            sections.push(section);
-        }
+            .map(|sheet| sheet.to_markdown())
+            .collect::<Result<Vec<_>>>()?;
         Ok(sections.join("\n"))
     }
 }

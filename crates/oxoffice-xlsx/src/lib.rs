@@ -36,11 +36,11 @@
 //! references are the spreadsheet's own, from 1, and the command line counts
 //! from 1.
 
+mod cell;
+mod comments;
 mod edit;
 mod grid;
 mod new_workbook;
-mod cell;
-mod comments;
 mod open;
 mod page_setup;
 mod read;
@@ -57,9 +57,9 @@ use oxoffice_opc::{OpcError, OpcPackage};
 use oxoffice_xlsx_oxml::workbook::WorkbookXml;
 use thiserror::Error;
 
-pub use edit::WorksheetMut;
 pub use cell::{Cell, CellError, FormulaKind, Value};
 pub use comments::{Comment, CommentKind, Reply};
+pub use edit::WorksheetMut;
 pub use oxoffice_numfmt::DateTime;
 pub use oxoffice_xlsx_oxml::{CellRange, CellRef};
 pub use page_setup::{

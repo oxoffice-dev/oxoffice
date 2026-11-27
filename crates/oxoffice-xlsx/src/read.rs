@@ -609,6 +609,13 @@ impl<'a> Worksheet<'a> {
         Ok(values)
     }
 
+    /// The rectangle `range` names, whole rows and columns clipped to the
+    /// used range as [`Worksheet::values`] reads them; `None` when they meet
+    /// no used cell.
+    pub fn range(&self, range: &str) -> Result<Option<CellRange>> {
+        self.reader()?.rectangle(range)
+    }
+
     /// The cells of `range` that hold a value or a formula, row by row; the
     /// range is read as [`Worksheet::values`] reads it.
     pub fn cells(&self, range: &str) -> Result<Vec<Cell>> {
