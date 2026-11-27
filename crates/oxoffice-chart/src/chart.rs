@@ -335,6 +335,31 @@ pub struct CT_ChartSpace {
 }
 
 impl CT_ChartSpace {
+    /// The date system of the chart's cached values: `c:date1904`, whose
+    /// `val` defaults to true, says 1904.
+    pub fn date_system(&self) -> Result<DateSystem> {
+        for raw in self.raw_children.iter() {
+            let mut reader = Reader::from_reader(raw);
+            let mut buffer = Vec::new();
+            if let Event::Empty(element) | Event::Start(element) = reader
+                .read_event_into(&mut buffer)
+                .map_err(OxmlError::from)?
+                && matches_local_name(element.name().as_ref(), b"date1904")
+            {
+                let date1904 = match attribute_value(&element, b"val")? {
+                    Some(value) => parse_bool_lexical("date1904", "val", &value)?,
+                    None => true,
+                };
+                return Ok(if date1904 {
+                    DateSystem::Date1904
+                } else {
+                    DateSystem::Date1900
+                });
+            }
+        }
+        Ok(DateSystem::Date1900)
+    }
+
     /// Parses one complete ChartML chart-space part.
     pub fn from_xml(xml: &[u8]) -> Result<Self> {
         let mut reader = Reader::from_reader(xml);

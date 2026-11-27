@@ -70,7 +70,7 @@ pub use chart::{CT_Chart, CT_ChartSpace, DispBlanksAs};
 pub use data_labels::DataLabelPosition;
 pub use legend::{LegendPosition, LegendSettings};
 pub use number_format::NumberFormat;
-use number_format::numeric_sections;
+pub use oxoffice_numfmt::{DateSystem, FormatOptions};
 pub use plot::{BarDirection, BarGrouping, Grouping, Plot, RadarStyle, ScatterStyle};
 pub use plot_area::CT_PlotArea;
 use plot_parse::parse_plot;

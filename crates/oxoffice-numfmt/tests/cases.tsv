@@ -1,0 +1,600 @@
+id	code	value	date_system	kind	excel	ours	why
+gen-01	General	0	1900	number	0		
+gen-02	General	1	1900	number	1		
+gen-03	General	-1	1900	number	-1		
+gen-04	General	0.5	1900	number	0.5		
+gen-05	General	0.1	1900	number	0.1		
+gen-06	General	-0.5	1900	number	-0.5		
+gen-07	General	-0	1900	number	0		
+gen-08	General	1234567890	1900	number	1234567890		
+gen-09	General	12345678901	1900	number	12345678901		
+gen-10	General	123456789012	1900	number	1.23457E+11		
+gen-11	General	-12345678901	1900	number	-12345678901		
+gen-12	General	-1234567890	1900	number	-1234567890		
+gen-13	General	99999999999	1900	number	99999999999		
+gen-14	General	99999999999.5	1900	number	1E+11		
+gen-15	General	100000000000	1900	number	1E+11		
+gen-16	General	1.23456789012346E+19	1900	number	1.23457E+19		
+gen-17	General	0.333333333333333	1900	number	0.333333333		
+gen-18	General	0.666666666666667	1900	number	0.666666667		
+gen-19	General	-0.333333333333333	1900	number	-0.333333333		
+gen-20	General	123.456789012345	1900	number	123.456789		
+gen-21	General	123456.789012	1900	number	123456.789		
+gen-22	General	1234567.891	1900	number	1234567.891		
+gen-23	General	12345678.91	1900	number	12345678.91		
+gen-24	General	123456789.12	1900	number	123456789.1		
+gen-25	General	0.123456789012	1900	number	0.123456789		
+gen-26	General	-0.123456789012	1900	number	-0.123456789		
+gen-27	General	3.14159265358979	1900	number	3.141592654		
+gen-28	General	0.001	1900	number	0.001		
+gen-29	General	0.0001	1900	number	0.0001		
+gen-30	General	0.00001	1900	number	0.00001		
+gen-31	General	0.000001	1900	number	0.000001		
+gen-32	General	0.0000001	1900	number	0.0000001		
+gen-33	General	0.0000123	1900	number	0.0000123		
+gen-34	General	0.000123456789	1900	number	0.000123457		
+gen-35	General	1E-9	1900	number	0.000000001		
+gen-36	General	1E-10	1900	number	1E-10		
+gen-37	General	1.5E-10	1900	number	1.5E-10		
+gen-38	General	-1.5E-10	1900	number	-1.5E-10		
+gen-39	General	1E-100	1900	number	1E-100		
+gen-40	General	2.2250738585072E-308	1900	number	0		
+gen-41	General	1E+15	1900	number	1E+15		
+gen-42	General	1E+20	1900	number	1E+20		
+gen-43	General	1.5E+300	1900	number	1.5E+300		
+gen-44	General	1E+307	1900	number	1E+307		
+gen-45	General	9007199254740992	1900	number	9.0072E+15		
+gen-46	General	1.23456789012E+15	1900	number	1.23457E+15		
+gen-47	General	0.3	1900	number	0.3		
+gen-48	General	1234567890.5	1900	number	1234567891		
+gen-49	General	-1234567890.5	1900	number	-1234567891		
+gen-50	General	1.0000000001	1900	number	1		
+gen-51	General	abc	1900	text	abc		
+gen-52	General	123	1900	text	123		
+gen-53	General		1900	text			
+num-01	0	0	1900	number	0		
+num-02	0	0.4	1900	number	0		
+num-03	0	0.5	1900	number	1		
+num-04	0	1.5	1900	number	2		
+num-05	0	2.5	1900	number	3		
+num-06	0	-0.4	1900	number	0		
+num-07	0	-0.5	1900	number	-1		
+num-08	0	-2.5	1900	number	-3		
+num-09	0	123456789012345000	1900	number	123456789012345000		
+num-10	0.00	1.005	1900	number	1.01		
+num-11	0.00	2.675	1900	number	2.68		
+num-12	0.00	0.005	1900	number	0.01		
+num-13	0.00	0.015	1900	number	0.02		
+num-14	0.00	-0.005	1900	number	-0.01		
+num-15	0.00	-0.001	1900	number	0.00		
+num-16	0.00	-0	1900	number	0.00		
+num-17	0.00	1E-20	1900	number	0.00		
+num-18	0.00	1234.5	1900	number	1234.50		
+num-19	0.0	9.95	1900	number	10.0		
+num-20	0.0	1E+20	1900	number	100000000000000000000.0		
+num-21	0.0	-9.95	1900	number	-10.0		
+num-22	#	0	1900	number			
+num-23	#	5	1900	number	5		
+num-24	#	0.4	1900	number			
+num-25	#.##	0	1900	number	.		
+num-26	#.##	0.001	1900	number	.		
+num-27	#.##	5	1900	number	5.		
+num-28	#.##	1.234	1900	number	1.23		
+num-29	0.##	5	1900	number	5.		
+num-30	0.##	1.005	1900	number	1.01		
+num-31	0.##	0.5	1900	number	0.5		
+num-32	#,##0	1234567	1900	number	1,234,567		
+num-33	#,##0	-1234567	1900	number	-1,234,567		
+num-34	#,##0	0	1900	number	0		
+num-35	#,##0	999.5	1900	number	1,000		
+num-36	#,##0	1234567890123	1900	number	1,234,567,890,123		
+num-37	#,##0.00	-1234.567	1900	number	-1,234.57		
+num-38	#,##0.00	1E+15	1900	number	1,000,000,000,000,000.00		
+num-39	#,##0.00	0.004	1900	number	0.00		
+num-40	#,###	0	1900	number			
+num-41	#,###	1234	1900	number	1,234		
+num-42	00000	123	1900	number	00123		
+num-43	00000	-123	1900	number	-00123		
+num-44	00000	123456	1900	number	123456		
+num-45	0.0#	1.5	1900	number	1.5		
+num-46	0.0#	1.234	1900	number	1.23		
+num-47	0.0#	1	1900	number	1.0		
+num-48	???.???	1.5	1900	number	  1.5  		
+num-49	???.???	-12.25	1900	number	- 12.25 		
+num-50	???.???	0	1900	number	   .   		
+num-51	?	0	1900	number	 		
+num-52	?	5	1900	number	5		
+num-53	0.00000000000000000000	0.333333333333333	1900	number	0.33333333333333300000		
+num-54	0.00000000000000000000	0.1	1900	number	0.10000000000000000000		
+num-55	000.000	1.5	1900	number	001.500		
+num-56	#,##0.00_);(#,##0.00)	1234.5	1900	number	1,234.50 		
+num-57	#,##0.00_);(#,##0.00)	-1234.5	1900	number	(1,234.50)		
+num-58	#,##0.00_);(#,##0.00)	0	1900	number	0.00 		
+num-59	0.00;(0.00);0.00	-0.001	1900	number	(0.00)		
+num-60	#,#0	123456	1900	number	123,456		
+num-61	0,000	5	1900	number	0,005		
+num-62	0,000	1234567	1900	number	1,234,567		
+num-63	#0.0,0	1234.5	1900	number	1234.50		
+scale-01	#,##0,	1234567	1900	number	1,235		
+scale-02	#,##0,	499	1900	number	0		
+scale-03	#,##0,	500	1900	number	1		
+scale-04	0.0,"K"	1234567	1900	number	1234.6K		
+scale-05	0.0,,"M"	1234567	1900	number	1.2M		
+scale-06	0.0,,"M"	-1234567	1900	number	-1.2M		
+scale-07	#,##0,,	1234567890	1900	number	1,235		
+scale-08	#,	999	1900	number	1		
+scale-09	#,	400	1900	number			
+scale-10	0%	0.256	1900	number	26%		
+scale-11	0%	1.5	1900	number	150%		
+scale-12	0%	-0.004	1900	number	0%		
+scale-13	0%	0	1900	number	0%		
+scale-14	0.0%	0.0005	1900	number	0.1%		
+scale-15	0.0%	-0.001234	1900	number	-0.1%		
+scale-16	0.00%	1	1900	number	100.00%		
+scale-17	#,##0.0%	123.456	1900	number	12,345.6%		
+scale-18	0%%	0.5	1900	number	5000%%		
+scale-19	0.0,%	1234	1900	number	123.4%		
+exp-01	0.00E+00	12345	1900	number	1.23E+04		
+exp-02	0.00E+00	0.000123	1900	number	1.23E-04		
+exp-03	0.00E+00	0	1900	number	0.00E+00		
+exp-04	0.00E+00	-12345	1900	number	-1.23E+04		
+exp-05	0.00E+00	9.995	1900	number	1.00E+01		
+exp-06	0.00E+00	1E+300	1900	number	1.00E+300		
+exp-07	0.00E+00	1E-300	1900	number	1.00E-300		
+exp-08	0.00E+00	1	1900	number	1.00E+00		
+exp-09	0.00E+00	-0.000123	1900	number	-1.23E-04		
+exp-10	0.00E-00	12345	1900	number	1.23E04		
+exp-11	0.00E-00	0.000123	1900	number	1.23E-04		
+exp-12	0E+0	12345	1900	number	1E+4		
+exp-13	0E+0	0.5	1900	number	5E-1		
+exp-14	##0.0E+0	12345	1900	number	12.3E+3		
+exp-15	##0.0E+0	0.00123	1900	number	1.2E-3		
+exp-16	##0.0E+0	1234567	1900	number	1.2E+6		
+exp-17	##0.0E+0	0.5	1900	number	500.0E-3		
+exp-18	##0.0E+0	100	1900	number	100.0E+0		
+exp-19	#0.0E+0	12345	1900	number	1.2E+4		
+exp-20	0.0e+00	12345	1900	number	12345		
+exp-21	0.00E+000	1E+100	1900	number	1.00E+100		
+exp-22	0.00E+000	1.5E-5	1900	number	1.50E-005		
+exp-23	#,##0.00E+00	12345	1900	number	1.23E+04		
+exp-24	00.00E+00	12345	1900	number	01.23E+04		
+exp-25	0.00E+00;(0.00E+00)	-12345	1900	number	(1.23E+04)		
+frac-01	# ?/?	1.5	1900	number	1 1/2		
+frac-02	# ?/?	0.5	1900	number	 1/2		
+frac-03	# ?/?	0	1900	number	0    		
+frac-04	# ?/?	1.0001	1900	number	1    		
+frac-05	# ?/?	-1.5	1900	number	-1 1/2		
+frac-06	# ?/?	0.666666666666667	1900	number	 2/3		
+frac-07	# ?/?	5	1900	number	5    		
+frac-08	# ?/?	0.99	1900	number	1    		
+frac-09	# ??/??	3.14159265358979	1900	number	3  1/7 		
+frac-10	# ??/??	0.333333333333333	1900	number	  1/3 		
+frac-11	# ??/??	-0.25	1900	number	-  1/4 		
+frac-12	# ??/??	123.456	1900	number	123 26/57		
+frac-13	# ??/16	1.3	1900	number	1  5/16		
+frac-14	# ??/16	0.0625	1900	number	  1/16		
+frac-15	# ??/16	2.99	1900	number	3      		
+frac-16	?/?	1.5	1900	number	3/2		
+frac-17	?/?	0.1	1900	number	0/1		
+frac-18	# ?/4	0.3	1900	number	 1/4		
+frac-19	# ?/4	2.9	1900	number	3    		
+frac-20	# ?/4	2.1	1900	number	2    		
+frac-21	# ?/8	0.75	1900	number	 6/8		
+frac-22	?/???	0.333	1900	number	1/3  		
+frac-23	0 ?/?	0.5	1900	number	0 1/2		
+frac-24	0 ?/?	0	1900	number	0    		
+frac-25	# ???/???	0.123456	1900	number	  10/81 		
+frac-26	?? ?/?	1.5	1900	number	 1 1/2		
+frac-27	#" "?/?	2.5	1900	number	2 1/2		
+frac-28	# ?/10	0.37	1900	number	 4/10		
+frac-29	# ?/?;(# ?/?)	-2.5	1900	number	(2 1/2)		
+frac-30	0.0 ?/?	1.5	1900	number	1.5		
+sec-01	0.00;(0.00)	-5	1900	number	(5.00)		
+sec-02	0.00;(0.00)	5	1900	number	5.00		
+sec-03	0.00;(0.00)	0	1900	number	0.00		
+sec-04	0.00;-0.00	-5	1900	number	-5.00		
+sec-05	0;0	-5	1900	number	5		
+sec-06	0;-0;;@	0	1900	number			
+sec-07	0;-0;;@	5	1900	number	5		
+sec-08	0;-0;;@	abc	1900	text	abc		
+sec-09	0;-0;"zero"	0	1900	number	zero		
+sec-10	0;-0;"zero"	-0.4	1900	number	-0		
+sec-11	0;(0);"zero";"text: "@	5	1900	number	5		
+sec-12	0;(0);"zero";"text: "@	-5	1900	number	(5)		
+sec-13	0;(0);"zero";"text: "@	0	1900	number	zero		
+sec-14	0;(0);"zero";"text: "@	abc	1900	text	text: abc		
+sec-15	0.0;[Red]-0.0	-5	1900	number	-5.0		
+sec-16	0.0;[Red]-0.0	5	1900	number	5.0		
+sec-17	[Red]0;[Blue]-0;[Green]0;[Magenta]@	5	1900	number	5		
+sec-18	[Red]0;[Blue]-0;[Green]0;[Magenta]@	-5	1900	number	-5		
+sec-19	[Red]0;[Blue]-0;[Green]0;[Magenta]@	0	1900	number	0		
+sec-20	[Color10]0.00	5	1900	number	5.00		
+sec-21	[color 45]0	5	1900	number	5		
+sec-22	[BLACK]0;[White]-0;[Cyan]0;[Yellow]@	-1	1900	number	-1		
+sec-23	[>=100]"big";[<0]"neg";"small"	150	1900	number	big		
+sec-24	[>=100]"big";[<0]"neg";"small"	-5	1900	number	neg		
+sec-25	[>=100]"big";[<0]"neg";"small"	50	1900	number	small		
+sec-26	[>=100]"big";[<0]"neg";"small"	100	1900	number	big		
+sec-27	[>=100]0.00;0	99.999	1900	number	100		
+sec-28	[>=100]0.00;0	100	1900	number	100.00		
+sec-29	[>=100]0.00;0	-5	1900	number	-5		
+sec-30	[<=-100]"low";[>=100]"high";0	-200	1900	number	low		
+sec-31	[<=-100]"low";[>=100]"high";0	200	1900	number	high		
+sec-32	[<=-100]"low";[>=100]"high";0	-5	1900	number	-5		
+sec-33	[<=-100]"low";[>=100]"high";0	5	1900	number	5		
+sec-34	[>0]"pos";[>10]"big";"other"	20	1900	number	pos		
+sec-35	[>0]"pos";[>10]"big";"other"	-3	1900	number	-other		
+sec-36	[>0]"pos";[>10]"big";"other"	0	1900	number	other		
+sec-37	[>100]0;0	-5	1900	number	-5		
+sec-38	[>100]0;0	200	1900	number	200		
+sec-39	[<-10]"a";[<0]"b";0	-20	1900	number	a		
+sec-40	[<-10]"a";[<0]"b";0	-5	1900	number	b		
+sec-41	[<-10]"a";[<0]"b";0	5	1900	number	5		
+sec-42	[=0]"zero";0	0	1900	number	zero		
+sec-43	[=0]"zero";0	-3	1900	number	-3		
+sec-44	[=0]"zero";0	3	1900	number	3		
+sec-45	[>=100]0	50	1900	number	50		
+sec-46	[>=100]0	150	1900	number	150		
+sec-47	[>=100]0	-150	1900	number	-150		
+sec-48	[<0]"neg"	5	1900	number	5		
+sec-49	[Red][<=100]0;[Blue][>100]0	50	1900	number	50		
+sec-50	[Red][<=100]0;[Blue][>100]0	150	1900	number	150		
+sec-51	[<>5]0;"five"	5	1900	number	five		
+sec-52	[<>5]0;"five"	6	1900	number	6		
+sec-53	[>=1E3]0,"K";0	12345	1900	number	12K		
+sec-54	[>=1E3]0,"K";0	999	1900	number	999		
+sec-55	0;"neg"	-5	1900	number	neg		
+sec-56	0;"neg"	0	1900	number	0		
+sec-57	0;-0;0;@	-0	1900	number	0		
+sec-58	;;;	5	1900	number			
+sec-59	;;;	-5	1900	number			
+sec-60	;;;	0	1900	number			
+sec-61	;;;	abc	1900	text			
+sec-62	0;-0;"-"	0	1900	number	-		
+sec-63	0.00;;	-5	1900	number			
+sec-64	0.00;;	0	1900	number			
+sec-65	;0	5	1900	number			
+sec-66	;0	-5	1900	number	5		
+sec-67	#,##0;-#,##0;0;"["@"]"	-1234	1900	number	-1,234		
+sec-68	#,##0;-#,##0;0;"["@"]"	x	1900	text	[x]		
+text-01	@	abc	1900	text	abc		
+text-02	@	0012	1900	text	0012		
+text-03	@		1900	text			
+text-04	@	1234.5	1900	number	1234.5		
+text-05	@	0.1	1900	number	0.1		
+text-06	@	123456789012	1900	number	1.23457E+11		
+text-07	@" suffix"	x	1900	text	x suffix		
+text-08	"pre "@	x	1900	text	pre x		
+text-09	"pre "@	5	1900	number	5		
+text-10	@@	ab	1900	text	abab		
+text-11	0.00	abc	1900	text	abc		
+text-12	0.00	123	1900	text	123		
+text-13	0;0;0	abc	1900	text	abc		
+text-14	m/d/yyyy	abc	1900	text	abc		
+text-15	0;-0;0;	abc	1900	text			
+bool-01	0.00	TRUE	1900	bool	TRUE		
+bool-02	General	FALSE	1900	bool	FALSE		
+lit-01	"$"#,##0.00	1234.567	1900	number	$1,234.57		
+lit-02	\$0.00	5	1900	number	$5.00		
+lit-03	$#,##0.00	-1234.567	1900	number	-$1,234.57		
+lit-04	0" units"	5	1900	number	5 units		
+lit-05	0 "kg"	5	1900	number	5 kg		
+lit-06	0\ \k\g	5	1900	number	5 kg		
+lit-07	\#0	5	1900	number	#5		
+lit-08	0\"	5	1900	number	5"		
+lit-09	(0)	5	1900	number	(5)		
+lit-10	+0;-0	5	1900	number	+5		
+lit-11	+0;-0	-5	1900	number	-5		
+lit-12	0.0 "°C"	21.5	1900	number	21.5 °C		
+lit-13	0-0-0	123	1900	number	1-2-3		
+lit-14	000-00-0000	123456789	1900	number	123-45-6789		
+lit-15	(000) 000-0000	5551234567	1900	number	(555) 123-4567		
+lit-16	0!x	5	1900	number	5!x		
+lit-17	0_)	5	1900	number	5 		
+lit-18	_(0_)	5	1900	number	 5 		
+lit-19	0__	5	1900	number	5 		
+lit-20	*-0	5	1900	number	5		
+lit-21	0*-	5	1900	number	5		
+lit-22	* #,##0	1234	1900	number	1,234		
+lit-23	"x"*.0	5	1900	number	x5		
+lit-24	@*.	abc	1900	text	abc		
+lit-25	_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)	1234.5	1900	number	 $1,234.50 		
+lit-26	_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)	-1234.5	1900	number	 $(1,234.50)		
+lit-27	_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)	0	1900	number	 $-   		
+lit-28	_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)	abc	1900	text	 abc 		
+lit-29	0.00" ""x"	5	1900	number	5.00 x		
+lit-30	0.0 %	0.5	1900	number	50.0 %		
+lit-31	#"#"#	123	1900	number	12#3		
+lit-32	0 ^ ~ { } < > = & '	5	1900	number	5 ^ ~ { } < > = & '		
+loc-01	[$$-409]#,##0.00	1234.567	1900	number	$1,234.57		
+loc-02	[$$-409]#,##0.00	-1234.567	1900	number	-$1,234.57		
+loc-03	[$€-40C]#,##0.00	1234.567	1900	number	€1,234.57		
+loc-04	#,##0.00 [$€-40C]	1234.567	1900	number	1,234.57 €		
+loc-05	#,##0.00\ [$€-1]	1234.567	1900	number	1,234.57 €		
+loc-06	[$£-809]#,##0.00	1234.567	1900	number	£1,234.57		
+loc-07	[$USD] #,##0.00	1234.567	1900	number	USD 1,234.57		
+loc-08	[$-409]#,##0.00	1234.567	1900	number	1,234.57		
+loc-09	[$¥-411]#,##0	1234	1900	number	¥1,234		
+loc-10	[$-409]mmmm d, yyyy	45306	1900	number	January 15, 2024		
+loc-11	[$-409]h:mm:ss AM/PM	45306.6046875	1900	number	2:30:45 PM		
+loc-12	[$-409]m/d/yy h:mm AM/PM;@	45306.6046875	1900	number	1/15/24 2:30 PM		
+loc-13	[$-F800]dddd, mmmm dd, yyyy	45306	1900	number	Monday, January 15, 2024		
+loc-14	[$-F400]h:mm:ss AM/PM	45306.6046875	1900	number	14:30:45	2:30:45 PM	[$-F400] is the system time format: Excel follows the machine's 24-hour clock setting (on for this Mac); we show the en-US default h:mm:ss AM/PM
+loc-15	[$-40C]mmmm	45306	1900	number	janvier	January	[$-40C] asks for French names: English names only for now (en-US output)
+loc-16	[$-407]dddd	45306	1900	number	Montag	Monday	[$-407] asks for German names: English names only for now (en-US output)
+loc-17	[$-x-sysdate]dddd, mmmm dd, yyyy	45306	1900	number	Monday, January 15, 2024		
+loc-18	[$-en-US]mmmm	45306	1900	number	January		
+loc-19	[$-10409]0.00	5	1900	number	5.00		
+date-01	m/d/yyyy	45306	1900	number	1/15/2024		
+date-02	m/d/yyyy	1	1900	number	1/1/1900		
+date-03	m/d/yyyy	59	1900	number	2/28/1900		
+date-04	m/d/yyyy	60	1900	number	2/29/1900		
+date-05	m/d/yyyy	61	1900	number	3/1/1900		
+date-06	m/d/yyyy	0	1900	number	1/0/1900		
+date-07	m/d/yyyy	367	1900	number	1/1/1901		
+date-08	m/d/yyyy	2958465	1900	number	12/31/9999		
+date-09	m/d/yyyy	2958466	1900	number	#####		
+date-10	m/d/yyyy	-1	1900	number	#####		
+date-11	m/d/yyyy	0.5	1900	number	1/0/1900		
+date-12	m/d/yyyy	45306.9999999	1900	number	1/16/2024		
+date-13	m/d/yyyy	45306.99999999	1900	number	1/16/2024		
+date-14	m/d/yyyy	45306.5	1900	number	1/15/2024		
+date-15	d-mmm-yy	45306	1900	number	15-Jan-24		
+date-16	d-mmm	45306	1900	number	15-Jan		
+date-17	mmm-yy	45306	1900	number	Jan-24		
+date-18	mmmm d, yyyy	45306	1900	number	January 15, 2024		
+date-19	mmmmm	45306	1900	number	J		
+date-20	mmmmm	45323	1900	number	F		
+date-21	dddd	45306	1900	number	Monday		
+date-22	dddd	1	1900	number	Sunday		
+date-23	dddd	60	1900	number	Wednesday		
+date-24	dddd	61	1900	number	Thursday		
+date-25	dddd	0	1900	number	Saturday		
+date-26	ddd	45306	1900	number	Mon		
+date-27	dd/mm/yyyy	45306	1900	number	15/01/2024		
+date-28	yyyy-mm-dd	45306	1900	number	2024-01-15		
+date-29	yyyy-mm-dd	0	1900	number	1900-01-00		
+date-30	yyyy-mm-dd	60	1900	number	1900-02-29		
+date-31	yyyy-mm-dd hh:mm:ss	45306.6046875	1900	number	2024-01-15 14:30:45		
+date-32	yyyy-mm-dd hh:mm:ss	45306.99999999	1900	number	2024-01-16 00:00:00		
+date-33	yyyy-mm-dd hh:mm:ss	45306.999994	1900	number	2024-01-15 23:59:59		
+date-34	m/d/yyyy h:mm	45306.6046875	1900	number	1/15/2024 14:30		
+date-35	m/d/yyyy h:mm	0.5	1900	number	1/0/1900 12:00		
+date-36	d	45306	1900	number	15		
+date-37	d	60	1900	number	29		
+date-38	dd	45296	1900	number	05		
+date-39	m	45306	1900	number	1		
+date-40	mm	45306	1900	number	01		
+date-41	mmm	60	1900	number	Feb		
+date-42	y	45306	1900	number	24		
+date-43	yy	45306	1900	number	24		
+date-44	yyy	45306	1900	number	2024		
+date-45	yyyy	45306	1900	number	2024		
+date-46	yyyy	1	1900	number	1900		
+date-47	yyyyy	45306	1900	number	2024		
+date-48	ddd, mmm d	45306	1900	number	Mon, Jan 15		
+date-49	d/m/yy h:mm	45306.7119097222	1900	number	15/1/24 17:05		
+date-50	mm/dd/yy hh:mm	45306.7119097222	1900	number	01/15/24 17:05		
+date-51	e	45306	1900	number	2024		
+date-52	dd.mm.yyyy	45306	1900	number	15.01.2024		
+date-53	dddd mm/dd/yyyy	1	1900	number	Sunday 01/01/1900		
+date-54	dddd mm/dd/yyyy	59	1900	number	Tuesday 02/28/1900		
+date-55	dddd mm/dd/yyyy	60	1900	number	Wednesday 02/29/1900		
+date-56	dddd mm/dd/yyyy	61	1900	number	Thursday 03/01/1900		
+date-57	m/d/yyyy	1E+20	1900	number	#####		
+date-58	yyyy-mm-dd	-0.5	1900	number	#####		
+time-01	h:mm	45306.6046875	1900	number	14:30		
+time-02	h:mm	45306	1900	number	0:00		
+time-03	h:mm	0.999999	1900	number	0:00		
+time-04	h:mm AM/PM	45306.6046875	1900	number	2:30 PM		
+time-05	h:mm AM/PM	45306	1900	number	12:00 AM		
+time-06	h:mm AM/PM	0.5	1900	number	12:00 PM		
+time-07	h:mm AM/PM	45306.7119097222	1900	number	5:05 PM		
+time-08	h:mm:ss A/P	45306.6046875	1900	number	2:30:45 P		
+time-09	h:mm:ss A/P	0.25	1900	number	6:00:00 A		
+time-10	h:mm:ss a/p	45306.6046875	1900	number	2:30:45 p		
+time-11	hh:mm am/pm	45306.6046875	1900	number	02:30 PM		
+time-12	h AM/PM	0	1900	number	12 AM		
+time-13	h AM/PM	0.5	1900	number	12 PM		
+time-14	h AM/PM	0.999	1900	number	11 PM		
+time-15	hh:mm:ss	45306.6046875	1900	number	14:30:45		
+time-16	hh:mm:ss	0.99999999	1900	number	00:00:00		
+time-17	hh:mm:ss	0.500005787037037	1900	number	12:00:00		
+time-18	hh:mm:ss	0.500005775	1900	number	12:00:00		
+time-19	h:mm:ss	0.99999999	1900	number	0:00:00		
+time-20	h:mm:ss	0.500005787037037	1900	number	12:00:00		
+time-21	h:mm:ss	1.5	1900	number	12:00:00		
+time-22	h:mm:ss AM/PM	0.99999999	1900	number	12:00:00 AM		
+time-23	hh:mm:ss.000	45306.6046875116	1900	number	14:30:45.001		
+time-24	h:mm:ss.0	0.500006365740741	1900	number	12:00:00.6		
+time-25	h:mm:ss.00	0.500006365740741	1900	number	12:00:00.55		
+time-26	mm:ss	0.0104166666666667	1900	number	15:00		
+time-27	m:ss	0.0104166666666667	1900	number	15:00		
+time-28	mm:ss.0	0.0000115740740740741	1900	number	00:01.0		
+time-29	mm:ss.0	0.000694212962962963	1900	number	01:00.0		
+time-30	ss.0	0.000694212962962963	1900	number	00.0		
+time-31	[h]:mm:ss	1.5	1900	number	36:00:00		
+time-32	[h]:mm:ss	2.75	1900	number	66:00:00		
+time-33	[h]:mm:ss	0	1900	number	0:00:00		
+time-34	[h]:mm:ss	1	1900	number	24:00:00		
+time-35	[h]:mm:ss	25.5	1900	number	612:00:00		
+time-36	[h]:mm:ss	-1.5	1900	number	#####		
+time-37	[h]:mm:ss	0.99999999	1900	number	24:00:00		
+time-38	[hh]:mm	0.25	1900	number	06:00		
+time-39	[hh]:mm	1.25	1900	number	30:00		
+time-40	[h]:mm	25.5	1900	number	612:00		
+time-41	[mm]:ss	0.0625	1900	number	90:00		
+time-42	[mm]:ss	1	1900	number	1440:00		
+time-43	[m]	1	1900	number	1440		
+time-44	[ss]	0.01	1900	number	864		
+time-45	[s].00	0.0000115740740740741	1900	number	1.00		
+time-46	h:m	45306.6046875	1900	number	14:30		
+time-47	h:m	45306.7119097222	1900	number	17:5		
+time-48	h "h" m "m"	45306.7119097222	1900	number	17 h 5 m		
+time-49	mm ss	45306.7119097222	1900	number	05 09		
+time-50	yyyy mm	45306	1900	number	2024 01		
+time-51	mm yyyy	45306	1900	number	01 2024		
+time-52	m s	45306.7119097222	1900	number	5 9		
+time-53	hh:mm:ss;@	-0.5	1900	number	#####		
+time-54	[h]:mm:ss.0	1.00000063657407	1900	number	24:00:00.1		
+time-55	h:mm;[Red]-h:mm	-0.5	1900	number	#####		
+builtin-01	builtin:1	-1234.567	1900	number	-1235		
+builtin-02	builtin:2	-1234.567	1900	number	-1234.57		
+builtin-03	builtin:3	-1234.567	1900	number	-1,235		
+builtin-04	builtin:4	-1234.567	1900	number	-1,234.57		
+builtin-05	builtin:9	-1234.567	1900	number	-123457%		
+builtin-06	builtin:10	-1234.567	1900	number	-123456.70%		
+builtin-07	builtin:11	-1234.567	1900	number	-1.23E+03		
+builtin-08	builtin:12	-1234.567	1900	number	-1234 4/7		
+builtin-09	builtin:13	-1234.567	1900	number	-1234 55/97		
+builtin-10	builtin:37	-1234.567	1900	number	(1,235)		
+builtin-11	builtin:38	-1234.567	1900	number	(1,235)		
+builtin-12	builtin:39	-1234.567	1900	number	(1,234.57)		
+builtin-13	builtin:40	-1234.567	1900	number	(1,234.57)		
+builtin-14	builtin:48	-1234.567	1900	number	-1.2E+3		
+builtin-15	builtin:5	-1234.567	1900	number	($1,235)		
+builtin-16	builtin:5	0	1900	number	$0 		
+builtin-17	builtin:6	-1234.567	1900	number	($1,235)		
+builtin-18	builtin:6	0	1900	number	$0 		
+builtin-19	builtin:7	-1234.567	1900	number	($1,234.57)		
+builtin-20	builtin:7	0	1900	number	$0.00 		
+builtin-21	builtin:8	-1234.567	1900	number	($1,234.57)		
+builtin-22	builtin:8	0	1900	number	$0.00 		
+builtin-23	builtin:41	-1234.567	1900	number	 (1,235)		
+builtin-24	builtin:41	0	1900	number	 - 		
+builtin-25	builtin:42	-1234.567	1900	number	 $(1,235)		
+builtin-26	builtin:42	0	1900	number	 $- 		
+builtin-27	builtin:43	-1234.567	1900	number	 (1,234.57)		
+builtin-28	builtin:43	0	1900	number	 -   		
+builtin-29	builtin:44	-1234.567	1900	number	 $(1,234.57)		
+builtin-30	builtin:44	0	1900	number	 $-   		
+builtin-31	builtin:14	45306.6046875	1900	number	1/15/24		
+builtin-32	builtin:15	45306.6046875	1900	number	15-Jan-24		
+builtin-33	builtin:16	45306.6046875	1900	number	15-Jan		
+builtin-34	builtin:17	45306.6046875	1900	number	Jan-24		
+builtin-35	builtin:18	45306.6046875	1900	number	2:30 PM		
+builtin-36	builtin:19	45306.6046875	1900	number	2:30:45 PM		
+builtin-37	builtin:20	45306.6046875	1900	number	14:30		
+builtin-38	builtin:21	45306.6046875	1900	number	14:30:45		
+builtin-39	builtin:22	45306.6046875	1900	number	1/15/24 14:30		
+builtin-40	builtin:45	45306.6046875	1900	number	30:45		
+builtin-41	builtin:46	45306.6046875	1900	number	1087358:30:45		
+builtin-42	builtin:47	45306.6046875	1900	number	30:45.0		
+builtin-43	builtin:23	45306.6046875	1900	number	45306.60469		
+builtin-44	builtin:24	45306.6046875	1900	number	45306.60469		
+builtin-45	builtin:25	45306.6046875	1900	number	45306.60469		
+builtin-46	builtin:26	45306.6046875	1900	number	45306.60469		
+builtin-47	builtin:27	45306.6046875	1900	number	1/15/24		
+builtin-48	builtin:28	45306.6046875	1900	number	1/15/24		
+builtin-49	builtin:29	45306.6046875	1900	number	1/15/24		
+builtin-50	builtin:30	45306.6046875	1900	number	1/15/24		
+builtin-51	builtin:31	45306.6046875	1900	number	1/15/24		
+builtin-52	builtin:32	45306.6046875	1900	number	14:30:45		
+builtin-53	builtin:33	45306.6046875	1900	number	14:30:45		
+builtin-54	builtin:34	45306.6046875	1900	number	14:30:45		
+builtin-55	builtin:35	45306.6046875	1900	number	14:30:45		
+builtin-56	builtin:36	45306.6046875	1900	number	1/15/24		
+builtin-57	builtin:50	45306.6046875	1900	number	1/15/24		
+builtin-58	builtin:51	45306.6046875	1900	number	1/15/24		
+builtin-59	builtin:52	45306.6046875	1900	number	1/15/24		
+builtin-60	builtin:53	45306.6046875	1900	number	1/15/24		
+builtin-61	builtin:54	45306.6046875	1900	number	1/15/24		
+builtin-62	builtin:55	45306.6046875	1900	number	1/15/24		
+builtin-63	builtin:56	45306.6046875	1900	number	1/15/24		
+builtin-64	builtin:57	45306.6046875	1900	number	1/15/24		
+builtin-65	builtin:58	45306.6046875	1900	number	1/15/24		
+builtin-66	builtin:59	45306.6046875	1900	number	45307		
+builtin-67	builtin:62	45306.6046875	1900	number	45,306.60		
+builtin-68	builtin:67	45306.6046875	1900	number	4530660%		
+builtin-69	builtin:69	45306.6046875	1900	number	45306 3/5		
+builtin-70	builtin:71	45306.6046875	1900	number	1/15/24		
+builtin-71	builtin:76	45306.6046875	1900	number	14:30		
+builtin-72	builtin:79	45306.6046875	1900	number	30:45		
+builtin-73	builtin:81	45306.6046875	1900	number	30:45.0		
+builtin-74	builtin:49	1234.5	1900	number	1234.5		
+builtin-75	builtin:46	1.5	1900	number	36:00:00		
+d1904-01	m/d/yyyy	0	1904	number	1/1/1904		
+d1904-02	m/d/yyyy	1	1904	number	1/2/1904		
+d1904-03	m/d/yyyy	43844	1904	number	1/15/2024		
+d1904-04	m/d/yyyy	-1	1904	number	-1/2/1904		
+d1904-05	m/d/yyyy	2957003	1904	number	12/31/9999		
+d1904-06	m/d/yyyy	2957004	1904	number	#####		
+d1904-07	m/d/yyyy	-1462	1904	number	-1/2/1908		
+d1904-08	dddd	0	1904	number	Friday		
+d1904-09	yyyy-mm-dd hh:mm:ss	43844.6046875	1904	number	2024-01-15 14:30:45		
+d1904-10	h:mm	-0.5	1904	number	-12:00		
+d1904-11	[h]:mm	-1.5	1904	number	-36:00		
+d1904-12	[h]:mm:ss	1.5	1904	number	36:00:00		
+d1904-13	General	5	1904	number	5		
+d1904-14	builtin:14	0	1904	number	1/1/04		
+r2cond-01	[<100]0;0	-5	1900	number	-5		
+r2cond-02	[>-10]0;0	-5	1900	number	-5		
+r2cond-03	[<0]0	-5	1900	number	5		
+r2cond-04	[<100]0	-5	1900	number	-5		
+r2cond-05	[<=0]0;0	-5	1900	number	-5		
+r2cond-06	[=-5]0;0	-5	1900	number	5		
+r2cond-07	[<>5]0;0	-5	1900	number	-5		
+r2cond-08	[<-10]0;[<0]0;0	-5	1900	number	5		
+r2cond-09	[<-10]0;[>0]0;0	-5	1900	number	-5		
+r2cond-10	[<100]"a";"b"	-5	1900	number	-a		
+r2cond-11	[<0]"neg";0	-5	1900	number	neg		
+r2cond-12	[>=100]0;[<0]0	-5	1900	number	5		
+r2cond-13	[>=100]0;[<0]0	50	1900	number	#####		
+r2gen-01	General;-General	-1.5	1900	number	-1.5		
+r2gen-02	General;General	-1.5	1900	number	1.5		
+r2gen-03	"Total: "General	1234.5	1900	number	Total: 1234.5		
+r2gen-04	"Total: "General	-1234.5	1900	number	-Total: 1234.5		
+r2gen-05	0.00;General	-1234.567	1900	number	1234.567		
+r2gen-06	[Red]General	-0.123456789012	1900	number	-0.123456789		
+r2num-01	.00	12.5	1900	number	12.50		
+r2num-02	.00	0.5	1900	number	.50		
+r2num-03	#.00	0.5	1900	number	.50		
+r2num-04	0	1E+300	1900	number	#####		
+r2num-05	0	-1E+300	1900	number	#####		
+r2num-06	#,##0	-0.4	1900	number	0		
+r2num-07	"x"	-0.4	1900	number	-x		
+r2num-08	"x"	-5	1900	number	-x		
+r2num-09	"x"	0	1900	number	x		
+r2num-10	0.0	-0.04	1900	number	0.0		
+r2frac-01	?/?	0	1900	number	0/1		
+r2frac-02	?/?	-0.5	1900	number	-1/2		
+r2frac-03	# ?/?	-0.01	1900	number	-0    		
+r2frac-04	# ?/?	0.04	1900	number	0    		
+r2frac-05	# ?/?	-1.0001	1900	number	-1    		
+r2frac-06	# ??/??	0.999	1900	number	1      		
+r2exp-01	0.00E+00	-0.000000001	1900	number	-1.00E-09		
+r2time-01	m/d/yyyy	45306.9997	1900	number	1/15/2024		
+r2time-02	m/d/yyyy	45306.99999	1900	number	1/15/2024		
+r2time-03	h:mm	0.9997	1900	number	23:59		
+r2time-04	h:mm:ss	0.99999	1900	number	23:59:59		
+r2time-05	[$-F400]h:mm:ss AM/PM	0.25	1900	number	06:00:00	6:00:00 AM	[$-F400] is the system time format: Excel follows the machine's 24-hour clock setting (on for this Mac); we show the en-US default h:mm:ss AM/PM
+r2builtin-01	builtin:60	45306.6046875	1900	number	45306.60		
+r2builtin-02	builtin:60	-1234.567	1900	number	-1234.57		
+r2builtin-03	builtin:61	45306.6046875	1900	number	45,307		
+r2builtin-04	builtin:61	-1234.567	1900	number	-1,235		
+r2builtin-05	builtin:63	45306.6046875	1900	number	$45,307 		
+r2builtin-06	builtin:63	-1234.567	1900	number	($1,235)		
+r2builtin-07	builtin:64	45306.6046875	1900	number	$45,307 		
+r2builtin-08	builtin:64	-1234.567	1900	number	($1,235)		
+r2builtin-09	builtin:65	45306.6046875	1900	number	$45,306.60 		
+r2builtin-10	builtin:65	-1234.567	1900	number	($1,234.57)		
+r2builtin-11	builtin:66	45306.6046875	1900	number	$45,306.60 		
+r2builtin-12	builtin:66	-1234.567	1900	number	($1,234.57)		
+r2builtin-13	builtin:68	45306.6046875	1900	number	4530660.47%		
+r2builtin-14	builtin:68	-1234.567	1900	number	-123456.70%		
+r2builtin-15	builtin:70	45306.6046875	1900	number	45306 26/43		
+r2builtin-16	builtin:70	-1234.567	1900	number	-1234 55/97		
+r2builtin-17	builtin:72	45306.6046875	1900	number	1/15/24		
+r2builtin-18	builtin:72	-1234.567	1900	number	#####		
+r2builtin-19	builtin:73	45306.6046875	1900	number	15-Jan-24		
+r2builtin-20	builtin:73	-1234.567	1900	number	#####		
+r2builtin-21	builtin:74	45306.6046875	1900	number	15-Jan		
+r2builtin-22	builtin:74	-1234.567	1900	number	#####		
+r2builtin-23	builtin:75	45306.6046875	1900	number	Jan-24		
+r2builtin-24	builtin:75	-1234.567	1900	number	#####		
+r2builtin-25	builtin:77	45306.6046875	1900	number	14:30:45		
+r2builtin-26	builtin:77	-1234.567	1900	number	#####		
+r2builtin-27	builtin:78	45306.6046875	1900	number	1/15/24 14:30		
+r2builtin-28	builtin:78	-1234.567	1900	number	#####		
+r2builtin-29	builtin:80	45306.6046875	1900	number	1087358:30:45		
+r2builtin-30	builtin:80	-1234.567	1900	number	#####		

@@ -17,5 +17,6 @@ publish = true
 oxoffice-core.workspace = true
 oxoffice-drawing.workspace = true
 oxoffice-layout.workspace = true
+oxoffice-numfmt.workspace = true
 oxoffice-sml.workspace = true
 quick-xml.workspace = true

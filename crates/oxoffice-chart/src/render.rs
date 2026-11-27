@@ -38,8 +38,11 @@ struct ChartAnnotations {
 }
 
 /// Converts one supported typed chart into a labelled backend-neutral group.
+/// `date_system` is the chart space's (`CT_ChartSpace::date_system`): dates
+/// on axes and in labels are counted from it.
 pub fn render_chart(
     chart: &CT_Chart,
+    date_system: DateSystem,
     bounds: Rect,
     theme: &CT_OfficeStyleSheet,
     color_map: &ColorMap,
@@ -69,14 +72,22 @@ pub fn render_chart(
         });
     }
 
-    let mut chart_annotations =
-        render_axes_and_labels(plot, &axes, plot_bounds, chart.disp_blanks_as, fonts)?;
+    let numbers = FormatOptions::default().with_date_system(date_system);
+    let mut chart_annotations = render_axes_and_labels(
+        plot,
+        &axes,
+        plot_bounds,
+        chart.disp_blanks_as,
+        &numbers,
+        fonts,
+    )?;
     let mut annotations = Vec::new();
     render_data_labels(
         plot,
         plot_bounds,
         chart.disp_blanks_as,
         options,
+        &numbers,
         fonts,
         &mut chart_annotations.labels,
     )?;
@@ -364,10 +375,11 @@ fn render_axes_and_labels(
     axes: &[Axis],
     bounds: Rect,
     blanks: DispBlanksAs,
+    numbers: &FormatOptions,
     fonts: &mut FontManager,
 ) -> Result<ChartAnnotations> {
     if matches!(plot, Plot::Radar { .. }) {
-        return render_radar_axes_and_labels(plot, axes, bounds, blanks, fonts);
+        return render_radar_axes_and_labels(plot, axes, bounds, blanks, numbers, fonts);
     }
     let mut annotations = ChartAnnotations::default();
     let series = plot_series(plot);
@@ -408,7 +420,7 @@ fn render_axes_and_labels(
                     axis.major_tick_mark,
                 );
                 if axis.tick_label_position != TickLabelPosition::None {
-                    let text = format_axis_value(axis.number_format.as_ref(), *tick)?;
+                    let text = format_axis_value(axis.number_format.as_ref(), *tick, numbers)?;
                     let origin = tick_label_origin(
                         bounds,
                         axis.position,
@@ -435,18 +447,19 @@ fn render_axes_and_labels(
                     ),
                 });
             }
-            let category_labels: BTreeMap<_, _> =
-                if axis.tick_label_position != TickLabelPosition::None {
-                    series
-                        .first()
-                        .map(|series| series_categories(series, axis.number_format.as_ref()))
-                        .transpose()?
-                        .unwrap_or_default()
-                        .into_iter()
-                        .collect()
-                } else {
-                    BTreeMap::new()
-                };
+            let category_labels: BTreeMap<_, _> = if axis.tick_label_position
+                != TickLabelPosition::None
+            {
+                series
+                    .first()
+                    .map(|series| series_categories(series, axis.number_format.as_ref(), numbers))
+                    .transpose()?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
             for logical_index in 0..count {
                 let index = oriented_category_index(logical_index, count, axis.scaling.orientation);
                 let fraction = (index as f64 + 0.5) / count as f64;
@@ -500,6 +513,7 @@ fn render_radar_axes_and_labels(
     axes: &[Axis],
     bounds: Rect,
     blanks: DispBlanksAs,
+    numbers: &FormatOptions,
     fonts: &mut FontManager,
 ) -> Result<ChartAnnotations> {
     let mut annotations = ChartAnnotations::default();
@@ -579,7 +593,7 @@ fn render_radar_axes_and_labels(
                     TickLabelPosition::None => None,
                 };
                 if let Some(origin) = origin {
-                    let text = format_axis_value(axis.number_format.as_ref(), *tick)?;
+                    let text = format_axis_value(axis.number_format.as_ref(), *tick, numbers)?;
                     annotations
                         .labels
                         .push(PositionedElement::Text(shape_label_with_properties(
@@ -591,18 +605,19 @@ fn render_radar_axes_and_labels(
                 }
             }
         } else {
-            let category_labels: BTreeMap<_, _> =
-                if axis.tick_label_position != TickLabelPosition::None {
-                    series
-                        .first()
-                        .map(|series| series_categories(series, axis.number_format.as_ref()))
-                        .transpose()?
-                        .unwrap_or_default()
-                        .into_iter()
-                        .collect()
-                } else {
-                    BTreeMap::new()
-                };
+            let category_labels: BTreeMap<_, _> = if axis.tick_label_position
+                != TickLabelPosition::None
+            {
+                series
+                    .first()
+                    .map(|series| series_categories(series, axis.number_format.as_ref(), numbers))
+                    .transpose()?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect()
+            } else {
+                BTreeMap::new()
+            };
             for logical_index in 0..count {
                 let index = oriented_category_index(logical_index, count, axis.scaling.orientation);
                 let end = radial_point(center, radius, index, count);
@@ -939,30 +954,40 @@ fn tick_label_origin(
     }
 }
 
-fn format_axis_value(format: Option<&NumberFormat>, value: f64) -> Result<String> {
-    if let Some(format) = format {
-        format_or_general(format, value)
-    } else {
-        NumberFormat::new("General".to_owned(), false)?.format_value(value)
+fn format_axis_value(
+    format: Option<&NumberFormat>,
+    value: f64,
+    numbers: &FormatOptions,
+) -> Result<String> {
+    match format {
+        Some(format) => format_or_general(format, value, numbers),
+        None => Ok(general(value, numbers)),
     }
 }
 
-fn format_or_general(format: &NumberFormat, value: f64) -> Result<String> {
-    match format.format_value(value) {
+fn general(value: f64, numbers: &FormatOptions) -> String {
+    oxoffice_numfmt::NumberFormat::general()
+        .format_number(value, numbers)
+        .text
+}
+
+/// A code Excel cannot read shows its values as General, as in Excel.
+fn format_or_general(format: &NumberFormat, value: f64, numbers: &FormatOptions) -> Result<String> {
+    match format.format_value_with(value, numbers) {
         Err(ChartError::InvalidValue { element, .. })
             if element == "c:numFmt/@formatCode projection" && value.is_finite() =>
         {
-            Ok(value.to_string())
+            Ok(general(value, numbers))
         }
         result => result,
     }
 }
-/// Refused numeric label codes, deduplicated in plot, point and axis source order.
+/// The label and axis codes Excel cannot read, whose values show as General,
+/// deduplicated in plot, point and axis source order.
 pub fn unsupported_number_formats(chart: &CT_Chart) -> Result<Vec<String>> {
     let mut codes = Vec::new();
     let mut note = |format: &NumberFormat| {
-        if format.format_code != "General"
-            && numeric_sections(&format.format_code).is_none()
+        if oxoffice_numfmt::NumberFormat::parse(&format.format_code).is_err()
             && !codes.contains(&format.format_code)
         {
             codes.push(format.format_code.clone());
@@ -1116,6 +1141,7 @@ fn plot_data_labels(plot: &Plot) -> Option<&CT_DLbls> {
 fn series_categories(
     series: &Series,
     number_format: Option<&NumberFormat>,
+    numbers: &FormatOptions,
 ) -> Result<Vec<(usize, String)>> {
     let Some(categories) = &series.categories else {
         return Ok(Vec::new());
@@ -1153,7 +1179,7 @@ fn series_categories(
                         element: "c:cat/c:pt/@idx".to_owned(),
                         value: index.to_string(),
                     })?;
-                    let text = format_or_general(format, *value)?;
+                    let text = format_or_general(format, *value, numbers)?;
                     Ok((index, text))
                 })
                 .collect()
@@ -1175,6 +1201,7 @@ fn render_data_labels(
     bounds: Rect,
     blanks: DispBlanksAs,
     options: GeometryOptions,
+    numbers: &FormatOptions,
     fonts: &mut FontManager,
     elements: &mut Vec<PositionedElement>,
 ) -> Result<()> {
@@ -1208,7 +1235,7 @@ fn render_data_labels(
             if labels.show_category_name {
                 if categories.is_none() {
                     categories = Some(
-                        series_categories(series, None)?
+                        series_categories(series, None, numbers)?
                             .into_iter()
                             .collect::<BTreeMap<_, _>>(),
                     );
@@ -1221,7 +1248,11 @@ fn render_data_labels(
                 }
             }
             if labels.show_value {
-                fields.push(format_axis_value(labels.number_format.as_ref(), value)?);
+                fields.push(format_axis_value(
+                    labels.number_format.as_ref(),
+                    value,
+                    numbers,
+                )?);
             }
             if labels.show_percent {
                 let total = if let Some(total) = percentage_total {
@@ -1241,9 +1272,10 @@ fn render_data_labels(
                 };
                 if total > 0.0 {
                     let text = if let Some(format) = &labels.number_format {
-                        format_or_general(format, value / total)?
+                        format_or_general(format, value / total, numbers)?
                     } else {
-                        NumberFormat::new("0%".to_owned(), false)?.format_value(value / total)?
+                        NumberFormat::new("0%".to_owned(), false)?
+                            .format_value_with(value / total, numbers)?
                     };
                     fields.push(text);
                 }
@@ -1264,7 +1296,11 @@ fn render_data_labels(
                     .as_ref()
                     .and_then(|sizes| sizes.get(&logical_index))
                 {
-                    fields.push(format_axis_value(labels.number_format.as_ref(), *value)?);
+                    fields.push(format_axis_value(
+                        labels.number_format.as_ref(),
+                        *value,
+                        numbers,
+                    )?);
                 }
             }
             if fields.is_empty() {
@@ -3668,4 +3704,47 @@ fn filled_and_stroked_path(path: Path, color: Color) -> PositionedElement {
         })),
         stroke: Some(Stroke::new(Paint::Solid(color), 1.0)),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn axis_and_label_values_show_as_excel_shows_them_in_the_chart_date_system() {
+        let format = |code: &str| NumberFormat::new(code.to_owned(), false).unwrap();
+        let in_1900 = FormatOptions::default();
+        let in_1904 = in_1900.with_date_system(DateSystem::Date1904);
+        let shown = |code: Option<&str>, value, numbers| {
+            format_axis_value(code.map(format).as_ref(), value, numbers).unwrap()
+        };
+        assert_eq!(shown(Some("d-mmm-yy"), 45306.0, &in_1900), "15-Jan-24");
+        assert_eq!(shown(Some("d-mmm-yy"), 43844.0, &in_1904), "15-Jan-24");
+        assert_eq!(shown(Some("# ?/?"), 1.5, &in_1900), "1 1/2");
+        assert_eq!(shown(Some("0.0;[Red](0.0)"), -2.0, &in_1900), "(2.0)");
+        assert_eq!(shown(None, 0.1 + 0.2, &in_1900), "0.3");
+        // A code Excel cannot read shows its values as General.
+        assert_eq!(shown(Some("0.0e+00"), 12345.0, &in_1900), "12345");
+
+        let data = ChartData {
+            categories: vec!["1".into(), "2".into()],
+            series: vec![("Sales".into(), vec![3.0, 7.0])],
+            ..ChartData::default()
+        };
+        let (xml, _) = authored_chart_parts(ChartKind::Scatter, &data, "rId1").unwrap();
+        let xml = String::from_utf8(xml).unwrap();
+        let space = |xml: &str| CT_ChartSpace::from_xml(xml.as_bytes()).unwrap();
+        assert_eq!(space(&xml).date_system().unwrap(), DateSystem::Date1900);
+        let root_end = xml.find("<c:chartSpace").unwrap()
+            + xml[xml.find("<c:chartSpace").unwrap()..].find('>').unwrap()
+            + 1;
+        for (date1904, system) in [
+            ("<c:date1904 val=\"1\"/>", DateSystem::Date1904),
+            ("<c:date1904/>", DateSystem::Date1904),
+            ("<c:date1904 val=\"0\"/>", DateSystem::Date1900),
+        ] {
+            let with = format!("{}{date1904}{}", &xml[..root_end], &xml[root_end..]);
+            assert_eq!(space(&with).date_system().unwrap(), system, "{date1904}");
+        }
+    }
 }

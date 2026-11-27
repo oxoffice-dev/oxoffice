@@ -90,14 +90,19 @@ pub(super) fn render_word_chart(
         height,
     };
     let rendered = match input.charts.get(relationship_id) {
-        Some(Ok(chart)) => oxoffice_chart::render_chart(
-            &chart.chart,
-            bounds,
-            &input.chart_theme,
-            &input.chart_color_map,
-            fm,
-        )
-        .map_err(|error| error.to_string()),
+        Some(Ok(chart)) => chart
+            .date_system()
+            .and_then(|date_system| {
+                oxoffice_chart::render_chart(
+                    &chart.chart,
+                    date_system,
+                    bounds,
+                    &input.chart_theme,
+                    &input.chart_color_map,
+                    fm,
+                )
+            })
+            .map_err(|error| error.to_string()),
         Some(Err(message)) => Err(message.clone()),
         None => Err("relationship was not resolved from the document part".to_owned()),
     };
