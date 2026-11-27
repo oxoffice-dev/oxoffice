@@ -28,7 +28,7 @@ mod decimal;
 mod number;
 mod parse;
 
-use parse::{Kind, Section, Token};
+use parse::{Condition, Kind, Section, Token};
 
 pub use builtin::builtin_code;
 
@@ -372,7 +372,9 @@ enum Choice<'a> {
 ///
 /// With no condition on the first two sections: one section takes every
 /// number with its sign; two give the second to negatives, without their
-/// sign; three give the third to zero. With conditions, the first section
+/// sign; three give the third to zero. With a condition on the second
+/// section only, the first takes positives (`[>0]`, before the second's
+/// condition: `0;[>100]"big"` shows 200 as `200`). Then the first section
 /// whose condition holds takes the number, else the third when the first
 /// two carry one (an overflow without a third), else the second, else
 /// General for a code of one section. The minus sign is dropped only by a
@@ -384,25 +386,28 @@ fn choose(sections: &[Section], value: f64) -> Choice<'_> {
         return Choice::General;
     };
     let second = sections.get(1);
-    if first.condition.is_none() && second.is_none_or(|second| second.condition.is_none()) {
+    let second_condition = second.and_then(|second| second.condition);
+    let first_condition = first
+        .condition
+        .or(second_condition.map(|_| Condition::POSITIVE));
+    let Some(first_condition) = first_condition else {
         return match (sections.len(), second) {
             (_, Some(second)) if value < 0.0 => Choice::Section(second, false),
             (3, _) if value == 0.0 => Choice::Section(&sections[2], true),
             _ => Choice::Section(first, true),
         };
+    };
+    if first_condition.holds(value) {
+        return Choice::Section(first, !first_condition.only_negatives());
     }
-    for section in [Some(first), second].into_iter().flatten() {
-        if let Some(condition) = section.condition
-            && condition.holds(value)
-        {
-            return Choice::Section(section, !condition.only_negatives());
+    match (second, second_condition) {
+        (Some(second), Some(condition)) if condition.holds(value) => {
+            Choice::Section(second, !condition.only_negatives())
         }
-    }
-    match (second, sections.get(2)) {
-        (Some(second), third) if second.condition.is_some() && first.condition.is_some() => {
-            third.map_or(Choice::Overflow, |third| Choice::Section(third, true))
-        }
-        (Some(second), _) => Choice::Section(second, true),
+        (Some(_), Some(_)) => sections
+            .get(2)
+            .map_or(Choice::Overflow, |third| Choice::Section(third, true)),
+        (Some(second), None) => Choice::Section(second, true),
         (None, _) => Choice::General,
     }
 }

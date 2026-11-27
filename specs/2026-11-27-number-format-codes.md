@@ -57,7 +57,7 @@ The crate has no CLI or Python surface of its own: the displayed text reaches th
 | two | `>= 0` the first, `< 0` the second | dropped by the second |
 | three | `> 0`, `< 0`, `= 0` | dropped by the second |
 | a text section | the fourth, or the last when it holds `@`; numbers skip it, and a text-only code shows numbers as General | |
-| conditions (`[>=100]`) | the first section whose condition holds; else the third when the first two carry one (none: overflow), else the second, else General for one section | dropped only by a section that takes negatives alone: `[<0]`, `[<-10]`, `[=-5]`, not `[<=0]` or `[<100]` |
+| conditions (`[>=100]`) | the first section whose condition holds, a first section with none taking positives (`[>0]`) when the second has one (`0;[>100]"big"` shows 200 as `200`); else the third when the first two carry one (none: overflow), else the second, else General for one section | dropped only by a section that takes negatives alone: `[<0]`, `[<-10]`, `[=-5]`, not `[<=0]` or `[<100]` |
 
 A literal-only or fraction section shows the minus of a nonzero value even when nothing else is shown
 (`[>0]"pos";[>10]"big";"other"` shows -3 as `-other`, `# ?/?` shows -0.01 as `-0    `).
@@ -73,7 +73,7 @@ A literal-only or fraction section shows the minus of a nonzero value even when 
 | each `%` multiplies by 100 | `0%%`: 0.5 → `5000%%` |
 | no integer placeholder: the integer digits go before the point | `.00`: 12.5 → `12.50` |
 | exponent: one digit before the point, or a multiple of the integer placeholder count (engineering); `E+` always signs, `E-` only negatives; lowercase `e` is refused (General) | `##0.0E+0`: 0.5 → `500.0E-3` |
-| fraction: the last convergent of the continued fraction with a denominator within the placeholders (no semiconvergent), or the fixed denominator; a whole part when placeholders precede the numerator; a zero numerator blanks the fraction | `# ??/??`: π → `3  1/7 `, 0.999 → `1      ` |
+| fraction: the last convergent of the continued fraction with a denominator within the placeholders (no semiconvergent), or the fixed denominator; a whole part when placeholders precede the numerator; a zero numerator blanks the fraction; a numerator beyond 15 digits is an overflow (Excel shows `?/100` with 1E+37 as `#####`; the limit is ours) | `# ??/??`: π → `3  1/7 `, 0.999 → `1      ` |
 | General: 11 characters besides the sign, no trailing zero; 6 significant digits in scientific form from 1E+11, and below 1E-5 when the fixed form needs more than 9 decimals; subnormal doubles are 0 | 123456789012 → `1.23457E+11`, 1E-9 → `0.000000001` |
 | a text longer than 255 characters is an overflow (Excel shows `0` with 1E+300 as `#####`; the exact limit is ours) | |
 | literals: quoted, `\x`, and any other character as itself; `[$€-40C]` is `€`; unknown brackets (`[DBNum1]`) are ignored | |
@@ -119,11 +119,11 @@ codes, and built-in codes, with no API change.
 
 One pull request (#365, pull request 4):
 
-- The crate, its unit tests, and one table-driven test over `crates/oxoffice-numfmt/tests/cases.tsv`: 599 cases
-  (528 + a second round of 71 for what the first left open), each a code, a value, a date system, Excel's text
-  (its CSV export where `Range.Text` depends on the column width) and, where we differ on purpose, our text and
-  why. `tests/excel/` holds the scripts that build each round's workbooks (`cases.py`) and pin Excel's text
-  into the table (`pin.py`); its README says how a round is run.
+- The crate, its unit tests, and one table-driven test over `crates/oxoffice-numfmt/tests/cases.tsv`: 621 cases
+  in three rounds (526, then 71 and 24 for what the rounds before and the review left open), each a code, a
+  value, a date system, Excel's text (its CSV export where `Range.Text` depends on the column width) and, where
+  we differ on purpose, our text and why. `tests/excel/` holds the scripts that build each round's workbooks
+  (`cases.py`) and pin Excel's text into the table (`pin.py`); its README says how a round is run.
 - `oxoffice-chart` formats through it: dates, fractions, sections and conditions reach axes and labels, General
   is Excel's, and `c:date1904` of the chart space sets the date system: `render_chart` takes the chart space,
   so no caller can forget it, and `NumberFormat::format_value` takes the options. The diagnostic "not

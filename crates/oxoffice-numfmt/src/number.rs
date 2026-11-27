@@ -489,6 +489,11 @@ fn fraction(section: &Section, value: f64, sign: bool) -> Formatted {
             }
         }
     };
+    // Excel shows `?/100` with 1E+37 as `#####`: a numerator beyond its 15
+    // digits is an overflow (the limit is ours).
+    if top.magnitude() >= 15 {
+        return Formatted::overflow(section.color);
+    }
     if mixed && top == Decimal::from_integer(bottom) {
         whole = whole.plus_one();
         top = Decimal::ZERO;

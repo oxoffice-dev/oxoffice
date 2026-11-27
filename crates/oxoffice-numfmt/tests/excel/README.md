@@ -1,8 +1,8 @@
 # The Excel case table
 
 `../cases.tsv` holds every case the number format test checks, with the text Excel displayed for it. The
-cases are grouped in rounds, each checked once in Excel (round 1: 528 cases, round 2: 71, in Excel for Mac
-16.115, en-US).
+cases are grouped in rounds, each checked once in Excel (round 1: 526 cases, round 2: 71, round 3: 24, in
+Excel for Mac 16.115, en-US).
 
 A round:
 

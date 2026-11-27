@@ -83,6 +83,13 @@ enum Operator {
 }
 
 impl Condition {
+    /// `[>0]`, the condition of a first section without one when the second
+    /// has one.
+    pub(crate) const POSITIVE: Condition = Condition {
+        operator: Operator::Greater,
+        threshold: 0.0,
+    };
+
     /// Whether only negative numbers meet the condition: such a section
     /// shows them without their minus sign, as the second section does.
     pub(crate) fn only_negatives(&self) -> bool {
