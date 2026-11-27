@@ -135,6 +135,35 @@ def test_a_range_of_paragraphs_removed_retires_their_handles_only():
     assert taken["t1"][0].cell(0, 0).text == "t1 a"
 
 
+# Removals of whole blocks after the Google Docs table or over its control (items p0 p1 t0 p2 p3 g t1 p4): the
+# handles they retire, and the first cell of each table left.
+BLOCK_REMOVALS = {
+    "remove_content(t1)": (lambda doc: doc.remove_content(6), {"t1", "t1 cell paragraph"}, ["t0 a", "g a"]),
+    "pop_content(t1)": (lambda doc: doc.pop_content(6), {"t1", "t1 cell paragraph"}, ["t0 a", "g a"]),
+    "remove_content_range(t1, p4)": (
+        lambda doc: doc.remove_content_range(6, 8),
+        {"t1", "t1 cell paragraph", "p4", "p4 runs", "p4 format"},
+        ["t0 a", "g a"],
+    ),
+    "remove_content_range(g, t1)": (
+        lambda doc: doc.remove_content_range(5, 7),
+        {"g", "g cell", "g cell paragraph", "t1", "t1 cell paragraph"},
+        ["t0 a"],
+    ),
+    "pop_content(g)": (lambda doc: doc.pop_content(5), {"g", "g cell", "g cell paragraph"}, ["t0 a", "t1 a"]),
+}
+
+
+@pytest.mark.parametrize("removal", list(BLOCK_REMOVALS))
+def test_blocks_removed_after_or_over_a_google_docs_table_retire_their_handles_only(removal):
+    remove, retired, tables = BLOCK_REMOVALS[removal]
+    doc = body(ids=False)
+    taken = handles(doc)
+    remove(doc)
+    check(taken, retired=retired)
+    assert [table.cell(0, 0).text for table in doc.tables] == tables
+
+
 def test_the_last_paragraph_removed_retires_its_handles_only():
     doc = body(ids=False)
     taken = handles(doc)
