@@ -100,10 +100,14 @@ dependency bumps and documentation.
 | 2026-11-23 | [A tracked insertion holds its simple fields as runs](2026-11-23-simple-fields-read-in-tracked-insertions.md) | shipped |
 | 2026-11-23 | [Bibliography: every source type in every style, from the CLI and Python](2026-11-23-bibliography-styles-and-bindings.md) | shipped |
 | 2026-11-24 | [Word binding: body handles follow their element across insertions and removals](2026-11-24-body-handles-follow-their-element.md) | accepted |
+| 2026-11-24 | [Edit cost: one body paragraph edited in place](2026-11-24-one-body-paragraph-edited-in-place.md) | accepted |
+| 2026-11-24 | [Edit cost: staged edits run in place](2026-11-24-staged-edits-in-place.md) | accepted |
 | 2026-11-24 | [Word binding: a body splice updates the owner index in place](2026-11-24-word-owner-index-updated-in-place.md) | accepted |
 | 2026-11-25 | [One block location resolver: paragraphs and ends inside block content controls](2026-11-25-block-locations-inside-content-controls.md) | accepted |
 | 2026-11-25 | [Equivalent XML writings give the same result](2026-11-25-equivalent-xml-writings.md) | accepted |
+| 2026-11-25 | [Full checks on demand](2026-11-25-full-checks-on-demand.md) | shipped |
+| 2026-11-25 | [Edit cost: references found by a walk of what the body writes](2026-11-25-written-fragment-walk.md) | accepted |
 | 2026-11-26 | [An element with nothing inside reads the same in both writings](2026-11-26-empty-elements-with-end-tags.md) | accepted |
 | 2026-11-26 | [A table written in a block content control has a location](2026-11-26-block-control-table-locations.md) | accepted |
-| 2026-11-26 | [A Word part written with the default namespace can be edited](2026-11-26-word-parts-with-a-default-namespace.md) | accepted |
+| 2026-11-26 | [A Word part written with the default namespace can be edited](2026-11-26-word-parts-with-a-default-namespace.md) | shipped |
 | 2026-11-26 | [Resolving a removed last mark and the controls a resolution empties](2026-11-26-resolving-a-removed-last-mark.md) | accepted |

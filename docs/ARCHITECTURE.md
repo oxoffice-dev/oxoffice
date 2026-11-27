@@ -6,7 +6,7 @@ the code is organised today. Decisions and their history live in `specs/`.
 
 ## Crates
 
-One workspace, three families, and one crate of test support.
+One workspace, three families, and two crates of test support.
 
 ```
 crates/
@@ -18,7 +18,7 @@ crates/
   oxoffice-media         image and media sniffing, dimensions, DPI, MIME
   oxoffice-drawing       DrawingML: colour, transforms, geometry, fills,
                          lines, effects, theme, text body
-  oxoffice-layout        layout output types, font manager, 32 bundled
+  oxoffice-layout        layout output types, font manager, 33 bundled
                          fonts, line breaking and shaping
   oxoffice-pdf           PDF writer and the tiny-skia rasteriser (PNG)
   oxoffice-chart         ChartML model and renderer, for Word and PowerPoint

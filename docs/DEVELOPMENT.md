@@ -20,8 +20,9 @@ How work lands in oxoffice. Short on purpose.
 6. **CI all green**, squash merge: `gh pr checks` shows every check
    passed, `Test (ubuntu-latest)`, `(macos-latest)` and `(windows-latest)`
    among them. A pull request whose base was changed to `main` may have no
-   run on that base: push a new commit, or close and reopen it, first. A documentation-only pull request runs no build, so there is
-   nothing to check. The squash commit takes the title, so
+   run on that base: push a new commit, or close and reopen it, first. A
+   documentation-only pull request runs no build, only the title check.
+   The squash commit takes the title, so
    `main` reads as a list of conventional commits, one per pull request, and
    the changelog is generated from it. Keep a pull request to one topic, so
    that its title can say all of it. Commits on a branch are conventional too.
@@ -138,7 +139,7 @@ Finish what you start.
 ```
 
 Types: `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `build`, `ci`,
-`chore`, `revert`. Scopes are free but usually one of `docx`, `pptx`,
+`chore`, `style`, `revert`. Scopes are free but usually one of `docx`, `pptx`,
 `xlsx`, `cli`, `python`, `pdf`, `layout`, `opc`. A breaking change adds `!`
 after the type and a `BREAKING CHANGE:` footer. The changelog groups commits
 by type.
@@ -333,7 +334,7 @@ merge variant).
   commit that broke it, push a branch at each candidate commit and run it
   there. On `main` with `-f report=true`, a failure opens or comments one
   issue labelled `ci-full-checks`, closed by the next green reporting run;
-  whoever sees it fixes it the same day. Another workflow calls it with
+  whoever sees it fixes it the same day. Another workflow can call it with
   `workflow_call`, granting `issues: write`.
 - **Merge only once `gh pr checks` is all green**: `main` requires no status
   check, so nothing stops a merge whose macOS or Windows run is red or still
