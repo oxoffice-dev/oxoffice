@@ -310,16 +310,21 @@ impl NumberFormat {
     }
 
     /// Whether a section tagged with a language this crate has no names for
-    /// (`[$-411]mmmm`, Japanese) shows month names, day names or a day period:
-    /// Excel writes them in that language, this crate in English. A language
-    /// it knows ([`names`]) is not one.
+    /// (`[$-411]mmmm`, Japanese) shows month names, day names or a day
+    /// period Excel writes otherwise: Excel writes them in that language,
+    /// this crate in English. A language it knows ([`names`]) is not one, nor
+    /// is a day period of Russian or Polish, which Excel shows as `AM`
+    /// and `PM`.
     pub fn shows_unknown_names(&self) -> bool {
         self.sections.iter().any(|section| {
-            section.language == Some(names::Language::Other)
-                && section.kind == Kind::Date
-                && section.has(|token| {
-                    matches!(token, Token::Month(count) | Token::Day(count) if *count >= 3)
-                        || matches!(token, Token::AmPm { .. })
+            let Some(names::Language::Other { english_day_period }) = section.language else {
+                return false;
+            };
+            section.kind == Kind::Date
+                && section.has(|token| match token {
+                    Token::Month(count) | Token::Day(count) => *count >= 3,
+                    Token::AmPm { .. } => !english_day_period,
+                    _ => false,
                 })
         })
     }

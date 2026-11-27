@@ -3803,6 +3803,7 @@ mod tests {
             assert!(!format(code).is_supported(), "{code}");
         }
         assert!(format("[$€-40C]#,##0.00").is_supported());
+        assert!(format("[$-419]h:mm AM/PM").is_supported());
         let reported =
             space(&yearly_chart("").replace("formatCode=\"yyyy\"", "formatCode=\"[$-411]mmmm\""));
         assert_eq!(

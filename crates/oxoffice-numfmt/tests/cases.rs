@@ -146,6 +146,16 @@ fn names_in_a_language_without_a_table_are_reported() {
         ("[$-411]mmmm", true),
         ("[$-ja-JP]ddd", true),
         ("[$-411]h:mm AM/PM", true),
+        ("[$-ru-RU]d mmmm", true),
+        // Excel showed `PM` for Russian and Polish (rows r4o-08, r4o-10),
+        // English for the tag `2040C` (r5h-02), and a tag with no primary
+        // language names none.
+        ("[$-419]h:mm AM/PM", false),
+        ("[$-pl]h:mm AM/PM", false),
+        ("[$-2040C]mmmm", false),
+        ("[$-800]mmm yy", false),
+        // A high word nobody asked.
+        ("[$-3040C]mmmm", true),
         // Numbers in the tag's language need no names.
         ("[$-411]dd/mm/yyyy", false),
         ("#,##0.00 [$€-411]", false),

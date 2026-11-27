@@ -94,7 +94,7 @@ A literal-only or fraction section shows the minus of a nonzero value even when 
 | `[h]`, `[mm]`, `[ss]`: the whole duration in that unit | `[h]:mm:ss`: 1.5 → `36:00:00` |
 | `[$-F800]`, `[$-x-sysdate]`: the long date `dddd, mmmm d, yyyy`; `[$-F400]`, `[$-x-systime]`: the time `h:mm:ss AM/PM` | |
 | `[$-40C]` or `[$-fr-FR]`: the names and day period of that language and region (next section); the tag may stand anywhere in its section, and only the first section's counts: it speaks for every section, and a tag of another section changes nothing | `[$-407]mmmm;[$-40C]mmmm`: 30000 → `Februar` |
-| two language tags in one section: Excel cannot read the code and shows General | `[$-40C][$-407]mmmm` → `45306` |
+| two language tags in a date section: Excel cannot read the code and shows General (the one shape asked); any other section takes its first tag, our choice | `[$-40C][$-407]mmmm` → `45306` |
 
 ### Built-in ids (en-US)
 
@@ -110,13 +110,18 @@ The text is en-US: a decimal point, a comma between thousands, English names. `F
 codes, and built-in codes, with no API change.
 
 A locale tag changes the names of a date code and nothing else (`[$€-40C]#,##0.00` is `€1,234.57`). The tag is an
-LCID in hexadecimal (`40C`; its low word counts, a high word of 0 or 1: `1040C` is French, `2040C` showed English)
-or a language tag (`fr-FR`, `fr`; case does not matter; a language alone, `de`, is no LCID). Excel for Mac, asked
-for 32 tags in rounds 4 and 5 (`tests/cases.tsv`), shows names that depend on the region, not only the language:
+LCID in hexadecimal (`40C`; its low word counts for a high word of 0 or 1, `1040C` being French; `2040C` showed
+English and reads as English, a higher high word was not asked and counts as a language with no table; a tag with
+no primary language, `[$-400]`, names none) or a language tag (`fr-FR`, `fr`; case does not matter; a language alone,
+`de`, is no LCID). A neutral LCID (`[$-A]`, `[$-16]`) reads as the tag with no region (`[$-es]`, `[$-pt]`): our
+choice, since Excel showed those tables other than Spain's and Brazil's and no producer writes a neutral LCID.
+Excel for Mac, asked for 32 tags in rounds 4 and 5 (`tests/cases.tsv`; 29 with their twelve months, seven weekdays
+and day period, and en-NZ, en-IE and en-ZA for the day period only), shows names that depend on the region, not
+only the language:
 
 | Language | Regions asked, with their own table | Same table as |
 | --- | --- | --- |
-| English | en-US, en-GB (`am`, `pm`), en-AU, en-CA, en-IN, en-NZ, en-IE, en-ZA | en-AU, en-IE: en-GB; the others: en-US |
+| English | en-US, en-GB (`am`, `pm`) | en-AU: en-GB; en-CA, en-IN: en-US; the day period only: en-NZ, en-ZA as en-US, en-IE as en-GB (their names are not pinned: they follow the other English regions) |
 | French | fr-FR, fr-CA (`juill.`, `a.m.`) | fr-BE, fr-CH, fr-LU: fr-FR |
 | German | de-DE, de-AT (`Jänner`, `Jän`) | de-CH, de-LU: de-DE |
 | Spanish | es-ES, es-MX, es-AR, es-CO, es-CL, es-US, and `es` | es-ES traditional sort (`40A`): es-ES |
@@ -135,7 +140,9 @@ region, as asked. The one-letter month is the first letter of the full name, as 
 
 - A tag of a language with no table (`[$-411]`, Japanese: Excel shows `水曜日`, `9月`, `午後`) shows English names and
   `AM`/`PM`. `shows_unknown_names()` says so, and the chart keeps such a code unsupported (General, with its
-  diagnostic). The xlsx text export shows the English names: the limitation `xlsx-date-names-language`.
+  diagnostic), except for what Excel showed as we do: the day period of Russian and Polish (`PM`, the morning
+  designator was not asked). The xlsx text export shows the English names: the limitation
+  `xlsx-date-names-language`, which says why a table is not enough.
 - A region of English, French, German, Spanish or Portuguese that Excel was not asked for takes the table of the
   widespread region of its language: its short names and day period can differ.
 - `[$-F400]` and id 14 follow the operating system in Excel: the en-US defaults are written above.
@@ -163,7 +170,7 @@ there and show what they showed (their tests, and the limitation `docx-date-cont
 names other than English stay refused there on purpose). Two rounds of Excel cases check it: round 4 (484 cases: 21
 LCIDs, each with its twelve months, seven weekdays and day period; 18 text tags; nine languages with no table; the
 position and number of tags) and round 5 (241: each spelling of the day period alone, six more regions, `es` and
-`pt`, the high word of an LCID, which sections a tag speaks for). The chart keeps its diagnostic for a language with
+`pt`, three more English regions for the day period, the high word of an LCID, which sections a tag speaks for). The chart keeps its diagnostic for a language with
 no table only. The text export says so with the limitation `xlsx-date-names-language`.
 
 ## Links

@@ -53,21 +53,37 @@ pub(crate) enum Language {
     /// A language this crate holds the names of.
     Known(&'static Names),
     /// Any other: Excel shows its names, this crate shows English ones.
-    Other,
+    Other {
+        /// Excel shows the day period as `AM` and `PM` in this language, as
+        /// this crate does (Russian and Polish: `PM` was seen).
+        english_day_period: bool,
+    },
 }
 
 impl Language {
+    /// A language with no table whose day period Excel did not show as ours.
+    const OTHER: Language = Language::Other {
+        english_day_period: false,
+    };
+
     /// The language of an LCID (`40C`). Its low word is the language and
-    /// region (the low ten bits are the primary language); Excel took the
-    /// tag `1040C` for French as well and `2040C` for English, so a high word
-    /// other than 0 and 1 is taken for a language this crate has no names
-    /// for. `None` for LCID 0, no language.
+    /// region (the low ten bits are the primary language). Excel took the
+    /// tag `1040C` for French, and `2040C` for English; a higher high word
+    /// was not asked and counts as a language with no table. A tag with no
+    /// primary language (`[$-400]`, `[$-0]`) names none, as before.
+    ///
+    /// A neutral LCID (`[$-A]`, `[$-16]`) takes the table of the text tag
+    /// with no region (`[$-es]`, `[$-pt]`), which Excel showed other than the
+    /// table of Spain or of Brazil: our choice, the neutral LCIDs were not
+    /// asked, and no producer writes them.
     pub(crate) fn of_lcid(lcid: u32) -> Option<Language> {
-        if lcid == 0 {
+        if lcid & 0x3FF == 0 {
             return None;
         }
-        if lcid >> 16 > 1 {
-            return Some(Language::Other);
+        match lcid >> 16 {
+            0 | 1 => {}
+            2 => return Some(Language::Known(&ENGLISH)),
+            _ => return Some(Language::OTHER),
         }
         let lcid = lcid & 0xFFFF;
         let names = match (lcid & 0x3FF, lcid) {
@@ -82,12 +98,20 @@ impl Language {
             (0x0A, 0x240A) => &SPANISH_COLOMBIA,
             (0x0A, 0x340A) => &SPANISH_CHILE,
             (0x0A, 0x540A) => &SPANISH_US,
+            (0x0A, 0x000A) => &SPANISH_NO_REGION,
             (0x0A, _) => &SPANISH,
             (0x10, _) => &ITALIAN,
             (0x16, 0x0816) => &PORTUGUESE_PORTUGAL,
+            (0x16, 0x0016) => &PORTUGUESE_NO_REGION,
             (0x16, _) => &PORTUGUESE,
             (0x13, _) => &DUTCH,
-            _ => return Some(Language::Other),
+            // Russian and Polish: `PM` was seen.
+            (0x19 | 0x15, _) => {
+                return Some(Language::Other {
+                    english_day_period: true,
+                });
+            }
+            _ => return Some(Language::OTHER),
         };
         Some(Language::Known(names))
     }
@@ -120,7 +144,12 @@ impl Language {
             ("pt", None) => &PORTUGUESE_NO_REGION,
             ("pt", _) => &PORTUGUESE,
             ("nl", _) => &DUTCH,
-            _ => return Some(Language::Other),
+            ("ru" | "pl", _) => {
+                return Some(Language::Other {
+                    english_day_period: true,
+                });
+            }
+            _ => return Some(Language::OTHER),
         };
         Some(Language::Known(names))
     }
@@ -457,3 +486,93 @@ pub static DUTCH: Names = Names {
     short_days: ["zo", "ma", "di", "wo", "do", "vr", "za"],
     day_periods: ["AM", "PM"],
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The table a tag gives, by identity: the tables of two regions can hold
+    /// the same words.
+    fn table(language: Option<Language>) -> Option<&'static Names> {
+        match language {
+            Some(Language::Known(names)) => Some(names),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_text_tag_reads_as_the_lcid_of_its_region() {
+        for (tag, lcid) in [
+            ("en-us", 0x0409),
+            ("en-gb", 0x0809),
+            ("en-au", 0x0C09),
+            ("en-ca", 0x1009),
+            ("en-ie", 0x1809),
+            ("en", 0x0009),
+            ("fr-fr", 0x040C),
+            ("fr-ca", 0x0C0C),
+            ("fr-be", 0x080C),
+            ("fr", 0x000C),
+            ("de-de", 0x0407),
+            ("de-at", 0x0C07),
+            ("de-ch", 0x0807),
+            ("de", 0x0007),
+            ("es-es", 0x0C0A),
+            ("es-mx", 0x080A),
+            ("es-ar", 0x2C0A),
+            ("es-co", 0x240A),
+            ("es-cl", 0x340A),
+            ("es-us", 0x540A),
+            // A neutral LCID reads as the tag with no region, which Excel
+            // showed other than Spain's and Brazil's (our choice).
+            ("es", 0x000A),
+            ("it-it", 0x0410),
+            ("it", 0x0010),
+            ("pt-br", 0x0416),
+            ("pt-pt", 0x0816),
+            ("pt", 0x0016),
+            ("nl-nl", 0x0413),
+            ("nl", 0x0013),
+        ] {
+            let by_tag = table(Language::of_tag(tag));
+            assert!(by_tag.is_some(), "{tag}");
+            assert!(
+                by_tag
+                    .zip(table(Language::of_lcid(lcid)))
+                    .is_some_and(|(a, b)| std::ptr::eq(a, b)),
+                "{tag} and {lcid:#x}"
+            );
+        }
+        // The tables differ where Excel showed them differ: the tags above
+        // are not all one table.
+        assert!(!std::ptr::eq(
+            table(Language::of_tag("es-ar")).unwrap(),
+            table(Language::of_tag("es-co")).unwrap()
+        ));
+    }
+
+    #[test]
+    fn a_tag_with_no_table_is_known_only_where_excel_showed_what_we_show() {
+        let other = |english_day_period| Some(Language::Other { english_day_period });
+        // No primary language, as before the tables: no language.
+        for lcid in [0x0, 0x400, 0x800, 0xC00, 0x1_0400] {
+            assert_eq!(Language::of_lcid(lcid), None, "{lcid:#x}");
+        }
+        // `[$-2040C]` showed English names: English, with its day period.
+        assert_eq!(
+            table(Language::of_lcid(0x2_040C)).map(|names| names.short_month(1)),
+            Some("Jan")
+        );
+        // A high word nobody asked, and languages with no table.
+        for lcid in [0x3_040C, 0x411, 0x804, 0x41F] {
+            assert_eq!(Language::of_lcid(lcid), other(false), "{lcid:#x}");
+        }
+        // Russian and Polish showed `PM`.
+        for (lcid, tag) in [(0x419, "ru-ru"), (0x415, "pl")] {
+            assert_eq!(Language::of_lcid(lcid), other(true), "{lcid:#x}");
+            assert_eq!(Language::of_tag(tag), other(true), "{tag}");
+        }
+        assert_eq!(Language::of_tag("ja-jp"), other(false));
+        assert_eq!(Language::of_tag(""), None);
+    }
+}

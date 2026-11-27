@@ -222,12 +222,11 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                         continue;
                     }
                     Bracket::Locale { symbol, language } => {
-                        // Excel reads no code with two language tags in a
-                        // section (`[$-40C][$-407]mmmm` shows as General).
-                        if language.is_some() && section.language.is_some() {
-                            return Err(invalid("a section has two locale tags"));
-                        }
-                        section.language = language.or(section.language);
+                        // The first tag of a section names its language; a
+                        // date section with a second one is no code for
+                        // Excel (see `RawSection::finish`).
+                        section.second_language |= language.is_some() && section.language.is_some();
+                        section.language = section.language.or(language);
                         match symbol {
                             Some(symbol) => Token::Literal(symbol),
                             None => continue,
@@ -419,6 +418,8 @@ struct RawSection {
     condition: Option<Condition>,
     system: Option<SystemFormat>,
     language: Option<Language>,
+    /// The section holds a second tag that names a language.
+    second_language: bool,
 }
 
 impl RawSection {
@@ -429,6 +430,7 @@ impl RawSection {
             condition,
             system,
             language,
+            second_language,
         } = self;
         let is_date = |token: &Token| {
             matches!(
@@ -458,6 +460,12 @@ impl RawSection {
         } else {
             (Kind::Literal, punctuation_as_literals(tokens))
         };
+        // Excel reads no date section with two language tags (`[$-40C][$-407]mmmm`
+        // shows as General); only that shape was asked. Any other section takes
+        // its first tag, which is our choice.
+        if second_language && kind == Kind::Date {
+            return Err("a date section has two locale tags");
+        }
         Ok(Section {
             tokens,
             kind,
@@ -645,5 +653,29 @@ mod tests {
             assert!(sections(code).is_err(), "{code}");
         }
         assert!(sections(&format!("0\"{}\"", "x".repeat(252))).is_ok());
+    }
+
+    #[test]
+    fn two_language_tags_refuse_a_date_section_only() {
+        // Excel showed `[$-40C][$-407]mmmm` as General, a date section.
+        for code in [
+            "[$-40C][$-407]mmmm",
+            "[$-407]mmmm [$-40C]",
+            "mmmm;[$-40C]yyyy[$-407]",
+        ] {
+            assert!(sections(code).is_err(), "{code}");
+        }
+        // Any other section takes its first tag (our choice), and a tag with
+        // no language is no second tag.
+        let first = Language::of_lcid(0x407);
+        for code in [
+            "[$€-407]#,##0.00 [$$-409]",
+            "[$-407]0;[$-40C]0",
+            "[$USD][$-407]0",
+        ] {
+            let read = sections(code).expect(code);
+            assert_eq!(read[0].language, first, "{code}");
+        }
+        assert!(sections("[$USD][$-40C]mmmm").is_ok());
     }
 }
