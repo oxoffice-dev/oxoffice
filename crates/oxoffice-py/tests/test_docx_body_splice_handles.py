@@ -3,22 +3,26 @@ after the edited slot follows its block to its new place: it reads and edits tha
 where it was. A handle to a removed block raises the stale-handle error, and so does a run handle, as after an
 append. The inserted block's handle works at once.
 
+A table in a block content control, as Google Docs writes one, moves with its control and keeps its handles too.
+
 Removals keep handles where the body splice takes them, on bodies whose paragraphs carry no identifiers; a body Word
 saved still takes the whole route, which retires every handle (oxoffice-dev/oxoffice#466)."""
 import pytest
 
 import oxoffice.docx as oxdocx
-from test_docx_block_handles import IDS, STALE, control, document, outcome, p, table, text_box
+from test_docx_block_handles import IDS, STALE, control, document, google, outcome, p, table, text_box
 
 
 def body(ids):
-    """Paragraphs p0 to p4 with a 2x2 table t0 after p1 and a 1x1 table t1 after p3."""
+    """Paragraphs p0 to p4 with a 2x2 table t0 after p1, then after p3 a 2x2 table g in a Google Docs control and a
+    1x1 table t1."""
     return document(
         p("p0", " tail")
         + p("p1", " tail")
         + table2("t0")
         + p("p2", " tail")
         + p("p3", " tail")
+        + google(1, table2("g"))
         + table("<w:p><w:r><w:t>t1 a</w:t></w:r></w:p>")
         + p("p4", " tail"),
         ids=ids,
@@ -39,7 +43,7 @@ def runs_text(paragraph):
 
 def handles(doc):
     """A handle of every kind on blocks before and after the slots the tests edit, with what each one reads."""
-    t0, t1 = doc.tables[0], doc.tables[1]
+    t0, g, t1 = doc.tables[0], doc.tables[1], doc.tables[2]
     taken = {
         "p0": (doc.paragraphs[0], runs_text),
         "p2": (doc.paragraphs[2], runs_text),
@@ -53,6 +57,9 @@ def handles(doc):
         "t0 cell": (t0.cell(0, 1), lambda h: h.text),
         "t0 cell paragraphs": (t0.cell(0, 1).paragraphs, lambda h: h[0].text),
         "t0 cell paragraph": (t0.cell(0, 1).paragraphs[0], runs_text),
+        "g": (g, lambda h: h.cell(1, 1).text),
+        "g cell": (g.cell(0, 1), lambda h: h.text),
+        "g cell paragraph": (g.cell(1, 0).paragraphs[0], runs_text),
         "t1": (t1, lambda h: h.cell(0, 0).text),
         "t1 cell paragraph": (t1.cell(0, 0).paragraphs[0], runs_text),
     }
@@ -128,6 +135,35 @@ def test_a_range_of_paragraphs_removed_retires_their_handles_only():
     assert taken["t1"][0].cell(0, 0).text == "t1 a"
 
 
+# Removals of whole blocks after the Google Docs table or over its control (items p0 p1 t0 p2 p3 g t1 p4): the
+# handles they retire, and the first cell of each table left.
+BLOCK_REMOVALS = {
+    "remove_content(t1)": (lambda doc: doc.remove_content(6), {"t1", "t1 cell paragraph"}, ["t0 a", "g a"]),
+    "pop_content(t1)": (lambda doc: doc.pop_content(6), {"t1", "t1 cell paragraph"}, ["t0 a", "g a"]),
+    "remove_content_range(t1, p4)": (
+        lambda doc: doc.remove_content_range(6, 8),
+        {"t1", "t1 cell paragraph", "p4", "p4 runs", "p4 format"},
+        ["t0 a", "g a"],
+    ),
+    "remove_content_range(g, t1)": (
+        lambda doc: doc.remove_content_range(5, 7),
+        {"g", "g cell", "g cell paragraph", "t1", "t1 cell paragraph"},
+        ["t0 a"],
+    ),
+    "pop_content(g)": (lambda doc: doc.pop_content(5), {"g", "g cell", "g cell paragraph"}, ["t0 a", "t1 a"]),
+}
+
+
+@pytest.mark.parametrize("removal", list(BLOCK_REMOVALS))
+def test_blocks_removed_after_or_over_a_google_docs_table_retire_their_handles_only(removal):
+    remove, retired, tables = BLOCK_REMOVALS[removal]
+    doc = body(ids=False)
+    taken = handles(doc)
+    remove(doc)
+    check(taken, retired=retired)
+    assert [table.cell(0, 0).text for table in doc.tables] == tables
+
+
 def test_the_last_paragraph_removed_retires_its_handles_only():
     doc = body(ids=False)
     taken = handles(doc)
@@ -149,20 +185,6 @@ def test_handles_follow_their_block_through_several_edits(ids):
     check(taken)
     saved = oxdocx.Document.from_bytes(doc.to_bytes())
     assert texts(saved) == texts(doc)
-
-
-@IDS
-def test_a_table_after_a_table_in_a_block_content_control_follows_its_own_index(ids):
-    # The table in the control has no owner, so the later table's owner counts one table fewer than doc.tables does.
-    doc = document(table(p("a")) + control(table(p("b"))) + p("x") + table(p("d")), ids=ids)
-    later = doc.tables[-1]
-    paragraph = later.cell(0, 0).paragraphs[0]
-    doc.insert_paragraph(0, "new")
-    assert later.cell(0, 0).text == "d"
-    assert runs_text(paragraph) == "d"
-    paragraph.text = "d edited"
-    assert doc.tables[-1].cell(0, 0).text == "d edited"
-    assert doc.tables[1].cell(0, 0).text == "b"
 
 
 @IDS
@@ -283,17 +305,6 @@ def test_handles_into_nested_tables_follow_their_block(ids):
     paragraph.text = "inner edited"
     assert doc.tables[2].cell(0, 0).tables[0].cell(0, 0).text == "inner edited"
     assert doc.tables[1].cell(0, 0).tables[0].cell(0, 0).text == "early"
-
-
-@IDS
-def test_a_table_inserted_before_a_table_in_a_block_content_control_keeps_every_table_in_place(ids):
-    # The cells of the table in the control have no owner: a table inserted takes the whole route there.
-    doc = document(table(p("a")) + control(table(p("b"))) + p("x") + table(p("d")), ids=ids)
-    later = doc.tables[-1]
-    doc.insert_table(0, 1, 1)
-    doc.insert_paragraph(0, "new")
-    assert outcome(lambda: later.cell(0, 0).text) in ("d", STALE)
-    assert [table.cell(0, 0).text for table in doc.tables] == ["", "a", "b", "d"]
 
 
 @IDS

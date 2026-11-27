@@ -1116,6 +1116,7 @@ dependencies = [
  "oxoffice-core",
  "oxoffice-drawing",
  "oxoffice-layout",
+ "oxoffice-numfmt",
  "oxoffice-sml",
  "quick-xml",
 ]
@@ -1288,6 +1289,13 @@ dependencies = [
 [[package]]
 name = "oxoffice-media"
 version = "0.8.0"
+
+[[package]]
+name = "oxoffice-numfmt"
+version = "0.8.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "oxoffice-opc"

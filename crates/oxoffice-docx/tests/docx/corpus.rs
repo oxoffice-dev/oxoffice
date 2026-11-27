@@ -88,7 +88,7 @@ fn every_document_saves_every_part_unchanged() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Every docx and pptx file under `tests/corpus/files` has its manifest
+/// Every docx, pptx and xlsx file under `tests/corpus/files` has its manifest
 /// entry and the other way round, within the budget of the test suite spec:
 /// 1 MiB a file, 20 MiB in all.
 #[test]
@@ -103,7 +103,7 @@ fn the_manifest_lists_every_corpus_file_within_the_budget() {
                 dirs.push(path);
             } else if path
                 .extension()
-                .is_some_and(|ext| ext == "docx" || ext == "pptx")
+                .is_some_and(|ext| ext == "docx" || ext == "pptx" || ext == "xlsx")
             {
                 let relative = path.strip_prefix(&files).unwrap();
                 on_disk.insert(relative.to_string_lossy().replace('\\', "/"));

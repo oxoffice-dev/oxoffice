@@ -14,7 +14,11 @@ fn same_inventory_route(
         let b = &address.location;
         let parent = address.parent;
         let equal = match (&record.location, b) {
+            // A paragraph or a table of a block control shares its slot with
+            // the other blocks of the control: its index there tells them
+            // apart.
             (WordOwnerLocation::Paragraph(a), WordOwnerLocation::Paragraph(b))
+            | (WordOwnerLocation::Table(a), WordOwnerLocation::Table(b))
                 if a.story().kind() == oxoffice_docx::StoryKind::Body
                     && b.story().kind() == oxoffice_docx::StoryKind::Body
                     && record.body_slot.is_some()
@@ -24,14 +28,6 @@ fn same_inventory_route(
                     && a.index_path().len() <= 2
                     && b.index_path().len() <= 2
                     && a.index_path().get(1..) == b.index_path().get(1..)
-            }
-            (WordOwnerLocation::Table(a), WordOwnerLocation::Table(b))
-                if a.story().kind() == oxoffice_docx::StoryKind::Body
-                    && b.story().kind() == oxoffice_docx::StoryKind::Body
-                    && record.body_slot.is_some()
-                    && address.body_slot.is_some() =>
-            {
-                record.body_slot == address.body_slot
             }
             (WordOwnerLocation::Paragraph(a), WordOwnerLocation::Paragraph(b))
             | (WordOwnerLocation::Table(a), WordOwnerLocation::Table(b))
@@ -113,14 +109,10 @@ fn word_route_key(
                 && class & 1 != 0
                 && let Some(slot) = address.body_slot
             {
-                let suffix = if matches!(address.location, WordOwnerLocation::Paragraph(_)) {
-                    if location.index_path().len() > 2 {
-                        return None;
-                    }
-                    location.index_path().get(1..).unwrap_or_default().to_vec()
-                } else {
-                    Vec::new()
-                };
+                if location.index_path().len() > 2 {
+                    return None;
+                }
+                let suffix = location.index_path().get(1..).unwrap_or_default().to_vec();
                 let kind = if matches!(address.location, WordOwnerLocation::Paragraph(_)) {
                     oxoffice_docx::StoryItemKind::Paragraph
                 } else {

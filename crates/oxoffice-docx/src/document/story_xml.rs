@@ -113,9 +113,35 @@ pub(super) fn story_range_paragraph_spans_from_inventory(
     inventories: &[Vec<StoryItemSpan>],
     control_scopes: &HashMap<usize, BTreeMap<String, String>>,
 ) -> Result<Vec<Vec<(ContentLocation, Range<usize>)>>> {
+    Ok(
+        story_range_block_spans_from_inventory(xml, owners, inventories, control_scopes)?
+            .into_iter()
+            .map(|(paragraphs, _)| paragraphs)
+            .collect(),
+    )
+}
+
+/// [`story_range_paragraph_spans_from_inventory`] with, for each owner, the
+/// tables written directly in its block content controls, `[c, k]` of kind
+/// table (`c` the innermost control), read in the same pass over each
+/// control: each list in story-item order, then in document order within a
+/// control.
+#[allow(clippy::type_complexity)] // Story-ordered paragraphs and control tables of each owner.
+pub(super) fn story_range_block_spans_from_inventory(
+    xml: &[u8],
+    owners: &[(StoryId, StoryOwnerSpan)],
+    inventories: &[Vec<StoryItemSpan>],
+    control_scopes: &HashMap<usize, BTreeMap<String, String>>,
+) -> Result<
+    Vec<(
+        Vec<(ContentLocation, Range<usize>)>,
+        Vec<(ContentLocation, Range<usize>)>,
+    )>,
+> {
     let mut spans = Vec::with_capacity(owners.len());
     for ((story, _), items) in owners.iter().zip(inventories) {
         let mut paragraphs = Vec::new();
+        let mut tables = Vec::new();
         for (index, item) in items.iter().enumerate() {
             let item_spans = match item.kind {
                 StoryItemKind::Paragraph => vec![(vec![index], item.full.clone())],
@@ -125,7 +151,21 @@ pub(super) fn story_range_paragraph_spans_from_inventory(
                             "content control namespace scope was not inventoried".to_owned(),
                         )
                     })?;
-                    scan_story_control_paragraphs_with_scope(xml, item, scope)?
+                    let (in_control, tables_in_control) =
+                        scan_story_control_blocks_with_scope(xml, item, scope)?;
+                    if item.sdt_context == Some(StorySdtContext::Block) {
+                        for (k, span) in tables_in_control.into_iter().enumerate() {
+                            tables.push((
+                                ContentLocation::new(
+                                    story.clone(),
+                                    StoryItemKind::Table,
+                                    vec![index, k],
+                                ),
+                                span,
+                            ));
+                        }
+                    }
+                    in_control
                         .into_iter()
                         .enumerate()
                         .map(|(paragraph, span)| (vec![index, paragraph], span))
@@ -140,7 +180,7 @@ pub(super) fn story_range_paragraph_spans_from_inventory(
                 ));
             }
         }
-        spans.push(paragraphs);
+        spans.push((paragraphs, tables));
     }
     Ok(spans)
 }

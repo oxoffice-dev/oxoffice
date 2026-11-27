@@ -111,9 +111,9 @@ use inventory_matches::{
 };
 use owner_anchors::{AnchoredRoute, WordBodyItems, WordOwner, route_key};
 use owner_facts::{
-    FormOwnerRoute, FormSourceKey, FormStoryKey, WordOwnerSnapshots, WordParagraphFacts,
-    form_owner_route, form_source_key, word_owner_facts, word_piece_owner_addresses,
-    word_table_facts, word_table_read_facts,
+    FormOwnerRoute, FormSourceKey, FormStoryKey, StoryEntry, WordOwnerSnapshots,
+    WordParagraphFacts, content_body_slot, form_owner_route, form_source_key, with_control_tables,
+    word_owner_facts, word_piece_owner_addresses, word_table_facts, word_table_read_facts,
 };
 use owner_locations::{
     CellParagraphIndex, IndexMap, WordReadFacts, same_content_owner, same_story_owner,

@@ -114,6 +114,33 @@ impl WordOwnerLocation {
 /// facade table index, then by row and cell.
 pub(super) type CellParagraphIndex = Vec<HashMap<(usize, usize), Vec<AnchoredRoute>>>;
 
+/// The routes of the body table owners, read for the table projection: by
+/// projection ordinal, and the direct ones (`[i]`) by body slot.
+#[derive(Default)]
+struct BodyTableRoutes {
+    by_ordinal: HashMap<usize, AnchoredRoute>,
+    by_slot: HashMap<usize, AnchoredRoute>,
+}
+
+impl BodyTableRoutes {
+    fn add(
+        &mut self,
+        items: &WordBodyItems,
+        location: oxoffice_docx::ContentLocation,
+        ordinal: Option<usize>,
+        slot: Option<usize>,
+    ) {
+        let direct = location.index_path().len() == 1;
+        let route = items.route(location);
+        if let Some(slot) = slot.filter(|_| direct) {
+            self.by_slot.entry(slot).or_insert_with(|| route.clone());
+        }
+        if let Some(ordinal) = ordinal {
+            self.by_ordinal.entry(ordinal).or_insert(route);
+        }
+    }
+}
+
 impl WordOwnerIndexes {
     fn empty(items: WordBodyItems, owners: usize) -> PyResult<Self> {
         let mut indexes = Self {
@@ -137,12 +164,11 @@ impl WordOwnerIndexes {
     }
 
     /// The projections of the document, stored relative to the body items,
-    /// with the body table owner route of each direct body slot.
-    fn project(
-        &mut self,
-        projections: WordIndexProjections,
-        tables: &HashMap<usize, AnchoredRoute>,
-    ) {
+    /// with the routes of the body table owners: by their ordinal, which is
+    /// their facade index, when there is one owner for each facade table;
+    /// else (the source lists other tables than the model) the route of each
+    /// direct body table by its slot.
+    fn project(&mut self, projections: WordIndexProjections, tables: BodyTableRoutes) {
         let WordIndexProjections {
             body_paragraphs,
             cell_paragraphs,
@@ -155,10 +181,22 @@ impl WordOwnerIndexes {
                 .map(|location| location.map(|location| items.route(location)))
                 .collect()
         });
-        self.body_tables = table_slots
-            .iter()
-            .map(|slot| slot.and_then(|slot| tables.get(&slot).cloned()))
-            .collect();
+        let BodyTableRoutes {
+            mut by_ordinal,
+            by_slot,
+        } = tables;
+        self.body_tables = if by_ordinal.len() == table_slots.len()
+            && (0..table_slots.len()).all(|ordinal| by_ordinal.contains_key(&ordinal))
+        {
+            (0..table_slots.len())
+                .map(|ordinal| by_ordinal.remove(&ordinal))
+                .collect()
+        } else {
+            table_slots
+                .iter()
+                .map(|slot| slot.and_then(|slot| by_slot.get(&slot).cloned()))
+                .collect()
+        };
         let mut cells = vec![HashMap::new(); table_slots.len()];
         for ((table, row, cell), locations) in cell_paragraphs {
             if table >= cells.len() {
@@ -182,7 +220,7 @@ impl WordOwnerIndexes {
         projections: WordIndexProjections,
     ) -> PyResult<Self> {
         let mut indexes = Self::empty(items, owners.len())?;
-        let mut tables = HashMap::new();
+        let mut tables = BodyTableRoutes::default();
         for (key, owner) in owners.iter().enumerate() {
             indexes.by_generation.insert(owner.owner.generation(), key);
             let body_slot = owner.body_slot();
@@ -194,15 +232,19 @@ impl WordOwnerIndexes {
                 body_slot,
             );
             // Only a body table is resolved: its route in the table projection.
-            if let (WordOwnerLocation::Table(shape), Some(slot)) = (owner.route_shape(), body_slot)
+            if let WordOwnerLocation::Table(shape) = owner.route_shape()
                 && shape.story().kind() == oxoffice_docx::StoryKind::Body
-                && !tables.contains_key(&slot)
                 && let WordOwnerLocation::Table(location) = owner.location().into_owned()
             {
-                tables.insert(slot, indexes.items.route(location));
+                tables.add(
+                    &indexes.items,
+                    location,
+                    owner.projection_ordinal(),
+                    body_slot,
+                );
             }
         }
-        indexes.project(projections, &tables);
+        indexes.project(projections, tables);
         Ok(indexes)
     }
 
@@ -214,21 +256,23 @@ impl WordOwnerIndexes {
         projections: WordIndexProjections,
     ) -> PyResult<Self> {
         let mut indexes = Self::empty(items, addresses.len())?;
-        let mut tables = HashMap::new();
+        let mut tables = BodyTableRoutes::default();
         for (key, address) in addresses.iter().enumerate() {
             let (route, anchor) = indexes.items.stored(&address.location);
             let hash = route_key(&route, anchor);
             indexes.index_entry(key, hash, &route, address.parent, address.body_slot);
-            if let (WordOwnerLocation::Table(location), Some(slot)) =
-                (&address.location, address.body_slot)
+            if let WordOwnerLocation::Table(location) = &address.location
                 && location.story().kind() == oxoffice_docx::StoryKind::Body
             {
-                tables
-                    .entry(slot)
-                    .or_insert_with(|| indexes.items.route(location.clone()));
+                tables.add(
+                    &indexes.items,
+                    location.clone(),
+                    address.projection_ordinal,
+                    address.body_slot,
+                );
             }
         }
-        indexes.project(projections, &tables);
+        indexes.project(projections, tables);
         Ok(indexes)
     }
 

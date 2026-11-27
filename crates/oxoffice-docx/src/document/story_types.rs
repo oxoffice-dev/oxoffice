@@ -312,7 +312,7 @@ pub struct OwnerElementXml {
     /// kind, part and ordinal.
     pub stories: HashMap<(StoryKind, String, usize), Vec<u8>>,
     /// Each story item by its story's kind, part and ordinal and its index
-    /// path.
+    /// path, and each table of a block control by its `[c, k]`.
     pub items: HashMap<(StoryKind, String, usize, Vec<usize>), Vec<u8>>,
     /// Each paragraph of [`Document::story_owner_snapshots`], keyed the same
     /// way.
@@ -323,17 +323,37 @@ pub struct OwnerElementXml {
     pub links: HashMap<(StoryKind, String, usize, Vec<usize>, usize), Vec<u8>>,
 }
 
+/// The owner families of [`Document::story_owner_snapshots`], each in story
+/// order.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+#[allow(clippy::type_complexity)] // Each family keeps its located payload.
+pub struct StoryOwnerSnapshots {
+    /// The story items.
+    pub items: Vec<StoryItemSnapshot>,
+    /// The physical cells of every table: the table, the cell's row and
+    /// index, and the cell's story.
+    pub cells: Vec<(ContentLocation, usize, usize, StoryId)>,
+    /// The paragraphs of each story, `[c, k]` in its block controls too,
+    /// with their XML.
+    pub paragraphs: Vec<(ContentLocation, Vec<u8>)>,
+    /// The hyperlinks.
+    pub links: Vec<(ContentLocation, LinkInfo)>,
+    /// The tables written directly in a block content control, `[c, k]` of
+    /// kind table, each with the number of story-item tables of its story
+    /// before it and its XML closed over its namespaces. With the story-item
+    /// tables, they are [`Document::story_tables`] of each story, in order.
+    pub control_tables: Vec<(ContentLocation, usize, Vec<u8>)>,
+}
+
 /// The checked Word owners of one body item, which
 /// [`Document::body_item_owners`] reads from a main part whose body holds
 /// only that item.
 #[doc(hidden)]
-#[allow(clippy::type_complexity)] // The four owned families and the item's index projections.
+#[allow(clippy::type_complexity)] // The owned families and the item's index projections.
 pub struct BodyItemOwners {
-    /// The four families of [`Document::story_owner_snapshots`].
-    pub snapshots: Vec<StoryItemSnapshot>,
-    pub cells: Vec<(ContentLocation, usize, usize, StoryId)>,
-    pub paragraphs: Vec<(ContentLocation, Vec<u8>)>,
-    pub links: Vec<(ContentLocation, LinkInfo)>,
+    /// The families of [`Document::story_owner_snapshots`].
+    pub owners: StoryOwnerSnapshots,
     /// The table cell story owners of the item.
     pub cell_stories: usize,
     /// The text box story owners of the item.

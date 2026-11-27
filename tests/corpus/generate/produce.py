@@ -1,6 +1,7 @@
 """Open and save the authored corpus files with real producers.
 
-    python3 tests/corpus/generate/produce.py [word] [powerpoint] [libreoffice] [google] [word-google] [--only family ...]
+    python3 tests/corpus/generate/produce.py [word] [powerpoint] [excel] [libreoffice] [google] [word-google] [--only family ...]
+    python3 tests/corpus/generate/produce.py --neutral-excel <file.xlsx> ...
 
 Each producer reads files/authored/* and writes files/<producer>/ with the
 same file names, then the manifest is rewritten: the files this run wrote get
@@ -8,11 +9,13 @@ the producer's version, the others keep theirs.
 Every producer by default, every family but the pilot (report, deck) unless
 --only names some: the behaviour tests pin facts of the pilot's copies.
 
-- word, powerpoint: Microsoft Word and PowerPoint for Mac through AppleScript.
-  The apps are sandboxed, so files go through their container folder. Each
-  document is closed right after its save, the app quits at the end even when
-  a file fails, and a file that takes more than five minutes (a dialog waiting
-  for an answer) stops the run.
+- word, powerpoint, excel: Microsoft Word, PowerPoint and Excel for Mac through
+  AppleScript. The apps are sandboxed, so files go through their container
+  folder. Each document is closed right after its save, the app quits at the
+  end even when a file fails, and a file that takes more than five minutes (a
+  dialog waiting for an answer) stops the run. Every workbook Excel saves is
+  made neutral right after (neutral_excel): `--neutral-excel` does the same to
+  a workbook made by hand in Excel.
 - libreoffice: `soffice --headless`, on any machine.
 - google: an rclone remote (OXOFFICE_CORPUS_RCLONE, default `gdrive:`) uploads
   with conversion to Google Docs and Slides, exports back, and removes the
@@ -21,7 +24,9 @@ Every producer by default, every family but the pilot (report, deck) unless
   --only names when it names some), into files/word-google/: a file edited in Word, then in Google Docs;
   the plain `google` route leaves those families out. Embedded faces whose licence is not the SIL Open Font
   License are dropped from the Docs exports (drop_unlicensed_fonts); Slides
-  exports embed no font.
+  exports embed no font. The Google Sheets copies (files/google/*.xlsx) are
+  not made here: they are uploaded through the Google Drive connector with
+  conversion to Google Sheets and exported as xlsx (see the README).
 
 Standard library only, Python 3.11 or later. On the Mac:
 
@@ -41,6 +46,7 @@ import zipfile
 from pathlib import Path
 
 import manifest
+import neutral_xlsx
 
 FILES = Path(__file__).resolve().parent.parent / "files"
 AUTHORED = FILES / "authored"
@@ -48,9 +54,13 @@ TIMEOUT = 300
 CONTAINERS = {
     "word": Path.home() / "Library/Containers/com.microsoft.Word/Data/oxoffice-corpus",
     "powerpoint": Path.home() / "Library/Containers/com.microsoft.Powerpoint/Data/oxoffice-corpus",
+    "excel": Path.home() / "Library/Containers/com.microsoft.Excel/Data/oxoffice-corpus",
 }
-APPLICATIONS = {"word": "Microsoft Word", "powerpoint": "Microsoft PowerPoint"}
-EXTENSIONS = {"word": "docx", "powerpoint": "pptx"}
+APPLICATIONS = {"word": "Microsoft Word", "powerpoint": "Microsoft PowerPoint", "excel": "Microsoft Excel"}
+EXTENSIONS = {"word": "docx", "powerpoint": "pptx", "excel": "xlsx"}
+# The name of Excel's Open XML workbook format in its AppleScript dictionary
+# (`sdef /Applications/Microsoft\ Excel.app | grep -i xml` lists the names).
+EXCEL_XLSX_FORMAT = "Excel XML file format"
 # Open, save as Open XML, close without saving again. The close runs even when
 # the open or the save fails, so that no document stays open. AppleScript waits
 # up to 600 s for the app, longer than TIMEOUT, so that a dialog waiting for an
@@ -88,11 +98,72 @@ end run""",
     end tell
   end timeout
 end run""",
+    # Excel takes HFS paths, made outside its tell block (`POSIX file` inside it fails with -50), and its
+    # dictionary has a `message` property, so the error variables have other names.
+    "excel": f"""on run argv
+  set sourcePath to (POSIX file (item 1 of argv)) as text
+  set targetPath to (POSIX file (item 2 of argv)) as text
+  with timeout of 600 seconds
+    tell application "Microsoft Excel"
+      try
+        open workbook workbook file name sourcePath
+        save workbook as active workbook filename targetPath file format {EXCEL_XLSX_FORMAT}
+      on error errorText number errorNumber
+        try
+          close active workbook saving no
+        end try
+        error errorText number errorNumber
+      end try
+      close active workbook saving no
+    end tell
+  end timeout
+end run""",
 }
 QUIT_SCRIPTS = {
     "word": 'with timeout of 120 seconds\ntell application "Microsoft Word" to quit saving no\nend timeout',
     "powerpoint": 'with timeout of 120 seconds\ntell application "Microsoft PowerPoint" to quit saving no\nend timeout',
+    "excel": 'with timeout of 120 seconds\ntell application "Microsoft Excel" to quit saving no\nend timeout',
 }
+
+
+# What Excel for Mac writes about the machine and the person, replaced in every workbook it saves.
+EXCEL_HOME = neutral_xlsx.HOME
+ABS_PATH = re.compile(r'(<x15ac:absPath\b[^>]*?\burl=")[^"]*(")')
+
+
+def neutral_excel(path: Path) -> list[str]:
+    """Make a workbook saved by Excel for Mac neutral, and check it: the folder it was saved from (`x15ac:absPath`
+    in xl/workbook.xml, kept with the url EXCEL_HOME), the account of the persons part, the creator and the last
+    editor of the core properties and the authors of the notes (neutral_xlsx), and the task pane add-ins it
+    carries (xl/webextensions/, with their relationships and content types) are replaced or dropped, no other
+    byte changes. The result is read again: it raises NotNeutral, and writes nothing, when an account name, an
+    email, a path or an add-in is left, or a pattern does not match what the workbook writes. Returns the parts
+    that changed."""
+    infos, parts = neutral_xlsx.read(path)
+    before = dict(parts)
+    names = neutral_xlsx.neutral_parts(parts, [])
+    name = "xl/workbook.xml"
+    if name in parts:
+        text = neutral_xlsx.replaced(
+            parts[name].decode("utf-8"), "x15ac:absPath", ABS_PATH, rf"\g<1>{EXCEL_HOME}\g<2>", name
+        )
+        parts[name] = text.encode("utf-8")
+    for name in [name for name in parts if name.startswith("xl/webextensions/")]:
+        del parts[name]
+    for name in parts:
+        if name.endswith(".rels"):
+            text = parts[name].decode("utf-8")
+            parts[name] = re.sub(r"<Relationship\b[^>]*webextension[^>]*/>", "", text).encode("utf-8")
+        elif name == "[Content_Types].xml":
+            text = parts[name].decode("utf-8")
+            parts[name] = re.sub(r'<Override PartName="/xl/webextensions/[^"]*"[^>]*/>', "", text).encode("utf-8")
+    left = [name for name, data in parts.items() if name.endswith((".xml", ".rels")) and b"webextension" in data]
+    if left:
+        raise neutral_xlsx.NotNeutral(f"add-in references left in {left}")
+    neutral_xlsx.check(parts, names)
+    if parts != before:
+        neutral_xlsx.write(path, infos, parts)
+    return sorted(name for name in before if parts.get(name) != before[name])
 
 
 def osascript(script: str, *args: str) -> str:
@@ -136,11 +207,17 @@ def through_office(app: str, only: list[str]) -> dict:
             (out / source.name).unlink(missing_ok=True)
             try:
                 osascript(SAVE_SCRIPTS[app], str(staged), str(saved))
+                if app == "excel":
+                    # `saved` is in the app's container: a copy that is not neutral never reaches files/.
+                    neutral_excel(saved)
                 shutil.copy(saved, out / source.name)
                 print(f"{app}: {source.name}")
             except subprocess.CalledProcessError as error:
                 failures.append(f"{source.name}: {error.stderr.strip()}")
                 print(f"{app}: {source.name} FAILED: {error.stderr.strip()}")
+            except (neutral_xlsx.NotNeutral, zipfile.BadZipFile, UnicodeDecodeError) as error:
+                failures.append(f"{source.name}: not neutral, not kept: {error}")
+                print(f"{app}: {source.name} FAILED, not kept: {error}")
             except subprocess.TimeoutExpired:
                 failures.append(f"{source.name}: no answer after {TIMEOUT} s, a dialog is probably open")
                 print(f"{app}: {source.name} took over {TIMEOUT} s: answer or close the dialog in {application}, "
@@ -156,14 +233,17 @@ def through_office(app: str, only: list[str]) -> dict:
             print(f"{application} did not quit: close its documents without saving and quit it by hand")
     if failures:
         print(f"{app}: {len(failures)} file(s) failed:\n  " + "\n  ".join(failures))
-    product = "Word" if app == "word" else "PowerPoint"
-    return {(app, extension): f"Microsoft {product} for Mac {version}"} if version else {}
+    return {(app, extension): f"{application} for Mac {version}"} if version else {}
 
 
 def through_libreoffice(only: list[str]) -> dict:
     out = FILES / "libreoffice"
     out.mkdir(exist_ok=True)
-    filters = {"docx": "docx:MS Word 2007 XML", "pptx": "pptx:Impress MS PowerPoint 2007 XML"}
+    filters = {
+        "docx": "docx:MS Word 2007 XML",
+        "pptx": "pptx:Impress MS PowerPoint 2007 XML",
+        "xlsx": "xlsx:Calc MS Excel 2007 XML",
+    }
     # A profile of its own, so that a LibreOffice already open on the machine is left alone.
     with tempfile.TemporaryDirectory() as profile:
         for extension, target in filters.items():
@@ -180,7 +260,7 @@ def through_libreoffice(only: list[str]) -> dict:
                 print(f"libreoffice: {source.name}")
     version = subprocess.run(["soffice", "--version"], capture_output=True, text=True).stdout.split()
     name = f"LibreOffice {version[1]}"
-    return {("libreoffice", "docx"): name, ("libreoffice", "pptx"): name}
+    return {("libreoffice", extension): name for extension in filters}
 
 
 def font_licence(data: bytes) -> str:
@@ -274,13 +354,18 @@ def through_google(only: list[str], route: str = "google") -> dict:
 
 def main() -> None:
     args = sys.argv[1:]
+    if args[:1] == ["--neutral-excel"]:
+        files = args[1:] or sys.exit(__doc__)
+        for name in files:
+            print(f"{name}: " + (", ".join(neutral_excel(Path(name))) or "nothing to replace"))
+        return
     only = args[args.index("--only") + 1:] if "--only" in args else []
     producers = (args[: args.index("--only")] if "--only" in args else args) or [
-        "word", "powerpoint", "libreoffice", "google", "word-google"
+        "word", "powerpoint", "excel", "libreoffice", "google", "word-google"
     ]
     versions, started = {}, time.time()
     for producer in producers:
-        if producer in ("word", "powerpoint"):
+        if producer in ("word", "powerpoint", "excel"):
             versions |= through_office(producer, only)
         elif producer == "libreoffice":
             versions |= through_libreoffice(only)

@@ -275,8 +275,204 @@ item heads, with debug checks against a full rebuild; a `[c, k]` table is in non
 reaches its three producers, the piece assembly, the indexes, the splice shifts and the form sources. The limitation
 narrows to `docx-python-control-table-handles` (#660).
 
+## Amendment 2026-11-27: an owner record for the tables of block controls
+
+### Context
+
+What #660 still holds (S4, limitation `docx-python-control-table-handles`): a `Table` or `Cell` handle of a table at
+`[c, k]` has no owner. It binds to the snapshot scope, so every edit retires it; it reads its location at each call
+(`TableLocation::Body(i).native`, then `table_story_location`: a story discovery and a scan of the body that reads
+the source from its start once per block control); its edits publish `Conservative`, retiring every other handle;
+`Cell.tables` of a cell holding a control reads the cell's story at each call.
+
+Read on 211ba592, with probes on a debug build:
+
+- The inventory has no `Table` or `Cell` owner for such a table. Its cell paragraphs and runs have owners, but with
+  no parent: their root is a paragraph of a cell story, which `prepare_shifted_revision` never proves, so
+  `Table.add_row` or `Cell.text` on another table retires them; `block_retention` finds them by their cell story
+  (`found_by_story`), so `Cell.add_table` in an earlier cell retires them.
+- **Defect in the cells family.** `story_table_cells_from_inventory` routes each physical cell to the innermost
+  table among the story-item tables. A table in a control inside a cell is none of them, so its cells go to the
+  table around it: a 1x1 table holding a 2x2 Google table lists `(0, 1)`, `(1, 0)`, `(1, 1)` under the outer table,
+  with the Google table's cell stories, and skips `(0, 0)` as a duplicate (Rust probe). Three phantom `Cell` owners;
+  harmless so far only because no handle reaches them.
+- **Table ordinals are not facade indexes.** A table owner's projection ordinal counts the story-item tables of its
+  story, `doc.tables` counts the control tables too. After a Google table, `items.before(..).1`, the base the N-to-M
+  splice (#647) splices `body_tables` at, and `local_cell_route`'s ordinal (the local cell route reads
+  `body_tables[ordinal]`) count one table fewer for each one before. Nothing desyncs today because its cell stories have
+  no `Cell` owner, so `cells_anchored` is false in any body holding one: every table insertion or removal there takes
+  the whole route (probe: `remove_content` of a direct table after a Google table retires every handle; without it,
+  the handles stay). Giving those cells an owner turns those splices on, so the ordinals must be fixed with it.
+
+### Decision
+
+**A fifth family, not an extended one.** The story items family stays the list of story items: its consumers count
+it (body items per block, direct slots, `spliced_table`'s one item, the one-table membership check), and an item
+`[c, k]` would break each count. The cells family cannot carry the tables alone: no XML for the read facts, no order
+among the story's tables. So:
+
+- **`control_tables: Vec<(ContentLocation, usize, Vec<u8>)>`**: per story, in document order, each table written
+  directly in a block control (the `[c, k]` of kind table, `c` the innermost control), the number of story-item tables
+  of its story before it, and its XML closed over its namespaces (always, the read facts parse it). It is
+  `story_tables(story)` less its `[i]` entries, with their places.
+- **The cells family is extended**: the control tables join the story-item tables `story_table_cells_from_inventory`
+  routes cells to, so each cell goes to its own table (fixes the defect above).
+- **One producer.** `owner_snapshots_of` feeds `story_owner_snapshots` (full), `body_item_owners` (block piece),
+  `story_part_owner_snapshots` (part piece) and `detached_table_owner_snapshots`. One scoped scan of each block
+  control already lists its direct `w:p` (`story_range_paragraph_spans_from_inventory`); it lists its direct `w:tbl`
+  in the same pass, so no control is read twice. Table starts join the leaf namespace scope pass. The four return a
+  named struct, `StoryOwnerSnapshots { items, cells, paragraphs, links, control_tables }`, in place of the 4-tuple
+  (hidden API; `BodyItemOwners` gains the field).
+- **`owner_element_xml`** lists them among its items, keyed by `[c, k]`: the kept-owner identity oracle
+  (`assert_kept_owners_name_their_elements`) reads a kept table there and panics on one it cannot find.
+
+**The Python inventory** (`word_owner_facts` for pieces, `word_owner_addresses` for the full path):
+
+- Each story's control tables merge into its table items by their count of story-item tables before (a stable
+  merge), into `WordOwnerFacts.items`, so the piece assembly, part pieces, `placed_blocks` and
+  `blocks_keeping_owners` carry them as any table item. A table owner's projection ordinal is its place among its
+  story's tables: for the body, its `doc.tables` index; in a cell, its `Cell.tables` index.
+- Read facts from its XML (`word_table_facts`); body slot: its control's, when `c` is a direct body child, as for a
+  paragraph `[c, k]`; its form source: its XML. Its cells, their paragraphs, runs and nested tables take it as their
+  ancestor, as for any table.
+- **Records**: a control item's record counts its tables (ordinals contiguous, checked by `derive`) and the cell
+  stories of its tables, so `cells_anchored` holds in bodies with Google tables.
+- **`body_tables`** is built from the owners: entry `i` is the body table owner of ordinal `i`, when the body's table
+  owners are as many as `doc.tables` (the model's count); otherwise (source and model disagree, the case
+  `table_story_location` answers `None` for) the slot rule of today, direct tables only. `prepare` and
+  `prepare_addresses` derive it; `WordIndexProjections` keeps its slots for that fallback.
+- **Matching**: `WordRouteKey::Slot` and `same_inventory_route` compare a table's path after its head, as they do a
+  paragraph's. Without it `[c, 0]` and `[c, 1]` share their key, and two new owners take one old owner's states.
+
+**Splice paths.** The anchoring is generic (owners stored relative to their item record, a splice moves the
+records), so the work is in what each path reads besides it:
+
+| Path | Reads | Change |
+| --- | --- | --- |
+| Body splice (`plan_body_splice`: `insert_paragraph`, `insert_table`, `remove_content`, ranges) | table ordinal base `items.before(first).1`, `body_tables` partition by head, the table-insertion guard (`cells_anchored`, no `None` entry) | none: the base and the entries now count Google tables; a body with one now takes the splice for tables |
+| N-to-M block splice (#647, removals and `pop_content` in place) | `bases.tables`, `placed_blocks`' table projection | `placed_blocks` lists a block's tables by ordinal, control tables included (today `None`); refuses when a block's table owners differ from its model count or `body_tables` holds a `None` |
+| Local cell route (`apply_local_cell_edit`) | `body_tables[ordinal]` | none: the ordinal now names the table; direct tables only, a cell holding a table refused, as today |
+| Block publications (`ParagraphEdit`, `CellInsert`, `BlockShift`) | owners by story ordinal | a Google table's cell content is found through its table, kept when its cell stories move |
+| In place: paragraph edits, form fills (#648), property edits; story splices (headers, notes) | pieces and parts read again, compared by owner | none: the family is in the pieces |
+
+**Debug checks** that catch a desync, all present: `assert_word_pieces_rebuild` (each assembled publication: piece
+inventory and projections against the full producer, in order), `assert_word_inventory_rebuilds` (after each splice
+and in-place publication: owners, item records, route index, `body_tables`, cell paragraph routes, parent lists in
+story order), `assert_kept_owners_name_their_elements` (each kept owner's bytes, once `owner_element_xml` lists the
+tables), `assert_old_owners_are_the_blocks_closure` (N-to-M), `assert_indexed_route` (each table route read: the
+inventory's `[c, k]` against `table_story_location`). None is added; the Rust test checks the family against
+`story_tables`.
+
+### The handles
+
+A `Table` or `Cell` handle at `[c, k]` binds to its owner, as one of a direct table does (`inventoried_table`,
+`unowned_table_location` and their `Conservative` branches go, and `prepare_shifted_revision` no longer turns a
+`[c, k]` `TableGrid`, `CellText` or `CellInsert` into `Conservative`):
+
+- **No location read at each call.** Binding, validation, `table_route`, the `ContentLocation` of a `Table` handle
+  and the cached reads (row count, a cell's paragraph count) come from the inventory; `Cell.tables` lists
+  `tables_by_parent`. `Table.xml` and `Cell.xml` read the element from the body source, as a control paragraph's
+  `xml` does (no direct block read).
+- **Edits that keep every other handle**, as through a direct table: `Table.replace_xml`, `Cell.replace_xml`
+  (`ElementXml`), `Table.add_row`, `Table.remove_row` (`TableGrid`), `Cell.text` (`CellText`), `Cell.add_paragraph`,
+  `Cell.add_table` (`CellInsert`), property edits.
+- **Unchanged, and the same for every table**: `insert_column`, `delete_column`, `clone_row`, `set_cell_grid_span`,
+  `Cell.split`, `Cell.merge` and `Cell.add_picture` publish `Conservative`; the document calls (`insert_content`,
+  `move_content`, `clone_content`, `pop_content`) too ([body handles](2026-11-24-body-handles-follow-their-element.md),
+  "What we do not do"). A table alone in its control is not moved or removed alone (#657 rule, Rust): the route
+  is the control.
+
+Nothing is left: the limitation file goes.
+
+### Deliberately not
+
+- A direct block read of a control block for `Table.xml` (nor for a control paragraph's `xml`): a measured perf
+  follow-up if ever.
+- A body slot for a table of a nested control (`c` not a direct child): none, as for the paragraphs there, so their
+  handles retire where routes are proved by slot. No Google file seen nests its table controls.
+- `story_tables` read per call by `HeaderFooter.tables` and `Note.tables` (listings, as for `[i]` tables).
+
+### Plan
+
+One pull request, `fix(python): a table in a block content control has an owner record`, closing #660, in two
+commits:
+
+1. **The record** (about 350 product lines: Rust 170, Python 180). The family, the cells routing, the struct,
+   `owner_element_xml`; the merge, the slots, the records, `body_tables`, the matcher, `placed_blocks` and its guard.
+   On its own it lands a sound state (the split point if the pull request grows past 800 lines).
+2. **The handles** (about +100 / -130). The binding, the publications, `Cell.tables`, docstrings; the limitation
+   file removed.
+
+### Tests
+
+Lean, on the shape Google writes (`goog_rdk_<n>`, `contentLocked`, a table alone), in the body, in a body table's
+cell and in a footer; plus a block control holding a table, a paragraph and a table, the shape where two tables share
+a slot (a rich text control around such a selection; the schema allows it, Word's own output is to confirm). The
+helper `google(n, table)` moves to `test_docx_block_handles.py`.
+
+- **Rust** (`block_locations.rs`, `a_table_in_a_block_control_is_listed_as_a_table_in_every_story`): the cell's
+  Google table becomes 2x2; for the body, the cell and the footer, `control_tables` are the `[c, k]` entries of
+  `story_tables` with their places, each cell of each Google table is in `cells` under its own table (fails today),
+  and `owner_element_xml` lists them. The `content_controls.rs` destructurings follow the struct.
+- **Splices** (`test_docx_body_splice_handles.py`): `body()` gains a Google table after `t1`; `handles()` gains its
+  cell paragraph (commit 1) and its table and cell (commit 2). Every insertion and removal test then runs around it
+  (today the table splices take the whole route there). The two `control(table(..))` tests take the Google shape, and
+  the table inserted before one asserts `"d"` where it accepts `"d"` or stale.
+- **Block publications** (`test_docx_block_handles.py`): the test of the cells of a control table that retire when
+  cell stories move flips (they follow their table), with the two-table control in its fixture (a matcher
+  without the path suffix fails it); `neighbourhood()` gains a Google table whose table and cell handles the
+  paragraph-edit matrix checks (commit 2).
+- **Edits through the handle** (commit 2): one table-driven test, the edits above at the three places, each outside
+  handle's outcome equal to that of the same edit through a direct table in a twin document; and the handles taken
+  before `replace_xml` and `add_row` in the Google test of `test_docx_block_locations.py` keep reading.
+
+Checks: as `agent-rules.md` asks, plus the whole docx Python suite on a debug build (every publication runs the
+oracles above) and the writings sample (the scan changes).
+
+### Risks
+
+- **Ordinals.** Every user of a table ordinal (record bases, the body splice's slot, `placed_blocks`, the local cell
+  route, the matcher's projection keys) now counts Google tables. All read ordinals of one producer, and the oracles
+  compare them with a full rebuild after each publication.
+- **The splices a Google body now takes** (table insertion and removal, N-to-M with a Google control): the guards
+  above and the oracles after each; the splice tests run around a Google table.
+- **Two tables in one slot**: the matcher suffix; the two-table control in the tests.
+- **Source and model disagreeing on the body's tables**: `body_tables` falls back to the slot rule, and the table
+  splices refuse on a `None` entry, as today.
+- **Cost**: no control is scanned twice; each control table's closed XML is a copy, as for a story-item table, cached
+  per block piece.
+
+### Open questions
+
+1. **One pull request**, two commits. Recommended: about 450 product lines added and 130 removed, under the bound;
+   the handles commit alone is small and depends on the record. Two pull requests (split at the commit) if review
+   prefers.
+2. **The family lists control tables only**, placed by their count of story-item tables before. Recommended over a
+   family of every story table (simpler merge, but each `[i]` table's XML twice).
+3. **A named struct** for the five families. Recommended over a 5-tuple: positional `.0`-`.4` at a dozen sites.
+4. **No body slot for a table of a nested control**, as for its paragraphs. Recommended: one rule for both.
+5. **The two-table control** (table, paragraph, table) in the fixture: the only shape where the matcher suffix shows,
+   and one a rich text control around a selection would write (not checked in Word, no Word here). Recommended: keep
+   it; drop it only if a Word check shows Word never writes two tables in one control.
+6. **`Table.xml` reads the body source**, as a control paragraph's `xml`. Recommended: no limitation, a perf
+   follow-up only if measured.
+7. **Release note**: handles survive more edits in documents from Google Docs; no signature change, no `!`.
+
+Answered as recommended (orchestrator, 2026-11-27).
+
+### Outcome
+
+Shipped as planned, one pull request in two commits (product lines +524 / -367, tests +160 / -55). Differences:
+
+- The location argument a `Table` handle gives (`block_location`) still resolves through the document: a route of
+  the inventory carries no body story fingerprint, which the location operations check. It costs what the operation
+  it feeds reads anyway.
+- The two `control(table(..))` splice tests went instead of changing shape: the Google table in `body()` covers them.
+  `test_docx_block_locations.py` is not extended: the table-driven test covers what it would.
+
 ## Links
 
 - Issue #660; #657 and its spec
   [One block location resolver](2026-11-25-block-locations-inside-content-controls.md), which added the limitation.
 - [Word binding: body handles follow their element](2026-11-24-body-handles-follow-their-element.md).
+- #683 (locations), #685 (`Cell.tables`, control moves); the amendment's owner record closes #660.

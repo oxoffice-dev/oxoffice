@@ -114,3 +114,4 @@ dependency bumps and documentation.
 | 2026-11-27 | [A container empty in one version compares as one empty paragraph](2026-11-27-an-empty-container-compares-as-one-empty-paragraph.md) | accepted |
 | 2026-11-27 | [Writing revisions and comments](2026-11-27-writing-revisions-and-comments.md) | accepted |
 | 2026-11-27 | [Workbooks: open and save without loss, read and edit cells, a new workbook](2026-11-27-xlsx-open-read-edit.md) | accepted |
+| 2026-11-27 | [Number format codes to the text Excel displays](2026-11-27-number-format-codes.md) | accepted |

@@ -8,6 +8,7 @@ members = [
     "crates/oxoffice-media",
     "crates/oxoffice-pdf",
     "crates/oxoffice-sml",
+    "crates/oxoffice-numfmt",
     "crates/oxoffice-chart",
     "crates/oxoffice-cli-support",
     "crates/oxoffice-cli",
@@ -51,6 +52,7 @@ oxoffice-layout = { path = "crates/oxoffice-layout", version = "0.8.0", default-
 oxoffice-media = { path = "crates/oxoffice-media", version = "0.8.0" }
 oxoffice-pdf = { path = "crates/oxoffice-pdf", version = "0.8.0", default-features = false }
 oxoffice-sml = { path = "crates/oxoffice-sml", version = "0.8.0" }
+oxoffice-numfmt = { path = "crates/oxoffice-numfmt", version = "0.8.0" }
 oxoffice-chart = { path = "crates/oxoffice-chart", version = "0.8.0" }
 oxoffice-cli-support = { path = "crates/oxoffice-cli-support", version = "0.8.0" }
 oxoffice-cli = { path = "crates/oxoffice-cli", version = "0.8.0", default-features = false }
