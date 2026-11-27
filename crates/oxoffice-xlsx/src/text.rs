@@ -4,7 +4,7 @@
 use oxoffice_xlsx_oxml::reference::column_letters;
 use oxoffice_xlsx_oxml::{CellRange, CellRef, format_f64};
 
-use crate::cell::{Cell, Value};
+use crate::cell::Value;
 use crate::sheet::SheetKind;
 use crate::{Result, Workbook, Worksheet};
 
@@ -135,12 +135,12 @@ impl Worksheet<'_> {
                     .iter()
                     .take_while(|cell| cell.row() == row)
                     .count();
-            let in_row: &[Cell] = &cells[at..end];
+            // The cells of a row come by column: one cursor walks them.
+            let mut in_row = cells[at..end].iter().peekable();
             out.push_str(&format!("| {} |", row + 1));
             for column in columns.clone() {
                 let text = in_row
-                    .iter()
-                    .find(|cell| cell.column() == column)
+                    .next_if(|cell| cell.column() == column)
                     .map_or(String::new(), |cell| markdown_cell(&cell.text));
                 out.push_str(&format!(" {text} |"));
             }

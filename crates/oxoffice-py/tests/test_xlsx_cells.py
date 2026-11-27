@@ -37,6 +37,20 @@ def test_a_cell_is_a_read_only_snapshot_by_reference_or_position():
     assert ws.used_range == "A1:G40"
 
 
+def test_a_position_read_keeps_the_error_of_the_cell(tmp_path):
+    broken = tmp_path / "broken.xlsx"
+    with zipfile.ZipFile(CORPUS / "excel" / "review.xlsx") as source, zipfile.ZipFile(broken, "w") as target:
+        for item in source.infolist():
+            data = source.read(item)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = data.replace(b'<c r="A3" t="s"><v>10</v></c>', b'<c r="A3" t="b"><v>yes</v></c>')
+            target.writestr(item, data)
+    ws = oxlsx.Workbook(broken).sheets[0]
+    for cell in ("A3", (2, 0)):
+        with pytest.raises(oxlsx.XmlError, match="not a boolean"):
+            ws.cell(cell)
+
+
 def test_values_convert_every_kind_in_one_call():
     ws = oxlsx.Workbook(CORPUS / "excel" / "multi.xlsx").sheet("Values")
     values = [row[0] for row in ws.values("B2:B12")]
@@ -83,6 +97,7 @@ def test_styles_comments_and_page_setup_are_frozen_snapshots(tmp_path):
                 data = data.replace(b"relationships/worksheet", b"relationships/chartsheet")
             target.writestr(item, data)
     sheet = oxlsx.Workbook(chart).sheets[0]
-    assert sheet.used_range is None
-    with pytest.raises(oxlsx.XlsxError, match="is a chartsheet: it holds no cells"):
-        sheet.cell("A1")
+    for read in (lambda: sheet.cell("A1"), lambda: sheet.used_range, sheet.to_csv):
+        with pytest.raises(oxlsx.XlsxError, match="is a chartsheet: it holds no cells"):
+            read()
+    assert sheet.page_setup.paper_size == 1

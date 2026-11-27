@@ -194,4 +194,4 @@ jobs:
           OXOFFICE_SCALING: quick
         run: |
           python -m pytest crates/oxoffice-py/tests/test_docx_scaling.py crates/oxoffice-py/tests/test_pptx_scaling.py \
-            -q -rxX -k "not test_every_timed_call_runs_once"
+            crates/oxoffice-py/tests/test_xlsx_scaling.py -q -rxX -k "not test_every_timed_call_runs_once"

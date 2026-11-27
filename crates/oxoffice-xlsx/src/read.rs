@@ -5,7 +5,7 @@
 //! shared strings, the styles (with the theme) and the persons of threaded
 //! comments are read once per workbook, the first time a cell needs them.
 
-use std::borrow::Cow;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use oxoffice_numfmt::{DateKind, DateTime, FormatOptions};
@@ -21,6 +21,7 @@ use oxoffice_xlsx_oxml::{CellRange, CellRef, Element, parse_f64, xstring};
 use crate::cell::{Cell, CellError, FormulaKind, Reference, Value};
 use crate::comments::{Comment, merge};
 use crate::open::is_external;
+use crate::ranges::{RangeEntry, RangeLookup};
 use crate::sheet::SheetKind;
 use crate::style::{CellFormat, StyleTable, theme_colors};
 use crate::{DateSystem, Error, Lazy, Result, Workbook, Worksheet};
@@ -165,14 +166,30 @@ fn related_part(package: &OpcPackage, source: &str, rel_type: &str) -> Option<St
 }
 
 /// The cells of a row with their 0-based columns: `r`, or the column after
-/// the cell before. A column written twice keeps its first cell.
+/// the cell before. A column written twice keeps its first cell. Cells
+/// written in order, as every producer writes them, cost one comparison
+/// each; the columns seen are kept in a set from the first cell out of
+/// order.
 fn columns(row: &CT_Row) -> Vec<(u32, &CT_Cell)> {
     let mut cells: Vec<(u32, &CT_Cell)> = Vec::new();
+    let mut seen: Option<HashSet<u32>> = None;
+    let mut highest: Option<u32> = None;
     let mut next = 0;
     for cell in row.cells() {
         let column = cell.r().map_or(next, |r| r.column);
         next = column + 1;
-        if !cells.iter().any(|(known, _)| *known == column) {
+        let new = if let Some(seen) = seen.as_mut() {
+            seen.insert(column)
+        } else if highest.is_none_or(|highest| column > highest) {
+            true
+        } else {
+            let mut known: HashSet<u32> = cells.iter().map(|(known, _)| *known).collect();
+            let new = known.insert(column);
+            seen = Some(known);
+            new
+        };
+        if new {
+            highest = Some(highest.map_or(column, |highest| highest.max(column)));
             cells.push((column, cell));
         }
     }
@@ -251,6 +268,7 @@ struct SheetReader<'a> {
     sheet: Worksheet<'a>,
     xml: &'a [u8],
     index: &'a SheetIndex,
+    ranges: &'a RangeLookup,
     styles: &'a StyleTable,
     options: FormatOptions,
     recalculation: bool,
@@ -268,32 +286,11 @@ impl<'a> SheetReader<'a> {
         }
     }
 
-    /// The rows from `first` to `last`, read, with their 0-based numbers;
-    /// a row written twice keeps its first writing.
+    /// The rows from `first` to `last`, read, with their 0-based numbers,
+    /// as edits staged them or as written; a row written twice keeps its
+    /// first writing.
     fn rows(&self, first: u32, last: u32) -> Result<Vec<(u32, CT_Row)>> {
-        // Rows written in order come borrowed; others are put in order.
-        let mut spans = self.index.rows_in(first, last);
-        if let Cow::Owned(spans) = &mut spans {
-            spans.sort_by_key(|span| span.row);
-            spans.dedup_by_key(|span| span.row);
-        }
-        spans
-            .iter()
-            .map(|span| {
-                CT_Row::parse(&self.xml[span.range.clone()])
-                    .map(|row| (span.row, row))
-                    .map_err(|error| self.malformed(error.to_string()))
-            })
-            .collect()
-    }
-
-    /// The array formula or data table range holding `address`.
-    fn array_range(&self, address: CellRef) -> Option<CellRange> {
-        self.index
-            .range_formulas
-            .iter()
-            .find(|formula| formula.range.contains(address))
-            .map(|formula| formula.range)
+        Ok(self.sheet.rows_in(first, last)?.into_iter().collect())
     }
 
     /// The value a cell stores.
@@ -401,11 +398,16 @@ impl<'a> SheetReader<'a> {
         if let Some(s) = row.filter(|row| row.custom_format()).and_then(CT_Row::s) {
             return Ok(s);
         }
-        let Some(cols) = self.index.child("cols") else {
-            return Ok(0);
-        };
-        let cols = Element::parse(&self.xml[cols.range.clone()])
-            .map_err(|error| self.malformed(error.to_string()))?;
+        // The columns as an edit staged them, else as written.
+        let cols = match self.sheet.entry().edits.children.get("cols") {
+            Some(Some(staged)) => Element::parse(staged),
+            Some(None) => return Ok(0),
+            None => match self.index.child("cols") {
+                Some(cols) => Element::parse(&self.xml[cols.range.clone()]),
+                None => return Ok(0),
+            },
+        }
+        .map_err(|error| self.malformed(error.to_string()))?;
         Ok(cols
             .elements_named("col")
             .find(|col| {
@@ -417,8 +419,17 @@ impl<'a> SheetReader<'a> {
             .unwrap_or(0))
     }
 
-    /// The cell at `address`, written as `cell` in `row` or absent.
-    fn cell(&self, address: CellRef, row: Option<&CT_Row>, cell: Option<&CT_Cell>) -> Result<Cell> {
+    /// The cell at `address`, written as `cell` in `row` or absent, in the
+    /// array formula's or data table's `range` when one holds it. A cell of
+    /// such a range without its own formula takes the range's kind, range
+    /// and staleness.
+    fn cell(
+        &self,
+        address: CellRef,
+        row: Option<&CT_Row>,
+        cell: Option<&CT_Cell>,
+        range: Option<RangeEntry>,
+    ) -> Result<Cell> {
         let s = match cell {
             Some(cell) => cell.s(),
             None => self.absent_style(row, address.column)?,
@@ -428,15 +439,22 @@ impl<'a> SheetReader<'a> {
             Some(cell) => (self.value(cell, address)?, self.formula(cell, address)?),
             None => (Value::Empty, (None, None, false)),
         };
-        let array_range = match kind {
-            Some(FormulaKind::Array | FormulaKind::DataTable) => cell
-                .and_then(CT_Cell::formula)
-                .and_then(|formula| formula.reference())
-                .or_else(|| self.array_range(address))
-                .or(Some(CellRange::new(address, address))),
-            _ => self.array_range(address),
+        let (kind, array_range, volatile) = match (kind, range) {
+            (Some(own @ (FormulaKind::Array | FormulaKind::DataTable)), range) => {
+                let written = cell
+                    .and_then(CT_Cell::formula)
+                    .and_then(|formula| formula.reference());
+                let range = written
+                    .or(range.map(|range| range.range))
+                    .unwrap_or(CellRange::new(address, address));
+                (Some(own), Some(range), ca)
+            }
+            (None, Some(range)) if stored.is_none() => {
+                (Some(range.kind), Some(range.range), range.volatile)
+            }
+            (kind, range) => (kind, range.map(|range| range.range), ca),
         };
-        let computed = stored.is_some() || kind.is_some() || array_range.is_some();
+        let computed = stored.is_some() || kind.is_some();
         Ok(Cell {
             address,
             text: self.displayed(&value, format),
@@ -445,7 +463,7 @@ impl<'a> SheetReader<'a> {
             stored_formula: stored,
             formula_kind: kind,
             array_range,
-            stale: computed && (self.recalculation || ca),
+            stale: computed && (self.recalculation || volatile),
             number_format: format.style.number_format.clone(),
             style: Arc::clone(&format.style),
             value,
@@ -475,8 +493,20 @@ impl<'a> SheetReader<'a> {
         }
     }
 
-    /// The smallest range holding every cell with a value or a formula.
+    /// The smallest range holding every cell with a value or a formula,
+    /// read once.
     fn used_range(&self) -> Result<Option<CellRange>> {
+        let entry = self.sheet.entry();
+        lazy(&entry.used, &entry.part, || {
+            self.read_used_range().map_err(|error| match error {
+                Error::MalformedPart { message, .. } => message,
+                error => error.to_string(),
+            })
+        })
+        .copied()
+    }
+
+    fn read_used_range(&self) -> Result<Option<CellRange>> {
         let mut used: Option<CellRange> = None;
         for (number, row) in self.rows(0, u32::MAX)? {
             for (column, cell) in columns(&row) {
@@ -516,10 +546,11 @@ impl<'a> SheetReader<'a> {
         for (number, row) in self.rows(range.first.row, range.last.row)? {
             let mut written = columns(&row);
             written.sort_by_key(|(column, _)| *column);
+            let ranges = self.ranges.in_row(number);
             for (column, cell) in written {
                 let address = CellRef::new(number, column);
                 if range.contains(address) && holds_content(cell) {
-                    cells.push(self.cell(address, Some(&row), Some(cell))?);
+                    cells.push(self.cell(address, Some(&row), Some(cell), ranges.find(column))?);
                 }
             }
         }
@@ -531,20 +562,31 @@ impl<'a> Worksheet<'a> {
     /// What reads this sheet's cells; a sheet that holds no cells is
     /// refused.
     fn reader(&self) -> Result<SheetReader<'a>> {
-        if self.kind() != SheetKind::Worksheet {
-            return Err(Error::NotAWorksheet {
-                sheet: self.name().to_owned(),
-                kind: self.kind(),
-            });
-        }
+        self.require_cells()?;
         let (xml, index) = self.index()?;
         Ok(SheetReader {
             sheet: *self,
             xml,
             index,
+            ranges: self
+                .entry()
+                .ranges
+                .get_or_init(|| RangeLookup::new(&index.range_formulas)),
             styles: self.workbook.style_table()?,
             options: self.workbook.format_options(),
             recalculation: self.workbook.recalculation_needed(),
+        })
+    }
+
+    /// Refuses a sheet that holds no cells: a chartsheet, a dialogsheet, a
+    /// macrosheet.
+    pub(crate) fn require_cells(&self) -> Result<()> {
+        if self.kind() == SheetKind::Worksheet {
+            return Ok(());
+        }
+        Err(Error::NotAWorksheet {
+            sheet: self.name().to_owned(),
+            kind: self.kind(),
         })
     }
 
@@ -577,7 +619,7 @@ impl<'a> Worksheet<'a> {
                 .find(|(written, _)| *written == column)
                 .map(|(_, cell)| cell)
         });
-        reader.cell(address, written, cell)
+        reader.cell(address, written, cell, reader.ranges.find(address))
     }
 
     /// The values of `range` (`A1:C10`, `B3`, whole columns `A:C` or rows
@@ -632,21 +674,15 @@ impl<'a> Worksheet<'a> {
     }
 
     /// The smallest range holding every cell with a value or a formula,
-    /// `None` for a sheet without one (a chartsheet among them). Neither
-    /// `dimension` (Google writes none) nor the rows written (Google pads
-    /// them to 1000) say it.
+    /// `None` for a sheet without one; read once. Neither `dimension`
+    /// (Google writes none) nor the rows written (Google pads them to 1000)
+    /// say it.
     pub fn used_range(&self) -> Result<Option<CellRange>> {
-        if self.kind() != SheetKind::Worksheet {
-            return Ok(None);
-        }
         self.reader()?.used_range()
     }
 
     /// The merged ranges, in the order written.
     pub fn merged_ranges(&self) -> Result<Vec<CellRange>> {
-        if self.kind() != SheetKind::Worksheet {
-            return Ok(Vec::new());
-        }
         let reader = self.reader()?;
         let Some(merges) = reader.index.child("mergeCells") else {
             return Ok(Vec::new());
@@ -667,6 +703,7 @@ impl<'a> Worksheet<'a> {
     /// The notes and comment threads of the sheet, by cell, row by row. See
     /// [`Comment`].
     pub fn comments(&self) -> Result<Vec<Comment>> {
+        self.require_cells()?;
         let workbook = self.workbook;
         let part = &self.entry().part;
         let read = |rel_type: &str| -> Result<Option<(String, &[u8])>> {
@@ -706,6 +743,21 @@ impl<'a> Worksheet<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_row_gives_each_column_once_in_the_order_written() {
+        let row = CT_Row::parse(
+            br#"<row r="1"><c r="A1"/><c r="C1"/><c r="B1"/><c r="C1"><v>2</v></c><c/></row>"#,
+        )
+        .unwrap();
+        let read: Vec<(u32, bool)> = columns(&row)
+            .into_iter()
+            .map(|(column, cell)| (column, cell.value().is_some()))
+            .collect();
+        // C written twice keeps its first cell; the cell without `r` follows
+        // the one before it.
+        assert_eq!(read, [(0, false), (2, false), (1, false), (3, false)]);
+    }
 
     #[test]
     fn an_iso_date_reads_as_the_serial_of_its_system() {

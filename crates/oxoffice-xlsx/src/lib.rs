@@ -43,6 +43,7 @@ mod grid;
 mod new_workbook;
 mod open;
 mod page_setup;
+mod ranges;
 mod read;
 mod save;
 mod sheet;

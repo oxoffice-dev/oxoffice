@@ -72,6 +72,22 @@ fn text_prints_displayed_texts_as_rows_markdown_or_records() {
         json!({"ref": "A1", "type": "text", "value": "Item", "text": "Item"})
     );
     assert_eq!(orders["comments"][1]["author"], "Reviewer");
+    // A cell of an array formula's range is stale with its formula.
+    let multi = corpus("authored/multi.xlsx");
+    let record: Value = serde_json::from_str(&stdout(&[
+        "xlsx",
+        "text",
+        "--json",
+        "--sheet",
+        "Q1 Forecast",
+        multi.to_str().unwrap(),
+    ]))
+    .unwrap();
+    let cells = record["sheets"][0]["cells"].as_array().unwrap();
+    assert_eq!(
+        cells.iter().find(|cell| cell["ref"] == "D3").unwrap(),
+        &json!({"ref": "D3", "type": "number", "value": 11960.0, "text": "11,960.00", "stale": true})
+    );
     assert_eq!(
         orders["comments"][0]["replies"][1]["text"],
         "Done, see the updated list."
@@ -185,4 +201,65 @@ fn comments_print_notes_and_threads() {
                "text": "The total looks too high.", "resolved": true,
                "replies": [{"author": "Corpus Author", "date": "2026-11-27T19:43:08.00", "text": "It includes the freight."}]})
     );
+}
+
+#[test]
+fn a_chartsheet_is_refused_by_every_command_that_reads_cells() {
+    use std::io::{Read, Write};
+
+    // excel/review.xlsx with its only sheet related as a chartsheet.
+    let mut source =
+        zip::ZipArchive::new(std::fs::File::open(corpus("excel/review.xlsx")).unwrap()).unwrap();
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for index in 0..source.len() {
+        let mut entry = source.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).unwrap();
+        if name == "xl/_rels/workbook.xml.rels" {
+            data = String::from_utf8(data)
+                .unwrap()
+                .replace("relationships/worksheet", "relationships/chartsheet")
+                .into_bytes();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        out.write_all(&data).unwrap();
+    }
+    let folder = std::env::temp_dir().join(format!("oxoffice-xlsx-chart-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let chart = folder.join("chart.xlsx");
+    std::fs::write(&chart, out.finish().unwrap().into_inner()).unwrap();
+    let chart = chart.to_str().unwrap();
+    for args in [
+        vec!["xlsx", "csv", chart],
+        vec!["xlsx", "csv", chart, "--sheet", "1"],
+        vec!["xlsx", "text", chart, "--sheet", "1"],
+        vec!["xlsx", "text", chart, "--json", "--sheet", "1"],
+        vec!["xlsx", "cells", chart, "A1", "--sheet", "1"],
+        vec!["xlsx", "comments", chart, "--sheet", "1"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("is a chartsheet: it holds no cells to read")
+                || error.contains("the workbook has no visible worksheet"),
+            "{args:?}: {error}"
+        );
+    }
+    // inspect lists it, with no used range.
+    let record: Value =
+        serde_json::from_str(&stdout(&["xlsx", "inspect", "--json", chart])).unwrap();
+    assert_eq!(
+        (
+            &record["sheets"][0]["kind"],
+            &record["sheets"][0]["used_range"]
+        ),
+        (&json!("chartsheet"), &Value::Null)
+    );
+    std::fs::remove_dir_all(&folder).unwrap();
 }

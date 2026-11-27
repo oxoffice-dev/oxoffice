@@ -232,24 +232,7 @@ impl<'a> WorksheetMut<'a> {
     /// The rows `first..=last` (0-based) the sheet has, as an edit staged
     /// them or as written, by row number.
     pub(crate) fn rows_in(&self, first: u32, last: u32) -> Result<BTreeMap<u32, CT_Row>> {
-        let sheet = self.read();
-        let (xml, index) = sheet.index()?;
-        let staged = &sheet.entry().edits.rows;
-        let mut rows = BTreeMap::new();
-        for span in index.rows_in(first, last).iter() {
-            // The first of two rows that say the same number is the row.
-            if !rows.contains_key(&span.row) && !staged.contains_key(&span.row) {
-                let row = CT_Row::parse(&xml[span.range.clone()])
-                    .map_err(|error| self.malformed(error))?;
-                rows.insert(span.row, row);
-            }
-        }
-        for (&number, row) in staged.range(first..=last) {
-            if let Some(row) = row {
-                rows.insert(number, row.clone());
-            }
-        }
-        Ok(rows)
+        self.read().rows_in(first, last)
     }
 
     /// Stages the rows given (number, row as it was, row as it is now). A row
@@ -267,6 +250,8 @@ impl<'a> WorksheetMut<'a> {
             changed = true;
         }
         if changed {
+            // The cells may have changed: the used range is read again.
+            self.workbook.sheets[self.position].used = Default::default();
             self.workbook.mark_edited();
         }
     }

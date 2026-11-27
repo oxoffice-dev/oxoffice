@@ -4,7 +4,7 @@
 
 use oxoffice_xlsx::{CommentKind, Workbook};
 
-use crate::support::corpus_bytes;
+use crate::support::{corpus_bytes, edited};
 
 /// A comment in one line: `cell kind author resolved: text`, each reply
 /// after ` / `.
@@ -61,4 +61,30 @@ fn threads_and_notes_read_by_cell_with_replies_and_authors() {
     ] {
         assert_eq!(lines(path), notes, "{path}");
     }
+}
+
+#[test]
+fn replies_read_by_date_whatever_their_order() {
+    // The first reply of C3 dated after the second.
+    let workbook = edited(
+        "excel/threads.xlsx",
+        "xl/threadedComments/threadedComment1.xml",
+        &[(
+            r#"dT="2026-11-23T09:25:00.00""#,
+            r#"dT="2026-11-23T12:00:00.00""#,
+        )],
+    );
+    let comments = workbook.sheet("Orders").unwrap().comments().unwrap();
+    let replies: Vec<&str> = comments[0]
+        .replies
+        .iter()
+        .map(|reply| reply.text.as_str())
+        .collect();
+    assert_eq!(
+        replies,
+        [
+            "Done, see the updated list.",
+            "Agreed, I will align them with the supplier."
+        ]
+    );
 }

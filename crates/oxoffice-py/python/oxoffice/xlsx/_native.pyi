@@ -154,7 +154,11 @@ class Worksheet:
 
     @property
     def used_range(self) -> str | None:
-        """The smallest range holding every cell with a value or a formula (``"A1:F16"``), ``None`` for none."""
+        """The smallest range holding every cell with a value or a formula (``"A1:F16"``), ``None`` for none.
+
+        Read once. A chartsheet, dialogsheet or macrosheet raises ``XlsxError``, as every read of its cells does
+        (its page setup reads).
+        """
 
     def cell(self, cell: _CellAddress) -> Cell:
         """The cell at an A1 reference (``"B3"``) or a 0-based ``(row, column)``.
@@ -224,7 +228,8 @@ class Cell:
 
     @property
     def formula_kind(self) -> Literal["shared", "array", "data_table"] | None:
-        """The kind of the cell's formula, ``None`` for a plain one or none."""
+        """The kind of the cell's formula, or of the array formula or data table whose range holds the cell;
+        ``None`` for a plain formula or none."""
 
     @property
     def array_range(self) -> str | None:
@@ -232,7 +237,8 @@ class Cell:
 
     @property
     def stale(self) -> bool:
-        """Whether the cached value of the formula may be out of date."""
+        """Whether the cached value of the formula, or of the array formula whose range holds the cell, may be out
+        of date."""
 
     @property
     def number_format(self) -> str:

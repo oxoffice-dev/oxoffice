@@ -4,7 +4,7 @@
 
 use oxoffice_xlsx::{Color, ColorSource, Fill, ResolvedStyle, Workbook};
 
-use crate::support::corpus_bytes;
+use crate::support::{corpus_bytes, edited};
 
 /// A style in one line: `font | fill | left/right/top/bottom | alignment |
 /// style name`.
@@ -126,6 +126,52 @@ fn a_hyperlink_takes_the_theme_link_colour_and_its_style_name() {
                 Some(name)
             ),
             "{path}"
+        );
+    }
+}
+
+#[test]
+fn a_cell_the_sheet_does_not_write_takes_its_row_style_then_its_column_style() {
+    let workbook = edited(
+        "excel/review.xlsx",
+        "xl/worksheets/sheet1.xml",
+        &[
+            (
+                r#"<row r="40" spans="1:7""#,
+                r#"<row r="40" spans="1:7" customFormat="1" s="1""#,
+            ),
+            (
+                r#"<col min="5" max="7" width="14.6640625" customWidth="1"/>"#,
+                r#"<col min="5" max="7" width="14.6640625" customWidth="1" style="3"/>"#,
+            ),
+        ],
+    );
+    let mut workbook = workbook;
+    // Reads take the rows and columns an edit staged: a width that splits
+    // the styled columns, a height on the styled row.
+    let mut orders = workbook.sheet_mut("Orders").unwrap();
+    orders.set_column_width("F", 30.0).unwrap();
+    orders.set_row_height("40", 30.0).unwrap();
+    let sheet = workbook.sheet("Orders").unwrap();
+    // (cell, number format, bold, style name): record 1 is bold, 3 is
+    // `#,##0.00`, 6 the hyperlink.
+    for (cell, format, bold, name) in [
+        ("B40", "General", true, "Normal"),
+        ("E40", "General", true, "Normal"),
+        ("E50", "#,##0.00", false, "Normal"),
+        ("G50", "#,##0.00", false, "Normal"),
+        ("C50", "General", false, "Normal"),
+        ("A40", "General", false, "Lien hypertexte"),
+    ] {
+        let style = sheet.cell(cell).unwrap().style;
+        assert_eq!(
+            (
+                style.number_format.as_str(),
+                style.font.bold,
+                style.style_name.as_deref()
+            ),
+            (format, bold, Some(name)),
+            "{cell}"
         );
     }
 }

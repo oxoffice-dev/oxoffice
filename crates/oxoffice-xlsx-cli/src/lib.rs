@@ -259,12 +259,13 @@ fn inspect(file: &Path, as_json: bool) -> Result<()> {
             } else {
                 serde_json::Value::Null
             };
+            let used_range = if worksheet { sheet.used_range()? } else { None };
             sheets.push(json!({
                 "sheet": sheet.position() + 1,
                 "name": sheet.name(),
                 "state": sheet.state().as_str(),
                 "kind": sheet.kind().as_str(),
-                "used_range": sheet.used_range()?.map(|range| range.to_string()),
+                "used_range": used_range.map(|range| range.to_string()),
                 "page_setup": page_setup,
             }));
         }
@@ -297,7 +298,9 @@ fn inspect(file: &Path, as_json: bool) -> Result<()> {
         if sheet.state() != SheetState::Visible {
             details.push(sheet.state().as_str().to_owned());
         }
-        if let Some(used) = sheet.used_range()? {
+        if sheet.kind() == SheetKind::Worksheet
+            && let Some(used) = sheet.used_range()?
+        {
             details.push(used.to_string());
         }
         writeln!(

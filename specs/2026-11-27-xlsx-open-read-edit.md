@@ -199,11 +199,13 @@ its cached value), `formula` (`None` or the displayed form), `stored_formula`, `
 `oxoffice-numfmt`), `text` (displayed), `style`. Python numbers are `float` (Excel stores doubles; producers write `1`
 and `1.0` alike); an error is a `CellError`, a `str` subclass (`== "#N/A"` works, `isinstance` tells it from text);
 `Cell.datetime` is a `datetime.datetime` for a number under a date or time format, else `None` (a duration such as
-`[h]:mm` has none, nor has the 1900 system's serial 60, Excel's 1900-02-29; its day 0 is 1899-12-31). `formula`,
-`stored_formula` and `formula_kind` belong to the cell that holds the formula, `array_range` to every cell of an array
-formula's or data table's range, whose cached values are stale when the formula's are. A cell the sheet does not write
+`[h]:mm` has none, nor has the 1900 system's serial 60, Excel's 1900-02-29; its day 0 is 1899-12-31). `formula` and
+`stored_formula` belong to the cell that holds the formula; every cell of an array formula's or data table's range
+takes its `formula_kind`, `array_range` and staleness. A cell the sheet does not write
 reads as empty, with its row's style when the row has `customFormat`, else its column's. A bulk read of values past
-10,000,000 cells is refused, naming a smaller range.
+10,000,000 cells is refused, naming a smaller range. A chartsheet, dialogsheet or macrosheet refuses every read of
+cells (cells, values, used range, merges, comments, CSV, Markdown); its page setup reads. A read costs its cells: the
+array ranges, the used range and the style names are each read once.
 
 **Displayed text**: `oxoffice-numfmt`, en-US, as in a column wide enough (no `####`, `General` at 11 characters);
 booleans `TRUE` / `FALSE`, errors their code, text through the format's text section.

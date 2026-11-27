@@ -17,8 +17,9 @@ fn value(value: &Value) -> (&'static str, Json) {
     }
 }
 
-/// A cell of `text --json`: its address, value and displayed text, and for
-/// a formula its displayed form and whether its value may be stale.
+/// A cell of `text --json`: its address, value and displayed text; for a
+/// formula its displayed form, and for a formula or a cell of an array
+/// formula's range whether its value may be stale.
 pub fn text_cell(cell: &Cell) -> Json {
     let (kind, value) = value(&cell.value);
     let mut record = Map::new();
@@ -28,6 +29,8 @@ pub fn text_cell(cell: &Cell) -> Json {
     record.insert("text".to_owned(), json!(cell.text));
     if let Some(formula) = &cell.formula {
         record.insert("formula".to_owned(), json!(formula));
+    }
+    if cell.formula.is_some() || cell.formula_kind.is_some() {
         record.insert("stale".to_owned(), json!(cell.stale));
     }
     Json::Object(record)

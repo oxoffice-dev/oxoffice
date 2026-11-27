@@ -8,6 +8,8 @@
 //! a second time. Comments are ordered by cell, row by row; replies by
 //! date.
 
+use std::collections::{HashMap, HashSet};
+
 use oxoffice_xlsx_oxml::CellRef;
 use oxoffice_xlsx_oxml::comments::{Note, Person, ThreadedComment};
 
@@ -77,27 +79,30 @@ pub(crate) fn merge(
     persons: &[Person],
 ) -> Result<Vec<Comment>> {
     let mut comments = Vec::new();
-    let mut thread_ids = Vec::new();
+    let mut thread_ids = HashSet::new();
     if let Some((part, threads)) = threads {
+        // Ids are GUIDs, compared in any case.
+        let names: HashMap<String, &str> = persons
+            .iter()
+            .map(|person| (person.id.to_ascii_lowercase(), person.display_name.as_str()))
+            .collect();
         let person = |id: &Option<String>| {
-            let id = id.as_deref()?;
-            persons
-                .iter()
-                .find(|person| person.id.eq_ignore_ascii_case(id))
-                .and_then(|person| author(&person.display_name))
+            let id = id.as_deref()?.to_ascii_lowercase();
+            names.get(&id).and_then(|name| author(name))
         };
+        let mut replies: HashMap<String, Vec<&ThreadedComment>> = HashMap::new();
+        for reply in &threads {
+            if let Some(parent) = &reply.parent_id {
+                replies
+                    .entry(parent.to_ascii_lowercase())
+                    .or_default()
+                    .push(reply);
+            }
+        }
         for root in threads.iter().filter(|comment| comment.parent_id.is_none()) {
-            let mut replies: Vec<&ThreadedComment> = threads
-                .iter()
-                .filter(|reply| {
-                    reply
-                        .parent_id
-                        .as_deref()
-                        .is_some_and(|parent| parent.eq_ignore_ascii_case(&root.id))
-                })
-                .collect();
+            let id = root.id.to_ascii_lowercase();
+            let mut replies = replies.remove(&id).unwrap_or_default();
             replies.sort_by(|a, b| a.date.cmp(&b.date));
-            thread_ids.push(root.id.to_ascii_lowercase());
             comments.push(Comment {
                 address: address(&part, &root.reference)?,
                 kind: CommentKind::Thread,
@@ -114,6 +119,7 @@ pub(crate) fn merge(
                     })
                     .collect(),
             });
+            thread_ids.insert(id);
         }
     }
     if let Some((part, notes)) = notes {

@@ -131,15 +131,16 @@ pub struct Cell {
     pub formula: Option<String>,
     /// The formula as the file stores it.
     pub stored_formula: Option<String>,
-    /// The kind of the formula the cell holds, `None` for a plain one or
-    /// none.
+    /// The kind of the formula the cell holds, or of the array formula or
+    /// data table whose range holds it; `None` for a plain formula or none.
     pub formula_kind: Option<FormulaKind>,
     /// The array formula's or data table's range the cell is in, the cell
     /// that holds the formula or another one.
     pub array_range: Option<CellRange>,
-    /// The cached value of the formula may be out of date: the workbook
-    /// asks for a recalculation ([`crate::Workbook::recalculation_needed`])
-    /// or the formula is one Excel computes again on every open (`ca`).
+    /// The cached value of the formula, or of the array formula whose range
+    /// holds the cell, may be out of date: the workbook asks for a
+    /// recalculation ([`crate::Workbook::recalculation_needed`]) or the
+    /// formula is one Excel computes again on every open (`ca`).
     pub stale: bool,
     /// The number format code, a built-in id resolved; `General` when the
     /// style names none.

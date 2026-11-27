@@ -11,6 +11,7 @@
 //! of its scheme is its `srgbClr`, transforms applied, or the `lastClr` of
 //! its `sysClr`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use oxoffice_drawing::color::{
@@ -312,6 +313,10 @@ struct Resolver<'a> {
     styles: &'a StylesXml,
     theme: &'a ThemeColors,
     indexed: Vec<RgbColor>,
+    /// The name of the first cell style of each cell style format.
+    style_names: HashMap<u32, String>,
+    /// The file's own number format codes, the first of each id.
+    number_formats: HashMap<u32, String>,
 }
 
 impl<'a> Resolver<'a> {
@@ -334,10 +339,26 @@ impl<'a> Resolver<'a> {
         } else {
             own
         };
+        let mut style_names = HashMap::new();
+        for style in styles.cell_styles() {
+            style_names
+                .entry(style.xf_id())
+                .or_insert_with(|| xstring::decode(&style.name()).into_owned());
+        }
+        let mut number_formats = HashMap::new();
+        for format in styles.num_fmts() {
+            if let Some(id) = format.id() {
+                number_formats
+                    .entry(id)
+                    .or_insert_with(|| xstring::decode(&format.code()).into_owned());
+            }
+        }
         Resolver {
             styles,
             theme,
             indexed,
+            style_names,
+            number_formats,
         }
     }
 
@@ -387,22 +408,18 @@ impl<'a> Resolver<'a> {
                 locked: flag(xf.protection(), "locked", true),
                 hidden: flag(xf.protection(), "hidden", false),
             },
-            style_name: xf.xf_id().and_then(|xf_id| {
-                self.styles
-                    .cell_styles()
-                    .find(|style| style.xf_id() == xf_id)
-                    .map(|style| xstring::decode(&style.name()).into_owned())
-            }),
+            style_name: xf
+                .xf_id()
+                .and_then(|xf_id| self.style_names.get(&xf_id).cloned()),
         }
     }
 
     /// The code of format `id`: the file's own `numFmt` first, which may
     /// redefine a built-in id, then the built-in code, else General.
     fn number_format(&self, id: u32) -> String {
-        self.styles
-            .num_fmts()
-            .find(|format| format.id() == Some(id))
-            .map(|format| xstring::decode(&format.code()).into_owned())
+        self.number_formats
+            .get(&id)
+            .cloned()
             .or_else(|| builtin_code(id, Locale::EnUs).map(str::to_owned))
             .unwrap_or_else(|| "General".to_owned())
     }
@@ -530,8 +547,11 @@ fn flag(element: Option<&Element>, name: &str, default: bool) -> bool {
 
 /// `AARRGGBB` or `RRGGBB`, the alpha byte ignored.
 fn parse_rgb(text: &str) -> Option<RgbColor> {
+    if !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
     let hex = match text.len() {
-        8 => &text[2..],
+        8 => text.get(2..)?,
         6 => text,
         _ => return None,
     };
@@ -645,6 +665,24 @@ mod tests {
             resolver.color(Some(&Element::parse(b"<color/>").unwrap())),
             None
         );
+    }
+
+    #[test]
+    fn an_rgb_value_reads_without_its_alpha_and_refuses_what_is_not_hex() {
+        for (text, rgb) in [
+            ("FF0F766E", Some("0F766E")),
+            ("0F766E", Some("0F766E")),
+            ("zz0F766E", None),
+            ("\u{20ac}FFFFF", None),
+            ("\u{e9}\u{e9}0F766E", None),
+            ("FFF", None),
+        ] {
+            assert_eq!(
+                parse_rgb(text).map(|rgb| rgb.to_string()).as_deref(),
+                rgb,
+                "{text}"
+            );
+        }
     }
 
     #[test]

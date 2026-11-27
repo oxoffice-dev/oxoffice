@@ -111,12 +111,14 @@ pub enum RangeFormulaKind {
     DataTable,
 }
 
-/// An array formula or a data table: the cell that holds it and its range.
+/// An array formula or a data table: the cell that holds it, its range,
+/// and whether it is computed again on every open (`ca`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RangeFormula {
     pub cell: CellRef,
     pub range: CellRange,
     pub kind: RangeFormulaKind,
+    pub volatile: bool,
 }
 
 /// What one pass over a worksheet (or any sheet part) records. See the
@@ -334,6 +336,7 @@ impl SheetIndex {
                                 cell,
                                 range: range.unwrap_or(CellRange::new(cell, cell)),
                                 kind,
+                                volatile: tag.bool("ca").unwrap_or(false),
                             });
                         }
                         _ => {}

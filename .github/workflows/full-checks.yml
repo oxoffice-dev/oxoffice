@@ -147,7 +147,7 @@ jobs:
         shell: bash
         env:
           OXOFFICE_SCALING: full
-        run: python -m pytest crates/oxoffice-py/tests/test_docx_scaling.py crates/oxoffice-py/tests/test_pptx_scaling.py -q -rxX
+        run: python -m pytest crates/oxoffice-py/tests/test_docx_scaling.py crates/oxoffice-py/tests/test_pptx_scaling.py crates/oxoffice-py/tests/test_xlsx_scaling.py -q -rxX
 
   # The stack a user's script needs, measured on a release-profile wheel
   # (frame sizes depend on optimisation) over the whole corpus, on the main

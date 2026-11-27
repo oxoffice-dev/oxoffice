@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 use oxoffice_xlsx::{CellRef, Error, Value, Workbook};
 
-use crate::support::{corpus_bytes, corpus_workbooks, package_parts, zip_of};
+use crate::support::{corpus_bytes, corpus_workbooks, edited};
 
 /// The rows of a table (`tests/xlsx/*.tsv`): its lines but comments,
 /// split at tabs, `\r`, `\n` and `\u{...}` read as their characters.
@@ -187,9 +187,9 @@ fn formulas_read_their_kind_range_stored_form_and_staleness() {
         "authored/review.xlsx | Orders!F3 | shared | - | D3*E3 | true",
         "authored/review.xlsx | Orders!A1 | - | - | - | false",
         "excel/multi.xlsx | Q1 Forecast!D2 | array | D2:D7 | B2:B7*C2:C7 | false",
-        "excel/multi.xlsx | Q1 Forecast!D3 | - | D2:D7 | - | false",
+        "excel/multi.xlsx | Q1 Forecast!D3 | array | D2:D7 | - | false",
         "excel/multi.xlsx | Q1 Forecast!F2 | array | F2:F7 | _xlfn._xlws.SORT(B2:B7,,-1) | false",
-        "authored/multi.xlsx | Q1 Forecast!F3 | - | F2:F7 | - | true",
+        "authored/multi.xlsx | Q1 Forecast!F3 | array | F2:F7 | - | true",
         "excel/stream.xlsx | Log!B28 | - | - | TODAY() | true",
         "excel/stream.xlsx | Log!B30 | - | - | SUM(OFFSET(E2,0,0,5,1)) | true",
         "libreoffice/stream.xlsx | Log!B28 | - | - | TODAY() | false",
@@ -212,6 +212,26 @@ fn formulas_read_their_kind_range_stored_form_and_staleness() {
             .recalculation_needed()
     };
     assert!(recalculation("authored/review.xlsx") && !recalculation("excel/review.xlsx"));
+}
+
+#[test]
+fn the_cells_of_an_array_formula_are_stale_with_it() {
+    // Excel marks a formula it computes again on every open with `ca`.
+    let workbook = edited(
+        "excel/multi.xlsx",
+        "xl/worksheets/sheet3.xml",
+        &[(
+            r#"<f t="array" ref="F2:F7">"#,
+            r#"<f t="array" ref="F2:F7" ca="1">"#,
+        )],
+    );
+    let sheet = workbook.sheet("Q1 Forecast").unwrap();
+    for cell in ["F2", "F3", "F7"] {
+        let read = sheet.cell(cell).unwrap();
+        assert!(read.stale, "{cell}");
+        assert_eq!(read.formula_kind.map(|kind| kind.as_str()), Some("array"));
+    }
+    assert!(!sheet.cell("D3").unwrap().stale, "another array formula");
 }
 
 #[test]
@@ -329,28 +349,29 @@ fn a_sheet_reads_as_csv_and_the_workbook_as_markdown() {
 
 #[test]
 fn a_sheet_without_cells_and_a_bad_reference_are_refused() {
-    let review = corpus_bytes("excel/review.xlsx");
-    let mut parts = package_parts(&review);
-    let rels = parts.get_mut("xl/_rels/workbook.xml.rels").unwrap();
-    *rels = String::from_utf8(rels.clone())
-        .unwrap()
-        .replace("relationships/worksheet", "relationships/chartsheet")
-        .into_bytes();
-    let entries: Vec<(&str, &[u8])> = parts
-        .iter()
-        .map(|(name, data)| (name.as_str(), data.as_slice()))
-        .collect();
-    let chart = Workbook::from_bytes(&zip_of(&entries)).unwrap();
+    let chart = edited(
+        "excel/review.xlsx",
+        "xl/_rels/workbook.xml.rels",
+        &[("relationships/worksheet", "relationships/chartsheet")],
+    );
     let chartsheet = chart.sheet("Orders").unwrap();
-    assert_eq!(chartsheet.used_range().unwrap(), None);
-    let workbook = Workbook::from_bytes(&review).unwrap();
+    // Every read of its cells is refused; its page setup reads.
+    let refused = "sheet Orders is a chartsheet: it holds no cells to read";
+    for error in [
+        chartsheet.used_range().map(|_| ()),
+        chartsheet.cells("A1:B2").map(|_| ()),
+        chartsheet.merged_ranges().map(|_| ()),
+        chartsheet.comments().map(|_| ()),
+        chartsheet.to_csv(&Default::default()).map(|_| ()),
+        chartsheet.to_markdown().map(|_| ()),
+    ] {
+        assert_eq!(error.unwrap_err().to_string(), refused);
+    }
+    assert!(chartsheet.page_setup().is_ok());
+    let workbook = Workbook::from_bytes(&corpus_bytes("excel/review.xlsx")).unwrap();
     let orders = workbook.sheet("Orders").unwrap();
     let cases: [(&str, Error, &str); 4] = [
-        (
-            "a chartsheet",
-            chartsheet.cell("A1").unwrap_err(),
-            "sheet Orders is a chartsheet: it holds no cells to read",
-        ),
+        ("a chartsheet", chartsheet.cell("A1").unwrap_err(), refused),
         (
             "not a reference",
             orders.values("A0:B2").unwrap_err(),

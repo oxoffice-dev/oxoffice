@@ -445,19 +445,13 @@ impl PyWorksheet {
                 "a cell is an A1 reference such as \"B3\" or a 0-based (row, column)",
             ));
         };
-        let (Ok(row), Ok(column)) = (u32::try_from(row), u32::try_from(column)) else {
+        if !(0..MAX_ROWS).contains(&row) || !(0..MAX_COLUMNS).contains(&column) {
             return Err(PyIndexError::new_err(format!(
                 "({row}, {column}) is outside the sheet"
             )));
-        };
+        }
+        let (row, column) = (row as u32, column as u32);
         self.read(py, |sheet| sheet.cell_at(row, column).map(PyCell::from))
-            .map_err(|error| {
-                if error.is_instance_of::<PyValueError>(py) {
-                    PyIndexError::new_err(format!("({row}, {column}) is outside the sheet"))
-                } else {
-                    error
-                }
-            })
     }
 
     /// The values of `range` (`"A1:C10"`, `"B3"`, whole columns `"A:C"` or
