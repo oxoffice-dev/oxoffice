@@ -55,9 +55,10 @@ impl PyDocument {
 impl PyDocument {
     pub(super) fn from_document(inner: oxoffice_docx::Document, py: Python<'_>) -> PyResult<Self> {
         // Keep all eager fallible checks, without building dormant read facts.
-        let (_, _, paragraphs, _) = inner
+        let paragraphs = inner
             .story_owner_snapshots()
-            .map_err(|error| docx_to_pyerr(py, error))?;
+            .map_err(|error| docx_to_pyerr(py, error))?
+            .paragraphs;
         for (_, xml) in paragraphs {
             oxoffice_docx_oxml::CT_P::from_xml_fragment(&xml)
                 .map_err(|error| docx_to_pyerr(py, error.into()))?;

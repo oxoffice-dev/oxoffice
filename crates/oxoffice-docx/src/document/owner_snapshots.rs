@@ -69,19 +69,12 @@ impl Document {
 
     /// Snapshot all checked Word owners within one immutable source inventory.
     ///
-    /// The four families have the same order, payload and admission as story
-    /// items, physical table cells, range paragraphs and hyperlinks respectively.
-    /// Source qualification is shared only within this call, never across edits.
+    /// The families have the same order, payload and admission as story
+    /// items, physical table cells, range paragraphs, hyperlinks and the
+    /// tables of block content controls respectively. Source qualification is
+    /// shared only within this call, never across edits.
     #[doc(hidden)]
-    #[allow(clippy::type_complexity)] // One cross-crate projection carries four existing owned families.
-    pub fn story_owner_snapshots(
-        &self,
-    ) -> Result<(
-        Vec<StoryItemSnapshot>,
-        Vec<(ContentLocation, usize, usize, StoryId)>,
-        Vec<(ContentLocation, Vec<u8>)>,
-        Vec<(ContentLocation, LinkInfo)>,
-    )> {
+    pub fn story_owner_snapshots(&self) -> Result<StoryOwnerSnapshots> {
         self.owner_snapshots_of(self.story_sources()?, false)
     }
 
@@ -90,19 +83,10 @@ impl Document {
     /// table's namespace-complete XML. Body routes are those of that body,
     /// and cell story owners count from zero.
     #[doc(hidden)]
-    #[allow(clippy::type_complexity)] // The table XML and the four owned families.
     pub fn detached_table_owner_snapshots(
         &self,
         table: &CT_Tbl,
-    ) -> Result<(
-        Vec<u8>,
-        (
-            Vec<StoryItemSnapshot>,
-            Vec<(ContentLocation, usize, usize, StoryId)>,
-            Vec<(ContentLocation, Vec<u8>)>,
-            Vec<(ContentLocation, LinkInfo)>,
-        ),
-    )> {
+    ) -> Result<(Vec<u8>, StoryOwnerSnapshots)> {
         let (part, xml) =
             self.standalone_body_item(&BodyContent::Table(Box::new(table.clone())))?;
         let snapshots = self.owner_snapshots_of(
@@ -133,7 +117,7 @@ impl Document {
         };
         alone.validate_resource_limits()?;
         let part = self.document.standalone_body_item_xml(item)?;
-        let (snapshots, cells, paragraphs, links) = self.owner_snapshots_of(
+        let snapshots = self.owner_snapshots_of(
             vec![StorySource {
                 root_kind: StoryKind::Body,
                 part_name: self.doc_part_name.clone(),
@@ -149,10 +133,7 @@ impl Document {
         let items = scan_story_items(&part, body, None)?;
         let count = |kind| owners.iter().filter(|owner| owner.kind == kind).count();
         Ok(BodyItemOwners {
-            snapshots,
-            cells,
-            paragraphs,
-            links,
+            owners: snapshots,
             cell_stories: count(StoryKind::TableCell),
             text_boxes: count(StoryKind::TextBox),
             paragraph_routes: body_paragraph_routes(&alone, &items),
@@ -287,8 +268,9 @@ impl Document {
         Ok(Some(extent))
     }
 
-    /// The bytes of every story owner, story item, paragraph and hyperlink of
-    /// the document, by the routes of [`Self::story_owner_snapshots`], each
+    /// The bytes of every story owner, story item (with the tables of block
+    /// controls), paragraph and hyperlink of the document, by the routes of
+    /// [`Self::story_owner_snapshots`], each
     /// closed over the namespaces it uses. Debug checks compare them across
     /// an edit with [`resolved_xml_events`].
     #[doc(hidden)]
@@ -336,16 +318,20 @@ impl Document {
                 for (index, item) in items.iter().enumerate() {
                     elements.push((1, key(vec![index], 0), item.full.clone()));
                 }
-                for (location, span) in story_range_paragraph_spans_from_inventory(
+                for (paragraphs, tables) in story_range_block_spans_from_inventory(
                     xml,
                     &[(id.clone(), owner.clone())],
                     std::slice::from_ref(&items),
                     &item_scopes,
-                )?
-                .into_iter()
-                .flatten()
-                {
-                    elements.push((2, key(location.index_path, 0), span));
+                )? {
+                    for (location, span) in paragraphs {
+                        elements.push((2, key(location.index_path, 0), span));
+                    }
+                    // A table of a block control is listed with the items, by
+                    // its `[c, k]`.
+                    for (location, span) in tables {
+                        elements.push((1, key(location.index_path, 0), span));
+                    }
                 }
                 let mut local = HashMap::<Vec<usize>, usize>::new();
                 for (location, link) in ordered_story_link_spans(xml, &id, items, &item_scopes)? {
@@ -408,18 +394,12 @@ impl Document {
     /// [`Self::story_part_sources`] lists, each snapshot's XML
     /// namespace-complete.
     #[doc(hidden)]
-    #[allow(clippy::type_complexity)] // The four owned families of one part.
     pub fn story_part_owner_snapshots(
         &self,
         kind: StoryKind,
         part_name: &str,
         xml: &[u8],
-    ) -> Result<(
-        Vec<StoryItemSnapshot>,
-        Vec<(ContentLocation, usize, usize, StoryId)>,
-        Vec<(ContentLocation, Vec<u8>)>,
-        Vec<(ContentLocation, LinkInfo)>,
-    )> {
+    ) -> Result<StoryOwnerSnapshots> {
         self.owner_snapshots_of(
             vec![StorySource {
                 root_kind: kind,
@@ -453,21 +433,16 @@ impl Document {
         valid
     }
 
-    #[allow(clippy::type_complexity)] // One cross-crate projection carries four existing owned families.
     fn owner_snapshots_of(
         &self,
         sources: Vec<StorySource<'_>>,
         standalone: bool,
-    ) -> Result<(
-        Vec<StoryItemSnapshot>,
-        Vec<(ContentLocation, usize, usize, StoryId)>,
-        Vec<(ContentLocation, Vec<u8>)>,
-        Vec<(ContentLocation, LinkInfo)>,
-    )> {
+    ) -> Result<StoryOwnerSnapshots> {
         let mut snapshots = Vec::new();
         let mut cells = Vec::new();
         let mut paragraphs = Vec::new();
         let mut links = Vec::new();
+        let mut control_tables = Vec::new();
         let mut seen = HashSet::new();
         let mut emitted_cells = HashSet::new();
         for source in sources {
@@ -509,19 +484,20 @@ impl Document {
                     .flatten()
                     .flat_map(|item| [item.scan.start, item.full.start]),
             )?;
-            cells.extend(Self::story_table_cells_from_inventory(
-                &source,
-                &physical_owners,
-                &inventories,
-                &scopes,
-                &mut emitted_cells,
-            )?);
-            let paragraph_spans = story_range_paragraph_spans_from_inventory(
-                &source.xml,
-                &owners,
-                &inventories,
-                &scopes,
-            )?;
+            // One pass over each block control gives its paragraphs and its
+            // tables.
+            let (paragraph_spans, mut table_spans): (Vec<_>, Vec<_>) =
+                story_range_block_spans_from_inventory(
+                    &source.xml,
+                    &owners,
+                    &inventories,
+                    &scopes,
+                )?
+                .into_iter()
+                .unzip();
+            for tables in &mut table_spans {
+                tables.sort_by_key(|(_, span): &(ContentLocation, Range<usize>)| span.start);
+            }
             let mut link_spans = Vec::with_capacity(owners.len());
             for ((story, _), items) in owners.iter().zip(&inventories) {
                 link_spans.push(ordered_story_link_spans(
@@ -536,9 +512,17 @@ impl Document {
                 paragraph_spans
                     .iter()
                     .flatten()
+                    .chain(table_spans.iter().flatten())
                     .map(|(_, span)| span.start)
                     .chain(link_spans.iter().flatten().map(|(_, link)| link.full.start)),
             )?;
+            cells.extend(Self::story_table_cells_from_inventory(
+                &source,
+                &physical_owners,
+                (&inventories, &table_spans),
+                |start| scopes.get(&start).or_else(|| leaf_scopes.get(&start)),
+                &mut emitted_cells,
+            )?);
             for (owner_index, ((story, _), items)) in owners.iter().zip(&inventories).enumerate() {
                 if !admitted[owner_index] {
                     continue;
@@ -587,6 +571,27 @@ impl Document {
                         xml,
                     });
                 }
+                // Each control table is placed among the story-item tables by
+                // how many of them come before it.
+                let mut item_tables = items
+                    .iter()
+                    .filter(|item| item.kind == StoryItemKind::Table)
+                    .map(|item| item.full.start)
+                    .peekable();
+                let mut before = 0;
+                for (location, span) in &table_spans[owner_index] {
+                    while item_tables.next_if(|start| *start < span.start).is_some() {
+                        before += 1;
+                    }
+                    let scope = leaf_scopes.get(&span.start).ok_or_else(|| {
+                        Error::Other("control table namespace scope was not inventoried".into())
+                    })?;
+                    control_tables.push((
+                        location.clone(),
+                        before,
+                        close_content_fragment_namespaces(&source.xml[span.clone()], scope)?,
+                    ));
+                }
             }
             for (index, mut spans) in paragraph_spans.into_iter().enumerate() {
                 if !admitted[index] {
@@ -616,15 +621,29 @@ impl Document {
                 }
             }
         }
-        Ok((snapshots, cells, paragraphs, links))
+        Ok(StoryOwnerSnapshots {
+            items: snapshots,
+            cells,
+            paragraphs,
+            links,
+            control_tables,
+        })
     }
 
+    /// The physical cells of every table of `source`, each routed to the
+    /// innermost table that holds it: the story-item tables of `inventories`
+    /// and the tables written in block controls of `control_tables`, one list
+    /// of each per owner. `scope_at` gives the namespaces in scope at a
+    /// table's start.
     #[allow(clippy::type_complexity)]
-    fn story_table_cells_from_inventory(
+    fn story_table_cells_from_inventory<'a>(
         source: &StorySource<'_>,
         owners: &[StoryOwnerSpan],
-        inventories: &[Vec<StoryItemSpan>],
-        scopes: &HashMap<usize, BTreeMap<String, String>>,
+        (inventories, control_tables): (
+            &[Vec<StoryItemSpan>],
+            &[Vec<(ContentLocation, Range<usize>)>],
+        ),
+        scope_at: impl Fn(usize) -> Option<&'a BTreeMap<String, String>>,
         emitted: &mut HashSet<(ContentLocation, usize, usize)>,
     ) -> Result<Vec<(ContentLocation, usize, usize, StoryId)>> {
         let mut result = Vec::new();
@@ -644,6 +663,11 @@ impl Document {
                     ));
                 }
             }
+        }
+        // A table written in a block control holds its own cells: without
+        // it, they would go to the table around the control.
+        for (location, span) in control_tables.iter().flatten() {
+            tables.push((span.clone(), location.clone()));
         }
         // Recover physical order with one lexical pass instead of sorting
         // a growing table inventory. Qualification came from the owner scan.
@@ -688,8 +712,7 @@ impl Document {
             while next < tables.len() && tables[next].0.end < span.end {
                 next += 1;
             }
-            let scope = scopes
-                .get(&span.start)
+            let scope = scope_at(span.start)
                 .ok_or_else(|| Error::Other("table item scope missing".into()))?;
             let closed = close_content_fragment_namespaces(&source.xml[span.clone()], scope)?;
             let mut wrapped =

@@ -129,7 +129,7 @@ use render_options::{
 pub(crate) use story_types::GeneratedStoryOwner;
 pub use story_types::{
     BodyItemOwners, BodyItemRef, ElementExtent, HeaderFooterKind, OwnerElementXml, StoryError,
-    StoryItemKind, StoryKind,
+    StoryItemKind, StoryKind, StoryOwnerSnapshots,
 };
 use text_report::STORY_TEXT_RELATIONSHIPS;
 pub use text_report::{StoryText, StoryTextItem, TextDiagnostic, TextReport};
@@ -287,8 +287,9 @@ use story_scan::{
     accepted_story_text_visible, bind_text_box_source_owners, complex_field_marker,
     complex_field_text_visible, control_block_name, editable_note_owner, opaque_story_event,
     paired_story_owners, prepare_semantic_paragraph_projection, scan_story_control_blocks,
-    scan_story_control_paragraphs, scan_story_control_paragraphs_with_scope, scan_story_item_links,
-    scan_story_items, story_break_text, story_field_marker_tracked, structural_fingerprint,
+    scan_story_control_blocks_with_scope, scan_story_control_paragraphs,
+    scan_story_control_paragraphs_with_scope, scan_story_item_links, scan_story_items,
+    story_break_text, story_field_marker_tracked, structural_fingerprint,
     update_complex_field_results,
 };
 pub(crate) use story_scan::{
@@ -323,9 +324,9 @@ use story_xml::{
     StoryNamespace, StorySdtContext, changed_story_namespace_scope, comment_move_source_edits,
     comment_reference_run_span, field_instruction_has_name, modeled_story_child,
     scoped_proof_marker, scoped_proof_sentinel, story_element_end, story_element_sdt_context,
-    story_frame_local_name, story_namespace, story_range_paragraph_spans,
-    story_range_paragraph_spans_from_inventory, story_sdt_context, story_word_prefixes_at,
-    word_element, xml_decodes,
+    story_frame_local_name, story_namespace, story_range_block_spans_from_inventory,
+    story_range_paragraph_spans, story_range_paragraph_spans_from_inventory, story_sdt_context,
+    story_word_prefixes_at, word_element, xml_decodes,
 };
 use template_programs::{
     paired_scoped_edits, paired_scoped_ranges, prepare_template_source_programs,

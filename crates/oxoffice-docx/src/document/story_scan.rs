@@ -1297,11 +1297,29 @@ pub(super) fn scan_story_control_blocks(
     control: &StoryItemSpan,
     local_block: &[u8],
 ) -> Result<Vec<Range<usize>>> {
+    let (paragraphs, tables) = scan_story_control_block_spans(xml, control)?;
+    Ok(if local_block == b"tbl" {
+        tables
+    } else {
+        paragraphs
+    })
+}
+
+/// The spans of the paragraphs and of the tables of a block control.
+pub(super) type ControlBlockSpans = (Vec<Range<usize>>, Vec<Range<usize>>);
+
+/// The paragraphs and the tables written directly in the content of
+/// `control`, each in document order, read in one pass.
+pub(super) fn scan_story_control_block_spans(
+    xml: &[u8],
+    control: &StoryItemSpan,
+) -> Result<ControlBlockSpans> {
     let empty_word_prefixes = Arc::new(Vec::new());
     let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut stack = Vec::<XmlElementFrame>::new();
     let mut paragraphs = Vec::new();
+    let mut tables = Vec::new();
     let mut active = false;
     let mut buffer = Vec::new();
     loop {
@@ -1349,8 +1367,13 @@ pub(super) fn scan_story_control_blocks(
                         && parent.namespace == StoryNamespace::Word
                         && parent.local_name.as_ref() == b"sdtContent"
                 });
-                if !opaque && is_word && local.as_ref() == local_block && direct_content {
-                    paragraphs.push(
+                let found = match local.as_ref() {
+                    b"p" => Some(&mut paragraphs),
+                    b"tbl" => Some(&mut tables),
+                    _ => None,
+                };
+                if let Some(found) = found.filter(|_| !opaque && is_word && direct_content) {
+                    found.push(
                         before..if empty {
                             after
                         } else {
@@ -1406,7 +1429,7 @@ pub(super) fn scan_story_control_blocks(
         }
         buffer.clear();
     }
-    Ok(paragraphs)
+    Ok((paragraphs, tables))
 }
 
 pub(super) fn scan_story_control_paragraphs_with_scope(
@@ -1414,6 +1437,16 @@ pub(super) fn scan_story_control_paragraphs_with_scope(
     control: &StoryItemSpan,
     scope: &BTreeMap<String, String>,
 ) -> Result<Vec<Range<usize>>> {
+    Ok(scan_story_control_blocks_with_scope(xml, control, scope)?.0)
+}
+
+/// [`scan_story_control_block_spans`] read from the control's excerpt
+/// alone, closed over `scope`, the namespaces in scope at its start.
+pub(super) fn scan_story_control_blocks_with_scope(
+    xml: &[u8],
+    control: &StoryItemSpan,
+    scope: &BTreeMap<String, String>,
+) -> Result<ControlBlockSpans> {
     let (closed, added) = scoped_story_fragment(xml, control.full.clone(), scope)?;
     let mut local_control = control.clone();
     local_control.full = 0..closed.len();
@@ -1431,10 +1464,14 @@ pub(super) fn scan_story_control_paragraphs_with_scope(
                 Error::Other("control paragraph excerpt has an invalid source offset".to_owned())
             })
     };
-    scan_story_control_paragraphs(&closed, &local_control)?
-        .into_iter()
-        .map(|paragraph| Ok(map(paragraph.start)?..map(paragraph.end)?))
-        .collect()
+    let spans = |blocks: Vec<Range<usize>>| -> Result<Vec<Range<usize>>> {
+        blocks
+            .into_iter()
+            .map(|block| Ok(map(block.start)?..map(block.end)?))
+            .collect()
+    };
+    let (paragraphs, tables) = scan_story_control_block_spans(&closed, &local_control)?;
+    Ok((spans(paragraphs)?, spans(tables)?))
 }
 
 pub(super) fn scan_story_items(
