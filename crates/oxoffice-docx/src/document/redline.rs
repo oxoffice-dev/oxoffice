@@ -39,6 +39,9 @@ enum ContainerKind {
     Holder { identity: String },
     /// A revision of this session; its id is given when the output is written.
     New { deletion: bool },
+    /// A later part of the insertion `of` that new text split, which takes
+    /// an id of its own when the output is written.
+    Split { of: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -888,40 +891,122 @@ pub(super) fn redline_xml(
     }
     take(Place::End, &mut placed, &mut leaves);
     adopt_markers(&mut leaves, &output.containers);
+    one_id_per_element(&mut leaves, &mut output.containers);
     output.leaves = leaves;
     output.start = new.start.clone();
 
-    // Ids in document order.
+    // Ids in document order, held once the result resolves as it should, so
+    // that a refused edit leaves none taken.
     let timestamp = tracking.changes.timestamp();
-    let mut written = Vec::new();
+    let mut order = Vec::new();
     for leaf in &output.leaves {
         for &container in &leaf.path {
-            let entry = &mut output.containers[container];
-            if let ContainerKind::New { deletion } = entry.kind
-                && entry.open.is_empty()
+            if matches!(
+                output.containers[container].kind,
+                ContainerKind::New { .. } | ContainerKind::Split { .. }
+            ) && !order.contains(&container)
             {
-                let id = identifiers.reserve_revision_id()?;
+                order.push(container);
+            }
+        }
+    }
+    let ids = identifiers.free_revision_ids(order.len())?;
+    let mut written = Vec::new();
+    for (&container, &id) in order.iter().zip(&ids) {
+        // A part of an insertion of this session stays the session's.
+        if let ContainerKind::Split { of } = output.containers[container].kind
+            && own(&output.containers[of].kind)
+        {
+            written.push(id);
+        }
+        let entry = &mut output.containers[container];
+        let prefix = &old.prefix;
+        match entry.kind {
+            ContainerKind::New { deletion } => {
                 written.push(id);
                 let author = quick_xml::escape::escape(author);
                 let date = timestamp.map_or(String::new(), |date| {
-                    format!(
-                        " {}date=\"{}\"",
-                        old.prefix,
-                        quick_xml::escape::escape(date)
-                    )
+                    format!(" {prefix}date=\"{}\"", quick_xml::escape::escape(date))
                 });
                 let name = if deletion { "del" } else { "ins" };
-                let prefix = &old.prefix;
                 entry.open = format!(
                     "<{prefix}{name} {prefix}id=\"{id}\" {prefix}author=\"{author}\"{date}>"
                 );
             }
+            ContainerKind::Split { .. } => entry.open = with_id(&entry.open, id)?,
+            _ => unreachable!("only new revisions and split halves take an id"),
         }
     }
     let redlined = write(&output);
     check(before, after, &redlined)?;
+    identifiers.hold_revision_ids(&ids);
     tracking.record(&written);
     Ok(redlined)
+}
+
+/// One id per revision element, as Word writes them: a revision the output
+/// writes as several elements, an earlier insertion that new text split or a
+/// new revision that other content cut, gives each later element a copy of
+/// its own, a `Split` or another `New`, which takes a new id (Word checks W1,
+/// W2). An element goes on while the leaves around it share the path up to
+/// it, as [`write`] keeps it open.
+fn one_id_per_element(leaves: &mut [Leaf], containers: &mut Vec<Container>) {
+    let mut seen = HashSet::new();
+    let mut previous: Vec<usize> = Vec::new();
+    let mut alias: HashMap<usize, usize> = HashMap::new();
+    for leaf in leaves {
+        let original = leaf.path.clone();
+        for (depth, slot) in leaf.path.iter_mut().enumerate() {
+            let container = *slot;
+            let kind = match containers[container].kind {
+                ContainerKind::Inserted { .. } => ContainerKind::Split { of: container },
+                ContainerKind::New { deletion } => ContainerKind::New { deletion },
+                _ => continue,
+            };
+            let open = previous.get(..=depth) == original.get(..=depth);
+            if !open {
+                let part = if seen.insert(container) {
+                    container
+                } else {
+                    let mut copy = containers[container].clone();
+                    copy.kind = kind;
+                    containers.push(copy);
+                    containers.len() - 1
+                };
+                alias.insert(container, part);
+            }
+            *slot = alias[&container];
+        }
+        previous = original;
+    }
+}
+
+/// A revision start tag, as the paragraph wrote it, with its `w:id` set to
+/// `id`. The tag carries no namespace declaration: the revision element and
+/// its id share the WordprocessingML prefix.
+fn with_id(tag: &str, id: i32) -> Result<String> {
+    let mut reader = quick_xml::Reader::from_str(tag);
+    let (Event::Start(start) | Event::Empty(start)) = reader.read_event().map_err(xml_error)?
+    else {
+        return Err(xml_error("a revision start tag"));
+    };
+    let prefix = start.name().prefix().map(|prefix| prefix.as_ref().to_vec());
+    let name = String::from_utf8_lossy(start.name().as_ref()).into_owned();
+    let mut copy = BytesStart::new(name);
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(xml_error)?;
+        let key = attribute.key;
+        let word = key.prefix().map(|prefix| prefix.as_ref().to_vec()) == prefix;
+        if word && key.local_name().as_ref() == b"id" {
+            let key = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+            copy.push_attribute((key.as_str(), id.to_string().as_str()));
+        } else {
+            copy.push_attribute(attribute);
+        }
+    }
+    let mut writer = Writer::new(Vec::new());
+    writer.write_event(Event::Start(copy)).map_err(xml_error)?;
+    String::from_utf8(writer.into_inner()).map_err(xml_error)
 }
 
 /// A marker between two leaves removed by the same new deletion goes into it.
@@ -1065,8 +1150,10 @@ fn check(before: &str, after: &str, redlined: &str) -> Result<()> {
     if resolved(redlined, Resolution::Accept)? != resolved(after, Resolution::Accept)?
         || resolved(redlined, Resolution::Reject)? != resolved(before, Resolution::Reject)?
     {
-        return Err(refused(
-            "an edit whose tracked change would not resolve to it",
+        return Err(Error::Other(
+            "this edit cannot be written as a tracked change: accepting it would not give the edit, \
+             or rejecting it the paragraph before it"
+                .to_owned(),
         ));
     }
     Ok(())

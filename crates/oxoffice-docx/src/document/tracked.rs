@@ -132,10 +132,25 @@ impl TrackedDocument<'_> {
     }
 
     fn run<T>(&mut self, call: impl FnOnce(&mut Document) -> Result<T>) -> Result<T> {
+        /// Puts back the document's session when the call returns or
+        /// unwinds, so that a panic leaves no session behind.
+        struct Held<'a> {
+            document: &'a mut Document,
+            tracking: Option<Tracking>,
+        }
+        impl Drop for Held<'_> {
+            fn drop(&mut self) {
+                self.document.tracking = self.tracking.take();
+            }
+        }
         let written = self.tracking.ids().len();
-        self.document.tracking = Some(self.tracking.clone());
-        let result = call(self.document);
-        self.document.tracking = None;
+        let tracking = self.document.tracking.replace(self.tracking.clone());
+        let held = Held {
+            document: self.document,
+            tracking,
+        };
+        let result = call(held.document);
+        drop(held);
         if result.is_err() {
             self.tracking
                 .ids
@@ -193,8 +208,33 @@ impl TrackedDocument<'_> {
         self.run(|document| document.edit_cell_paragraph(table, row, cell, paragraph, edit))
     }
 
-    /// [`Document::set_story_text`], written as tracked changes.
+    /// [`Document::set_story_text`], written as tracked changes: the same
+    /// edit, the first run's formatting kept, then its redline.
     pub fn set_story_text(&mut self, location: &ContentLocation, value: &str) -> Result<()> {
-        self.edit_paragraph(location, |paragraph| paragraph.set_text(value))
+        self.run(|document| {
+            let mut untracked = document.clone_for_staging();
+            untracked.tracking = None;
+            untracked.set_story_text(location, value)?;
+            // The edit changed the story, and so its fingerprint.
+            let story = untracked
+                .stories()?
+                .into_iter()
+                .find(|story| {
+                    story.kind == location.story.kind
+                        && story.part_name == location.story.part_name
+                        && story.owner_index == location.story.owner_index
+                })
+                .ok_or_else(|| Error::Other("the edited story is gone".to_owned()))?;
+            let edited_location = ContentLocation {
+                story,
+                ..location.clone()
+            };
+            let snapshot = untracked.story_range_paragraph_snapshot(&edited_location)?;
+            let edited = CT_P::from_xml_fragment(snapshot.xml())?;
+            document.edit_story_paragraph(location, |paragraph| {
+                *paragraph.inner = edited;
+                Ok(())
+            })
+        })
     }
 }
