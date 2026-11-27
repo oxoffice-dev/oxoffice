@@ -132,6 +132,8 @@ pub(crate) struct Section {
     pub(crate) color: Option<Color>,
     pub(crate) condition: Option<Condition>,
     pub(crate) system: Option<SystemFormat>,
+    /// A locale tag names a language other than English (`[$-40C]`).
+    pub(crate) foreign: bool,
 }
 
 impl Section {
@@ -139,6 +141,8 @@ impl Section {
         self.tokens.iter().any(wanted)
     }
 }
+
+const MAX_CODE: usize = 255;
 
 /// Reads a code as stored in a file (ECMA-376 Part 1, 18.8.31: the
 /// invariant en-US form) into its sections.
@@ -149,6 +153,12 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
     };
     if code.is_empty() {
         return Err(invalid("the code is empty"));
+    }
+    // Excel takes 255 characters at most, and opens a file with a longer
+    // code by repairing it to General. The cap also bounds every width a
+    // code asks for (`[hhh...]`).
+    if code.chars().count() > MAX_CODE {
+        return Err(invalid("a code has at most 255 characters"));
     }
     let mut sections = Vec::new();
     let mut section = RawSection::default();
@@ -202,6 +212,13 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                     Bracket::System(system) => {
                         section.system = Some(system);
                         continue;
+                    }
+                    Bracket::Locale { symbol, foreign } => {
+                        section.foreign |= foreign;
+                        match symbol {
+                            Some(symbol) => Token::Literal(symbol),
+                            None => continue,
+                        }
                     }
                     Bracket::Ignored => continue,
                 }
@@ -288,6 +305,11 @@ enum Bracket {
     Color(Color),
     Condition(Condition),
     System(SystemFormat),
+    /// `[$€-40C]`: the currency symbol, and whether the locale is not English.
+    Locale {
+        symbol: Option<String>,
+        foreign: bool,
+    },
     /// `[DBNum1]`, `[NatNum1]`, a locale with no symbol...: no effect on the
     /// en-US text.
     Ignored,
@@ -297,19 +319,25 @@ enum Bracket {
 fn bracket(content: &str) -> Option<Bracket> {
     if let Some(currency) = content.strip_prefix('$') {
         let (symbol, tag) = currency.split_once('-').unwrap_or((currency, ""));
-        let system = match tag.to_ascii_lowercase().as_str() {
-            "x-sysdate" => Some(SystemFormat::LongDate),
-            "x-systime" => Some(SystemFormat::Time),
-            tag => match u32::from_str_radix(tag, 16).map(|lcid| lcid & 0xFFFF) {
-                Ok(0xF800) => Some(SystemFormat::LongDate),
-                Ok(0xF400) => Some(SystemFormat::Time),
-                _ => None,
-            },
+        let tag = tag.to_ascii_lowercase();
+        let lcid = u32::from_str_radix(&tag, 16).map(|lcid| lcid & 0xFFFF).ok();
+        let system = match (tag.as_str(), lcid) {
+            ("x-sysdate", _) | (_, Some(0xF800)) => Some(SystemFormat::LongDate),
+            ("x-systime", _) | (_, Some(0xF400)) => Some(SystemFormat::Time),
+            _ => None,
         };
-        return Some(match system {
-            Some(system) => Bracket::System(system),
-            None if symbol.is_empty() => Bracket::Ignored,
-            None => Bracket::Token(Token::Literal(symbol.to_owned())),
+        if let Some(system) = system {
+            return Some(Bracket::System(system));
+        }
+        // The primary language of an LCID is its low ten bits, English 0x09;
+        // a tag such as `en-US` names it.
+        let foreign = match lcid {
+            Some(lcid) => !matches!(lcid & 0x3FF, 0 | 0x09),
+            None => !(tag.is_empty() || tag == "en" || tag.starts_with("en-")),
+        };
+        return Some(Bracket::Locale {
+            symbol: (!symbol.is_empty()).then(|| symbol.to_owned()),
+            foreign,
         });
     }
     let operators = [
@@ -363,6 +391,7 @@ struct RawSection {
     color: Option<Color>,
     condition: Option<Condition>,
     system: Option<SystemFormat>,
+    foreign: bool,
 }
 
 impl RawSection {
@@ -372,6 +401,7 @@ impl RawSection {
             color,
             condition,
             system,
+            foreign,
         } = self;
         let is_date = |token: &Token| {
             matches!(
@@ -407,6 +437,7 @@ impl RawSection {
             color,
             condition,
             system,
+            foreign,
         })
     }
 }
@@ -572,6 +603,7 @@ mod tests {
 
     #[test]
     fn a_code_excel_cannot_read_is_refused() {
+        let too_long = format!("0\"{}\"", "x".repeat(253));
         for code in [
             "",
             "0.0e+00",
@@ -581,8 +613,10 @@ mod tests {
             "0\\",
             "0;0;0;@;0",
             "yyyy 0",
+            &too_long,
         ] {
             assert!(sections(code).is_err(), "{code}");
         }
+        assert!(sections(&format!("0\"{}\"", "x".repeat(252))).is_ok());
     }
 }

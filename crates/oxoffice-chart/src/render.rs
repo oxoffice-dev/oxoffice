@@ -38,16 +38,17 @@ struct ChartAnnotations {
 }
 
 /// Converts one supported typed chart into a labelled backend-neutral group.
-/// `date_system` is the chart space's (`CT_ChartSpace::date_system`): dates
-/// on axes and in labels are counted from it.
+/// Dates on axes and in labels are counted in the chart space's date system
+/// (`c:date1904`).
 pub fn render_chart(
-    chart: &CT_Chart,
-    date_system: DateSystem,
+    chart_space: &CT_ChartSpace,
     bounds: Rect,
     theme: &CT_OfficeStyleSheet,
     color_map: &ColorMap,
     fonts: &mut FontManager,
 ) -> Result<GroupElement> {
+    let chart = &chart_space.chart;
+    let numbers = FormatOptions::default().with_date_system(chart_space.date_system()?);
     let plots = chart.plot_area.plots()?;
     let plot = plots
         .first()
@@ -72,7 +73,6 @@ pub fn render_chart(
         });
     }
 
-    let numbers = FormatOptions::default().with_date_system(date_system);
     let mut chart_annotations = render_axes_and_labels(
         plot,
         &axes,
@@ -973,7 +973,7 @@ fn general(value: f64, numbers: &FormatOptions) -> String {
 
 /// A code Excel cannot read shows its values as General, as in Excel.
 fn format_or_general(format: &NumberFormat, value: f64, numbers: &FormatOptions) -> Result<String> {
-    match format.format_value_with(value, numbers) {
+    match format.format_value(value, numbers) {
         Err(ChartError::InvalidValue { element, .. })
             if element == "c:numFmt/@formatCode projection" && value.is_finite() =>
         {
@@ -982,14 +982,13 @@ fn format_or_general(format: &NumberFormat, value: f64, numbers: &FormatOptions)
         result => result,
     }
 }
-/// The label and axis codes Excel cannot read, whose values show as General,
+/// The label and axis codes the chart does not support
+/// ([`NumberFormat::is_supported`]), whose values show as General,
 /// deduplicated in plot, point and axis source order.
 pub fn unsupported_number_formats(chart: &CT_Chart) -> Result<Vec<String>> {
     let mut codes = Vec::new();
     let mut note = |format: &NumberFormat| {
-        if oxoffice_numfmt::NumberFormat::parse(&format.format_code).is_err()
-            && !codes.contains(&format.format_code)
-        {
+        if !format.is_supported() && !codes.contains(&format.format_code) {
             codes.push(format.format_code.clone());
         }
     };
@@ -1275,7 +1274,7 @@ fn render_data_labels(
                         format_or_general(format, value / total, numbers)?
                     } else {
                         NumberFormat::new("0%".to_owned(), false)?
-                            .format_value_with(value / total, numbers)?
+                            .format_value(value / total, numbers)?
                     };
                     fields.push(text);
                 }
@@ -3710,41 +3709,102 @@ fn filled_and_stroked_path(path: Path, color: Color) -> PositionedElement {
 mod tests {
     use super::*;
 
-    #[test]
-    fn axis_and_label_values_show_as_excel_shows_them_in_the_chart_date_system() {
-        let format = |code: &str| NumberFormat::new(code.to_owned(), false).unwrap();
-        let in_1900 = FormatOptions::default();
-        let in_1904 = in_1900.with_date_system(DateSystem::Date1904);
-        let shown = |code: Option<&str>, value, numbers| {
-            format_axis_value(code.map(format).as_ref(), value, numbers).unwrap()
-        };
-        assert_eq!(shown(Some("d-mmm-yy"), 45306.0, &in_1900), "15-Jan-24");
-        assert_eq!(shown(Some("d-mmm-yy"), 43844.0, &in_1904), "15-Jan-24");
-        assert_eq!(shown(Some("# ?/?"), 1.5, &in_1900), "1 1/2");
-        assert_eq!(shown(Some("0.0;[Red](0.0)"), -2.0, &in_1900), "(2.0)");
-        assert_eq!(shown(None, 0.1 + 0.2, &in_1900), "0.3");
-        // A code Excel cannot read shows its values as General.
-        assert_eq!(shown(Some("0.0e+00"), 12345.0, &in_1900), "12345");
+    fn space(xml: &str) -> CT_ChartSpace {
+        CT_ChartSpace::from_xml(xml.as_bytes()).unwrap()
+    }
 
+    /// A scatter chart whose value axes show the year of their ticks, with
+    /// `extra` written first in the chart space.
+    fn yearly_chart(extra: &str) -> String {
         let data = ChartData {
-            categories: vec!["1".into(), "2".into()],
-            series: vec![("Sales".into(), vec![3.0, 7.0])],
+            categories: vec!["43844".into(), "43874".into()],
+            series: vec![("Sales".into(), vec![43844.0, 43874.0])],
             ..ChartData::default()
         };
         let (xml, _) = authored_chart_parts(ChartKind::Scatter, &data, "rId1").unwrap();
         let xml = String::from_utf8(xml).unwrap();
-        let space = |xml: &str| CT_ChartSpace::from_xml(xml.as_bytes()).unwrap();
-        assert_eq!(space(&xml).date_system().unwrap(), DateSystem::Date1900);
-        let root_end = xml.find("<c:chartSpace").unwrap()
-            + xml[xml.find("<c:chartSpace").unwrap()..].find('>').unwrap()
-            + 1;
+        let root = xml.find("<c:chartSpace").unwrap();
+        let root_end = root + xml[root..].find('>').unwrap() + 1;
+        let xml = format!("{}{extra}{}", &xml[..root_end], &xml[root_end..]);
+        xml.replace(
+            "<c:crossAx",
+            "<c:numFmt formatCode=\"yyyy\" sourceLinked=\"0\"/><c:crossAx",
+        )
+    }
+
+    fn label_texts(space: &CT_ChartSpace) -> BTreeSet<String> {
+        let mut fonts = FontManager::new_deterministic().unwrap();
+        let bounds = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 400.0,
+            height: 300.0,
+        };
+        let group = render_chart(
+            space,
+            bounds,
+            &CT_OfficeStyleSheet::office_default(),
+            &ColorMap::default(),
+            &mut fonts,
+        )
+        .unwrap();
+        let mut texts = BTreeSet::new();
+        let mut stack = vec![&group];
+        while let Some(group) = stack.pop() {
+            for child in &group.children {
+                match child {
+                    PositionedElement::Text(run) => {
+                        texts.insert(run.text.clone());
+                    }
+                    PositionedElement::Group(inner) => stack.push(inner),
+                    _ => {}
+                }
+            }
+        }
+        texts
+    }
+
+    #[test]
+    fn a_chart_counts_its_dates_in_the_date_system_of_its_chart_space() {
+        let in_1900 = label_texts(&space(&yearly_chart("")));
+        let in_1904 = label_texts(&space(&yearly_chart("<c:date1904 val=\"1\"/>")));
+        assert!(in_1900.contains("2020"), "{in_1900:?}");
+        assert!(in_1904.contains("2024"), "{in_1904:?}");
+        assert!(!in_1904.contains("2020"), "{in_1904:?}");
         for (date1904, system) in [
-            ("<c:date1904 val=\"1\"/>", DateSystem::Date1904),
+            ("", DateSystem::Date1900),
             ("<c:date1904/>", DateSystem::Date1904),
             ("<c:date1904 val=\"0\"/>", DateSystem::Date1900),
         ] {
-            let with = format!("{}{date1904}{}", &xml[..root_end], &xml[root_end..]);
-            assert_eq!(space(&with).date_system().unwrap(), system, "{date1904}");
+            let read = space(&yearly_chart(date1904)).date_system().unwrap();
+            assert_eq!(read, system, "{date1904}");
         }
+    }
+
+    #[test]
+    fn axis_and_label_values_show_as_excel_shows_them() {
+        let format = |code: &str| NumberFormat::new(code.to_owned(), false).unwrap();
+        let in_1900 = FormatOptions::default();
+        let shown = |code: Option<&str>, value| {
+            format_axis_value(code.map(format).as_ref(), value, &in_1900).unwrap()
+        };
+        assert_eq!(shown(Some("d-mmm-yy"), 45306.0), "15-Jan-24");
+        assert_eq!(shown(Some("[$-1009]yyyy/mm/dd"), 45306.0), "2024/01/15");
+        assert_eq!(shown(Some("# ?/?"), 1.5), "1 1/2");
+        assert_eq!(shown(Some("0.0;[Red](0.0)"), -2.0), "(2.0)");
+        assert_eq!(shown(None, 0.1 + 0.2), "0.3");
+        // A code Excel cannot read, and month names of another language
+        // (until they come), show as General and are reported.
+        for code in ["0.0e+00", "[$-40C]mmmm yyyy"] {
+            assert_eq!(shown(Some(code), 45306.0), "45306", "{code}");
+            assert!(!format(code).is_supported(), "{code}");
+        }
+        assert!(format("[$€-40C]#,##0.00").is_supported());
+        let reported =
+            space(&yearly_chart("").replace("formatCode=\"yyyy\"", "formatCode=\"[$-40C]mmmm\""));
+        assert_eq!(
+            unsupported_number_formats(&reported.chart).unwrap(),
+            vec!["[$-40C]mmmm".to_owned()]
+        );
     }
 }

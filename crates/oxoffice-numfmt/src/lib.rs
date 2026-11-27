@@ -300,6 +300,19 @@ impl NumberFormat {
         })
     }
 
+    /// Whether a section tagged with a language other than English
+    /// (`[$-40C]mmmm`) shows month or day names: Excel writes them in that
+    /// language, this crate in English for now.
+    pub fn shows_foreign_names(&self) -> bool {
+        self.sections.iter().any(|section| {
+            section.foreign
+                && section.kind == Kind::Date
+                && section.has(
+                    |token| matches!(token, Token::Month(count) | Token::Day(count) if *count >= 3),
+                )
+        })
+    }
+
     /// A number as Excel displays it. A value that is not finite (no cell
     /// holds one) shows as an overflow.
     pub fn format_number(&self, value: f64, options: &FormatOptions) -> Formatted {

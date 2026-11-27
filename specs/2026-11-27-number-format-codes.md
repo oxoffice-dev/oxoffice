@@ -25,11 +25,12 @@ every rule below was checked in Excel for Mac 16.115 (en-US) on the case table, 
 
 | API | What it does |
 | --- | --- |
-| `NumberFormat::parse(code)` | up to four sections; `Err` for a code Excel cannot read: Excel shows it as General, and the caller does (`NumberFormat::general()`) |
+| `NumberFormat::parse(code)` | up to four sections; `Err` for a code Excel cannot read, or longer than 255 characters (Excel repairs it to General on open): Excel shows it as General, and the caller does (`NumberFormat::general()`) |
 | `format_number(value, &FormatOptions)` | the section the value takes, then `Formatted` |
 | `format_text(text)` | through the text section, the text as it is without one |
 | `date_kind()`, `is_date_format(code)` | `Date`, `Time`, `DateTime` or `Duration` (`[h]`) when a positive number shows as one, for a reader that types cells |
 | `builtin_code(id, Locale)` | a built-in id (a style with no `numFmt` record) to its code; `None` shows as General |
+| `shows_foreign_names()` | a section tagged with another language than English shows month or day names, which this crate writes in English for now |
 | `FormatOptions` | `date_system` (`Date1900`, `Date1904`), `locale` (`EnUs` only, `non_exhaustive`) |
 
 `Formatted` carries what the text export and a render need, without layout code:
@@ -107,6 +108,9 @@ codes, and built-in codes, with no API change.
 ### What we do not do
 
 - A `[$-40C]` tag that asks for French month names shows English ones; only the currency symbol of a tag is used.
+  `shows_foreign_names()` says so, and the chart keeps such a code unsupported (General, with its diagnostic)
+  until the names of other languages come (the next pull request of the set, with the tables of
+  `oxoffice-docx-oxml/src/date_format.rs`).
 - `[$-F400]` and id 14 follow the operating system in Excel: the en-US defaults are written above.
 - General narrower than 11 characters (Excel shortens it to the column width): the render asks for it later.
 - `[DBNum]`, `[NatNum]`, `B1`/`B2` calendars, `g` eras: ignored or literal.
@@ -121,9 +125,10 @@ One pull request (#365, pull request 4):
   why. `tests/excel/` holds the scripts that build each round's workbooks (`cases.py`) and pin Excel's text
   into the table (`pin.py`); its README says how a round is run.
 - `oxoffice-chart` formats through it: dates, fractions, sections and conditions reach axes and labels, General
-  is Excel's, and `c:date1904` of the chart space sets the date system (`CT_ChartSpace::date_system`,
-  `render_chart` takes it). The diagnostic "not supported and its labels use General" now names only codes Excel
-  cannot read.
+  is Excel's, and `c:date1904` of the chart space sets the date system: `render_chart` takes the chart space,
+  so no caller can forget it, and `NumberFormat::format_value` takes the options. The diagnostic "not
+  supported and its labels use General" names the codes Excel cannot read and those that ask for names in
+  another language.
 
 ## Links
 

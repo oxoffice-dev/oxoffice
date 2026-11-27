@@ -48,6 +48,36 @@ impl Decimal {
         self.digits.is_empty()
     }
 
+    /// A whole number.
+    pub(crate) fn from_integer(value: u128) -> Decimal {
+        let digits = value.to_string().into_bytes();
+        let point = digits.len() as i32;
+        Decimal::normalised(digits, point)
+    }
+
+    /// The value × `factor`, exactly.
+    pub(crate) fn times(&self, factor: u64) -> Decimal {
+        if self.is_zero() || factor == 0 {
+            return Decimal::ZERO;
+        }
+        // Schoolbook multiplication on the digits, least significant first.
+        let mut product = vec![0u128; self.digits.len() + 20];
+        for (at, digit) in self.digits.iter().rev().enumerate() {
+            product[at] += u128::from(digit - b'0') * u128::from(factor);
+        }
+        for at in 0..product.len() - 1 {
+            product[at + 1] += product[at] / 10;
+            product[at] %= 10;
+        }
+        let extra = product.len() as i32 - self.digits.len() as i32;
+        let digits = product
+            .iter()
+            .rev()
+            .map(|digit| b'0' + *digit as u8)
+            .collect();
+        Decimal::normalised(digits, self.point.saturating_add(extra))
+    }
+
     pub(crate) fn to_f64(&self) -> f64 {
         if self.is_zero() {
             return 0.0;
@@ -70,7 +100,7 @@ impl Decimal {
         }
         Decimal {
             digits: self.digits.clone(),
-            point: self.point + places,
+            point: self.point.saturating_add(places),
         }
     }
 
@@ -234,5 +264,14 @@ mod tests {
         assert!(Decimal::from_f64(2.0e-308).is_zero());
         assert_eq!(Decimal::from_f64(0.375).as_ratio(), Some((375, 1000)));
         assert_eq!(Decimal::from_f64(999.0).plus_one().integer_digits(), "1000");
+        let product = Decimal::from_f64(1.0e37).times(100);
+        assert_eq!(
+            (product.digit_string(), product.magnitude()),
+            ("1".into(), 39)
+        );
+        assert_eq!(
+            Decimal::from_f64(0.3).times(16).rounded(0),
+            Decimal::from_integer(5)
+        );
     }
 }

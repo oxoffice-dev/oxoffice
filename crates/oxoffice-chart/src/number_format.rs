@@ -112,26 +112,36 @@ impl NumberFormat {
         Ok(())
     }
 
-    /// One cached value as Excel displays it with this code, dates in the
-    /// 1900 system. A code Excel cannot read is an error.
-    pub fn format_value(&self, value: f64) -> Result<String> {
-        self.format_value_with(value, &FormatOptions::default())
-    }
-
-    pub(super) fn format_value_with(&self, value: f64, options: &FormatOptions) -> Result<String> {
+    /// One cached value as Excel displays it with this code, dates counted
+    /// in `options.date_system` (the chart space's,
+    /// [`CT_ChartSpace::date_system`]). An error for a code the chart does
+    /// not support ([`NumberFormat::is_supported`]).
+    pub fn format_value(&self, value: f64, options: &FormatOptions) -> Result<String> {
         if !value.is_finite() {
             return Err(ChartError::InvalidValue {
                 element: "c:numFmt value".to_owned(),
                 value: value.to_string(),
             });
         }
-        let format = oxoffice_numfmt::NumberFormat::parse(&self.format_code).map_err(|_| {
-            ChartError::InvalidValue {
-                element: "c:numFmt/@formatCode projection".into(),
-                value: self.format_code.clone(),
-            }
-        })?;
+        let unsupported = || ChartError::InvalidValue {
+            element: "c:numFmt/@formatCode projection".into(),
+            value: self.format_code.clone(),
+        };
+        let format =
+            oxoffice_numfmt::NumberFormat::parse(&self.format_code).map_err(|_| unsupported())?;
+        if format.shows_foreign_names() {
+            return Err(unsupported());
+        }
         Ok(format.format_number(value, options).text)
+    }
+
+    /// Whether the chart draws this code as Excel does: not when Excel
+    /// cannot read it, nor when it asks for month or day names in another
+    /// language than English (`[$-40C]mmmm`), which wait for the names of
+    /// other languages. Their values show as General, with a diagnostic.
+    pub fn is_supported(&self) -> bool {
+        oxoffice_numfmt::NumberFormat::parse(&self.format_code)
+            .is_ok_and(|format| !format.shows_foreign_names())
     }
 
     pub(super) fn validate(&self) -> Result<()> {

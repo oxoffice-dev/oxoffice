@@ -1307,16 +1307,13 @@ impl<'a> ResolveCtx<'a> {
                     width: bounds.width,
                     height: bounds.height,
                 };
-                match chart_space.date_system().and_then(|date_system| {
-                    render_chart(
-                        &chart_space.chart,
-                        date_system,
-                        local_bounds,
-                        self.theme,
-                        &self.color_map,
-                        fonts,
-                    )
-                }) {
+                match render_chart(
+                    chart_space,
+                    local_bounds,
+                    self.theme,
+                    &self.color_map,
+                    fonts,
+                ) {
                     Ok(group) => {
                         for code in oxoffice_chart::unsupported_number_formats(&chart_space.chart)
                             .map_err(|error| ResolveError::ConcreteValue {

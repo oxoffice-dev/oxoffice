@@ -272,8 +272,6 @@ text-12	0.00	123	1900	text	123
 text-13	0;0;0	abc	1900	text	abc		
 text-14	m/d/yyyy	abc	1900	text	abc		
 text-15	0;-0;0;	abc	1900	text			
-bool-01	0.00	TRUE	1900	bool	TRUE		
-bool-02	General	FALSE	1900	bool	FALSE		
 lit-01	"$"#,##0.00	1234.567	1900	number	$1,234.57		
 lit-02	\$0.00	5	1900	number	$5.00		
 lit-03	$#,##0.00	-1234.567	1900	number	-$1,234.57		

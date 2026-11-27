@@ -433,10 +433,17 @@ fn fraction(section: &Section, value: f64, sign: bool) -> Formatted {
             _ => None,
         })
         .collect();
-    let fixed = fixed
-        .parse::<u64>()
-        .ok()
-        .filter(|denominator| *denominator > 0 && !fixed.starts_with('0'));
+    // A denominator written as a number (`# ??/16`) starts with a digit
+    // other than 0, which reads as a placeholder; one too large for any
+    // fraction is an overflow.
+    let fixed = if fixed.starts_with(|c: char| c.is_ascii_digit() && c != '0') {
+        match fixed.parse::<u64>() {
+            Ok(denominator) => Some(denominator),
+            Err(_) => return Formatted::overflow(section.color),
+        }
+    } else {
+        None
+    };
     let denominator_end = slash
         + 1
         + match fixed {
@@ -468,30 +475,29 @@ fn fraction(section: &Section, value: f64, sign: bool) -> Formatted {
     } else {
         (Decimal::ZERO, magnitude.clone())
     };
-    let Some((mut top, bottom)) = (match fixed {
-        Some(denominator) => part.as_ratio().map(|(numerator, scale)| {
-            let denominator = u128::from(denominator);
-            (
-                (2 * numerator * denominator + scale) / (2 * scale),
-                denominator,
-            )
-        }),
+    // The numerator in decimal: `?/100` takes 1E+37 as 1E+39 hundredths.
+    let (mut top, bottom) = match fixed {
+        Some(denominator) => (part.times(denominator).rounded(0), u128::from(denominator)),
+        // A whole number of more than 15 digits has no fraction: itself
+        // over one.
+        None if !mixed && part.magnitude() >= 15 => (part.integer_part(), 1),
         None => {
             let digits = u32::try_from(denominator.len().min(7)).expect("seven at most");
-            continued_fraction(&part, 10u128.pow(digits) - 1)
+            match continued_fraction(&part, 10u128.pow(digits) - 1) {
+                Some((numerator, denominator)) => (Decimal::from_integer(numerator), denominator),
+                None => return Formatted::overflow(section.color),
+            }
         }
-    }) else {
-        return Formatted::overflow(section.color);
     };
-    if mixed && top == bottom {
+    if mixed && top == Decimal::from_integer(bottom) {
         whole = whole.plus_one();
-        top = 0;
+        top = Decimal::ZERO;
     }
     let mut out = Out::default();
     if sign && value < 0.0 {
         out.push('-');
     }
-    let blank = mixed && top == 0;
+    let blank = mixed && top.is_zero();
     let whole_digits = match whole.integer_digits() {
         digits if digits.is_empty() && blank => "0".to_owned(),
         digits => digits,
@@ -513,7 +519,11 @@ fn fraction(section: &Section, value: f64, sign: bool) -> Formatted {
     if blank {
         out.push_str(&" ".repeat(denominator_end - numerator_start));
     } else {
-        for share in right_aligned(&placeholders(tokens, &numerator), &top.to_string(), false) {
+        let top = match top.integer_digits() {
+            digits if digits.is_empty() => "0".to_owned(),
+            digits => digits,
+        };
+        for share in right_aligned(&placeholders(tokens, &numerator), &top, false) {
             out.push_str(&share);
         }
         out.push('/');

@@ -8,7 +8,7 @@ Writes the cases of one round into an output directory:
 
 Conventions:
 - code `builtin:N` is the built-in format id N, written as numFmtId N with no numFmt record;
-- kind `number` (value is a decimal literal), `text` (value is the string), `bool` (TRUE or FALSE);
+- kind `number` (value is a decimal literal) or `text` (value is the string);
 - values have at most 15 significant digits, so the file holds the same double.
 
 A new round adds its cases at the end, after `ROUND = N`. See README.md.
@@ -178,8 +178,6 @@ text("text", "0.00", "abc", "123")
 text("text", "0;0;0", "abc")
 text("text", "m/d/yyyy", "abc")
 text("text", "0;-0;0;", "abc")
-add("bool", "0.00", "TRUE", kind="bool")
-add("bool", "General", "FALSE", kind="bool")
 
 # Literals, escapes, spaces and fills.
 add("lit", "\"$\"#,##0.00", "1234.567")
@@ -355,6 +353,21 @@ add("r2time", "[$-F400]h:mm:ss AM/PM", "0.25")
 for n in [60, 61, 63, 64, 65, 66, 68, 70, 72, 73, 74, 75, 77, 78, 80]:
     add("r2builtin", f"builtin:{n}", DT, "-1234.567")
 
+# Round 3: a condition on the second section only, and codes or values at the limits.
+ROUND = 3
+add("r3cond", "0;[<0]\"neg\"", "5", "-5", "0")
+add("r3cond", "0;[<0]\"neg\";\"zero\"", "5", "-5", "0")
+add("r3cond", "0;[>100]\"big\"", "5", "200", "-5")
+add("r3cond", "0;[>100]\"big\";\"zero\"", "0", "5", "-5", "200")
+add("r3cond", "\"pos\";[<0]\"neg\"", "5", "-5")
+add("r3cond", "0.0;[=0]\"zero\"", "0", "5", "-5")
+add("r3limit", "[" + "h" * 20 + "]:mm", "1.5")
+add("r3limit", "[" + "h" * 100 + "]", "1.5")
+add("r3limit", "0\"" + "x" * 297 + "\"", "5")
+add("r3limit", "?/100", "1E+37")
+add("r3limit", "# ?/16", "1E-39")
+add("r3limit", "?/16", "1E-39")
+
 
 def check_values():
     for case_id, _code, value, _system, kind, _round in CASES:
@@ -391,10 +404,8 @@ def write_workbook(path, system, cases):
         sheet.write_string(row, 1, code)
         if kind == "number":
             sheet.write_number(row, 2, float(value), cell_format)
-        elif kind == "text":
-            sheet.write_string(row, 2, value, cell_format)
         else:
-            sheet.write_boolean(row, 2, value == "TRUE", cell_format)
+            sheet.write_string(row, 2, value, cell_format)
         sheet.write_string(row, 3, kind)
     workbook.close()
 

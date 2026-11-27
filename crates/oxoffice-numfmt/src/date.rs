@@ -154,13 +154,11 @@ pub(crate) fn format(
     let per_day = 86_400 * per_second;
     // In decimal: 12:00:00.4999999999968 is noon, though its double times
     // 86400 is 43200.5.
-    let units = match magnitude.as_ratio() {
-        Some((numerator, denominator)) => {
-            let scaled = numerator * per_day as u128;
-            ((2 * scaled + denominator) / (2 * denominator)) as i64
-        }
-        None => (magnitude.to_f64() * per_day as f64).round() as i64,
-    };
+    let exact = magnitude.as_ratio().and_then(|(numerator, denominator)| {
+        let twice = numerator.checked_mul(2 * per_day as u128)?;
+        Some((twice.checked_add(denominator)? / (2 * denominator)) as i64)
+    });
+    let units = exact.unwrap_or_else(|| (magnitude.to_f64() * per_day as f64).round() as i64);
     let day = units / per_day;
     if day > last_day {
         return Formatted::overflow(section.color);
@@ -180,8 +178,14 @@ pub(crate) fn format(
     if negative && sign {
         out.push('-');
     }
+    // Zeros pushed by hand: a `[hhh...]` as wide as the code allows is no
+    // width `format!` takes.
     let padded = |out: &mut Out, value: i64, width: usize| {
-        out.push_str(&format!("{value:0width$}"));
+        let digits = value.to_string();
+        for _ in digits.len()..width {
+            out.push('0');
+        }
+        out.push_str(&digits);
     };
     for token in tokens {
         match *token {

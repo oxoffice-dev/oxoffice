@@ -35,8 +35,7 @@ fn every_case_shows_what_excel_shows() {
         let shown = match kind {
             "number" => format.format_number(value.parse().expect("a number"), &options),
             "text" => format.format_text(value),
-            // Booleans are not formatted: the caller writes TRUE or FALSE.
-            _ => continue,
+            kind => panic!("{id}: unknown kind {kind}"),
         };
         let expected = if ours.is_empty() { excel } else { ours };
         if shown.text != expected || shown.overflow != (expected == "#####") {
@@ -57,40 +56,81 @@ fn every_case_shows_what_excel_shows() {
 #[test]
 fn a_render_gets_the_colour_the_fill_and_the_spaces() {
     let options = FormatOptions::default();
-    let accounting = format_of("builtin:44").format_number(-1234.5, &options);
+    let shown = |code: &str, value: f64| format_of(code).format_number(value, &options);
+    let fill = |character, at| Some(Fill { character, at });
+    let space = |at, width_of| Space { at, width_of };
+
+    let accounting = shown("builtin:44", -1234.5);
     assert_eq!(accounting.text, " $(1,234.50)");
+    assert_eq!(accounting.fill, fill(' ', 2));
+    assert_eq!(accounting.spaces, vec![space(0, '(')]);
+    // After the minus sign of a single section, and after a two-byte `€`
+    // and a three-byte one: offsets are bytes.
+    let after_minus = shown("*-0_)", -5.0);
     assert_eq!(
-        accounting.fill,
-        Some(Fill {
-            character: ' ',
-            at: 2
-        })
+        (after_minus.text.as_str(), after_minus.fill),
+        ("-5 ", fill('-', 1))
+    );
+    assert_eq!(after_minus.spaces, vec![space(2, ')')]);
+    let after_euro = shown("[$€-40C]* 0_€", 5.0);
+    assert_eq!(
+        (after_euro.text.as_str(), after_euro.fill),
+        ("€5 ", fill(' ', 3))
+    );
+    assert_eq!(after_euro.spaces, vec![space(4, '€')]);
+    let after_pound = shown("\"£\"* 0", -5.0);
+    assert_eq!(
+        (after_pound.text.as_str(), after_pound.fill),
+        ("-£5", fill(' ', 3))
+    );
+
+    // The colour is the section's, also when a condition picks it.
+    let colour = |code: &str, value| shown(code, value).color.map(Color::number);
+    assert_eq!(colour("0.00;[Red]-0.00", -5.0), Some(3));
+    assert_eq!(
+        colour("[Blue][>=100]0;[Red][<0]0;[Color10]0", 150.0),
+        Some(5)
     );
     assert_eq!(
-        accounting.spaces,
-        vec![Space {
-            at: 0,
-            width_of: '('
-        }]
+        colour("[Blue][>=100]0;[Red][<0]0;[Color10]0", -5.0),
+        Some(3)
     );
-    let red = format_of("0.00;[Red]-0.00").format_number(-5.0, &options);
-    assert_eq!(red.color.map(Color::number), Some(3));
-    assert_eq!(red.color.map(Color::indexed), Some(10));
+    assert_eq!(
+        colour("[Blue][>=100]0;[Red][<0]0;[Color10]0", 50.0),
+        Some(10)
+    );
+    assert_eq!(colour("0.00;[Red]-0.00", -5.0).map(|n| n + 7), Some(10));
+    assert_eq!(
+        format_of("0;[Red]-0")
+            .format_number(-5.0, &options)
+            .color
+            .map(Color::indexed),
+        Some(10)
+    );
+
     let text = format_of("0;0;0;[Blue]\"<\"@*-").format_text("x");
     assert_eq!(
         (text.text.as_str(), text.color.map(Color::number)),
         ("<x", Some(5))
     );
-    assert_eq!(
-        text.fill,
-        Some(Fill {
-            character: '-',
-            at: 2
-        })
-    );
-    let negative_date = format_of("m/d/yyyy").format_number(-1.0, &options);
+    assert_eq!(text.fill, fill('-', 2));
+
+    let negative_date = shown("m/d/yyyy", -1.0);
     assert!(negative_date.overflow);
     assert_eq!(negative_date.fill.map(|fill| fill.character), Some('#'));
+}
+
+#[test]
+fn a_code_as_wide_as_excel_takes_pads_and_a_longer_one_is_general() {
+    let options = FormatOptions::default();
+    // 253 `h`: the widest `[h]` a code of 255 characters holds.
+    let widest = format!("[{}]", "h".repeat(253));
+    let shown = format_of(&widest).format_number(1.5, &options);
+    assert_eq!(shown.text, format!("{}36", "0".repeat(251)));
+    // Far beyond any width `format!` takes: General, as Excel repairs it.
+    let absurd = format!("[{}]", "h".repeat(70_000));
+    assert!(NumberFormat::parse(&absurd).is_err());
+    assert_eq!(format_of(&absurd).format_number(1.5, &options).text, "1.5");
 }
 
 #[test]
