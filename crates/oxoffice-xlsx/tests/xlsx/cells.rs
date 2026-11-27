@@ -1,5 +1,6 @@
 //! Cells read their value, formula, displayed text, kind, staleness and
-//! date; every producer's copy of a family reads the cells of its authored
+//! date; every cell and comment of every corpus copy reads, and every
+//! producer's copy of a family reads the cells of its authored
 //! source (the same values, formulas as Excel displays them and displayed
 //! texts at the cells of `cells.tsv`, the same used ranges and merges), what
 //! a producer writes otherwise named with why in `cell-differences.tsv`, a
@@ -88,6 +89,13 @@ fn every_copy_reads_the_cells_of_its_source() {
         let workbook = Workbook::from_bytes(&file.bytes()).unwrap();
         let source =
             Workbook::from_bytes(&corpus_bytes(&format!("authored/{family}.xlsx"))).unwrap();
+        // Every cell and comment of every sheet reads.
+        for sheet in workbook.sheets() {
+            let read = sheet.cells("1:1048576").and(sheet.comments());
+            if let Err(error) = read {
+                failures.push(format!("{} {}: {error}", file.path, sheet.name()));
+            }
+        }
         for sheet in source.sheets() {
             let copy = workbook.sheet(sheet.name()).unwrap();
             let expected = (sheet.used_range().unwrap(), sheet.merged_ranges().unwrap());
