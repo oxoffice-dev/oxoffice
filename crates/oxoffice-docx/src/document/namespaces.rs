@@ -1352,8 +1352,8 @@ pub(super) fn unsafe_nested_namespace_prefix(owners: &[NestedNamespaceOwner]) ->
 }
 
 /// The refusal of a save that cannot keep the binding of `prefix`. The
-/// empty prefix is a default namespace the body declares (a root's is kept),
-/// which no known producer writes.
+/// empty prefix is a default namespace the body declares (a root's is kept;
+/// no known producer writes one below the root).
 pub(super) fn shadowed_namespace_diagnostic(prefix: &str) -> String {
     if prefix.is_empty() {
         return format!(

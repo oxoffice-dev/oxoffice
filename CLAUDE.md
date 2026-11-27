@@ -24,7 +24,8 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
 3. **Rust facade first**, then the CLI where it makes sense, then Python. A
    feature is done when it reaches all three.
 4. **Tests come with the change.** Name a test after the behaviour, never
-   after a ticket. Run what you touched locally, CI runs the rest.
+   after a ticket. Run what you touched locally; CI runs the integration
+   and Python tests, not the unit tests in `src/`.
 5. **Exclude the Python crates from workspace `cargo test`**, they cannot link
    a test binary.
 6. **Never open documents in Word, PowerPoint or another GUI app** and leave
@@ -43,8 +44,8 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
 9. **An independent review before every merge**, posted on the pull request;
    every finding answered first (fixed, or why it is not a defect; a major
    is fixed unless the maintainer waives it). At most two reviews: one
-   full, one delta after a major fix or a change that can alter
-   behaviour. A minor is fixed in the pull request when the fix is cheap,
+   full, one delta after a major fix or a change no finding asked for
+   that can alter behaviour. A minor is fixed in the pull request when the fix is cheap,
    with its proof (a test that fails without it, or a mutation check), and
    not re-reviewed; a follow-up issue only for a
    real defect the pull request cannot carry, at most one per pull request,

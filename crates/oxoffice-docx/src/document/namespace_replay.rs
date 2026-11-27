@@ -37,7 +37,8 @@ pub(super) fn plain_local_edit_facts(
 
 /// The refusal of a retained owner the replay cannot find again after an
 /// edit. One that declares WordprocessingML as its default namespace (a
-/// table, a block content control), which no known producer writes, says so.
+/// table, a block content control; no known producer writes one there)
+/// adds what to do.
 fn unidentified_owner(owner: &NestedNamespaceOwner) -> Error {
     let message = format!(
         "cannot identify retained `{}` nested namespace owner after mutation",
