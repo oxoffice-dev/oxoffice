@@ -15,6 +15,12 @@ Transitional or Strict Open XML.
   atomic and never replaces the file the workbook was opened from unless
   asked; the extension selects the workbook, template or macro-enabled
   class.
+- A new workbook, `Workbook::new()`: one empty sheet, Calibri 11 under the
+  Office 2013-2022 theme, the same bytes every time. `add_sheet` adds a
+  sheet after the others under Excel's naming rules, `set_column_width`,
+  `set_row_height` and `freeze_panes` set the grid of a sheet. Edits are
+  staged and a save writes only the parts they changed, the rest as it was
+  read; a workbook that was edited asks Excel to calculate it on open.
 
 ## Use it when
 
@@ -31,5 +37,12 @@ for sheet in workbook.sheets() {
     println!("{} {:?}", sheet.name(), sheet.state());
 }
 workbook.save("copy.xlsx")?;
+
+let mut new = Workbook::new();
+let mut data = new.add_sheet("Data")?;
+data.set_column_width("A:C", 20.0)?; // characters
+data.set_row_height("1", 30.0)?; // points
+data.freeze_panes(Some("A2"))?;
+new.save("new.xlsx")?;
 # Ok::<(), oxoffice_xlsx::Error>(())
 ```

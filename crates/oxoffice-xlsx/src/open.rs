@@ -63,7 +63,7 @@ impl Workbook {
 
     /// The workbook a package holds, or the refusal its main content type
     /// names.
-    fn from_package(package: OpcPackage) -> Result<Self> {
+    pub(crate) fn from_package(package: OpcPackage) -> Result<Self> {
         let workbook_part = package
             .package_rels
             .items
@@ -98,6 +98,7 @@ impl Workbook {
             class,
             workbook,
             sheets,
+            edited: false,
         })
     }
 }

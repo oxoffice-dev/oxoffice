@@ -198,19 +198,24 @@ impl Workbook {
     }
 
     /// The package a save writes: the workbook's own while nothing changes
-    /// it, else a copy with the changes made.
+    /// it, else a copy with the changes made ([`Workbook::write_staged_parts`]).
     fn saved_package(
         &self,
         _options: SaveOptions,
         class: Option<WorkbookClass>,
     ) -> Result<Cow<'_, OpcPackage>> {
-        let Some(class) = class else {
+        if class.is_none() && !self.edited {
             return Ok(Cow::Borrowed(&self.package));
-        };
+        }
         let mut package = self.package.clone();
-        package
-            .content_types
-            .add_override(&self.workbook_part, class.content_type());
+        if self.edited {
+            self.write_staged_parts(&mut package)?;
+        }
+        if let Some(class) = class {
+            package
+                .content_types
+                .add_override(&self.workbook_part, class.content_type());
+        }
         Ok(Cow::Owned(package))
     }
 }

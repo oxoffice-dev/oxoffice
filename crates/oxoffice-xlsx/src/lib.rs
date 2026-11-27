@@ -14,6 +14,9 @@
 //! Positions are 0-based, like every index of the oxoffice packages; the
 //! command line counts from 1.
 
+mod edit;
+mod grid;
+mod new_workbook;
 mod open;
 mod page_setup;
 mod save;
@@ -26,6 +29,7 @@ use oxoffice_opc::{OpcError, OpcPackage};
 use oxoffice_xlsx_oxml::workbook::WorkbookXml;
 use thiserror::Error;
 
+pub use edit::WorksheetMut;
 pub use page_setup::{
     CellComments, HeaderFooter, Orientation, PageBreak, PageMargins, PageOrder, PageSetup,
     PrintErrors,
@@ -44,6 +48,12 @@ pub enum Error {
 
     #[error("{part} is not well-formed SpreadsheetML: {message}")]
     MalformedPart { part: String, message: String },
+
+    #[error("{0}")]
+    InvalidArgument(String),
+
+    #[error("{0}")]
+    Refused(String),
 
     #[error("the workbook is password-protected: open it with a password")]
     PasswordProtected,
@@ -130,6 +140,10 @@ pub struct Workbook {
     class: WorkbookClass,
     workbook: WorkbookXml,
     sheets: Vec<sheet::SheetEntry>,
+    /// Whether an edit has changed the workbook since it was opened or
+    /// made: the first one asks Excel to calculate it on open and drops the
+    /// calculation chain, and a save writes what edits staged.
+    edited: bool,
 }
 
 impl Workbook {

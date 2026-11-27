@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use oxoffice_opc::OpcPackage;
+use oxoffice_xlsx_oxml::Element;
 use oxoffice_xlsx_oxml::namespaces::content_types;
 use oxoffice_xlsx_oxml::shared_strings::SharedStrings;
 use oxoffice_xlsx_oxml::styles::StylesXml;
@@ -330,4 +331,83 @@ pub fn package_through_writers(bytes: &[u8]) -> Result<(Vec<u8>, usize), String>
         .write_to(&mut out)
         .map_err(|error| error.to_string())?;
     Ok((out.into_inner(), written))
+}
+
+/// How a change moved the parts of a package, by ZIP entry name: the parts
+/// whose bytes differ, the parts added and the parts removed.
+#[derive(Debug, Default, PartialEq)]
+pub struct PartsDiff {
+    pub changed: Vec<String>,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+pub fn parts_diff(before: &[u8], after: &[u8]) -> PartsDiff {
+    let (before, after) = (package_parts(before), package_parts(after));
+    PartsDiff {
+        changed: before
+            .iter()
+            .filter(|(name, bytes)| after.get(*name).is_some_and(|other| other != *bytes))
+            .map(|(name, _)| name.clone())
+            .collect(),
+        added: after
+            .keys()
+            .filter(|name| !before.contains_key(*name))
+            .cloned()
+            .collect(),
+        removed: before
+            .keys()
+            .filter(|name| !after.contains_key(*name))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// The text of one part of a package.
+pub fn part_text(bytes: &[u8], part: &str) -> String {
+    let parts = package_parts(bytes);
+    let bytes = parts.get(part).unwrap_or_else(|| panic!("no part {part}"));
+    String::from_utf8(bytes.clone()).expect("a text part")
+}
+
+/// A new workbook whose only sheet is `xml`, a worksheet part.
+pub fn workbook_with_sheet(xml: &str) -> oxoffice_xlsx::Workbook {
+    let bytes = oxoffice_xlsx::Workbook::new().to_bytes().expect("saves");
+    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("a package");
+    package.set_part("/xl/worksheets/sheet1.xml", xml.as_bytes().to_vec());
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).expect("writes");
+    oxoffice_xlsx::Workbook::from_bytes(bytes.get_ref()).expect("opens")
+}
+
+/// The parts of a sheet an edit may change: every child of the root but
+/// these and every row but the ones named, as bytes, with the root's start
+/// tag.
+pub fn kept_bytes(xml: &[u8], children: &[&str], rows: &[u32]) -> Vec<u8> {
+    let index = SheetIndex::build(xml).expect("an index");
+    let mut kept = xml[index.root.start_tag.clone()].to_vec();
+    for child in &index.children {
+        if child.name != "sheetData" && !children.contains(&child.name.as_str()) {
+            kept.extend_from_slice(&xml[child.range.clone()]);
+        }
+    }
+    for row in &index.rows {
+        if !rows.contains(&row.row) {
+            kept.extend_from_slice(&xml[row.range.clone()]);
+        }
+    }
+    kept
+}
+
+/// The elements of a child of the root, and the children it holds.
+pub fn child_of(xml: &[u8], name: &str) -> Option<Element> {
+    let index = SheetIndex::build(xml).expect("an index");
+    let child = index.child(name)?;
+    Some(Element::parse(&xml[child.range.clone()]).expect("an element"))
+}
+
+pub fn row_of(xml: &[u8], number: u32) -> Option<CT_Row> {
+    let index = SheetIndex::build(xml).expect("an index");
+    let span = index.row(number)?;
+    Some(CT_Row::parse(&xml[span.range.clone()]).expect("a row"))
 }

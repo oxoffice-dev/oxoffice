@@ -33,6 +33,20 @@ fn save(bytes: &[u8]) -> Result<Vec<u8>, String> {
     open(bytes)?.to_bytes().map_err(|error| error.to_string())
 }
 
+/// A sheet added, and the widths, heights and panes of the first sheet set.
+fn edited(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut workbook = open(bytes)?;
+    let error = |error: oxoffice_xlsx::Error| error.to_string();
+    workbook.add_sheet("Added").map_err(error)?;
+    let mut sheet = workbook.sheet_at_mut(0).ok_or("no sheet")?;
+    if sheet.set_column_width("B:C", 20.0).is_err() {
+        return Err("the first sheet takes no width".to_owned());
+    }
+    sheet.set_row_height("2:3", 30.0).map_err(error)?;
+    sheet.freeze_panes(Some("B2")).map_err(error)?;
+    workbook.to_bytes().map_err(error)
+}
+
 fn run(bytes: &[u8]) -> Outcome {
     let mut outcome = Outcome::default();
     let opened = attempt(|| open(bytes));
@@ -65,6 +79,10 @@ fn run(bytes: &[u8]) -> Outcome {
     outcome.saving(
         "save",
         &attempt(|| save(bytes).map(|saved| (saved, String::new()))),
+    );
+    outcome.saving(
+        "edit",
+        &attempt(|| edited(bytes).map(|saved| (saved, String::new()))),
     );
     let written =
         attempt(|| package_through_writers(bytes).map(|(saved, count)| (saved, count.to_string())));
