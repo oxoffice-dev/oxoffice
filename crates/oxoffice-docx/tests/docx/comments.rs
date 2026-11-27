@@ -1632,13 +1632,15 @@ fn a_first_comment_on_text_reserves_the_styles_part_it_adds() {
     let mut bytes = Cursor::new(Vec::new());
     package.write_to(&mut bytes).unwrap();
     let mut doc = Document::from_bytes(&bytes.into_inner()).unwrap();
-    // A refused comment leaves nothing reserved that the save would miss.
+    // A refused comment drops its staged copy: the next one takes the first id.
     assert!(
         doc.add_comment_on_text("gamma", "Ada", "x", TextCommentOptions::default())
             .is_err()
     );
-    doc.add_comment_on_text("beta", "Ada", "x", TextCommentOptions::default())
+    let id = doc
+        .add_comment_on_text("beta", "Ada", "x", TextCommentOptions::default())
         .unwrap();
+    assert_eq!(id, 0);
     let link = doc.add_hyperlink_relationship("https://example.com/");
     let saved = doc.to_bytes().unwrap();
     let package = OpcPackage::from_reader(Cursor::new(saved.clone())).unwrap();
