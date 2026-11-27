@@ -20,7 +20,8 @@ Transitional or Strict Open XML.
   sheet after the others under Excel's naming rules, `set_column_width`,
   `set_row_height` and `freeze_panes` set the grid of a sheet. Edits are
   staged and a save writes only the parts they changed, the rest as it was
-  read; a workbook that was edited asks Excel to calculate it on open.
+  read; an edited workbook that holds a formula asks Excel to calculate it on
+  open, and a signed one has its package signature marked invalidated.
 
 ## Use it when
 
