@@ -342,7 +342,7 @@ The render follows the docx and pptx path: model -> `oxoffice-xlsx-layout` (mile
 
 ### Not in this set
 
-The evaluator; LET / LAMBDA written; sheet rename, remove, reorder, insertion at a position; row and column insertion;
+The evaluator; sheet rename, remove, reorder, insertion at a position; row and column insertion;
 writing comments, names, tables, validations, conditional formats, hidden rows, filters, merges, theme colours;
 per-column CSV types; document properties; the render; WebAssembly bindings.
 
@@ -373,23 +373,22 @@ colour (a name or a palette index the workbook resolves through its `indexedColo
 with the date system (en-US output); `builtin_code(id)` and whether an id is locale-independent (safe to reuse on
 write); `is_date_format(code)`; serial to date-time and back in both systems, serial 60 of 1900 included.
 
-## Open questions
+## Decided with the spec
 
-1. **Strict workbooks** are read and kept (section 8), which needs one Excel Strict copy in the corpus (`review`
-   saved as "Strict Open XML Spreadsheet" on the Mac). Recommendation: add `excel/strict.xlsx` to pull request 2.
-2. **Writing formulas that need Excel 365 metadata**: a spilling dynamic array (`cm` plus an `XLDAPR` block) and LET /
-   LAMBDA parameters (`_xlpm.`). Recommendation: PR 6 writes a spilling formula on request (`spill=True`, its range
-   the anchor cell, as XlsxWriter does; Excel spills it on load) and refuses LET / LAMBDA with a known limitation until
-   the parser of the second set.
-3. **0-based `(row, column)` positions in Python** next to 1-based A1 strings (section 4). Recommendation: keep them,
-   the rule of both packages; openpyxl users read the A1 form.
-4. **The new workbook's font**: Calibri 11 under the Office 2013-2022 theme, not Excel 365's Aptos Narrow.
-   Recommendation: Calibri, whose metrics Carlito bundles for the render and which LibreOffice and Google substitute
-   alike.
-5. **Excel checks for the Mac**, each a fact this spec assumes: the `ca="1"` mark on volatile formulas; a written
+1. **Strict workbooks** are read and kept (section 8): pull request 2 adds `excel/strict.xlsx` (`review` saved as
+   "Strict Open XML Spreadsheet" on the Mac).
+2. **Formulas that need Excel 365 metadata**: PR 6 writes a spilling formula on request (`spill=True`, its range the
+   anchor cell, `cm` plus an `XLDAPR` block, as XlsxWriter does; Excel spills it on load), and writes LET / LAMBDA
+   with their `_xlpm.` parameter prefixes: the lexer knows where their parameter names sit (LET: every name before its
+   value; LAMBDA: every argument but the last), so no limitation is needed.
+3. **0-based `(row, column)` positions in Python** next to 1-based A1 strings (section 4): kept, the rule of both
+   packages; openpyxl users read the A1 form.
+4. **The new workbook's font**: Calibri 11 under the Office 2013-2022 theme, not Excel 365's Aptos Narrow: Carlito
+   bundles its metrics for the render, and LibreOffice and Google substitute it alike.
+5. **Excel checks on the Mac**, each a fact this spec assumes: the `ca="1"` mark on volatile formulas; a written
    formula without `<v>` opens without a repair prompt; a font record without `sz`; the `rgb` alpha byte; theme
-   indexes 2 and 3 (`lt2`, `dk2`, swapped like 0 and 1); the `tc=` note copy of a thread. Recommendation: one Mac
-   session over the PR 6 and PR 7 copies.
+   indexes 2 and 3 (`lt2`, `dk2`, swapped like 0 and 1); the `tc=` note copy of a thread. The corpus copies answer
+   what they can; the PR 6 and PR 7 copies go through one Mac session for the rest.
 
 ## Links
 
