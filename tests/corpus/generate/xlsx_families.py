@@ -5,9 +5,9 @@ XlsxWriter writes every formula on its own: what Excel stores as one shared
 formula over a filled-down column is rewritten into a shared group after the
 build, in the form Excel writes it (`rewrite_part`, `share_column`).
 
-Three families, each feature once:
+Five sources, each feature once:
 
-- `review`: a purchase tracker as a reviewer gets it (a table, one shared
+- `review`: a purchase tracker as a reviewer gets it (rows of data, one shared
   formula down a column, a total, legacy notes, a link), the workflow of
   tensorbee/rdocx#281.
 - `budget`: styles and layout (fonts, fills, borders, number formats, merges,
@@ -17,6 +17,11 @@ Three families, each feature once:
   between sheets, array formulas, errors, booleans, rich text, long text,
   Unicode).
 - `dates1904`: a small workbook in the 1904 date system.
+- `stream`: what a streaming writer produces (XlsxWriter with `constant_memory`,
+  as Apache POI's SXSSF does): inline strings, `_xHHHH_` escapes in text, and
+  volatile formulas (`TODAY`, `RAND`, `OFFSET`, `INDIRECT`). No other producer
+  of ours writes inline strings, and Excel is the only one that marks volatile
+  formulas (`ca="1"`): its copy of this workbook is the one that shows it.
 
 Cached values are written with every formula, computed here, so that a reader
 that never recalculates shows right numbers. XlsxWriter marks every workbook
@@ -31,17 +36,16 @@ from pathlib import Path
 
 import xlsxwriter
 
-from common import CHART, family
+from common import CHART, family, sentences
 
 CREATED = datetime(2026, 11, 21, 9, 0, 0)
 AUTHOR = "Corpus Author"
 
-# Text, as XlsxWriter writes it: Unicode kept in the source as escapes, so
-# that the generators stay ASCII.
-ACCENTS = "Café crème brûlée, Zoë, Œuvre, Straße, mañana, Ångström"
-CJK = "日本語のテキスト、中文文本、한국어 텍스트"
-ARABIC = "مرحبا بالعالم، هذا نص عربي"
-EMOJI = "Launch \U0001f680 done ✅"
+# Text with accents, CJK, Arabic and an emoji, kept in the source as escapes so that the generators stay ASCII.
+ACCENTS = "Caf\u00e9 cr\u00e8me br\u00fbl\u00e9e, Zo\u00eb, \u0152uvre, Stra\u00dfe, ma\u00f1ana, \u00c5ngstr\u00f6m"
+CJK = "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8\u3001\u4e2d\u6587\u6587\u672c\u3001\ud55c\uad6d\uc5b4 \ud14d\uc2a4\ud2b8"
+ARABIC = "\u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645\u060c \u0647\u0630\u0627 \u0646\u0635 \u0639\u0631\u0628\u064a"
+EMOJI = "Launch \U0001f680 done \u2705"
 
 
 def workbook(path: Path, title: str, **options) -> xlsxwriter.Workbook:
@@ -587,4 +591,58 @@ def dates1904(path: Path) -> None:
     sheet.write_datetime(5, 1, datetime(2026, 11, 21, 14, 35), stamp)
     sheet.write(6, 0, "Days between")
     sheet.write_formula(6, 1, "=B4-B2", None, (rows[2][1] - rows[0][1]).days)
+    book.close()
+
+
+# ------------------------------------------------------------------- stream
+
+LOG_ROWS = 24
+LOG_SOURCES = ("scheduler", "importer", "mailer", "exporter")
+LOG_LEVELS = ("info", "info", "info", "warning", "error")
+
+
+@family("stream", "xlsx")
+def stream(path: Path) -> None:
+    """A log as a streaming writer saves it: inline strings, `_xHHHH_` escapes, volatile formulas."""
+    rng = random.Random(365)
+    book = workbook(path, "Import log", constant_memory=True)  # rows in order, strings inline
+    sheet = book.add_worksheet("Log")
+    head = book.add_format({"bold": True, "bottom": 1})
+    when = book.add_format({"num_format": "yyyy-mm-dd hh:mm"})
+    day = book.add_format({"num_format": "yyyy-mm-dd"})
+    number = book.add_format({"num_format": "#,##0.00"})
+    sheet.set_column("A:A", 18)
+    sheet.set_column("B:C", 12)
+    sheet.set_column("D:D", 70)
+    sheet.set_column("E:E", 12)
+    sheet.write_row(0, 0, ("Time", "Source", "Level", "Message", "Value"), head)
+    values = []
+    for index, message in enumerate(sentences(365, LOG_ROWS)):
+        row = index + 1
+        sheet.write_datetime(row, 0, datetime(2026, 11, 20, 8, 0) + timedelta(minutes=20 * index), when)
+        sheet.write(row, 1, rng.choice(LOG_SOURCES))
+        sheet.write(row, 2, rng.choice(LOG_LEVELS))
+        if index == 0:
+            sheet.write_rich_string(row, 3, "Started ", book.add_format({"bold": True}), "the nightly import", ". ", message)
+        else:
+            sheet.write(row, 3, message)
+        values.append(round(rng.uniform(1, 5000), 2))
+        sheet.write_number(row, 4, values[-1], number)
+    # Volatile formulas, with the value they had on the day the sources were written (21 November 2026).
+    first = LOG_ROWS + 3
+    sheet.write(first - 1, 0, "Volatile", head)
+    cached = (
+        ("Today", "=TODAY()", 46347, day),
+        ("Random", "=RAND()", 0.25, None),
+        ("Next five values", "=SUM(OFFSET(E2,0,0,5,1))", round(sum(values[:5]), 2), number),
+        ("Last value", f'=INDIRECT("E"&COUNTA(D1:D{LOG_ROWS + 1}))', values[-1], number),
+    )
+    for index, (label, formula, value, style) in enumerate(cached):
+        sheet.write(first + index, 0, label)
+        sheet.write_formula(first + index, 1, formula, style, value)
+    # Text as Excel stores it: a line break as `_x000D_` plus a line feed, a literal `_x0041_` as `_x005F_x0041_`.
+    sheet.write(first + 5, 0, "Line break")
+    sheet.write_string(first + 5, 3, "First line\r\nsecond line")
+    sheet.write(first + 6, 0, "Escape sequence")
+    sheet.write_string(first + 6, 3, "The text _x0041_ is not the letter A")
     book.close()

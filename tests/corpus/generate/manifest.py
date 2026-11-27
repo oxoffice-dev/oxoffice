@@ -235,9 +235,32 @@ def xlsx_features(package: zipfile.ZipFile) -> list[str]:
     text = "".join(re.findall(r"<t(?: [^>]*)?>([^<]*)", strings))
     formulas = [f.replace("#REF!", "") for f in re.findall(r"<f(?: [^>]*)?>([^<]+)</f>", sheets)]
     names_of_workbook = re.findall(r'<definedName [^>]*name="([^"]*)"', workbook)
-    # What is set, not what a producer writes whatever the file asks (LibreOffice writes a full pageSetup and
-    # an alignment on every cell format).
-    print_setup = re.search(r'<pageSetup [^>]*(orientation="landscape"|scale="(?!100")|fitTo\w+="(?!1"))', sheets)
+    # Features describe what the file asks for, not what a producer writes whatever the file asks: LibreOffice
+    # writes a full pageSetup and an alignment on every cell format; Google Sheets writes a bare
+    # `<pageSetup orientation="landscape"/>` on every sheet, padded rows with `customHeight` up to row 1000 and
+    # an empty persons part. Nothing in a Google page setup tells a chosen landscape from that default, so a
+    # landscape counts only when its element says more (paper, scale...) and print-setup otherwise needs a
+    # print area, print titles, fit to page, a scale or a header or footer.
+    page_setups = re.findall(r"<pageSetup\b([^>]*)>", sheets)
+    landscape = any('orientation="landscape"' in tag and len(re.findall(r"\w+=", tag)) > 1 for tag in page_setups)
+    scaled = any(re.search(r'\bscale="(?!100")', tag) for tag in page_setups)
+    # Rows that hold a cell and have a height of their own: Google Sheets gives every row from the 21st, with or
+    # without a cell, the height 15.75 and customHeight, so that height says nothing about the file.
+    sized_rows = any(
+        float(height) != 15.75
+        for height in re.findall(r'<row\b[^>]*\bht="([\d.]+)"[^>]*\bcustomHeight="(?:1|true)"[^>]*(?<!/)>\s*<c\b', sheets)
+    )
+    person_list = re.search(r"<(?:\w+:)?person\b", _xml(package, "xl/persons/"))
+    authors_of_notes = [
+        (re.findall(r"<author>([^<]*)</author>", part), re.findall(r'<comment\b[^>]*\bauthorId="(\d+)"', part))
+        for part in re.findall(r"<comments\b.*?</comments>", _xml(package, "xl/comments"), re.S)
+    ]
+    # A note, not the placeholder (`tc={id}` author) a threaded comment leaves in the legacy comments part.
+    notes = any(
+        int(index) >= len(authors) or not authors[int(index)].startswith("tc=")
+        for authors, indexes in authors_of_notes
+        for index in indexes
+    )
     cell_formats = "".join(re.findall(r"<cellXfs.*?</cellXfs>", styles, re.S))
 
     found = {
@@ -247,6 +270,8 @@ def xlsx_features(package: zipfile.ZipFile) -> list[str]:
         "full-calc-on-load": re.search(r'<calcPr [^>]*fullCalcOnLoad="(1|true)"', workbook),
         "calc-chain": "xl/calcChain.xml" in names,
         "formulas": re.search(r"<f[ >/]", sheets),
+        "volatile-formula": any(re.search(r"\b(TODAY|NOW|RAND|RANDBETWEEN|OFFSET|INDIRECT)\(", f) for f in formulas),
+        "calc-always": re.search(r'<f [^>]*\bca="(1|true)"', sheets),
         "shared-formula": re.search(r'<f [^>]*t="shared"', sheets),
         "array-formula": re.search(r'<f [^>]*t="array"', sheets),
         "dynamic-array": re.search(r'<c [^>]*\bcm="\d+"', sheets) or "xl/metadata.xml" in names,
@@ -275,16 +300,18 @@ def xlsx_features(package: zipfile.ZipFile) -> list[str]:
         "hidden-column": re.search(r'<col [^>]*hidden="(1|true)"', sheets),
         "hidden-row": re.search(r'<row [^>]*hidden="(1|true)"', sheets),
         "column-widths": re.search(r'<col [^>]*customWidth="(1|true)"', sheets),
-        "row-heights": re.search(r'<row [^>]*customHeight="(1|true)"', sheets),
-        "print-setup": print_setup
+        "row-heights": sized_rows,
+        "print-setup": landscape
+        or scaled
         or re.search(r'<pageSetUpPr [^>]*fitToPage="(1|true)"', sheets)
-        or re.search(r"_xlnm\.Print_(Area|Titles)", workbook),
+        or re.search(r"_xlnm\.Print_(Area|Titles)", workbook)
+        or re.search(r"<(odd|even|first)(Header|Footer)>[^<]", sheets),
         "header-footer": re.search(r"<(odd|even|first)(Header|Footer)>[^<]", sheets),
-        "notes": "<comment " in _xml(package, "xl/comments"),
+        "notes": notes,
         "threaded-comments": re.search(r"<(?:\w+:)?threadedComment ", _xml(package, "xl/threadedComments/")),
         "comment-reply": "parentId=" in _xml(package, "xl/threadedComments/"),
         "resolved-comment": re.search(r'<(?:\w+:)?threadedComment [^>]*done="1"', _xml(package, "xl/threadedComments/")),
-        "persons": any(name.startswith("xl/persons/") for name in names),
+        "persons": person_list,
         "hyperlink": "<hyperlink " in sheets,
         "internal-link": re.search(r"<hyperlink [^>]*location=", sheets),
         "picture": re.search(r"<(\w+:)?pic[ >]", drawings),
