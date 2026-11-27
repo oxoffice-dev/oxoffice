@@ -173,6 +173,12 @@ size = 12469
 features = ["calc-chain", "formulas", "shared-formula", "column-widths", "notes", "threaded-comments", "comment-reply", "resolved-comment", "persons", "hyperlink", "number-formats", "fonts", "borders"]
 
 [[file]]
+path = "google/budget.xlsx"
+producer = "Google Sheets export"
+size = 25656
+features = ["multiple-sheets", "formulas", "shared-formula", "cross-sheet-reference", "merged-cells", "defined-names", "scoped-name", "table", "data-validation", "conditional-format", "color-scale", "frozen-panes", "auto-filter", "filtered", "hidden-column", "hidden-row", "column-widths", "row-heights", "print-setup", "header-footer", "persons", "picture", "chart", "number-formats", "fonts", "fills", "borders", "alignment"]
+
+[[file]]
 path = "google/contract.docx"
 producer = "Google Docs export"
 size = 17640
