@@ -32,10 +32,14 @@ A friendly fork of rdocx, see [NOTICE](NOTICE).
    PowerPoint close every document and quit.
 7. **Keep unmodelled XML verbatim and child order exact.** See the model
    conventions in the architecture doc.
-8. **Known limitations** live in `crates/oxoffice-cli/limitations/`, one
-   JSON file per limitation named by its id (shown by `oxoffice
-   limitations`). Add one with its issue, remove it with the fix. The
-   release builds the page; `docs/LIMITATIONS.md` is not committed.
+8. **Avoid known limitations.** A case a real file or a known producer can
+   hit is fixed, not documented; one no real file and no producer shows is
+   refused with a plain message naming no limitation id. A limitation
+   stays only for a case that can happen and cannot be fixed now: one JSON
+   file in `crates/oxoffice-cli/limitations/` named by its id (shown by
+   `oxoffice limitations`), added with its issue, removed with the fix. The
+   release builds the page; `docs/LIMITATIONS.md` is not committed. See
+   [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#known-limitations).
 9. **An independent review before every merge**, posted on the pull request;
    every finding answered first (fixed, or why it is not a defect; a major
    is fixed unless the maintainer waives it). At most two reviews: one

@@ -111,8 +111,7 @@ go into the details. ✅ works, ⚠️ works with known gaps, ❌ not yet, — d
 lacks; `oxoffice limitations` in a build of `main`, one file per gap in
 [crates/oxoffice-cli/limitations](crates/oxoffice-cli/limitations), and, from the release after 0.1.0, a limitations
 page attached to each [release](https://github.com/oxoffice-dev/oxoffice/releases) give each listed gap its workaround,
-with a few that touch whole files: edits and form operations that cost more as a Word document grows, and a deck
-refused at open when one of its parts holds a control character.
+with a few that touch whole files: edits and form operations that cost more as a Word document grows.
 
 ### 📝 Word
 

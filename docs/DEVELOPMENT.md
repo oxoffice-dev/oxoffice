@@ -106,6 +106,10 @@ Finish what you start.
   becomes a new issue only when it is a different defect the pull request
   cannot carry: at most one per pull request. A major is fixed unless the
   maintainer waives it (see [Independent review](#independent-review)).
+- **Fixed, not documented.** A case a real file or a known producer can hit
+  is fixed; one no real file and no producer shows is refused with a plain
+  message, and its issue is closed. A limitation is the exception (see
+  [Known limitations](#known-limitations)).
 - **One root cause, one issue.** When several issues share a cause (an
   escape, a measurement parser, a text decoder), open one issue for the
   cause, link the others to it, and fix the cause.
@@ -270,13 +274,24 @@ same file refuses a quick-xml reader in the crates that read them.
 
 ## Known limitations
 
-A limitation users can hit, with a workaround, gets its own file,
-`crates/oxoffice-cli/limitations/<id>.json` (one JSON object: `id`, the file
-name; `format`, `area`, `title`, `symptom`, `workaround`, and `issue`, an
-issue labelled `limitation`). The pull request that fixes it deletes the
-file and closes the issue. The build joins the files in name order (it fails
-on a file whose `id` is not its name, or not lower-case letters, digits and
-dashes); `oxoffice limitations` lists them, and
+Avoid them (maintainer decision, 2026-11-27):
+
+- **A case a real file or a known producer can hit is fixed**, not
+  documented (Word, LibreOffice, Google Docs and the other producers of
+  `tests/corpus/README.md`).
+- **A case never seen in a real file and written by no known producer is
+  not documented.** The code may keep refusing it, with a plain error
+  message that names no limitation id.
+- **A limitation file stays only for a case that can happen and cannot be
+  fixed now**; the pull request that adds or keeps one says why.
+
+Such a case gets its own file, `crates/oxoffice-cli/limitations/<id>.json`
+(one JSON object: `id`, the file name; `format`, `area`, `title`,
+`symptom`, `workaround`, and `issue`, an issue labelled `limitation`). The
+pull request that fixes it deletes the file and closes the issue. The build
+joins the files in name order (it fails on a file whose `id` is not its
+name, or not lower-case letters, digits and dashes); `oxoffice limitations`
+lists them, and
 the release attaches the page built from the same files
 (`scripts/limitations_doc.py`, which lint runs too). Nothing to regenerate:
 `docs/LIMITATIONS.md` is not committed (`-o docs/LIMITATIONS.md` writes it
