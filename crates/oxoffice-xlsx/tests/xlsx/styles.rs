@@ -1,6 +1,6 @@
 //! The resolved style of a cell: font, fill, borders, alignment and style
 //! name, colours resolved through the theme, the same in every producer's
-//! copy of `budget` but for what a producer writes otherwise.
+//! copy of `budget` (`styles.tsv`) but for what a producer writes otherwise.
 
 use oxoffice_xlsx::{Color, ColorSource, Fill, ResolvedStyle, Workbook};
 
@@ -59,80 +59,27 @@ fn summary(style: &ResolvedStyle) -> String {
     line
 }
 
-/// `(sheet!cell, summary)` of `budget`, as the source and every copy read
-/// them.
-const BUDGET: &[(&str, &str)] = &[
-    (
-        "Budget!A1",
-        "Cambria 16 bold FFFFFF | solid 0F766E | none/none/none/none | center center | Normal",
-    ),
-    (
-        "Budget!A2",
-        "Calibri 11 italic 6B7280 | none auto | none/none/none/none | general bottom | Normal",
-    ),
-    (
-        "Budget!A3",
-        "Calibri 11 bold FFFFFF | solid 1F2937 | thin/thin/thin/thin | center center wrap | Normal",
-    ),
-    (
-        "Budget!A4",
-        "Calibri 11 000000 | none auto | thin/thin/thin/thin | left bottom indent 1 | Normal",
-    ),
-    (
-        "Budget!A12",
-        "Calibri 11 bold 000000 | none auto | none/none/thin/double | left bottom indent 1 | Normal",
-    ),
-    (
-        "Budget!A17",
-        "Calibri 11 italic 374151 | solid F3F4F6 | medium/medium/medium/medium | general top wrap | Normal",
-    ),
-    (
-        "Formats!C2",
-        "Calibri 11 000000 | none auto | none/none/none/none | right bottom | Normal",
-    ),
-    (
-        "Ledger!A1",
-        "Calibri 14 bold 000000 | none auto | none/none/none/none | general bottom | Normal",
-    ),
-];
-
-/// `(copy, sheet!cell, summary, why)`.
-const DIFFERENCES: &[(&str, &str, &str, &str)] = &[
-    (
-        "google",
-        "Budget!A4",
-        "Calibri 11 000000 | none auto | thin/thin/thin/thin | left bottom | Normal",
-        "Google drops the indent",
-    ),
-    (
-        "google",
-        "Budget!A12",
-        "Calibri 11 bold 000000 | none auto | none/none/thin/double | left bottom | Normal",
-        "Google drops the indent",
-    ),
-    (
-        "google",
-        "Budget!A17",
-        "Calibri 11 italic 374151 | solid F3F4F6 | medium/none/medium/none | general top wrap | Normal",
-        "Google gives each cell of a merged range its part of the border",
-    ),
-];
-
+/// Every copy of `budget` reads the styles of `styles.tsv`.
 #[test]
 fn budget_styles_resolve_in_every_copy() {
+    let table: Vec<Vec<&str>> = include_str!("styles.tsv")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| line.split('\t').collect())
+        .collect();
     let mut failures = Vec::new();
     for producer in ["authored", "excel", "google", "libreoffice"] {
         let workbook =
             Workbook::from_bytes(&corpus_bytes(&format!("{producer}/budget.xlsx"))).unwrap();
-        for (at, expected) in BUDGET {
-            let expected = DIFFERENCES
+        for row in table.iter().filter(|row| row[0] == "*") {
+            let expected = table
                 .iter()
-                .find(|row| row.0 == producer && row.1 == *at)
-                .map_or(*expected, |row| row.2);
-            let (sheet, cell) = at.split_once('!').unwrap();
+                .find(|other| other[0] == producer && other[1] == row[1])
+                .map_or(row[2], |other| other[2]);
+            let (sheet, cell) = row[1].split_once('!').unwrap();
             let read = summary(&workbook.sheet(sheet).unwrap().cell(cell).unwrap().style);
             if read != expected {
-                failures.push(format!("{producer} {at}: {read}"));
+                failures.push(format!("{producer} {}: {read}", row[1]));
             }
         }
         let color = workbook
