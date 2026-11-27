@@ -48,11 +48,18 @@ pub mod rel_types {
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain";
     pub const VBA_PROJECT: &str =
         "http://schemas.microsoft.com/office/2006/relationships/vbaProject";
+    pub const COMMENTS: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+    /// Excel 365's threaded comments of a sheet (no Strict twin).
+    pub const THREADED_COMMENT: &str =
+        "http://schemas.microsoft.com/office/2017/10/relationships/threadedComment";
+    /// The people who wrote threaded comments, from the workbook part.
+    pub const PERSON: &str = "http://schemas.microsoft.com/office/2017/10/relationships/person";
 }
 
 /// The Strict namespaces and relationship types, each beside its
 /// Transitional twin.
-const STRICT_TWINS: [(&str, &str); 12] = [
+const STRICT_TWINS: [(&str, &str); 13] = [
     (STRICT_MAIN, MAIN),
     (
         "http://purl.oclc.org/ooxml/officeDocument/relationships",
@@ -93,6 +100,10 @@ const STRICT_TWINS: [(&str, &str); 12] = [
     (
         "http://purl.oclc.org/ooxml/officeDocument/relationships/calcChain",
         rel_types::CALC_CHAIN,
+    ),
+    (
+        "http://purl.oclc.org/ooxml/officeDocument/relationships/comments",
+        rel_types::COMMENTS,
     ),
     (
         "http://purl.oclc.org/ooxml/officeDocument/relationships/extendedProperties",
