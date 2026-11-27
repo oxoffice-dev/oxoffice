@@ -167,8 +167,9 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
   `crates/oxoffice-pptx/tests/pptx/` (`--test pptx`). A new area is a new
   module, not a new file under `tests/`, so each crate links one binary.
 - Run the tests you touched locally (`cargo test -p <crate>` runs the unit
-  tests in `src/` too). CI runs the integration tests (`--test '*'`) and
-  the Python tests, not the unit tests in `src/`.
+  tests in `src/` too). CI runs the unit tests (`--lib`), the integration
+  tests (`--test '*'`) and the Python tests; the full checks shard the
+  integration tests only.
 - Never `cargo clean` the shared target directory. Use one target
   directory per worktree.
 - Rendering checks use the bundled fonts only (the `*_deterministic`
