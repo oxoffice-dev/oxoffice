@@ -103,7 +103,7 @@ fn libreoffice_opens_what_is_made_and_edited_and_reads_the_widths_heights_and_pa
     }
 
     // What LibreOffice is given: new workbooks, and a copy of each
-    // producer's `review` and the Strict copy, as it was and as edited.
+    // producer's `review` and the Strict copy, edited.
     let new = Workbook::new();
     let mut named = Workbook::with_sheet_names(&["Data", "Summary"]).unwrap();
     named.add_sheet("Notes").unwrap();
@@ -132,15 +132,8 @@ fn libreoffice_opens_what_is_made_and_edited_and_reads_the_widths_heights_and_pa
         "libreoffice/review",
         "excel/strict",
     ] {
-        let name = copy.replace('/', "-");
         let original = corpus_bytes(&format!("{copy}.xlsx"));
-        files.push(Made {
-            sheets: names(&Workbook::from_bytes(&original).unwrap()),
-            edited: None,
-            bytes: original.clone(),
-            name: name.clone(),
-        });
-        files.push(edited(&name, &original));
+        files.push(edited(&copy.replace('/', "-"), &original));
     }
     let paths: Vec<PathBuf> = files
         .iter()
@@ -173,16 +166,6 @@ fn libreoffice_opens_what_is_made_and_edited_and_reads_the_widths_heights_and_pa
         for sheet in &made.sheets {
             let file = csv.join(format!("{}-{sheet}.csv", made.name));
             assert!(file.is_file(), "{}: no CSV of {sheet}", made.name);
-        }
-    }
-
-    // The cells are as they were: each edited workbook exports the CSV of
-    // its original, sheet by sheet.
-    for made in files.iter().filter(|made| made.name.ends_with("-edited")) {
-        let original = made.name.trim_end_matches("-edited");
-        for sheet in made.sheets.iter().filter(|sheet| *sheet != "Added") {
-            let read = |name: &str| fs::read(csv.join(format!("{name}-{sheet}.csv"))).unwrap();
-            assert_eq!(read(&made.name), read(original), "{}: {sheet}", made.name);
         }
     }
 

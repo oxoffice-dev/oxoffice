@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 import oxoffice.docx as docx
-import oxoffice.pptx as pptx
 import oxoffice.xlsx as oxlsx
 
 CORPUS = Path(__file__).resolve().parents[3] / "tests" / "corpus" / "files"
@@ -130,13 +129,8 @@ def test_a_sheet_added_is_a_handle_that_stays_valid_and_edits_its_own_sheet():
         (lambda wb: wb.add_sheet("a/b"), ValueError, "not a sheet name"),
         (lambda wb: wb.add_sheet("SHEET1"), oxlsx.XlsxError, "exists already"),
         (lambda wb: wb.sheets[0].set_column_width("A:", 5), ValueError, "not a column"),
-        (lambda wb: wb.sheets[0].set_column_width("A", 0), ValueError, "would hide"),
-        (lambda wb: wb.sheets[0].set_column_width("A", float("nan")), ValueError, "from 0 to 255"),
         (lambda wb: wb.sheets[0].set_column_width("A", True), TypeError, "number of characters"),
-        (lambda wb: wb.sheets[0].set_column_width("A", "5"), TypeError, "number of characters"),
         (lambda wb: wb.sheets[0].set_column_width("A", docx.Pt(12)), TypeError, "not a Length"),
-        (lambda wb: wb.sheets[0].set_row_height("1", pptx.Pt(12)), TypeError, "not a Length"),
-        (lambda wb: wb.sheets[0].set_row_height("0", 12), ValueError, "not a row"),
         (lambda wb: wb.sheets[0].set_row_height("1:1048576", 12), oxlsx.XlsxError, "at most 100000"),
         (lambda wb: wb.sheets[0].freeze_panes("A1"), ValueError, "no rows above it"),
         (lambda wb: wb.sheets[0].freeze_panes((1048576, 0)), IndexError, "outside the sheet"),

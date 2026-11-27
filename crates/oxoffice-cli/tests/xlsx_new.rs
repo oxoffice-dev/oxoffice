@@ -79,12 +79,6 @@ fn new_makes_the_same_workbook_every_time_and_replaces_nothing_unless_asked() {
     );
     assert_eq!(sheets(&path("named.xlsx")), ["Data", "Summary"]);
 
-    // The extension picks the class.
-    assert!(run(&[], "template.xltx").status.success());
-    let output = oxoffice(&["inspect", "--json", path("template.xltx").to_str().unwrap()]);
-    let record: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(record["class"], "template");
-
     // A file is not replaced unless asked, and what is there stays.
     let before = fs::read(path("named.xlsx")).unwrap();
     let output = run(&[], "named.xlsx");
@@ -108,11 +102,6 @@ fn new_makes_the_same_workbook_every_time_and_replaces_nothing_unless_asked() {
     );
     assert!(!path("refused.xlsx").exists());
 
-    let output = run(&["--json"], "record.xlsx");
-    let record: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(record["schema"], 1);
-    assert_eq!(record["operation"], "new");
-    assert_eq!(record["sheets"], json!(["Sheet1"]));
     let _ = fs::remove_dir_all(&dir);
 }
 

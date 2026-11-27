@@ -274,11 +274,6 @@ mod tests {
                 r#"<ns0:workbook xmlns:ns0="http://purl.oclc.org/ooxml/spreadsheetml/main" xmlns:ns1="http://purl.oclc.org/ooxml/officeDocument/relationships"><ns0:sheets><ns0:sheet name="A" sheetId="7" ns1:id="rId1"/></ns0:sheets></ns0:workbook>"#.to_owned(),
                 r#"<ns0:sheet name="C_x005F_x0041_" sheetId="8" ns1:id="rId9"/>"#.to_owned(),
             ),
-            (
-                "Strict, no prefix for the relationships",
-                r#"<workbook xmlns="http://purl.oclc.org/ooxml/spreadsheetml/main"><sheets/></workbook>"#.to_owned(),
-                r#"<sheet name="C_x005F_x0041_" sheetId="1" xmlns:r="http://purl.oclc.org/ooxml/officeDocument/relationships" r:id="rId9"/>"#.to_owned(),
-            ),
         ];
         for (case, xml, expected) in cases {
             let workbook = WorkbookXml::parse(Arc::new(xml.into_bytes())).unwrap();

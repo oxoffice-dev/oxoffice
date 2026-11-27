@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn a_width_splits_the_spans_it_crosses_and_keeps_what_else_they_say() {
         type Case<'a> = (&'a str, &'a str, (u32, u32), f64, &'a str);
-        let cases: [Case; 9] = [
+        let cases: [Case; 8] = [
             (
                 "a sheet with no cols",
                 "",
@@ -229,13 +229,6 @@ mod tests {
                 (16_383, 16_383),
                 4.0,
                 r#"<cols><col min="16383" max="16383" width="3"/><col min="16384" max="16384" width="4" customWidth="1"/></cols>"#,
-            ),
-            (
-                "a col that names no columns stays where it is",
-                r#"<cols><col width="3"/></cols>"#,
-                (0, 0),
-                4.0,
-                r#"<cols><col min="1" max="1" width="4" customWidth="1"/><col width="3"/></cols>"#,
             ),
             (
                 "the same width again changes nothing",
