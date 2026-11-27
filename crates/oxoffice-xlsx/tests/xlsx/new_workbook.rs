@@ -193,6 +193,39 @@ fn a_sheet_added_takes_the_next_ids_and_a_refused_name_changes_nothing() {
     assert!(part_text(&saved, "xl/workbook.xml").contains(r#"<calcPr calcId="191029"/>"#));
 }
 
+#[test]
+fn a_sheet_name_with_markup_and_other_characters_is_escaped_once_and_reads_back_as_given() {
+    let given = [
+        "R&D",
+        "a<b>\"c\"",
+        "it's",
+        "\u{c9}t\u{e9}",
+        "x&amp;y",
+        "Q_x0041_",
+    ];
+    // Added one by one, and given at once.
+    let mut added = Workbook::new();
+    for name in given {
+        added.add_sheet(name).unwrap();
+    }
+    let all: Vec<&str> = ["Sheet1"].into_iter().chain(given).collect();
+    let at_once = Workbook::with_sheet_names(&all).unwrap();
+    for (how, workbook) in [("added", &added), ("at once", &at_once)] {
+        let saved = workbook.to_bytes().unwrap();
+        assert_eq!(names(&Workbook::from_bytes(&saved).unwrap()), all, "{how}");
+        let text = part_text(&saved, "xl/workbook.xml");
+        for written in [
+            r#"name="R&amp;D""#,
+            r#"name="a&lt;b&gt;&quot;c&quot;""#,
+            r#"name="it&apos;s""#,
+            r#"name="x&amp;amp;y""#,
+            r#"name="Q_x005F_x0041_""#,
+        ] {
+            assert!(text.contains(written), "{how}: {written}");
+        }
+    }
+}
+
 /// Adds a sheet to `original` and checks what changed. Gives whether the
 /// workbook holds a formula, and whether it had a calculation chain.
 fn with_sheet_added(original: &[u8]) -> Result<(bool, bool), String> {

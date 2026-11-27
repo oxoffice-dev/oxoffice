@@ -139,6 +139,7 @@ fn edit_applies_its_map_in_order_and_all_or_nothing() {
             {"columns": "B", "width": 12.5},
             {"sheet": 1, "freeze": null},
             {"sheet": "sheet1", "freeze": "A2"},
+            {"add_sheet": "R&D <\"2026\"> it's"},
         ]),
         "edited.xlsx",
         &["--json"],
@@ -147,9 +148,13 @@ fn edit_applies_its_map_in_order_and_all_or_nothing() {
     let record: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         (record["operation"].as_str(), record["edits"].as_u64()),
-        (Some("edit"), Some(7))
+        (Some("edit"), Some(8))
     );
-    assert_eq!(sheets(&path("edited.xlsx")), ["Sheet1", "Data"]);
+    // A name with markup characters is written once and read back as given.
+    assert_eq!(
+        sheets(&path("edited.xlsx")),
+        ["Sheet1", "Data", "R&D <\"2026\"> it's"]
+    );
     let first = part(&path("edited.xlsx"), "xl/worksheets/sheet1.xml");
     assert!(
         first.contains(r#"<col min="1" max="3" width="20.7109375" customWidth="1"/>"#),

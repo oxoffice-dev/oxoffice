@@ -143,6 +143,7 @@ impl SharedStrings {
 
     /// A new, empty part in `namespace`, for a workbook that has none.
     pub fn empty(namespace: &str) -> Self {
+        let namespace = oxoffice_core::xml::escape_attribute_value(namespace);
         let xml = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<sst xmlns=\"{namespace}\" count=\"0\" uniqueCount=\"0\"/>"
         );
