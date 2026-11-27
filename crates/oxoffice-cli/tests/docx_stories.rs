@@ -453,3 +453,48 @@ fn comments_a_producer_reordered_are_no_difference() {
         "only the resolved comment Google drops differs: {comments:?}"
     );
 }
+
+/// A table and a numbered paragraph holding each kind of change PR 2a reads:
+/// `revision list` names each one.
+#[test]
+fn revision_list_names_every_table_and_numbering_change() {
+    const MARKS: &str = r#"w:author="Ann" w:date="2026-11-20T09:00:00Z""#;
+    let body = format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:tblGridChange w:id="4"><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid></w:tblGridChange></w:tblGrid><w:tr><w:tblPrEx><w:jc w:val="center"/><w:tblPrExChange w:id="3" {MARKS}><w:tblPrEx/></w:tblPrExChange></w:tblPrEx><w:trPr><w:cantSplit/><w:trPrChange w:id="1" {MARKS}><w:trPr/></w:trPrChange></w:trPr><w:tc><w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="FF0000"/><w:tcPrChange w:id="2" {MARKS}><w:tcPr/></w:tcPrChange></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:cellIns w:id="6" {MARKS}/></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:cellDel w:id="7" {MARKS}/></w:tcPr><w:p><w:r><w:t>d</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="5" {MARKS} w:original="1."/></w:numPr></w:pPr><w:r><w:t>item</w:t></w:r></w:p>"#
+    );
+    let mut package =
+        OpcPackage::from_reader(Cursor::new(fs::read(report("word")).unwrap())).unwrap();
+    let main = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    let (start, end) = (
+        main.find("<w:body>").unwrap() + 8,
+        main.rfind("<w:sectPr").unwrap(),
+    );
+    package.set_part(
+        "/word/document.xml",
+        format!("{}{body}{}", &main[..start], &main[end..]).into_bytes(),
+    );
+    let file = std::env::temp_dir().join(format!("oxoffice-cli-kinds-{}.docx", std::process::id()));
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    fs::write(&file, bytes.into_inner()).unwrap();
+    let listed = read_json(&["docx", "revision", "list", file.to_str().unwrap(), "--json"]);
+    let kinds = listed["revisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|revision| revision["kind"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    let _ = fs::remove_file(&file);
+    assert_eq!(
+        kinds,
+        [
+            "table_grid_change",
+            "table_property_exception_change",
+            "row_property_change",
+            "cell_property_change",
+            "cell_insertion",
+            "cell_deletion",
+            "numbering_change",
+        ]
+    );
+}

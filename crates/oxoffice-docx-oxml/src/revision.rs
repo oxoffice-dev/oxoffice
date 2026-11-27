@@ -205,6 +205,7 @@ impl RevisionSourceFacts {
 
 /// The modeled tracked-change element kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RevisionKind {
     Insertion,
     Deletion,
@@ -214,9 +215,47 @@ pub enum RevisionKind {
     ParagraphPropertyChange,
     TablePropertyChange,
     SectionPropertyChange,
+    /// `w:trPrChange`: a row's properties.
+    RowPropertyChange,
+    /// `w:tcPrChange`: a cell's properties.
+    CellPropertyChange,
+    /// `w:tblPrExChange`: a row's table property exceptions.
+    TablePropertyExceptionChange,
+    /// `w:tblGridChange`: a table's column widths. Word writes it with an
+    /// id alone, no author and no date.
+    TableGridChange,
+    /// `w:numberingChange`: a paragraph's numbering, whose old value is the
+    /// number as it read, not a numbering to restore.
+    NumberingChange,
+    /// `w:cellIns`: a cell inserted.
+    CellInsertion,
+    /// `w:cellDel`: a cell deleted.
+    CellDeletion,
 }
 
 impl RevisionKind {
+    /// The name the CLI and Python give the kind, `insertion` to
+    /// `cell_deletion`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Insertion => "insertion",
+            Self::Deletion => "deletion",
+            Self::MoveFrom => "move_from",
+            Self::MoveTo => "move_to",
+            Self::RunPropertyChange => "run_property_change",
+            Self::ParagraphPropertyChange => "paragraph_property_change",
+            Self::TablePropertyChange => "table_property_change",
+            Self::SectionPropertyChange => "section_property_change",
+            Self::RowPropertyChange => "row_property_change",
+            Self::CellPropertyChange => "cell_property_change",
+            Self::TablePropertyExceptionChange => "table_property_exception_change",
+            Self::TableGridChange => "table_grid_change",
+            Self::NumberingChange => "numbering_change",
+            Self::CellInsertion => "cell_insertion",
+            Self::CellDeletion => "cell_deletion",
+        }
+    }
+
     /// Whether the change adds or removes content: an insertion, a deletion
     /// or either end of a move, not a change of properties.
     pub fn changes_content(self) -> bool {

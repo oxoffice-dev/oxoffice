@@ -7020,3 +7020,310 @@ fn a_paragraph_of_each_kind_edited_in_a_producer_copy_compares_and_resolves_to_e
 /// The copy a pull request walks: a page written in Google Docs, with a
 /// paragraph of most kinds, which compares in seconds.
 const COMPARE_AFTER_EDIT_PR_COPY: &str = "google-docs/review.docx";
+
+/// A table of one row of `cells`, its grid, row and cell properties and
+/// what follows its first cell given, then an empty paragraph.
+fn table(grid: &str, row: &str, cell: &str, more: &str) -> String {
+    format!(
+        r#"<w:tbl><w:tblPr/><w:tblGrid>{grid}</w:tblGrid><w:tr>{row}<w:tc><w:tcPr>{cell}</w:tcPr><w:p><w:r><w:t>first</w:t></w:r></w:p></w:tc>{more}</w:tr></w:tbl><w:p/>"#
+    )
+}
+
+fn change(kind: &str, id: i32, prior: &str) -> String {
+    format!(r#"<w:{kind} w:id="{id}" w:author="{AUTHOR}" w:date="{DATE}">{prior}</w:{kind}>"#)
+}
+
+/// Row, cell, exception, grid and numbering changes, and inserted and deleted
+/// cells, read with their kind and resolved by id and all at once: accepting
+/// keeps what the document shows, rejecting brings back what it held.
+#[test]
+fn every_table_and_numbering_change_is_read_and_resolved() {
+    let col = |w: u32| format!(r#"<w:gridCol w:w="{w}"/>"#);
+    let second = |marker: &str| {
+        format!(r#"<w:tc><w:tcPr>{marker}</w:tcPr><w:p><w:r><w:t>second</w:t></w:r></w:p></w:tc>"#)
+    };
+    let rows: [(RevisionKind, String, &str, &str); 7] = [
+        (
+            RevisionKind::RowPropertyChange,
+            table(
+                &col(2000),
+                &format!(
+                    "<w:trPr><w:cantSplit/>{}</w:trPr>",
+                    change("trPrChange", 1, "<w:trPr/>")
+                ),
+                "",
+                "",
+            ),
+            "<w:cantSplit/>",
+            "",
+        ),
+        (
+            RevisionKind::CellPropertyChange,
+            table(
+                &col(2000),
+                "",
+                &format!(
+                    r#"<w:shd w:val="clear" w:color="auto" w:fill="FF0000"/>{}"#,
+                    change("tcPrChange", 1, "<w:tcPr/>")
+                ),
+                "",
+            ),
+            r#"w:fill="FF0000""#,
+            "",
+        ),
+        (
+            RevisionKind::TablePropertyExceptionChange,
+            table(
+                &col(2000),
+                &format!(
+                    r#"<w:tblPrEx><w:jc w:val="center"/>{}</w:tblPrEx>"#,
+                    change("tblPrExChange", 1, "<w:tblPrEx/>")
+                ),
+                "",
+                "",
+            ),
+            r#"<w:jc w:val="center"/>"#,
+            "",
+        ),
+        (
+            RevisionKind::TableGridChange,
+            table(
+                &format!(
+                    r#"{}<w:tblGridChange w:id="1"><w:tblGrid>{}</w:tblGrid></w:tblGridChange>"#,
+                    col(3000),
+                    col(2000)
+                ),
+                "",
+                "",
+                "",
+            ),
+            r#"w:w="3000""#,
+            r#"w:w="2000""#,
+        ),
+        (
+            RevisionKind::NumberingChange,
+            format!(
+                r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/><w:numberingChange w:id="1" w:author="{AUTHOR}" w:date="{DATE}" w:original="1."/></w:numPr></w:pPr><w:r><w:t>item</w:t></w:r></w:p>"#
+            ),
+            r#"<w:numId w:val="1"/>"#,
+            r#"<w:numId w:val="1"/>"#,
+        ),
+        (
+            RevisionKind::CellInsertion,
+            table(
+                &(col(2000) + &col(2000)),
+                "",
+                "",
+                &second(&format!(
+                    r#"<w:cellIns w:id="1" w:author="{AUTHOR}" w:date="{DATE}"/>"#
+                )),
+            ),
+            "second",
+            "",
+        ),
+        (
+            RevisionKind::CellDeletion,
+            table(
+                &(col(2000) + &col(2000)),
+                "",
+                "",
+                &second(&format!(
+                    r#"<w:cellDel w:id="1" w:author="{AUTHOR}" w:date="{DATE}"/>"#
+                )),
+            ),
+            "",
+            "second",
+        ),
+    ];
+    for (kind, body, accepted_shows, rejected_shows) in rows {
+        let doc = doc_with_body(&body);
+        let listed = doc.story_revisions().unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|revision| revision.kind())
+                .collect::<Vec<_>>(),
+            [kind],
+            "{kind:?}"
+        );
+        for accept in [true, false] {
+            for by_id in [true, false] {
+                let mut copy = doc_with_body(&body);
+                let resolved = match (accept, by_id) {
+                    (true, true) => copy.accept_revision_id(1),
+                    (false, true) => copy.reject_revision_id(1),
+                    (true, false) => copy.accept_all(),
+                    (false, false) => copy.reject_all(),
+                };
+                assert_eq!(
+                    resolved.unwrap(),
+                    1,
+                    "{kind:?} accept={accept} by_id={by_id}"
+                );
+                let copy = reopen(&mut copy);
+                assert!(
+                    copy.story_revisions().unwrap().is_empty(),
+                    "{kind:?} accept={accept}"
+                );
+                let xml = copy.part_xml("/word/document.xml").unwrap();
+                let (shows, hides) = if accept {
+                    (accepted_shows, rejected_shows)
+                } else {
+                    (rejected_shows, accepted_shows)
+                };
+                assert!(xml.contains(shows), "{kind:?} accept={accept}: {xml}");
+                assert!(
+                    hides.is_empty() || shows == hides || !xml.contains(hides),
+                    "{kind:?} accept={accept}: {xml}"
+                );
+            }
+        }
+    }
+}
+
+/// Google Docs writes an id-only grid change in every table: it reads as a
+/// change with no author, and accepting every change removes it.
+#[test]
+fn a_google_grid_change_reads_and_goes_with_every_change() {
+    let mut doc = crate::support::corpus_doc("google/report.docx");
+    let grids = doc
+        .story_revisions()
+        .unwrap()
+        .into_iter()
+        .filter(|revision| revision.kind() == RevisionKind::TableGridChange)
+        .collect::<Vec<_>>();
+    assert!(!grids.is_empty() && grids.iter().all(|grid| grid.author().is_empty()));
+    assert!(doc.accept_all().unwrap() >= grids.len());
+    let doc = reopen(&mut doc);
+    assert!(
+        !doc.part_xml("/word/document.xml")
+            .unwrap()
+            .contains("tblGridChange")
+    );
+}
+
+/// A grid change with an id alone goes with its table's property change when
+/// that one is resolved by its id, its author or its date, and counts as no
+/// change of its own; alone by its id; and a grid change that records no old
+/// grid keeps the grid.
+#[test]
+fn a_grid_change_with_an_id_alone_goes_with_its_table_change() {
+    let col = |w: u32| format!(r#"<w:gridCol w:w="{w}"/>"#);
+    let body = |grid_change: &str| {
+        format!(
+            r#"<w:tbl><w:tblPr><w:jc w:val="center"/>{}</w:tblPr><w:tblGrid>{}{grid_change}</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
+            change("tblPrChange", 1, "<w:tblPr/>"),
+            col(3000)
+        )
+    };
+    let with_old = body(&format!(
+        r#"<w:tblGridChange w:id="2"><w:tblGrid>{}</w:tblGrid></w:tblGridChange>"#,
+        col(2000)
+    ));
+    type Resolve = fn(&mut Document) -> oxoffice_docx::Result<usize>;
+    let rows: [(&str, Resolve, &[&str], &[&str]); 5] = [
+        (
+            "accepted by the table change's id",
+            |doc| doc.accept_revision_id(1),
+            &[r#"w:w="3000""#, "<w:jc"],
+            &["tblGridChange", "tblPrChange"],
+        ),
+        (
+            "rejected by author",
+            |doc| doc.reject_revisions_by_author(AUTHOR),
+            &[r#"w:w="2000""#],
+            &["tblGridChange", "tblPrChange", "<w:jc"],
+        ),
+        (
+            "rejected by date",
+            |doc| {
+                doc.reject_revisions_in_date_range("2026-11-21T00:00:00Z", "2026-11-22T00:00:00Z")
+            },
+            &[r#"w:w="2000""#],
+            &["tblGridChange", "tblPrChange", "<w:jc"],
+        ),
+        (
+            "rejected alone by its id",
+            |doc| doc.reject_revision_id(2),
+            &[r#"w:w="2000""#, "tblPrChange"],
+            &["tblGridChange"],
+        ),
+        (
+            "accepted alone by its id",
+            |doc| doc.accept_revision_id(2),
+            &[r#"w:w="3000""#, "tblPrChange"],
+            &["tblGridChange"],
+        ),
+    ];
+    for (shape, resolve, shows, hides) in rows {
+        let mut doc = doc_with_body(&with_old);
+        assert_eq!(resolve(&mut doc).unwrap(), 1, "{shape}");
+        let xml = reopen(&mut doc).part_xml("/word/document.xml").unwrap();
+        assert!(
+            shows.iter().all(|part| xml.contains(part)),
+            "{shape}: {xml}"
+        );
+        assert!(
+            hides.iter().all(|part| !xml.contains(part)),
+            "{shape}: {xml}"
+        );
+    }
+    let mut doc = doc_with_body(&body(r#"<w:tblGridChange w:id="2"/>"#));
+    doc.reject_all().unwrap();
+    let xml = reopen(&mut doc).part_xml("/word/document.xml").unwrap();
+    assert!(
+        xml.contains(r#"w:w="3000""#) && !xml.contains("tblGridChange"),
+        "{xml}"
+    );
+}
+
+/// A cell inserted and rejected, or deleted and accepted, that is its row's
+/// only cell takes the row with it.
+#[test]
+fn a_row_whose_only_cell_goes_goes_with_it() {
+    for (marker, accept) in [("cellIns", false), ("cellDel", true)] {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>kept</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:tcPr><w:{marker} w:id="1" w:author="{AUTHOR}" w:date="{DATE}"/></w:tcPr><w:p><w:r><w:t>gone</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        ));
+        let resolved = if accept {
+            doc.accept_all()
+        } else {
+            doc.reject_all()
+        };
+        assert_eq!(resolved.unwrap(), 1, "{marker}");
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("/word/document.xml").unwrap();
+        assert_eq!(xml.matches("<w:tr").count(), 1, "{marker}: {xml}");
+        assert!(
+            !xml.contains("gone") && doc.validate().unwrap().is_valid(),
+            "{marker}: {xml}"
+        );
+    }
+}
+
+/// A Google Docs table, which holds a grid change with an id alone, compared
+/// with a copy that changes the table's properties: the comparison resolves to
+/// either version, the grid change left as it was.
+#[test]
+fn a_google_table_with_a_grid_change_compares_with_a_property_change() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/files/google/report.docx");
+    let bytes = std::fs::read(path).unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(&bytes)).unwrap();
+    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
+    // The first table's alignment changed in its XML, the grid change kept.
+    let at = xml.find("<w:tblPr>").unwrap();
+    let jc = at + xml[at..].find(r#"<w:jc w:val="center"/>"#).unwrap();
+    let xml = format!(
+        "{}{}{}",
+        &xml[..jc],
+        r#"<w:jc w:val="right"/>"#,
+        &xml[jc + 22..]
+    );
+    package.set_part("/word/document.xml", xml.into_bytes());
+    let mut written = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut written).unwrap();
+    let edited = Document::from_bytes(&written.into_inner()).unwrap();
+    let mut redlined = Document::from_bytes(&bytes).unwrap();
+    redlined.compare(&edited, AUTHOR, DATE).expect("comparison");
+}

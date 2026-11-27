@@ -1115,13 +1115,7 @@ fn render_with_source_ranges(
 }
 
 pub(crate) fn modeled_revision_count(source: &[u8]) -> Result<usize> {
-    let mut tree = XmlTree::parse(source)?;
-    tree.qualify_note_revisions()?;
-    Ok(tree
-        .elements
-        .iter()
-        .filter(|element| element.revision.is_some())
-        .count())
+    Ok(modeled_revision_spans(source)?.len())
 }
 
 /// The modeled revision elements of one part in document order: the byte
@@ -1133,7 +1127,14 @@ pub(crate) fn modeled_revision_spans(source: &[u8]) -> Result<Vec<(Range<usize>,
     Ok(tree
         .elements
         .iter()
-        .filter_map(|element| Some((element.start..element.end, element.revision.as_ref()?.id)))
+        .filter_map(|element| {
+            let revision = element.revision.as_ref()?;
+            // A grid change with an id alone, which Google Docs writes in
+            // every table, records no one's change: comparison leaves it as
+            // it leaves any other markup.
+            (revision.kind != RevisionKind::TableGridChange || !revision.author.is_empty())
+                .then_some((element.start..element.end, revision.id))
+        })
         .collect())
 }
 
@@ -1877,7 +1878,16 @@ impl<'a> XmlTree<'a> {
                 | RevisionKind::ParagraphPropertyChange
                 | RevisionKind::TablePropertyChange
         );
-        if kind == RevisionKind::SectionPropertyChange {
+        if !matches!(
+            kind,
+            RevisionKind::Insertion
+                | RevisionKind::Deletion
+                | RevisionKind::MoveFrom
+                | RevisionKind::MoveTo
+                | RevisionKind::RunPropertyChange
+                | RevisionKind::ParagraphPropertyChange
+                | RevisionKind::TablePropertyChange
+        ) {
             return Ok(String::new());
         }
         let owner = if current {
@@ -2654,17 +2664,41 @@ impl<'a> XmlTree<'a> {
         }
         if let Some(metadata) = &element.revision
             && semantic
-            && state.scope.matches(metadata)
+            && self.selects(index, metadata, state)
         {
-            state.resolved.insert(index);
+            // A grid change that goes with its table's change is not one of
+            // the changes the caller selected.
+            if state.scope.matches(metadata) {
+                state.resolved.insert(index);
+            }
             return self.render_selected_revision(index, metadata.kind, state, destination);
+        }
+        // A row whose every cell the resolution removes goes whole.
+        if semantic && element.word && element.local == "tr" && self.cells_all_remove(index, state)
+        {
+            self.validate_selected_descendants(index, state)?;
+            return Ok(Vec::new());
         }
 
         if semantic && matches!(state.resolution, Resolution::Reject) {
             let changes = self.selected_property_changes(index, state)?;
+            // A grid change that records no old grid keeps the grid.
+            let changes = match element.local.as_str() {
+                "tblGrid" => changes
+                    .into_iter()
+                    .filter(|(_, prior)| prior.is_some())
+                    .collect(),
+                _ => changes,
+            };
             if let Some((_, prior)) = changes.first().copied() {
                 for (selected, _) in &changes {
-                    state.resolved.insert(*selected);
+                    if self.elements[*selected]
+                        .revision
+                        .as_ref()
+                        .is_some_and(|metadata| state.scope.matches(metadata))
+                    {
+                        state.resolved.insert(*selected);
+                    }
                     self.validate_selected_descendants(*selected, state)?;
                 }
 
@@ -2720,7 +2754,10 @@ impl<'a> XmlTree<'a> {
     ) -> Result<Vec<u8>> {
         if is_property_change(kind) {
             let prior = self.prior_property(index, kind)?;
-            if matches!(state.resolution, Resolution::Accept) {
+            // A grid change that records no old grid goes both ways.
+            if matches!(state.resolution, Resolution::Accept)
+                || kind == RevisionKind::TableGridChange && prior.is_none()
+            {
                 return Ok(Vec::new());
             }
 
@@ -3275,6 +3312,10 @@ impl<'a> XmlTree<'a> {
             "pPr" => RevisionKind::ParagraphPropertyChange,
             "tblPr" => RevisionKind::TablePropertyChange,
             "sectPr" => RevisionKind::SectionPropertyChange,
+            "trPr" => RevisionKind::RowPropertyChange,
+            "tcPr" => RevisionKind::CellPropertyChange,
+            "tblPrEx" => RevisionKind::TablePropertyExceptionChange,
+            "tblGrid" => RevisionKind::TableGridChange,
             _ => return Ok(Vec::new()),
         };
         element
@@ -3282,7 +3323,8 @@ impl<'a> XmlTree<'a> {
             .iter()
             .filter_map(|child| {
                 let metadata = self.elements[*child].revision.as_ref()?;
-                (metadata.kind == expected && state.scope.matches(metadata)).then_some(*child)
+                (metadata.kind == expected && self.selects(*child, metadata, state))
+                    .then_some(*child)
             })
             .map(|change| {
                 self.prior_property(change, expected)
@@ -3566,18 +3608,35 @@ impl<'a> XmlTree<'a> {
             self.collect_owned_rows(*child, &mut rows);
         }
         !rows.is_empty()
-            && rows.iter().all(|row| {
-                self.selected_owner_markers(*row, state)
-                    .iter()
-                    .any(|marker| {
-                        let kind = self.elements[*marker]
-                            .revision
-                            .as_ref()
-                            .expect("row marker is a revision")
-                            .kind;
-                        removes_content(state.resolution, kind)
-                    })
+            && rows
+                .iter()
+                .all(|row| self.owner_removes(*row, state) || self.cells_all_remove(*row, state))
+    }
+
+    /// Whether the resolution removes owner `index` (a row, a cell) by the
+    /// marks of its properties.
+    fn owner_removes(&self, index: usize, state: &RenderState<'_>) -> bool {
+        self.selected_owner_markers(index, state)
+            .iter()
+            .any(|marker| {
+                let kind = self.elements[*marker]
+                    .revision
+                    .as_ref()
+                    .expect("owner marker is a revision")
+                    .kind;
+                removes_content(state.resolution, kind)
             })
+    }
+
+    /// Whether the resolution removes every cell of row `row`, which then
+    /// goes whole rather than stay empty.
+    fn cells_all_remove(&self, row: usize, state: &RenderState<'_>) -> bool {
+        let cells = self.elements[row]
+            .children
+            .iter()
+            .filter(|child| self.elements[**child].word && self.elements[**child].local == "tc")
+            .collect::<Vec<_>>();
+        !cells.is_empty() && cells.iter().all(|cell| self.owner_removes(**cell, state))
     }
 
     /// The paragraphs that the removed mark of `last`, the last paragraph of
@@ -4139,17 +4198,44 @@ impl<'a> XmlTree<'a> {
         }
     }
 
+    /// Whether the resolution selects revision `index`. A table grid change
+    /// with no author, as Word and Google Docs write it, goes with its
+    /// table's property change, as well as by its id or with every change.
+    fn selects(&self, index: usize, metadata: &RevisionMetadata, state: &RenderState<'_>) -> bool {
+        if state.scope.matches(metadata) {
+            return true;
+        }
+        // Not for the ids a caller names, as comparison names its own: those
+        // are exactly the changes it means.
+        if metadata.kind != RevisionKind::TableGridChange
+            || !metadata.author.is_empty()
+            || matches!(state.scope, RevisionScope::Ids(_))
+        {
+            return false;
+        }
+        let table = self.elements[index]
+            .parent
+            .and_then(|grid| self.elements[grid].parent);
+        table.is_some_and(|table| {
+            self.elements[table]
+                .children
+                .iter()
+                .filter(|child| {
+                    self.elements[**child].word && self.elements[**child].local == "tblPr"
+                })
+                .flat_map(|properties| &self.elements[*properties].children)
+                .filter_map(|change| self.elements[*change].revision.as_ref())
+                .any(|change| {
+                    change.kind == RevisionKind::TablePropertyChange && state.scope.matches(change)
+                })
+        })
+    }
+
     fn prior_property(&self, change: usize, kind: RevisionKind) -> Result<Option<usize>> {
-        let expected = match kind {
-            RevisionKind::RunPropertyChange => "rPr",
-            RevisionKind::ParagraphPropertyChange => "pPr",
-            RevisionKind::TablePropertyChange => "tblPr",
-            RevisionKind::SectionPropertyChange => "sectPr",
-            _ => {
-                return Err(Error::Other(
-                    "selected revision is not a property change".to_owned(),
-                ));
-            }
+        let Some(expected) = property_owner_local(kind) else {
+            return Err(Error::Other(
+                "selected revision is not a property change".to_owned(),
+            ));
         };
         let element = &self.elements[change];
         // LibreOffice writes a change with no prior value where Word writes
@@ -4191,6 +4277,7 @@ impl<'a> XmlTree<'a> {
         let property_local = match owner.local.as_str() {
             "r" => "rPr",
             "tr" => "trPr",
+            "tc" => "tcPr",
             "numPr" => "numPr",
             _ => return Vec::new(),
         };
@@ -4215,6 +4302,8 @@ impl<'a> XmlTree<'a> {
                         | RevisionKind::Deletion
                         | RevisionKind::MoveFrom
                         | RevisionKind::MoveTo
+                        | RevisionKind::CellInsertion
+                        | RevisionKind::CellDeletion
                 ) && state.scope.matches(metadata))
                 .then_some(*child)
             })
@@ -4225,7 +4314,7 @@ impl<'a> XmlTree<'a> {
         self.elements[index].parent.is_some_and(|parent| {
             matches!(
                 self.elements[parent].local.as_str(),
-                "rPr" | "trPr" | "numPr"
+                "rPr" | "trPr" | "tcPr" | "numPr"
             )
         })
     }
@@ -4600,9 +4689,12 @@ fn modeled_child(parent: &XmlElement, word: bool, local: &str) -> bool {
         "rPr" => matches!(local, "ins" | "del" | "moveFrom" | "moveTo" | "rPrChange"),
         "tbl" => matches!(local, "tblPr" | "tblGrid" | "tr" | "sdt"),
         "tblPr" => local == "tblPrChange",
-        "tr" => matches!(local, "trPr" | "tc" | "sdt"),
-        "trPr" => matches!(local, "ins" | "del" | "moveFrom" | "moveTo"),
+        "tblGrid" => local == "tblGridChange",
+        "tr" => matches!(local, "tblPrEx" | "trPr" | "tc" | "sdt"),
+        "tblPrEx" => local == "tblPrExChange",
+        "trPr" => matches!(local, "ins" | "del" | "moveFrom" | "moveTo" | "trPrChange"),
         "tc" => matches!(local, "tcPr" | "p" | "tbl" | "sdt"),
+        "tcPr" => matches!(local, "tcPrChange" | "cellIns" | "cellDel"),
         "sdt" => matches!(local, "sdtPr" | "sdtContent"),
         "sdtContent" => matches!(
             local,
@@ -4621,7 +4713,7 @@ fn modeled_child(parent: &XmlElement, word: bool, local: &str) -> bool {
                 | "sectPrChange"
         ),
         "sectPr" => local == "sectPrChange",
-        "numPr" => local == "ins",
+        "numPr" => matches!(local, "ins" | "numberingChange"),
         "ins" | "del" | "moveFrom" | "moveTo" => matches!(
             local,
             "r" | "hyperlink" | "ins" | "del" | "moveFrom" | "moveTo"
@@ -4720,7 +4812,11 @@ fn retained_revision_local(owner: &str, child: &str) -> bool {
         "rPr" => matches!(child, "rPrChange" | "ins" | "del"),
         "tblPr" => child == "tblPrChange",
         "sectPr" => child == "sectPrChange",
-        "numPr" => child == "ins",
+        "numPr" => matches!(child, "ins" | "numberingChange"),
+        "trPr" => matches!(child, "trPrChange" | "ins" | "del"),
+        "tcPr" => matches!(child, "tcPrChange" | "cellIns" | "cellDel"),
+        "tblPrEx" => child == "tblPrExChange",
+        "tblGrid" => child == "tblGridChange",
         _ => false,
     }
 }
@@ -4790,6 +4886,13 @@ fn revision_metadata(
         "pPrChange" => RevisionKind::ParagraphPropertyChange,
         "tblPrChange" => RevisionKind::TablePropertyChange,
         "sectPrChange" => RevisionKind::SectionPropertyChange,
+        "trPrChange" => RevisionKind::RowPropertyChange,
+        "tcPrChange" => RevisionKind::CellPropertyChange,
+        "tblPrExChange" => RevisionKind::TablePropertyExceptionChange,
+        "tblGridChange" => RevisionKind::TableGridChange,
+        "numberingChange" => RevisionKind::NumberingChange,
+        "cellIns" => RevisionKind::CellInsertion,
+        "cellDel" => RevisionKind::CellDeletion,
         _ => return Ok(None),
     };
     let mut id = None;
@@ -4816,6 +4919,8 @@ fn revision_metadata(
             _ => {}
         }
     }
+    // Word writes a table grid change with an id alone, as Google Docs does.
+    let author = author.or_else(|| (kind == RevisionKind::TableGridChange).then(String::new));
     Ok(id.zip(author).map(|(id, author)| RevisionMetadata {
         kind,
         id,
@@ -4876,13 +4981,23 @@ fn is_revision_local(local: &str) -> bool {
 }
 
 fn is_property_change(kind: RevisionKind) -> bool {
-    matches!(
-        kind,
-        RevisionKind::RunPropertyChange
-            | RevisionKind::ParagraphPropertyChange
-            | RevisionKind::TablePropertyChange
-            | RevisionKind::SectionPropertyChange
-    )
+    property_owner_local(kind).is_some()
+}
+
+/// The property owner a property change of this kind sits in, which its
+/// old value replaces when it is rejected.
+fn property_owner_local(kind: RevisionKind) -> Option<&'static str> {
+    Some(match kind {
+        RevisionKind::RunPropertyChange => "rPr",
+        RevisionKind::ParagraphPropertyChange => "pPr",
+        RevisionKind::TablePropertyChange => "tblPr",
+        RevisionKind::SectionPropertyChange => "sectPr",
+        RevisionKind::RowPropertyChange => "trPr",
+        RevisionKind::CellPropertyChange => "tcPr",
+        RevisionKind::TablePropertyExceptionChange => "tblPrEx",
+        RevisionKind::TableGridChange => "tblGrid",
+        _ => return None,
+    })
 }
 
 fn keeps_content(resolution: Resolution, kind: RevisionKind) -> bool {
@@ -4913,8 +5028,14 @@ fn range_marker(local: &str) -> bool {
 
 fn removes_content(resolution: Resolution, kind: RevisionKind) -> bool {
     match resolution {
-        Resolution::Accept => matches!(kind, RevisionKind::Deletion | RevisionKind::MoveFrom),
-        Resolution::Reject => matches!(kind, RevisionKind::Insertion | RevisionKind::MoveTo),
+        Resolution::Accept => matches!(
+            kind,
+            RevisionKind::Deletion | RevisionKind::MoveFrom | RevisionKind::CellDeletion
+        ),
+        Resolution::Reject => matches!(
+            kind,
+            RevisionKind::Insertion | RevisionKind::MoveTo | RevisionKind::CellInsertion
+        ),
     }
 }
 

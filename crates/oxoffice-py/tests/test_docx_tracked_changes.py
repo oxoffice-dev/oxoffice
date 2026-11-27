@@ -4,6 +4,8 @@ was. The class table below names the calls a session tracks or leaves untracked;
 scaling registry (test_docx_scaling.TIMED and WHOLE_DOCUMENT) is refused, so that a call added to the API is refused
 until a class names it, and test_every_call_behaves_as_its_class runs each one under a session."""
 import datetime
+import zipfile
+from pathlib import Path
 
 import docx
 import pytest
@@ -209,3 +211,37 @@ def test_a_regular_expression_replacement_in_a_text_box_is_refused(tmp_path):
         with pytest.raises(oxdocx.DocxError, match="a replacement in a text box"):
             doc.replace_all_regex([("old (text)", "new $1")])
     assert doc.to_bytes() == before
+
+
+def test_a_google_grid_change_reads_with_its_kind_and_goes_with_every_change():
+    path = Path(__file__).resolve().parents[3] / "tests/corpus/files/google/report.docx"
+    doc = oxdocx.Document.open(path)
+    grids = [r for r in doc.revisions if r.kind == "table_grid_change"]
+    assert grids and all(r.author == "" for r in grids)
+    doc.accept_all()
+    assert doc.revisions == ()
+
+
+def test_every_table_and_numbering_change_reads_with_its_kind(tmp_path):
+    marks = 'w:author="Ann" w:date="2026-11-20T09:00:00Z"'
+    body = (
+        '<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="3000"/><w:tblGridChange w:id="4"><w:tblGrid><w:gridCol w:w="2000"/>'
+        f'</w:tblGrid></w:tblGridChange></w:tblGrid><w:tr><w:tblPrEx><w:jc w:val="center"/><w:tblPrExChange w:id="3" {marks}>'
+        f'<w:tblPrEx/></w:tblPrExChange></w:tblPrEx><w:trPr><w:cantSplit/><w:trPrChange w:id="1" {marks}><w:trPr/></w:trPrChange>'
+        f'</w:trPr><w:tc><w:tcPr><w:tcPrChange w:id="2" {marks}><w:tcPr/></w:tcPrChange></w:tcPr><w:p/></w:tc><w:tc><w:tcPr>'
+        f'<w:cellIns w:id="6" {marks}/></w:tcPr><w:p/></w:tc><w:tc><w:tcPr><w:cellDel w:id="7" {marks}/></w:tcPr><w:p/></w:tc>'
+        '</w:tr></w:tbl><w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/>'
+        f'<w:numberingChange w:id="5" {marks} w:original="1."/></w:numPr></w:pPr></w:p>')
+    docx.Document().save(tmp_path / "plain.docx")
+    with zipfile.ZipFile(tmp_path / "plain.docx") as z:
+        parts = {name: z.read(name) for name in z.namelist()}
+    main = parts["word/document.xml"].decode()
+    start, end = main.index("<w:body>") + len("<w:body>"), main.rindex("<w:sectPr")
+    parts["word/document.xml"] = (main[:start] + body + main[end:]).encode()
+    with zipfile.ZipFile(tmp_path / "kinds.docx", "w") as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+    doc = oxdocx.Document.open(tmp_path / "kinds.docx")
+    assert [r.kind for r in doc.revisions] == [
+        "table_grid_change", "table_property_exception_change", "row_property_change", "cell_property_change",
+        "cell_insertion", "cell_deletion", "numbering_change"]
