@@ -268,10 +268,15 @@ pub(super) fn normalized_package(
     let original_source = source;
     let mut coordinates = Vec::new();
     let source = if story_ignored(options, ComparisonStoryKind::TextBox) {
-        let (masked, _) = mask_text_box_subtrees(source, "w", &text_box_markers.main)?;
+        let prefix = root_prefix(source, "document")?;
+        let (masked, _) = mask_text_box_subtrees(source, &prefix, &text_box_markers.main)?;
         main_source = masked;
-        coordinates =
-            guard_mask_coordinates(original_source, &main_source, "w", &text_box_markers.main)?;
+        coordinates = guard_mask_coordinates(
+            original_source,
+            &main_source,
+            &prefix,
+            &text_box_markers.main,
+        )?;
         main_source.as_str()
     } else {
         source

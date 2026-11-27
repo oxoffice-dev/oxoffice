@@ -473,7 +473,14 @@ pub(super) fn compare_story_inner(
     // and boxes changed only inside are compared box by box (#666).
     let scan_text_boxes = !metadata.options.ignore_formatting
         || story_ignored(metadata.options, ComparisonStoryKind::TextBox)
-        || text_boxes_changed_inside(original, edited, word_prefix)?;
+        || text_boxes_changed_inside(
+            original,
+            edited,
+            [
+                &bound_word_prefix(original_bindings, word_prefix),
+                &bound_word_prefix(edited_bindings, word_prefix),
+            ],
+        )?;
     compare_story_inner_impl(
         original,
         edited,
@@ -499,13 +506,17 @@ pub(super) fn compare_story_inner_impl(
     diagnostics: &mut Vec<ComparisonDiagnostic>,
     scan_text_boxes: bool,
 ) -> Result<String> {
+    // Each input is scanned under the prefix its own scope binds to
+    // WordprocessingML, which another writer may name otherwise (`ox0`).
+    let original_prefix = bound_word_prefix(original_bindings, word_prefix);
+    let edited_prefix = bound_word_prefix(edited_bindings, word_prefix);
     let original_text_boxes = if scan_text_boxes {
-        text_box_spans(original, word_prefix)?
+        text_box_spans(original, &original_prefix)?
     } else {
         Vec::new()
     };
     let edited_text_boxes = if scan_text_boxes {
-        text_box_spans(edited, word_prefix)?
+        text_box_spans(edited, &edited_prefix)?
     } else {
         Vec::new()
     };
@@ -516,13 +527,14 @@ pub(super) fn compare_story_inner_impl(
     if (!original_text_boxes.is_empty() || !edited_text_boxes.is_empty())
         && (ignored
             || original_text_boxes.len() == edited_text_boxes.len()
-                && text_box_run_skeletons(original, &original_text_boxes)?
-                    == text_box_run_skeletons(edited, &edited_text_boxes)?)
+                && text_box_run_skeletons(original, &original_text_boxes, &original_prefix)?
+                    == text_box_run_skeletons(edited, &edited_text_boxes, &edited_prefix)?)
     {
-        let marker = text_box_marker_local(original, edited, word_prefix)?;
+        let marker = text_box_marker_local(original, edited, &original_prefix)?;
         let (masked_original, original_hosts) =
-            mask_text_box_subtrees(original, word_prefix, &marker)?;
-        let (masked_edited, edited_hosts) = mask_text_box_subtrees(edited, word_prefix, &marker)?;
+            mask_text_box_subtrees(original, &original_prefix, &marker)?;
+        let (masked_edited, edited_hosts) =
+            mask_text_box_subtrees(edited, &edited_prefix, &marker)?;
         // Ignored, a box both inputs hold keeps the original's content.
         let compared = if ignored {
             None
@@ -557,7 +569,7 @@ pub(super) fn compare_story_inner_impl(
                 original,
                 &original_text_boxes,
                 &tracked_boxes,
-                word_prefix,
+                &original_prefix,
             )?)
         };
         let before = metadata.ids.used.clone();
@@ -577,7 +589,7 @@ pub(super) fn compare_story_inner_impl(
             [&original_hosts, &edited_hosts],
             compared.as_deref(),
             |id| !before.contains(&id),
-            word_prefix,
+            &original_prefix,
             &marker,
             location,
         )?;

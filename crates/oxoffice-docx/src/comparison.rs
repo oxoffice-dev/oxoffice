@@ -89,8 +89,9 @@ use guard::{
 };
 use move_pairs::{crossing_reply_additions, pair_moves, share_trailing_move};
 use namespaces::{
-    actual_root_bindings, declared_prefixes, drawing_signature, element_inner_range_any_prefix,
-    foreign_word_binding, required_external_bindings, root_prefix, scan_root_start,
+    actual_root_bindings, bound_word_prefix, declared_prefixes, drawing_signature,
+    element_inner_range_any_prefix, foreign_word_binding, required_external_bindings, root_prefix,
+    scan_root_start,
 };
 pub(crate) use postconditions::reopen_staged;
 use postconditions::{
@@ -917,6 +918,14 @@ impl Document {
             &original,
             &original.doc_part_name,
         )?);
+        let (_, original_bindings) = main_body_source(original_xml)?;
+        let (_, edited_bindings) = main_body_source(edited_xml)?;
+        // Each body is scanned for its text boxes under the prefix its part
+        // binds to WordprocessingML.
+        let main_prefixes = [
+            bound_word_prefix(&original_bindings, "w"),
+            bound_word_prefix(&edited_bindings, "w"),
+        ];
         let tracked_body = if !added_reply_ids.is_empty() {
             extract_body_inner(edited_xml)?.to_owned()
         } else if story_ignored(options, ComparisonStoryKind::Main) {
@@ -925,13 +934,9 @@ impl Document {
             || text_boxes_changed_inside(
                 extract_body_inner(original_xml)?,
                 extract_body_inner(edited_xml)?,
-                "w",
+                [&main_prefixes[0], &main_prefixes[1]],
             )?
         {
-            let original_source = std::str::from_utf8(original_xml).map_err(utf8_error)?;
-            let edited_source = std::str::from_utf8(edited_xml).map_err(utf8_error)?;
-            let (_, original_bindings) = main_body_source(original_source.as_bytes())?;
-            let (_, edited_bindings) = main_body_source(edited_source.as_bytes())?;
             // Box by box, whatever the formatting policy: an edit inside a box
             // is tracked inside it, not as the box replaced whole.
             compare_story_inner_impl(
@@ -948,10 +953,6 @@ impl Document {
         } else {
             let original_body = extract_body_inner(original_xml)?;
             let edited_body = extract_body_inner(edited_xml)?;
-            let original_source = std::str::from_utf8(original_xml).map_err(utf8_error)?;
-            let edited_source = std::str::from_utf8(edited_xml).map_err(utf8_error)?;
-            let (_, original_bindings) = main_body_source(original_source.as_bytes())?;
-            let (_, edited_bindings) = main_body_source(edited_source.as_bytes())?;
             let original_spans = story_content_spans(original_body, &original_bindings)?;
             let edited_spans = story_content_spans(edited_body, &edited_bindings)?;
             let original_document = story_document(original_body, &original_bindings)?;

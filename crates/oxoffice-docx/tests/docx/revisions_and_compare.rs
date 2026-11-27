@@ -5554,6 +5554,7 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
                 tail,
             ),
             "anchored" => (from, anchored(to), tail),
+            "edited anchored" => (anchored(from), anchored(to), tail),
             "run formatted" => (
                 from,
                 to.replacen("<w:r>", "<w:r><w:rPr><w:b/></w:rPr>", 1),
@@ -5602,8 +5603,38 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
             format!("{}{boxed}{}", &xml[..at], &xml[at..])
         })
     };
+    // A document as another writer writes it, the main namespaces under
+    // other prefixes (`ox0:r`).
+    let other_prefixes = |mut doc: Document| {
+        let bytes = doc.to_bytes().unwrap();
+        let rewritten =
+            oxoffice_xml_test::rewrite_package(&bytes, oxoffice_xml_test::Writing::OtherPrefixes);
+        Document::from_bytes(&rewritten.unwrap().0).unwrap()
+    };
+    // The part as `w` and `wp` write it, whatever prefixes it binds them to.
+    let plain_prefixes = |mut xml: String| {
+        for (uri, plain) in [
+            (
+                "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+                "w",
+            ),
+            (
+                "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+                "wp",
+            ),
+        ] {
+            let declared = xml.split(&format!(r#"="{uri}""#)).next().unwrap();
+            let prefix = declared.rsplit("xmlns:").next().unwrap().to_owned();
+            if prefix != plain && !prefix.contains(['<', ' ']) {
+                xml = xml
+                    .replace(&format!("<{prefix}:"), &format!("<{plain}:"))
+                    .replace(&format!("</{prefix}:"), &format!("</{plain}:"));
+            }
+        }
+        xml
+    };
     let (body, header, notes) = ("document.xml", "header1.xml", "footnotes.xml");
-    for (form, change, part, ignore_formatting, boxes_ignored) in [
+    let rows = [
         ("alternate content", "deleted", body, false, false),
         ("alternate content", "replaced by text", body, true, false),
         ("alternate content", "resized", body, false, false),
@@ -5622,11 +5653,32 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         ("alternate content", "deleted", body, false, true),
         ("alternate content", "nested", body, false, true),
         ("vml", "run formatted", body, true, true),
-    ] {
+    ];
+    // Under other prefixes, a box tracked inside (body, header, note,
+    // ignored) and one replaced whole.
+    let written_otherwise = [
+        ("alternate content", "edited", body, false, false),
+        ("alternate content", "edited anchored", body, false, false),
+        ("alternate content", "nested", body, false, false),
+        ("alternate content", "edited", header, false, false),
+        ("alternate content", "edited", header, true, false),
+        ("alternate content", "edited", notes, false, false),
+        ("alternate content", "nested", body, false, true),
+        ("alternate content", "resized", body, false, false),
+    ];
+    let rows = rows.map(|row| (row, false));
+    for ((form, change, part, ignore_formatting, boxes_ignored), otherwise) in rows
+        .into_iter()
+        .chain(written_otherwise.map(|row| (row, true)))
+    {
         let case = format!(
-            "{form}, {change}, {part}, ignore formatting {ignore_formatting}, boxes ignored {boxes_ignored}"
+            "{form}, {change}, {part}, ignore formatting {ignore_formatting}, boxes ignored {boxes_ignored}, other prefixes {otherwise}"
         );
         let (from, to, tail) = shape(form, change);
+        let version = |part: &str, boxed: &str, tail: &str| {
+            let doc = version(part, boxed, tail);
+            if otherwise { other_prefixes(doc) } else { doc }
+        };
         let original = version(part, &from, "Tail.");
         let edited = version(part, &to, &tail);
         let mut options = ComparisonOptions {
@@ -5645,6 +5697,7 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         let report = doc.validate().unwrap();
         assert!(report.is_valid(), "{case}: {:?}", report.findings);
         let copies = if form == "alternate content" { 2 } else { 1 };
+        let part_xml = |doc: &mut Document, part: &str| plain_prefixes(part_xml(doc, part));
         let count = |doc: &mut Document, text: &str| part_xml(doc, part).matches(text).count();
         // A box deleted and inserted whole has a drawing id of its own.
         let xml = part_xml(&mut doc, part);
@@ -5661,8 +5714,9 @@ fn a_text_box_deleted_replaced_or_reframed_is_redlined_with_its_text_deleted_ins
         // The route a row pins: a box compared inside keeps its one
         // alternate content, one replaced whole is deleted and inserted.
         let alternate_contents = match (change, ignore_formatting) {
-            ("nested", _) => Some(1),
+            ("nested" | "edited" | "edited anchored", _) => Some(1),
             ("run formatted", false) => Some(2),
+            ("resized", _) if form == "alternate content" => Some(2),
             _ => None,
         };
         if let Some(expected) = alternate_contents {
