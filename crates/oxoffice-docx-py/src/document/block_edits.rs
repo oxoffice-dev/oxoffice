@@ -156,8 +156,8 @@ impl BlockShift {
     /// its story: a text box after the element, when the edit changes how
     /// many text boxes the element holds; with `found_by_story`, a table cell
     /// story after it too. The content of a cell is found through its table,
-    /// which the edit does not move, unless no cell owner holds it (a table
-    /// inside a block content control): then it is found by its story.
+    /// which the edit does not move, unless no cell owner holds it: then it
+    /// is found by its story.
     fn story_renumbered(&self, story: &oxoffice_docx::StoryId, found_by_story: bool) -> bool {
         (story.kind() == oxoffice_docx::StoryKind::TextBox
             || found_by_story && story.kind() == oxoffice_docx::StoryKind::TableCell)

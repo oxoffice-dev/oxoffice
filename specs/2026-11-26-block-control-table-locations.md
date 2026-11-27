@@ -458,6 +458,18 @@ oracles above) and the writings sample (the scan changes).
    follow-up only if measured.
 7. **Release note**: handles survive more edits in documents from Google Docs; no signature change, no `!`.
 
+Answered as recommended (orchestrator, 2026-11-27).
+
+### Outcome
+
+Shipped as planned, one pull request in two commits (product lines +524 / -367, tests +160 / -55). Differences:
+
+- The location argument a `Table` handle gives (`block_location`) still resolves through the document: a route of
+  the inventory carries no body story fingerprint, which the location operations check. It costs what the operation
+  it feeds reads anyway.
+- The two `control(table(..))` splice tests went instead of changing shape: the Google table in `body()` covers them.
+  `test_docx_block_locations.py` is not extended: the table-driven test covers what it would.
+
 ## Links
 
 - Issue #660; #657 and its spec

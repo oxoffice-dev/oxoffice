@@ -552,18 +552,6 @@ impl PyDocument {
         publication: WordPublication,
         shift: Option<BlockShift>,
     ) -> PyResult<PreparedWordRevision> {
-        // A table of a block content control, `[c, k]`, has no owner record:
-        // an edit of it retires every handle, as `Conservative` does.
-        let publication = match publication {
-            WordPublication::TableGrid(table)
-            | WordPublication::CellText(table, ..)
-            | WordPublication::CellInsert(table, ..)
-                if table.index_path().len() == 2 =>
-            {
-                WordPublication::Conservative
-            }
-            publication => publication,
-        };
         let block = matches!(
             publication,
             WordPublication::ParagraphEdit(_) | WordPublication::CellInsert(..)

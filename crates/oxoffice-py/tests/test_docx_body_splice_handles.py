@@ -57,6 +57,8 @@ def handles(doc):
         "t0 cell": (t0.cell(0, 1), lambda h: h.text),
         "t0 cell paragraphs": (t0.cell(0, 1).paragraphs, lambda h: h[0].text),
         "t0 cell paragraph": (t0.cell(0, 1).paragraphs[0], runs_text),
+        "g": (g, lambda h: h.cell(1, 1).text),
+        "g cell": (g.cell(0, 1), lambda h: h.text),
         "g cell paragraph": (g.cell(1, 0).paragraphs[0], runs_text),
         "t1": (t1, lambda h: h.cell(0, 0).text),
         "t1 cell paragraph": (t1.cell(0, 0).paragraphs[0], runs_text),

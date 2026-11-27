@@ -196,13 +196,14 @@ PLACES = ["body", "cell", "footer"]
 
 def neighbourhood(ids):
     """A body paragraph, a cell paragraph and a footer paragraph of two runs each, with hyperlinks before and after
-    them in the body, in another cell and in the footer, and a text box after them."""
+    them in the body, in another cell and in the footer, a text box after them and a Google Docs table last."""
     return document(
         p("first", link(1, "before"))
         + p("edited", " second")
         + table(p("cell", " second"), p("other", link(2, "in cell")))
         + p("box holder", text_box("in box"))
-        + p("after", link(3, "after")),
+        + p("after", link(3, "after"))
+        + google(1, table(p("google"), p("google other"))),
         footer=p("foot", " second") + p("foot next", link(4, "in footer")),
         ids=ids,
     )
@@ -239,6 +240,7 @@ def test_an_edit_of_one_paragraph_keeps_every_handle_outside_it(call, place, ids
     paragraphs = {label: get() for label, get in fresh.items()}
     runs = {label: paragraph.runs[0] for label, paragraph in paragraphs.items()}
     table_handle, cell_handle, other_cell = doc.tables[0], doc.tables[0].cell(0, 0), doc.tables[0].cell(0, 1)
+    google_table, google_cell = doc.tables[1], doc.tables[1].cell(0, 1)
     section = doc.section(0)
     names = ["before", "in cell", "after", "in footer"]
     hyperlinks = {name: link_named(doc, name) for name in names}
@@ -254,6 +256,8 @@ def test_an_edit_of_one_paragraph_keeps_every_handle_outside_it(call, place, ids
     handles["table"] = (lambda: len(table_handle.rows), lambda: len(doc.tables[0].rows))
     handles["cell"] = (lambda: cell_handle.text, lambda: doc.tables[0].cell(0, 0).text)
     handles["other cell"] = (lambda: other_cell.text, lambda: doc.tables[0].cell(0, 1).text)
+    handles["google table"] = (lambda: len(google_table.rows), lambda: len(doc.tables[1].rows))
+    handles["google cell"] = (lambda: google_cell.text, lambda: doc.tables[1].cell(0, 1).text)
     handles["section"] = (lambda: section.page_width, lambda: doc.section(0).page_width)
     # A field added in a story renumbers the items after it there: the links of later items of that story retire.
     retired = set()
@@ -517,6 +521,58 @@ def test_the_cells_of_a_table_in_a_block_content_control_follow_their_table_when
     check(doc, handles, [], [])
     in_controls["f"].text = "f edited"
     assert [table.cell(0, 0).text for table in doc.tables][1:] == ["b", "e", "f edited", "d"]
+
+
+def grid(name):
+    """A 2x2 table whose cells read `name a`, `name b`, then `name c`, `name d`."""
+    rows = "".join(
+        "<w:tr>" + "".join(f"<w:tc>{p(f'{name} {cell}')}</w:tc>" for cell in row) + "</w:tr>" for row in ("ab", "cd")
+    )
+    return f'<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>{rows}</w:tbl>'
+
+
+# Edits through a table handle.
+TABLE_EDITS = {
+    "Table.replace_xml": lambda t: t.replace_xml(t.xml.replace("x c", "x c edited")),
+    "Table.add_row": lambda t: t.add_row(),
+    "Table.remove_row": lambda t: t.remove_row(1),
+    "Table.alignment": lambda t: setattr(t, "alignment", 1),
+    "Cell.text": lambda t: setattr(t.cell(1, 0), "text", "edited"),
+    "Cell.add_paragraph": lambda t: t.cell(1, 0).add_paragraph("added"),
+    "Cell.add_table": lambda t: t.cell(1, 0).add_table(1, 1),
+    "Cell.replace_xml": lambda t: t.cell(1, 0).replace_xml(t.cell(1, 0).xml.replace("x c", "edited")),
+}
+
+
+@pytest.mark.parametrize("place", ["body", "cell", "footer"])
+@pytest.mark.parametrize("call", list(TABLE_EDITS))
+def test_an_edit_through_a_google_docs_table_keeps_the_handles_a_direct_table_keeps(call, place):
+    # The same edit through a direct table, in a twin document, tells which handles stay.
+    def outcomes(wrap):
+        edited = wrap(grid("x"))
+        here = {"body": edited, "cell": table(p("holder") + edited), "footer": ""}[place]
+        footer = p("foot") + (edited if place == "footer" else "")
+        doc = document(p("before") + here + p("after") + table(p("other")), footer=footer)
+        target = {
+            "body": lambda: doc.tables[0],
+            "cell": lambda: doc.tables[0].cell(0, 0).tables[0],
+            "footer": lambda: doc.section(0).footer.tables[0],
+        }[place]()
+        taken = {
+            "paragraph before": (doc.paragraphs[0], lambda h: h.text),
+            "paragraph after": (doc.paragraphs[1], lambda h: h.text),
+            "other table": (doc.tables[-1], lambda h: h.cell(0, 0).text),
+            "its cell paragraph": (doc.tables[-1].cell(0, 0).paragraphs[0], lambda h: h.text),
+            "footer paragraph": (doc.section(0).footer.paragraphs[0], lambda h: h.text),
+            "edited table": (target, lambda h: h.cell(0, 1).text),
+            "its other cell": (target.cell(0, 1), lambda h: h.text),
+        }
+        TABLE_EDITS[call](target)
+        return {name: outcome(lambda h=handle, read=read: read(h)) for name, (handle, read) in taken.items()}
+
+    google_outcomes = outcomes(lambda xml: google(1, xml))
+    assert google_outcomes == outcomes(lambda xml: xml)
+    assert google_outcomes["paragraph before"] == "before"
 
 
 @pytest.mark.parametrize("call", ["Run.remove", "Run.add_field", "Paragraph.text"])
