@@ -1,8 +1,9 @@
 //! Word document settings and document-protection metadata.
 
 use oxoffice_core::Twips;
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::document::{CT_NoteProperties, CT_SectPr};
 use crate::error::{OxmlError, Result};
@@ -10,7 +11,7 @@ use crate::math::{MathProperties, fixed_math_prefix_is_safe, is_math_element};
 use crate::namespace::W_NS;
 use crate::numbering::{namespace_bindings, word_prefixes_at};
 use crate::properties::{is_word_attribute, is_word_element, parse_twips_measure};
-use crate::raw_xml::capture_element;
+use crate::raw_xml::{capture_element, capture_empty};
 
 /// The editing operation permitted by `w:documentProtection`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -744,7 +745,7 @@ impl CT_Settings {
                         let raw = if started {
                             capture_element(&mut reader, element)?
                         } else {
-                            capture_empty_element(element)?
+                            capture_empty(element, reader.empty_writing())?
                         };
                         let bindings = namespace_bindings(&prefixes);
                         let parsed = if fixed_math_prefix_is_safe(&raw, &bindings)? {
@@ -2838,12 +2839,6 @@ pub(crate) fn supported_name(
         .find(|name| is_word_element(element.name().as_ref(), name.as_bytes(), prefixes))
 }
 
-pub(crate) fn capture_empty_element(element: &BytesStart<'_>) -> Result<Vec<u8>> {
-    let mut raw = Vec::new();
-    Writer::new(&mut raw).write_event(Event::Empty(element.to_owned().into_owned()))?;
-    Ok(raw)
-}
-
 /// Replace one qualified scalar attribute without serializing producer bytes.
 pub(crate) fn rewrite_word_root_attribute(
     raw: &[u8],
@@ -3231,7 +3226,10 @@ pub(crate) fn find_top_level_children(
             Event::Empty(element) if depth == 1 => {
                 let prefixes = word_prefixes_at(&element, &root_prefixes)?;
                 if is_word_element(element.name().as_ref(), local, &prefixes) {
-                    matches.push((capture_empty_element(&element)?, root_prefixes.clone()));
+                    matches.push((
+                        capture_empty(&element, reader.empty_writing())?,
+                        root_prefixes.clone(),
+                    ));
                 }
             }
             Event::Start(_) => depth += 1,
@@ -3249,7 +3247,10 @@ fn rewrite_group_children(
     modeled: &[u8],
     inherited_prefixes: &[String],
 ) -> Result<Vec<u8>> {
-    let mut reader = Reader::from_reader(raw);
+    // A copy of the part that models nothing but the replaced child: read
+    // as written, so every other element keeps its writing.
+    let mut source_reader = Reader::from_reader(raw);
+    let reader = source_reader.verbatim();
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::with_capacity(raw.len() + modeled.len()));
     let mut prefixes = Vec::new();
@@ -3277,7 +3278,7 @@ fn rewrite_group_children(
                         writer.get_mut().extend_from_slice(modeled);
                         inserted = true;
                     }
-                    capture_element(&mut reader, &element)?;
+                    capture_element(reader, &element)?;
                 } else {
                     writer.write_event(Event::Start(element.into_owned()))?;
                     depth += 1;
@@ -3355,7 +3356,10 @@ fn rewrite_child_in_raw(
     inherited_prefixes: &[String],
     order: &[&[u8]],
 ) -> Result<Vec<u8>> {
-    let mut reader = Reader::from_reader(raw);
+    // A copy of the part that models nothing but the replaced child: read
+    // as written, so every other element keeps its writing.
+    let mut source_reader = Reader::from_reader(raw);
+    let reader = source_reader.verbatim();
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::with_capacity(raw.len() + replacement.len()));
     let mut prefixes = Vec::new();
@@ -3387,7 +3391,7 @@ fn rewrite_child_in_raw(
                         writer.get_mut().extend_from_slice(replacement);
                         inserted = true;
                     }
-                    capture_element(&mut reader, &element)?;
+                    capture_element(reader, &element)?;
                 } else {
                     if !inserted && element_follows(order, child_local, &element, &child_prefixes) {
                         writer.get_mut().extend_from_slice(replacement);
@@ -3480,7 +3484,10 @@ pub(crate) fn rewrite_ordered_child(
     replacement: &[u8],
     matches: fn(&[u8], &[u8], &[String]) -> bool,
 ) -> Result<Vec<u8>> {
-    let mut reader = Reader::from_reader(source);
+    // A copy of the part that models nothing but the replaced child: read
+    // as written, so every other element keeps its writing.
+    let mut source_reader = Reader::from_reader(source);
+    let reader = source_reader.verbatim();
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::with_capacity(source.len() + replacement.len()));
     let mut root_prefixes = Vec::new();
@@ -3512,7 +3519,7 @@ pub(crate) fn rewrite_ordered_child(
                         writer.get_mut().extend_from_slice(replacement);
                         inserted = true;
                     }
-                    capture_element(&mut reader, &element)?;
+                    capture_element(reader, &element)?;
                 } else {
                     if !inserted && element_follows(order, local, &element, &prefixes) {
                         writer.get_mut().extend_from_slice(replacement);

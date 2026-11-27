@@ -2,10 +2,11 @@ use std::fmt;
 use std::io::Write;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw};
 use oxoffice_core::xml::{local_name, matches_local_name};
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::color::ColorError;
 use crate::fill::FillError;
@@ -369,7 +370,7 @@ impl CT_TextBodyProperties {
                 }
                 Event::Empty(element) => {
                     let name = local_name(element.name().as_ref()).to_vec();
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     properties.capture_child(&name, raw, &mut boundary, &mut occurrences)?;
                 }
                 Event::End(element) if matches_local_name(element.name().as_ref(), b"bodyPr") => {

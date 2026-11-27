@@ -7,6 +7,7 @@ use std::sync::Arc;
 use oxoffice_core::Length;
 use oxoffice_core::custom_properties::CustomPropertyValue;
 use oxoffice_core::xml::{XmlLexicalError, is_xml_1_0_character, validate_strict_xml_1_0};
+use oxoffice_core::xml_reader::NsReader;
 use oxoffice_docx_oxml::comments::CT_Comments;
 use oxoffice_docx_oxml::content_control::{CT_Sdt, SdtContent};
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body, CT_Document, CT_SectPr};
@@ -29,7 +30,6 @@ use oxoffice_opc::relationship::rel_types;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Namespace, NamespaceResolver, ResolveResult};
-use quick_xml::reader::NsReader;
 
 pub use oxoffice_docx_oxml::text::{
     Field, LegacyCheckBoxSize, LegacyFormFieldDefinition, LegacyFormFieldKind,

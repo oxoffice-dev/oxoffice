@@ -310,6 +310,47 @@ fn an_authored_separator_is_not_counted_as_a_note() {
     assert!(xml.contains("~~~~") && xml.contains("Continued on the next page"));
 }
 
+#[test]
+fn a_note_with_nothing_inside_is_read_in_both_writings() {
+    let mut doc = doc_with(&["Body"]);
+    let footnote = create_note(&mut doc, Footnote, 0, "Footnote");
+    let endnote = create_note(&mut doc, Endnote, 0, "Endnote");
+    let parts = oxoffice_xml_test::package_parts(&doc.to_bytes().unwrap()).unwrap();
+    for end_tag in [false, true] {
+        let emptied = parts.iter().map(|(name, data)| {
+            let mut xml = String::from_utf8(data.clone()).unwrap();
+            for (part, kind, id) in [
+                ("footnotes", "footnote", footnote),
+                ("endnotes", "endnote", endnote),
+            ] {
+                if name == &format!("word/{part}.xml") {
+                    let id = format!(r#"w:id="{id}""#);
+                    let start = xml
+                        .match_indices(&format!("<w:{kind} "))
+                        .map(|(at, _)| at)
+                        .find(|&at| xml[at..at + xml[at..].find('>').unwrap()].contains(&id))
+                        .expect("the note");
+                    let close = format!("</w:{kind}>");
+                    let end = start + xml[start..].find(&close).unwrap() + close.len();
+                    let empty = match end_tag {
+                        true => format!("<w:{kind} {id}>{close}"),
+                        false => format!("<w:{kind} {id}/>"),
+                    };
+                    xml.replace_range(start..end, &empty);
+                }
+            }
+            (name.clone(), xml.into_bytes())
+        });
+        let bytes = oxoffice_xml_test::write_package(&emptied.collect::<Vec<_>>());
+        let doc = Document::from_bytes(&bytes).unwrap();
+        assert_eq!(doc.footnotes(), [(footnote, String::new())], "{end_tag}");
+        for story in [doc.footnote_story(footnote), doc.endnote_story(endnote)] {
+            let story = story.unwrap().expect("the empty note is a story");
+            assert!(doc.story_items(&story).unwrap().is_empty(), "{end_tag}");
+        }
+    }
+}
+
 // ---- Editing ----
 
 #[test]

@@ -91,7 +91,7 @@ impl<'a> UnsupportedXmlRef<'a> {
 }
 
 fn raw_element_names(raw: &[u8]) -> Option<(String, String)> {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     loop {
@@ -112,7 +112,7 @@ fn raw_element_names(raw: &[u8]) -> Option<(String, String)> {
 }
 
 fn raw_namespace_declaration(raw: &[u8], prefix: &str) -> Option<String> {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     let mut buffer = Vec::new();
     let declaration = if prefix.is_empty() {
         "xmlns".to_owned()
@@ -157,7 +157,7 @@ pub(super) fn inherited_namespace<'a>(
 }
 
 fn raw_has_child_content(raw: &[u8]) -> bool {
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut depth = 0usize;
@@ -202,7 +202,7 @@ pub(super) fn typed_numbering_leaf_has_unmodeled(raw: &[u8], word_prefixes: &[St
     if raw_has_child_content(raw) {
         return true;
     }
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     let mut buffer = Vec::new();
     loop {
         match reader.read_event_into(&mut buffer) {

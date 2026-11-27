@@ -632,7 +632,7 @@ fn validate_relationship_free_body(content: &[u8]) -> Result<()> {
             "building block relationships require an owned document fragment".to_owned(),
         ));
     }
-    let mut reader = quick_xml::reader::NsReader::from_reader(xml.as_slice());
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(xml.as_slice());
     let mut buffer = Vec::new();
     loop {
         let (namespace, event) = reader
@@ -671,7 +671,7 @@ fn validate_relationship_free_body(content: &[u8]) -> Result<()> {
 }
 
 fn glossary_body_as_document(body: &[u8]) -> oxoffice_docx_oxml::error::Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(body);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(body);
     let mut buffer = Vec::new();
     let scope = crate::document::story_namespace_scope_at(body, 0)
         .map_err(|error| oxoffice_docx_oxml::error::OxmlError::InvalidValue(error.to_string()))?;
@@ -787,7 +787,7 @@ fn updated_word_value(parent: &[u8], local: &str, value: &str) -> Result<Vec<u8>
     let Some(xml) = word_child(parent, local)? else {
         return Ok(word_value(local, value)?);
     };
-    let mut reader = quick_xml::reader::NsReader::from_reader(xml.as_slice());
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(xml.as_slice());
     let mut buffer = Vec::new();
     let event = reader
         .read_event_into(&mut buffer)
@@ -843,7 +843,7 @@ struct ControlChildren {
 }
 
 fn word_children(xml: &[u8]) -> oxoffice_docx_oxml::error::Result<ControlChildren> {
-    let mut reader = quick_xml::reader::NsReader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(xml);
     let mut buffer = Vec::new();
     let mut depth = 0usize;
     let mut pending = None;
@@ -937,7 +937,7 @@ fn set_word_children(xml: &[u8], updates: &[(&str, Vec<u8>)]) -> Result<Vec<u8>>
         empty,
     } = word_children(xml)?;
     if empty {
-        let mut reader = quick_xml::Reader::from_reader(xml);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
         let mut buffer = Vec::new();
         let quick_xml::events::Event::Empty(element) = reader
             .read_event_into(&mut buffer)

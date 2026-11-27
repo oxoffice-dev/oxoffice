@@ -781,7 +781,7 @@ fn document_xml_lexical_fault(xml: &[u8]) -> Option<String> {
     if let Err(error) = oxoffice_core::xml::validate_strict_xml_1_0(xml) {
         return Some(format!("{error:?}"));
     }
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut depth = 0usize;
     let mut roots = 0usize;
     let mut doctype = false;
@@ -1227,7 +1227,7 @@ fn definition_levels<'a>(
 /// The style a definition's raw `w:numStyleLink` child names.
 fn num_style_link(raw_children: &[(usize, Vec<u8>)]) -> Option<String> {
     raw_children.iter().find_map(|(_, raw)| {
-        let mut reader = quick_xml::Reader::from_reader(raw.as_slice());
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw.as_slice());
         let mut buffer = Vec::new();
         match reader.read_event_into(&mut buffer).ok()? {
             quick_xml::events::Event::Empty(element) | quick_xml::events::Event::Start(element)

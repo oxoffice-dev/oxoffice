@@ -365,7 +365,9 @@ pub(super) fn replay_nested_namespace_declarations_in(
         NamespaceReplayOutput::Bytes(Vec::new())
     };
     let mut retained_events = Vec::new();
+    // A copy that models no element: every event is replayed as written.
     let mut reader = NsReader::from_reader(input);
+    let reader = reader.verbatim();
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(output);
     let mut replayed = 0usize;

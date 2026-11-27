@@ -2,14 +2,15 @@
 
 use std::io::Write;
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
 use crate::numbering::word_prefixes_at;
 use crate::properties::is_word_element;
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::text::{CT_P, declare_w14_on_part_root};
 
 const W14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
@@ -137,7 +138,7 @@ impl CT_Comments {
                             pending.comments.push(CommentReadFacts::default());
                         }
                     } else if saw_root {
-                        let raw = capture_empty_element(element)?;
+                        let raw = capture_empty(element, reader.empty_writing())?;
                         if read_output.is_some() {
                             pending.raws.push(
                                 controls
@@ -350,7 +351,7 @@ fn parse_comment(
                     )?);
                     paragraphs.push(CT_P::from_empty_root(element, &child_prefixes)?);
                 } else {
-                    let raw = capture_empty_element(element)?;
+                    let raw = capture_empty(element, reader.empty_writing())?;
                     if let Some(output) = read_output.as_deref_mut() {
                         output.raws.push(
                             controls

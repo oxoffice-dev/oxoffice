@@ -1182,7 +1182,7 @@ fn write_legacy_form_source<W: std::io::Write>(
                     )?;
                     wrote_value = true;
                 } else {
-                    writer.write_event(Event::Empty(element))?;
+                    crate::raw_xml::write_empty(writer, &element, reader.empty_writing())?;
                 }
             }
             Event::End(element) => {

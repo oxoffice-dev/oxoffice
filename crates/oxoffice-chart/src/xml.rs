@@ -269,7 +269,9 @@ pub(super) fn parse_raw_shell(
                         Event::Start(child) => {
                             raw_children.push(0, capture_element(&mut reader, &child)?)
                         }
-                        Event::Empty(child) => raw_children.push(0, capture_empty_element(&child)?),
+                        Event::Empty(child) => {
+                            raw_children.push(0, capture_empty(&child, reader.empty_writing())?)
+                        }
                         event @ (Event::Text(_)
                         | Event::CData(_)
                         | Event::Comment(_)
@@ -452,7 +454,7 @@ fn foreign_element_regions(
             Event::Empty(element) => {
                 let namespaces = namespace_stack.last().expect("root namespace binding");
                 if !element_is_in_namespace(&element, A_NS, namespaces)? {
-                    foreign.push(capture_empty_element(&element)?);
+                    foreign.push(capture_empty(&element, reader.empty_writing())?);
                 }
             }
             Event::End(element) if matches_local_name(element.name().as_ref(), root_local) => {

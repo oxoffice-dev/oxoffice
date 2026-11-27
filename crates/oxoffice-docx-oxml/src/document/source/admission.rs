@@ -892,7 +892,7 @@ pub(super) fn admit_word_input_classified(
 /// Public reader entrypoints begin after the owning start event. Reconstruct
 /// exactly that remaining owner, without consuming the caller or its siblings.
 pub(crate) fn admit_word_reader(
-    input: &Reader<&[u8]>,
+    input: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
     prefixes: &[String],
     owner: &[u8],
     namespace: Option<&str>,

@@ -692,7 +692,7 @@ impl CT_SectPr {
                         raw_position = (3, 0);
                     } else if is_word_element(name.as_ref(), b"pgNumType", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &page_number_bindings,
                         )?;
                         if sect.page_number.is_none() {
@@ -710,7 +710,7 @@ impl CT_SectPr {
                             sect.footnote_pr = Some(Box::default());
                         } else {
                             let raw = crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &raw_owner_bindings,
                             )?;
                             sect.push_extra_xml(raw, 2, 0);
@@ -721,7 +721,7 @@ impl CT_SectPr {
                             sect.endnote_pr = Some(Box::default());
                         } else {
                             let raw = crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &raw_owner_bindings,
                             )?;
                             sect.push_extra_xml(raw, 2, 1);
@@ -733,7 +733,7 @@ impl CT_SectPr {
                                 Some(Box::new(Self::parse_paper_source(e, &prefixes)?));
                         } else {
                             let raw = crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &raw_owner_bindings,
                             )?;
                             sect.push_extra_xml(raw, 5, 1);
@@ -745,7 +745,7 @@ impl CT_SectPr {
                                 Some(Box::new(Self::parse_page_border_attrs(e, &prefixes)?));
                         } else {
                             let raw = crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &raw_owner_bindings,
                             )?;
                             sect.push_extra_xml(raw, 5, 2);
@@ -757,7 +757,7 @@ impl CT_SectPr {
                                 Some(Box::new(Self::parse_line_number(e, &prefixes)?));
                         } else {
                             let raw = crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &raw_owner_bindings,
                             )?;
                             sect.push_extra_xml(raw, 5, 3);
@@ -773,7 +773,7 @@ impl CT_SectPr {
                             }
                             _ => {
                                 let raw = crate::text::raw_with_external_bindings(
-                                    &capture_empty_element(e)?,
+                                    &capture_empty(e, reader.empty_writing())?,
                                     &raw_owner_bindings,
                                 )?;
                                 sect.push_extra_xml(raw, 7, 0);
@@ -787,7 +787,7 @@ impl CT_SectPr {
                             }
                             _ => {
                                 let raw = crate::text::raw_with_external_bindings(
-                                    &capture_empty_element(e)?,
+                                    &capture_empty(e, reader.empty_writing())?,
                                     &raw_owner_bindings,
                                 )?;
                                 sect.push_extra_xml(raw, 8, 0);
@@ -802,7 +802,7 @@ impl CT_SectPr {
                             // after the typed one rather than before it, the
                             // way a second `w:paperSrc` already is.
                             let raw = crate::text::raw_with_external_bindings(
-                                &capture_empty_element(e)?,
+                                &capture_empty(e, reader.empty_writing())?,
                                 &raw_owner_bindings,
                             )?;
                             sect.push_extra_xml(raw, 8, 2);
@@ -859,7 +859,7 @@ impl CT_SectPr {
                         raw_position = (8, 0);
                     } else if is_word_element(name.as_ref(), b"sectPrChange", &prefixes) {
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &raw_owner_bindings,
                         )?;
                         if let Some(revision) = CT_Revision::from_raw(raw.clone(), &prefixes) {
@@ -884,7 +884,7 @@ impl CT_SectPr {
                         let position = Self::raw_child_schema_slot(name.as_ref(), &prefixes)
                             .unwrap_or(raw_position);
                         let raw = crate::text::raw_with_external_bindings(
-                            &capture_empty_element(e)?,
+                            &capture_empty(e, reader.empty_writing())?,
                             &raw_owner_bindings,
                         )?;
                         sect.push_extra_xml(raw, position.0, position.1);
@@ -1558,7 +1558,7 @@ impl CT_SectPr {
                         borders
                             .extra_xml
                             .push(crate::text::raw_with_external_bindings(
-                                &capture_empty_element(child)?,
+                                &capture_empty(child, reader.empty_writing())?,
                                 owner_bindings,
                             )?);
                     }
@@ -1693,7 +1693,7 @@ impl CT_SectPr {
                         properties.extra_xml.push((
                             slot,
                             crate::text::raw_with_external_bindings(
-                                &capture_empty_element(child)?,
+                                &capture_empty(child, reader.empty_writing())?,
                                 owner_bindings,
                             )?,
                         ));

@@ -954,7 +954,7 @@ pub(super) fn word_txbx_paragraph_spans(
     xml: &[u8],
     inherited: &[(String, String)],
 ) -> Result<Vec<(usize, usize)>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut scopes = vec![inherited.to_vec()];
@@ -1185,7 +1185,7 @@ fn bound_field_source_has_typed_ancestors(
     paragraph_start: usize,
     inherited: &[(String, String)],
 ) -> Result<bool> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut scopes = vec![inherited.to_vec()];

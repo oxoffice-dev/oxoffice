@@ -6,9 +6,10 @@ use std::io::Write;
 
 use oxoffice_core::OxmlError;
 use oxoffice_core::raw_xml::{
-    capture_element, capture_empty_element, capture_event, emit_raw, push_attributes,
+    capture_element, capture_empty, capture_event, emit_raw, push_attributes,
 };
 use oxoffice_core::xml::{escape_text, local_name, matches_local_name};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_core::xml_text::resolve_entity;
 use oxoffice_drawing::color::{
     ColorChoice, ColorMap, ColorMapSlot, ResolvedColor, ThemeColorSlot, apply_color_transforms,
@@ -26,7 +27,7 @@ use oxoffice_layout::{
 };
 use oxoffice_sml::{ChartCellValue, ChartRange, ChartRangeUpdate, Column, Workbook};
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 pub use oxoffice_drawing::color::RgbColor;
 

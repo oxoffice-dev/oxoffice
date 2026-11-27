@@ -178,7 +178,8 @@ fn read_effective_section_page_number(
     section: &CT_SectPr,
     modeled_start: Option<usize>,
 ) -> Option<EffectiveSectionPageNumber> {
-    use quick_xml::{events::Event, name::ResolveResult, reader::NsReader};
+    use oxoffice_core::xml_reader::NsReader;
+    use quick_xml::{events::Event, name::ResolveResult};
     let mut writer = quick_xml::Writer::new(Vec::new());
     section.to_xml(&mut writer).ok()?;
     let mut xml =

@@ -1241,7 +1241,7 @@ impl Document {
 
 /// The local name of the root element of `xml`.
 fn root_local_name(xml: &[u8]) -> Option<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut buffer = Vec::new();
     loop {
         match reader.read_event_into(&mut buffer).ok()? {

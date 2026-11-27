@@ -33,7 +33,7 @@ fn assert_same_reopen(reopened: &Result<Document>, through_zip: &Result<Document
 /// Whether an element of `xml` has a `val` attribute, whatever its prefix,
 /// quotes, spacing or character references, whose value is `value`.
 fn part_has_val(xml: &[u8], value: &str) -> bool {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     loop {
         match reader.read_event() {
             Ok(Event::Start(element) | Event::Empty(element)) => {

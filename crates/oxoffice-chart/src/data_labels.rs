@@ -140,7 +140,7 @@ impl CT_DLbls {
                 }
                 Event::Empty(element) => {
                     let name = chart_child_local(&element, &state.namespaces)?;
-                    let raw = capture_empty_element(&element)?;
+                    let raw = capture_empty(&element, reader.empty_writing())?;
                     state.parse_child(name.as_deref().unwrap_or_default(), raw)?;
                 }
                 event @ (Event::Text(_)

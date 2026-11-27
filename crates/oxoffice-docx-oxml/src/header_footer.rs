@@ -1,15 +1,16 @@
 //! Header and footer elements: `CT_HdrFtr`.
 
+use oxoffice_core::xml_reader::NsReader;
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::name::{Namespace, ResolveResult};
-use quick_xml::reader::NsReader;
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{W_NS, matches_local_name};
 use crate::numbering::{namespace_bindings, word_prefixes_at};
 use crate::properties::is_word_element;
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::text::{CT_P, ROOT_R_BINDING, ROOT_WP_BINDING, declare_w14_on_part_root};
 
 const VML_NS: &str = "urn:schemas-microsoft-com:vml";
@@ -275,31 +276,12 @@ impl CT_HdrFtr {
                     } else if is_word_element(name.as_ref(), b"hdr", &prefixes)
                         || is_word_element(name.as_ref(), b"ftr", &prefixes)
                     {
-                        // Capture extra namespace declarations and the other
-                        // attributes from root element
-                        for attr in e.attributes().flatten() {
-                            let key = attr.key.as_ref();
-                            let is_namespace = key.starts_with(b"xmlns:") || key == b"xmlns";
-                            if is_namespace && !known_ns.contains(&key) {
-                                let key_str = std::str::from_utf8(key).unwrap_or("").to_string();
-                                let val_str = attr
-                                    .decoded_and_normalized_value(
-                                        XmlVersion::Implicit1_0,
-                                        e.decoder(),
-                                    )?
-                                    .into_owned();
-                                extra_namespaces.push((key_str, val_str));
-                            } else if !is_namespace {
-                                root_attributes.push((
-                                    std::str::from_utf8(key)?.to_owned(),
-                                    attr.decoded_and_normalized_value(
-                                        XmlVersion::Implicit1_0,
-                                        e.decoder(),
-                                    )?
-                                    .into_owned(),
-                                ));
-                            }
-                        }
+                        root_attributes_of(
+                            e,
+                            known_ns,
+                            &mut extra_namespaces,
+                            &mut root_attributes,
+                        )?;
                         word_prefixes = prefixes.into_owned();
                     } else {
                         // Capture unknown elements as raw XML
@@ -312,10 +294,22 @@ impl CT_HdrFtr {
                     let prefixes = word_prefixes_at(e, &word_prefixes)?;
                     if is_word_element(name.as_ref(), b"p", &prefixes) {
                         paragraphs.push(CT_P::from_empty_root(e, &prefixes)?);
+                    } else if is_word_element(name.as_ref(), b"hdr", &prefixes)
+                        || is_word_element(name.as_ref(), b"ftr", &prefixes)
+                    {
+                        // A root with nothing inside, in either writing, keeps
+                        // what an opened one keeps.
+                        root_attributes_of(
+                            e,
+                            known_ns,
+                            &mut extra_namespaces,
+                            &mut root_attributes,
+                        )?;
+                        word_prefixes = prefixes.into_owned();
                     } else if !matches_local_name(name.as_ref(), b"hdr")
                         && !matches_local_name(name.as_ref(), b"ftr")
                     {
-                        extra_xml.push(capture_empty_element(e)?);
+                        extra_xml.push(capture_empty(e, reader.empty_writing())?);
                         extra_xml_positions.push(paragraphs.len());
                     }
                 }
@@ -1339,5 +1333,58 @@ impl HdrFtrRef {
 impl PartialEq for HdrFtrRef {
     fn eq(&self, other: &Self) -> bool {
         self.hdr_ftr_type == other.hdr_ftr_type && self.rel_id == other.rel_id
+    }
+}
+
+/// The extra namespace declarations (all but `known`) and the other
+/// attributes of an `hdr` or `ftr` root.
+fn root_attributes_of(
+    root: &BytesStart<'_>,
+    known: &[&[u8]],
+    extra_namespaces: &mut Vec<(String, String)>,
+    root_attributes: &mut Vec<(String, String)>,
+) -> Result<()> {
+    for attr in root.attributes().flatten() {
+        let key = attr.key.as_ref();
+        let is_namespace = key.starts_with(b"xmlns:") || key == b"xmlns";
+        if is_namespace && !known.contains(&key) {
+            let key_str = std::str::from_utf8(key).unwrap_or("").to_string();
+            let val_str = attr
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, root.decoder())?
+                .into_owned();
+            extra_namespaces.push((key_str, val_str));
+        } else if !is_namespace {
+            root_attributes.push((
+                std::str::from_utf8(key)?.to_owned(),
+                attr.decoded_and_normalized_value(XmlVersion::Implicit1_0, root.decoder())?
+                    .into_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_root_with_nothing_inside_keeps_its_declarations_and_attributes_in_both_writings() {
+        let root = concat!(
+            r#"<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#,
+            r#" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006""#,
+            r#" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#,
+            r#" mc:Ignorable="w14""#,
+        );
+        for xml in [format!("{root}/>"), format!("{root}></w:hdr>")] {
+            let written = CT_HdrFtr::from_xml(xml.as_bytes())
+                .and_then(|header| header.to_xml_header())
+                .unwrap();
+            let written = String::from_utf8(written).unwrap();
+            assert!(
+                written.contains(r#"mc:Ignorable="w14""#) && written.contains("xmlns:w14="),
+                "{xml}: {written}"
+            );
+        }
     }
 }

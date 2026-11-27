@@ -30,8 +30,9 @@
 //! retained and written after the modelled ones, because `w:rubyPr` is a
 //! closed sequence and such a child is already off-schema wherever it sat.
 
+use oxoffice_core::xml_reader::Reader;
+use quick_xml::Writer;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer};
 
 use crate::error::Result;
 use crate::numbering::word_prefixes_at;
@@ -40,7 +41,7 @@ use crate::properties::{
     get_word_val_attr, is_word_attribute, is_word_element, parse_half_point_measure,
     parse_word_toggle,
 };
-use crate::raw_xml::{capture_element, capture_empty_element};
+use crate::raw_xml::{capture_element, capture_empty};
 use crate::text::{CT_R, parse_run_raw};
 use crate::units::HalfPoint;
 
@@ -201,7 +202,7 @@ impl CT_RubyPr {
             {
                 properties.raw_xml.push(match raw {
                     Some(raw) => raw,
-                    None => capture_empty_element(&element)?,
+                    None => capture_empty(&element, reader.empty_writing())?,
                 });
             }
             buffer.clear();
@@ -631,7 +632,8 @@ impl CT_Ruby {
                         // back as an empty element.
                         return Ok(None);
                     } else {
-                        ruby.raw_xml.push(capture_empty_element(&element)?);
+                        ruby.raw_xml
+                            .push(capture_empty(&element, reader.empty_writing())?);
                     }
                 }
                 event if depth == 1 && rejects_direct_characters(&event) => return Ok(None),

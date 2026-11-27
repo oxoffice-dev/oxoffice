@@ -718,7 +718,8 @@ pub(super) fn comment_move_source_edits(
         .iter()
         .find(|span| reference_span.contains(&span.start))
         .ok_or_else(|| Error::Other("comment move reference source was not selected".into()))?;
-    let mut original_reader = quick_xml::Reader::from_reader(&xml[reference_span.clone()]);
+    let mut original_reader =
+        oxoffice_core::xml_reader::Reader::from_reader(&xml[reference_span.clone()]);
     original_reader
         .read_event()
         .map_err(|error| Error::Other(error.to_string()))?;
@@ -839,7 +840,7 @@ pub(super) fn comment_move_source_edits(
 
 fn pure_empty_google_comment_control(xml: &[u8], scope: &BTreeMap<String, String>) -> Result<bool> {
     // An authored namespace declaration or any other root attribute is payload.
-    let mut raw_reader = quick_xml::Reader::from_reader(xml);
+    let mut raw_reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     if !matches!(raw_reader.read_event(), Ok(Event::Start(ref root)) if root.attributes().next().is_none())
     {
         return Ok(false);
@@ -917,7 +918,7 @@ pub(super) fn story_element_end(xml: &[u8], start: usize) -> Result<usize> {
     let fragment = xml
         .get(start..)
         .ok_or_else(|| Error::Other("story element begins outside its source part".to_owned()))?;
-    let mut reader = quick_xml::Reader::from_reader(fragment);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(fragment);
     reader.config_mut().trim_text(false);
     let mut depth = 0usize;
     let mut buffer = Vec::new();

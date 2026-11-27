@@ -2,14 +2,15 @@ use std::io::Write;
 use std::ops::Range;
 
 use oxoffice_core::OxmlError;
-use oxoffice_core::raw_xml::{capture_element, capture_empty_element, emit_raw, push_attributes};
+use oxoffice_core::raw_xml::{capture_element, capture_empty, emit_raw, push_attributes};
+use oxoffice_core::xml_reader::Reader;
 use oxoffice_drawing::fill::BlipFill;
 use oxoffice_drawing::namespace::A_NS;
 use oxoffice_drawing::order::OrderedRawChildren;
 use oxoffice_drawing::shape_props::CT_ShapeProperties;
 use oxoffice_drawing::xfrm::CT_Transform2D;
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::namespace::{
     FIXED_SHAPE_TREE_PREFIXES, MC_NS, NamespaceBindings, P_NS, R_NS, accessibility_parent_bindings,
@@ -374,7 +375,7 @@ impl CT_Picture {
                     let child_namespaces = namespaces.with_start(&child)?;
                     let name = local_name(child.name().as_ref()).to_vec();
                     let uri = child_namespaces.element_uri(child.name().as_ref());
-                    let raw = capture_empty_element(&child)?;
+                    let raw = capture_empty(&child, reader.empty_writing())?;
                     capture_picture_child(
                         &name,
                         uri,
@@ -738,7 +739,7 @@ fn parse_non_visual_picture(
                             } else {
                                 None
                             };
-                            let raw = capture_empty_element(&child)?;
+                            let raw = capture_empty(&child, reader.empty_writing())?;
                             capture_non_visual_child(
                                 &name,
                                 uri,

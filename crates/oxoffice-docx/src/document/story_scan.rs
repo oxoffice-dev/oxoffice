@@ -633,7 +633,7 @@ pub(super) fn paired_story_owners(
 // Anchor capture uses trim_text(true). Apply precisely that parser projection
 // to the original span, while retaining element names, attributes and order.
 fn drawing_capture_key(xml: &[u8]) -> Result<Vec<u8>> {
-    let mut reader = quick_xml::Reader::from_reader(xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     reader.config_mut().trim_text(true);
     let mut writer = quick_xml::Writer::new(Vec::new());
     let mut buffer = Vec::new();
@@ -814,7 +814,7 @@ pub(crate) fn prepare_physical_story_projection(
 ) -> Result<()> {
     fn consume_raw(raw: &[u8], anchors: &mut [(Vec<u8>, Option<usize>, bool)]) -> Result<()> {
         let captured = drawing_capture_key(raw)?;
-        let mut reader = quick_xml::Reader::from_reader(captured.as_slice());
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(captured.as_slice());
         let mut buffer = Vec::new();
         loop {
             let before = reader.buffer_position() as usize;
@@ -889,7 +889,7 @@ pub(crate) fn prepare_physical_story_projection(
             .map(drawing_capture_key)
             .transpose()?;
         let captured = drawing_capture_key(raw)?;
-        let mut reader = quick_xml::Reader::from_reader(captured.as_slice());
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(captured.as_slice());
         let mut buffer = Vec::new();
         let mut bound = false;
         loop {
@@ -1171,7 +1171,7 @@ fn typed_complex_field_candidate_is_admitted(
     inherited_word_prefixes: &[String],
 ) -> Result<bool> {
     let paragraph_xml = &xml[paragraph.clone()];
-    let mut reader = quick_xml::Reader::from_reader(paragraph_xml);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(paragraph_xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let paragraph_local_name = loop {
@@ -1205,7 +1205,7 @@ fn typed_complex_field_candidate_is_admitted(
         .checked_sub(candidate.scan.start)
         .filter(|end| marker_start <= *end && *end <= scanned.len())
         .ok_or_else(|| Error::Other("complex story field ends outside its run span".to_owned()))?;
-    let mut run_reader = quick_xml::Reader::from_reader(scanned);
+    let mut run_reader = oxoffice_core::xml_reader::Reader::from_reader(scanned);
     run_reader.config_mut().trim_text(false);
     let mut run_buffer = Vec::new();
     let mut run_opening_end = None;
@@ -1663,6 +1663,10 @@ pub(super) fn scan_story_items(
                         complex_ancestors: Vec::new(),
                         sdt_context,
                     });
+                }
+                // An owner with nothing inside (`<w:endnote w:id="3"/>`) holds no item.
+                if after == owner.full.end {
+                    break;
                 }
             }
             Event::End(_) => {

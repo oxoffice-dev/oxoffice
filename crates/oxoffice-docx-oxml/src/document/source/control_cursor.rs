@@ -47,7 +47,7 @@ impl<'a> ControlSourceCursor<'a> {
     /// Bind the completed same-reader paragraph transcript to this live input.
     pub(crate) fn paragraph_word_facts(
         &self,
-        reader: &Reader<&[u8]>,
+        reader: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
         texts: crate::text::WordParagraphTextFacts,
     ) -> Option<crate::text::WordParagraphReadFacts> {
         let input = self.input?;
@@ -149,7 +149,7 @@ impl<'a> ControlSourceCursor<'a> {
 
     pub(crate) fn captured_map(
         &self,
-        reader: &Reader<&[u8]>,
+        reader: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
         captured: std::ops::Range<u64>,
         raw: &[u8],
     ) -> Option<std::sync::Arc<WordSourceMap>> {
@@ -160,7 +160,7 @@ impl<'a> ControlSourceCursor<'a> {
 
     pub(crate) fn unchanged_capture_range(
         &self,
-        reader: &Reader<&[u8]>,
+        reader: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
         captured: std::ops::Range<u64>,
         raw: &[u8],
     ) -> Option<std::ops::Range<usize>> {
@@ -182,7 +182,7 @@ impl<'a> ControlSourceCursor<'a> {
 
     pub(crate) fn confirm_standalone_paragraph(
         &mut self,
-        reader: &Reader<&[u8]>,
+        reader: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
         opening: std::ops::Range<u64>,
     ) {
         if !self.selector_requested {
@@ -205,7 +205,7 @@ impl<'a> ControlSourceCursor<'a> {
 
     pub(crate) fn simple_selector(
         &self,
-        reader: &Reader<&[u8]>,
+        reader: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
         captured: std::ops::Range<u64>,
         raw: &[u8],
     ) -> Option<(bool, std::ops::Range<usize>)> {
@@ -252,7 +252,7 @@ impl<'a> ControlSourceCursor<'a> {
 
     pub(crate) fn field_input(
         &self,
-        reader: &Reader<&[u8]>,
+        reader: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
         captured: std::ops::Range<u64>,
         raw: &[u8],
     ) -> Option<WordFieldInput> {
@@ -265,7 +265,7 @@ impl<'a> ControlSourceCursor<'a> {
 
     pub(crate) fn simple_header(
         &self,
-        reader: &Reader<&[u8]>,
+        reader: &oxoffice_core::xml_reader::Verbatim<&[u8]>,
         opening: std::ops::Range<u64>,
         start: &BytesStart<'_>,
         prefixes: &[String],

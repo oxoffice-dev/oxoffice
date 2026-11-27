@@ -823,7 +823,7 @@ fn rewrite_shape_hyperlink(
         return Ok(rewritten);
     };
     if let Some((start, head_end, _, empty)) = location.click {
-        let mut reader = quick_xml::Reader::from_reader(&xml[start..head_end]);
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(&xml[start..head_end]);
         let mut buffer = Vec::new();
         let event = reader
             .read_event_into(&mut buffer)

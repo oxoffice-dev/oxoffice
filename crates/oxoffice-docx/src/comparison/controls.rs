@@ -1216,7 +1216,9 @@ fn block_markup_between_owners(raw: &[u8]) -> bool {
             | "commentRangeEnd"
             | "permStart"
             | "permEnd"
-    ) && oxoffice_core::xml_element::start_tag(text)
-        .is_ok_and(|tag| tag.self_closing && tag.range.end == text.len())
-        && text.matches('<').count() == 1
+    ) && oxoffice_core::xml_element::element_span(text).is_ok_and(|span| {
+        span.content.is_empty()
+            && span.range().end == text.len()
+            && text.matches('<').count() == if span.is_self_closing() { 1 } else { 2 }
+    })
 }

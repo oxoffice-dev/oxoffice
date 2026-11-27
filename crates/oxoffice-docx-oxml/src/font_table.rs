@@ -1,12 +1,13 @@
 //! Word font-table parsing and schema-ordered serialization.
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{R_NS, W_NS};
 use crate::properties::{is_word_attribute, is_word_element, word_prefixes_at};
-use crate::raw_xml::{capture_element, capture_empty_element, capture_event};
+use crate::raw_xml::{capture_element, capture_empty, capture_event};
 
 const RDOCX_FONT_NS: &str = "urn:rdocx:font-embedding:1";
 const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
@@ -269,9 +270,10 @@ impl FontTable {
                     if is_word_element(child.name().as_ref(), b"font", &prefixes) {
                         table.fonts.push(read_empty_font(&child, &prefixes)?);
                     } else {
-                        table
-                            .raw_children
-                            .push((table.fonts.len(), capture_empty_element(&child)?));
+                        table.raw_children.push((
+                            table.fonts.len(),
+                            capture_empty(&child, reader.empty_writing())?,
+                        ));
                     }
                 }
                 event @ (Event::Text(_)
@@ -692,7 +694,7 @@ fn read_font(
                     font.retain_field_or_child(
                         slot,
                         boundary,
-                        capture_empty_element(&child)?,
+                        capture_empty(&child, reader.empty_writing())?,
                         &relationship_prefixes,
                     );
                 }

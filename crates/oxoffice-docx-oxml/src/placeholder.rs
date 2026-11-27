@@ -1870,7 +1870,7 @@ fn remove_emptied_runs_in(
                     (raw, prefixes.to_vec())
                 }
             };
-            let mut reader = quick_xml::Reader::from_reader(raw);
+            let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
             let quick_xml::events::Event::Start(root) = reader.read_event().ok()? else {
                 return None;
             };
@@ -2376,8 +2376,9 @@ fn edit_text_box_block(
     edit: &mut TextBoxEditor<'_, '_>,
     input: Option<&crate::document::WordFieldInput>,
 ) -> crate::Result<(usize, Option<crate::document::WordSourceMap>)> {
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     use quick_xml::events::Event;
-    use quick_xml::{Reader, Writer};
     let (record_input, _record_publication) = match input {
         Some(input) => {
             let (input, publication) = input.record_publication(raw)?;
@@ -2699,9 +2700,10 @@ pub(crate) fn try_replace_in_block_with_constructors_in(
     mut context: Option<ScopedLiteralContext<'_>>,
 ) -> crate::Result<usize> {
     use crate::OxmlError;
+    use oxoffice_core::xml_reader::{NsReader, Reader};
+    use quick_xml::Writer;
     use quick_xml::events::Event;
     use quick_xml::name::ResolveResult;
-    use quick_xml::{NsReader, Reader, Writer};
 
     // Validate the whole closed source, including attributes and opaque children.
     let mut checked = NsReader::from_reader(raw.as_slice());
@@ -2995,7 +2997,7 @@ struct ScopedContainerStart {
 
 fn scoped_container_starts(raw: &[u8]) -> crate::Result<Vec<ScopedContainerStart>> {
     use quick_xml::events::Event;
-    let mut reader = quick_xml::Reader::from_reader(raw);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(raw);
     let mut buffer = Vec::new();
     let mut stack: Vec<(Vec<String>, Option<usize>)> = Vec::new();
     let mut result = Vec::new();
@@ -3066,7 +3068,7 @@ fn restore_scoped_container_attributes(source: &[u8], rewritten: &[u8]) -> crate
         }
         // A declaration restored for an attribute must not redirect names in
         // the rewritten subtree. Refuse conflicting inherited bindings too.
-        let mut reader = quick_xml::Reader::from_reader(attributes.as_slice());
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(attributes.as_slice());
         if let Event::Empty(record) = reader.read_event()? {
             let bindings = namespace_bindings(&retained.scope);
             for attribute in record.attributes() {
@@ -3145,7 +3147,7 @@ type NamespaceUse = (Vec<String>, Vec<(String, String)>);
 /// The [`NamespaceUse`] of `xml`, the empty prefix standing for the default
 /// namespace of an unprefixed element.
 fn namespace_use(xml: &[u8]) -> Option<NamespaceUse> {
-    use quick_xml::Reader;
+    use oxoffice_core::xml_reader::Reader;
     use quick_xml::events::Event;
 
     let prefix_of = |name: &[u8]| {
@@ -3585,8 +3587,9 @@ fn rewrite_text_boxes_within(
     use crate::error::OxmlError;
     use crate::namespace::matches_local_name;
     use crate::raw_xml::capture_element;
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     use quick_xml::events::Event;
-    use quick_xml::{Reader, Writer};
 
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -3794,8 +3797,12 @@ fn rewrite_text_boxes_within(
                         Ok(Event::Eof) => {
                             return Err(OxmlError::MissingElement("w:txbxContent end".to_owned()));
                         }
-                        // Empty elements such as `<w:p/>` or a bookmark, whitespace,
-                        // comments and processing instructions.
+                        // Empty elements such as `<w:p/>` or a bookmark, in the
+                        // writing they were read in, whitespace, comments and
+                        // processing instructions.
+                        Ok(Event::Empty(e)) => {
+                            crate::raw_xml::write_empty(&mut writer, &e, reader.empty_writing())?
+                        }
                         Ok(ev) => writer.write_event(ev)?,
                         Err(e) => return Err(e.into()),
                     }
@@ -3850,6 +3857,9 @@ fn rewrite_text_boxes_within(
             Ok(Event::End(e)) => {
                 scopes.pop();
                 writer.write_event(Event::End(e))?;
+            }
+            Ok(Event::Empty(e)) => {
+                crate::raw_xml::write_empty(&mut writer, &e, reader.empty_writing())?;
             }
             Ok(ev) => {
                 writer.write_event(ev)?;
@@ -3927,8 +3937,9 @@ fn rewrite_notes(
 ) -> crate::error::Result<(Vec<u8>, usize)> {
     use crate::error::OxmlError;
     use crate::raw_xml::capture_element;
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     use quick_xml::events::Event;
-    use quick_xml::{Reader, Writer};
 
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -3969,6 +3980,12 @@ fn rewrite_notes(
                             }
                             // Empty elements, whitespace, comments and
                             // processing instructions.
+                            // An empty element read is written back in its writing.
+                            Event::Empty(element) => oxoffice_core::raw_xml::write_empty(
+                                &mut writer,
+                                &element,
+                                reader.empty_writing(),
+                            )?,
                             event => writer.write_event(event)?,
                         }
                         inner_buffer.clear();
@@ -3981,6 +3998,10 @@ fn rewrite_notes(
             Event::End(end) => {
                 scopes.pop();
                 writer.write_event(Event::End(end))?;
+            }
+            // An empty element read is written back in its writing.
+            Event::Empty(element) => {
+                oxoffice_core::raw_xml::write_empty(&mut writer, &element, reader.empty_writing())?
             }
             event => writer.write_event(event)?,
         }
@@ -4029,8 +4050,9 @@ fn rewrite_alternate_content(
 ) -> crate::Result<TextBoxOutput> {
     use crate::namespace::matches_local_name;
     use crate::raw_xml::capture_element;
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     use quick_xml::events::Event;
-    use quick_xml::{Reader, Writer};
     let mut reader = Reader::from_reader(raw);
     reader.config_mut().trim_text(false);
     let mut writer = Writer::new(Vec::new());
@@ -4107,6 +4129,10 @@ fn rewrite_alternate_content(
                     total_count += output.count;
                     branch_map = output.map;
                 }
+            }
+            // An empty element read is written back in its writing.
+            Event::Empty(element) => {
+                oxoffice_core::raw_xml::write_empty(&mut writer, &element, reader.empty_writing())?
             }
             event => writer.write_event(event)?,
         }
@@ -4210,8 +4236,9 @@ pub fn replace_many_in_chart_xml(
     replacements: &[(&str, &str)],
 ) -> crate::error::Result<(Vec<u8>, usize)> {
     use crate::namespace::matches_local_name;
+    use oxoffice_core::xml_reader::Reader;
+    use quick_xml::Writer;
     use quick_xml::events::{BytesEnd, BytesText, Event};
-    use quick_xml::{Reader, Writer};
 
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -4249,6 +4276,9 @@ pub fn replace_many_in_chart_xml(
                 writer.write_event(Event::End(BytesEnd::new(
                     std::str::from_utf8(name.as_ref()).unwrap_or_default(),
                 )))?;
+            }
+            Ok(Event::Empty(e)) => {
+                crate::raw_xml::write_empty(&mut writer, &e, reader.empty_writing())?;
             }
             Ok(ev) => {
                 writer.write_event(ev)?;

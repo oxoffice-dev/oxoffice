@@ -2,8 +2,9 @@
 
 use std::io::Write;
 
+use oxoffice_core::xml_reader::Reader;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
-use quick_xml::{Reader, Writer, XmlVersion};
+use quick_xml::{Writer, XmlVersion};
 
 use crate::error::{OxmlError, Result};
 use crate::namespace::{M_NS, W_NS};
@@ -4078,7 +4079,7 @@ fn canonical_element(raw: &[u8]) -> Result<Vec<u8>> {
     source.extend_from_slice(b"<rdocxScope>");
     source.extend_from_slice(raw);
     source.extend_from_slice(b"</rdocxScope>");
-    let mut reader = quick_xml::NsReader::from_reader(source.as_slice());
+    let mut reader = oxoffice_core::xml_reader::NsReader::from_reader(source.as_slice());
     reader.config_mut().trim_text(false);
     let mut output = Vec::with_capacity(raw.len());
     // The bindings the output holds at each open element, whether the last
@@ -4293,7 +4294,10 @@ fn parse_element(raw: &[u8], inherited: &[(String, String)]) -> Result<ParsedEle
             Event::Start(element) if inside => {
                 children.push(capture_element(&mut reader, &element)?)
             }
-            Event::Empty(element) if inside => children.push(capture_empty(&element)?),
+            Event::Empty(element) if inside => children.push(crate::raw_xml::capture_empty(
+                &element,
+                reader.empty_writing(),
+            )?),
             Event::Text(text) if inside && !text.as_ref().iter().all(u8::is_ascii_whitespace) => {
                 children.push(capture_event(Event::Text(text.into_owned()))?)
             }
@@ -4740,9 +4744,6 @@ fn math_text_has_invalid_space(element: &BytesStart<'_>) -> Result<bool> {
     Ok(false)
 }
 
-fn capture_empty(element: &BytesStart<'_>) -> Result<Vec<u8>> {
-    capture_event(Event::Empty(element.to_owned().into_owned()))
-}
 fn capture_event(event: Event<'static>) -> Result<Vec<u8>> {
     let mut output = Vec::new();
     Writer::new(&mut output).write_event(event)?;
