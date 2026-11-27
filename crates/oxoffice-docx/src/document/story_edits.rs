@@ -46,6 +46,7 @@ impl Document {
             inner: &mut candidate,
         })?;
         self.localize_run_styles(&mut candidate);
+        let candidate = self.redline_edited_paragraph(&original, candidate)?;
         let mut fragment = ContentFragment::paragraph(candidate.clone())?;
         reject_section_owning_content_fragment(&fragment)?;
         let qualified = (|| -> Option<bool> {
@@ -139,12 +140,16 @@ impl Document {
     ) -> Result<T> {
         let snapshot = self.story_range_paragraph_snapshot(location)?;
         let mut paragraph = CT_P::from_xml_fragment(snapshot.xml())?;
+        let before = self.tracking.is_some().then(|| paragraph.clone());
         let result = edit(&mut Paragraph {
             inner: &mut paragraph,
         })?;
         // `Paragraph`'s adders name built-in styles by their English id; a
         // localized file names them otherwise.
         self.localize_run_styles(&mut paragraph);
+        if let Some(before) = before {
+            paragraph = self.redline_edited_paragraph(&before, paragraph)?;
+        }
         let mut fragment = ContentFragment::paragraph(paragraph)?;
         // This fragment is rebuilt from the checked paragraph of this same owner.
         // Keep relationship admission scoped to that owner, including newly

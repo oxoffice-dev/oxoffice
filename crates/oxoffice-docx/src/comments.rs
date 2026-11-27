@@ -60,27 +60,31 @@ pub struct RunRange {
     pub end: RunPosition,
 }
 
-/// The date a new comment or reply carries in `w:date`.
+/// The date a new comment, reply or tracked change carries in `w:date`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum CommentDate<'a> {
+pub enum RevisionDate<'a> {
     /// The current time, in UTC to the second. Word itself writes its local
-    /// time to the minute here, and the UTC time as `w16cex:dateUtc` in the
-    /// extensible comments part (`commentsExtensible.xml`), which oxoffice
-    /// does not write. Refused where the platform has no clock, such
-    /// as WebAssembly in a browser: pass a date or [`CommentDate::Undated`].
+    /// time to the minute here, and for a comment the UTC time as
+    /// `w16cex:dateUtc` in the extensible comments part
+    /// (`commentsExtensible.xml`), which oxoffice does not write. Refused
+    /// where the platform has no clock, such as WebAssembly in a browser:
+    /// pass a date or [`RevisionDate::Undated`].
     #[default]
     Now,
     /// This RFC 3339 timestamp.
     At(&'a str),
-    /// No date, as Word leaves comments once its Document Inspector removes
-    /// personal information.
+    /// No date, as Word leaves comments and tracked changes once its
+    /// Document Inspector removes personal information.
     Undated,
 }
 
-impl CommentDate<'_> {
+/// The date of a new comment or reply: [`RevisionDate`] under its first name.
+pub type CommentDate<'a> = RevisionDate<'a>;
+
+impl RevisionDate<'_> {
     /// The timestamp to write, or `None` for an undated comment. A timestamp
     /// that is not RFC 3339 is refused.
-    fn resolve(self) -> Result<Option<String>> {
+    pub(crate) fn resolve(self) -> Result<Option<String>> {
         match self {
             Self::Now => crate::revision::rfc3339_now().map(Some),
             Self::At(value) => {

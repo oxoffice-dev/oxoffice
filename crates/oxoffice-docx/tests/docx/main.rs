@@ -43,4 +43,5 @@ mod story_paragraphs;
 mod support;
 mod tables;
 mod text_and_runs;
+mod tracked_changes;
 mod written_references;

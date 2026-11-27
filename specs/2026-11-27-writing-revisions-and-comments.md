@@ -1,6 +1,6 @@
 ---
 date: 2026-11-27
-status: draft
+status: accepted
 scope: docx
 ---
 
@@ -137,7 +137,7 @@ of three classes. A test checks that the table lists every call.
   as a tracked change yet: end the tracked changes to make it", and the document stays unchanged. No limitation file:
   only a caller's own session can reach it (Known limitations rule). The refusals left after PR 5:
   - content control edits;
-  - field, TOC and bibliography updates and insertions (whether Word tracks a field update: W13);
+  - field, TOC and bibliography updates and insertions (Word tracks a TOC update whole, W13);
   - section and header or footer structure, watermarks, page colour;
   - picture replacement and resizing, equations;
   - table column insertion and deletion, cell merge and split (W8);
@@ -223,7 +223,7 @@ rewrites.
 | Run properties | `w:rPr/w:rPrChange/w:rPr{old}`, the last child. "old" is the direct properties before the session's first change of that run, without `w:ins`, `w:del` or `w:rPrChange`. A paragraph mark's properties: the same inside `w:pPr/w:rPr` |
 | Paragraph properties | `w:pPr/w:pPrChange/w:pPr{old}`, the last child; "old" leaves out `w:rPr`, `w:sectPr` and `w:pPrChange`. A style or numbering change is a `pPrChange` holding the old `w:pStyle` or `w:numPr` (Word writes no `w:numberingChange` for it; W5) |
 | Table properties | `w:tblPr/w:tblPrChange/w:tblPr{old}`. Changed column widths add `w:tblGrid/w:tblGridChange w:id/w:tblGrid{old}`, which has an id and no author: it resolves with its table's `tblPrChange`, or alone by id or when everything is resolved (Google's id-only ones) |
-| Row, cell | `w:trPr/w:trPrChange/w:trPr{old}` (after `w:ins`/`w:del`); `w:tcPr/w:tcPrChange/w:tcPr{old}`, the last child |
+| Row, cell | a row height change has no `w:trPrChange` in Word: it writes `w:tblPrChange` and `w:tblGridChange` (old = new) and a `w:tcPrChange` on each cell of the row (W8), and so does PR 2; `w:tcPr/w:tcPrChange/w:tcPr{old}`, the last child, for a cell's own change. `w:trPrChange` is read and resolved, never written |
 | Row inserted or deleted | `w:trPr/w:ins` or `w:trPr/w:del`, with every cell paragraph's content and mark marked, as `marked_row` writes them |
 | Table inserted or deleted | every row marked, as `marked_table` writes it |
 | Section | `w:sectPr/w:sectPrChange/w:sectPr{old}`, the last child |
@@ -245,8 +245,10 @@ rewrites.
 
 - Moved-from text keeps `w:t`, not `w:delText`.
 - The name is `move` followed by a number no other range name in the document uses.
-- For several paragraphs, the range starts in the first moved paragraph and ends in the last, and each paragraph has
-  its own content and mark revisions (exact placement: W7).
+- The range starts inside the first moved paragraph, after its `w:pPr`, and ends at body level after the last moved
+  paragraph, so it covers every moved paragraph mark; each paragraph's mark carries `w:moveFrom` or `w:moveTo`, and
+  every element has its own id (W7). Without range marks covering the marks, Word reads a deletion and an insertion
+  (W6).
 - The resolver resolves a move as one change: the id of any of its parts selects the whole named move, and resolving
   it removes its range marks (fixes F2).
 - A move of content that already holds revisions is refused in this series.
@@ -268,20 +270,20 @@ rewrites.
 - No `w:rsidR`, `w:rsidDel` or `w:rsidRPr` is written, as compare writes none; Word assigns its own on its next save.
   The `w:rsids` of the settings stay as they are.
 
-**Edits that meet existing revisions.** Each rule is a recommendation; the Word behaviour behind it is open (W1-W4):
+**Edits that meet existing revisions.** Checked in Word (W1-W4, see Word checks: results):
 
-- **R1. Insert inside the author's own insertion:** a new insertion, splitting the old one. That keeps "reject the
-  session's ids gives the document back".
+- **R1. Insert inside the author's insertion of an earlier session:** a new insertion, splitting the old one, as
+  Word does (W1). Only this session's own insertions take new text into themselves.
 - **R2. Insert inside another author's insertion:** split it, with the new insertion in between.
-- **R3. Delete text this session inserted:** drop it. Delete text the same author inserted earlier: drop it too, as
-  Word is believed to do (W1).
+- **R3. Delete text this session inserted:** drop it. Delete text the same author inserted earlier: drop it too, no
+  `w:del`, as Word does (W1).
 - **R4. Delete text another author inserted:** `<w:ins A><w:del B><w:r><w:delText>`.
 - **R5.** Deleted text is out of the accepted view, so no edit can reach it. A deletion across another's deletion
   marks only the visible units.
-- **R6. Change the properties of text this session inserted:** no `rPrChange`, since the insertion covers it (W3).
-  Elsewhere, an `rPrChange`.
+- **R6. Change the properties of inserted text:** an `rPrChange` inside the insertion, even the author's own, as
+  Word does (W3).
 - **R7. A second property change of the same owner:** keep the one `*PrChange` with the oldest "old" properties, and
-  give it the latest author and date (W4).
+  give it the latest author and date, as Word does (W4).
 
 ### 5. Interplay
 
@@ -358,26 +360,58 @@ Five pull requests, each about 800 product lines or fewer, and each useful on it
 | PR | Title | What it lands | Lines | Issue |
 | --- | --- | --- | --- | --- |
 | 1 | `feat(docx): tracked text edits` | the session (Rust `TrackedDocument`, Python `track_changes`, CLI `replace --track-*`); the revision id pool; the paragraph text redliner in every story, R1-R5, and the owner postcondition; tracked: `Run.text`, `Run.remove`, `Run.add_tab`, `Run.add_break`, `Paragraph.text`, `Paragraph.add_run`, `Paragraph.replace_text`, `Cell.text`, `Cell.replace_text`, `Document.set_story_text`, the replace family (`try_replace_text`, `replace_text_at`, `replace_all`, `replace_all_regex(_expected)`), `Paragraph.replace_xml` within what the redliner marks; the class table and its refusal; the fast-route predicates | ~800 | Refs #469 |
-| 2 | `feat(docx)!: tracked property changes` | `rPrChange` and `pPrChange` through the paragraph route (`Font.*`, `Run.bold/italic/underline/style_id`, `ParagraphFormat.*`, `Paragraph.alignment/style/numbering`); `tblPrChange` with `tblGridChange`, `trPrChange` and `tcPrChange` through the table, row and cell property routes (`Table.*`, `Row.*`, cell setters); `sectPrChange` through `SectionHandle` setters; R6-R7. Reads and resolves `trPrChange`, `tcPrChange`, `tblPrExChange`, `tblGridChange` and `numberingChange` (F1): new `RevisionKind` variants and `#[non_exhaustive]`, hence the `!`. Compare writes `trPrChange` and `tcPrChange` instead of the diagnostic (F4) | ~750 | Refs #469 |
-| 3 | `feat(docx): tracked insertions and deletions of blocks and rows` | splices in any story: `add_paragraph`, `insert_paragraph`, `insert_paragraph_before`, `add_heading`, the list item adders, `add_table`, `insert_table`, `remove_content(_range)`, `pop_content`, `insert_content`, `clone_content`, `insert_html`, `insert_document`, `import_fragment`; rows (`Table.add_row`, `clone_row`, `remove_row`); inline insertions that bring a part (`Run.add_picture`, `Paragraph.add_hyperlink` as a `HYPERLINK` field, `Run.add_field`, footnote and endnote references with their notes marked inserted); last-mark rules; `cellIns`/`cellDel`/`cellMerge` resolved when read (F1) | ~800 | Refs #469 |
-| 4 | `feat(docx): tracked moves` | `move_content` in Word's shape; the resolver links a move by name and removes its range marks (F2); compare writes its moves the same way (F3) | ~600 | Refs #469 |
-| 5 | `feat(docx): modern comment metadata` | `commentsIds` and `commentsExtensible` entries for new comments and replies (parts made on the first one, `dateUtc` = the comment's instant); `w15:done="0"` written; ids within MS-DOCX bounds and unique per part; `people.xml` per Q8; `Comment.durable_id` and `Comment.date_utc` read (Rust, Python, `comment list --json`); compare writes an added or removed comment as its reference run in `w:ins` or `w:del`, with no whole-paragraph replacement, and keeps its private record only for what no revision can hold (Q6) | ~650 | Closes #469 |
+| 2 | `feat(docx)!: tracked property changes` | `rPrChange` and `pPrChange` through the paragraph route (`Font.*`, `Run.bold/italic/underline/style_id`, `ParagraphFormat.*`, `Paragraph.alignment/style/numbering`); `tblPrChange` with `tblGridChange` and `tcPrChange` through the table, row and cell property routes (`Table.*`, `Row.*`, cell setters), a row's height as Word writes it (W8); `sectPrChange` through `SectionHandle` setters; R6-R7. Reads and resolves `trPrChange`, `tcPrChange`, `tblPrExChange`, `tblGridChange` and `numberingChange` (F1): new `RevisionKind` variants and `#[non_exhaustive]`, hence the `!`. Compare writes `trPrChange` and `tcPrChange` instead of the diagnostic (F4) | ~750 | Refs #469 |
+| 3 | `feat(docx): tracked insertions and deletions of blocks and rows` | splices in any story: `add_paragraph`, `insert_paragraph`, `insert_paragraph_before`, `add_heading`, the list item adders, `add_table`, `insert_table`, `remove_content(_range)`, `pop_content`, `insert_content`, `clone_content`, `insert_html`, `insert_document`, `import_fragment`; rows (`Table.add_row`, `clone_row`, `remove_row`); inline insertions that bring a part (`Run.add_picture`, `Paragraph.add_hyperlink` as a `HYPERLINK` field, `Run.add_field`, footnote and endnote references with their notes marked inserted); last-mark rules (the final mark is never marked, W12); `cellIns`/`cellDel`/`cellMerge` resolved when read (F1), never written: column insertion and deletion and cell merges are refused under a session, as Word does not track them (W8) | ~800 | Refs #469 |
+| 4 | `feat(docx): tracked moves` | `move_content` in Word's shape (W7); the resolver links a move by name and removes its range marks (F2); compare writes its moves the same way, which Word then reads as moves (F3, W6) | ~600 | Refs #469 |
+| 5 | `feat(docx): modern comment metadata` | `commentsIds` and `commentsExtensible` entries for new comments and replies (parts made on the first one, `dateUtc` = the comment's instant); `w15:done="0"` written, `done` set on the whole thread (W10); a reply to a reply linked to the root (W11); ids within MS-DOCX bounds and unique per part; `people.xml` per Q8; `w16du:dateUtc` on revisions, as Word writes it beside its local `w:date`; `Comment.durable_id` and `Comment.date_utc` read (Rust, Python, `comment list --json`); compare writes an added or removed comment as its reference run in `w:ins` or `w:del`, with no whole-paragraph replacement, and keeps its private record only for what no revision can hold (Q6) | ~650 | Closes #469 |
 
 - **Order.** 1, 2, 3, 4. PR 5 is independent of the edit path and can run beside PR 2 to PR 4, but after PR 4
   where both touch `comparison.rs`.
 - **Each pull request:** a spec amendment if a Word check changes a rule, `docs/ARCHITECTURE.md` (the revision
   writer), the README feature rows, and the skills' docx reference after the release.
-- **Mac check before PR 1 merges:** W1-W4 and W12 (one probe file, below). Before PR 2: W5 and W8. Before PR 4: W6
-  and W7. Before PR 5: W9-W11.
+- **Word checks:** done (see Word checks: results); a PR whose rule they changed says so.
+
+## Amendment: PR 1 in two (2026-11-27, during PR 1)
+
+The maintainer accepted the spec and all recommendations Q1-Q11. PR 1 passes 900 product lines, so it lands in
+three, with the orchestrator's agreement:
+
+- **PR 1a** `feat(docx): tracked paragraph edits in the rust facade` (branch `feat/tracked-paragraph-edits`): the
+  session (`TrackedChanges`, `Document::track_changes`, `TrackedDocument`), `RevisionDate` with `CommentDate` as its
+  alias, the revision id pool, the redliner with its owner-scoped check, and the paragraph routes.
+- **PR 1b** `feat(docx): tracked replacements in the rust facade and the cli` (branch `feat/tracked-replacements`,
+  stacked on 1a): the replace family, notes and headers, and `replace --track-author` in the CLI.
+- **PR 1c** `feat(docx): tracked text edits in python`: `Document.track_changes`, the class table with its
+  completeness test, the guard (a gate in the handle counter's publication, with an allow-list; accepted), the
+  fast-route predicates (their effect is only measurable through the Python scaling entries), and the
+  `"<Call> (tracked)"` `TIMED` entries. It starts after the binding changes of #660 land.
+
+What PR 1a settles:
+
+- **Alignment key.** A word is the same before and after an edit when its text, its run properties and its holders
+  (links, controls) are. A word the edit kept but gave other formatting, as a replacement across two runs takes the
+  first run's formatting, is written as deleted and inserted. Compare writes that as a formatting change; PR 2 makes
+  the session do the same. An edit that changes formatting and nothing else is refused until PR 2.
+- **Session date.** `RevisionDate::Now` is the time the session starts: every revision of a session takes it.
+- **Split insertions.** Text inserted inside another author's insertion splits it; both halves keep its id, as one
+  revision the resolver selects by that id.
+- **Refused in PR 1a**, each with the plain message "<what> is not recorded as a tracked change yet":
+  - a replacement in a text box, and in a header or footer table or control;
+  - `try_replace_text_at` on a table or block control (a paragraph is tracked);
+  - an edit that adds, removes or reorders a bookmark or comment mark, or changes paragraph properties;
+  - the removal or insertion of a drawing, a field or a reference, and text put in a new link or control.
+- **Notes** are tracked through their part's XML, paragraph by paragraph, as replacement edits them.
+- **Replacements** (W12): each whole match is deleted and the whole value inserted, read on the paragraph's text
+  character by character; where the matches found there do not give the paragraph after the replacement (one the
+  replacement could not reach), the paragraph is aligned word by word instead, as other edits are.
 
 ## Open questions
 
 ### Product (maintainer)
 
 - **Q1. Session or twins.** Recommendation: the session (section 1).
-- **Q2. Granularity of a text redline.** Word, fixed, as compare's `word`, readable and equal to compare's. The
-  alternative is a whole-match deletion and insertion for replace, which Word's Find and Replace may write (W12).
-  Recommendation: word.
+- **Q2. Granularity of a text redline.** Word, fixed, as compare's `word`, for paragraph text edits. Decided after
+  W12: the replace family deletes each whole match and inserts the whole value, as Word's tracked Replace All.
 - **Q3. `w:trackRevisions`.** Recommendation: independent, as decided above. A caller who wants Word to keep
   tracking sets `settings.track_revisions` too.
 - **Q4. What Word never tracks runs untracked in a session.** The alternative is refusing every call the session
@@ -392,39 +426,40 @@ Five pull requests, each about 800 product lines or fewer, and each useful on it
   only additions.
 - **Q8. `people.xml`.** Recommendation: never create it. When it exists, add a `w15:person` for a new author with
   `w15:presenceInfo w15:providerId="None" w15:userId="{author}"` (W10). It is optional, and no corpus file has one.
-- **Q9. Resolving a thread.** It sets `done` on the root only (today), or on every comment of the thread.
-  Recommendation: what Word writes (W10). Until then, keep the root.
-- **Q10. Replying to a reply.** It links to the reply (today) or to the thread root, as modern comments do.
-  Recommendation: the root, if W11 confirms.
+- **Q9. Resolving a thread.** Decided after W10: `done` on every comment of the thread, as Word saves it (PR 5).
+- **Q10. Replying to a reply.** Decided after W11: the reply links to the thread root, as Word rewrites it (PR 5).
 - **Q11. Edits under a session that the redliner cannot mark** (section 3, refused by effect). Recommendation: plain
   refusals. A real need becomes an issue.
 
-### Word checks (Mac, none on Linux)
+### Word checks: results
 
-One probe file made in Word: Track Changes on, author "Mac", the actions below, save, and send back the XML of
-`document.xml`, `comments*.xml` and `people.xml`.
+Run on Word for Mac 16.115.2 on 2026-11-27: orphan branch `probe/rev-word-checks` of oxoffice-dev/oxoffice (head
+13c5e59f), `RESULTS.md` and one folder per check, the files Word saved byte for byte.
 
-- **W1.** Type inside your own insertion from an earlier session (another date): is it one revision or a new one?
-  Delete text you inserted earlier: is it dropped, or marked deleted?
-- **W2.** Type inside, then delete inside, another author's insertion: is the insertion split? Is the deletion
-  nested (`w:ins/w:del`)?
-- **W3.** Bold some of your own inserted text: is an `rPrChange` written?
-- **W4.** Bold a word, then (as another author) italicize it: one `rPrChange`? Which old properties, which author?
-- **W5.** Change a paragraph's numbering and its style: `pPrChange` only, with no `numberingChange`?
-- **W6.** Open our compare redline of a moved paragraph (today's shape): does Word show a move, or an insertion and a
-  deletion? Then open our Word-shaped move: is it a move, and do Accept and Reject All give the right result?
-- **W7.** Move two paragraphs: where do the range marks sit (inside the first and last paragraph, or around the
-  marks)?
-- **W8.** Change a row height and a cell shading: `trPrChange` and `tcPrChange`? Insert and delete a column, merge
-  two cells: does Word track them (`cellIns`, `cellDel`, `cellMerge`), and how?
-- **W9.** A redline whose comment reference run is in `w:ins` (and another in `w:del`): does Reject All (Accept All)
-  remove the comment?
-- **W10.** Add a comment and a reply, then resolve the thread: what goes into `commentsIds` (durableId vs paraId),
-  `commentsExtensible` (`dateUtc`, local `w:date`), `people.xml` (providerId, userId) and `done` (root or all)?
-- **W11.** Reply to a reply: which `w15:paraIdParent`?
-- **W12.** Find and Replace "30 days" with "45 days": is the whole match deleted and inserted, or only "30" and
-  "45"? Delete the last paragraph of the body: is the mark before it the one marked deleted?
-- **W13.** Update a TOC field: is the update tracked?
+- **W1.** Typing inside the author's insertion of an earlier session splits it with a new insertion; deleting text
+  the author inserted earlier drops it, no `w:del` (R1, R3).
+- **W2.** Inside another author's insertion: split in three; a deletion nests, `w:ins` (other) > `w:del` (R2, R4).
+- **W3.** Bolding the author's own inserted text writes an `rPrChange` inside the `w:ins` (R6).
+- **W4.** Two formatting changes: one `rPrChange`, author and date of the last editor, old properties from before the
+  first (R7).
+- **W5.** Numbering and style: `pPrChange` only, no `numberingChange`.
+- **W6.** Our 0.8.0 compare moves (no range marks, ids all 0) read as deletion plus insertion; a move needs range
+  marks that also cover the `moveTo` paragraph mark (PR 4).
+- **W7.** Ranges start inside the first moved paragraph after `w:pPr`, end at body level after the last moved
+  paragraph; unique ids, `w:name` pairs (PR 4).
+- **W8.** Row height: no `trPrChange` (`tblPrChange`, `tblGridChange`, `tcPrChange` instead); cell shading:
+  `tcPrChange`; column insertion half tracked (Reject All keeps it), column deletion and cell merge not tracked; no
+  `cellIns`, `cellDel` or `cellMerge` ever (PR 2, PR 3: refused under a session).
+- **W9.** A comment's reference run in `w:ins`: Reject All removes the comment; in `w:del`: Accept All does (Q6).
+- **W10.** `commentsIds` maps `paraId` to `durableId`; `commentsExtensible` keyed by `durableId`, `dateUtc` true
+  UTC; `people.xml` with provider "Windows Live"; `done` on the root is saved on the root and the replies (PR 5).
+- **W11.** A reply to a reply is rewritten to the root's `paraId`: threads are flat (PR 5).
+- **W12.** Tracked Replace All deletes the whole match and inserts the whole replacement; the final paragraph mark
+  is never marked (PR 1b of the cut below, PR 3).
+- **W13.** A TOC update is tracked whole: the new entries inserted, the old deleted (stays refused in this series).
+- **Dates.** Word writes `w:date` as local time with a `Z` suffix, seconds zeroed, and the true UTC in
+  `w16du:dateUtc` on revisions and `w16cex:dateUtc` on comments. oxoffice writes the caller's date as given; the
+  `dateUtc` attributes come with PR 5.
 
 ## Found on the way, outside this spec
 
