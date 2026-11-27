@@ -12,9 +12,10 @@ use quick_xml::events::Event;
 
 use crate::canonical::{canonical, first_difference};
 
-/// The main namespaces of WordprocessingML, PresentationML and DrawingML:
-/// the ones [`Writing::OtherPrefixes`] rebinds.
-const MAIN_NAMESPACES: [&str; 8] = [
+/// The main namespaces of WordprocessingML, PresentationML, DrawingML and
+/// SpreadsheetML (Transitional and Strict): the ones
+/// [`Writing::OtherPrefixes`] rebinds.
+const MAIN_NAMESPACES: [&str; 11] = [
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
     "http://schemas.openxmlformats.org/presentationml/2006/main",
     "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -23,6 +24,9 @@ const MAIN_NAMESPACES: [&str; 8] = [
     "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
     "http://schemas.openxmlformats.org/drawingml/2006/picture",
     "http://schemas.openxmlformats.org/drawingml/2006/chart",
+    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+    "http://purl.oclc.org/ooxml/spreadsheetml/main",
+    "http://purl.oclc.org/ooxml/officeDocument/relationships",
 ];
 
 /// One way of writing the same XML, as a producer writes it.
@@ -32,7 +36,9 @@ pub enum Writing {
     EmptyWithEndTag,
     /// `<x/>` for every `<x></x>` (Google Docs' `w:sdtContent`, #656).
     EmptySelfClosed,
-    /// The main namespaces under other prefixes (`ox0:p`; ElementTree's `ns0`).
+    /// The main namespaces under other prefixes (`ox0:p`; ElementTree's `ns0`),
+    /// the root's default namespace too (`x:` of the Open XML SDK's
+    /// SpreadsheetML).
     OtherPrefixes,
     /// The root's namespace as the default one, attributes keeping their prefix.
     DefaultNamespace,
@@ -199,7 +205,8 @@ fn declarations(
 }
 
 /// `name` with its prefix renamed by `prefixes` (a missing prefix kept, an
-/// empty new one dropped).
+/// empty new one dropped); an element name without a prefix takes the one
+/// the default namespace is renamed to.
 fn renamed(name: &str, prefixes: &BTreeMap<String, String>) -> String {
     match name.split_once(':') {
         Some((prefix, local)) => match prefixes.get(prefix) {
@@ -207,7 +214,10 @@ fn renamed(name: &str, prefixes: &BTreeMap<String, String>) -> String {
             Some(new) => format!("{new}:{local}"),
             None => name.to_owned(),
         },
-        None => name.to_owned(),
+        None => match prefixes.get("") {
+            Some(new) if !new.is_empty() => format!("{new}:{name}"),
+            _ => name.to_owned(),
+        },
     }
 }
 
@@ -240,6 +250,31 @@ fn prefix_renames(
                 return Err(format!("the part already binds ox{index}"));
             }
             renames.insert(prefix.clone(), format!("ox{index}"));
+        }
+        // A main namespace declared as the default once, on the root, goes
+        // under a prefix too: every element without one is in it.
+        let defaults = tags()
+            .map(|(_, raw)| parse_tag(&text[raw.clone()]))
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .map(|tag| {
+                tag.attributes
+                    .iter()
+                    .filter(|(key, ..)| key == "xmlns")
+                    .count()
+            })
+            .collect::<Vec<_>>();
+        let on_root = defaults.first() == Some(&1) && defaults.iter().sum::<usize>() == 1;
+        if on_root
+            && declared
+                .get("")
+                .is_some_and(|uri| MAIN_NAMESPACES.contains(&uri.as_str()))
+        {
+            let prefix = format!("ox{}", renames.len());
+            if declared.contains_key(&prefix) {
+                return Err(format!("the part already binds {prefix}"));
+            }
+            renames.insert(String::new(), prefix);
         }
         return Ok((renames, None));
     }
@@ -299,13 +334,20 @@ fn written_tag(
                     Some(_) => {}
                     // Under a default namespace attributes keep their prefix.
                     None if writing == Writing::DefaultNamespace => {}
+                    None if key == "xmlns" => {
+                        if let Some(new) = renames.get("").filter(|new| !new.is_empty()) {
+                            *key = format!("xmlns:{new}");
+                        }
+                    }
+                    // An attribute without a prefix is in no namespace.
+                    None if !key.contains(':') => {}
                     None => {
                         // A markup compatibility list naming a renamed prefix
                         // (never a main one in practice) is not rewritten.
                         let lists = ["Ignorable", "MustUnderstand", "ProcessContent", "Requires"];
                         let mut tokens = value.split([' ', ':']);
                         if lists.contains(&key.rsplit(':').next().unwrap_or(key))
-                            && tokens.any(|token| renames.contains_key(token))
+                            && tokens.any(|token| !token.is_empty() && renames.contains_key(token))
                         {
                             return Err(format!("{key} names a renamed prefix"));
                         }
@@ -505,4 +547,49 @@ pub fn rewrite_package(bytes: &[u8], writing: Writing) -> Result<(Vec<u8>, Vec<S
         }
     }
     Ok((write_package(&parts), changed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canonical::canonical_folded;
+
+    #[test]
+    fn other_prefixes_puts_a_default_main_namespace_under_a_prefix() {
+        let xml = concat!(
+            r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
+            r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
+            r#"<sheetData><row r="1"/></sheetData><drawing r:id="rId1"/></worksheet>"#
+        );
+        let written = rewrite(xml.as_bytes(), Writing::OtherPrefixes).unwrap();
+        assert_eq!(
+            String::from_utf8(written.clone()).unwrap(),
+            concat!(
+                r#"<ox1:worksheet xmlns:ox1="http://schemas.openxmlformats.org/spreadsheetml/2006/main" "#,
+                r#"xmlns:ox0="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
+                r#"<ox1:sheetData><ox1:row r="1"/></ox1:sheetData><ox1:drawing ox0:id="rId1"/></ox1:worksheet>"#
+            )
+        );
+        assert_eq!(canonical(&written), canonical(xml.as_bytes()));
+        // The spellings of the attributes named fold, and no other; a
+        // literal CR LF reads as LF.
+        let typed = |element: &str, attribute: &str| {
+            element == "row" && matches!(attribute, "ht" | "hidden")
+        };
+        assert_eq!(
+            canonical_folded(
+                b"<row ht=\"15.0\" hidden=\"true\"><t>a\r\nb</t></row>",
+                &typed
+            ),
+            canonical_folded(b"<row ht=\"15\" hidden=\"1\"><t>a\nb</t></row>", &typed)
+        );
+        assert_ne!(
+            canonical_folded(br#"<numFmt formatCode="0.00"/>"#, &typed),
+            canonical_folded(br#"<numFmt formatCode="0"/>"#, &typed)
+        );
+        assert_ne!(
+            canonical(b"<row hidden=\"true\"/>"),
+            canonical(b"<row hidden=\"1\"/>")
+        );
+    }
 }

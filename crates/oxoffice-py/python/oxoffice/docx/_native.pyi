@@ -659,6 +659,26 @@ class Revision:
 
 
 @_final
+class TrackedChanges:
+    """A tracked changes session of a document, made by ``Document.track_changes``."""
+    @property
+    def author(self) -> str: ...
+    @property
+    def timestamp(self) -> str | None: ...
+    @property
+    def revision_ids(self) -> tuple[int, ...]:
+        """The ids of the revisions the session wrote that the document holds, in the order it wrote them: a call
+        refused after it took ids leaves none. Read from the document's parts, so it costs a save."""
+    @property
+    def active(self) -> bool:
+        """Whether the document's edits still run in this session."""
+    def stop(self) -> None:
+        """End the session; ending one that has ended does nothing."""
+    def __enter__(self) -> TrackedChanges: ...
+    def __exit__(self, *exception: object) -> bool: ...
+
+
+@_final
 class Story:
     def __new__(cls, *, kind: str, part_name: str, owner_index: int) -> Story: ...
     @property
@@ -1923,6 +1943,23 @@ class Document:
     def reject_revisions_in_date_range(self, *, start: str, end: str) -> int: ...
     def accept_revision_id(self, id: int) -> int: ...
     def reject_revision_id(self, id: int) -> int: ...
+    def track_changes(self, author: str, *, timestamp: str | None = None, undated: bool = False) -> TrackedChanges:
+        """Start a tracked changes session by ``author``, also a context manager that ends it.
+
+        Until it stops, text edits of paragraphs in any story (``Run.text``, ``Run.remove``, ``Run.add_tab``,
+        ``Run.add_break``, ``Paragraph.text``, ``Paragraph.add_run``, ``Paragraph.replace_text``,
+        ``Paragraph.replace_xml``, ``Cell.text``, ``Cell.replace_text``, ``set_story_text`` and the replace
+        calls) are written as insertions and deletions by ``author``, dated ``timestamp`` (RFC 3339; the time of
+        this call when absent, none with ``undated``); a replacement deletes each whole match and inserts its
+        value, as Word's tracked Replace All. Edits Word records no revision for (properties, settings, styles,
+        numbering definitions, fonts, comments, bookmarks, protection, accepting and rejecting) run as without a
+        session; any other edit, and a text edit that also changes formatting, a field or a link, raises
+        ``DocxError`` and leaves the document unchanged. An edit of a paragraph's text retires that paragraph's
+        run handles, as ``Paragraph.text`` does. A second session while one runs raises ``DocxError``.
+        """
+    @property
+    def tracked_changes(self) -> TrackedChanges | None:
+        """The tracked changes session the document's edits run in, if any."""
     def update_fields(
         self,
         *,

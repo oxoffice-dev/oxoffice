@@ -129,19 +129,19 @@ impl NumberFormat {
         };
         let format =
             oxoffice_numfmt::NumberFormat::parse(&self.format_code).map_err(|_| unsupported())?;
-        if format.shows_foreign_names() {
+        if format.shows_unknown_names() {
             return Err(unsupported());
         }
         Ok(format.format_number(value, options).text)
     }
 
     /// Whether the chart draws this code as Excel does: not when Excel
-    /// cannot read it, nor when it asks for month or day names in another
-    /// language than English (`[$-40C]mmmm`), which wait for the names of
-    /// other languages. Their values show as General, with a diagnostic.
+    /// cannot read it, nor when it asks for month or day names in a language
+    /// `oxoffice-numfmt` has no names for (`[$-411]mmmm`, Japanese). Their
+    /// values show as General, with a diagnostic.
     pub fn is_supported(&self) -> bool {
         oxoffice_numfmt::NumberFormat::parse(&self.format_code)
-            .is_ok_and(|format| !format.shows_foreign_names())
+            .is_ok_and(|format| !format.shows_unknown_names())
     }
 
     pub(super) fn validate(&self) -> Result<()> {

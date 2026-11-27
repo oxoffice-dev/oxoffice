@@ -32,7 +32,18 @@ impl Document {
             unreachable!("a direct body paragraph's slot holds it");
         };
         let mut edited = current.as_ref().clone();
+        let before = self.tracking.is_some().then(|| edited.clone());
         let value = edit(&mut Paragraph { inner: &mut edited })?;
+        // Under tracked changes, the edit is written as revisions; the ids
+        // it reserves are the only identifiers this route reserves. An edit
+        // the session cannot write takes the caller's other route, which
+        // refuses it.
+        if let Some(before) = before {
+            match self.redline_edited_paragraph(&before, edited) {
+                Ok(redlined) => edited = redlined,
+                Err(_) => return Ok(None),
+            }
+        }
         let Some(BodyContent::Paragraph(current)) = self.document.body.content.get_mut(slot) else {
             unreachable!("a direct body paragraph's slot holds it");
         };

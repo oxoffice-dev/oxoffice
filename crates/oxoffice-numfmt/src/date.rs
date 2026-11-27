@@ -1,43 +1,15 @@
 //! Dates and times from serial day numbers.
 
 use crate::decimal::Decimal;
+use crate::names::{self, Language, Names};
 use crate::parse::{self, Section, SystemFormat, Token, Unit};
 use crate::{DateSystem, FormatOptions, Formatted, Locale, Out};
 
-const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-const DAYS: [&str; 7] = [
-    "Sunday",
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-];
-
 impl Locale {
-    fn month(self, month: u32) -> &'static str {
+    /// The names a code takes when no locale tag names a language.
+    fn names(self) -> &'static Names {
         match self {
-            Locale::EnUs => MONTHS[month as usize - 1],
-        }
-    }
-
-    fn weekday(self, weekday: u32) -> &'static str {
-        match self {
-            Locale::EnUs => DAYS[weekday as usize],
+            Locale::EnUs => &names::ENGLISH,
         }
     }
 
@@ -172,7 +144,12 @@ pub(crate) fn format(
     let twelve_hours = tokens
         .iter()
         .any(|token| matches!(token, Token::AmPm { .. }));
-    let locale = options.locale;
+    // The tag of the section names the language; `Other` is a language this
+    // crate has no names for, shown in the locale's.
+    let names = match section.language {
+        Some(Language::Known(names)) => names,
+        _ => options.locale.names(),
+    };
 
     let mut out = Out::default();
     if negative && sign {
@@ -193,12 +170,14 @@ pub(crate) fn format(
             Token::Year(_) => padded(&mut out, year, 4),
             Token::Month(1) => padded(&mut out, i64::from(month), 1),
             Token::Month(2) => padded(&mut out, i64::from(month), 2),
-            Token::Month(3) => out.push_str(&locale.month(month)[..3]),
-            Token::Month(5) => out.push_str(&locale.month(month)[..1]),
-            Token::Month(_) => out.push_str(locale.month(month)),
+            Token::Month(3) => out.push_str(names.short_month(month)),
+            Token::Month(5) => {
+                out.push_str(&names.month(month).chars().take(1).collect::<String>())
+            }
+            Token::Month(_) => out.push_str(names.month(month)),
             Token::Day(count @ (1 | 2)) => padded(&mut out, i64::from(date), count),
-            Token::Day(3) => out.push_str(&locale.weekday(weekday)[..3]),
-            Token::Day(_) => out.push_str(locale.weekday(weekday)),
+            Token::Day(3) => out.push_str(names.short_weekday(weekday)),
+            Token::Day(_) => out.push_str(names.weekday(weekday)),
             Token::Hour(count) => {
                 let hour = if twelve_hours {
                     (hour + 11) % 12 + 1
@@ -224,9 +203,15 @@ pub(crate) fn format(
             }
             Token::AmPm { short } => {
                 let morning = hour < 12;
-                match short {
-                    Some((am, pm)) => out.push(if morning { am } else { pm }),
-                    None => out.push_str(if morning { "AM" } else { "PM" }),
+                if section.language.is_some() {
+                    // Under a language tag, every spelling (`A/P`, `am/pm`) shows
+                    // the designator of the language.
+                    out.push_str(names.day_period(!morning));
+                } else {
+                    match short {
+                        Some((am, pm)) => out.push(if morning { am } else { pm }),
+                        None => out.push_str(names.day_period(!morning)),
+                    }
                 }
             }
             ref token => {

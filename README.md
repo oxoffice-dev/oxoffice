@@ -26,7 +26,7 @@ from Rust, the command line or Python.**
 - 🦀 **One engine, three doors**: a Rust API, an `oxoffice` command for everything that makes sense in a
   shell, and an `oxoffice` Python package that covers nearly all of it (a few calls, such as
   encryption, are Rust only for now) for when the shell is not enough.
-- 📄 **Word and PowerPoint as equals**, with spreadsheets on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap).
+- 📄 **Word and PowerPoint as equals**, with Excel workbooks joining them: they open and save today, the rest is on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap).
 - ✍️ **Edits that keep the file intact**: unmodelled XML is carried over verbatim, child order follows the
   schema, and text changes keep their formatting.
 - 🔍 **Real review tools**: list, accept and reject tracked changes, compare two versions into a redline,
@@ -124,7 +124,7 @@ with a few that touch whole files: edits and form operations that cost more as a
 | Sections, headers and footers | ✅ | ⚠️ | ✅ | the document-wide header or footer setter reaches the last section only |
 | Footnotes and endnotes | ✅ | ⚠️ | ✅ | removing a paragraph leaves its notes behind, and removing a note leaves its custom mark |
 | Comments and replies | ✅ | ✅ | ⚠️ | anchored on a piece of text, moved, resolved, dated; in a file saved by Word in another language, a new comment does not take the file's comment styles yet |
-| Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields; text edits and replacements written as tracked changes by a given author (Rust `track_changes`, CLI `replace --track-author`); in Python, and for formatting, paragraphs, rows and moves, on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap) |
+| Tracked changes | ✅ | ✅ | ⚠️ | accept and reject by id, author or date; compare two versions into a redline, which refuses a few edits around simple fields; text edits and replacements written as tracked changes by a given author (`track_changes` in Rust and Python, CLI `replace --track-author`); for formatting, paragraphs, rows and moves, on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap) |
 | Fields and tables of contents | ✅ | ✅ | ✅ | page numbers, page references, dates, sequences, cross-references |
 | Content controls and forms | ⚠️ | ⚠️ | ✅ | fill, validate, reset and protect in every story, export to fillable PDF fields; a date control shows month and day names in English, French, German, Spanish, Italian, Portuguese and Dutch, numeric dates in any language, and a time where its format shows one |
 | Pictures and watermarks | ✅ | ✅ | ✅ | a replaced picture keeps its frame |
@@ -156,6 +156,18 @@ with a few that touch whole files: edits and form operations that cost more as a
 | Embedded fonts | ✅ | ✅ | ✅ | you state that the font's licence allows it |
 | Signatures | ✅ | — | ✅ | sign and verify, no certificate chain trust |
 | Encryption | ⚠️ | — | ⚠️ | open and save with a password, from Rust only for now |
+
+### 📗 Excel
+
+Workbooks arrive step by step ([#365](https://github.com/oxoffice-dev/oxoffice/issues/365)): opening and saving first,
+then reading cells, editing them and creating a workbook.
+
+| Family | Read | Edit | Create | Notes |
+| --- | :---: | :---: | :---: | --- |
+| Workbooks | ⚠️ | — | ❌ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind), the date system and, from Rust, each sheet's page setup; a save without an edit keeps every part byte for byte; `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out |
+| Cells, formulas and styles | ❌ | ❌ | ❌ | next |
+| Encryption | ✅ | — | ✅ | open and save with a password, from Rust and Python |
+
 ### Fillable PDF forms
 
 A Word form exports to a PDF that the recipient fills in, and signs, in Acrobat Reader or any PDF viewer. Its content controls and legacy form fields become fields: text, check boxes, lists and dates, with their current values. Word's own PDF export flattens forms.

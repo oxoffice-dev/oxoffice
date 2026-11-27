@@ -368,6 +368,86 @@ add("r3limit", "?/100", "1E+37")
 add("r3limit", "# ?/16", "1E-39")
 add("r3limit", "?/16", "1E-39")
 
+# Round 4: month and day names and the day period under a language tag. Each month case writes the three month
+# tokens of one month, each day case the two day tokens of one weekday, each period case the four spellings of
+# the day period for a morning and an afternoon, `|` apart: the whole table of a language in 12 + 7 + 2 cases.
+ROUND = 4
+MONTH_CODE = 'mmm"|"mmmm"|"mmmmm'
+DAY_CODE = 'ddd"|"dddd'
+PERIOD_CODE = 'h AM/PM"|"am/pm"|"A/P"|"a/p'
+TAGGED_LOCALES = [  # (LCID of the tag, what it is)
+    # English, French, German, Spanish, Italian, Portuguese and Dutch: the languages of Word's date controls.
+    ("409", "en-US"), ("809", "en-GB"), ("C09", "en-AU"), ("1009", "en-CA"), ("4009", "en-IN"),
+    ("40C", "fr-FR"), ("80C", "fr-BE"), ("C0C", "fr-CA"), ("100C", "fr-CH"),
+    ("407", "de-DE"), ("C07", "de-AT"), ("807", "de-CH"),
+    ("C0A", "es-ES"), ("80A", "es-MX"), ("2C0A", "es-AR"),
+    ("410", "it-IT"), ("810", "it-CH"),
+    ("416", "pt-BR"), ("816", "pt-PT"),
+    ("413", "nl-NL"), ("813", "nl-BE"),
+]
+for lcid, _name in TAGGED_LOCALES:
+    for month in range(1, 13):
+        add(f"r4m-{lcid}", f"[$-{lcid}]{MONTH_CODE}", serial(2024, month, 15))
+    for day in range(14, 21):  # Sunday 2024-01-14 to Saturday 2024-01-20
+        add(f"r4d-{lcid}", f"[$-{lcid}]{DAY_CODE}", serial(2024, 1, day))
+    add(f"r4p-{lcid}", f"[$-{lcid}]{PERIOD_CODE}", serial(2024, 1, 15, 5, 9, 0), PM5)
+# The tag as text, as newer Excel writes it: a language and region, or a language.
+TEXT_TAGS = ["fr-FR", "fr", "fr-fr", "fr-CA", "de-DE", "de-AT", "de", "es-ES", "es-MX", "es", "it-IT", "pt-BR",
+             "pt-PT", "nl-NL", "nl", "en-GB", "en-US", "en"]
+for tag in TEXT_TAGS:
+    add("r4t", f"[$-{tag}]ddd\"|\"dddd\"|\"mmm\"|\"mmmm\"|\"mmmmm", serial(2024, 9, 4))
+# Languages no table of ours holds: what Excel shows for them.
+for lcid in ["411", "804", "412", "419", "415", "41D", "41F", "403", "401"]:
+    add("r4o", f"[$-{lcid}]ddd\"|\"dddd\"|\"mmm\"|\"mmmm\"|\"mmmmm", serial(2024, 9, 4))
+    add("r4o", f"[$-{lcid}]{PERIOD_CODE}", PM5)
+# Where the tag stands and which one counts: the section's, wherever it is; the sections have their own.
+add("r4s", "dddd d mmmm[$-40C]", D)
+add("r4s", "[$-40C][$-407]mmmm", D)
+add("r4s", "[$-407][$-40C]mmmm", D)
+add("r4s", '[>40000][$-407]mmmm;[$-40C]mmmm', "45306", "30000")
+add("r4s", '[$-40C]mmmm;[$-407]mmmm', "45306")
+add("r4s", '[$€-40C]mmmm', D)
+
+# Round 5: what round 4 left open. Its period cases wrote four spellings of the day period in one code and Excel
+# showed the full designator for all of them (`A/P` too), so here each spelling has its own code, with and without
+# a tag; the regions of Spanish (a language with four spellings of its short names), French, German and English
+# not seen; the tag without a region; the high word of an LCID; and which sections a tag speaks for.
+ROUND = 5
+MORNING = serial(2024, 1, 15, 5, 9, 0)
+for lcid in ["409", "809", "C0C", "C0A", "80A"]:
+    for spelling in ["AM/PM", "am/pm", "A/P", "a/p"]:
+        add(f"r5p-{lcid}", f"[$-{lcid}]h {spelling}", MORNING, PM5)
+for spelling in ["AM/PM", "am/pm", "A/P", "a/p"]:
+    add("r5p-none", f"h {spelling}", MORNING, PM5)
+add("r5p-none", PERIOD_CODE, MORNING, PM5)
+add("r5p-none", 'h A/P"|"AM/PM', MORNING, PM5)
+add("r5p-none", 'h AM/PM"|"A/P', MORNING, PM5)
+for lcid in ["1409", "1809", "1C09"]:  # en-NZ, en-IE, en-ZA: the day period only (English names are the same)
+    add(f"r5p-{lcid}", f"[$-{lcid}]h AM/PM", MORNING, PM5)
+MORE_LOCALES = ["40A", "240A", "340A", "540A", "140C", "1007"]  # es-ES (traditional), es-CO, es-CL, es-US, fr-LU, de-LU
+for lcid in MORE_LOCALES:
+    for month in range(1, 13):
+        add(f"r5m-{lcid}", f"[$-{lcid}]{MONTH_CODE}", serial(2024, month, 15))
+    for day in range(14, 21):
+        add(f"r5d-{lcid}", f"[$-{lcid}]{DAY_CODE}", serial(2024, 1, day))
+    add(f"r5p-{lcid}", f"[$-{lcid}]h AM/PM", MORNING, PM5)
+for tag in ["es", "pt"]:  # a language with no region
+    for month in range(1, 13):
+        add(f"r5m-{tag}", f"[$-{tag}]{MONTH_CODE}", serial(2024, month, 15))
+    for day in range(14, 21):
+        add(f"r5d-{tag}", f"[$-{tag}]{DAY_CODE}", serial(2024, 1, day))
+    add(f"r5p-{tag}", f"[$-{tag}]h AM/PM", MORNING, PM5)
+# The high word of an LCID (calendar and digits), the low word names the language.
+for lcid in ["1040C", "2040C", "10407", "F40C"]:
+    add("r5h", f"[$-{lcid}]{DAY_CODE}\"|\"{MONTH_CODE}", serial(2024, 9, 4))
+# Which sections a tag speaks for: the tag of the first section, of the second only, of each.
+add("r5s", "[>40000]mmmm;[$-40C]mmmm", "45306", "30000")
+add("r5s", "[>40000][$-40C]mmmm;mmmm", "45306", "30000")
+add("r5s", "[$-407]mmmm;[$-40C]mmmm;mmmm", "45306")
+add("r5s", "[<40000][$-407]mmmm;[>=40000][$-40C]mmmm", "45306", "30000")
+add("r5s", '[$-40C]d mmmm yyyy;@', D)
+add("r5s", '[$-40C]d mmmm yyyy;@', "abc", system=1900, kind="text")
+
 
 def check_values():
     for case_id, _code, value, _system, kind, _round in CASES:

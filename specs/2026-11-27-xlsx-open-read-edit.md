@@ -77,8 +77,10 @@ row not edited stay bytes. An edit costs its rows plus, once per group, the rows
 (section 6), not the sheet (the docx lesson of #466). Rows and cells without `r` take the next number. Tolerant on
 read (any prefix, `1`/`true`, `0`/`false`, `1.0`). On write, an element takes the prefix the root binds to the main
 namespace (none under a default namespace, `x:` or `ns0:` when the root binds one), never a fixed one (spec
-2026-11-26 met the same question in Word); canonical attribute values (`1`/`0`, the shortest text that reads back the
-same double) appear only in what an edit rewrites.
+2026-11-26 met the same question in Word). A start tag is kept as read; a row, a cell and a formula take the fixed
+writing of the attributes the schema types (`1`/`0`, the shortest text that reads back the same double) when they
+are read, so only the rows an edit rewrites carry it. Style and workbook records keep the producer's spelling: they
+are appended to, never rewritten in place.
 
 **Indexes only grow.** Shared strings and `cellXfs` (and the fonts, fills, borders and number formats they point to)
 are appended, never removed or reordered, so the sheets not edited keep valid indexes. A written text reuses an
@@ -172,7 +174,7 @@ writes correct values and makes the option unnecessary.
 | What | Rust (`oxoffice_xlsx`) | CLI (`oxoffice xlsx`) | Python (`oxoffice.xlsx`) |
 | --- | --- | --- | --- |
 | workbook | `Workbook::open`, `from_bytes`, `open_encrypted`; `sheets()`, `date_system()`, `recalculation_needed()` | `inspect [--json]` | `Workbook(path)`, `Workbook.open`, `from_bytes`, `open_encrypted`; `.sheets`, `.sheet(name)`, `.date1904`, `.recalculation_needed` |
-| sheet | `name()`, `position()`, `state()` (`visible`, `hidden`, `veryHidden`), `used_range()` | in `inspect` | `.name`, `.index`, `.state`, `.used_range` |
+| sheet | `name()`, `position()`, `state()` (`visible`, `hidden`, `veryHidden`), `kind()` (`worksheet`, `chartsheet`, `dialogsheet`, `macrosheet`; PR 3), `used_range()` | in `inspect` | `.name`, `.index`, `.state`, `.kind`, `.used_range` |
 | cell | `cell(ref) -> Cell` | `cells FILE RANGE [--sheet S] [--json]` | `ws.cell(ref) -> Cell` |
 | range | `values(range)`, `cells(range)` (row-major, empty cells skipped) | `cells` | `ws.values(range, text=False)` (one native call, nested lists), `ws.cells(range)` |
 | merges | `merged_ranges()` | `cells --json`, `text --json` | `.merged_ranges` |
@@ -181,7 +183,8 @@ writes correct values and makes the option unnecessary.
 | text | `to_markdown()`, `to_csv(options)` in the facade | `text [--json \| --markdown] [--sheet S]...`, `csv` | `wb.to_markdown()`, `ws.to_csv(...)` |
 
 **Used range**: the smallest range holding every cell with a value or a formula (`None` when empty); not `dimension`
-(Google writes none), not the rows (Google pads empty rows to 1000).
+(Google writes none), not the rows (Google pads empty rows to 1000). A cell read of a chartsheet, a dialogsheet or a
+macrosheet is refused with a plain message naming its kind.
 
 **`Cell`**: `ref` (Rust `address`), `row`, `column`, `value` (number, text, boolean, error or empty; for a formula,
 its cached value), `formula` (`None` or the displayed form), `stored_formula`, `formula_kind` (`shared`, `array`,
@@ -327,18 +330,23 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 | --- | --- | --- |
 | `.xlsx`, `.xltx`, `.xlsm`, `.xltm` | main part content type | opened; a VBA project and its signature parts kept |
 | Strict Open XML (`purl.oclc.org` namespaces) | the workbook relationship or root namespace | opened and kept Strict: one table maps the Strict namespaces and relationship types to their transitional twins on read; edited parts keep the root's namespace, a new part takes the package's |
-| encrypted workbook | a compound file (`D0 CF 11 E0`) with an `EncryptionInfo` stream | plain open refused: "the workbook is password-protected: open it with a password"; Agile encryption through `oxoffice-opc` in PR 3, as docx: `open_encrypted`, `from_encrypted_bytes`, `save_encrypted`, `to_encrypted_bytes` |
-| `.xls`, `.doc`, `.ppt`, another compound file | a compound file with a `Workbook` or `Book`, `WordDocument` or `PowerPoint Document` stream, or none of them | refused, each with its message: "a legacy Excel 97-2003 workbook (.xls): save it as .xlsx in Excel or LibreOffice first", and the like |
+| encrypted workbook | a compound file (`D0 CF 11 E0`) with an `EncryptionInfo` stream | plain open refused: "the workbook is password-protected: open it with a password"; Agile encryption through `oxoffice-opc` in PR 3, as docx: `open_encrypted`, `from_encrypted_bytes`, `save_encrypted`, `to_encrypted_bytes`, in Rust and Python (the first family whose encryption reaches Python), none in the CLI, as docx; an encrypted open of a workbook that is not protected is refused: "open it without a password" |
+| `.xls`, `.doc`, `.ppt`, another compound file | a compound file with a `Workbook` or `Book`, `WordDocument` or `PowerPoint Document` stream, or none of them (`oxoffice_opc::compound_file` reads the directory) | refused, each with its message: "a legacy Excel 97-2003 workbook (.xls): save it as .xlsx in Excel or LibreOffice first", and the like; another one "a compound file that holds no workbook" |
 | `.xlsb` | main part `sheet.binary.macroEnabled.main` | refused: "a binary workbook (.xlsb): save it as .xlsx first" |
 | `.ods` | ZIP `mimetype` `application/vnd.oasis.opendocument.spreadsheet` | refused: "an OpenDocument spreadsheet (.ods): save it as .xlsx first" |
 | a Word or PowerPoint package | main part content type | refused, naming `oxoffice docx` / `oxoffice pptx` |
+| any other package: an add-in (`.xlam`), another OpenDocument file, no main part | main part content type, ZIP `mimetype` | refused: "not a workbook: ...", naming the main content type or its absence |
+| a sheet whose relationship or part is missing | the workbook relationships | refused (Excel repairs it; no producer writes it) |
 
 The package is told by its content, never its extension (today a compound file fails as a ZIP error in `oxoffice-opc`).
 
 **Save**, the docx rule: staged in a synced sibling file and renamed over `path` by `oxoffice_opc::write_atomic_file`
 (a failed save leaves the file as it was; a symbolic link kept, its target replaced; Unix mode bits kept). A workbook
-opened from a file refuses to be saved over it, whatever the spelling of `path` (`Error::OverwritesSource`), unless
-`SaveOptions { overwrite_source: true, .. }`; `drop_cached_values` is the other option (section 3). `.xlsx`, `.xlsm`,
+opened from a file refuses to be saved over it, whatever the spelling of `path` (`Error::OverwritesSource`), the
+encrypted saves too, unless `SaveOptions { overwrite_source: true, .. }`; `drop_cached_values` is the other option
+(section 3, PR 6). `SaveOptions` is the facade's own, not `oxoffice-opc`'s: each save has a `*_with_options` variant
+taking it (`save_with_options`, `to_bytes_with_options`, `save_encrypted_with_options`,
+`to_encrypted_bytes_with_options`), the plain call taking the defaults. `.xlsx`, `.xlsm`,
 `.xltx` or `.xltm` selects the main content type; a VBA project cannot be saved under a macro-free extension. Python
 `save(path, *, overwrite_source=False, drop_cached_values=False)`, `to_bytes(*, drop_cached_values=False)`, the
 encrypted saves with the same keyword; the CLI writes `-o`, never the input, `--force` replacing another file. Python

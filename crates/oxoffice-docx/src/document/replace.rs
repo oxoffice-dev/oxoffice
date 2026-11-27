@@ -113,6 +113,9 @@ impl Document {
         replacement: &str,
         expected: Option<usize>,
     ) -> Result<std::result::Result<usize, ReplacementCountMismatch>> {
+        if self.tracking.is_some() {
+            return self.replace_text_at_tracked(location, placeholder, replacement, expected);
+        }
         self.try_replace_scoped(
             ScopedReplacementTarget::Item(location),
             placeholder,
@@ -133,6 +136,26 @@ impl Document {
         replacement: &str,
         expected: Option<usize>,
     ) -> Result<std::result::Result<usize, ReplacementCountMismatch>> {
+        if self.tracking.is_some() {
+            let mut document = self.clone_for_staging();
+            return Ok(
+                match document.replace_in_cell_tracked(
+                    cell,
+                    paragraph,
+                    placeholder,
+                    replacement,
+                    expected,
+                )? {
+                    Err(mismatch) => Err(mismatch),
+                    Ok(count) => {
+                        if count > 0 {
+                            *self = document;
+                        }
+                        Ok(count)
+                    }
+                },
+            );
+        }
         self.try_replace_scoped(
             ScopedReplacementTarget::Cell {
                 coordinates: cell,
@@ -180,6 +203,14 @@ impl Document {
         replacement: &str,
         expected: Option<usize>,
     ) -> Result<std::result::Result<Option<(Self, usize)>, ReplacementCountMismatch>> {
+        if self.tracking.is_some() {
+            return self.replace_text_at_tracked_owned(
+                location,
+                placeholder,
+                replacement,
+                expected,
+            );
+        }
         self.replace_scoped_owned(
             ScopedReplacementTarget::Item(location),
             placeholder,
@@ -264,6 +295,14 @@ impl Document {
         };
         // No model/package mutation occurs between qualification and this
         // owned call. CheckedItem cannot be supplied by any public caller.
+        if self.tracking.is_some() {
+            return self.replace_text_at_tracked_owned(
+                &location,
+                placeholder,
+                replacement,
+                expected,
+            );
+        }
         self.replace_scoped_owned(
             ScopedReplacementTarget::CheckedItem(&location),
             placeholder,
@@ -282,6 +321,22 @@ impl Document {
         replacement: &str,
         expected: Option<usize>,
     ) -> Result<std::result::Result<Option<(Self, usize)>, ReplacementCountMismatch>> {
+        if self.tracking.is_some() {
+            let mut document = self;
+            return Ok(
+                match document.replace_in_cell_tracked(
+                    cell,
+                    paragraph,
+                    placeholder,
+                    replacement,
+                    expected,
+                )? {
+                    Err(mismatch) => Err(mismatch),
+                    Ok(0) => Ok(None),
+                    Ok(count) => Ok(Some((document, count))),
+                },
+            );
+        }
         self.replace_scoped_owned(
             ScopedReplacementTarget::Cell {
                 coordinates: cell,
@@ -302,6 +357,11 @@ impl Document {
         replacement: &str,
         expected: Option<usize>,
     ) -> Result<std::result::Result<Option<(Self, usize)>, ReplacementCountMismatch>> {
+        if self.tracking.is_some() {
+            return Err(super::redline::refused(
+                "a replacement in a table outside the body",
+            ));
+        }
         self.replace_scoped_owned(
             ScopedReplacementTarget::RelatedCell(story),
             placeholder,

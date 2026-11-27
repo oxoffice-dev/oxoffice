@@ -35,7 +35,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  PY_CRATES: --exclude oxoffice-py --exclude oxoffice-docx-py --exclude oxoffice-pptx-py
+  PY_CRATES: --exclude oxoffice-py --exclude oxoffice-docx-py --exclude oxoffice-pptx-py --exclude oxoffice-xlsx-py
 
 # The jobs restore the caches the CI of main saves (shared key `test`) and
 # save none: the 10 GB of the Actions cache stay for main's. The debug builds

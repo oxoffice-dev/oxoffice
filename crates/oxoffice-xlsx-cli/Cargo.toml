@@ -1,0 +1,20 @@
+[package]
+name = "oxoffice-xlsx-cli"
+description = "CLI tool for inspecting Excel-compatible workbooks"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["xlsx", "excel", "ooxml", "spreadsheet", "cli"]
+categories = ["command-line-utilities", "parser-implementations"]
+publish = true
+
+[dependencies]
+clap.workspace = true
+oxoffice-cli-support.workspace = true
+oxoffice-xlsx.workspace = true
+serde_json.workspace = true

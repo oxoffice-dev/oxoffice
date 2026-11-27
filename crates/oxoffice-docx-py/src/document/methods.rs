@@ -4,6 +4,26 @@ use super::*;
 
 #[pymethods]
 impl PyDocument {
+    /// Start a tracked changes session by `author`: until it stops, the edits
+    /// it records are written as revisions dated `timestamp` (RFC 3339, the
+    /// time of this call when absent, none with `undated`), and any other
+    /// edit Word would track is refused.
+    #[pyo3(signature = (author, *, timestamp = None, undated = false))]
+    fn track_changes(
+        slf: &Bound<'_, Self>,
+        author: &str,
+        timestamp: Option<&str>,
+        undated: bool,
+    ) -> PyResult<PyTrackedChanges> {
+        tracked::track_changes(slf, author, timestamp, undated)
+    }
+
+    /// The tracked changes session the document's edits run in, if any.
+    #[getter]
+    fn tracked_changes(slf: &Bound<'_, Self>) -> Option<PyTrackedChanges> {
+        tracked::tracked_changes(slf)
+    }
+
     #[getter]
     fn default_font_name(&self) -> Option<String> {
         self.inner.default_font_name().map(str::to_owned)
@@ -427,6 +447,9 @@ impl PyDocument {
         rules: &Bound<'_, PyAny>,
         assignments: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyTuple>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.fill_form")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let rules = copied_rules(py, rules)?;
         let assignments = copied_assignments(py, assignments)?;
         if let Some(counts) =
@@ -451,6 +474,9 @@ impl PyDocument {
     }
 
     fn reset_form(&mut self, py: Python<'_>, rules: &Bound<'_, PyAny>) -> PyResult<Py<PyTuple>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.reset_form")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let rules = copied_rules(py, rules)?;
         if let Some(counts) =
             self.publish_form_edited_in_place(py, "Document.reset_form", |document| {
@@ -479,6 +505,9 @@ impl PyDocument {
         rules: &Bound<'_, PyAny>,
         protection: &PyDocumentProtection,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.protect_form")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let rules = copied_rules(py, rules)?;
         let protection = protection.inner.clone();
         // It validates, then writes the settings in place, as
@@ -598,6 +627,9 @@ impl PyDocument {
         py: Python<'_>,
         values: &Bound<'_, PyDict>,
     ) -> PyResult<Py<PyInt>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.bind_content_controls")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let values = values
             .iter()
             .map(|(key, value)| Ok((key.extract::<String>()?, value.extract::<String>()?)))
@@ -674,6 +706,9 @@ impl PyDocument {
         locale_filter: Option<u32>,
         tags: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_bibliography_options")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.set_bibliography_options_impl(py, style, locale, locale_filter, tags)
     }
 
@@ -699,6 +734,9 @@ impl PyDocument {
         occurrence: usize,
         locale: Option<u32>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.insert_citation_after_text")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.insert_citation_after_text_impl(py, text, sources, occurrence, locale)
     }
 
@@ -726,6 +764,9 @@ impl PyDocument {
         py: Python<'_>,
         default_locale: Option<u32>,
     ) -> PyResult<PyBibliographyUpdateReport> {
+        self.inner
+            .refuse_under_tracked_changes("Document.update_bibliography")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.update_bibliography_impl(py, default_locale)
     }
 
@@ -778,6 +819,9 @@ impl PyDocument {
         source_part: Option<&str>,
         ordinal: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyLegacyFormField>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_legacy_form_field_value")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let ordinal = ordinal
             .map(|value| {
                 if !value.is_instance_of::<PyInt>() || value.is_instance_of::<PyBool>() {
@@ -882,6 +926,9 @@ impl PyDocument {
         tag: &str,
         value: &str,
     ) -> PyResult<usize> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_value_by_tag")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.set_control_value(py, tag, value, true)
     }
     fn fill_content_control_tags<'py>(
@@ -889,6 +936,9 @@ impl PyDocument {
         py: Python<'py>,
         pairs: Vec<(String, String)>,
     ) -> PyResult<Bound<'py, PyTuple>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.fill_content_control_tags")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let pairs = pairs
             .iter()
             .map(|(tag, value)| (tag.as_str(), value.as_str()))
@@ -947,6 +997,9 @@ impl PyDocument {
         location: PyRef<'_, PyContentLocation>,
         tag: Option<String>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_tag")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.edit_content_control_property(
             py,
             &location,
@@ -962,6 +1015,9 @@ impl PyDocument {
         location: PyRef<'_, PyContentLocation>,
         alias: Option<String>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_alias")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.edit_content_control_property(
             py,
             &location,
@@ -977,6 +1033,9 @@ impl PyDocument {
         location: PyRef<'_, PyContentLocation>,
         lock: Option<String>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_lock")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let lock = lock
             .as_deref()
             .map(content_control_lock_from_name)
@@ -996,6 +1055,9 @@ impl PyDocument {
         location: PyRef<'_, PyContentLocation>,
         appearance: Option<String>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_appearance")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let appearance = appearance
             .as_deref()
             .map(content_control_appearance_from_name)
@@ -1015,6 +1077,9 @@ impl PyDocument {
         location: PyRef<'_, PyContentLocation>,
         placeholder: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_placeholder")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let placeholder = optional_python_bool(placeholder, "placeholder")?;
         self.edit_content_control_property(
             py,
@@ -1056,6 +1121,9 @@ impl PyDocument {
         source: PyRef<'_, PyContentLocation>,
         destination: PyRef<'_, PyContentLocation>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.move_content_control")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let source = source.native(py, self)?;
         let destination = destination.native(py, self)?;
         let mut candidate = self.inner.clone_for_staging();
@@ -1084,6 +1152,9 @@ impl PyDocument {
         location: PyRef<'_, PyContentLocation>,
         payload: PyRef<'_, PyContentControlTypePayload>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_type")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let payload = payload.inner.clone();
         self.edit_content_control_property(
             py,
@@ -1132,6 +1203,9 @@ impl PyDocument {
         xpath: String,
         prefix_mappings: Option<String>,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_binding")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.edit_content_control_property(
             py,
             &location,
@@ -1150,6 +1224,9 @@ impl PyDocument {
         alias: &str,
         value: &str,
     ) -> PyResult<usize> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_content_control_value_by_alias")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.set_control_value(py, alias, value, false)
     }
     #[pyo3(signature = (destination, fragment, *, policy=None))]
@@ -1247,6 +1324,9 @@ impl PyDocument {
         relationship_id: &str,
         data: &[u8],
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.replace_image")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         // No content moves, so live handles stay valid.
         self.inner
             .replace_image(relationship_id, data)
@@ -1260,6 +1340,9 @@ impl PyDocument {
         relationship_id: &str,
         data: &[u8],
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.replace_image_for_story")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         // The body story of the main part is always there: it needs no
         // story listing, which writes the whole main part. No content
         // moves, so live handles stay valid.
@@ -1449,6 +1532,9 @@ impl PyDocument {
         width: &Bound<'_, PyAny>,
         height: &Bound<'_, PyAny>,
     ) -> PyResult<usize> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_picture_sizes_for_relationship")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let width = crate::required_length(
             width,
             "Document.set_picture_sizes_for_relationship(width)",
@@ -2007,6 +2093,9 @@ impl PyDocument {
         ignore_comments: bool,
         ignored_stories: Option<Vec<String>>,
     ) -> PyResult<Bound<'py, PyTuple>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.compare")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut candidate = self.inner.clone_for_staging();
         let (diagnostics, changed) = py
             .detach(|| {
@@ -2169,6 +2258,9 @@ impl PyDocument {
         different_first_page: Option<bool>,
         break_type: Option<&str>,
     ) -> PyResult<PySection> {
+        self.inner
+            .refuse_under_tracked_changes("a change of section properties")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let length = |value: Option<Bound<'_, PyAny>>, name: &str| {
             crate::length_argument(
                 value.as_ref(),
@@ -2374,6 +2466,9 @@ impl PyDocument {
     }
 
     fn set_page_color(&mut self, py: Python<'_>, color: &str) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_page_color")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         // The page background and the settings, in place: no handle reads
         // them, so the edit publishes nothing and every handle stays.
         self.inner
@@ -3017,6 +3112,10 @@ impl PyDocument {
         paragraph: PyRef<'_, PyParagraph>,
         start: Py<PyAny>,
     ) -> PyResult<u32> {
+        slf.borrow(py)
+            .inner
+            .refuse_under_tracked_changes("Document.restart_numbering")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let start = start.bind(py);
         if !start.is_instance_of::<PyInt>() || start.is_instance_of::<PyBool>() {
             return Err(PyTypeError::new_err("start must be a non-bool integer"));
@@ -3086,6 +3185,10 @@ impl PyDocument {
         position: Option<&str>,
         overlay: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
+        slf.borrow(py)
+            .inner
+            .refuse_under_tracked_changes("Document.set_chart_legend")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let checked_bool = |value: Option<&Bound<'_, PyAny>>| -> PyResult<Option<bool>> {
             value
                 .map(|v| {
@@ -3537,6 +3640,9 @@ impl PyDocument {
         hyperlink: PyRef<'_, PyHyperlink>,
         url: &str,
     ) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.set_hyperlink_url")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         // A link of the main part's body whose relationship no other
         // element names is retargeted in place, found in its body block: no
         // story is listed, which writes the whole main part.
@@ -4144,6 +4250,9 @@ impl PyDocument {
     }
 
     fn rebuild_toc(&mut self, py: Python<'_>) -> PyResult<Py<PyTocRebuildReport>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.rebuild_toc")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut candidate = self.inner.clone_for_staging();
         let (report, changed) = py
             .detach(|| {
@@ -4498,6 +4607,9 @@ impl PyDocument {
         merge_record_number: Option<u32>,
         merge_sequence_number: Option<u32>,
     ) -> PyResult<usize> {
+        self.inner
+            .refuse_under_tracked_changes("Document.update_fields")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         // Read field by field: the abi3 build has no datetime accessors, and
         // the wall-clock values are used as given.
         let now = now
@@ -4548,6 +4660,9 @@ impl PyDocument {
         merge_record_number: Option<u32>,
         merge_sequence_number: Option<u32>,
     ) -> PyResult<Py<PyFieldsUpdateReport>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.update_all_fields")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         // Read field by field: the abi3 build has no datetime accessors, and
         // the wall-clock values are used as given.
         let now = now
@@ -4628,6 +4743,9 @@ impl PyDocument {
     }
 
     fn update_page_fields(&mut self, py: Python<'_>) -> PyResult<usize> {
+        self.inner
+            .refuse_under_tracked_changes("Document.update_page_fields")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut candidate = self.inner.clone_for_staging();
         let updated = py
             .detach(|| candidate.update_page_fields())
@@ -4649,6 +4767,9 @@ impl PyDocument {
         &mut self,
         py: Python<'_>,
     ) -> PyResult<Py<PyLayoutBackedFieldUpdateReport>> {
+        self.inner
+            .refuse_under_tracked_changes("Document.update_layout_backed_fields")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut candidate = self.inner.clone_for_staging();
         let report = py
             .detach(|| candidate.update_layout_backed_fields())
@@ -4680,6 +4801,9 @@ impl PyDocument {
 
     #[pyo3(signature = (index, max_level = 3))]
     fn insert_toc(&mut self, py: Python<'_>, index: usize, max_level: u32) -> PyResult<()> {
+        self.inner
+            .refuse_under_tracked_changes("Document.insert_toc")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let mut candidate = self.inner.clone_for_staging();
         if index > candidate.content_count() {
             return Err(PyIndexError::new_err("content index out of range"));

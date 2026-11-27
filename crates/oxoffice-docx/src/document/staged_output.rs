@@ -450,6 +450,7 @@ impl Document {
         #[cfg(debug_assertions)]
         let prepared = IdentifierSummary::of_package(&self);
         let custom_properties_owned = self.custom_properties_owned;
+        let tracking = self.tracking.clone();
         let settings_owned = self.settings_owned;
         let owned_settings = settings_owned.then(|| self.settings.clone());
         let web_settings_owned = self.web_settings_owned;
@@ -489,6 +490,9 @@ impl Document {
         }
         reopened.identifiers.reconcile_provenance(&provenance);
         reopened.custom_properties_owned = custom_properties_owned;
+        // A tracked changes session goes on in the document a staged edit
+        // reopens.
+        reopened.tracking = tracking;
         reopened.settings_owned = settings_owned;
         if let Some(settings) = owned_settings {
             reopened.settings = settings;
