@@ -489,6 +489,12 @@ pub fn splice(xml: &[u8], index: &SheetIndex, edits: &SheetEdits) -> Result<Vec<
         }
     }
     if !root_insertions.is_empty() {
+        // Children inserted at one place keep the schema order.
+        let rank = |bytes: &[u8]| {
+            local_name_of(bytes)
+                .and_then(|name| WORKSHEET_CHILDREN.iter().position(|known| *known == name))
+        };
+        root_insertions.sort_by_key(|(at, bytes)| (*at, rank(bytes)));
         if index.root.is_self_closing() {
             let content = root_insertions
                 .into_iter()
@@ -496,12 +502,6 @@ pub fn splice(xml: &[u8], index: &SheetIndex, edits: &SheetEdits) -> Result<Vec<
                 .collect();
             append_to(&mut splice, &index.root, &index.root_tag, None, content);
         } else {
-            // Children inserted at one place keep the schema order.
-            let rank = |bytes: &[u8]| {
-                local_name_of(bytes)
-                    .and_then(|name| WORKSHEET_CHILDREN.iter().position(|known| *known == name))
-            };
-            root_insertions.sort_by_key(|(at, bytes)| (*at, rank(bytes)));
             for (at, bytes) in root_insertions {
                 splice.insert(at, bytes);
             }
@@ -668,17 +668,21 @@ mod tests {
                 r#"<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData><x:row r="1"/></x:sheetData><x:pageMargins/></x:worksheet>"#,
             ),
             (
-                "children of an empty root",
+                "children of an empty root, in schema order",
                 r#"<worksheet xmlns="http://purl.oclc.org/ooxml/spreadsheetml/main"/>"#,
                 SheetEdits {
-                    children: [(
-                        "dimension".to_owned(),
-                        Some(br#"<dimension ref="A1"/>"#.to_vec()),
-                    )]
+                    rows: [(0, Some(row(r#"<row r="1"/>"#)))].into(),
+                    children: [
+                        ("cols".to_owned(), Some(b"<cols/>".to_vec())),
+                        (
+                            "dimension".to_owned(),
+                            Some(br#"<dimension ref="A1"/>"#.to_vec()),
+                        ),
+                        ("pageMargins".to_owned(), Some(b"<pageMargins/>".to_vec())),
+                    ]
                     .into(),
-                    ..SheetEdits::default()
                 },
-                r#"<worksheet xmlns="http://purl.oclc.org/ooxml/spreadsheetml/main"><dimension ref="A1"/></worksheet>"#,
+                r#"<worksheet xmlns="http://purl.oclc.org/ooxml/spreadsheetml/main"><dimension ref="A1"/><cols/><sheetData><row r="1"/></sheetData><pageMargins/></worksheet>"#,
             ),
         ];
         for (case, source, edits, expected) in cases {
