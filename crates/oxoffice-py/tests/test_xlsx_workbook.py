@@ -118,9 +118,9 @@ def test_a_sheet_added_is_a_handle_that_stays_valid_and_edits_its_own_sheet():
     wb2.add_sheet("Data").freeze_panes((1, 1))
     assert other.to_bytes() == wb2.to_bytes()
     data.freeze_panes(None)
-    data.freeze_panes()
     assert "<pane" not in sheet_xml(wb.to_bytes(), "xl/worksheets/sheet2.xml")
-    assert [s.name for s in oxlsx.Workbook.from_bytes(wb.to_bytes()).sheets] == ["Sheet1", "Data", "Notes"]
+    wb.add_sheet("R&D <1> it's")
+    assert [s.name for s in oxlsx.Workbook.from_bytes(wb.to_bytes()).sheets] == ["Sheet1", "Data", "Notes", "R&D <1> it's"]
 
 
 @pytest.mark.parametrize(
@@ -133,6 +133,7 @@ def test_a_sheet_added_is_a_handle_that_stays_valid_and_edits_its_own_sheet():
         (lambda wb: wb.sheets[0].set_column_width("A", docx.Pt(12)), TypeError, "not a Length"),
         (lambda wb: wb.sheets[0].set_row_height("1:1048576", 12), oxlsx.XlsxError, "at most 100000"),
         (lambda wb: wb.sheets[0].freeze_panes("A1"), ValueError, "no rows above it"),
+        (lambda wb: wb.sheets[0].freeze_panes(), TypeError, "cell"),
         (lambda wb: wb.sheets[0].freeze_panes((1048576, 0)), IndexError, "outside the sheet"),
         (lambda wb: wb.sheets[0].freeze_panes(3), TypeError, "a cell is"),
     ],

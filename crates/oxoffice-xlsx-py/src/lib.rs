@@ -375,8 +375,9 @@ impl PyWorksheet {
         self.edit(py, |sheet| sheet.set_row_height(rows, height))
     }
 
-    /// Freezes the panes above and left of `cell`, or removes them (`None`).
-    #[pyo3(signature = (cell = None))]
+    /// Freezes the panes above and left of `cell`, or removes them (`None`): the
+    /// argument is required, so that a call without one never removes them.
+    #[pyo3(signature = (cell))]
     fn freeze_panes(&self, py: Python<'_>, cell: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         let cell = cell
             .filter(|cell| !cell.is_none())

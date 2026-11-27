@@ -31,7 +31,8 @@ class Workbook:
         """A new workbook with an empty sheet for each name of ``sheets``.
 
         Raises ``ValueError`` for a name Excel would not accept (see
-        ``add_sheet``) or for no name at all.
+        ``add_sheet``) or for no name at all, and ``XlsxError`` when a name
+        repeats another in any case.
         """
 
     @staticmethod
@@ -126,10 +127,11 @@ class Worksheet:
         ``set_column_width``.
         """
 
-    def freeze_panes(self, cell: str | tuple[int, int] | None = None) -> None:
+    def freeze_panes(self, cell: str | tuple[int, int] | None) -> None:
         """Freezes the panes above and left of ``cell``, or removes them.
 
         ``"B2"`` keeps row 1 and column A in view; a tuple is ``(row,
-        column)`` counted from 0. ``None`` removes the frozen panes. ``A1``,
+        column)`` counted from 0. ``None`` removes the frozen panes; the
+        argument is required, so a call without one is a ``TypeError``. ``A1``,
         which has nothing above or left of it, raises ``ValueError``.
         """
