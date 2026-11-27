@@ -4580,8 +4580,9 @@ fn google_control(n: u32, content: &str) -> String {
 }
 
 /// A shape to resolve: its name, its story (`body`, `header` or `footnote`),
-/// its XML there, the revision id resolved alone if any, and the text
-/// report it gives or the refusal it meets.
+/// its XML there, the revision id resolved alone if any, and what it gives
+/// (the text report, then each content control as `tag{its paragraphs}` and
+/// the bookmarks left) or the refusal it meets.
 type ResolutionRow = (
     &'static str,
     &'static str,
@@ -4598,15 +4599,18 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
     // of a story stays and its removed content goes; a paragraph that goes
     // whole takes the inline controls the resolution leaves empty, leaves the
     // comment marks they or its removed text hold at block level, and takes
-    // a comment it holds whole.
-    let deleted = |content: &str| {
-        format!(r#"<w:del w:id="2" w:author="A" w:date="{DATE}">{content}</w:del>"#)
+    // a comment it holds whole; a removed last mark of a block control merges
+    // across the plain controls after it, the merge kept in the first one.
+    let deleted_as = |id: u32, content: &str| {
+        format!(r#"<w:del w:id="{id}" w:author="A" w:date="{DATE}">{content}</w:del>"#)
     };
-    let removed = |content: &str| {
+    let removed_as = |id: u32, content: &str| {
         format!(
-            r#"<w:p><w:pPr><w:rPr><w:del w:id="1" w:author="A" w:date="{DATE}"/></w:rPr></w:pPr>{content}</w:p>"#
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="{id}" w:author="A" w:date="{DATE}"/></w:rPr></w:pPr>{content}</w:p>"#
         )
     };
+    let deleted = |content: &str| deleted_as(2, content);
+    let removed = |content: &str| removed_as(1, content);
     let gone = "<w:r><w:delText>gone</w:delText></w:r>";
     let start =
         |id: u32| google_control(200 + id, &format!(r#"<w:commentRangeStart w:id="{id}"/>"#));
@@ -4623,12 +4627,33 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
     let wrapped = google_control(101, &deleted(gone));
     let final_paragraph = format!("{before}{}", removed(&deleted(gone)));
     let kept_and_removed = format!("{}{}", plain("Kept."), removed(&deleted(gone)));
-    let report = |body: &str, comments: usize| {
+    // Paragraphs each in a block control, as Google Docs writes a suggestion
+    // deleting from one paragraph into another: the marks of the first two
+    // removed, the text of the second.
+    let chain_with = |inside_first: &str, between: &str, inside_last: &str| {
         format!(
-            "{body}--- comment (/word/comments.xml) ---\n{}",
-            "Note\n".repeat(comments)
+            "{}{between}{}{}",
+            google_control(
+                100,
+                &format!(
+                    "{}{inside_first}",
+                    removed_as(
+                        11,
+                        &format!("<w:r><w:t>Kept.</w:t></w:r>{}", deleted_as(12, gone))
+                    )
+                )
+            ),
+            google_control(101, &removed_as(21, &deleted_as(22, gone))),
+            google_control(
+                102,
+                &format!(
+                    r#"<w:p>{}<w:r><w:t xml:space="preserve"> Also.</w:t></w:r>{inside_last}</w:p>"#,
+                    deleted_as(32, gone)
+                )
+            ),
         )
     };
+    let chain = chain_with("", "", "");
     let rows: Vec<ResolutionRow> = vec![
         (
             "the body's last paragraph",
@@ -4649,7 +4674,7 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
             "body",
             format!("{before}{}", google_control(100, &kept_and_removed)),
             None,
-            Ok("Before.\nKept.\n\n".into()),
+            Ok("Before.\nKept.\n\ngoog_rdk_100{Kept.|}\n".into()),
         ),
         (
             "the last paragraph of a control in a control ending the body",
@@ -4659,7 +4684,7 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
                 google_control(100, &google_control(105, &kept_and_removed))
             ),
             None,
-            Ok("Before.\nKept.\n\n".into()),
+            Ok("Before.\nKept.\n\ngoog_rdk_100{Kept.|}\ngoog_rdk_105{Kept.|}\n".into()),
         ),
         (
             "the last paragraph of a cell",
@@ -4678,7 +4703,7 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
         (
             "the last paragraph of a footnote",
             "footnote",
-            kept_and_removed,
+            kept_and_removed.clone(),
             None,
             Ok("Before.\n--- footnote (/word/footnotes.xml) ---\nKept.\n\n".into()),
         ),
@@ -4691,7 +4716,77 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
                 one_cell_table(&plain("Cell.")),
             ),
             None,
-            Err("only a paragraph right after the control whose mark stays can take the merge"),
+            Ok("Before.\nKept.\nCell.\t\nAfter.\ngoog_rdk_100{Kept.}\n".into()),
+        ),
+        (
+            "a paragraph before a table and one ending the body after it, their text kept",
+            "body",
+            format!(
+                "{before}{}{}{}",
+                removed("<w:r><w:t>Kept.</w:t></w:r>"),
+                one_cell_table(&plain("Cell.")),
+                removed("<w:r><w:t>Last.</w:t></w:r>"),
+            ),
+            None,
+            Ok("Before.\nKept.\nCell.\t\nLast.\n".into()),
+        ),
+        (
+            "a chain of block controls ending a cell",
+            "body",
+            format!(
+                "{before}{}{after}",
+                one_cell_table(&format!(
+                    "{}{}",
+                    google_control(
+                        100,
+                        &removed(&format!("<w:r><w:t>Kept.</w:t></w:r>{}", deleted(gone)))
+                    ),
+                    google_control(101, &removed(&deleted(gone))),
+                ))
+            ),
+            None,
+            Ok("Before.\nKept.\t\nAfter.\ngoog_rdk_100{Kept.}\n".into()),
+        ),
+        (
+            "a chain of block controls",
+            "body",
+            format!("{before}{chain}{after}"),
+            None,
+            Ok("Before.\nKept. Also.\nAfter.\ngoog_rdk_100{Kept. Also.}\n".into()),
+        ),
+        (
+            "a chain of block controls in a cell",
+            "body",
+            format!("{before}{}{after}", one_cell_table(&chain)),
+            None,
+            Ok("Before.\nKept. Also.\t\nAfter.\ngoog_rdk_100{Kept. Also.}\n".into()),
+        ),
+        (
+            "comment starts in nested inline controls, one ending elsewhere",
+            "body",
+            format!(
+                "{before}{}<w:p><w:r><w:t>After.</w:t></w:r>{}</w:p>",
+                google_control(
+                    100,
+                    &removed(&google_control(
+                        101,
+                        &format!(
+                            r#"<w:del w:id="3" w:author="A" w:date="{DATE}"/>{}{}"#,
+                            start(0),
+                            deleted(&format!(
+                                "{}{}{gone}{}{}<w:r><w:rPr><w:b/></w:rPr></w:r>",
+                                start(1),
+                                start(2),
+                                end(0),
+                                end(1)
+                            ))
+                        )
+                    )),
+                ),
+                end(2)
+            ),
+            None,
+            Ok("Before.\nAfter.\n--- comment (/word/comments.xml) ---\nNote\n".into()),
         ),
         (
             "a block control's only paragraph, its text in an inline control",
@@ -4728,7 +4823,7 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
                 )
             ),
             None,
-            Ok(report("Before.\nAfter.\n", 2)),
+            Ok("Before.\nAfter.\n--- comment (/word/comments.xml) ---\nNote\nNote\n".into()),
         ),
         (
             "a comment whose end and mark the deletion holds",
@@ -4763,7 +4858,7 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
                 )
             ),
             None,
-            Ok(report("Before.\nAfter.\n", 1)),
+            Ok("Before.\nAfter.\n--- comment (/word/comments.xml) ---\nNote\n".into()),
         ),
         (
             "a block control ending the body",
@@ -4781,7 +4876,99 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
                 one_cell_table(&plain("Cell.")),
             ),
             None,
-            Ok(report("Before.\nCell.\t\nAfter.\n", 2)),
+            Ok("Before.\nCell.\t\nAfter.\n--- comment (/word/comments.xml) ---\nNote\nNote\n".into()),
+        ),
+        (
+            "a bookmark end and a table removed whole after a control's last paragraph",
+            "body",
+            format!(
+                r#"<w:p><w:bookmarkStart w:id="9" w:name="span"/><w:r><w:t>Before.</w:t></w:r></w:p>{}{after}"#,
+                google_control(
+                    100,
+                    &format!(
+                        r#"{}<w:bookmarkEnd w:id="9"/><w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:trPr><w:del w:id="5" w:author="A" w:date="{DATE}"/></w:trPr><w:tc>{}</w:tc></w:tr></w:tbl>"#,
+                        removed("<w:r><w:t>Kept.</w:t></w:r>"),
+                        removed_as(6, &deleted_as(7, "<w:r><w:delText>cell</w:delText></w:r>")),
+                    )
+                )
+            ),
+            None,
+            Ok("Before.\nKept.After.\ngoog_rdk_100{Kept.After.}\nbookmarks: span\n".into()),
+        ),
+        (
+            "a control removed whole after a control's last paragraph, ending a cell",
+            "body",
+            format!(
+                "{before}{}{after}",
+                one_cell_table(&google_control(
+                    100,
+                    &format!(
+                        "{}{}",
+                        removed("<w:r><w:t>Kept.</w:t></w:r>"),
+                        google_control(
+                            103,
+                            &removed(&format!(
+                                r#"<w:bookmarkStart w:id="7" w:name="inside"/>{}<w:bookmarkEnd w:id="7"/>"#,
+                                deleted(gone)
+                            ))
+                        )
+                    )
+                ))
+            ),
+            None,
+            Ok("Before.\nKept.\t\nAfter.\ngoog_rdk_100{Kept.}\n".into()),
+        ),
+        (
+            "range markers between and inside chained controls",
+            "body",
+            format!(
+                r#"<w:p><w:bookmarkStart w:id="8" w:name="first"/><w:r><w:t>Before.</w:t></w:r></w:p>{}{after}"#,
+                chain_with(
+                    r#"<w:bookmarkEnd w:id="8"/><w:commentRangeStart w:id="0"/>"#,
+                    r#"<w:bookmarkStart w:id="9" w:name="second"/>"#,
+                    &format!(r#"<w:bookmarkEnd w:id="9"/>{}"#, end(0)),
+                )
+            ),
+            None,
+            Ok("Before.\nKept. Also.\nAfter.\n--- comment (/word/comments.xml) ---\nNote\ngoog_rdk_100{Kept. Also.}\nbookmarks: first, second\n".into()),
+        ),
+        (
+            "the first control's mark alone, by its id, then the rest",
+            "body",
+            format!("{before}{chain}{after}"),
+            Some(11),
+            Ok("Before.\nKept. Also.\nAfter.\ngoog_rdk_100{Kept. Also.}\n".into()),
+        ),
+        (
+            "a paragraph that keeps text before a block control",
+            "body",
+            format!(
+                "{before}{}{}{after}",
+                removed("<w:r><w:t>Kept.</w:t></w:r>"),
+                google_control(100, &plain("Inside.")),
+            ),
+            None,
+            Err(
+                "cannot remove the mark of a paragraph that keeps text before a block content control",
+            ),
+        ),
+        (
+            "a table of contents after a control's last mark",
+            "body",
+            format!(
+                "{before}{}{}{after}",
+                google_control(
+                    100,
+                    &removed(&format!("<w:r><w:t>Kept.</w:t></w:r>{}", deleted(gone)))
+                ),
+                concat!(
+                    r#"<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/>"#,
+                    r#"<w:docPartUnique/></w:docPartObj></w:sdtPr><w:sdtContent>"#,
+                    r#"<w:p><w:r><w:t>Contents</w:t></w:r></w:p></w:sdtContent></w:sdt>"#
+                ),
+            ),
+            None,
+            Err("the block content control after it has properties of its own"),
         ),
     ];
     for (name, story, xml, scope, outcome) in rows {
@@ -4834,9 +5021,10 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
                 (Ok(_), Ok(text)) => text,
             };
             let mut doc = reopen(&mut doc);
-            if scope.is_some() {
-                // The mark alone: its paragraph keeps its content tracked.
-                assert_eq!(ids(&doc), [2], "{name}");
+            if let Some(id) = scope {
+                // That mark alone: the other changes stay tracked.
+                let left = ids(&doc);
+                assert!(!left.is_empty() && !left.contains(&id), "{name}: {left:?}");
                 if accept {
                     doc.accept_all()
                 } else {
@@ -4844,10 +5032,58 @@ fn a_removed_final_mark_stays_and_a_paragraph_removed_whole_takes_its_emptied_co
                 }
                 .unwrap();
             }
-            let doc = reopen(&mut doc);
-            assert_eq!(&doc.text_report().text, text, "{name}");
+            let mut doc = reopen(&mut doc);
+            // Each bookmark and comment range starts once and ends once.
+            let xml = main_xml(&mut doc);
+            for kind in ["bookmark", "commentRange"] {
+                let ids = |marker: &str| {
+                    let mut ids = xml
+                        .split(&format!("<w:{kind}{marker} "))
+                        .skip(1)
+                        .map(|rest| {
+                            rest.split("w:id=\"")
+                                .nth(1)
+                                .unwrap()
+                                .split('"')
+                                .next()
+                                .unwrap()
+                        })
+                        .collect::<Vec<_>>();
+                    ids.sort_unstable();
+                    ids
+                };
+                let starts = ids("Start");
+                assert!(
+                    starts.windows(2).all(|pair| pair[0] != pair[1]),
+                    "{name}: {xml}"
+                );
+                assert_eq!(starts, ids("End"), "{name}: {xml}");
+            }
+            // The text, then which controls hold it and the bookmarks left.
+            let mut shape = doc.text_report().text;
+            for control in doc.content_controls() {
+                let tag = control.tag().unwrap_or_default();
+                shape.push_str(&format!("{tag}{{{}}}\n", control.text().replace('\n', "|")));
+            }
+            let bookmarks = bookmark_names(&doc);
+            if !bookmarks.is_empty() {
+                shape.push_str(&format!("bookmarks: {}\n", bookmarks.join(", ")));
+            }
+            assert_eq!(&shape, text, "{name}");
             assert!(doc.revisions().is_empty(), "{name}");
-            assert_eq!(validation_errors(&doc), Vec::<String>::new(), "{name}");
+            // Errors, and warnings such as a bookmark id used twice; not
+            // the empty paragraphs and the missing title and author.
+            let findings = doc
+                .validate()
+                .expect("validation runs")
+                .findings
+                .into_iter()
+                .map(|finding| finding.message)
+                .filter(|message| {
+                    !message.contains("empty paragraph") && !message.starts_with("Missing document")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(findings, Vec::<String>::new(), "{name}");
         }
     }
 }
