@@ -19,8 +19,8 @@ struct PlacedBlocks {
     cells: usize,
     /// The facade paragraph projection: each paragraph's route, if any.
     paragraphs: Vec<Option<oxoffice_docx::ContentLocation>>,
-    /// The facade table projection: a direct body table's route, `None` for
-    /// a table inside a block content control.
+    /// The facade table projection: the route of each table, direct or in a
+    /// block content control.
     tables: Vec<Option<oxoffice_docx::ContentLocation>>,
     /// The routes of each cell's paragraphs, by facade table.
     cell_paragraphs: Vec<HashMap<(usize, usize), Vec<oxoffice_docx::ContentLocation>>>,
@@ -184,9 +184,19 @@ fn placed_blocks(
             )));
             placed.cell_paragraphs.push(HashMap::new());
         } else {
-            placed
-                .tables
-                .extend(std::iter::repeat_n(None, owners.tables));
+            // The tables of the block's controls, as the facade lists them:
+            // a block whose source lists another number is not placed.
+            let mut in_controls = 0;
+            for (location, _, _) in &owners.facts.items {
+                if in_body(location) && location.item_kind() == oxoffice_docx::StoryItemKind::Table
+                {
+                    placed.tables.push(Some(place(location)));
+                    in_controls += 1;
+                }
+            }
+            if in_controls != owners.tables {
+                return None;
+            }
             placed
                 .cell_paragraphs
                 .extend(std::iter::repeat_n(HashMap::new(), owners.tables));
@@ -288,8 +298,13 @@ impl PyDocument {
             &story,
             &new_blocks.iter().zip(&new_owners).collect::<Vec<_>>(),
         )?;
-        // Unanchored cell stories after the slot would not follow a change.
-        if !items.cells_anchored() && (old.cells != 0 || new.cells != 0) {
+        // Unanchored cell stories after the slot would not follow a change,
+        // and a table projection without a route for every table would not
+        // place the blocks' tables.
+        if !items.cells_anchored() && (old.cells != 0 || new.cells != 0)
+            || (!old.tables.is_empty() || !new.tables.is_empty())
+                && indexes.body_tables.iter().any(Option::is_none)
+        {
             return None;
         }
         let first = self.first_item_of_slot(slot, removed, &old)?;

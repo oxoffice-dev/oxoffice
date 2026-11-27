@@ -70,6 +70,14 @@ def control(*paragraphs):
     return "<w:sdt><w:sdtPr/><w:sdtContent>" + "".join(paragraphs) + "</w:sdtContent></w:sdt>"
 
 
+def google(n, table):
+    """`table` in a block control as Google Docs writes one: locked, alone."""
+    return (
+        f'<w:sdt><w:sdtPr><w:lock w:val="contentLocked"/><w:id w:val="{n}"/><w:tag w:val="goog_rdk_{n}"/></w:sdtPr>'
+        f"<w:sdtContent>{table}</w:sdtContent></w:sdt>"
+    )
+
+
 def document(body, footer="", ids=False):
     """A file whose body and footer hold the XML given, every `rIdLn` a hyperlink to example.com/n. With `ids`, every
     paragraph and run carries the identifiers Word writes."""
@@ -474,19 +482,22 @@ def test_an_edit_in_a_text_box_retires_its_paragraph_and_keeps_the_paragraph_tha
 
 @IDS
 @pytest.mark.parametrize("insertion", ["Cell.add_table", "Cell.add_paragraph"])
-def test_the_cells_of_a_table_in_a_block_content_control_retire_when_cell_stories_move(insertion, ids):
-    # A table inside a block content control has no table or cell handle of its own: its cells' content is found by
-    # the ordinal of the cell story, which a table added in an earlier cell moves.
+def test_the_cells_of_a_table_in_a_block_content_control_follow_their_table_when_cell_stories_move(insertion, ids):
+    # A table in a block content control owns its cells, as any table: a table added in an earlier cell moves their
+    # stories, and their content is found through the table. A control may hold two tables, which share its slot.
     doc = document(
-        table(p("a")) + control(table(p("b"), p("c"))) + table(p("d")),
+        table(p("a"))
+        + google(1, table(p("b"), p("c")))
+        + control(table(p("e")), p("between"), table(p("f")))
+        + table(p("d")),
         ids=ids,
     )
-    in_control = {
+    in_controls = {
         text: next(item.paragraph for item in doc.story_items if item.kind == "paragraph" and item.text == text)
-        for text in ("b", "c")
+        for text in ("b", "c", "e", "f")
     }
-    runs = {text: paragraph.runs[0] for text, paragraph in in_control.items()}
-    # `doc.tables` lists the table in the control too: the later table is the last one.
+    runs = {text: paragraph.runs[0] for text, paragraph in in_controls.items()}
+    # `doc.tables` lists the tables in the controls too: the later table is the last one.
     later = doc.tables[-1].cell(0, 0).paragraphs[0]
     later_run = later.runs[0]
 
@@ -496,15 +507,16 @@ def test_the_cells_of_a_table_in_a_block_content_control_retire_when_cell_storie
     else:
         cell.add_paragraph("added")
 
-    moved = insertion == "Cell.add_table"
     handles = {
         "paragraph of the later table": (lambda: later.text, lambda: doc.tables[-1].cell(0, 0).paragraphs[0].text),
         "its run": (lambda: later_run.text, lambda: doc.tables[-1].cell(0, 0).paragraphs[0].runs[0].text),
     }
-    for text in ("b", "c"):
-        handles[f"paragraph {text}"] = (lambda h=in_control[text]: h.text, STALE if moved else (lambda t=text: t))
-        handles[f"run of {text}"] = (lambda h=runs[text]: h.text, STALE if moved else (lambda t=text: t))
+    for text in in_controls:
+        handles[f"paragraph {text}"] = (lambda h=in_controls[text]: h.text, lambda t=text: t)
+        handles[f"run of {text}"] = (lambda h=runs[text]: h.text, lambda t=text: t)
     check(doc, handles, [], [])
+    in_controls["f"].text = "f edited"
+    assert [table.cell(0, 0).text for table in doc.tables][1:] == ["b", "e", "f edited", "d"]
 
 
 @pytest.mark.parametrize("call", ["Run.remove", "Run.add_field", "Paragraph.text"])

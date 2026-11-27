@@ -81,10 +81,10 @@ pub use document::{
     PictureAnchor, PictureCrop, PictureOccurrence, PictureOptions, RemovedBodyBlocks,
     RenderOptions, ReplaceOptions, ReplacementCountMismatch, ReplacementRefusal, Section,
     SectionRef, SectionStory, SlotHit, StoryError, StoryId, StoryItemKind, StoryItemRef,
-    StoryItemSnapshot, StoryKind, StoryParagraph, StoryText, StoryTextItem, TextBoxDirection,
-    TextBoxOptions, TextDiagnostic, TextReport, TextWatermarkOptions, UncheckedReplacement,
-    UnreachedReplacement, UnsupportedXmlRef, ValidationFinding, ValidationReport,
-    ValidationSeverity, WordCreationProfile, WordPackageClass, derive_font_key,
+    StoryItemSnapshot, StoryKind, StoryOwnerSnapshots, StoryParagraph, StoryText, StoryTextItem,
+    TextBoxDirection, TextBoxOptions, TextDiagnostic, TextReport, TextWatermarkOptions,
+    UncheckedReplacement, UnreachedReplacement, UnsupportedXmlRef, ValidationFinding,
+    ValidationReport, ValidationSeverity, WordCreationProfile, WordPackageClass, derive_font_key,
     resolved_xml_events, validate_document_bytes, validate_document_file,
 };
 pub use embedded::{

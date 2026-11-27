@@ -559,9 +559,10 @@ pub(super) fn assert_kept_owners_name_their_elements(
         elements: oxoffice_docx::OwnerElementXml,
     }
     let read = |document: &oxoffice_docx::Document| {
-        let (_, _, paragraphs, _) = document
+        let paragraphs = document
             .story_owner_snapshots()
-            .expect("a published document has owner snapshots");
+            .expect("a published document has owner snapshots")
+            .paragraphs;
         Read {
             paragraphs: paragraphs
                 .into_iter()
