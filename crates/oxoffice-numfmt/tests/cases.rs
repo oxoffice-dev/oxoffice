@@ -134,6 +134,24 @@ fn a_code_as_wide_as_excel_takes_pads_and_a_longer_one_is_general() {
 }
 
 #[test]
+fn month_and_day_names_under_a_tag_of_another_language_are_foreign() {
+    for (code, foreign) in [
+        ("[$-409]mmm-yy", false),
+        ("[$-809]dddd", false),
+        ("[$-en-US]mmmm", false),
+        ("[$-1009]yyyy/mm/dd", false),
+        ("[$-407]dddd", true),
+        ("[$-fr-FR]mmm", true),
+        ("[$-40C]mmmm yyyy", true),
+        // Numbers in the tag's language need no names.
+        ("[$-40C]dd/mm/yyyy", false),
+        ("#,##0.00 [$€-40C]", false),
+    ] {
+        assert_eq!(format_of(code).shows_foreign_names(), foreign, "{code}");
+    }
+}
+
+#[test]
 fn a_code_says_whether_it_shows_a_date_a_time_or_a_duration() {
     for (code, kind) in [
         ("m/d/yyyy", Some(DateKind::Date)),
