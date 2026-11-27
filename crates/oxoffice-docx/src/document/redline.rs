@@ -1175,7 +1175,7 @@ fn one_id_per_element(leaves: &mut [Leaf], containers: &mut Vec<Container>) {
 /// `id`. The tag carries no namespace declaration: the revision element and
 /// its id share the WordprocessingML prefix.
 fn with_id(tag: &str, id: i32) -> Result<String> {
-    let mut reader = quick_xml::Reader::from_str(tag);
+    let mut reader = oxoffice_core::xml_reader::Reader::from_str(tag);
     let (Event::Start(start) | Event::Empty(start)) = reader.read_event().map_err(xml_error)?
     else {
         return Err(xml_error("a revision start tag"));
