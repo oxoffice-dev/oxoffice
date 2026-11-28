@@ -7,8 +7,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use oxoffice_xlsx_formula::{
-    Lookups, check_stored, function, move_references, result_extent, to_displayed, to_stored,
-    tokenize,
+    DefinedName, Lookups, NameLookup, NameScope, check_stored, function, move_references,
+    result_extent, to_displayed, to_stored, tokenize,
 };
 use quick_xml::events::Event;
 
@@ -188,16 +188,34 @@ fn shared_formula_members_move_their_relative_references() {
 
 #[test]
 fn a_result_is_as_large_as_its_formula_and_inputs_say() {
-    let names = |sheet: Option<&str>, name: &str| {
-        let refers = match (sheet, name) {
-            (None, "Sales") => "Data!$B$2:$B$25",
-            (None, "Rate") => "0.07",
-            (Some("Data" | "My data"), "Local") => "$A$1:$C$3",
-            (None, "Loop") => "Loop+1",
-            (None, "Calc") => "OFFSET(A1,0,0,B1)",
-            _ => return None,
+    let names = |scope: NameScope<'_>, name: &str| {
+        let local = |sheet: &str| match (sheet, name) {
+            ("Data" | "My data", "Local") => Some("$A$1:$C$3"),
+            ("Data", "Inner") => Some("Other*2"),
+            ("Data", "Other") => Some("$A$1:$A$5"),
+            _ => None,
         };
-        Some(refers.to_owned())
+        let workbook = match name {
+            "Sales" => Some("Data!$B$2:$B$25"),
+            "Rate" => Some("0.07"),
+            "Loop" => Some("Loop+1"),
+            "Calc" => Some("OFFSET(A1,0,0,B1)"),
+            "Other" => Some("$A$1:$A$9"),
+            "Outer" => Some("Other"),
+            _ => None,
+        };
+        let (formula, sheet) = match scope {
+            NameScope::Formula | NameScope::Workbook => (workbook?, None),
+            NameScope::Sheet(sheet) => (local(sheet)?, Some(sheet)),
+            NameScope::WithinSheet(sheet) => match local(sheet) {
+                Some(formula) => (formula, Some(sheet)),
+                None => (workbook?, None),
+            },
+        };
+        Some(DefinedName {
+            formula: formula.to_owned(),
+            sheet: sheet.map(str::to_owned),
+        })
     };
     let used = |sheet: Option<&str>| match sheet {
         None => Some((25, 3)),
@@ -219,6 +237,137 @@ fn a_result_is_as_large_as_its_formula_and_inputs_say() {
         });
         assert_eq!(found, expected, "{formula}");
     }
+}
+
+/// The rows and columns of an A1 range or cell: `F2:F7`, `J2`.
+fn range_shape(range: &str) -> (u32, u32) {
+    let cell = |text: &str| {
+        let letters = text
+            .trim_start_matches('$')
+            .split(|c: char| c.is_ascii_digit())
+            .next()
+            .unwrap();
+        let column = letters.trim_end_matches('$').bytes().fold(0u32, |n, b| {
+            n * 26 + u32::from(b.to_ascii_uppercase() - b'A') + 1
+        });
+        let row: u32 = text
+            .trim_start_matches(|c: char| !c.is_ascii_digit())
+            .parse()
+            .unwrap();
+        (row, column)
+    };
+    let (first, last) = range.split_once(':').unwrap_or((range, range));
+    let ((r1, c1), (r2, c2)) = (cell(first), cell(last));
+    (r1.abs_diff(r2) + 1, c1.abs_diff(c2) + 1)
+}
+
+#[test]
+fn every_dynamic_array_excel_saved_fits_the_extent_its_formula_gives() {
+    let names = |_: NameScope<'_>, _: &str| None;
+    let used = |_: Option<&str>| None;
+    let lookups = Lookups {
+        names: &names,
+        used: &used,
+    };
+    let mut checked = 0;
+    for workbook in corpus_workbooks() {
+        let mut archive = zip::ZipArchive::new(File::open(&workbook).unwrap()).unwrap();
+        for index in 0..archive.len() {
+            let mut entry = archive.by_index(index).unwrap();
+            let part = entry.name().unwrap().into_owned();
+            if !part.starts_with("xl/worksheets/") || !part.ends_with(".xml") {
+                continue;
+            }
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml).unwrap();
+            let mut reader = quick_xml::Reader::from_str(&xml);
+            // Inside a cell with `cm`, then inside its array formula, with
+            // its range and text.
+            let mut dynamic = false;
+            let mut array: Option<(String, String)> = None;
+            loop {
+                match reader.read_event().unwrap() {
+                    Event::Start(start) | Event::Empty(start) => {
+                        let attribute = |name: &[u8]| {
+                            start
+                                .try_get_attribute(name)
+                                .unwrap()
+                                .map(|value| String::from_utf8_lossy(&value.value).into_owned())
+                        };
+                        match start.local_name().as_ref() {
+                            b"c" => dynamic = attribute(b"cm").is_some(),
+                            b"f" if dynamic && attribute(b"t").as_deref() == Some("array") => {
+                                array = attribute(b"ref").map(|range| (range, String::new()));
+                            }
+                            _ => {}
+                        }
+                    }
+                    Event::Text(text) => {
+                        if let Some((_, formula)) = &mut array {
+                            formula.push_str(&text.decode().unwrap());
+                        }
+                    }
+                    Event::End(end) if end.local_name().as_ref() == b"f" => {
+                        let Some((range, formula)) = array.take() else {
+                            continue;
+                        };
+                        checked += 1;
+                        let saved = range_shape(&range);
+                        let fits = match result_extent(&formula, &lookups) {
+                            None => true,
+                            Some(extent) if extent.exact => {
+                                (extent.shape.rows, extent.shape.columns) == saved
+                            }
+                            Some(extent) => {
+                                saved.0 <= extent.shape.rows && saved.1 <= extent.shape.columns
+                            }
+                        };
+                        assert!(fits, "{} {part} {formula} {range}", workbook.display());
+                    }
+                    Event::Eof => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert!(checked > 0, "no dynamic array in the corpus");
+}
+
+#[test]
+fn names_that_nest_wide_and_deep_are_read_once_within_a_budget() {
+    // Each name uses the next one 1,000 times, four deep: read once each.
+    let wide = |_: NameScope<'_>, name: &str| {
+        let level: usize = name.strip_prefix("Level")?.parse().ok()?;
+        let formula = match level {
+            4 => "A1:A3".to_owned(),
+            _ => vec![format!("Level{}", level + 1); 1_000].join("+"),
+        };
+        Some(DefinedName {
+            formula,
+            sheet: None,
+        })
+    };
+    // Each name uses 300 other names, none twice: past the budget.
+    let fresh = |_: NameScope<'_>, name: &str| {
+        let formula = match name.len() {
+            ..12 => (0..300)
+                .map(|n| format!("{name}_{n}"))
+                .collect::<Vec<_>>()
+                .join("+"),
+            _ => "A1:A3".to_owned(),
+        };
+        Some(DefinedName {
+            formula,
+            sheet: None,
+        })
+    };
+    let used = |_: Option<&str>| None;
+    let extent = |names: &NameLookup<'_>, formula| {
+        result_extent(formula, &Lookups { names, used: &used })
+            .map(|extent| (extent.shape.rows, extent.shape.columns))
+    };
+    assert_eq!(extent(&wide, "Level1"), Some((3, 1)));
+    assert_eq!(extent(&fresh, "X"), None);
 }
 
 #[test]
@@ -411,7 +560,12 @@ fn no_text_makes_a_function_panic() {
         let _ = check_stored(&text);
         let _ = move_references(&text, 1, -1);
         let _ = to_displayed(&text);
-        let names = |_: Option<&str>, name: &str| Some(name.to_owned());
+        let names = |_: NameScope<'_>, name: &str| {
+            Some(DefinedName {
+                formula: name.to_owned(),
+                sheet: Some(name.to_owned()),
+            })
+        };
         let used = |_: Option<&str>| Some((u32::MAX, u32::MAX));
         let lookups = Lookups {
             names: &names,

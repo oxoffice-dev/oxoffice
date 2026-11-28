@@ -53,6 +53,7 @@ def test_a_formula_is_told_from_a_text_by_formula():
     assert ws.cell("C1").formula == "SUM(A1:B1)"
     assert ws.cell("A2").value == "=A1" and ws.cell("A2").formula is None
     assert ws.cell("C2").formula_kind == "array"
+    assert ws.cell("C2").array_range == "C2:D2"
     ws.set_formula((3, 0), "_xlfn.XLOOKUP(1,A1:A2,B1:B2)", stored=True)
     assert ws.cell("A4").formula == "XLOOKUP(1,A1:A2,B1:B2)"
     ws.set_value("A5", oxlsx.Formula("=A1*2"))
@@ -117,6 +118,11 @@ def test_a_refused_edit_raises_xlsx_error_and_drop_cached_values_reaches_every_s
     with pytest.raises(oxlsx.XlsxError, match="merged range"):
         wb.sheet("Budget").set_value("B1", 1)
     assert wb.to_bytes() == before
+    new = oxlsx.Workbook()
+    for n in range(200):
+        new.sheets[0].set_number_format("A1", f'0.0" u{n}"')
+    with pytest.raises(oxlsx.XlsxError, match="holds 200 custom number formats"):
+        new.sheets[0].set_number_format("A1", "0.000")
 
     def sheet_xml(data):
         with zipfile.ZipFile(io.BytesIO(data)) as package:

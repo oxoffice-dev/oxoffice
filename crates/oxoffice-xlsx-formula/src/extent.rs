@@ -15,6 +15,8 @@
 //! a value that can only make one (a text where `SEQUENCE` takes its start,
 //! an error as an `IF` condition) is not looked at.
 
+use std::collections::HashMap;
+
 use crate::forms::parameter;
 use crate::functions::function;
 use crate::lexer::TokenKind;
@@ -149,9 +151,11 @@ const ELEMENT_OPERATORS: [&str; 12] = [
 /// result no worksheet holds, and a formula this crate cannot read.
 ///
 /// ```
-/// use oxoffice_xlsx_formula::{Lookups, result_extent};
+/// use oxoffice_xlsx_formula::{DefinedName, Lookups, NameScope, result_extent};
 ///
-/// let names = |_: Option<&str>, name: &str| (name == "Sales").then(|| "Data!$B$2:$B$25".to_owned());
+/// let names = |_: NameScope<'_>, name: &str| {
+///     (name == "Sales").then(|| DefinedName { formula: "Data!$B$2:$B$25".to_owned(), sheet: None })
+/// };
 /// // The formula's sheet holds values down to row 40, in columns A to C.
 /// let used = |sheet: Option<&str>| sheet.is_none().then_some((40, 3));
 /// let lookups = Lookups { names: &names, used: &used };
@@ -166,21 +170,55 @@ const ELEMENT_OPERATORS: [&str; 12] = [
 /// assert_eq!(extent("_xlfn.SEQUENCE(B1)"), None);
 /// ```
 pub fn result_extent(formula: &str, lookups: &Lookups<'_>) -> Option<Extent> {
-    extent_of(formula, lookups, 0).filter(|extent| {
-        extent.exact || (extent.shape.rows < MAX_ROWS && extent.shape.columns < MAX_COLUMNS)
-    })
+    let mut shared = Shared::default();
+    let extent = extent_of(formula, lookups, 0, &Within::Formula, &mut shared)?;
+    let cells = u64::from(extent.shape.rows) * u64::from(extent.shape.columns);
+    let bounded = extent.exact
+        || (extent.shape.rows < MAX_ROWS
+            && extent.shape.columns < MAX_COLUMNS
+            && cells <= MAX_BOUND_CELLS);
+    (bounded && shared.nodes <= MAX_NODES).then_some(extent)
 }
 
-/// The formula a defined name refers to: see [`Lookups::names`].
-pub type NameLookup<'a> = dyn Fn(Option<&str>, &str) -> Option<String> + 'a;
+/// The most cells a bound covers: a wider one is no bound (Google Sheets
+/// keeps a grid as large as the `ref`, and holds 10 million cells).
+const MAX_BOUND_CELLS: u64 = 1_000_000;
+/// The most parts of formulas, defined names' included, one extent reads:
+/// a workbook whose names nest wide and deep leaves it unknown.
+const MAX_NODES: usize = 100_000;
+
+/// Where a defined name is looked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NameScope<'a> {
+    /// In the formula of a cell: its sheet's own names, then the workbook's.
+    Formula,
+    /// Written after a sheet (`Data!Sales`): that sheet's own names.
+    Sheet(&'a str),
+    /// In the formula of a sheet's own name: that sheet's names, then the
+    /// workbook's.
+    WithinSheet(&'a str),
+    /// In the formula of a workbook name: the workbook's names.
+    Workbook,
+}
+
+/// A defined name: what it refers to, and the sheet it belongs to (`None`
+/// for a workbook name), whose names its own formula reads first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefinedName {
+    pub formula: String,
+    pub sheet: Option<String>,
+}
+
+/// The defined name of a name: see [`Lookups::names`].
+pub type NameLookup<'a> = dyn Fn(NameScope<'_>, &str) -> Option<DefinedName> + 'a;
 /// How far a sheet's cells reach: see [`Lookups::used`].
 pub type UsedLookup<'a> = dyn Fn(Option<&str>) -> Option<(u32, u32)> + 'a;
 
 /// What [`result_extent`] reads from the workbook.
 pub struct Lookups<'a> {
-    /// The formula a defined name refers to, from the sheet written before
-    /// it (`Data!Sales`), unquoted, and the name; `None` for a name the
-    /// workbook does not define.
+    /// The defined name of a name, looked for in a scope (a sheet written
+    /// before it, `Data!Sales`, is unquoted); `None` for a name the scope
+    /// does not define.
     pub names: &'a NameLookup<'a>,
     /// The last row and column a sheet's values and formulas reach, 1-based,
     /// 0 for a sheet without any: the formula's own sheet for `None`, else
@@ -188,12 +226,38 @@ pub struct Lookups<'a> {
     pub used: &'a UsedLookup<'a>,
 }
 
-fn extent_of(formula: &str, lookups: &Lookups<'_>, depth: usize) -> Option<Extent> {
+/// Whose names the formula being read reads first.
+#[derive(Clone, Debug)]
+enum Within {
+    Formula,
+    Sheet(String),
+    Workbook,
+}
+
+/// What one extent's reading shares across the defined names it follows.
+#[derive(Default)]
+struct Shared {
+    /// The extent of each name followed, by scope and name; `None` while it
+    /// is read, so a name that refers to itself stops there.
+    names: HashMap<String, Option<Extent>>,
+    /// The parts of formulas read.
+    nodes: usize,
+}
+
+fn extent_of(
+    formula: &str,
+    lookups: &Lookups<'_>,
+    depth: usize,
+    within: &Within,
+    shared: &mut Shared,
+) -> Option<Extent> {
     let parsed = parse(formula, false).ok()?;
     let mut inference = Inference {
         parsed: &parsed,
         lookups,
         depth,
+        within,
+        shared,
         scope: Vec::new(),
     };
     inference.extent(&parsed.root)
@@ -428,6 +492,8 @@ struct Inference<'p, 'n> {
     lookups: &'n Lookups<'n>,
     /// How many defined names deep this formula is.
     depth: usize,
+    within: &'p Within,
+    shared: &'p mut Shared,
     /// The LET names in force, by the key they compare by, with the extent
     /// of their value.
     scope: Vec<(String, Option<Extent>)>,
@@ -435,6 +501,10 @@ struct Inference<'p, 'n> {
 
 impl Inference<'_, '_> {
     fn extent(&mut self, node: &Node) -> Option<Extent> {
+        self.shared.nodes += 1;
+        if self.shared.nodes > MAX_NODES {
+            return None;
+        }
         match node {
             Node::Leaf(index) => self.leaf(*index),
             Node::Prefix { op, operand } => match self.parsed.token(*op) {
@@ -497,8 +567,34 @@ impl Inference<'_, '_> {
             0 => None,
             _ => Some(sheet_of(&token[..start - 1])?),
         };
-        let refers = (self.lookups.names)(sheet.as_deref(), &token[start..])?;
-        extent_of(&refers, self.lookups, self.depth + 1)
+        let name = &token[start..];
+        let (scope, key) = match (&sheet, self.within) {
+            (Some(sheet), _) => (NameScope::Sheet(sheet), format!("s:{sheet}")),
+            (None, Within::Formula) => (NameScope::Formula, "f".to_owned()),
+            (None, Within::Sheet(owner)) => (NameScope::WithinSheet(owner), format!("w:{owner}")),
+            (None, Within::Workbook) => (NameScope::Workbook, "b".to_owned()),
+        };
+        let key = format!("{}!{}", key.to_lowercase(), name.to_lowercase());
+        if let Some(known) = self.shared.names.get(&key) {
+            return *known;
+        }
+        self.shared.names.insert(key.clone(), None);
+        let defined = (self.lookups.names)(scope, name);
+        let extent = defined.and_then(|defined| {
+            let within = match defined.sheet {
+                Some(owner) => Within::Sheet(owner),
+                None => Within::Workbook,
+            };
+            extent_of(
+                &defined.formula,
+                self.lookups,
+                self.depth + 1,
+                &within,
+                self.shared,
+            )
+        });
+        self.shared.names.insert(key, extent);
+        extent
     }
 
     /// An array constant: `,` between columns, `;` between rows.

@@ -15,7 +15,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
 use oxoffice_numfmt::DateTime;
-use oxoffice_xlsx_formula::{Lookups, TokenKind, check_stored, result_extent, to_stored, tokenize};
+use oxoffice_xlsx_formula::{
+    DefinedName, Lookups, NameScope, TokenKind, check_stored, result_extent, to_stored, tokenize,
+};
 use oxoffice_xlsx_oxml::metadata::MetadataXml;
 use oxoffice_xlsx_oxml::namespaces::{MAIN, STRICT_MAIN, content_types, rel_types, strict};
 use oxoffice_xlsx_oxml::reference::{MAX_COLUMNS, MAX_ROWS};
@@ -57,8 +59,9 @@ pub enum Spill {
     /// when the data decide how much (`UNIQUE(A2:A10)`, `FILTER`: the range
     /// they read), which Excel and Google Sheets fill as far as the result
     /// goes, leaving the rest empty; see
-    /// [`oxoffice_xlsx_formula::result_extent`]. Its other cells hold
-    /// nothing. When neither tells it (`SEQUENCE(B1)`, `GROUPBY`), the
+    /// [`oxoffice_xlsx_formula::result_extent`]. The result's range must
+    /// hold nothing but the formula; the most a result can fill is written
+    /// only where it meets nothing, else the formula goes on its cell alone. When neither tells it (`SEQUENCE(B1)`, `GROUPBY`), the
     /// formula is written on its cell alone, as XlsxWriter writes it: Excel
     /// spills it on open, Google Sheets shows the first value alone.
     Anchor,
@@ -392,28 +395,19 @@ pub(crate) enum SpillOrigin {
     /// The result's, which the formula's text decides, or the formula's cell
     /// alone when nothing tells it.
     Result,
-    /// The most the result can fill: the data decide how much of it.
+    /// The most the result can fill, the data deciding how much of it:
+    /// written only where it meets nothing, else the formula's cell alone
+    /// (Excel finds the result's own range).
     Bound,
 }
 
 impl SpillOrigin {
-    /// How the formula spills over its range.
-    fn spills(self) -> &'static str {
-        match self {
-            SpillOrigin::Bound => "can spill",
-            _ => "spills",
-        }
-    }
-
     /// What to do about a range that meets something: `actions`, and a
-    /// range that stops before it for a range given, or the range the result
-    /// fills for one the data decide.
+    /// range that stops before it for a range given.
     fn way_out(self, actions: &[&str]) -> String {
         let mut actions = actions.to_vec();
-        match self {
-            SpillOrigin::Given => actions.push("give a range that stops before it"),
-            SpillOrigin::Result => {}
-            SpillOrigin::Bound => actions.push("give the range its result fills"),
+        if self == SpillOrigin::Given {
+            actions.push("give a range that stops before it");
         }
         match actions.split_last() {
             Some((last, [])) => (*last).to_owned(),
@@ -934,13 +928,11 @@ fn check_batch_spills(contents: &[(CellRef, &Content)]) -> Result<()> {
             && let Some(entry) = batch.find(*at)
             && entry.range.first != *at
         {
-            let origin = origins[&entry.range.first];
             return Err(Error::Refused(format!(
-                "{at} is written inside {}, where the formula of {} {}: {}",
+                "{at} is written inside {}, where the formula of {} spills: {}",
                 entry.range,
                 entry.range.first,
-                origin.spills(),
-                origin.way_out(&["write it elsewhere"])
+                origins[&entry.range.first].way_out(&["write it elsewhere"])
             )));
         }
     }
@@ -1342,7 +1334,62 @@ impl WorksheetMut<'_> {
                 style: StyleChange::Keep,
             });
         }
+        self.narrow_blocked_bounds(&mut writes)?;
         self.apply(writes, Region::Cells, None)
+    }
+
+    /// Writes on its cell alone a formula whose bound meets a value,
+    /// another array formula or a merge, in the sheet or in the same write:
+    /// its result may be shorter, which Excel finds when it calculates it.
+    fn narrow_blocked_bounds(&self, writes: &mut [CellWrite]) -> Result<()> {
+        let bound = |write: &CellWrite| match &write.content {
+            Some(Content::Formula {
+                spill: Some(spill), ..
+            }) if spill.origin == SpillOrigin::Bound => Some(*spill),
+            _ => None,
+        };
+        if !writes.iter().any(|write| bound(write).is_some()) {
+            return Ok(());
+        }
+        let lookup = self.read().range_lookup()?;
+        let merges = self.guards()?.merges.clone();
+        let mut blocked = Vec::new();
+        for (position, write) in writes.iter().enumerate() {
+            let Some(spill) = bound(write) else { continue };
+            let at = write.at;
+            let in_sheet = match self.check_spill_range(at, spill, lookup, &merges) {
+                Ok(()) => false,
+                Err(Error::Refused(_)) => true,
+                Err(error) => return Err(error),
+            };
+            let in_write = writes.iter().any(|other| {
+                other.at != at
+                    && match &other.content {
+                        Some(Content::Formula {
+                            spill: Some(other_spill),
+                            ..
+                        }) => other_spill.range.intersects(&spill.range),
+                        Some(Content::Empty) | None => false,
+                        Some(_) => spill.range.contains(other.at),
+                    }
+            });
+            if in_sheet || in_write {
+                blocked.push(position);
+            }
+        }
+        for position in blocked {
+            let at = writes[position].at;
+            if let Some(Content::Formula {
+                spill: Some(spill), ..
+            }) = &mut writes[position].content
+            {
+                *spill = SpillRange {
+                    range: CellRange::new(at, at),
+                    origin: SpillOrigin::Result,
+                };
+            }
+        }
+        Ok(())
     }
 
     /// The range a dynamic array formula written at `at` without one spills
@@ -1353,7 +1400,7 @@ impl WorksheetMut<'_> {
     /// does not fit), else its cell alone. A result that
     /// reaches past the edge of the sheet is refused.
     fn result_range(&self, at: CellRef, stored: &str) -> Result<SpillRange> {
-        let names = |sheet: Option<&str>, name: &str| self.defined_name(sheet, name);
+        let names = |scope: NameScope<'_>, name: &str| self.defined_name(scope, name);
         let used = |sheet: Option<&str>| self.used_reach(sheet);
         let extent = result_extent(
             stored,
@@ -1401,16 +1448,19 @@ impl WorksheetMut<'_> {
         })
     }
 
-    /// The formula the defined name `name` refers to in a formula of this
-    /// sheet, names compared in any case: written after a sheet
-    /// (`Data!Sales`), that sheet's own name; without, this sheet's own,
-    /// else the workbook's.
-    fn defined_name(&self, sheet: Option<&str>, name: &str) -> Option<String> {
-        let position = match sheet {
-            Some(sheet) => self.workbook.sheet(sheet)?.position(),
-            None => self.position,
+    /// The defined name `name` in `scope`, names compared in any case: a
+    /// sheet's own name first (this sheet's for a cell's formula), then the
+    /// workbook's, except after a sheet (`Data!Sales`), where only that
+    /// sheet's own name counts.
+    fn defined_name(&self, scope: NameScope<'_>, name: &str) -> Option<DefinedName> {
+        // The sheet whose own names come first, and whether the workbook's
+        // follow.
+        let (sheet, workbook) = match scope {
+            NameScope::Formula => (Some(self.position), true),
+            NameScope::Sheet(sheet) => (Some(self.workbook.sheet(sheet)?.position()), false),
+            NameScope::WithinSheet(sheet) => (Some(self.workbook.sheet(sheet)?.position()), true),
+            NameScope::Workbook => (None, true),
         };
-        let local = u32::try_from(position).ok();
         let name = name.to_lowercase();
         let named = || {
             self.workbook
@@ -1418,15 +1468,22 @@ impl WorksheetMut<'_> {
                 .defined_names()
                 .filter(|defined| defined.name().to_lowercase() == name)
         };
-        named()
-            .find(|defined| defined.local_sheet_id() == local)
-            .or_else(|| {
-                sheet
-                    .is_none()
-                    .then(|| named().find(|defined| defined.local_sheet_id().is_none()))
-                    .flatten()
+        if let Some(position) = sheet
+            && let Some(defined) =
+                named().find(|defined| defined.local_sheet_id() == u32::try_from(position).ok())
+        {
+            return Some(DefinedName {
+                formula: defined.text(),
+                sheet: Some(self.workbook.sheet_at(position)?.name().to_owned()),
+            });
+        }
+        workbook
+            .then(|| named().find(|defined| defined.local_sheet_id().is_none()))
+            .flatten()
+            .map(|defined| DefinedName {
+                formula: defined.text(),
+                sheet: None,
             })
-            .map(|defined| defined.text())
     }
 
     /// What a write of content may not change, read once.
@@ -1645,12 +1702,8 @@ impl WorksheetMut<'_> {
     ) -> Result<()> {
         let range = spill.range;
         let refused = |what: String| {
-            let spills = match spill.origin {
-                SpillOrigin::Bound => "can spill over",
-                _ => "would spill over",
-            };
             Err(Error::Refused(format!(
-                "the formula of {at} {spills} {range}, where {what}: {}",
+                "the formula of {at} would spill over {range}, where {what}: {}",
                 spill
                     .origin
                     .way_out(&["clear it", "write the formula elsewhere"])

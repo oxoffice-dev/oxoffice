@@ -669,15 +669,20 @@ impl Workbook {
             .into_iter()
             .filter(|code| editor.index.existing_id(code).is_none())
             .collect();
+        // Every `numFmt` counts, used or not: stricter than what Excel
+        // drops, never past it.
         let held = editor.styles.list(StyleList::NumFmts).len();
-        match new.first() {
-            Some(code) if held + new.len() > MAX_CUSTOM_NUMBER_FORMATS => {
-                Err(Error::Refused(format!(
-                    "the workbook holds {held} custom number formats, and `{code}` would add one: Excel keeps only the first 200 to 250, depending on its language, and shows the cells of the others as General; use a format the workbook holds or a built-in one"
-                )))
-            }
-            _ => Ok(()),
+        if new.is_empty() || held + new.len() <= MAX_CUSTOM_NUMBER_FORMATS {
+            return Ok(());
         }
+        let codes: Vec<String> = new.iter().map(|code| format!("`{code}`")).collect();
+        let adds = match new.len() {
+            1 => format!("{} would add one", codes[0]),
+            count => format!("{} would add {count}", codes.join(", ")),
+        };
+        Err(Error::Refused(format!(
+            "the workbook holds {held} custom number formats, and {adds}: Excel keeps only the first 200 to 250, depending on its language, and shows the cells of the others as General; use a format the workbook holds or a built-in one"
+        )))
     }
 
     /// What a style edit writes into, read for it.

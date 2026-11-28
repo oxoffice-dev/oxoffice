@@ -305,7 +305,10 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them). Google Sheets takes the extent from `ref` (checked:
   the anchor alone shows one value, `ref="J2:J5"` without cached values spills), so `ref` covers the result whenever
   the formula tells how large it is ([#715](https://github.com/oxoffice-dev/oxoffice/issues/715)), read by `oxoffice_xlsx_formula::result_extent` from the parse tree, its
-  defined names resolved from the formula's sheet (a sheet's own name first, then the workbook's):
+  defined names resolved as Excel scopes them (a cell's formula: its sheet's own name first, then the workbook's; after
+  a sheet, `Data!Sales`, that sheet's own name only; inside a sheet's name, that sheet's names first; inside a workbook
+  name, the workbook's), each name read once per formula and at most 100,000 parts of formulas read, so a crafted
+  workbook cannot hang a write:
   - **exactly** when the text decides the shape: a range or a name of one (whole columns are 1,048,576 rows), an array
     constant, operators and the functions applied to each element of their values (`A2:A10*2`, `ROUND(A2:A10,1)`, the
     criteria of `COUNTIF`, the value `MATCH` looks up: the largest operand, a dimension of 1 repeated), aggregates
@@ -319,7 +322,11 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
     `CHOOSE` on one value (the largest choice), and whatever takes such a result (`SORT(UNIQUE(...))`). A `ref` wider
     than the result is harmless (checked on the Mac, Excel 16.115 and Google Sheets: `UNIQUE(A2:A20)` with `ref`
     `J2:J20` shows its 5 values in `J2:J6` and leaves the rest empty, no repair prompt, and each app writes the true
-    size back when it saves); this bound stops at the edge of the sheet, where a larger result shows `#SPILL!` anyway.
+    size back when it saves; LibreOffice 26.2, a later producer here, fills the rest with `#N/A`, probed); this bound
+    stops at the edge of the sheet, where a larger result shows `#SPILL!` anyway, covers at most 1,000,000 cells (else
+    the formula goes on its cell alone: Google Sheets holds 10 million cells), and is written only where it meets no
+    value, array formula or merge, in the sheet or the same write: otherwise the formula goes on its cell alone, its
+    result possibly shorter (Excel finds it; Google Sheets shows one value, the limitation's case).
     Whole columns (or rows) read by `UNIQUE` count as far as their sheet's used range and one more row (or column) for
     the value of the blank cells after it, which collapse into one (Excel shows it as 0); `FILTER` over whole columns
     gives no bound, each blank row past the used range able to pass on its own (`FILTER(A:A,B:B="")`). Google Sheets keeps a grid as large as a
@@ -336,8 +343,8 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   writes it: the known limitation `xlsx-spill-range-google` until the evaluator of the second set
   ([#724](https://github.com/oxoffice-dev/oxoffice/issues/724)) writes every extent. `spill` also takes the range (Rust
   `Spill::Range`, Python `spill="J2:J5"`, CLI `--spill-range J2:J5`, edit map `"spill": "J2:J5"`), kept as given. A range,
-  given or found, starts at the cell and its other cells hold nothing, meet no other array formula and no merge (else
-  refused, as Excel would show `#SPILL!`, the way out naming the range to give for an extent the data decide), nor
+  given or exact, starts at the cell and its other cells hold nothing, meet no other array formula and no merge (else
+  refused, as Excel would show `#SPILL!`), nor
   another range or a value written by the same call; its own empty cells count as written, so its own call rewrites
   or retargets it.
 - **The edit map** (`oxoffice xlsx edit FILE --map EDITS.json -o OUT`): a JSON array applied in order, all or nothing,
@@ -368,8 +375,9 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   General), refused, with nothing changed, when it would take the workbook past 200 custom formats (a style edit, a
   number format, a date written in a General cell): Excel keeps only the first 200 to 250, depending on its language
   (Microsoft's figure; Excel for Mac 16.115 kept ids 164 to 378 and dropped the rest on open without a word, their
-  cells shown as General); the formats the file holds stay, and the message names the way out, a format the workbook
-  holds or a built-in one. Colours are written as `rgb` (`FF` + RRGGBB); writing theme colours is not in this set. `StylePatch` (Python
+  cells shown as General); every `numFmt` the styles part holds counts, used or not, which is stricter than what Excel
+  drops; the formats the file holds stay, and the message names the codes the edit adds and the way out, a format the
+  workbook holds or a built-in one. Colours are written as `rgb` (`FF` + RRGGBB); writing theme colours is not in this set. `StylePatch` (Python
   keywords, edit map keys): `bold`, `italic`, `underline` (single), `strike`, `font_name` (drops the theme `scheme`,
   `family` and `charset`, which would win over it), `font_size`, `font_color`, `fill` (solid, `bgColor indexed="64"` as
   Excel writes it), `border` and `border_color` (the four sides; automatic is `indexed="64"`), `horizontal`, `vertical`,

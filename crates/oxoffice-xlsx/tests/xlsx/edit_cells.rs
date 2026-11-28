@@ -667,17 +667,18 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
         );
     }
 
-    // Its range must be free, as a range given must be, and its own call
-    // rewrites or retargets it; the way out names the range a result the
-    // data size fills, never a smaller one for a result of known shape. The
-    // most a result can fill stops at the edge of the sheet, whole columns
-    // at their sheet's used range and one row more for the blank cells (none
-    // when that sheet is not known); a result known to pass the edge is
-    // refused.
+    // An exact range must be free, as a range given must be, and its own
+    // call rewrites or retargets it; the way out never names a smaller range.
+    // The most a result can fill is written only where it meets nothing,
+    // else the formula goes on its cell alone; it stops at the edge of the
+    // sheet, whole columns at their sheet's used range and one row more for
+    // the blank cells (none when that sheet is not known). A result known to
+    // pass the edge is refused.
     let mut workbook = workbook_with_sheet(&sheet(
         r#"<sheetData><row r="3"><c r="A3"><v>1</v></c></row></sheetData>"#,
     ));
     let mut data = workbook.sheet_at_mut(0).unwrap();
+    let spill = |text: &str| CellInput::Formula(text.to_owned(), SPILL);
     data.set_formula("E1", "SEQUENCE(3)", SPILL).unwrap();
     data.set_formula("E1", "SEQUENCE(2)", SPILL).unwrap();
     data.set_value("E3", number(1.0)).unwrap();
@@ -685,15 +686,16 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
     data.set_formula("H1048570", "UNIQUE(A1:A20)", SPILL)
         .unwrap();
     data.set_formula("I2", "UNIQUE(Nope!A:A)", SPILL).unwrap();
-    let spill = |text: &str| CellInput::Formula(text.to_owned(), SPILL);
+    data.set_formula("A1", "UNIQUE(C1:C5)", SPILL).unwrap();
+    data.write(
+        "K1",
+        vec![vec![spill("FILTER(A1:A3,A1:A3>0)")], vec![number(5.0)]],
+    )
+    .unwrap();
     for (result, message) in [
         (
             data.set_formula("A1", "SEQUENCE(5)", SPILL),
             "the formula of A1 would spill over A1:A5, where A3 holds a value or a formula: clear it, or write the formula elsewhere",
-        ),
-        (
-            data.set_formula("A1", "UNIQUE(C1:C5)", SPILL),
-            "the formula of A1 can spill over A1:A5, where A3 holds a value or a formula: clear it, write the formula elsewhere, or give the range its result fills",
         ),
         (
             data.set_formula("B2", "A:A", SPILL),
@@ -702,13 +704,6 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
         (
             data.write("C1", vec![vec![spill("SEQUENCE(3)")], vec![number(5.0)]]),
             "C2 is written inside C1:C3, where the formula of C1 spills: write it elsewhere",
-        ),
-        (
-            data.write(
-                "C1",
-                vec![vec![spill("FILTER(A1:A3,A1:A3>0)")], vec![number(5.0)]],
-            ),
-            "C2 is written inside C1:C3, where the formula of C1 can spill: write it elsewhere, or give the range its result fills",
         ),
     ] {
         assert_eq!(result.unwrap_err().to_string(), message);
@@ -719,6 +714,8 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
         ("G2", "G2:G5"),
         ("H1048570", "H1048570:H1048576"),
         ("I2", "I2"),
+        ("A1", "A1"),
+        ("K1", "K1"),
     ] {
         assert_eq!(
             sheet
@@ -988,9 +985,20 @@ fn what_excel_would_repair_or_this_version_does_not_write_is_refused_and_changes
             "at most 1000000 are styled at once",
         ),
         (
-            "a custom number format past the 200 every Excel keeps",
-            Op::NumberFormat("B5", "0.000"),
-            "the workbook holds 200 custom number formats, and `0.000` would add one: Excel keeps only the first 200 to 250",
+            "custom number formats past the 200 every Excel keeps",
+            Op::Write(
+                "B5",
+                vec![vec![
+                    date(2026, 1, 5),
+                    CellInput::Date(DateValue::Time {
+                        hour: 9,
+                        minute: 30,
+                        second: 0,
+                        millisecond: 0,
+                    }),
+                ]],
+            ),
+            "the workbook holds 199 custom number formats, and `hh:mm:ss`, `yyyy-mm-dd` would add 2: Excel keeps only the first 200 to 250",
         ),
         (
             "a CSV not in UTF-8",
@@ -999,17 +1007,26 @@ fn what_excel_would_repair_or_this_version_does_not_write_is_refused_and_changes
         ),
     ];
     for (case, op, message) in cases {
-        let mut workbook = workbook_with_number_formats(&pivot_and_array, 200);
+        let mut workbook = workbook_with_number_formats(&pivot_and_array, 199);
         let before = workbook.to_bytes().unwrap();
         let error = apply(&mut workbook.sheet_at_mut(0).unwrap(), vec![op]).unwrap_err();
         assert!(error.to_string().contains(message), "{case}: {error}");
         assert_eq!(workbook.to_bytes().unwrap(), before, "{case}");
     }
     // A whole array is written and cleared; a merged range's first cell and
-    // its other cells' styles are written; a number format the workbook
-    // holds, or a built-in one, is written at the limit.
-    let mut workbook = workbook_with_number_formats(&pivot_and_array, 200);
+    // its other cells' styles are written; the 200th custom number format
+    // is written, the 201st refused, and a format the workbook holds, or a
+    // built-in one, is still written.
+    let mut workbook = workbook_with_number_formats(&pivot_and_array, 199);
     let mut data = workbook.sheet_at_mut(0).unwrap();
+    data.set_number_format("B4", "0.000").unwrap();
+    let error = data.set_number_format("B5", "0.0000").unwrap_err();
+    assert!(
+        error.to_string().starts_with(
+            "the workbook holds 200 custom number formats, and `0.0000` would add one"
+        ),
+        "{error}"
+    );
     data.set_number_format("B5", "0.0\" u7\"").unwrap();
     data.set_number_format("B6:B7", "0.00").unwrap();
     data.write("A1", vec![vec![number(1.0)], vec![number(2.0)]])
