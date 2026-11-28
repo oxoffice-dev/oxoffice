@@ -6601,41 +6601,53 @@ fn comment_ending_inside_a_revision(wrapper: &str) -> Document {
     Document::from_bytes(&out.into_inner()).unwrap()
 }
 
-/// The text the only comment of `doc` covers, after `resolve`.
+/// The text the only comment of `doc` covers after `resolve`, `None` when
+/// the comment went.
 fn comment_after(
     doc: &mut Document,
     resolve: fn(&mut Document) -> oxoffice_docx::Result<usize>,
-) -> String {
+) -> Option<String> {
     let mut doc = reopen(doc);
     resolve(&mut doc).unwrap_or_else(|e| panic!("{e}"));
     let doc = reopen(&mut doc);
     let comments = doc.comments();
-    assert_eq!(comments.len(), 1);
-    comments[0].anchor_text().unwrap().unwrap_or_default()
+    assert!(comments.len() <= 1);
+    comments
+        .first()
+        .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
 }
 
 #[test]
-fn a_comment_ending_inside_an_accepted_deletion_stays_on_the_text_left() {
+fn a_comment_whose_mark_an_accepted_deletion_holds_goes_with_it() {
+    // W9: the reference run alone is enough, the range start left aside.
     let mut doc = comment_ending_inside_a_revision("del");
-    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept ");
-    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept four");
+    assert_eq!(comment_after(&mut doc, Document::accept_all), None);
+    assert_eq!(
+        comment_after(&mut doc, Document::reject_all).as_deref(),
+        Some("Kept four")
+    );
 }
 
 #[test]
-fn a_comment_ending_inside_a_rejected_insertion_stays_on_the_text_left() {
+fn a_comment_whose_mark_a_rejected_insertion_holds_goes_with_it() {
+    // W9: the reference run alone is enough, the range start left aside.
     let mut doc = comment_ending_inside_a_revision("ins");
-    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept four");
-    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept ");
+    assert_eq!(
+        comment_after(&mut doc, Document::accept_all).as_deref(),
+        Some("Kept four")
+    );
+    assert_eq!(comment_after(&mut doc, Document::reject_all), None);
 }
 
 #[test]
-fn every_revision_of_libreoffices_record_is_accepted_with_its_comments_kept() {
-    // LibreOffice writes the end and the mark of a comment inside a deletion.
+fn every_revision_of_libreoffices_record_is_accepted_and_a_deleted_mark_takes_its_comment() {
+    // LibreOffice writes the end and the mark of one of its four comments
+    // inside a deletion: accepting it removes that comment, as Word does (W9).
     let mut doc = crate::support::corpus_doc("libreoffice/record.docx");
-    let before = doc.comments().len();
+    assert_eq!(doc.comments().len(), 4);
     doc.accept_all().unwrap_or_else(|e| panic!("{e}"));
     let doc = reopen(&mut doc);
-    assert_eq!(doc.comments().len(), before);
+    assert_eq!(doc.comments().len(), 3);
     assert!(
         doc.comments()
             .iter()
@@ -6721,17 +6733,19 @@ fn a_comment_whose_range_two_accepted_deletions_hold_goes_with_them() {
 }
 
 #[test]
-fn accepting_only_the_deletion_with_a_comment_end_keeps_the_comment() {
-    // The start stays in the other deletion, which is not resolved.
+fn accepting_only_the_deletion_with_a_comment_mark_removes_the_comment() {
+    // W9: the mark goes, so does the comment, its start in the other
+    // deletion, which is not resolved, with it.
     let mut doc = comment_on_thirty_days(thirty_days_in_two_deletions);
     doc.accept_revision_id(91).unwrap_or_else(|e| panic!("{e}"));
     let doc = reopen(&mut doc);
-    assert_eq!(doc.comments().len(), 1);
-    assert!(doc.comments()[0].anchor_text().is_ok());
+    assert!(doc.comments().is_empty());
+    let xml = doc.part_xml("/word/document.xml").unwrap();
+    assert!(!xml.contains("commentRange"), "{xml}");
 }
 
 #[test]
-fn a_comment_end_in_a_deletion_inside_a_rejected_insertion_stays() {
+fn a_comment_mark_in_a_deletion_inside_a_rejected_insertion_goes_with_it() {
     // ` days`, the end and the mark were inserted, then the end and the mark
     // deleted by someone else.
     let mut doc = comment_on_thirty_days(|xml| {
@@ -6743,7 +6757,8 @@ fn a_comment_end_in_a_deletion_inside_a_rejected_insertion_stays() {
         let close = xml.find("</w:del>").unwrap() + "</w:del>".len();
         wrapped(&xml, days, close, "ins", 92)
     });
-    assert_eq!(comment_after(&mut doc, Document::reject_all), "30");
+    // W9: rejecting the insertion removes the mark, and the comment with it.
+    assert_eq!(comment_after(&mut doc, Document::reject_all), None);
 }
 
 // ---- Compare after an edit, on every producer's copy ----

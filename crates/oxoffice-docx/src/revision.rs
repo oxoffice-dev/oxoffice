@@ -304,6 +304,9 @@ struct RenderState<'a> {
     /// with any of them, and their range marks, which go.
     move_parts: HashSet<usize>,
     move_marks: HashSet<usize>,
+    /// The comments whose every reference the resolution removes: they go,
+    /// their range marks with them, wherever those stand (W9).
+    going_comments: HashSet<String>,
 }
 
 impl RenderState<'_> {
@@ -568,8 +571,10 @@ impl Document {
             absorbed: HashSet::new(),
             move_parts: HashSet::new(),
             move_marks: HashSet::new(),
+            going_comments: HashSet::new(),
         };
         (state.move_parts, state.move_marks) = tree.selected_moves(&state.scope)?;
+        state.going_comments = tree.going_comments(&state, &[]);
         state.retiring_simple_fields = tree.carried_simple_field_retirements(&state)?;
         let mut output = Vec::with_capacity(source.len());
         output.extend_from_slice(&source[..tree.elements[tree.root].start]);
@@ -1284,8 +1289,10 @@ fn render_with_source_ranges(
         absorbed: HashSet::new(),
         move_parts: HashSet::new(),
         move_marks: HashSet::new(),
+        going_comments: HashSet::new(),
     };
     (state.move_parts, state.move_marks) = tree.selected_moves(&state.scope)?;
+    state.going_comments = tree.going_comments(&state, &[]);
     state.retiring_simple_fields = tree.carried_simple_field_retirements(&state)?;
     let mut output = Vec::with_capacity(tree.source.len());
     output.extend_from_slice(&tree.source[..tree.elements[tree.root].start]);
@@ -2962,8 +2969,15 @@ impl<'a> XmlTree<'a> {
         destination: &[(String, String)],
     ) -> Result<Vec<u8>> {
         let element = &self.elements[index];
-        // The range marks of a move the resolution settles go with it (F2).
-        if state.move_marks.contains(&index) {
+        // The range marks of a move the resolution settles go with it (F2),
+        // and those of a comment whose references it removes (W9).
+        if state.move_marks.contains(&index)
+            || element.word
+                && matches!(element.local.as_str(), "commentRangeStart" | "commentRangeEnd")
+                && self
+                    .element_id(index)
+                    .is_some_and(|id| state.going_comments.contains(&id))
+        {
             return Ok(Vec::new());
         }
         let semantic = self.semantic_element(index);
@@ -3199,34 +3213,46 @@ impl<'a> XmlTree<'a> {
         }
     }
 
-    /// Whether this resolution removes the reference and every range marker
-    /// of comment `id`, whichever wrappers hold them: each lies in a revision
-    /// wrapper whose content it removes, or in content it removes whole,
-    /// `group` (the source spans of the paragraphs and tables that go whole
-    /// with a block content control or before a table).
+    /// Whether comment `id` goes with this resolution: it removes every
+    /// reference of the comment, each in a revision wrapper whose content it
+    /// removes or in content it removes whole, `group` (the source spans of
+    /// the paragraphs and tables that go whole with a block content control
+    /// or before a table). Word removes a comment whose reference run a
+    /// rejected insertion or an accepted deletion holds, wherever its range
+    /// marks stand, and its range marks with it (W9).
     fn comment_goes_whole(
         &self,
         id: &str,
         state: &RenderState<'_>,
         group: &[Range<usize>],
     ) -> bool {
-        let mut referenced = false;
+        if group.is_empty() {
+            return state.going_comments.contains(id);
+        }
+        self.going_comments(state, group).contains(id)
+    }
+
+    /// The comments whose every reference goes with this resolution or with
+    /// `group` (see `comment_goes_whole`).
+    fn going_comments(&self, state: &RenderState<'_>, group: &[Range<usize>]) -> HashSet<String> {
+        let mut going = HashMap::new();
         for (index, node) in self.elements.iter().enumerate() {
-            if !(node.word && is_comment_marker(&node.local))
-                || self.element_id(index).as_deref() != Some(id)
-            {
+            if !(node.word && node.local == "commentReference") {
                 continue;
             }
-            if !self.removed_by_resolution(index, state)
-                && !group
+            let Some(id) = self.element_id(index) else {
+                continue;
+            };
+            let goes = self.removed_by_resolution(index, state)
+                || group
                     .iter()
-                    .any(|span| span.start <= node.start && node.end <= span.end)
-            {
-                return false;
-            }
-            referenced |= node.local == "commentReference";
+                    .any(|span| span.start <= node.start && node.end <= span.end);
+            *going.entry(id).or_insert(true) &= goes;
         }
-        referenced
+        going
+            .into_iter()
+            .filter_map(|(id, goes)| goes.then_some(id))
+            .collect()
     }
 
     /// Whether the element at `index` lies in a revision wrapper whose content
