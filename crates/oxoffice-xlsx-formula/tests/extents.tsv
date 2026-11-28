@@ -1,7 +1,6 @@
 # How large a formula's result is: rows x columns exactly, <= at most (the data decide how much of it the result
 # fills), or - when neither its text nor its inputs tell it. Names: Sales is Data!$B$2:$B$25, Rate 0.07, Local on
-# sheet Data or 'My data' $A$1:$C$3, Loop Loop+1, Calc OFFSET(A1,0,0,B1). Used ranges: the formula's sheet to C25,
-# Data to B40, Empty none; another sheet is not known.
+# sheet Data or 'My data' $A$1:$C$3, Loop Loop+1, Calc OFFSET(A1,0,0,B1).
 # Inner on Data is Other*2, and Data's own Other $A$1:$A$5; the workbook's Other is $A$1:$A$9, its Outer Other.
 # Constants, references and names.
 1	1x1
@@ -116,15 +115,13 @@ CHOOSE(B1,A2:A10,C2:E3)	<=9x3
 _xlfn.UNIQUE(A2:A10)	<=9x1
 _xlfn.UNIQUE(A2:C10,TRUE,B1)	<=9x3
 _xlfn.UNIQUE(A2)	1x1
-_xlfn.UNIQUE(A:A)	<=26x1
-_xlfn.UNIQUE(Data!A:B)	<=41x2
-_xlfn.UNIQUE(Empty!A:A)	1x1
-_xlfn.UNIQUE(2:3)	<=2x4
+# A bound over whole columns or rows is none: Google Sheets keeps a grid that large.
+_xlfn.UNIQUE(A:A)	-
+_xlfn.UNIQUE(2:3)	-
+_xlfn.UNIQUE(A:A,TRUE)	-
 _xlfn.UNIQUE(A1:Z50000)	-
-_xlfn.UNIQUE([1]Data!A:A)	-
-_xlfn.UNIQUE(Other!A:A)	-
 _xlfn._xlws.FILTER(A:A,B:B="")	-
-_xlfn._xlws.SORT(_xlfn.UNIQUE(A:A*2))	<=26x1
+_xlfn._xlws.SORT(_xlfn.UNIQUE(A:A*2))	-
 _xlfn.TAKE(A:A,B1)	-
 IF(B1>0,A:A)	-
 _xlfn._xlws.FILTER(A2:C10,B2:B10>0)	<=9x3

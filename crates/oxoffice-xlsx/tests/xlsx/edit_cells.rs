@@ -671,8 +671,8 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
     // call rewrites or retargets it; the way out never names a smaller range.
     // The most a result can fill is written only where it meets nothing,
     // else the formula goes on its cell alone; it stops at the edge of the
-    // sheet, whole columns at their sheet's used range and one row more for
-    // the blank cells (none when that sheet is not known). A result known to
+    // sheet, and none covers whole columns, data written in the same call
+    // or not. A range covers cells the same call clears. A result known to
     // pass the edge is refused.
     let mut workbook = workbook_with_sheet(&sheet(
         r#"<sheetData><row r="3"><c r="A3"><v>1</v></c></row></sheetData>"#,
@@ -690,6 +690,22 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
     data.write(
         "K1",
         vec![vec![spill("FILTER(A1:A3,A1:A3>0)")], vec![number(5.0)]],
+    )
+    .unwrap();
+    data.write(
+        "N1",
+        vec![vec![number(1.0), spill("UNIQUE(N:N)")], vec![number(2.0)]],
+    )
+    .unwrap();
+    data.set_value("P3", number(1.0)).unwrap();
+    data.set_value("Q3", number(1.0)).unwrap();
+    let empty = || CellInput::Value(Value::Empty);
+    data.write(
+        "P2",
+        vec![
+            vec![spill("SEQUENCE(3)"), spill("UNIQUE(A1:A3)")],
+            vec![empty(), empty()],
+        ],
     )
     .unwrap();
     for (result, message) in [
@@ -711,7 +727,10 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
     let sheet = workbook.sheet_at(0).unwrap();
     for (cell, range) in [
         ("E1", "E1:E2"),
-        ("G2", "G2:G5"),
+        ("G2", "G2"),
+        ("O1", "O1"),
+        ("P2", "P2:P4"),
+        ("Q2", "Q2:Q4"),
         ("H1048570", "H1048570:H1048576"),
         ("I2", "I2"),
         ("A1", "A1"),

@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 
 use oxoffice_numfmt::DateTime;
 use oxoffice_xlsx_formula::{
-    DefinedName, Lookups, NameScope, TokenKind, check_stored, result_extent, to_stored, tokenize,
+    DefinedName, NameScope, TokenKind, check_stored, result_extent, to_stored, tokenize,
 };
 use oxoffice_xlsx_oxml::metadata::MetadataXml;
 use oxoffice_xlsx_oxml::namespaces::{MAIN, STRICT_MAIN, content_types, rel_types, strict};
@@ -61,9 +61,11 @@ pub enum Spill {
     /// goes, leaving the rest empty; see
     /// [`oxoffice_xlsx_formula::result_extent`]. The result's range must
     /// hold nothing but the formula; the most a result can fill is written
-    /// only where it meets nothing, else the formula goes on its cell alone. When neither tells it (`SEQUENCE(B1)`, `GROUPBY`), the
-    /// formula is written on its cell alone, as XlsxWriter writes it: Excel
-    /// spills it on open, Google Sheets shows the first value alone.
+    /// only where it meets nothing, else the formula goes on its cell
+    /// alone. When neither tells it (`SEQUENCE(B1)`, `GROUPBY`, a bound over
+    /// whole columns), the formula is written on its cell alone, as
+    /// XlsxWriter writes it: Excel spills it on open, Google Sheets shows
+    /// the first value alone.
     Anchor,
     /// Over this range, which starts at the formula's cell and whose other
     /// cells hold nothing: written as its `ref`, so Google Sheets spills it
@@ -939,6 +941,15 @@ fn check_batch_spills(contents: &[(CellRef, &Content)]) -> Result<()> {
     Ok(())
 }
 
+/// The cells a call writes nothing into: a spill range may cover them.
+fn cleared_cells(writes: &[CellWrite]) -> HashSet<CellRef> {
+    writes
+        .iter()
+        .filter(|write| write.content == Some(Content::Empty))
+        .map(|write| write.at)
+        .collect()
+}
+
 /// Whether each write is of nothing over a cell that holds nothing: a
 /// write that changes nothing.
 fn noop_clears(writes: &[CellWrite], rows: &BTreeMap<u32, CT_Row>) -> Vec<bool> {
@@ -1353,11 +1364,12 @@ impl WorksheetMut<'_> {
         }
         let lookup = self.read().range_lookup()?;
         let merges = self.guards()?.merges.clone();
+        let cleared = cleared_cells(writes);
         let mut blocked = Vec::new();
         for (position, write) in writes.iter().enumerate() {
             let Some(spill) = bound(write) else { continue };
             let at = write.at;
-            let in_sheet = match self.check_spill_range(at, spill, lookup, &merges) {
+            let in_sheet = match self.check_spill_range(at, spill, lookup, &merges, &cleared) {
                 Ok(()) => false,
                 Err(Error::Refused(_)) => true,
                 Err(error) => return Err(error),
@@ -1395,20 +1407,12 @@ impl WorksheetMut<'_> {
     /// The range a dynamic array formula written at `at` without one spills
     /// over: its result's when the formula decides its shape (its defined
     /// names read from this sheet), the most it can fill when the data
-    /// decide how much (whole columns as far as their sheet's used range),
-    /// cut at the edge of the sheet (Excel shows #SPILL! for a result that
-    /// does not fit), else its cell alone. A result that
-    /// reaches past the edge of the sheet is refused.
+    /// decide how much, cut at the edge of the sheet (Excel shows #SPILL!
+    /// for a result that does not fit), else its cell alone. A result known
+    /// to reach past the edge of the sheet is refused.
     fn result_range(&self, at: CellRef, stored: &str) -> Result<SpillRange> {
         let names = |scope: NameScope<'_>, name: &str| self.defined_name(scope, name);
-        let used = |sheet: Option<&str>| self.used_reach(sheet);
-        let extent = result_extent(
-            stored,
-            &Lookups {
-                names: &names,
-                used: &used,
-            },
-        );
+        let extent = result_extent(stored, &names);
         let Some(extent) = extent else {
             return Ok(SpillRange {
                 range: CellRange::new(at, at),
@@ -1432,19 +1436,6 @@ impl WorksheetMut<'_> {
             } else {
                 SpillOrigin::Bound
             },
-        })
-    }
-
-    /// The last row and column, 1-based, the values and formulas of this
-    /// sheet (`None`) or of the sheet named reach, 0 for none.
-    fn used_reach(&self, sheet: Option<&str>) -> Option<(u32, u32)> {
-        let sheet = match sheet {
-            Some(name) => self.workbook.sheet(name)?,
-            None => self.read(),
-        };
-        Some(match sheet.used_range().ok()? {
-            Some(range) => (range.last.row + 1, range.last.column + 1),
-            None => (0, 0),
         })
     }
 
@@ -1638,6 +1629,7 @@ impl WorksheetMut<'_> {
             return Ok(());
         }
         let guards = self.guards()?;
+        let cleared = cleared_cells(writes);
         let bounds = contents
             .iter()
             .map(|(at, _)| CellRange::new(*at, *at))
@@ -1685,20 +1677,22 @@ impl WorksheetMut<'_> {
             } = content
                 && spill.range.first != spill.range.last
             {
-                self.check_spill_range(*at, *spill, lookup, &guards.merges)?;
+                self.check_spill_range(*at, *spill, lookup, &guards.merges, &cleared)?;
             }
         }
         check_batch_spills(&contents)
     }
 
     /// Refuses a spill range whose cells other than the formula's hold a
-    /// value or a formula, or meet another array formula or a merge.
+    /// value or a formula (but those `cleared` by the same call), or meet
+    /// another array formula or a merge.
     fn check_spill_range(
         &self,
         at: CellRef,
         spill: SpillRange,
         lookup: &crate::ranges::RangeLookup,
         merges: &[CellRange],
+        cleared: &HashSet<CellRef>,
     ) -> Result<()> {
         let range = spill.range;
         let refused = |what: String| {
@@ -1712,7 +1706,11 @@ impl WorksheetMut<'_> {
         for (number, row) in self.read().rows_in(range.first.row, range.last.row)? {
             for (column, cell) in columns(&row) {
                 let cell_at = CellRef::new(number, column);
-                if cell_at != at && range.contains(cell_at) && holds_content(cell) {
+                if cell_at != at
+                    && range.contains(cell_at)
+                    && holds_content(cell)
+                    && !cleared.contains(&cell_at)
+                {
                     return refused(format!("{cell_at} holds a value or a formula"));
                 }
             }

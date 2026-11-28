@@ -327,24 +327,25 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
     the formula goes on its cell alone: Google Sheets holds 10 million cells), and is written only where it meets no
     value, array formula or merge, in the sheet or the same write: otherwise the formula goes on its cell alone, its
     result possibly shorter (Excel finds it; Google Sheets shows one value, the limitation's case).
-    Whole columns (or rows) read by `UNIQUE` count as far as their sheet's used range and one more row (or column) for
-    the value of the blank cells after it, which collapse into one (Excel shows it as 0); `FILTER` over whole columns
-    gives no bound, each blank row past the used range able to pass on its own (`FILTER(A:A,B:B="")`). Google Sheets keeps a grid as large as a
-    whole-column `ref` and exports a million empty rows (checked on the Mac, 47 MB of sheet XML), so no bound covers
-    whole columns or rows; one that would (whole columns of another workbook, `TAKE(A:A,B1)`) leaves the extent unknown,
-    as does `FILTER` over whole columns.
-    Whole columns in an exact shape (`A:A*2`) stay whole, as Excel spills that far.
-    `WRAPROWS({1,2},5)` is one row of two (no padding, Excel 16.115): lines as long as the wrap or the vector, whichever
-    is shorter; `WRAPCOLS` likewise.
+    No bound covers whole columns or rows (`UNIQUE(A:A)`, `UNIQUE(2:3)`, `FILTER(A:C,C:C>0)`): Google Sheets keeps a
+    grid as large as a whole-column `ref` and exports a million empty rows (Mac job 16, 47 MB of sheet XML), and a used
+    range would not bound one (`UNIQUE` by column keeps every row, data written in the same call or later in Excel,
+    blank rows each passing a `FILTER`), so such a formula is written on its cell alone. Whole columns in an exact shape
+    (`A:A*2`) stay whole, as Excel spills that far. `WRAPROWS({1,2},5)` is one row of two: Excel for Mac 16.115 showed
+    `I1:J1` = 1, 2 with no `#N/A` (Mac job 16), so a line is as long as the wrap or the vector, whichever is shorter;
+    `WRAPCOLS` likewise. The extents of this list are pinned in `crates/oxoffice-xlsx-formula/tests/extents.tsv`, and
+    a walk of the corpus checks that every dynamic array Excel saved fits its formula's extent; the corpus holds `SORT`
+    only, so that walk guards exact shapes, the bounds resting on the table and the Mac checks.
   An error that replaces the whole result shows in one cell, within any extent, so a value that can only make one is
   not looked at. A result known to pass the edge of the sheet is refused. When neither tells the size (a size read from
   a cell, `SEQUENCE(B1)`; `GROUPBY`, `PIVOTBY`, `TEXTSPLIT`; a function the table does not list, such as `XLOOKUP`,
-  `INDEX`, `OFFSET`, `MAP`; a table reference; a LAMBDA), the formula is written on its cell alone, as XlsxWriter
+  `INDEX`, `OFFSET`, `MAP`; a table reference; a LAMBDA; a bound over whole columns or rows, over a million cells or
+  meeting a value), the formula is written on its cell alone, as XlsxWriter
   writes it: the known limitation `xlsx-spill-range-google` until the evaluator of the second set
   ([#724](https://github.com/oxoffice-dev/oxoffice/issues/724)) writes every extent. `spill` also takes the range (Rust
   `Spill::Range`, Python `spill="J2:J5"`, CLI `--spill-range J2:J5`, edit map `"spill": "J2:J5"`), kept as given. A range,
-  given or exact, starts at the cell and its other cells hold nothing, meet no other array formula and no merge (else
-  refused, as Excel would show `#SPILL!`), nor
+  given or exact, starts at the cell and its other cells hold nothing (or are cleared by the same call), meet no other
+  array formula and no merge (else refused, as Excel would show `#SPILL!`), nor
   another range or a value written by the same call; its own empty cells count as written, so its own call rewrites
   or retargets it.
 - **The edit map** (`oxoffice xlsx edit FILE --map EDITS.json -o OUT`): a JSON array applied in order, all or nothing,

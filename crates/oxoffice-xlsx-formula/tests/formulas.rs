@@ -7,8 +7,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use oxoffice_xlsx_formula::{
-    DefinedName, Lookups, NameLookup, NameScope, check_stored, function, move_references,
-    result_extent, to_displayed, to_stored, tokenize,
+    DefinedName, NameLookup, NameScope, check_stored, function, move_references, result_extent,
+    to_displayed, to_stored, tokenize,
 };
 use quick_xml::events::Event;
 
@@ -217,21 +217,11 @@ fn a_result_is_as_large_as_its_formula_and_inputs_say() {
             sheet: sheet.map(str::to_owned),
         })
     };
-    let used = |sheet: Option<&str>| match sheet {
-        None => Some((25, 3)),
-        Some("Data") => Some((40, 2)),
-        Some("Empty") => Some((0, 0)),
-        Some(_) => None,
-    };
-    let lookups = Lookups {
-        names: &names,
-        used: &used,
-    };
     for case in cases(include_str!("extents.tsv")) {
         let [formula, expected] = case[..] else {
             panic!("{case:?}")
         };
-        let found = result_extent(formula, &lookups).map_or("-".to_owned(), |extent| {
+        let found = result_extent(formula, &names).map_or("-".to_owned(), |extent| {
             let bound = if extent.exact { "" } else { "<=" };
             format!("{bound}{}x{}", extent.shape.rows, extent.shape.columns)
         });
@@ -261,14 +251,13 @@ fn range_shape(range: &str) -> (u32, u32) {
     (r1.abs_diff(r2) + 1, c1.abs_diff(c2) + 1)
 }
 
+/// Excel's own `ref` for each dynamic array of the corpus: an exact extent
+/// must be it, a bound must hold it. The corpus holds `SORT` only, so this
+/// guards exact shapes; the bounds are pinned by `extents.tsv` and the Mac
+/// checks of the spec.
 #[test]
 fn every_dynamic_array_excel_saved_fits_the_extent_its_formula_gives() {
     let names = |_: NameScope<'_>, _: &str| None;
-    let used = |_: Option<&str>| None;
-    let lookups = Lookups {
-        names: &names,
-        used: &used,
-    };
     let mut checked = 0;
     for workbook in corpus_workbooks() {
         let mut archive = zip::ZipArchive::new(File::open(&workbook).unwrap()).unwrap();
@@ -313,7 +302,7 @@ fn every_dynamic_array_excel_saved_fits_the_extent_its_formula_gives() {
                         };
                         checked += 1;
                         let saved = range_shape(&range);
-                        let fits = match result_extent(&formula, &lookups) {
+                        let fits = match result_extent(&formula, &names) {
                             None => true,
                             Some(extent) if extent.exact => {
                                 (extent.shape.rows, extent.shape.columns) == saved
@@ -361,10 +350,8 @@ fn names_that_nest_wide_and_deep_are_read_once_within_a_budget() {
             sheet: None,
         })
     };
-    let used = |_: Option<&str>| None;
     let extent = |names: &NameLookup<'_>, formula| {
-        result_extent(formula, &Lookups { names, used: &used })
-            .map(|extent| (extent.shape.rows, extent.shape.columns))
+        result_extent(formula, names).map(|extent| (extent.shape.rows, extent.shape.columns))
     };
     assert_eq!(extent(&wide, "Level1"), Some((3, 1)));
     assert_eq!(extent(&fresh, "X"), None);
@@ -566,11 +553,6 @@ fn no_text_makes_a_function_panic() {
                 sheet: Some(name.to_owned()),
             })
         };
-        let used = |_: Option<&str>| Some((u32::MAX, u32::MAX));
-        let lookups = Lookups {
-            names: &names,
-            used: &used,
-        };
-        let _ = result_extent(&text, &lookups);
+        let _ = result_extent(&text, &names);
     }
 }

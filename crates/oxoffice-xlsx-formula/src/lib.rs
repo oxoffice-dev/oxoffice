@@ -47,9 +47,7 @@ mod mover;
 mod parser;
 mod reference;
 
-pub use extent::{
-    DefinedName, Extent, Lookups, NameLookup, NameScope, Shape, UsedLookup, result_extent,
-};
+pub use extent::{DefinedName, Extent, NameLookup, NameScope, Shape, result_extent};
 pub use forms::{check_stored, to_displayed, to_stored};
 pub use functions::{Function, Prefix, function};
 pub use lexer::{Token, TokenKind, tokenize};
