@@ -2,7 +2,7 @@
 
 `../cases.tsv` holds every case the number format test checks, with the text Excel displayed for it. The
 cases are grouped in rounds, each checked once in Excel (round 1: 526 cases, round 2: 71, round 3: 24, round 4:
-484, round 5: 241, round 6: 1326, round 7: 60, round 8: 63, in Excel for Mac 16.115, en-US).
+484, round 5: 241, round 6: 1326, round 7: 60, round 8: 63, round 10: 9, in Excel for Mac 16.115, en-US).
 
 A round:
 
@@ -25,7 +25,7 @@ A round:
 5. A round that asks for month names, day names or the day period of a language (`[$-411]mmm"|"mmmm"|"mmmmm`,
    `ddd"|"dddd`, `h AM/PM`, as rounds 4 and 6 write them): add the language to `LANGUAGES` in `names.py`
    (the table each pinned tag is, the regions and text tags that read as it) and run `python3 -I names.py`: it
-   writes `src/names/tables.rs` from the pinned rows and stops on a tag whose rows differ from its table's or that
+   writes `src/names/tables.rs` from the pinned rows (CI runs it and fails on a diff) and stops on a tag whose rows differ from its table's or that
    no table claims.
 6. Run `cargo test -p oxoffice-numfmt`. A case where the crate differs from Excel on purpose gets its text in
    `ours` and the reason in `why`; any other difference is a defect to fix.

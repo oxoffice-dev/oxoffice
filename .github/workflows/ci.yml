@@ -67,6 +67,11 @@ jobs:
             echo "::error file=docs/LIMITATIONS.md::built at release, not committed: git rm docs/LIMITATIONS.md"
             exit 1
           fi
+      # The name tables of oxoffice-numfmt are written from its Excel rows.
+      - name: Name tables are what names.py writes
+        run: |
+          python3 -I crates/oxoffice-numfmt/tests/excel/names.py
+          git diff --exit-code -- crates/oxoffice-numfmt/src/names/tables.rs
       - name: Release highlights script works
         run: python3 scripts/release_highlights.py --check
       - name: Wheel licence files match the root ones

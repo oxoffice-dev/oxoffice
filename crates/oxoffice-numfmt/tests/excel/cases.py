@@ -561,6 +561,13 @@ for lcid in ["4", "7804", "7C04"]:
     add(f"r8p-{lcid}", f"[$-{lcid}]h AM/PM", MORNING, EVENING)
 
 
+# Round 10: a tag with a script and a region (what BCP 47 producers write): which of the two Excel reads, for Chinese.
+ROUND = 10
+for tag in ["zh-Hans-CN", "zh-Hans-SG", "zh-Hans-HK", "zh-Hans-TW", "zh-Hant-HK", "zh-Hant-TW", "zh-Hant-MO",
+            "zh-Hant-CN", "zh-Hant-SG"]:
+    add("r10t", f"[$-{tag}]{TAG_CODE}", SEPTEMBER)
+
+
 def check_values():
     for case_id, _code, value, _system, kind, _round in CASES:
         if kind != "number":

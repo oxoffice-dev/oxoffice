@@ -146,6 +146,10 @@ in Spain, `a.\u{a0}m.` in Colombia and Chile, `a. m.` in Mexico). Where a langua
 asked, it takes the table of its most widespread region (en-US, fr-FR, de-DE, es-ES, pt-BR) or, for a tag with no
 region, as asked. The one-letter month is the first letter of the full name, as written (`j`, `s`, `9`, `九`).
 
+A tag with a script and a region (`zh-Hans-CN`, `zh-Hant-HK`) reads as the pair, as Excel read it in round 10:
+`zh-Hans-CN` is zh-CN, `zh-Hans-SG` zh-SG, `zh-Hant-HK` zh-HK, `zh-Hant-TW` and `-MO` zh-TW, `zh-Hans-HK` zh-CN,
+`zh-Hans-TW` the tag `zh`, `zh-Hant-CN` and `-SG` `zh-Hant`; a pair not asked takes the script's table.
+
 A month name does not change next to a day number: Excel for Mac writes `15 январь` and `15 styczeń`, not the genitive
 (`января`, `stycznia`) that Russian and Polish system data holds, whatever the codes (`d mmmm`, `dd mmmm yyyy`,
 `mmmm d`, `d-mmm-yy`, `dddd, d mmmm yyyy`, a literal between): every month of both, five codes (round 6).

@@ -2794,3 +2794,12 @@ r8d-7C04-06	[$-7C04]ddd"|"dddd	45310	1900	number	週五|星期五
 r8d-7C04-07	[$-7C04]ddd"|"dddd	45311	1900	number	週六|星期六		
 r8p-7C04-01	[$-7C04]h AM/PM	45306.2145833333	1900	number	5 上午		
 r8p-7C04-02	[$-7C04]h AM/PM	45306.7119097222	1900	number	5 下午		
+r10t-01	[$-zh-Hans-CN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|9月|九月|九|2 下午		
+r10t-02	[$-zh-Hans-SG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|九月|九月|九|2 下午		
+r10t-03	[$-zh-Hans-HK]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|9月|九月|九|2 下午		
+r10t-04	[$-zh-Hans-TW]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|九月|九|2 下午		
+r10t-05	[$-zh-Hant-HK]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|九月|九月|九|2 下午		
+r10t-06	[$-zh-Hant-TW]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r10t-07	[$-zh-Hant-MO]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r10t-08	[$-zh-Hant-CN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r10t-09	[$-zh-Hant-SG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		

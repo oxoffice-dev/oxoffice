@@ -107,12 +107,23 @@ impl Language {
         }
         let mut parts = tag.split(['-', '_']);
         let primary = parts.next().unwrap_or_default();
-        // `es` with no region, `es-mx` with one: the key of a region table.
-        let key = match parts.next() {
-            Some(region) => format!("{primary}-{region}"),
-            None => primary.to_owned(),
-        };
-        let region = tables::REGIONS.iter().find(|(_, tag, _)| *tag == key);
+        // The keys of a region table, the most exact first: `es` with no
+        // region, `es-mx` with one, `zh-hans-cn` and then `zh-hans` with a
+        // script (four letters) as BCP 47 producers write it.
+        let mut keys = Vec::new();
+        match (parts.next(), parts.next()) {
+            (Some(script), region) if script.len() == 4 => {
+                if let Some(region) = region {
+                    keys.push(format!("{primary}-{script}-{region}"));
+                }
+                keys.push(format!("{primary}-{script}"));
+            }
+            (Some(region), _) => keys.push(format!("{primary}-{region}")),
+            (None, _) => keys.push(primary.to_owned()),
+        }
+        let region = keys
+            .iter()
+            .find_map(|key| tables::REGIONS.iter().find(|(_, tag, _)| tag == key));
         let language = tables::LANGUAGES.iter().find(|(_, tag, _)| *tag == primary);
         Some(
             region
@@ -177,6 +188,17 @@ mod tests {
             ("zh-mo", 0x1404),
             ("zh-hant", 0x7C04),
             ("zh", 0x7804),
+            // A script and a region, as BCP 47 producers write it: Excel read
+            // them as the LCID of the pair (round 10).
+            ("zh-hans-cn", 0x0804),
+            ("zh-hans-sg", 0x1004),
+            ("zh-hant-hk", 0x0C04),
+            ("zh-hant-tw", 0x0404),
+            ("zh-hant-mo", 0x1404),
+            ("zh-hans-hk", 0x0804),
+            ("zh-hans-tw", 0x7804),
+            ("zh-hant-cn", 0x7C04),
+            ("zh-hant_sg", 0x7C04),
             ("zh-hans", 0x0004),
             ("ko-kr", 0x0412),
             ("ko", 0x0012),
