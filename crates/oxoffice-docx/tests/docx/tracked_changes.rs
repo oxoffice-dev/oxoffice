@@ -1644,3 +1644,28 @@ fn a_rejected_section_change_keeps_its_references_first() {
         "{section}"
     );
 }
+
+/// A copy that ends the body, whose properties a session rewrites, gives
+/// every revision it brings an id of its own, one in its mark's properties
+/// too: the source keeps its ids.
+#[test]
+fn a_copy_ending_the_body_gives_its_revisions_ids_of_their_own() {
+    let source = r#"<w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:b/><w:rPrChange w:id="7" w:author="Other" w:date="2026-11-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:pPr><w:ins w:id="8" w:author="Other" w:date="2026-11-01T00:00:00Z"><w:r><w:t>Copied.</w:t></w:r></w:ins></w:p>"#;
+    let mut doc = doc_with_body(&(source.to_owned() + &paragraph(&run("Last."))));
+    let changes = changes();
+    doc.start_tracked_changes(&changes).unwrap();
+    let copy = doc.body_children()[0].clone();
+    let slot = doc.content_count();
+    let marked = doc.marked_inserted_block(copy, slot, true).unwrap();
+    doc.insert_body_block(slot, marked);
+    doc.stop_tracked_changes();
+    let xml = reopen(&mut doc).part_xml("/word/document.xml").unwrap();
+    let ids = xml
+        .match_indices(r#" w:id=""#)
+        .map(|(at, _)| xml[at + 7..].split('"').next().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let mut unique = ids.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
+}

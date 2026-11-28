@@ -2280,7 +2280,10 @@ pub(super) fn inserted_block_xml(
                     new.kept = [kept("rPr"), kept("sectPr")]
                         .into_iter()
                         .flatten()
-                        .map(|span| without_spans(xml, span, &mark_revisions).unwrap_or_default())
+                        .map(|span| {
+                            without_spans(xml, span, &mark_revisions, &renumbered)
+                                .unwrap_or_default()
+                        })
                         .collect();
                     let written = changed_props(&new, &old, &prefix, "pPr", "pPrChange", tracking);
                     edits.push(match word_children(paragraph, "pPr").next() {
@@ -2422,15 +2425,34 @@ fn holds_any(node: &Node, locals: &[&str]) -> bool {
     })
 }
 
-/// `xml[span]` without the `removed` spans inside it.
-fn without_spans(xml: &str, span: Range<usize>, removed: &[Range<usize>]) -> Option<String> {
+/// `xml[span]` without the `removed` spans inside it, and with the
+/// `replaced` ones inside it rewritten (the ids a copy brings).
+fn without_spans(
+    xml: &str,
+    span: Range<usize>,
+    removed: &[Range<usize>],
+    replaced: &[(Range<usize>, String)],
+) -> Option<String> {
+    let mut cuts = removed
+        .iter()
+        .map(|cut| (cut.clone(), ""))
+        .chain(
+            replaced
+                .iter()
+                .map(|(cut, text)| (cut.clone(), text.as_str())),
+        )
+        .filter(|(cut, _)| span.start <= cut.start && cut.end <= span.end)
+        .collect::<Vec<_>>();
+    cuts.sort_by_key(|(cut, _)| cut.start);
     let mut output = String::new();
     let mut at = span.start;
-    for cut in removed
-        .iter()
-        .filter(|cut| span.start <= cut.start && cut.end <= span.end)
-    {
+    for (cut, text) in cuts {
+        // A rewrite inside a removed span goes with it.
+        if cut.start < at {
+            continue;
+        }
         output.push_str(xml.get(at..cut.start)?);
+        output.push_str(text);
         at = cut.end;
     }
     output.push_str(xml.get(at..span.end)?);

@@ -283,6 +283,22 @@ def test_copied_tracked_content_keeps_one_mark_and_ids_of_its_own():
     assert [p.text for p in oxdocx.Document.from_bytes(after).paragraphs] == ["New.", "One.", "New.", "Two.", "New."]
 
 
+def test_copied_content_holding_a_deletion_is_refused():
+    # A paragraph whose mark another author deleted: rejecting the session would bring the copy's deletion back.
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    doc = oxdocx.Document()
+    for text in ("One.", "Two.", "Three."):
+        doc.add_paragraph(text)
+    doc.paragraphs[1].replace_xml(
+        f'<w:p xmlns:w="{w}"><w:pPr><w:rPr><w:del w:id="5" w:author="Other" w:date="{STAMP}"/></w:rPr></w:pPr>'
+        '<w:r><w:t>Two.</w:t></w:r></w:p>')
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+        with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+            doc.clone_content(doc.paragraphs[1], 0)
+    assert doc.to_bytes() == before and session.revision_ids == ()
+
+
 def test_an_insertion_outside_the_body_is_refused():
     doc = oxdocx.Document()
     doc.add_paragraph("Body.")
