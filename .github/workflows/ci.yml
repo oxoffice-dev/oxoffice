@@ -1,13 +1,18 @@
 name: CI
 
 # One set of jobs, the same on every pull request (drafts and stacked ones
-# included) and on every push to main: lint, the tests on Linux, macOS and
-# Windows, and the timings on Linux.
-# About 10 minutes, bounded by the slowest platform. The full sets (debug
-# assertions, the whole render corpus, every producer's copy in the
-# workflow walks, on Linux; every scaling call) run on demand in
-# full-checks.yml.
-# See specs/2026-11-22-one-ci-for-pull-requests-and-main.md.
+# included), on every push to main and on a dispatch: lint, the Rust and
+# the Python tests, and the timings.
+# - Pull request: Linux runs the whole Rust and Python suites, each split
+#   into shards on parallel runners; macOS and Windows run a smoke each
+#   (a build of the wheel, the Rust tests of the code that touches the
+#   operating system and a few Python test files). About 6 minutes.
+# - Push to main and dispatch: the whole suites, sharded the same way, on
+#   Linux, macOS and Windows. No schedule: the full sets (debug
+#   assertions, the whole render corpus, every producer's copy in the
+#   workflow walks, every scaling call) run on demand in full-checks.yml.
+# See specs/2026-11-28-faster-pull-request-ci.md and
+# specs/2026-11-22-one-ci-for-pull-requests-and-main.md.
 # The tests build without debug assertions (the `scaling` profile): with
 # them every edit re-checks the whole document, which doubles the Rust
 # tests and quadruples the Python ones. They stay in every local debug
@@ -104,12 +109,98 @@ jobs:
         run: cargo test --profile ci --locked -p oxoffice-pptx --no-default-features --features default-template --test pptx
 
 
-  test:
-    name: Test (${{ matrix.os }})
+  # What each platform runs, by event. Linux runs the whole suites on every
+  # run, split into shards that run side by side. macOS and Windows run the
+  # whole suites, sharded the same way, on every push to main and every
+  # dispatch, and a smoke of each on a pull request: the Rust tests of the
+  # code that touches the operating system (.config/nextest.toml, profile
+  # `smoke`) and a few Python test files, on a wheel built there.
+  # specs/2026-11-28-faster-pull-request-ci.md.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.plan.outputs.rust }}
+      python: ${{ steps.plan.outputs.python }}
+    steps:
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+
+          RUST_SHARDS, PYTHON_SHARDS = 3, 4
+          rust, python = [], []
+          for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
+              if os.environ["EVENT"] == "pull_request" and runner != "ubuntu-latest":
+                  rust.append({"os": runner, "label": "smoke", "args": "--profile smoke"})
+                  python.append({"os": runner, "label": "smoke", "shard": "", "fill": False})
+                  continue
+              for i in range(1, RUST_SHARDS + 1):
+                  rust.append({"os": runner, "label": f"{i}/{RUST_SHARDS}", "args": f"--partition hash:{i}/{RUST_SHARDS}"})
+              for i in range(1, PYTHON_SHARDS + 1):
+                  python.append({"os": runner, "label": f"{i}/{PYTHON_SHARDS}", "shard": f"{i}/{PYTHON_SHARDS}", "fill": i == 1})
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"rust={json.dumps(rust)}\npython={json.dumps(python)}\n")
+          PY
+
+  # `--lib` adds the unit tests in `src/`; oxoffice-py-support has no tests
+  # and its test binary needs libpython to link. The shards split the tests
+  # by a hash of their names (cargo-nextest, one process per test), the
+  # tests of one binary included.
+  # The render tests (specs/2026-11-21-render-fidelity.md) render the
+  # corpus without its long files on Linux and skip it on macOS and
+  # Windows (the render is the same bytes on every platform); the full
+  # checks render the whole corpus on Linux. The workflow tests read one
+  # corpus file each (specs/2026-11-21-consumer-workflows.md), every
+  # producer's copy in the full checks. Under CI an unset OXOFFICE_RENDER
+  # fails the render tests.
+  rust:
+    name: Rust tests (${{ matrix.os }}, ${{ matrix.label }})
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include: ${{ fromJSON(needs.plan.outputs.rust) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup show active-toolchain
+      # The one deployment target that the wheel build uses (maturin sets it
+      # for the wheel), so that the tests share its units.
+      - name: One deployment target for the wheel and the tests
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
+      # The cache `main` saves (the Python job's first shard, below):
+      # downloaded crates and the third-party crates of both builds.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: test
+          save-if: false
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2.90.11
+        with:
+          tool: cargo-nextest@0.9.152
+      - name: Rust tests
+        shell: bash
+        env:
+          OXOFFICE_RENDER: ${{ matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
+        run: cargo nextest run --cargo-profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*' ${{ matrix.args }}
+
+  # The wheel carries both the Python package and the `oxoffice` command, so
+  # one build serves the Python and the CLI checks. Every shard builds it
+  # itself (about a minute and a half with the cache): the shards then start
+  # together, with nothing to hand from one job to the next.
+  python:
+    name: Python tests (${{ matrix.os }}, ${{ matrix.label }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.python) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,23 +210,21 @@ jobs:
         with:
           python-version: "3.12"
       - run: rustup show active-toolchain
-      # maturin builds the wheel with MACOSX_DEPLOYMENT_TARGET=11.0. Set for
-      # the whole job, cargo test shares the units both builds have in common
-      # instead of rebuilding them because the variable differs (the workspace
-      # crates still compile twice: their features differ).
       - name: One deployment target for the wheel and the tests
         if: runner.os == 'macOS'
         shell: bash
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
+      # Only a run on main saves the cache (the first shard of each platform,
+      # on a key miss, and it compiles the Rust tests too, last of its steps,
+      # so that the cache holds both builds); pull requests and the full
+      # checks restore it. Keeping both builds in one cache is what the one
+      # job of before did; full-checks.yml restores this key too.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        id: cache
         with:
-          # full-checks.yml's scaling jobs and writings shard restore this
-          # cache (same profile), its other jobs only the downloaded crates.
           shared-key: test
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: ${{ github.ref == 'refs/heads/main' }}
-      # The wheel carries both the Python package and the `oxoffice` command,
-      # so one build serves the Python and the CLI checks.
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.fill }}
+          cache-on-failure: ${{ github.ref == 'refs/heads/main' && matrix.fill }}
       - name: Build the wheel
         shell: bash
         run: |
@@ -149,25 +238,28 @@ jobs:
           oxoffice --version
           oxoffice docx --help > /dev/null
           oxoffice pptx --help > /dev/null
-      # The render tests (specs/2026-11-21-render-fidelity.md) render the
-      # corpus without its long files on Linux and skip it on macOS and
-      # Windows (the render is the same bytes on every platform); the full
-      # checks render the whole corpus on Linux. The workflow tests read one
-      # corpus file each (specs/2026-11-21-consumer-workflows.md), every
-      # producer's copy in the full checks. Under CI an unset OXOFFICE_RENDER fails the
-      # render tests.
-      # `--lib` adds the unit tests in `src/`; oxoffice-py-support has no
-      # tests and its test binary needs libpython to link.
-      - name: Rust tests
+      # One worker per CPU (pytest-xdist). Tests write only under tmp_path.
+      # OXOFFICE_SHARD (conftest.py) runs one of the shards of the tests. The
+      # smoke of macOS and Windows on a pull request: what saves, loads and
+      # reports through files, paths, the command line and the platform's
+      # dates, fonts and characters.
+      - name: Python tests
         shell: bash
         env:
-          OXOFFICE_RENDER: ${{ matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
-        run: cargo test --profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*'
-      # One worker per CPU (pytest-xdist). Tests write only under tmp_path.
-      - name: Python tests
-        if: ${{ !cancelled() }}
+          OXOFFICE_SHARD: ${{ matrix.shard }}
+        run: |
+          tests=crates/oxoffice-py/tests
+          if [ -n "$OXOFFICE_SHARD" ]; then
+            python -m pytest "$tests" -q -n auto
+          else
+            python -m pytest -q -n auto "$tests/test_save.py" "$tests/test_package_errors.py" "$tests/test_limitations.py" \
+              "$tests/test_missing_glyphs.py" "$tests/test_xlsx_workbook.py" "$tests/test_non_xml_characters.py" \
+              "$tests/test_core_property_dates.py"
+          fi
+      - name: Compile the Rust tests into the cache
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && matrix.fill && steps.cache.outputs.cache-hit != 'true' }}
         shell: bash
-        run: python -m pytest crates/oxoffice-py/tests -q -n auto
+        run: cargo test --profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*' --no-run
 
   # The QUICK scaling sets time one call of each area, the edits of #6
   # among them, at N and 16N (docx) or 4N (pptx), and the reads of a

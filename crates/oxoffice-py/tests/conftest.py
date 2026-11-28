@@ -8,9 +8,14 @@ OXOFFICE_SCALING picks what runs:
 - unset: only the checks that every mutating call is timed, and each timed docx call made once, untimed
 - quick: also the calls of each module's QUICK set, for pull requests and main (ci.yml)
 - full: every call, in the full checks (full-checks.yml)
+
+OXOFFICE_SHARD=I/N runs the I-th of N shards of the tests (the CI of pull requests and main runs them on parallel
+runners, specs/2026-11-28-faster-pull-request-ci.md): each test goes to the shard its id's checksum picks, so the
+shards' union is every test and a new test moves no other.
 """
 import os
 import threading
+import zlib
 
 import pytest
 
@@ -42,9 +47,27 @@ def selected(item):
     return SCALING == "quick" and item.callspec.params["name"] in item.module.QUICK
 
 
+def shard():
+    spec = os.environ.get("OXOFFICE_SHARD", "")
+    if not spec:
+        return None
+    try:
+        index, count = map(int, spec.split("/"))
+        assert 1 <= index <= count
+    except (ValueError, AssertionError):
+        raise pytest.UsageError(f"OXOFFICE_SHARD={spec!r}: use I/N, with 1 <= I <= N") from None
+    return index - 1, count
+
+
+def in_shard(item, wanted):
+    return wanted is None or zlib.crc32(item.nodeid.encode()) % wanted[1] == wanted[0]
+
+
 def pytest_collection_modifyitems(config, items):
-    kept = [item for item in items if selected(item)]
-    config.hook.pytest_deselected(items=[item for item in items if not selected(item)])
+    wanted = shard()
+    kept = [item for item in items if selected(item) and in_shard(item, wanted)]
+    kept_ids = {id(item) for item in kept}
+    config.hook.pytest_deselected(items=[item for item in items if id(item) not in kept_ids])
     items[:] = kept
 
 
