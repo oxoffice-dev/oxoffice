@@ -1,0 +1,9 @@
+{
+  "id": "xlsx-spill-range-google",
+  "format": "xlsx",
+  "area": "formulas",
+  "title": "A spilling formula written without its range shows one value in Google Sheets",
+  "symptom": "a dynamic array formula written to spill from its cell alone (Python `set_formula(..., spill=True)` or `Formula(..., spill=True)`, Rust `Spill::Anchor`, CLI `set --formula --spill`, edit map `\"spill\": true`) is stored on that cell (`<f t=\"array\" ref=\"J2\">`, as XlsxWriter stores it): Excel spills it over its result when it opens the workbook, but Google Sheets takes the extent from `ref` and shows the first value alone. The extent is the size of the formula's result, which only an evaluator knows; the evaluator of the second set of #365 will write it",
+  "workaround": "give the range the result fills, from the formula's cell, its other cells empty: `spill=\"J2:J5\"` in Python, `Spill::Range` in Rust, `--spill J2:J5` or `\"spill\": \"J2:J5\"` in the CLI; Google Sheets then spills it over that range, as Excel does",
+  "issue": 715
+}

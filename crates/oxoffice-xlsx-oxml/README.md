@@ -19,6 +19,8 @@ is kept as written.
   frozen panes (`sheetViews`), written at their place in the sheet.
 - The sheet lists of `docProps/app.xml`, dropped when the sheet list changes.
 - Page setup elements, typed and written as read.
+- `metadata.xml`: the block that marks a dynamic array formula, found or
+  appended, the part made when the workbook has none.
 - Comments, read only: notes, threaded comments and the persons who wrote
   them.
 - Transitional and Strict Open XML.

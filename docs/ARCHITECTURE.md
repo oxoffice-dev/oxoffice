@@ -62,14 +62,17 @@ crates/
   oxoffice-xlsx-oxml     the parts of a workbook: workbook, shared strings,
                          styles, worksheets (the row index and the splice
                          writer, column widths, frozen panes), page setup,
-                         comments read only; Strict read as Transitional
+                         the dynamic array block of metadata.xml, comments
+                         read only; Strict read as Transitional
   oxoffice-xlsx          the facade: Workbook, Worksheet, WorksheetMut, Cell;
                          open and save without loss, refusals told by
                          content; cells read with their displayed text and
-                         resolved style, comments, CSV and Markdown; a new
-                         workbook from the text files under assets/default/,
-                         sheets added, column widths, row heights and frozen
-                         panes
+                         resolved style, comments, CSV and Markdown; cells
+                         written (values, dates, formulas, clears, bulk
+                         writes, CSV imports, styles and number formats); a
+                         new workbook from the text files under
+                         assets/default/, sheets added, column widths, row
+                         heights and frozen panes
   oxoffice-xlsx-cli      the `oxoffice xlsx` commands (library)
   oxoffice-xlsx-py       the `oxoffice.xlsx` bindings (library)
 
@@ -112,13 +115,20 @@ workbook: the workbook part read at open; a sheet indexed at its first read
   comments read the first time a cell needs them; an edit stages the rows
   and children of the root it changed beside the sheet (a call that changes
   nothing stages nothing) and the first one marks the workbook edited; a
+  write of cells (write.rs, one path for every write) reads the rows it
+  writes, refuses what Excel would repair before it changes anything,
+  dissolves the shared formula groups it writes into (reading their rows
+  once), and appends to the shared strings, the styles (records compared on
+  what they say, an identical one reused, format.rs) and metadata.xml, each
+  created when the workbook lacks it, the reads seeing what it wrote; a
   save copies every part no edit changed, splices the staged rows and
   children into the sheet's source bytes, writes the workbook part with its
-  new records and, when the workbook holds a formula, asks Excel to
-  calculate it on open (`fullCalcOnLoad`) with the calculation chain
-  removed; a package signature the save no longer matches is marked
-  invalidated, as docx and pptx do; a workbook nobody edited saves as it was
-  read
+  new records and the parts edits appended to and, when the workbook holds
+  a formula, asks Excel to calculate it on open (`fullCalcOnLoad`) with the
+  calculation chain removed (`drop_cached_values` drops every formula's
+  cached value too, for LibreOffice); a package signature the save no
+  longer matches is marked invalidated, as docx and pptx do; a workbook
+  nobody edited saves as it was read
   new workbook: Workbook::new assembles a package from text files and the
   package writer's sorted entries and fixed ZIP date give the same bytes
   every time

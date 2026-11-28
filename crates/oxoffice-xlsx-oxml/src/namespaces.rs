@@ -55,11 +55,21 @@ pub mod rel_types {
         "http://schemas.microsoft.com/office/2017/10/relationships/threadedComment";
     /// The people who wrote threaded comments, from the workbook part.
     pub const PERSON: &str = "http://schemas.microsoft.com/office/2017/10/relationships/person";
+    /// The cell and value metadata of the workbook (`metadata.xml`): what
+    /// marks a dynamic array formula.
+    pub const SHEET_METADATA: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata";
+    /// A table of a sheet.
+    pub const TABLE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table";
+    /// A pivot table of a sheet.
+    pub const PIVOT_TABLE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/pivotTable";
 }
 
 /// The Strict namespaces and relationship types, each beside its
 /// Transitional twin.
-const STRICT_TWINS: [(&str, &str); 13] = [
+const STRICT_TWINS: [(&str, &str); 16] = [
     (STRICT_MAIN, MAIN),
     (
         "http://purl.oclc.org/ooxml/officeDocument/relationships",
@@ -104,6 +114,18 @@ const STRICT_TWINS: [(&str, &str); 13] = [
     (
         "http://purl.oclc.org/ooxml/officeDocument/relationships/comments",
         rel_types::COMMENTS,
+    ),
+    (
+        "http://purl.oclc.org/ooxml/officeDocument/relationships/sheetMetadata",
+        rel_types::SHEET_METADATA,
+    ),
+    (
+        "http://purl.oclc.org/ooxml/officeDocument/relationships/table",
+        rel_types::TABLE,
+    ),
+    (
+        "http://purl.oclc.org/ooxml/officeDocument/relationships/pivotTable",
+        rel_types::PIVOT_TABLE,
     ),
     (
         "http://purl.oclc.org/ooxml/officeDocument/relationships/extendedProperties",
@@ -159,6 +181,8 @@ pub mod content_types {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml";
     pub const CALC_CHAIN: &str =
         "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml";
+    pub const SHEET_METADATA: &str =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml";
 }
 
 #[cfg(test)]

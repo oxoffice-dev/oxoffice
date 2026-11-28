@@ -1,6 +1,8 @@
 //! The array formulas and data tables of a sheet, found by the cell: what
 //! gives a cell of their range its kind, its range and its staleness.
 
+use std::collections::{BTreeMap, HashMap};
+
 use oxoffice_xlsx_oxml::worksheet::{RangeFormula, RangeFormulaKind};
 use oxoffice_xlsx_oxml::{CellRange, CellRef};
 
@@ -15,78 +17,114 @@ pub(crate) struct RangeEntry {
     pub volatile: bool,
 }
 
-/// The ranges of a sheet, sorted by first row, with an implicit balanced
-/// tree over them that keeps the last row each subtree reaches: the ranges
-/// over a row are found in a time that follows their number and the log of
-/// the sheet's, whatever their heights.
-#[derive(Clone, Debug, Default)]
+/// The height classes of the ranges: class `k` holds the ranges `2^k` to
+/// `2^(k+1) - 1` rows tall, and a sheet has `2^20` rows.
+const CLASSES: usize = 21;
+
+/// The ranges of a sheet, each in the class of its height, by first row and
+/// column. A range of class `k` over row `r` starts at most `2^(k+1) - 2`
+/// rows above it, so the ranges over a row are found by one ordered scan per
+/// class, in a time that follows their number and the log of the sheet's,
+/// whatever their heights; an edit adds or removes one in the log of their
+/// number, so a write never rebuilds them.
+#[derive(Clone, Debug)]
 pub(crate) struct RangeLookup {
-    entries: Vec<RangeEntry>,
-    reach: Vec<u32>,
+    classes: Vec<BTreeMap<(u32, u32), RangeEntry>>,
+    /// Where each range is, by the cell that holds its formula.
+    anchors: HashMap<CellRef, (usize, (u32, u32))>,
+}
+
+impl Default for RangeLookup {
+    fn default() -> Self {
+        RangeLookup {
+            classes: vec![BTreeMap::new(); CLASSES],
+            anchors: HashMap::new(),
+        }
+    }
+}
+
+/// The class of a range's height.
+fn class_of(range: &CellRange) -> usize {
+    let height = range.last.row - range.first.row + 1;
+    ((u32::BITS - 1 - height.leading_zeros()) as usize).min(CLASSES - 1)
+}
+
+/// The first row a range of `class` over row `row` may start at.
+fn lowest_start(class: usize, row: u32) -> u32 {
+    row.saturating_sub((1u32 << (class + 1)).saturating_sub(2))
 }
 
 impl RangeLookup {
     pub(crate) fn new(formulas: &[RangeFormula]) -> Self {
-        let mut entries: Vec<RangeEntry> = formulas
+        let mut lookup = RangeLookup::default();
+        for formula in formulas {
+            lookup.insert(formula);
+        }
+        lookup
+    }
+
+    /// Adds the range of `formula`; of two ranges at the same place, the
+    /// first one stays.
+    pub(crate) fn insert(&mut self, formula: &RangeFormula) {
+        let range = formula.range;
+        let class = class_of(&range);
+        let key = (range.first.row, range.first.column);
+        let entry = RangeEntry {
+            range,
+            kind: match formula.kind {
+                RangeFormulaKind::Array => FormulaKind::Array,
+                RangeFormulaKind::DataTable => FormulaKind::DataTable,
+            },
+            volatile: formula.volatile,
+        };
+        if let std::collections::btree_map::Entry::Vacant(vacant) = self.classes[class].entry(key) {
+            vacant.insert(entry);
+            self.anchors.insert(formula.cell, (class, key));
+        }
+    }
+
+    /// Removes the range whose formula `anchor` holds, if any.
+    pub(crate) fn remove(&mut self, anchor: CellRef) {
+        if let Some((class, key)) = self.anchors.remove(&anchor) {
+            self.classes[class].remove(&key);
+        }
+    }
+
+    /// The ranges that may reach rows `first..=last`, class by class.
+    fn candidates(&self, first: u32, last: u32) -> impl Iterator<Item = &RangeEntry> {
+        self.classes
             .iter()
-            .map(|formula| RangeEntry {
-                range: formula.range,
-                kind: match formula.kind {
-                    RangeFormulaKind::Array => FormulaKind::Array,
-                    RangeFormulaKind::DataTable => FormulaKind::DataTable,
-                },
-                volatile: formula.volatile,
+            .enumerate()
+            .filter(|(_, ranges)| !ranges.is_empty())
+            .flat_map(move |(class, ranges)| {
+                ranges
+                    .range((lowest_start(class, first), 0)..=(last, u32::MAX))
+                    .map(|(_, entry)| entry)
             })
-            .collect();
-        entries.sort_by_key(|entry| (entry.range.first.row, entry.range.first.column));
-        let mut reach = vec![0; entries.len()];
-        fill_reach(&entries, &mut reach, 0, entries.len());
-        RangeLookup { entries, reach }
     }
 
     /// The ranges over `row`, by first column.
     pub(crate) fn in_row(&self, row: u32) -> RowRanges<'_> {
-        let mut found = Vec::new();
-        self.collect(row, 0, self.entries.len(), &mut found);
+        let mut found: Vec<&RangeEntry> = self
+            .candidates(row, row)
+            .filter(|entry| entry.range.last.row >= row)
+            .collect();
         found.sort_by_key(|entry| entry.range.first.column);
         RowRanges(found)
-    }
-
-    fn collect<'a>(&'a self, row: u32, low: usize, high: usize, found: &mut Vec<&'a RangeEntry>) {
-        if low >= high {
-            return;
-        }
-        let middle = (low + high) / 2;
-        if self.reach[middle] < row {
-            return;
-        }
-        self.collect(row, low, middle, found);
-        let entry = &self.entries[middle];
-        if entry.range.first.row <= row {
-            if entry.range.last.row >= row {
-                found.push(entry);
-            }
-            self.collect(row, middle + 1, high, found);
-        }
     }
 
     /// The range holding `cell`.
     pub(crate) fn find(&self, cell: CellRef) -> Option<RangeEntry> {
         self.in_row(cell.row).find(cell.column)
     }
-}
 
-/// The last row the ranges of `low..high` reach, kept at each subtree's
-/// middle.
-fn fill_reach(entries: &[RangeEntry], reach: &mut [u32], low: usize, high: usize) -> u32 {
-    if low >= high {
-        return 0;
+    /// The ranges that share a cell with `range`.
+    pub(crate) fn meeting(&self, range: CellRange) -> Vec<RangeEntry> {
+        self.candidates(range.first.row, range.last.row)
+            .filter(|entry| entry.range.intersects(&range))
+            .copied()
+            .collect()
     }
-    let middle = (low + high) / 2;
-    let left = fill_reach(entries, reach, low, middle);
-    let right = fill_reach(entries, reach, middle + 1, high);
-    reach[middle] = entries[middle].range.last.row.max(left).max(right);
-    reach[middle]
 }
 
 /// The ranges over one row, by first column.
@@ -144,5 +182,29 @@ mod tests {
         assert!(tall.volatile && tall.kind == FormulaKind::Array);
         let table = lookup.find(CellRef::parse("E2").unwrap()).unwrap();
         assert_eq!(table.kind, FormulaKind::DataTable);
+        let meeting = |range: &str| -> Vec<String> {
+            let mut found: Vec<String> = lookup
+                .meeting(CellRange::parse(range).unwrap())
+                .iter()
+                .map(|entry| entry.range.to_string())
+                .collect();
+            found.sort();
+            found
+        };
+        assert_eq!(meeting("A999:C1002"), ["A1:A1000"]);
+        // An edit adds and removes a range in place.
+        let mut lookup = lookup.clone();
+        lookup.remove(CellRef::parse("A1").unwrap());
+        lookup.insert(&formula("G3:H900", RangeFormulaKind::Array, false));
+        assert_eq!(lookup.find(CellRef::parse("A500").unwrap()), None);
+        assert_eq!(
+            lookup
+                .find(CellRef::parse("H700").unwrap())
+                .map(|entry| entry.range.to_string())
+                .as_deref(),
+            Some("G3:H900")
+        );
+        assert_eq!(meeting("C2:E9"), ["B2:C3", "E2"]);
+        assert!(meeting("F1:G9").is_empty());
     }
 }

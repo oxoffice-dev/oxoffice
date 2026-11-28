@@ -151,6 +151,10 @@ pub struct Cell {
     /// The number as a date and time, when the number format shows a date,
     /// a time or both (not a duration such as `[h]:mm`).
     pub datetime: Option<DateTime>,
+    /// The number as a duration, when the number format shows one (`[h]:mm`,
+    /// `[mm]:ss`): serial days of 86,400 seconds, to the millisecond. `None`
+    /// for a negative number, which Excel shows as `####`.
+    pub duration: Option<std::time::Duration>,
     pub style: Arc<ResolvedStyle>,
 }
 

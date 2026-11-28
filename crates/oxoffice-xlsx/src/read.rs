@@ -30,12 +30,30 @@ use crate::{DateSystem, Error, Lazy, Result, Workbook, Worksheet};
 /// a smaller range rather than filling memory with empty cells.
 pub const MAX_BULK_CELLS: u64 = 10_000_000;
 
-/// The parts of a workbook its cells read, each read once.
+/// The parts of a workbook its cells read, each read once. An edit writes
+/// into the shared strings and styles read here, so reads see it.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ReadParts {
-    shared_strings: Lazy<Option<SharedStrings>>,
-    styles: Lazy<Arc<StyleTable>>,
+    pub(crate) shared_strings: Lazy<Option<SharedStrings>>,
+    pub(crate) styles_xml: Lazy<Option<StylesXml>>,
+    pub(crate) styles: Lazy<Arc<StyleTable>>,
     persons: Lazy<Vec<Person>>,
+}
+
+/// A lazily read value, or the error its read gave, as the facade's error
+/// naming `part`, which is only looked for when there is an error.
+fn lazy_named<T>(
+    cell: &Lazy<T>,
+    part: impl FnOnce() -> String,
+    read: impl FnOnce() -> std::result::Result<T, String>,
+) -> Result<&T> {
+    match cell.get_or_init(read) {
+        Ok(value) => Ok(value),
+        Err(message) => Err(Error::MalformedPart {
+            part: part(),
+            message: message.clone(),
+        }),
+    }
 }
 
 /// A lazily read value, or the error its read gave, as the facade's error.
@@ -55,8 +73,9 @@ fn lazy<'a, T>(
 impl Workbook {
     /// Whether the cached values of formulas may be out of date: the file
     /// asks for a recalculation on open (`calcPr fullCalcOnLoad`, as
-    /// XlsxWriter writes it over placeholder results), or calculation is
-    /// manual and was not run at the last save.
+    /// XlsxWriter writes it over placeholder results), calculation is
+    /// manual and was not run at the last save, or an edit changed a
+    /// workbook that holds a formula (which then asks for the calculation).
     pub fn recalculation_needed(&self) -> bool {
         self.workbook.calc_pr().is_some_and(|calc| {
             calc.full_calc_on_load() || (calc.calc_mode() == "manual" && !calc.calc_on_save())
@@ -64,7 +83,7 @@ impl Workbook {
     }
 
     /// The part the first workbook relationship of `rel_type` names.
-    fn related_part(&self, rel_type: &str) -> Option<String> {
+    pub(crate) fn related_part(&self, rel_type: &str) -> Option<String> {
         related_part(&self.package, &self.workbook_part, rel_type)
     }
 
@@ -77,12 +96,15 @@ impl Workbook {
             })
     }
 
-    /// The shared strings, `None` for a workbook without them.
-    fn shared_strings(&self) -> Result<Option<&SharedStrings>> {
-        let part = self.related_part(rel_types::SHARED_STRINGS);
-        let name = part.clone().unwrap_or_default();
-        lazy(&self.read.shared_strings, &name, || {
-            let Some(part) = part else {
+    /// The shared strings, `None` for a workbook without them. Only the
+    /// first call looks for the part.
+    pub(crate) fn shared_strings(&self) -> Result<Option<&SharedStrings>> {
+        let name = || {
+            self.related_part(rel_types::SHARED_STRINGS)
+                .unwrap_or_default()
+        };
+        lazy_named(&self.read.shared_strings, name, || {
+            let Some(part) = self.related_part(rel_types::SHARED_STRINGS) else {
                 return Ok(None);
             };
             let bytes = self
@@ -96,21 +118,36 @@ impl Workbook {
         .map(Option::as_ref)
     }
 
-    /// The cell formats, resolved once.
-    pub(crate) fn style_table(&self) -> Result<&StyleTable> {
-        let part = self.related_part(rel_types::STYLES);
-        let name = part.clone().unwrap_or_default();
-        lazy(&self.read.styles, &name, || {
-            let styles = match &part {
+    /// The styles part, `None` for a workbook without one. Only the first
+    /// call looks for the part.
+    pub(crate) fn styles_xml(&self) -> Result<Option<&StylesXml>> {
+        let name = || self.related_part(rel_types::STYLES).unwrap_or_default();
+        lazy_named(&self.read.styles_xml, name, || {
+            match &self.related_part(rel_types::STYLES) {
                 Some(part) => {
                     let bytes = self
                         .package
                         .get_part_shared(part)
                         .ok_or_else(|| format!("package part is missing: {part}"))?;
-                    Some(StylesXml::parse(Arc::clone(bytes)).map_err(|error| error.to_string())?)
+                    StylesXml::parse(Arc::clone(bytes))
+                        .map(Some)
+                        .map_err(|error| error.to_string())
                 }
-                None => None,
-            };
+                None => Ok(None),
+            }
+        })
+        .map(Option::as_ref)
+    }
+
+    /// The cell formats, resolved once: a cell read after the first costs no
+    /// look for a part.
+    pub(crate) fn style_table(&self) -> Result<&StyleTable> {
+        if let Some(Ok(table)) = self.read.styles.get() {
+            return Ok(table);
+        }
+        let styles = self.styles_xml()?;
+        let name = || self.related_part(rel_types::STYLES).unwrap_or_default();
+        lazy_named(&self.read.styles, name, || {
             // A theme that does not read, like one the workbook lacks,
             // leaves the theme colours unresolved: no cell read needs it.
             let theme = self
@@ -118,7 +155,7 @@ impl Workbook {
                 .and_then(|theme| self.package.get_part_shared(&theme))
                 .and_then(|bytes| theme_colors(bytes).ok())
                 .unwrap_or_default();
-            Ok(Arc::new(StyleTable::build(styles.as_ref(), &theme)))
+            Ok(Arc::new(StyleTable::build(styles, &theme)))
         })
         .map(Arc::as_ref)
     }
@@ -163,12 +200,31 @@ fn related_part(package: &OpcPackage, source: &str, rel_type: &str) -> Option<St
         .map(|relationship| OpcPackage::resolve_rel_target(source, &relationship.target))
 }
 
+/// The parts every relationship of `rel_type` from `source` names, Strict
+/// types read as their Transitional twins.
+pub(crate) fn related_parts(package: &OpcPackage, source: &str, rel_type: &str) -> Vec<String> {
+    package
+        .get_part_rels(source)
+        .map(|relationships| {
+            relationships
+                .items
+                .iter()
+                .filter(|relationship| {
+                    transitional_relationship_type(&relationship.rel_type) == rel_type
+                        && !is_external(relationship)
+                })
+                .map(|relationship| OpcPackage::resolve_rel_target(source, &relationship.target))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The cells of a row with their 0-based columns: `r`, or the column after
 /// the cell before. A column written twice keeps its first cell. Cells
 /// written in order, as every producer writes them, cost one comparison
 /// each; the columns seen are kept in a set from the first cell out of
 /// order.
-fn columns(row: &CT_Row) -> Vec<(u32, &CT_Cell)> {
+pub(crate) fn columns(row: &CT_Row) -> Vec<(u32, &CT_Cell)> {
     let mut cells: Vec<(u32, &CT_Cell)> = Vec::new();
     let mut seen: Option<HashSet<u32>> = None;
     let mut highest: Option<u32> = None;
@@ -195,7 +251,7 @@ fn columns(row: &CT_Row) -> Vec<(u32, &CT_Cell)> {
 }
 
 /// Whether a cell holds a value or a formula.
-fn holds_content(cell: &CT_Cell) -> bool {
+pub(crate) fn holds_content(cell: &CT_Cell) -> bool {
     cell.formula().is_some()
         || cell.inline_string().is_some()
         || cell.value().is_some_and(|value| !value.is_empty())
@@ -259,6 +315,19 @@ fn iso_serial(text: &str, system: oxoffice_numfmt::DateSystem) -> Option<f64> {
         second,
         millisecond,
     })
+}
+
+/// The number of a cell as a duration, when its format shows one (`[h]:mm`):
+/// days of 86,400 seconds, rounded to the millisecond; none when negative.
+fn duration(value: &Value, format: &CellFormat) -> Option<std::time::Duration> {
+    let Value::Number(number) = value else {
+        return None;
+    };
+    if format.date_kind != Some(DateKind::Duration) || *number < 0.0 {
+        return None;
+    }
+    let milliseconds = (number * 86_400_000.0).round();
+    (milliseconds < u64::MAX as f64).then(|| std::time::Duration::from_millis(milliseconds as u64))
 }
 
 /// What reads the cells of one worksheet.
@@ -389,33 +458,6 @@ impl<'a> SheetReader<'a> {
         })
     }
 
-    /// The style record of a cell the sheet does not write: its row's when
-    /// the row has one, else its column's, else record 0.
-    fn absent_style(&self, row: Option<&CT_Row>, column: u32) -> Result<u32> {
-        if let Some(s) = row.filter(|row| row.custom_format()).and_then(CT_Row::s) {
-            return Ok(s);
-        }
-        // The columns as an edit staged them, else as written.
-        let cols = match self.sheet.entry().edits.children.get("cols") {
-            Some(Some(staged)) => Element::parse(staged),
-            Some(None) => return Ok(0),
-            None => match self.index.child("cols") {
-                Some(cols) => Element::parse(&self.xml[cols.range.clone()]),
-                None => return Ok(0),
-            },
-        }
-        .map_err(|error| self.malformed(error.to_string()))?;
-        Ok(cols
-            .elements_named("col")
-            .find(|col| {
-                let min = col.tag.u32("min").unwrap_or(0);
-                let max = col.tag.u32("max").unwrap_or(0);
-                (min..=max).contains(&(column + 1))
-            })
-            .and_then(|col| col.tag.u32("style"))
-            .unwrap_or(0))
-    }
-
     /// The cell at `address`, written as `cell` in `row` or absent, in the
     /// array formula's or data table's `range` when one holds it. A cell of
     /// such a range without its own formula takes the range's kind, range
@@ -429,7 +471,7 @@ impl<'a> SheetReader<'a> {
     ) -> Result<Cell> {
         let s = match cell {
             Some(cell) => cell.s(),
-            None => self.absent_style(row, address.column)?,
+            None => self.sheet.absent_style(row, address.column)?,
         };
         // The styles are read at the first cell, not for a used range.
         let format = self.sheet.workbook.style_table()?.get(s);
@@ -457,6 +499,7 @@ impl<'a> SheetReader<'a> {
             address,
             text: self.displayed(&value, format),
             datetime: self.datetime(&value, format),
+            duration: duration(&value, format),
             formula: stored.as_deref().map(oxoffice_xlsx_formula::to_displayed),
             stored_formula: stored,
             formula_kind: kind,
@@ -557,6 +600,46 @@ impl<'a> SheetReader<'a> {
 }
 
 impl<'a> Worksheet<'a> {
+    /// The style record of a cell the sheet does not write: its row's when
+    /// the row has one, else its column's, else record 0.
+    pub(crate) fn absent_style(&self, row: Option<&CT_Row>, column: u32) -> Result<u32> {
+        if let Some(s) = row.filter(|row| row.custom_format()).and_then(CT_Row::s) {
+            return Ok(s);
+        }
+        Ok(self
+            .column_styles()?
+            .iter()
+            .find(|(min, max, _)| (*min..=*max).contains(&column))
+            .map_or(0, |(_, _, style)| *style))
+    }
+
+    /// The styles of the columns, as an edit staged them or as written:
+    /// each `col` span's first and last 0-based column and style.
+    pub(crate) fn column_styles(&self) -> Result<Vec<(u32, u32, u32)>> {
+        let (xml, index) = self.index()?;
+        let malformed = |error: oxoffice_xlsx_oxml::OxmlError| Error::MalformedPart {
+            part: self.entry().part.clone(),
+            message: error.to_string(),
+        };
+        let cols = match self.entry().edits.children.get("cols") {
+            Some(Some(staged)) => Element::parse(staged),
+            Some(None) => return Ok(Vec::new()),
+            None => match index.child("cols") {
+                Some(cols) => Element::parse(&xml[cols.range.clone()]),
+                None => return Ok(Vec::new()),
+            },
+        }
+        .map_err(malformed)?;
+        Ok(cols
+            .elements_named("col")
+            .filter_map(|col| {
+                let min = col.tag.u32("min")?.checked_sub(1)?;
+                let max = col.tag.u32("max")?.checked_sub(1)?;
+                Some((min, max, col.tag.u32("style").unwrap_or(0)))
+            })
+            .collect())
+    }
+
     /// What reads this sheet's cells; a sheet that holds no cells is
     /// refused.
     fn reader(&self) -> Result<SheetReader<'a>> {
@@ -566,10 +649,7 @@ impl<'a> Worksheet<'a> {
             sheet: *self,
             xml,
             index,
-            ranges: self
-                .entry()
-                .ranges
-                .get_or_init(|| RangeLookup::new(&index.range_formulas)),
+            ranges: self.range_lookup()?,
             options: self.workbook.format_options(),
             recalculation: self.workbook.recalculation_needed(),
         })

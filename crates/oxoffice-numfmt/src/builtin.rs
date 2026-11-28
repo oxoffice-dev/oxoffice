@@ -14,6 +14,17 @@ pub fn builtin_code(id: u32, locale: Locale) -> Option<&'static str> {
     }
 }
 
+/// Whether built-in format `id` shows the same code in every language of
+/// Excel, so that a workbook may name it rather than write the code: the
+/// numbers, percentages, scientific and fraction formats, text, and the
+/// duration `[h]:mm:ss` (46, shown and kept as 46 by Excel in French). The
+/// dates, the times of day, currencies and accounting formats are each
+/// language's own (Excel in French saves `hh:mm:ss` as id 21 and shows id 44
+/// in euros), and so are the ids Excel shows as General.
+pub fn is_locale_independent(id: u32) -> bool {
+    matches!(id, 0..=4 | 9..=13 | 46 | 48 | 49)
+}
+
 fn en_us(id: u32) -> Option<&'static str> {
     Some(match id {
         0 => "General",
