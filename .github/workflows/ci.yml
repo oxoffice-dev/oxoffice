@@ -130,17 +130,19 @@ jobs:
           python3 - <<'PY'
           import json, os
 
-          RUST_SHARDS, PYTHON_SHARDS = 3, 4
+          # Shards per platform: (Rust, Python). The org runs 5 macOS jobs at
+          # once: one push to main takes no more than that (2 + 3).
+          SHARDS = {"ubuntu-latest": (3, 4), "macos-latest": (2, 3), "windows-latest": (3, 4)}
           rust, python = [], []
-          for runner in ("ubuntu-latest", "macos-latest", "windows-latest"):
+          for runner, (rust_shards, python_shards) in SHARDS.items():
               if os.environ["EVENT"] == "pull_request" and runner != "ubuntu-latest":
                   rust.append({"os": runner, "label": "smoke", "args": "--profile smoke"})
                   python.append({"os": runner, "label": "smoke", "shard": "", "fill": False})
                   continue
-              for i in range(1, RUST_SHARDS + 1):
-                  rust.append({"os": runner, "label": f"{i}/{RUST_SHARDS}", "args": f"--partition hash:{i}/{RUST_SHARDS}"})
-              for i in range(1, PYTHON_SHARDS + 1):
-                  python.append({"os": runner, "label": f"{i}/{PYTHON_SHARDS}", "shard": f"{i}/{PYTHON_SHARDS}", "fill": i == 1})
+              for i in range(1, rust_shards + 1):
+                  rust.append({"os": runner, "label": f"{i}/{rust_shards}", "args": f"--partition hash:{i}/{rust_shards}"})
+              for i in range(1, python_shards + 1):
+                  python.append({"os": runner, "label": f"{i}/{python_shards}", "shard": f"{i}/{python_shards}", "fill": i == 1})
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"rust={json.dumps(rust)}\npython={json.dumps(python)}\n")
           PY
@@ -184,11 +186,27 @@ jobs:
       - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2.90.11
         with:
           tool: cargo-nextest@0.9.152
+      # `--no-tests=fail`: a shard or a filter that selects nothing is a
+      # failure. The smoke profile also has a floor: a rename that drops a
+      # clause of its filter (.config/nextest.toml) fails here instead of
+      # shrinking the smoke unseen.
       - name: Rust tests
         shell: bash
         env:
           OXOFFICE_RENDER: ${{ matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
-        run: cargo nextest run --cargo-profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*' ${{ matrix.args }}
+          SMOKE_FLOOR: "206"
+        run: |
+          set -euo pipefail
+          select=(--cargo-profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*')
+          if [ "${{ matrix.label }}" = smoke ]; then
+            count="$(cargo nextest list "${select[@]}" ${{ matrix.args }} --message-format oneline | grep -c . || true)"
+            echo "smoke profile: $count tests (floor $SMOKE_FLOOR)"
+            if [ "$count" -lt "$SMOKE_FLOOR" ]; then
+              echo "::error::the smoke profile selects $count tests, under its floor of $SMOKE_FLOOR: a clause of its filter in .config/nextest.toml matches nothing any more"
+              exit 1
+            fi
+          fi
+          cargo nextest run "${select[@]}" ${{ matrix.args }} --no-tests=fail
 
   # The wheel carries both the Python package and the `oxoffice` command, so
   # one build serves the Python and the CLI checks. Every shard builds it
@@ -215,8 +233,8 @@ jobs:
         shell: bash
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
       # Only a run on main saves the cache (the first shard of each platform,
-      # on a key miss, and it compiles the Rust tests too, last of its steps,
-      # so that the cache holds both builds); pull requests and the full
+      # on a key miss, and it compiles the Rust tests too, right after the
+      # wheel, so that the cache holds both builds); pull requests and the full
       # checks restore it. Keeping both builds in one cache is what the one
       # job of before did; full-checks.yml restores this key too.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -224,13 +242,26 @@ jobs:
         with:
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' && matrix.fill }}
-          cache-on-failure: ${{ github.ref == 'refs/heads/main' && matrix.fill }}
+          # Off: a cache is saved only once both builds succeeded (the step
+          # after the compile turns it on for the rest of the job, so that a
+          # failing test still saves it).
+          cache-on-failure: false
       - name: Build the wheel
         shell: bash
         run: |
           python -m pip install --require-hashes -r .github/requirements/ci.txt
           maturin build --profile scaling --locked -m crates/oxoffice-py/Cargo.toml -o dist
           python -m pip install dist/*.whl
+      - name: Compile the Rust tests into the cache
+        if: ${{ github.ref == 'refs/heads/main' && matrix.fill && steps.cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: cargo test --profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*' --no-run
+      # Both builds are in: the cache is worth saving whatever the tests say
+      # (rust-cache's post step runs on success, or when this is 'true').
+      - name: Save the cache even if a test fails
+        if: ${{ github.ref == 'refs/heads/main' && matrix.fill }}
+        shell: bash
+        run: echo "CACHE_ON_FAILURE=true" >> "$GITHUB_ENV"
       - name: Smoke test
         shell: bash
         run: |
@@ -256,10 +287,6 @@ jobs:
               "$tests/test_missing_glyphs.py" "$tests/test_xlsx_workbook.py" "$tests/test_non_xml_characters.py" \
               "$tests/test_core_property_dates.py"
           fi
-      - name: Compile the Rust tests into the cache
-        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && matrix.fill && steps.cache.outputs.cache-hit != 'true' }}
-        shell: bash
-        run: cargo test --profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*' --no-run
 
   # The QUICK scaling sets time one call of each area, the edits of #6
   # among them, at N and 16N (docx) or 4N (pptx), and the reads of a

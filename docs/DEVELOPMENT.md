@@ -342,15 +342,18 @@ merge variant).
     `OXOFFICE_SHARD=N/4` (`conftest.py`: a test goes to the shard its
     id's checksum picks). Every Python shard builds the wheel itself.
     The number of shards is in the `plan` job of `ci.yml`.
-  - **On a pull request, Linux runs the whole suites** (about 4 minutes
-    for the tests), **macOS and Windows a smoke** each: the Rust tests of the code that touches
+  - **On a pull request, Linux runs the whole suites** (the Rust shards
+    take 6 to 7 minutes, the Python shards about 4), **macOS and Windows a
+    smoke** each: the Rust tests of the code that touches
     the operating system (`cargo nextest run --profile smoke`, the profile
     is in `.config/nextest.toml`: files written in place, paths, the
     command line, system fonts, the save and stack tests of the facades)
     and a few Python test files, on a wheel built there. A pull request
-    takes about 5 to 6 minutes, bounded by lint.
+    took 6.9 minutes on the run that measured it (17 to 20 before),
+    bounded by the Linux Rust shards, then lint (5.5 minutes).
   - **On every push to `main`, the whole suites run on Linux, macOS and
-    Windows**, sharded the same way: a failure that only one platform shows
+    Windows**, sharded the same way (macOS in at most 5 jobs, the org's
+    cap on concurrent macOS jobs): a failure that only one platform shows
     outside the smoke shows there, after the merge. No test run is
     scheduled.
   A push to `main` runs in full, beside the runs before it, so every merge
@@ -381,7 +384,10 @@ merge variant).
   `workflow_call`, granting `issues: write`.
 - **Merge only once `gh pr checks` is all green**: `main` requires no status
   check, so nothing stops a merge whose macOS or Windows run is red or still
-  queued.
+  queued. The smoke of those two is not the whole suites, so a failure only
+  one platform shows lands on `main` by design, and a red CI run on `main`
+  opens no issue: whoever merged watches the run on `main`
+  (`gh run list --branch main`) and fixes a red one the same day.
 - **A change of base to `main` runs nothing**, whether GitHub moves a stacked
   pull request when its base merges or the author changes it by hand. Push a
   new commit, or close and reopen the pull request, so that its last run is
@@ -399,7 +405,8 @@ merge variant).
   full checks restore them and save nothing. One key, `test`, holds the
   third-party crates of the wheel build and of the test build; on a key
   miss, the first Python shard of each platform on `main` compiles the Rust
-  tests after its own tests, so that it saves both. A new pull request used to save
+  tests right after its wheel, so that it saves both, and only once both
+  builds have succeeded. A new pull request used to save
   about 2.25 GB of caches that only its own later runs could read: five of
   them filled the 10 GB of the Actions cache and evicted `main`'s.
 - **Lint runs clippy without debug assertions** too (`cargo clippy

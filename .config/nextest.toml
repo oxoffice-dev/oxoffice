@@ -13,9 +13,12 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 # What macOS and Windows run on a pull request, `--profile smoke`: the code
 # that touches the operating system (files written and replaced in place,
 # paths, the command line's streams and its stack, system fonts), with the
-# save and stack tests of the facades. The whole suites run on every push to
+# save and stack tests of the facades (docx has no stack test: three tests
+# that save a document to a file). The whole suites run on every push to
 # main. Counted over the whole workspace, so that it builds with the same
-# features as the shards and shares their cache.
+# features as the shards and shares their cache. ci.yml fails the job when
+# the profile selects fewer tests than its floor (SMOKE_FLOOR): a clause that
+# matches nothing after a rename would shrink it unseen.
 [profile.smoke]
 default-filter = '''
     package(oxoffice-opc)
@@ -26,4 +29,5 @@ default-filter = '''
   | package(oxoffice-pdf)
   | (binary_id(oxoffice-pptx::pptx) & test(/^(save|stack)::/))
   | (binary_id(oxoffice-xlsx::xlsx) & test(/^(saving|signatures)::/))
+  | (binary_id(oxoffice-docx::docx) & test(/^(mail_merge_and_templates::(a_dotx_template_filled|a_document_with_a_vba)|pictures::a_removed_picture_leaves)/))
 '''
