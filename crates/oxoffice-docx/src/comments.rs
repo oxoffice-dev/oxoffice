@@ -5060,9 +5060,32 @@ impl Document {
                 updates.insert(part, xml);
             }
         }
-        // Preserve the existing last-paragraph-only law. In particular a
-        // present imported commentsIds part is never rewritten. If its old
-        // target cannot remain valid, this staged publication refuses here.
+        // The durable ids follow the last paragraph too: an entry of
+        // commentsIds is keyed by it (W10). Its other bytes stay as written.
+        if let Some((part, entries)) = self.comment_companion(&COMMENT_IDS)? {
+            let source_spellings = entries
+                .iter()
+                .filter_map(|entry| {
+                    let old_value = entry.attributes.get("paraId")?;
+                    let new_value = rebind.get(&old_value.to_ascii_uppercase())?;
+                    Some((old_value.clone(), new_value.clone()))
+                })
+                .collect::<BTreeMap<_, _>>();
+            if !source_spellings.is_empty() {
+                let source = self
+                    .package
+                    .get_part(&part)
+                    .expect("checked companion source");
+                let xml = crate::field::patch_ref_comment_identity_attributes(
+                    source,
+                    &BTreeMap::new(),
+                    &source_spellings,
+                    &BTreeMap::new(),
+                )?;
+                updates.insert(part, xml);
+            }
+        }
+        // A companion whose old target cannot remain valid refuses here.
         self.comment_owned_graph_at(&self.doc_part_name, Some(next), Some(&updates))?;
         for (part, xml) in updates {
             self.package.set_part(&part, xml);
