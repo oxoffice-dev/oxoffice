@@ -535,6 +535,67 @@ def test_a_note_goes_with_the_only_reference_a_resolution_removes():
     assert [p.text for p in accepted.story_paragraphs if p.kind == "footnote"] == [" The note."]
 
 
+def word_note(reference=True, content=True, second=False, table=False):
+    """A document whose footnote Word wrote inserted: its reference (id 9) and its content (id 8) in w:ins as asked,
+    a second plain reference to it, a table in it."""
+    doc = oxdocx.Document()
+    doc.add_paragraph("Body.")
+    note = doc.add_footnote(doc.paragraphs[0], "The note.")
+    if table:
+        note.add_table(1, 1)
+    def wrap(xml, pattern, number):
+        return re.sub(pattern, rf'<w:ins w:id="{number}" w:author="Other" w:date="{STAMP}">\1</w:ins>', xml, count=1)
+    reference = r"(<w:r>(?:(?!</w:r>).)*<w:footnoteReference [^>]*/>(?:(?!</w:r>).)*</w:r>)"
+    if content:
+        paragraph = note.paragraphs[0]
+        paragraph.replace_xml(wrap(paragraph.xml, r"(<w:r>(?:(?!</w:r>).)*<w:footnoteRef/>.*</w:r>)", 8))
+    body = doc.paragraphs[0].xml
+    plain = re.search(reference, body).group(1)
+    if reference:
+        body = wrap(body, reference, 9)
+    if second:
+        body = body.replace("</w:p>", plain + "</w:p>")
+    doc.paragraphs[0].replace_xml(body)
+    return oxdocx.Document.from_bytes(doc.to_bytes())
+
+
+def footnotes(doc):
+    return [p.text for p in doc.story_paragraphs if p.kind == "footnote"]
+
+
+def test_a_note_goes_only_once_it_holds_nothing_and_nothing_shows_it():
+    # In two calls, either order: the note goes with the second.
+    for first, second in ((9, 8), (8, 9)):
+        doc = word_note()
+        doc.reject_revision_id(first)
+        assert footnotes(doc), first
+        doc.reject_revision_id(second)
+        assert footnotes(doc) == [], (first, second)
+    # It stays while another reference shows it, while it keeps its text, and while it holds a table.
+    for shape, doc in (("second reference", word_note(second=True)), ("text kept", word_note(content=False)),
+                       ("table", word_note(table=True))):
+        doc.reject_all()
+        assert footnotes(doc), shape
+    # A tracked note goes when its author's changes are rejected; a tracked endnote too, and its ids are its own.
+    for add in (lambda doc: doc.add_footnote(doc.paragraphs[0], "The note."),
+                lambda doc: doc.add_endnote(doc.paragraphs[0], "The note.")):
+        doc = oxdocx.Document()
+        doc.add_paragraph("Body.")
+        with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+            add(doc)
+        ids = [r.id for r in doc.revisions]
+        assert len(ids) == len(set(ids)) and set(session.revision_ids) <= set(ids)
+        doc.reject_revisions_by_author(AUTHOR)
+        assert [p.kind for p in doc.story_paragraphs if p.kind != "body"] == []
+    # A reference added any other way stays refused in an insertion.
+    doc = word_note(reference=False, content=False)
+    body = doc.paragraphs[0].xml
+    added = re.search(r"(<w:r>(?:(?!</w:r>).)*<w:footnoteReference [^>]*/>(?:(?!</w:r>).)*</w:r>)", body).group(1)
+    with doc.track_changes(AUTHOR, timestamp=STAMP):
+        with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+            doc.paragraphs[0].replace_xml(body.replace("</w:p>", added + "</w:p>"))
+
+
 def test_an_insertion_outside_the_body_is_refused():
     doc = oxdocx.Document()
     doc.add_paragraph("Body.")

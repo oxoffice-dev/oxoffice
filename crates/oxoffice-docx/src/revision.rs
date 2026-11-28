@@ -741,10 +741,11 @@ impl Document {
         }
         candidate.reconcile_comment_removal(self)?;
         candidate = crate::comparison::reopen_staged(candidate)?;
-        // A note whose only reference this resolution removed, and whose
-        // text it removed too, goes with it (the rejection of a note inserted
-        // with its reference, the acceptance of one deleted with it), as Word
-        // removes a comment whose anchor goes (W9).
+        // A note this resolution leaves with no reference and no text goes
+        // (the rejection of a note inserted with its reference, the
+        // acceptance of one deleted with it, in one call or in two), as Word
+        // removes a comment whose anchor goes (W9). A note that keeps its
+        // text stays, as a compared version may hold it alone.
         if publication.is_none() {
             let after = candidate
                 .package
@@ -768,24 +769,32 @@ impl Document {
                 {
                     continue;
                 }
-                let kept = note_reference_ids(&after, kind)?;
-                for id in note_reference_ids(&source, kind)?.difference(&kept) {
-                    let story = match kind {
-                        crate::StoryKind::Footnote => candidate.footnote_story(*id)?,
-                        _ => candidate.endnote_story(*id)?,
-                    };
-                    // A note the resolution emptied too: written as inserted
-                    // or deleted with its reference. A note that keeps its
-                    // text stays, as a compared version may hold it alone.
-                    let emptied = match &story {
-                        Some(story) => candidate.story_items(story)?.iter().all(|item| {
-                            item.text()
-                                .ok()
-                                .flatten()
-                                .is_none_or(|text| text.trim().is_empty())
-                        }),
-                        None => false,
-                    };
+                // Read only when the resolution touched a note or a document
+                // holding references: a resolution elsewhere costs nothing.
+                let Some(part) = crate::comparison::note_part_name(&candidate, note)? else {
+                    continue;
+                };
+                let local: &[u8] = match kind {
+                    crate::StoryKind::Footnote => b"footnoteReference",
+                    _ => b"endnoteReference",
+                };
+                let referenced = source.windows(local.len()).any(|window| window == local);
+                if !referenced && note_part_resolved.get(&note) != Some(&true) {
+                    continue;
+                }
+                let (before, now) = (
+                    note_reference_ids(&source, kind)?,
+                    note_reference_ids(&after, kind)?,
+                );
+                let notes = candidate
+                    .package
+                    .get_part(&part)
+                    .map(|xml| normal_note_ids(xml, kind))
+                    .transpose()?
+                    .unwrap_or_default();
+                for id in notes.difference(&now) {
+                    let emptied = note_holds_nothing(&candidate, kind, *id)
+                        && (before.contains(id) || !note_holds_nothing(self, kind, *id));
                     if emptied {
                         match kind {
                             crate::StoryKind::Footnote => candidate.remove_footnote(*id)?,
@@ -808,6 +817,74 @@ impl Document {
         self.commit_staged_mutation(candidate);
         Ok(resolved)
     }
+}
+
+/// The ids of the normal notes of `kind` (no `w:type`: no separator) the
+/// notes part `xml` holds.
+fn normal_note_ids(xml: &[u8], kind: crate::StoryKind) -> Result<HashSet<i32>> {
+    let local: &[u8] = match kind {
+        crate::StoryKind::Footnote => b"footnote",
+        _ => b"endnote",
+    };
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
+    let mut ids = HashSet::new();
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| Error::Other(format!("notes: {error}")))?
+        {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == local =>
+            {
+                let mut id = None;
+                let mut typed = false;
+                for attribute in element.attributes().flatten() {
+                    match attribute.key.local_name().as_ref() {
+                        b"id" => {
+                            id = oxoffice_core::xml::attribute_text(&attribute)
+                                .ok()
+                                .and_then(|value| value.trim().parse().ok());
+                        }
+                        b"type" => typed = true,
+                        _ => {}
+                    }
+                }
+                if let (Some(id), false) = (id, typed) {
+                    ids.insert(id);
+                }
+            }
+            Event::Eof => return Ok(ids),
+            _ => {}
+        }
+    }
+}
+
+/// Whether note `id` of `kind` of `document` holds nothing a reader sees:
+/// only paragraphs, with no text, no drawing and no object. A note it cannot
+/// read, or one holding a table, counts as holding something.
+fn note_holds_nothing(document: &Document, kind: crate::StoryKind, id: i32) -> bool {
+    let story = match kind {
+        crate::StoryKind::Footnote => document.footnote_story(id),
+        _ => document.endnote_story(id),
+    };
+    let Ok(Some(story)) = story else {
+        return false;
+    };
+    let Ok(items) = document.story_items(&story) else {
+        return false;
+    };
+    items.iter().all(|item| {
+        item.kind() == crate::StoryItemKind::Paragraph
+            && item
+                .text()
+                .is_ok_and(|text| text.as_deref().is_none_or(|text| text.trim().is_empty()))
+            && item.xml().is_ok_and(|xml| {
+                !["<w:drawing", "<w:pict", "<w:object"].iter().any(|shown| {
+                    xml.windows(shown.len())
+                        .any(|window| window == shown.as_bytes())
+                })
+            })
+    })
 }
 
 /// The ids of the notes of `kind` the references of `xml`, a story part,
