@@ -759,6 +759,62 @@ fn area(range: CellRange) -> u64 {
         * u64::from(range.last.column - range.first.column + 1)
 }
 
+/// Whether each write is of nothing over a cell that holds nothing: a
+/// write that changes nothing.
+fn noop_clears(writes: &[CellWrite], rows: &BTreeMap<u32, CT_Row>) -> Vec<bool> {
+    let mut held: HashMap<u32, HashMap<u32, bool>> = HashMap::new();
+    writes
+        .iter()
+        .map(|write| {
+            write.content == Some(Content::Empty)
+                && !held
+                    .entry(write.at.row)
+                    .or_insert_with(|| {
+                        rows.get(&write.at.row)
+                            .map(|row| {
+                                columns(row)
+                                    .into_iter()
+                                    .map(|(column, cell)| (column, holds_content(cell)))
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    })
+                    .get(&write.at.column)
+                    .copied()
+                    .unwrap_or(false)
+        })
+        .collect()
+}
+
+/// Turns each cell of `dissolved` into a plain formula with its text.
+fn dissolve(
+    rows: &mut BTreeMap<u32, CT_Row>,
+    indexes: &HashMap<u32, RowIndex>,
+    dissolved: &[(CellRef, String)],
+) {
+    for (at, text) in dissolved {
+        let Some(row) = rows.get_mut(&at.row) else {
+            continue;
+        };
+        let Some(&child) = indexes
+            .get(&at.row)
+            .and_then(|index| index.columns.get(&at.column))
+        else {
+            continue;
+        };
+        if let RowChild::Cell(cell) = &mut row.children[child] {
+            for child in &mut cell.children {
+                if let CellChild::Formula(formula) = child {
+                    for attribute in ["t", "ref", "si"] {
+                        formula.tag.set(attribute, None);
+                    }
+                    formula.text = text.clone();
+                }
+            }
+        }
+    }
+}
+
 impl Workbook {
     /// The directory of the workbook part, `/xl`, where new parts go.
     fn part_directory(&self) -> &str {
@@ -1197,31 +1253,7 @@ impl WorksheetMut<'_> {
 
         // What the write reads, and what it refuses, before anything changes.
         let mut rows = self.rows_in(first, last)?;
-        let noop: Vec<bool> = {
-            let mut cells: HashMap<u32, HashMap<u32, bool>> = HashMap::new();
-            writes
-                .iter()
-                .map(|write| {
-                    write.content == Some(Content::Empty)
-                        && !cells
-                            .entry(write.at.row)
-                            .or_insert_with(|| {
-                                rows.get(&write.at.row)
-                                    .map(|row| {
-                                        columns(row)
-                                            .into_iter()
-                                            .map(|(column, cell)| (column, holds_content(cell)))
-                                            .rev()
-                                            .collect()
-                                    })
-                                    .unwrap_or_default()
-                            })
-                            .get(&write.at.column)
-                            .copied()
-                            .unwrap_or(false)
-                })
-                .collect()
-        };
+        let noop = noop_clears(&writes, &rows);
         self.check_contents(&writes, &noop, region)?;
         for (write, noop) in writes.iter_mut().zip(&noop) {
             if *noop {
@@ -1253,121 +1285,21 @@ impl WorksheetMut<'_> {
         {
             self.workbook.read_metadata()?;
         }
-        // Each row's cells by column, read once; the style each cell has, or
-        // the one a cell the sheet does not write takes.
+        // Each row's cells by column, read once.
         let indexes: HashMap<u32, RowIndex> = rows
             .iter()
             .map(|(&number, row)| (number, RowIndex::new(row)))
             .collect();
-        let mut column_styles = None;
-        let mut old_styles = Vec::with_capacity(writes.len());
-        let mut old_strings = Vec::with_capacity(writes.len());
-        for write in &writes {
-            let row = rows.get(&write.at.row);
-            let cell = indexes
-                .get(&write.at.row)
-                .and_then(|index| index.cell(row?, write.at.column));
-            old_strings.push(cell.is_some_and(|cell| cell.t() == "s" && cell.value().is_some()));
-            old_styles.push(match cell {
-                Some(cell) => cell.s(),
-                None => match row.filter(|row| row.custom_format()).and_then(CT_Row::s) {
-                    Some(s) => s,
-                    None => {
-                        if column_styles.is_none() {
-                            column_styles = Some(self.read().column_styles()?);
-                        }
-                        let styles: &Vec<(u32, u32, u32)> =
-                            column_styles.as_ref().expect("just read");
-                        styles
-                            .iter()
-                            .find(|(min, max, _)| (*min..=*max).contains(&write.at.column))
-                            .map_or(0, |(_, _, style)| *style)
-                    }
-                },
-            });
-        }
+        let (old_styles, old_strings) = self.old_cells(&writes, &rows, &indexes)?;
 
-        // The styles: each style the cells had, patched once.
-        let mut new_styles: Vec<Option<u32>> = Vec::with_capacity(writes.len());
-        let mut patched: HashMap<(u32, Option<&str>), u32> = HashMap::new();
-        for (write, &old) in writes.iter().zip(&old_styles) {
-            let new = match (write.style, write.date_code) {
-                (StyleChange::Remove, _) => None,
-                (StyleChange::Patch, _) => {
-                    let patch = patch.expect("a patch with a patched write");
-                    Some(match patched.get(&(old, None)) {
-                        Some(&new) => new,
-                        None => {
-                            let new = self.workbook.styled(old, patch)?;
-                            patched.insert((old, None), new);
-                            new
-                        }
-                    })
-                }
-                (StyleChange::Keep, Some(code)) => {
-                    let general =
-                        self.workbook.style_table()?.get(old).style.number_format == "General";
-                    if general {
-                        Some(match patched.get(&(old, Some(code))) {
-                            Some(&new) => new,
-                            None => {
-                                let patch = StylePatch {
-                                    number_format: Some(code.to_owned()),
-                                    ..StylePatch::default()
-                                };
-                                let new = self.workbook.styled(old, &patch)?;
-                                patched.insert((old, Some(code)), new);
-                                new
-                            }
-                        })
-                    } else {
-                        Some(old)
-                    }
-                }
-                (StyleChange::Keep, None) => Some(old),
-            };
-            new_styles.push(new);
-        }
-
-        // The contents as written: texts in the shared strings, spilling
-        // formulas' metadata.
-        let mut strings: Vec<Option<usize>> = Vec::with_capacity(writes.len());
-        let mut spill_cm = None;
-        for write in &writes {
-            strings.push(match &write.content {
-                Some(Content::Text(text)) => Some(self.workbook.shared_string(text)?),
-                _ => None,
-            });
-            if matches!(write.content, Some(Content::Formula { spill: true, .. }))
-                && spill_cm.is_none()
-            {
-                spill_cm = Some(self.workbook.dynamic_array_cell()?);
-            }
-        }
+        // The styles, each style the cells had patched once, and the contents
+        // as written: texts in the shared strings, spilling formulas' metadata.
+        let new_styles = self.new_styles(&writes, &old_styles, patch)?;
+        let (strings, spill_cm) = self.written_contents(&writes)?;
 
         // The rows: the groups dissolved, then each cell written.
         let prefix = self.prefix()?;
-        for (at, text) in &dissolved {
-            let Some(row) = rows.get_mut(&at.row) else {
-                continue;
-            };
-            let Some(child) = indexes
-                .get(&at.row)
-                .and_then(|index| index.columns.get(&at.column))
-            else {
-                continue;
-            };
-            if let RowChild::Cell(cell) = &mut row.children[*child] {
-                for child in &mut cell.children {
-                    if let CellChild::Formula(formula) = child {
-                        for attribute in ["t", "ref", "si"] {
-                            formula.tag.set(attribute, None);
-                        }
-                        formula.text = text.clone();
-                    }
-                }
-            }
-        }
+        dissolve(&mut rows, &indexes, &dissolved);
         let mut arrays: BTreeMap<CellRef, Option<RangeFormula>> = BTreeMap::new();
         let mut touched: Option<CellRange> = None;
         let mut formula_written = false;
@@ -1515,6 +1447,118 @@ impl WorksheetMut<'_> {
             self.widen_dimension(touched)?;
         }
         Ok(())
+    }
+
+    /// The style each written cell has, or the one a cell the sheet does not
+    /// write takes (its row's, else its column's), and whether it holds a
+    /// shared string.
+    fn old_cells(
+        &self,
+        writes: &[CellWrite],
+        rows: &BTreeMap<u32, CT_Row>,
+        indexes: &HashMap<u32, RowIndex>,
+    ) -> Result<(Vec<u32>, Vec<bool>)> {
+        let mut column_styles: Option<Vec<(u32, u32, u32)>> = None;
+        let mut styles = Vec::with_capacity(writes.len());
+        let mut strings = Vec::with_capacity(writes.len());
+        for write in writes {
+            let row = rows.get(&write.at.row);
+            let cell = indexes
+                .get(&write.at.row)
+                .and_then(|index| index.cell(row?, write.at.column));
+            strings.push(cell.is_some_and(|cell| cell.t() == "s" && cell.value().is_some()));
+            styles.push(match cell {
+                Some(cell) => cell.s(),
+                None => match row.filter(|row| row.custom_format()).and_then(CT_Row::s) {
+                    Some(s) => s,
+                    None => {
+                        if column_styles.is_none() {
+                            column_styles = Some(self.read().column_styles()?);
+                        }
+                        column_styles
+                            .iter()
+                            .flatten()
+                            .find(|(min, max, _)| (*min..=*max).contains(&write.at.column))
+                            .map_or(0, |(_, _, style)| *style)
+                    }
+                },
+            });
+        }
+        Ok((styles, strings))
+    }
+
+    /// The style each written cell takes (`None`: the default, `s` gone):
+    /// the call's patch, or a date's format in a cell shown as General, each
+    /// style the cells had patched once.
+    fn new_styles(
+        &mut self,
+        writes: &[CellWrite],
+        old_styles: &[u32],
+        patch: Option<&StylePatch>,
+    ) -> Result<Vec<Option<u32>>> {
+        let mut styles = Vec::with_capacity(writes.len());
+        let mut patched: HashMap<(u32, Option<&str>), u32> = HashMap::new();
+        for (write, &old) in writes.iter().zip(old_styles) {
+            let code = match (write.style, write.date_code) {
+                (StyleChange::Remove, _) => {
+                    styles.push(None);
+                    continue;
+                }
+                (StyleChange::Patch, _) => None,
+                (StyleChange::Keep, Some(code))
+                    if self.workbook.style_table()?.get(old).style.number_format == "General" =>
+                {
+                    Some(code)
+                }
+                (StyleChange::Keep, _) => {
+                    styles.push(Some(old));
+                    continue;
+                }
+            };
+            let new = match patched.get(&(old, code)) {
+                Some(&new) => new,
+                None => {
+                    let new = match code {
+                        Some(code) => {
+                            let patch = StylePatch {
+                                number_format: Some(code.to_owned()),
+                                ..StylePatch::default()
+                            };
+                            self.workbook.styled(old, &patch)?
+                        }
+                        None => self
+                            .workbook
+                            .styled(old, patch.expect("a patch with a patched write"))?,
+                    };
+                    patched.insert((old, code), new);
+                    new
+                }
+            };
+            styles.push(Some(new));
+        }
+        Ok(styles)
+    }
+
+    /// The shared string of each text written, and the `cm` of a spilling
+    /// formula when one is written.
+    fn written_contents(
+        &mut self,
+        writes: &[CellWrite],
+    ) -> Result<(Vec<Option<usize>>, Option<u32>)> {
+        let mut strings = Vec::with_capacity(writes.len());
+        let mut spill_cm = None;
+        for write in writes {
+            strings.push(match &write.content {
+                Some(Content::Text(text)) => Some(self.workbook.shared_string(text)?),
+                _ => None,
+            });
+            if matches!(write.content, Some(Content::Formula { spill: true, .. }))
+                && spill_cm.is_none()
+            {
+                spill_cm = Some(self.workbook.dynamic_array_cell()?);
+            }
+        }
+        Ok((strings, spill_cm))
     }
 
     /// The shared formula groups `writes` write content into, each read
