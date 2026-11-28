@@ -4,6 +4,7 @@
 mod cell;
 mod page_setup;
 mod style;
+mod write;
 
 use std::path::PathBuf;
 
@@ -11,10 +12,11 @@ use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 
-use oxoffice_xlsx::{CsvOptions, Error, MAX_BULK_CELLS, SaveOptions};
+use oxoffice_xlsx::{Clear, CsvImport, CsvOptions, Error, MAX_BULK_CELLS, SaveOptions, StylePatch};
 
 use crate::cell::{PyCell, PyComment, Values};
 use crate::page_setup::PyPageSetup;
+use crate::write::Inputs;
 
 const MODULE: &str = "oxoffice.xlsx";
 
@@ -228,7 +230,8 @@ impl PyWorkbook {
     }
 
     /// Whether the cached values of formulas may be out of date: the file
-    /// asks for a recalculation on open.
+    /// asks for a recalculation on open, or an edit changed a workbook that
+    /// holds a formula.
     #[getter]
     fn recalculation_needed(&self) -> bool {
         self.inner.recalculation_needed()
@@ -242,33 +245,56 @@ impl PyWorkbook {
     }
 
     /// Saves to `path`. A workbook opened from a file refuses to replace that
-    /// file unless `overwrite_source` is true.
-    #[pyo3(signature = (path, *, overwrite_source = false))]
-    fn save(&self, py: Python<'_>, path: PathBuf, overwrite_source: bool) -> PyResult<()> {
-        let options = SaveOptions { overwrite_source };
+    /// file unless `overwrite_source` is true; `drop_cached_values` leaves
+    /// every formula to be calculated on open.
+    #[pyo3(signature = (path, *, overwrite_source = false, drop_cached_values = false))]
+    fn save(
+        &self,
+        py: Python<'_>,
+        path: PathBuf,
+        overwrite_source: bool,
+        drop_cached_values: bool,
+    ) -> PyResult<()> {
+        let options = SaveOptions {
+            overwrite_source,
+            drop_cached_values,
+        };
         py.detach(|| self.inner.save_with_options(path, options))
             .map_err(|error| xlsx_to_pyerr(py, error))
     }
 
     /// The bytes of the workbook as it stands.
-    fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+    #[pyo3(signature = (*, drop_cached_values = false))]
+    fn to_bytes<'py>(
+        &self,
+        py: Python<'py>,
+        drop_cached_values: bool,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let options = SaveOptions {
+            drop_cached_values,
+            ..SaveOptions::default()
+        };
         let bytes = py
-            .detach(|| self.inner.to_bytes())
+            .detach(|| self.inner.to_bytes_with_options(options))
             .map_err(|error| xlsx_to_pyerr(py, error))?;
         Ok(PyBytes::new(py, &bytes))
     }
 
     /// Saves to `path` protected by `password`, refusing the file the
     /// workbook was opened from as `save` does.
-    #[pyo3(signature = (path, password, *, overwrite_source = false))]
+    #[pyo3(signature = (path, password, *, overwrite_source = false, drop_cached_values = false))]
     fn save_encrypted(
         &self,
         py: Python<'_>,
         path: PathBuf,
         password: &str,
         overwrite_source: bool,
+        drop_cached_values: bool,
     ) -> PyResult<()> {
-        let options = SaveOptions { overwrite_source };
+        let options = SaveOptions {
+            overwrite_source,
+            drop_cached_values,
+        };
         py.detach(|| {
             self.inner
                 .save_encrypted_with_options(path, password, options)
@@ -277,13 +303,22 @@ impl PyWorkbook {
     }
 
     /// The bytes of the workbook protected by `password`.
+    #[pyo3(signature = (password, *, drop_cached_values = false))]
     fn to_encrypted_bytes<'py>(
         &self,
         py: Python<'py>,
         password: &str,
+        drop_cached_values: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
+        let options = SaveOptions {
+            drop_cached_values,
+            ..SaveOptions::default()
+        };
         let bytes = py
-            .detach(|| self.inner.to_encrypted_bytes(password))
+            .detach(|| {
+                self.inner
+                    .to_encrypted_bytes_with_options(password, options)
+            })
             .map_err(|error| xlsx_to_pyerr(py, error))?;
         Ok(PyBytes::new(py, &bytes))
     }
@@ -421,6 +456,171 @@ impl PyWorksheet {
             .map(cell_argument)
             .transpose()?;
         self.edit(py, |sheet| sheet.freeze_panes(cell.as_deref()))
+    }
+
+    /// Writes `value` into `cell`: a number, a str (never a formula), a bool,
+    /// a `CellError`, `None` (the content cleared), a `datetime`, `date`,
+    /// `time` or `timedelta`, or a `Formula`.
+    fn set_value(
+        &self,
+        py: Python<'_>,
+        cell: &Bound<'_, PyAny>,
+        value: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let cell = cell_argument(cell)?;
+        let input = Inputs::new(py)?.convert(value)?;
+        self.edit(py, |sheet| sheet.set_value(&cell, input))
+    }
+
+    /// Writes a formula into `cell`, as Excel displays it (an `=` accepted),
+    /// or as the file stores it with `stored`; `spill` for a dynamic array
+    /// formula.
+    #[pyo3(signature = (cell, formula, *, stored = false, spill = false))]
+    fn set_formula(
+        &self,
+        py: Python<'_>,
+        cell: &Bound<'_, PyAny>,
+        formula: &str,
+        stored: bool,
+        spill: bool,
+    ) -> PyResult<()> {
+        let cell = cell_argument(cell)?;
+        let options = oxoffice_xlsx::FormulaOptions { stored, spill };
+        self.edit(py, |sheet| sheet.set_formula(&cell, formula, options))
+    }
+
+    /// Writes `rows` from `cell` down and right, one sequence per row; a
+    /// formula is a `Formula`, so a str is never one.
+    fn write(
+        &self,
+        py: Python<'_>,
+        cell: &Bound<'_, PyAny>,
+        rows: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let cell = cell_argument(cell)?;
+        if rows.is_instance_of::<pyo3::types::PyString>() {
+            return Err(PyTypeError::new_err(
+                "rows is a sequence of rows, each a sequence of values",
+            ));
+        }
+        let inputs = Inputs::new(py)?;
+        let mut converted = Vec::new();
+        for row in rows.try_iter()? {
+            let row = row?;
+            if row.is_instance_of::<pyo3::types::PyString>() {
+                return Err(PyTypeError::new_err(
+                    "each row is a sequence of values, not a str",
+                ));
+            }
+            let values = row
+                .try_iter()
+                .map_err(|_| PyTypeError::new_err("each row is a sequence of values"))?
+                .map(|value| inputs.convert(&value?))
+                .collect::<PyResult<Vec<_>>>()?;
+            converted.push(values);
+        }
+        self.edit(py, |sheet| sheet.write(&cell, converted))
+    }
+
+    /// Clears `range`: its contents (values and formulas), its formats, or
+    /// both.
+    #[pyo3(signature = (range, *, contents = true, formats = false))]
+    fn clear(&self, py: Python<'_>, range: &str, contents: bool, formats: bool) -> PyResult<()> {
+        let what = match (contents, formats) {
+            (true, true) => Clear::All,
+            (true, false) => Clear::Contents,
+            (false, true) => Clear::Formats,
+            (false, false) => return Ok(()),
+        };
+        self.edit(py, |sheet| sheet.clear(range, what))
+    }
+
+    /// Sets the number format code of every cell of `range`.
+    fn set_number_format(&self, py: Python<'_>, range: &str, code: &str) -> PyResult<()> {
+        self.edit(py, |sheet| sheet.set_number_format(range, code))
+    }
+
+    /// Changes the parts of the style of every cell of `range` that are
+    /// given; `None` leaves a part as it is.
+    #[pyo3(signature = (
+        range, *, bold = None, italic = None, underline = None, strike = None,
+        font_name = None, font_size = None, font_color = None, fill = None,
+        border = None, border_color = None, horizontal = None, vertical = None,
+        wrap_text = None, number_format = None
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn set_style(
+        &self,
+        py: Python<'_>,
+        range: &str,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        underline: Option<bool>,
+        strike: Option<bool>,
+        font_name: Option<String>,
+        font_size: Option<&Bound<'_, PyAny>>,
+        font_color: Option<String>,
+        fill: Option<String>,
+        border: Option<String>,
+        border_color: Option<String>,
+        horizontal: Option<String>,
+        vertical: Option<String>,
+        wrap_text: Option<bool>,
+        number_format: Option<String>,
+    ) -> PyResult<()> {
+        let font_size = font_size
+            .map(|size| number_argument(size, "font_size", "points"))
+            .transpose()?;
+        let patch = StylePatch {
+            bold,
+            italic,
+            underline,
+            strike,
+            font_name,
+            font_size,
+            font_color,
+            fill,
+            border,
+            border_color,
+            horizontal,
+            vertical,
+            wrap_text,
+            number_format,
+        };
+        self.edit(py, |sheet| sheet.set_style(range, &patch))
+    }
+
+    /// Writes a CSV from the cell `at`: `source` is its text (a str), its
+    /// bytes in UTF-8, or the path of its file.
+    #[pyo3(signature = (source, *, at = "A1", infer = true))]
+    fn import_csv(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        at: &str,
+        infer: bool,
+    ) -> PyResult<()> {
+        let bytes: Vec<u8> = if let Ok(text) = source.cast::<pyo3::types::PyString>() {
+            text.to_str()?.as_bytes().to_vec()
+        } else if let Ok(bytes) = source.cast::<PyBytes>() {
+            bytes.as_bytes().to_vec()
+        } else if let Ok(path) = source.extract::<PathBuf>() {
+            std::fs::read(&path).map_err(|error| {
+                oxoffice_py_support::public_error(
+                    py,
+                    MODULE,
+                    "PackageError",
+                    format!("{}: {error}", path.display()),
+                )
+            })?
+        } else {
+            return Err(PyTypeError::new_err(
+                "source is the CSV as a str, its UTF-8 bytes, or the path of its file",
+            ));
+        };
+        self.edit(py, |sheet| {
+            sheet.import_csv(at, &bytes, CsvImport { infer })
+        })
     }
 
     /// The smallest range holding every cell with a value or a formula
@@ -575,6 +775,7 @@ pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyWorksheet>()?;
     cell::register(module)?;
     style::register(module)?;
+    write::register(module)?;
     page_setup::register(module)?;
     Ok(())
 }

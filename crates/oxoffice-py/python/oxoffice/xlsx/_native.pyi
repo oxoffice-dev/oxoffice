@@ -10,6 +10,34 @@ from . import CellError
 _Path = str | os.PathLike[str]
 _Value = float | str | bool | CellError | None
 _CellAddress = str | tuple[int, int]
+_Input = (
+    float
+    | int
+    | str
+    | bool
+    | CellError
+    | None
+    | datetime.datetime
+    | datetime.date
+    | datetime.time
+    | datetime.timedelta
+    | Formula
+)
+
+class Formula:
+    """A formula, for ``Worksheet.write`` and ``set_value``: a str is never a formula.
+
+    ``text`` is the formula as Excel displays it after its ``=`` (an ``=`` is accepted), or as the file stores it
+    with ``stored`` (``_xlfn.XLOOKUP(...)``); ``spill`` writes a dynamic array formula that spills from its cell.
+    """
+
+    def __init__(self, text: str, stored: bool = False, spill: bool = False) -> None: ...
+    @property
+    def text(self) -> str: ...
+    @property
+    def stored(self) -> bool: ...
+    @property
+    def spill(self) -> bool: ...
 
 class Workbook:
     """An Excel-compatible workbook (``.xlsx``, ``.xlsm``, ``.xltx``, ``.xltm``).
@@ -81,7 +109,8 @@ class Workbook:
 
     @property
     def recalculation_needed(self) -> bool:
-        """Whether the cached values of formulas may be out of date: the file asks for a recalculation on open."""
+        """Whether the cached values of formulas may be out of date: the file asks for a recalculation on open,
+        or an edit since the workbook was opened changed a workbook that holds a formula."""
 
     def to_markdown(self) -> str:
         """The workbook as Markdown: ``## <name>`` and a table per sheet, hidden ones included.
@@ -92,21 +121,26 @@ class Workbook:
         address. The texts are the displayed ones; ``|`` is escaped and line breaks are written ``<br>``.
         """
 
-    def save(self, path: _Path, *, overwrite_source: bool = False) -> None:
+    def save(self, path: _Path, *, overwrite_source: bool = False, drop_cached_values: bool = False) -> None:
         """Saves to ``path``, staged and renamed so a failed save changes nothing.
 
         The extension (``.xlsx``, ``.xlsm``, ``.xltx``, ``.xltm``) selects the
         class. A workbook opened from a file refuses to replace it unless
-        ``overwrite_source`` is true.
+        ``overwrite_source`` is true. ``drop_cached_values`` drops the cached
+        value of every formula, so that LibreOffice, which does not calculate
+        on open by default, computes them (a function it lacks then shows an
+        error); Excel and Google Sheets calculate an edited workbook anyway.
         """
 
-    def to_bytes(self) -> bytes:
+    def to_bytes(self, *, drop_cached_values: bool = False) -> bytes:
         """The bytes of the workbook as it stands."""
 
-    def save_encrypted(self, path: _Path, password: str, *, overwrite_source: bool = False) -> None:
+    def save_encrypted(
+        self, path: _Path, password: str, *, overwrite_source: bool = False, drop_cached_values: bool = False
+    ) -> None:
         """Saves to ``path`` protected by ``password``, as ``save`` does."""
 
-    def to_encrypted_bytes(self, password: str) -> bytes:
+    def to_encrypted_bytes(self, password: str, *, drop_cached_values: bool = False) -> bytes:
         """The bytes of the workbook protected by ``password``."""
 
 class Worksheet:
@@ -152,6 +186,75 @@ class Worksheet:
         column)`` counted from 0. ``None`` removes the frozen panes; the
         argument is required, so a call without one is a ``TypeError``. ``A1``,
         which has nothing above or left of it, raises ``ValueError``.
+        """
+
+    def set_value(self, cell: _CellAddress, value: _Input) -> None:
+        """Writes ``value`` into ``cell``, keeping its style.
+
+        A number, a ``str`` (never read as a formula; ``""`` clears), a ``bool``, a ``CellError``, ``None`` (the
+        content cleared), a ``datetime``, ``date``, ``time`` or ``timedelta`` (its serial; a cell shown as General
+        takes ``yyyy-mm-dd``, ``yyyy-mm-dd hh:mm:ss``, ``hh:mm:ss`` or ``[h]:mm:ss``), or a ``Formula``. A write into
+        a shared formula's range turns the group's other cells into plain formulas. Raises ``XlsxError`` for a
+        cell of an array formula written alone, a value under a merged range but its first cell, a table header
+        that would no longer name its column, a cell of a pivot table; ``ValueError`` for a value a cell cannot
+        hold; ``TypeError`` for another type. A refusal changes nothing.
+        """
+
+    def set_formula(self, cell: _CellAddress, formula: str, *, stored: bool = False, spill: bool = False) -> None:
+        """Writes a formula into ``cell``, as Excel displays it after its ``=`` (an ``=`` is accepted).
+
+        ``stored`` takes the form the file stores (``_xlfn.XLOOKUP(...)``); ``spill`` writes a dynamic array
+        formula that Excel spills from the cell. A formula Excel would repair (``IF(B2>0;1;0)``, ``B2*``,
+        ``IF(1,2,3,4)``) raises ``ValueError``. Written without a cached value, the workbook is calculated on open.
+        """
+
+    def write(self, cell: _CellAddress, rows: Sequence[Sequence[_Input]]) -> None:
+        """Writes ``rows`` from ``cell`` down and right, each value as ``set_value`` writes it.
+
+        A row shorter than another leaves the cells after it as they are.
+        """
+
+    def clear(self, range: str, *, contents: bool = True, formats: bool = False) -> None:
+        """Clears ``range`` (``"A1:C10"``, ``"B3"``, ``"A:C"``, ``"2:5"``): its contents, its formats, or both.
+
+        A whole array formula is removed; part of one raises ``XlsxError``.
+        """
+
+    def set_number_format(self, range: str, code: str) -> None:
+        """Sets the number format code (``"0.00"``, ``"yyyy-mm-dd"``) of every cell of ``range``."""
+
+    def set_style(
+        self,
+        range: str,
+        *,
+        bold: bool | None = None,
+        italic: bool | None = None,
+        underline: bool | None = None,
+        strike: bool | None = None,
+        font_name: str | None = None,
+        font_size: float | None = None,
+        font_color: str | None = None,
+        fill: str | None = None,
+        border: str | None = None,
+        border_color: str | None = None,
+        horizontal: str | None = None,
+        vertical: str | None = None,
+        wrap_text: bool | None = None,
+        number_format: str | None = None,
+    ) -> None:
+        """Changes the parts of the style of every cell of ``range`` that are given; ``None`` leaves one as it is.
+
+        Colours are ``"RRGGBB"``; ``fill`` is a solid fill, ``border`` the style of the four sides (``"thin"``,
+        ``"medium"``, ``"thick"``, ``"double"``, ``"none"``...). Identical style records are reused, others
+        appended. Whole columns or rows are clipped to the used range; at most 1,000,000 cells at once.
+        """
+
+    def import_csv(self, source: str | bytes | os.PathLike[str], *, at: str = "A1", infer: bool = True) -> None:
+        """Writes a CSV from the cell ``at``: ``source`` is its text, its UTF-8 bytes or the path of its file.
+
+        The rectangle it covers is written, an empty field clearing its cell. With ``infer``, a field is a number
+        (no leading zero, at most 15 significant digits), ``TRUE`` / ``FALSE``, a date ``YYYY-MM-DD`` with a time
+        or not, else a str (a leading ``=`` included); without, every field is a str.
         """
 
     @property
@@ -257,6 +360,10 @@ class Cell:
     @property
     def datetime(self) -> datetime.datetime | None:
         """The number as a date and time when its format shows a date, a time or both (not a duration)."""
+
+    @property
+    def duration(self) -> datetime.timedelta | None:
+        """The number as a duration when its format shows one (``[h]:mm``, ``[mm]:ss``); ``None`` when negative."""
 
 class Comment:
     """A note or a comment thread on a cell."""

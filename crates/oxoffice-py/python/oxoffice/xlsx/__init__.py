@@ -14,6 +14,20 @@ as Excel displays them and save it without loss::
         print(comment.ref, comment.author, comment.text)
     wb.save("copy.xlsx")
 
+Write values, dates and formulas, styles and number formats, a CSV::
+
+    import datetime
+    from oxoffice.xlsx import Formula
+
+    ws.set_value("B2", 3)                            # a number; "007" stays a str
+    ws.set_value("E2", datetime.date(2026, 1, 5))    # yyyy-mm-dd in a General cell
+    ws.set_formula("D2", "B2*C2")                    # checked, stored as Excel stores it
+    ws.write("A40", [["Total", Formula("SUM(F2:F37)")]])
+    ws.set_style("A1:G1", bold=True, fill="FFFF00")
+    ws.set_number_format("F2:F38", "#,##0.00")
+    ws.import_csv("north,12\nsouth,7\n", at="A50")
+    wb.save("edited.xlsx")
+
 Make a workbook, add a sheet, set the widths of columns, the heights of rows
 and the frozen panes::
 
@@ -66,6 +80,7 @@ from ._native import (  # noqa: E402
     Comment,
     Fill,
     Font,
+    Formula,
     GradientStop,
     HeaderFooter,
     PageBreak,
@@ -88,6 +103,7 @@ __all__ = [
     "Comment",
     "Fill",
     "Font",
+    "Formula",
     "GradientStop",
     "HeaderFooter",
     "PackageError",

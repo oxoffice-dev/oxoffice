@@ -1,7 +1,8 @@
-"""xlsx: a read costs the cells it reads. A bulk read (cells, values, CSV, Markdown) of a sheet of 4N rows, each with an
-array formula and its own cell style, takes about 4 times what it takes at N rows, not 16; so does the first read of a
-workbook of 4N cell styles, and a read of one row of 4W cells; and N single-cell reads take about the same time whatever
-the size of the sheet (measured on a build without debug assertions, 2026-11-28).
+"""xlsx: a read costs the cells it reads, an edit the rows it writes. A bulk read (cells, values, CSV, Markdown) of a
+sheet of 4N rows, each with an array formula and its own cell style, takes about 4 times what it takes at N rows, not
+16; so does the first read of a workbook of 4N cell styles, and a read of one row of 4W cells; and N single-cell reads,
+writes or style edits take about the same time whatever the size of the sheet (measured on a build without debug
+assertions, 2026-11-28).
 
 The workbooks are written here: a tall sheet (N rows: a number, an array formula over its own cell, a number in one of
 N cell styles, each following its own named style) and a wide one (one row of W numbers)."""
@@ -108,10 +109,21 @@ TIMED = {
     "Workbook.from_bytes + first cell": (lambda book: oxlsx.Workbook.from_bytes(book.data).sheets[0].cell("A1"), True),
     "Worksheet.cell x N": (lambda book: [book.ws.cell((row, 1)) for row in range(N)], False),
     "Worksheet.cells, one wide row": (lambda book: book.ws.cells(book.used), True),
+    "Worksheet.set_value x N": (lambda book: [book.ws.set_value((row, 3), row) for row in range(N)], False),
+    "Worksheet.set_style x N": (
+        lambda book: [book.ws.set_style(f"E{row + 1}", bold=row % 2 == 0) for row in range(N)],
+        False,
+    ),
 }
 WIDE = {"Worksheet.cells, one wide row"}
 # ci.yml times these on every pull request and push to main.
-QUICK = {"Worksheet.cells", "Workbook.from_bytes + first cell", "Worksheet.cell x N", "Worksheet.cells, one wide row"}
+QUICK = {
+    "Worksheet.cells",
+    "Workbook.from_bytes + first cell",
+    "Worksheet.cell x N",
+    "Worksheet.cells, one wide row",
+    "Worksheet.set_value x N",
+}
 
 
 @pytest.fixture(scope="module")
@@ -148,6 +160,6 @@ def test_every_timed_call_runs_once():
     """Each timed read on small workbooks, untimed: what runs without OXOFFICE_SCALING."""
     small = {False: Book(tall(20)), True: Book(wide(20))}
     for name, (read, _) in TIMED.items():
-        if name != "Worksheet.cell x N":
+        if not name.endswith(" x N"):
             read(small[name in WIDE])
     assert sorted(QUICK - set(TIMED)) == []
