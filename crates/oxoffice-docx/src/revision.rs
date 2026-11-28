@@ -5641,6 +5641,77 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     (year_of_era + era * 400 + i64::from(month <= 2), month, day)
 }
 
+/// A story part's XML with `w16du:dateUtc`, its date in UTC, on each dated
+/// revision of these ids that has none, as Word writes it beside the local
+/// `w:date` (the part's root then declares `w16du`); `None` when none takes
+/// one. The revisions are those oxoffice wrote: a producer's own are left
+/// as they are.
+pub(crate) fn dated_in_utc(xml: &[u8], ids: &HashSet<i32>) -> Result<Option<Vec<u8>>> {
+    let tree = XmlTree::parse(xml)?;
+    let mut inserts = Vec::new();
+    for (index, element) in tree.elements.iter().enumerate() {
+        if !element.word {
+            continue;
+        }
+        let (id, date) = match &element.revision {
+            Some(metadata) => (Some(metadata.id), metadata.timestamp.clone()),
+            None if matches!(
+                element.local.as_str(),
+                "moveFromRangeStart" | "moveToRangeStart"
+            ) =>
+            {
+                (
+                    tree.word_attribute(index, "id")?
+                        .and_then(|id| id.trim().parse().ok()),
+                    tree.word_attribute(index, "date")?,
+                )
+            }
+            None => continue,
+        };
+        let (Some(id), Some(date)) = (id, date) else {
+            continue;
+        };
+        if !ids.contains(&id) {
+            continue;
+        }
+        let Some(utc) = utc_rfc3339(&date) else {
+            continue;
+        };
+        let tag = oxoffice_core::xml_element::start_tag(&xml[element.start..])?;
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(
+            &xml[element.start..element.start + tag.range.end],
+        );
+        let dated = match reader
+            .verbatim()
+            .read_event()
+            .map_err(|error| Error::Other(error.to_string()))?
+        {
+            quick_xml::events::Event::Start(start) | quick_xml::events::Event::Empty(start) => {
+                start
+                    .attributes()
+                    .flatten()
+                    .any(|attribute| attribute.key.local_name().as_ref() == b"dateUtc")
+            }
+            _ => true,
+        };
+        if !dated {
+            inserts.push((element.start + tag.attributes_end, utc));
+        }
+    }
+    if inserts.is_empty() {
+        return Ok(None);
+    }
+    let mut out = Vec::with_capacity(xml.len() + inserts.len() * 40);
+    let mut cursor = 0;
+    for (at, utc) in inserts {
+        out.extend_from_slice(&xml[cursor..at]);
+        out.extend_from_slice(format!(r#" w16du:dateUtc="{utc}""#).as_bytes());
+        cursor = at;
+    }
+    out.extend_from_slice(&xml[cursor..]);
+    Ok(Some(out))
+}
+
 /// The current time as an RFC 3339 UTC timestamp to the second, the form
 /// Word writes in `w:date`.
 pub(crate) fn rfc3339_now() -> Result<String> {

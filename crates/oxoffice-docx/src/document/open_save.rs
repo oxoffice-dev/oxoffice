@@ -490,6 +490,8 @@ impl Document {
             body_namespace_bindings: namespace_scopes.body_bindings,
             plain_local_edit_blocked,
             tracking: None,
+            written_revisions: HashSet::new(),
+            written_authors: Default::default(),
             local_cell_source,
             unsavable_body_edit_cache,
             styles,
@@ -780,12 +782,69 @@ impl Document {
     fn staged_current_output(&self) -> Result<(Self, bool)> {
         self.validate_model_resource_limits()?;
         let mut candidate = self.clone_for_staging();
-        let normalized = candidate.prepare_staged_output()?;
+        let mut normalized = candidate.prepare_staged_output()?;
+        normalized |= candidate.finish_written_revisions()?;
         crate::embedded::persist_invalidated_package_signature(
             &mut candidate.package,
             candidate.package_signatures_invalidated,
         )?;
         Ok((candidate, normalized))
+    }
+
+    /// What Word writes beside the revisions oxoffice wrote: each dated in
+    /// UTC too (see `dated_in_utc`), in each story part, its root declaring
+    /// `w16du`, and their authors in `people.xml` (Q8). Whether a part
+    /// changed.
+    fn finish_written_revisions(&mut self) -> Result<bool> {
+        let mut ids = self.written_revisions.clone();
+        let mut authors = self.written_authors.clone();
+        if let Some(tracking) = &self.tracking {
+            let held = tracking.held_ids();
+            if !held.is_empty() {
+                authors.insert(tracking.changes.author().to_owned());
+            }
+            ids.extend(held);
+        }
+        if ids.is_empty() {
+            return Ok(false);
+        }
+        let mut parts = vec![self.doc_part_name.clone()];
+        if let Some(relationships) = self.package.get_part_rels(&self.doc_part_name) {
+            parts.extend(
+                relationships
+                    .items
+                    .iter()
+                    .filter(|relationship| {
+                        crate::document::relationship_is_internal(relationship)
+                            && matches!(
+                                relationship.rel_type.as_str(),
+                                rel_types::HEADER
+                                    | rel_types::FOOTER
+                                    | rel_types::FOOTNOTES
+                                    | rel_types::ENDNOTES
+                                    | rel_types::COMMENTS
+                            )
+                    })
+                    .map(|relationship| {
+                        OpcPackage::resolve_rel_target(&self.doc_part_name, &relationship.target)
+                    }),
+            );
+        }
+        let mut changed = false;
+        for part in parts {
+            let Some(xml) = self.package.get_part(&part) else {
+                continue;
+            };
+            if let Some(mut written) = crate::revision::dated_in_utc(xml, &ids)? {
+                oxoffice_docx_oxml::text::declare_w16du_on_part_root(&mut written)?;
+                self.package.set_part(&part, written);
+                changed = true;
+            }
+        }
+        for author in &authors {
+            changed |= self.add_person(author)?;
+        }
+        Ok(changed)
     }
 
     /// Drop the content relationships (pictures, charts, embedded objects,

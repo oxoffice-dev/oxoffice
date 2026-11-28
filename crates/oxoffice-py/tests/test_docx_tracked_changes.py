@@ -144,13 +144,15 @@ def view(data, resolve=None, xml=False):
     if resolve:
         getattr(doc, resolve)()
     # The redline writes every text it rewrites with xml:space="preserve", which changes nothing it reads, and
-    # Run.style_id's recipe names a new style for each document it makes ready.
+    # Run.style_id's recipe names a new style for each document it makes ready. A save that dated a revision in UTC
+    # declares w16du on the root, which every paragraph's XML then names.
     marks = []
     if xml:
         with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as z:
             main = z.read("word/document.xml").decode()
         marks = [p.xml for p in doc.paragraphs] + [t.xml for t in doc.tables]
         marks = [re.sub(r"Probestyle\d+", "Probestyle", xml.replace(' xml:space="preserve"', "")) for xml in marks]
+        marks = [re.sub(r' xmlns:w16du="[^"]*"', "", xml) for xml in marks]
         # Each section by what it reads, and the children of its properties the section calls write, as the XML of a
         # section saved again writes its other attributes in another order.
         marks += [tuple(getattr(section, field) for field in SECTION_FIELDS) for section in doc.sections]

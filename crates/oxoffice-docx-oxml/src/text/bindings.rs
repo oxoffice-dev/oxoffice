@@ -1219,6 +1219,85 @@ pub(crate) fn plan_w14_on_part_root(xml: &[u8]) -> Result<Option<(usize, String)
         .then(|| (root_end - 1, format!(r#" xmlns:w14="{W14_NS}""#))))
 }
 
+/// The Word 2023 namespace of `w16du:dateUtc`, the UTC date Word writes on
+/// a revision beside its local `w:date`.
+pub const W16DU_NS: &str = "http://schemas.microsoft.com/office/word/2023/wordml/word16du";
+
+/// Declare `w16du` on the root of a part whose content uses it, ignorable
+/// (`mc:Ignorable`, `mc` declared when it is not), as Word writes a part
+/// that holds `w16du:dateUtc`: a reader that does not know the namespace
+/// skips it. A root that declares it, or a part that does not use it, is
+/// left as it is.
+pub fn declare_w16du_on_part_root(xml: &mut Vec<u8>) -> Result<()> {
+    let invalid = |error: &dyn std::fmt::Display| OxmlError::InvalidValue(error.to_string());
+    let span = oxoffice_core::xml_element::root_element_span(xml.as_slice())
+        .map_err(|error| invalid(&error))?;
+    let mut source = Reader::from_reader(&xml[span.start_tag.clone()]);
+    let root = match source.verbatim().read_event()? {
+        Event::Start(root) | Event::Empty(root) => root.into_owned(),
+        _ => return Ok(()),
+    };
+    // Each attribute: its name and its value read.
+    let mut attributes = Vec::new();
+    for attribute in root.attributes() {
+        let attribute = attribute.map_err(|error| invalid(&error))?;
+        let text = oxoffice_core::xml::attribute_text(&attribute)
+            .map_err(|error| invalid(&error))?
+            .into_owned();
+        attributes.push((attribute.key.as_ref().to_vec(), text));
+    }
+    if attributes.iter().any(|(key, _)| key == b"xmlns:w16du")
+        || !uses_qualified_name(&xml[span.start_tag.end..], b"w16du:")
+    {
+        return Ok(());
+    }
+    let mc = attributes.iter().find_map(|(key, text)| {
+        (text == MC_NS)
+            .then(|| key.strip_prefix(b"xmlns:"))
+            .flatten()
+            .map(<[u8]>::to_vec)
+    });
+    let ignorable = mc.as_ref().map(|mc| [&mc[..], b":Ignorable"].concat());
+    let mut marked = false;
+    for (key, text) in &mut attributes {
+        if ignorable.as_deref() == Some(&key[..]) {
+            text.push_str(" w16du");
+            marked = true;
+        }
+    }
+    attributes.push((b"xmlns:w16du".to_vec(), W16DU_NS.to_owned()));
+    if !marked {
+        let mc = match &mc {
+            Some(mc) => String::from_utf8_lossy(mc).into_owned(),
+            None => {
+                attributes.push((b"xmlns:mc".to_vec(), MC_NS.to_owned()));
+                "mc".to_owned()
+            }
+        };
+        attributes.push((format!("{mc}:Ignorable").into_bytes(), "w16du".to_owned()));
+    }
+    // The start tag written again up to where its attributes end; how it
+    // closes is kept as written.
+    let mut written = vec![b'<'];
+    written.extend_from_slice(root.name().as_ref());
+    for (key, text) in attributes {
+        written.push(b' ');
+        written.extend_from_slice(&key);
+        written.extend_from_slice(b"=\"");
+        written.extend_from_slice(oxoffice_core::xml::escape_attribute_value(&text).as_bytes());
+        written.push(b'"');
+    }
+    written.extend_from_slice(&xml[span.attributes_end()..span.start_tag.end]);
+    xml.splice(span.start_tag, written);
+    Ok(())
+}
+
+fn uses_qualified_name(xml: &[u8], prefix: &[u8]) -> bool {
+    xml.windows(prefix.len() + 1).any(|window| {
+        matches!(window[0], b'<' | b'/' | b' ' | b'\t' | b'\r' | b'\n') && &window[1..] == prefix
+    })
+}
+
 fn uses_w14_qualified_name(xml: &[u8]) -> bool {
     xml.windows(5).any(|window| {
         matches!(window[0], b'<' | b'/' | b' ' | b'\t' | b'\r' | b'\n') && &window[1..] == b"w14:"
@@ -2142,6 +2221,45 @@ fn raw_with_root_word_binding_in<'raw>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A root declares `w16du` ignorable, under its own `mc` prefix or a new
+    /// one, once; a part that does not use it is left as it is.
+    #[test]
+    fn a_root_declares_w16du_ignorable_once() {
+        let w = crate::namespace::W_NS;
+        let used = r#"<w:p><w:ins w16du:dateUtc="2026-01-01T00:00:00Z"/></w:p>"#;
+        for (root, body, expected) in [
+            (
+                format!(r#"<w:document xmlns:w="{w}" xmlns:m="{MC_NS}" m:Ignorable="w14">"#),
+                used,
+                format!(
+                    r#"<w:document xmlns:w="{w}" xmlns:m="{MC_NS}" m:Ignorable="w14 w16du" xmlns:w16du="{W16DU_NS}">"#
+                ),
+            ),
+            (
+                format!(r#"<w:document xmlns:w="{w}">"#),
+                used,
+                format!(
+                    r#"<w:document xmlns:w="{w}" xmlns:w16du="{W16DU_NS}" xmlns:mc="{MC_NS}" mc:Ignorable="w16du">"#
+                ),
+            ),
+            (
+                format!(r#"<w:document xmlns:w="{w}">"#),
+                "<w:p/>",
+                format!(r#"<w:document xmlns:w="{w}">"#),
+            ),
+        ] {
+            let mut xml = format!("{root}{body}</w:document>").into_bytes();
+            declare_w16du_on_part_root(&mut xml).unwrap();
+            let once = xml.clone();
+            declare_w16du_on_part_root(&mut xml).unwrap();
+            assert_eq!(xml, once);
+            assert_eq!(
+                String::from_utf8(xml).unwrap(),
+                format!("{expected}{body}</w:document>")
+            );
+        }
+    }
 
     #[test]
     fn a_retained_root_attribute_keeps_a_tab_written_as_a_reference() {

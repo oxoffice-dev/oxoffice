@@ -51,7 +51,9 @@ pub(crate) use bindings::{
     root_attribute_value_prefixes, root_binding_scope, with_publication_bindings,
     write_raw_with_word_override_in,
 };
-pub use bindings::{declare_w14_on_part_root, is_root_attribute_record};
+pub use bindings::{
+    W16DU_NS, declare_w14_on_part_root, declare_w16du_on_part_root, is_root_attribute_record,
+};
 use emission::{FieldXmlRecord, field_source_prefix};
 pub(crate) use owner_check::{discard_checked_paragraph, validate_word_owner_fragment};
 pub use run::{

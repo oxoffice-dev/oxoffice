@@ -63,6 +63,13 @@ pub(crate) struct Tracking {
     pub(crate) note_reference: bool,
 }
 
+impl Tracking {
+    /// The ids of the revisions the session wrote so far.
+    pub(crate) fn held_ids(&self) -> Vec<i32> {
+        self.ids.lock().expect("tracking ids").clone()
+    }
+}
+
 /// The pair of a replacement made under tracked changes.
 #[derive(Debug)]
 pub(crate) enum ReplacePattern {
@@ -1580,10 +1587,26 @@ impl TrackedDocument<'_> {
         };
         let result = call(held.document);
         drop(held);
-        if result.is_err() {
-            self.forget_since(written);
+        match &result {
+            Err(_) => self.forget_since(written),
+            Ok(_) => self.keep_since(written),
         }
         result
+    }
+
+    /// Note in the document the revisions a call wrote from the session's
+    /// `written`-th id on, which a save dates in UTC and whose author it
+    /// lists (see `finish_written_revisions`).
+    fn keep_since(&mut self, written: usize) {
+        let ids = self.tracking.ids();
+        if ids.len() > written {
+            self.document
+                .written_revisions
+                .extend(ids[written..].iter().copied());
+            self.document
+                .written_authors
+                .insert(self.tracking.changes.author().to_owned());
+        }
     }
 
     /// [`Self::run`] for a call that refuses with `Ok(Err(_))`: that refusal
@@ -1823,6 +1846,13 @@ impl Document {
     pub fn stop_tracked_changes(&mut self) -> Option<TrackedSession> {
         let session = TrackedSession(self.tracking.clone()?);
         if let Ok(held) = session.revision_ids(self) {
+            // A save dates them in UTC and lists their author (see
+            // `finish_written_revisions`).
+            if !held.is_empty() {
+                self.written_revisions.extend(held.iter().copied());
+                self.written_authors
+                    .insert(session.0.changes.author().to_owned());
+            }
             *session.0.ids.lock().expect("tracking ids") = held;
         }
         self.tracking = None;

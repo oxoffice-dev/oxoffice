@@ -451,6 +451,8 @@ impl Document {
         let prepared = IdentifierSummary::of_package(&self);
         let custom_properties_owned = self.custom_properties_owned;
         let tracking = self.tracking.clone();
+        let written_revisions = self.written_revisions.clone();
+        let written_authors = self.written_authors.clone();
         let settings_owned = self.settings_owned;
         let owned_settings = settings_owned.then(|| self.settings.clone());
         let web_settings_owned = self.web_settings_owned;
@@ -493,6 +495,8 @@ impl Document {
         // A tracked changes session goes on in the document a staged edit
         // reopens.
         reopened.tracking = tracking;
+        reopened.written_revisions = written_revisions;
+        reopened.written_authors = written_authors;
         reopened.settings_owned = settings_owned;
         if let Some(settings) = owned_settings {
             reopened.settings = settings;
