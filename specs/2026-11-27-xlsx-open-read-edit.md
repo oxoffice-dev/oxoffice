@@ -470,7 +470,7 @@ encrypted saves too, unless `SaveOptions { overwrite_source: true, .. }`; `drop_
 (section 3, PR 6). `SaveOptions` is the facade's own, not `oxoffice-opc`'s: each save has a `*_with_options` variant
 taking it (`save_with_options`, `to_bytes_with_options`, `save_encrypted_with_options`,
 `to_encrypted_bytes_with_options`), the plain call taking the defaults. `.xlsx`, `.xlsm`,
-`.xltx` or `.xltm` selects the main content type; a VBA project cannot be saved under a macro-free extension. Python
+`.xltx` or `.xltm` selects the main content type; a VBA project cannot be saved under a macro-free extension, and an extension that names another format (`.xls`, `.xlsb`, `.xla`, `.xlam`, `.xlt`, `.ods`, `.csv`, `.tsv`, `.txt`, `.docx`, `.pptx`, `.pdf`) is refused with the extension to use (`Error::OtherFormatExtension`, `XlsxError`), any other extension keeping the workbook's class as docx and pptx do. Python
 `save(path, *, overwrite_source=False, drop_cached_values=False)`, `to_bytes(*, drop_cached_values=False)`, the
 encrypted saves with the same keyword; the CLI writes `-o`, never the input, `--force` replacing another file. Python
 errors: `XlsxError`, `PackageError(XlsxError)`, `XmlError(XlsxError, ValueError)`, a refused edit `XlsxError`, a bad

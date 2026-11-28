@@ -47,6 +47,10 @@ def test_a_save_refuses_the_source_unless_asked(multi, tmp_path):
     assert multi.read_bytes() == before
     wb.save(multi, overwrite_source=True)
     assert multi.read_bytes() == wb.to_bytes()
+    legacy = tmp_path / "report.xls"
+    with pytest.raises(oxlsx.XlsxError, match=r"save it as a \.xlsx workbook") as error:
+        wb.save(legacy)
+    assert not isinstance(error.value, oxlsx.PackageError) and not legacy.exists()
     locked = tmp_path / "locked.xlsx"
     wb.save_encrypted(locked, "secret")
     with pytest.raises(oxlsx.PackageError, match="password-protected"):
