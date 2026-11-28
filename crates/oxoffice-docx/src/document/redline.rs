@@ -2286,13 +2286,7 @@ pub(super) fn inserted_block_xml(
                     edits.push(match word_children(paragraph, "pPr").next() {
                         Some(properties) => (properties.span(), written),
                         None if paragraph.end.is_none() => {
-                            let open = xml[paragraph.start.clone()]
-                                .trim_end_matches("/>")
-                                .trim_end();
-                            (
-                                paragraph.start.clone(),
-                                format!("{open}>{written}</{}>", paragraph.name),
-                            )
+                            (paragraph.start.clone(), opened(xml, paragraph, &written)?)
                         }
                         None => (paragraph.start.end..paragraph.start.end, written),
                     });
@@ -2315,13 +2309,7 @@ pub(super) fn inserted_block_xml(
         match properties {
             // An empty paragraph, `<w:p/>`, opened to hold its mark.
             None if paragraph.end.is_none() => {
-                let open = xml[paragraph.start.clone()]
-                    .trim_end_matches("/>")
-                    .trim_end();
-                edits.push((
-                    paragraph.start.clone(),
-                    format!("{open}>{marked}</{}>", paragraph.name),
-                ));
+                edits.push((paragraph.start.clone(), opened(xml, paragraph, &marked)?));
             }
             None => edits.push((paragraph.start.end..paragraph.start.end, marked)),
             Some(properties) => match word_children(properties, "rPr").next() {
@@ -2516,4 +2504,12 @@ fn wrap_runs(
     }
     end(&mut stretch, edits);
     Ok(())
+}
+
+/// `node`, an element written self-closing (`<w:p/>`), written with an end
+/// tag to hold `content`.
+fn opened(xml: &str, node: &Node, content: &str) -> Result<String> {
+    oxoffice_core::xml_element::replace_content(&xml[node.start.clone()], content)
+        .map(|(opened, _)| opened)
+        .map_err(xml_error)
 }
