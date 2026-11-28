@@ -670,8 +670,10 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
     // Its range must be free, as a range given must be, and its own call
     // rewrites or retargets it; the way out names the range a result the
     // data size fills, never a smaller one for a result of known shape. The
-    // most a result can fill stops at the edge of the sheet; a result
-    // known to pass it is refused.
+    // most a result can fill stops at the edge of the sheet, whole columns
+    // at their sheet's used range and one row more for the blank cells (none
+    // when that sheet is not known); a result known to pass the edge is
+    // refused.
     let mut workbook = workbook_with_sheet(&sheet(
         r#"<sheetData><row r="3"><c r="A3"><v>1</v></c></row></sheetData>"#,
     ));
@@ -680,6 +682,9 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
     data.set_formula("E1", "SEQUENCE(2)", SPILL).unwrap();
     data.set_value("E3", number(1.0)).unwrap();
     data.set_formula("G2", "UNIQUE(A:A)", SPILL).unwrap();
+    data.set_formula("H1048570", "UNIQUE(A1:A20)", SPILL)
+        .unwrap();
+    data.set_formula("I2", "UNIQUE(Nope!A:A)", SPILL).unwrap();
     let spill = |text: &str| CellInput::Formula(text.to_owned(), SPILL);
     for (result, message) in [
         (
@@ -709,7 +714,12 @@ fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
         assert_eq!(result.unwrap_err().to_string(), message);
     }
     let sheet = workbook.sheet_at(0).unwrap();
-    for (cell, range) in [("E1", "E1:E2"), ("G2", "G2:G1048576")] {
+    for (cell, range) in [
+        ("E1", "E1:E2"),
+        ("G2", "G2:G5"),
+        ("H1048570", "H1048570:H1048576"),
+        ("I2", "I2"),
+    ] {
         assert_eq!(
             sheet
                 .cell(cell)

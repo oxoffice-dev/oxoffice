@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
 use oxoffice_numfmt::DateTime;
-use oxoffice_xlsx_formula::{TokenKind, check_stored, result_extent, to_stored, tokenize};
+use oxoffice_xlsx_formula::{Lookups, TokenKind, check_stored, result_extent, to_stored, tokenize};
 use oxoffice_xlsx_oxml::metadata::MetadataXml;
 use oxoffice_xlsx_oxml::namespaces::{MAIN, STRICT_MAIN, content_types, rel_types, strict};
 use oxoffice_xlsx_oxml::reference::{MAX_COLUMNS, MAX_ROWS};
@@ -1348,11 +1348,20 @@ impl WorksheetMut<'_> {
     /// The range a dynamic array formula written at `at` without one spills
     /// over: its result's when the formula decides its shape (its defined
     /// names read from this sheet), the most it can fill when the data
-    /// decide how much, cut at the edge of the sheet (Excel shows #SPILL! for
-    /// a result that does not fit), else its cell alone. A result that
+    /// decide how much (whole columns as far as their sheet's used range),
+    /// cut at the edge of the sheet (Excel shows #SPILL! for a result that
+    /// does not fit), else its cell alone. A result that
     /// reaches past the edge of the sheet is refused.
     fn result_range(&self, at: CellRef, stored: &str) -> Result<SpillRange> {
-        let extent = result_extent(stored, |sheet, name| self.defined_name(sheet, name));
+        let names = |sheet: Option<&str>, name: &str| self.defined_name(sheet, name);
+        let used = |sheet: Option<&str>| self.used_reach(sheet);
+        let extent = result_extent(
+            stored,
+            &Lookups {
+                names: &names,
+                used: &used,
+            },
+        );
         let Some(extent) = extent else {
             return Ok(SpillRange {
                 range: CellRange::new(at, at),
@@ -1376,6 +1385,19 @@ impl WorksheetMut<'_> {
             } else {
                 SpillOrigin::Bound
             },
+        })
+    }
+
+    /// The last row and column, 1-based, the values and formulas of this
+    /// sheet (`None`) or of the sheet named reach, 0 for none.
+    fn used_reach(&self, sheet: Option<&str>) -> Option<(u32, u32)> {
+        let sheet = match sheet {
+            Some(name) => self.workbook.sheet(name)?,
+            None => self.read(),
+        };
+        Some(match sheet.used_range().ok()? {
+            Some(range) => (range.last.row + 1, range.last.column + 1),
+            None => (0, 0),
         })
     }
 

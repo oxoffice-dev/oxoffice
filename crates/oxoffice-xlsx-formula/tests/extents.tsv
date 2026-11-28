@@ -1,6 +1,7 @@
 # How large a formula's result is: rows x columns exactly, <= at most (the data decide how much of it the result
 # fills), or - when neither its text nor its inputs tell it. Names: Sales is Data!$B$2:$B$25, Rate 0.07, Local on
-# sheet Data or 'My data' $A$1:$C$3, Loop Loop+1, Calc OFFSET(A1,0,0,B1).
+# sheet Data or 'My data' $A$1:$C$3, Loop Loop+1, Calc OFFSET(A1,0,0,B1). Used ranges: the formula's sheet to C25,
+# Data to B40, Empty none; another sheet is not known.
 # Constants, references and names.
 1	1x1
 "a text"	1x1
@@ -92,6 +93,8 @@ _xlfn.TOROW(A2:C10)	1x27
 _xlfn.WRAPROWS(A1:A7,3)	3x3
 _xlfn.WRAPCOLS(A1:G1,3)	3x3
 _xlfn.WRAPROWS(A1:B7,3)	-
+_xlfn.WRAPROWS({1,2},5)	1x2
+_xlfn.WRAPCOLS({1,2},5)	2x1
 MMULT(A1:B3,D1:G2)	3x4
 MMULT(A1:B3,D1:G3)	-
 ROW(A2:C10)	9x1
@@ -108,6 +111,16 @@ CHOOSE(B1,A2:A10,C2:E3)	<=9x3
 _xlfn.UNIQUE(A2:A10)	<=9x1
 _xlfn.UNIQUE(A2:C10,TRUE,B1)	<=9x3
 _xlfn.UNIQUE(A2)	1x1
+_xlfn.UNIQUE(A:A)	<=26x1
+_xlfn.UNIQUE(Data!A:B)	<=41x2
+_xlfn.UNIQUE(Empty!A:A)	1x1
+_xlfn.UNIQUE(2:3)	<=2x4
+_xlfn.UNIQUE([1]Data!A:A)	-
+_xlfn.UNIQUE(Other!A:A)	-
+_xlfn._xlws.FILTER(A:C,C:C>0)	<=26x3
+_xlfn._xlws.SORT(_xlfn.UNIQUE(A:A*2))	<=26x1
+_xlfn.TAKE(A:A,B1)	-
+IF(B1>0,A:A)	-
 _xlfn._xlws.FILTER(A2:C10,B2:B10>0)	<=9x3
 _xlfn._xlws.FILTER(A2:C10,A1:C1<>"",{"none";"-"})	<=9x3
 _xlfn._xlws.FILTER(A2:A3,B2:B3>0,{"none","-","x"})	<=2x3

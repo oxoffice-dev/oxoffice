@@ -7,7 +7,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use oxoffice_xlsx_formula::{
-    check_stored, function, move_references, result_extent, to_displayed, to_stored, tokenize,
+    Lookups, check_stored, function, move_references, result_extent, to_displayed, to_stored,
+    tokenize,
 };
 use quick_xml::events::Event;
 
@@ -198,11 +199,21 @@ fn a_result_is_as_large_as_its_formula_and_inputs_say() {
         };
         Some(refers.to_owned())
     };
+    let used = |sheet: Option<&str>| match sheet {
+        None => Some((25, 3)),
+        Some("Data") => Some((40, 2)),
+        Some("Empty") => Some((0, 0)),
+        Some(_) => None,
+    };
+    let lookups = Lookups {
+        names: &names,
+        used: &used,
+    };
     for case in cases(include_str!("extents.tsv")) {
         let [formula, expected] = case[..] else {
             panic!("{case:?}")
         };
-        let found = result_extent(formula, names).map_or("-".to_owned(), |extent| {
+        let found = result_extent(formula, &lookups).map_or("-".to_owned(), |extent| {
             let bound = if extent.exact { "" } else { "<=" };
             format!("{bound}{}x{}", extent.shape.rows, extent.shape.columns)
         });
@@ -400,6 +411,12 @@ fn no_text_makes_a_function_panic() {
         let _ = check_stored(&text);
         let _ = move_references(&text, 1, -1);
         let _ = to_displayed(&text);
-        let _ = result_extent(&text, |_, name| Some(name.to_owned()));
+        let names = |_: Option<&str>, name: &str| Some(name.to_owned());
+        let used = |_: Option<&str>| Some((u32::MAX, u32::MAX));
+        let lookups = Lookups {
+            names: &names,
+            used: &used,
+        };
+        let _ = result_extent(&text, &lookups);
     }
 }

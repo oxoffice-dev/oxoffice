@@ -320,6 +320,13 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
     than the result is harmless (checked on the Mac, Excel 16.115 and Google Sheets: `UNIQUE(A2:A20)` with `ref`
     `J2:J20` shows its 5 values in `J2:J6` and leaves the rest empty, no repair prompt, and each app writes the true
     size back when it saves); this bound stops at the edge of the sheet, where a larger result shows `#SPILL!` anyway.
+    Whole columns (or rows) read by `UNIQUE` or `FILTER` count as far as their sheet's used range and one more row (or
+    column) for the value of the blank cells after it (Excel shows it as 0): Google Sheets keeps a grid as large as a
+    whole-column `ref` and exports a million empty rows (checked on the Mac, 47 MB of sheet XML), so no bound covers
+    whole columns or rows; one that would (whole columns of another workbook, `TAKE(A:A,B1)`) leaves the extent unknown.
+    Whole columns in an exact shape (`A:A*2`) stay whole, as Excel spills that far.
+    `WRAPROWS({1,2},5)` is one row of two (no padding, Excel 16.115): lines as long as the wrap or the vector, whichever
+    is shorter; `WRAPCOLS` likewise.
   An error that replaces the whole result shows in one cell, within any extent, so a value that can only make one is
   not looked at. A result known to pass the edge of the sheet is refused. When neither tells the size (a size read from
   a cell, `SEQUENCE(B1)`; `GROUPBY`, `PIVOTBY`, `TEXTSPLIT`; a function the table does not list, such as `XLOOKUP`,

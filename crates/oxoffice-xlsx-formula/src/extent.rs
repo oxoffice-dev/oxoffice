@@ -54,11 +54,16 @@ pub struct Extent {
     /// Whether the result has that shape; else the data decide how much of
     /// it, from its first cell, the result fills (`FILTER`, `UNIQUE`).
     pub exact: bool,
+    /// The part of it the data fill: past it every element is what a blank
+    /// cell gives. Whole columns hold their sheet's used rows and one for
+    /// the blank cells after them; `None` when that is not known (whole
+    /// columns of another workbook).
+    data: Option<Shape>,
 }
 
 impl Extent {
     fn exact(shape: Shape) -> Extent {
-        Extent { shape, exact: true }
+        Extent::new(shape, true)
     }
 
     /// At most `shape`, or exactly when that is known: one value is one
@@ -67,7 +72,18 @@ impl Extent {
         Extent {
             shape,
             exact: exact || shape == Shape::ONE,
+            data: Some(shape),
         }
+    }
+
+    /// The same extent with the part the data fill.
+    fn with_data(self, data: Option<Shape>) -> Extent {
+        Extent { data, ..self }
+    }
+
+    /// Whether `self` and `other` say the same of a result.
+    fn same(self, other: Extent) -> bool {
+        self.shape == other.shape && self.exact == other.exact
     }
 
     fn of(rows: u64, columns: u64, exact: bool) -> Option<Extent> {
@@ -116,11 +132,14 @@ const ELEMENT_OPERATORS: [&str; 12] = [
 /// - `IF` and `CHOOSE` on an array give the largest of their arguments.
 ///
 /// At most, the data deciding how much of it the result fills: `FILTER`
-/// (what it filters, or `if_empty`), `UNIQUE` (what it reads), `FREQUENCY`
+/// (what it filters, or `if_empty`) and `UNIQUE` (what it reads, whole
+/// columns or rows as far as their sheet's used range and one more for the
+/// blank cells after it), `FREQUENCY`
 /// (one more than its bins), `TAKE` and `DROP` by a count, and `CHOOSECOLS`
 /// or `CHOOSEROWS` by an index, read from a cell, a `TOCOL` or `TOROW` that
 /// skips, `IF` and `CHOOSE` on one value (the largest of their choices), and
-/// whatever takes the result of one of them.
+/// whatever takes the result of one of them; not when that bound would be
+/// whole columns or rows (Google Sheets keeps a grid that large).
 ///
 /// `None` for a size read from a cell (`SEQUENCE(B1)`, `EXPAND(A1:B2,B1)`),
 /// a function this table does not list (`GROUPBY`, `TEXTSPLIT`, `XLOOKUP`,
@@ -128,37 +147,51 @@ const ELEMENT_OPERATORS: [&str; 12] = [
 /// spill of another cell (`J2#`), a union or intersection of references, a
 /// result no worksheet holds, and a formula this crate cannot read.
 ///
-/// `names` gives the formula a defined name refers to, from the sheet
-/// written before it (`Data!Sales`), unquoted, and the name; `None` for a
-/// name the workbook does not define.
-///
 /// ```
-/// use oxoffice_xlsx_formula::result_extent;
+/// use oxoffice_xlsx_formula::{Lookups, result_extent};
 ///
 /// let names = |_: Option<&str>, name: &str| (name == "Sales").then(|| "Data!$B$2:$B$25".to_owned());
+/// // The formula's sheet holds values down to row 40, in columns A to C.
+/// let used = |sheet: Option<&str>| sheet.is_none().then_some((40, 3));
+/// let lookups = Lookups { names: &names, used: &used };
 /// let extent = |formula| {
-///     result_extent(formula, names).map(|e| (e.shape.rows, e.shape.columns, e.exact))
+///     result_extent(formula, &lookups).map(|e| (e.shape.rows, e.shape.columns, e.exact))
 /// };
 /// assert_eq!(extent("_xlfn._xlws.SORT(Sales,,-1)"), Some((24, 1, true)));
 /// assert_eq!(extent("ROUND(A2:C10*2,1)"), Some((9, 3, true)));
 /// assert_eq!(extent("_xlfn.SEQUENCE(3,4)"), Some((3, 4, true)));
 /// assert_eq!(extent("_xlfn.UNIQUE(A2:B10)"), Some((9, 2, false)));
+/// assert_eq!(extent("_xlfn.UNIQUE(A:A)"), Some((41, 1, false)));
 /// assert_eq!(extent("_xlfn.SEQUENCE(B1)"), None);
 /// ```
-pub fn result_extent(
-    formula: &str,
-    names: impl Fn(Option<&str>, &str) -> Option<String>,
-) -> Option<Extent> {
-    extent_of(formula, &names, 0)
+pub fn result_extent(formula: &str, lookups: &Lookups<'_>) -> Option<Extent> {
+    extent_of(formula, lookups, 0).filter(|extent| {
+        extent.exact || (extent.shape.rows < MAX_ROWS && extent.shape.columns < MAX_COLUMNS)
+    })
 }
 
-type Names<'n> = dyn Fn(Option<&str>, &str) -> Option<String> + 'n;
+/// The formula a defined name refers to: see [`Lookups::names`].
+pub type NameLookup<'a> = dyn Fn(Option<&str>, &str) -> Option<String> + 'a;
+/// How far a sheet's cells reach: see [`Lookups::used`].
+pub type UsedLookup<'a> = dyn Fn(Option<&str>) -> Option<(u32, u32)> + 'a;
 
-fn extent_of(formula: &str, names: &Names<'_>, depth: usize) -> Option<Extent> {
+/// What [`result_extent`] reads from the workbook.
+pub struct Lookups<'a> {
+    /// The formula a defined name refers to, from the sheet written before
+    /// it (`Data!Sales`), unquoted, and the name; `None` for a name the
+    /// workbook does not define.
+    pub names: &'a NameLookup<'a>,
+    /// The last row and column a sheet's values and formulas reach, 1-based,
+    /// 0 for a sheet without any: the formula's own sheet for `None`, else
+    /// the sheet named, unquoted; `None` for a sheet the workbook lacks.
+    pub used: &'a UsedLookup<'a>,
+}
+
+fn extent_of(formula: &str, lookups: &Lookups<'_>, depth: usize) -> Option<Extent> {
     let parsed = parse(formula, false).ok()?;
     let mut inference = Inference {
         parsed: &parsed,
-        names,
+        lookups,
         depth,
         scope: Vec::new(),
     };
@@ -280,16 +313,18 @@ enum Count {
 /// #N/A, which is not relied on.
 fn broadcast(a: Extent, b: Extent) -> Extent {
     let fits = |x: u32, y: u32| x == y || x == 1 || y == 1;
+    let largest = |a: Shape, b: Shape| Shape {
+        rows: a.rows.max(b.rows),
+        columns: a.columns.max(b.columns),
+    };
     Extent::new(
-        Shape {
-            rows: a.shape.rows.max(b.shape.rows),
-            columns: a.shape.columns.max(b.shape.columns),
-        },
+        largest(a.shape, b.shape),
         a.exact
             && b.exact
             && fits(a.shape.rows, b.shape.rows)
             && fits(a.shape.columns, b.shape.columns),
     )
+    .with_data(a.data.zip(b.data).map(|(a, b)| largest(a, b)))
 }
 
 /// The rows or columns between two parts of a reference, both included.
@@ -297,19 +332,50 @@ fn span(a: &Part, b: &Part) -> u64 {
     u64::from(a.index.abs_diff(b.index)) + 1
 }
 
-/// The shape of a reference token: a cell, an area, whole columns or rows;
-/// `None` for a 3D reference.
-fn reference_shape(token: &str) -> Option<Shape> {
-    if token[..target_start(token)].contains(':') {
+/// The extent of a reference token: a cell, an area, whole columns or rows,
+/// these as far as their sheet's used range (`used`) and one more for the
+/// blank cells after it; `None` for a 3D reference.
+fn reference_extent(token: &str, used: &UsedLookup<'_>) -> Option<Extent> {
+    let start = target_start(token);
+    let prefix = &token[..start];
+    if prefix.contains(':') {
         return None;
     }
+    // The used range of the sheet whole columns or rows are on: `None` for
+    // another workbook's.
+    let reach = || match prefix.strip_suffix('!') {
+        None => used(None),
+        Some(sheet) => used(Some(&sheet_of(sheet)?)),
+    };
+    let whole = |length: u64, across: u64, limit: u32, rows: bool| -> Option<Extent> {
+        let full = match rows {
+            true => Shape::new(u64::from(limit), across)?,
+            false => Shape::new(across, u64::from(limit))?,
+        };
+        let data = reach().and_then(|(last_row, last_column)| {
+            let reached = u64::from(if rows { last_row } else { last_column }) + 1;
+            let length = reached.min(length);
+            match rows {
+                true => Shape::new(length, across),
+                false => Shape::new(across, length),
+            }
+        });
+        Some(Extent::exact(full).with_data(data))
+    };
     match target(token)? {
-        Target::Cell { .. } | Target::Deleted => Some(Shape::ONE),
+        Target::Cell { .. } | Target::Deleted => Some(Extent::exact(Shape::ONE)),
         Target::Area { first, last } => {
-            Shape::new(span(&first.1, &last.1), span(&first.0, &last.0))
+            Shape::new(span(&first.1, &last.1), span(&first.0, &last.0)).map(Extent::exact)
         }
-        Target::Columns(first, last) => Shape::new(u64::from(MAX_ROWS), span(&first, &last)),
-        Target::Rows(first, last) => Shape::new(span(&first, &last), u64::from(MAX_COLUMNS)),
+        Target::Columns(first, last) => {
+            whole(u64::from(MAX_ROWS), span(&first, &last), MAX_ROWS, true)
+        }
+        Target::Rows(first, last) => whole(
+            u64::from(MAX_COLUMNS),
+            span(&first, &last),
+            MAX_COLUMNS,
+            false,
+        ),
     }
 }
 
@@ -358,7 +424,7 @@ fn counted(rule: Rule, count: Count, size: u64, exact: bool) -> Option<(u64, boo
 
 struct Inference<'p, 'n> {
     parsed: &'p Parsed<'p>,
-    names: &'n Names<'n>,
+    lookups: &'n Lookups<'n>,
     /// How many defined names deep this formula is.
     depth: usize,
     /// The LET names in force, by the key they compare by, with the extent
@@ -404,7 +470,7 @@ impl Inference<'_, '_> {
             TokenKind::Number | TokenKind::Text | TokenKind::Boolean | TokenKind::Error => {
                 Some(Extent::exact(Shape::ONE))
             }
-            TokenKind::Reference => reference_shape(token).map(Extent::exact),
+            TokenKind::Reference => reference_extent(token, self.lookups.used),
             TokenKind::Name => self.name(token),
             _ => None,
         }
@@ -430,8 +496,8 @@ impl Inference<'_, '_> {
             0 => None,
             _ => Some(sheet_of(&token[..start - 1])?),
         };
-        let refers = (self.names)(sheet.as_deref(), &token[start..])?;
-        extent_of(&refers, self.names, self.depth + 1)
+        let refers = (self.lookups.names)(sheet.as_deref(), &token[start..])?;
+        extent_of(&refers, self.lookups, self.depth + 1)
     }
 
     /// An array constant: `,` between columns, `;` between rows.
@@ -546,24 +612,29 @@ impl Inference<'_, '_> {
                 Some(extent)
             }
             Rule::First => self.argument(args, 0),
+            // What the data fill of what they read (blank cells give one
+            // value more), or `if_empty` when nothing is left.
             Rule::WithinFirst => {
-                let read = self.argument(args, 0)?;
-                Some(Extent::new(read.shape, false))
+                let read = self.argument(args, 0)?.data?;
+                Some(Extent::new(read, false))
             }
             Rule::Filter => {
-                // What it filters, by rows or by columns, or `if_empty`
-                // when nothing is left.
-                let filtered = self.argument(args, 0)?;
-                let empty = self.value(args, 2)?;
+                let filtered = Extent::exact(self.argument(args, 0)?.data?);
+                let empty = Extent::exact(self.value(args, 2)?.data?);
                 Some(Extent::new(broadcast(filtered, empty).shape, false))
             }
             Rule::Frequency => {
-                let bins = self.argument(args, 1)?;
-                Extent::of(bins.rows() * bins.columns() + 1, 1, false)
+                let bins = self.argument(args, 1)?.data?;
+                Extent::of(u64::from(bins.rows) * u64::from(bins.columns) + 1, 1, false)
             }
             Rule::Transpose => {
                 let extent = self.argument(args, 0)?;
+                let swap = |shape: Shape| Shape {
+                    rows: shape.columns,
+                    columns: shape.rows,
+                };
                 Extent::of(extent.columns(), extent.rows(), extent.exact)
+                    .map(|swapped| swapped.with_data(extent.data.map(swap)))
             }
             Rule::Sized => Extent::of(self.size(args, 0)?, self.size(args, 1)?, true),
             Rule::Square => {
@@ -641,10 +712,13 @@ impl Inference<'_, '_> {
                     Some(_) => self.size(args, 1)?,
                     None => return None,
                 };
+                // As many lines as it takes, each as long as the wrap or the
+                // vector, whichever is shorter (checked in Excel 16.115).
                 let lines = length.div_ceil(wrap);
+                let line = wrap.min(length);
                 match rule {
-                    Rule::WrapRows => Extent::of(lines, wrap, vector.exact),
-                    _ => Extent::of(wrap, lines, vector.exact),
+                    Rule::WrapRows => Extent::of(lines, line, vector.exact),
+                    _ => Extent::of(line, lines, vector.exact),
                 }
             }
             Rule::MatrixProduct => {
@@ -676,11 +750,11 @@ impl Inference<'_, '_> {
                 for index in 1..count {
                     choices.push(self.value(args, index)?);
                 }
-                if selector == Extent::exact(Shape::ONE) {
+                if selector.shape == Shape::ONE {
                     // One of the choices: exact when they all have its shape.
                     let first = *choices.first()?;
                     let largest = choices.iter().fold(first, |a, &b| broadcast(a, b));
-                    let same = choices.iter().all(|&choice| choice == first);
+                    let same = choices.iter().all(|&choice| choice.same(first));
                     Some(Extent::new(largest.shape, same && first.exact))
                 } else {
                     Some(choices.into_iter().fold(selector, broadcast))
