@@ -320,10 +320,12 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
     than the result is harmless (checked on the Mac, Excel 16.115 and Google Sheets: `UNIQUE(A2:A20)` with `ref`
     `J2:J20` shows its 5 values in `J2:J6` and leaves the rest empty, no repair prompt, and each app writes the true
     size back when it saves); this bound stops at the edge of the sheet, where a larger result shows `#SPILL!` anyway.
-    Whole columns (or rows) read by `UNIQUE` or `FILTER` count as far as their sheet's used range and one more row (or
-    column) for the value of the blank cells after it (Excel shows it as 0): Google Sheets keeps a grid as large as a
+    Whole columns (or rows) read by `UNIQUE` count as far as their sheet's used range and one more row (or column) for
+    the value of the blank cells after it, which collapse into one (Excel shows it as 0); `FILTER` over whole columns
+    gives no bound, each blank row past the used range able to pass on its own (`FILTER(A:A,B:B="")`). Google Sheets keeps a grid as large as a
     whole-column `ref` and exports a million empty rows (checked on the Mac, 47 MB of sheet XML), so no bound covers
-    whole columns or rows; one that would (whole columns of another workbook, `TAKE(A:A,B1)`) leaves the extent unknown.
+    whole columns or rows; one that would (whole columns of another workbook, `TAKE(A:A,B1)`) leaves the extent unknown,
+    as does `FILTER` over whole columns.
     Whole columns in an exact shape (`A:A*2`) stay whole, as Excel spills that far.
     `WRAPROWS({1,2},5)` is one row of two (no padding, Excel 16.115): lines as long as the wrap or the vector, whichever
     is shorter; `WRAPCOLS` likewise.

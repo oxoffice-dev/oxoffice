@@ -117,7 +117,7 @@ _xlfn.UNIQUE(Empty!A:A)	1x1
 _xlfn.UNIQUE(2:3)	<=2x4
 _xlfn.UNIQUE([1]Data!A:A)	-
 _xlfn.UNIQUE(Other!A:A)	-
-_xlfn._xlws.FILTER(A:C,C:C>0)	<=26x3
+_xlfn._xlws.FILTER(A:A,B:B="")	-
 _xlfn._xlws.SORT(_xlfn.UNIQUE(A:A*2))	<=26x1
 _xlfn.TAKE(A:A,B1)	-
 IF(B1>0,A:A)	-

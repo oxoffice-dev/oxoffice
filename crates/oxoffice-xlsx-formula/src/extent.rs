@@ -132,9 +132,10 @@ const ELEMENT_OPERATORS: [&str; 12] = [
 /// - `IF` and `CHOOSE` on an array give the largest of their arguments.
 ///
 /// At most, the data deciding how much of it the result fills: `FILTER`
-/// (what it filters, or `if_empty`) and `UNIQUE` (what it reads, whole
-/// columns or rows as far as their sheet's used range and one more for the
-/// blank cells after it), `FREQUENCY`
+/// (what it filters, or `if_empty`; not whole columns or rows, whose blank
+/// rows may each pass), `UNIQUE` (what it reads, whole columns or rows as
+/// far as their sheet's used range and one more for the blank cells after
+/// it), `FREQUENCY`
 /// (one more than its bins), `TAKE` and `DROP` by a count, and `CHOOSECOLS`
 /// or `CHOOSEROWS` by an index, read from a cell, a `TOCOL` or `TOROW` that
 /// skips, `IF` and `CHOOSE` on one value (the largest of their choices), and
@@ -612,15 +613,20 @@ impl Inference<'_, '_> {
                 Some(extent)
             }
             Rule::First => self.argument(args, 0),
-            // What the data fill of what they read (blank cells give one
-            // value more), or `if_empty` when nothing is left.
+            // What the data fill of what it reads: its blank cells give one
+            // value more.
             Rule::WithinFirst => {
                 let read = self.argument(args, 0)?.data?;
                 Some(Extent::new(read, false))
             }
+            // What it filters, or `if_empty` when nothing is left. Each blank
+            // row of whole columns may pass on its own, so these give none.
             Rule::Filter => {
-                let filtered = Extent::exact(self.argument(args, 0)?.data?);
-                let empty = Extent::exact(self.value(args, 2)?.data?);
+                let filtered = self.argument(args, 0)?;
+                if filtered.data != Some(filtered.shape) {
+                    return None;
+                }
+                let empty = self.value(args, 2)?;
                 Some(Extent::new(broadcast(filtered, empty).shape, false))
             }
             Rule::Frequency => {
