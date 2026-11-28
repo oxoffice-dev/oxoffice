@@ -490,6 +490,7 @@ impl Document {
             body_namespace_bindings: namespace_scopes.body_bindings,
             plain_local_edit_blocked,
             tracking: None,
+            written_revisions: HashMap::new(),
             local_cell_source,
             unsavable_body_edit_cache,
             styles,
@@ -786,6 +787,70 @@ impl Document {
             candidate.package_signatures_invalidated,
         )?;
         Ok((candidate, normalized))
+    }
+
+    /// What Word writes beside the revisions oxoffice wrote and no save
+    /// dated yet: each dated in UTC too (see `dated_in_utc`), in each story
+    /// part, its root declaring `w16du`, and the authors of those the parts
+    /// still hold in `people.xml` (Q8): a revision rejected or accepted away
+    /// lists no one. They are then done. Whether a part changed.
+    pub(super) fn finish_written_revisions(&mut self) -> Result<bool> {
+        let mut written = std::mem::take(&mut self.written_revisions);
+        if let Some(tracking) = &self.tracking {
+            for id in tracking.held_ids() {
+                written
+                    .entry(id)
+                    .or_insert_with(|| tracking.changes.author().to_owned());
+            }
+        }
+        if written.is_empty() {
+            return Ok(false);
+        }
+        let ids = written.keys().copied().collect::<HashSet<_>>();
+        let mut parts = vec![self.doc_part_name.clone()];
+        if let Some(relationships) = self.package.get_part_rels(&self.doc_part_name) {
+            parts.extend(
+                relationships
+                    .items
+                    .iter()
+                    .filter(|relationship| {
+                        crate::document::relationship_is_internal(relationship)
+                            && matches!(
+                                relationship.rel_type.as_str(),
+                                rel_types::HEADER
+                                    | rel_types::FOOTER
+                                    | rel_types::FOOTNOTES
+                                    | rel_types::ENDNOTES
+                                    | rel_types::COMMENTS
+                            )
+                    })
+                    .map(|relationship| {
+                        OpcPackage::resolve_rel_target(&self.doc_part_name, &relationship.target)
+                    }),
+            );
+        }
+        let (mut changed, mut held) = (false, HashSet::new());
+        for part in parts {
+            let Some(xml) = self.package.get_part(&part) else {
+                continue;
+            };
+            let (dated, found) = crate::revision::dated_in_utc(xml, &ids)?;
+            held.extend(found);
+            if let Some(mut dated) = dated {
+                oxoffice_docx_oxml::text::declare_w16du_on_part_root(&mut dated)?;
+                self.package.set_part(&part, dated);
+                changed = true;
+            }
+        }
+        let authors = written
+            .iter()
+            .filter(|(id, _)| held.contains(id))
+            .map(|(_, author)| author)
+            .collect::<std::collections::BTreeSet<_>>();
+        for author in authors {
+            changed |= self.add_person(author)?;
+        }
+        Ok(changed)
     }
 
     /// Drop the content relationships (pictures, charts, embedded objects,

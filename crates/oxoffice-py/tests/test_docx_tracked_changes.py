@@ -144,13 +144,15 @@ def view(data, resolve=None, xml=False):
     if resolve:
         getattr(doc, resolve)()
     # The redline writes every text it rewrites with xml:space="preserve", which changes nothing it reads, and
-    # Run.style_id's recipe names a new style for each document it makes ready.
+    # Run.style_id's recipe names a new style for each document it makes ready. A save that dated a revision in UTC
+    # declares w16du on the root, which every paragraph's XML then names.
     marks = []
     if xml:
         with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as z:
             main = z.read("word/document.xml").decode()
         marks = [p.xml for p in doc.paragraphs] + [t.xml for t in doc.tables]
         marks = [re.sub(r"Probestyle\d+", "Probestyle", xml.replace(' xml:space="preserve"', "")) for xml in marks]
+        marks = [re.sub(r' xmlns:w16du="[^"]*"', "", xml) for xml in marks]
         # Each section by what it reads, and the children of its properties the section calls write, as the XML of a
         # section saved again writes its other attributes in another order.
         marks += [tuple(getattr(section, field) for field in SECTION_FIELDS) for section in doc.sections]
@@ -158,6 +160,26 @@ def view(data, resolve=None, xml=False):
                             main)
     # Every story's paragraphs by their text and style; the XML is read for the body, which the recipes format.
     return [(p.kind, p.text, p.style) for p in doc.story_paragraphs] + marks
+
+
+NAMES = re.compile(rb"(probe_|Probe style |Probestyle|Probe |Replaced|Added)\d+")
+VOLATILE = [
+    (NAMES, rb"\1"),
+    (re.compile(rb"\{[0-9A-F-]{36}\}"), b"{}"),
+    (re.compile(rb'(date|dateUtc)="[^"]*"'), rb'\1=""'),
+]
+
+
+def parts(data):
+    """The parts of a package, without the counter the recipes give the names they make (probe_5, Probestyle6) and the
+    identifiers and the time of day a call takes."""
+    found = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for name in z.namelist():
+            found[name] = z.read(name)
+            for pattern, replacement in VOLATILE:
+                found[name] = pattern.sub(replacement, found[name])
+    return found
 
 
 def ready(doc, name):
@@ -170,12 +192,29 @@ def ready(doc, name):
 
 @pytest.fixture(scope="module")
 def saved(tmp_path_factory):
-    return edit_cost_docx(tmp_path_factory.mktemp("tracked") / "saved.docx", 10, picture_side=8)
+    return edit_cost_docx(tmp_path_factory.mktemp("tracked") / "saved.docx", 10, picture_side=8, probes=2)
 
 
 def test_the_class_table_names_calls_there_are():
     assert sorted((TRACKED | UNTRACKED | set(NOT_RUN) | set(WHOLE)) - CALLS) == []
+    # what the class matrix does not run, the scaling file runs once
+    assert sorted(set(scaling.TIMED) - (CALLS - set(WHOLE)) - set(scaling.RUN_ONCE_HERE)) == []
     assert sorted(set(scaling.WHOLE_DOCUMENT) - set(WHOLE) - set(NOT_RUN)) == []
+
+
+# The class matrix below checks, for every call, that the session does what its class says and that the call without
+# a session runs, saves and reopens. Resolving the changes both ways (the twin and the original document compared
+# after accept_all and reject_all, four reads of the document) is the Rust redliner's, tested there: here it runs for
+# every call that writes an edit of its own kind (tracked), for the first call of each formatting class, whose
+# other calls differ by the property they set, not by how it is recorded, and for the calls that write another part of
+# the properties than their class (a grid, a style, a numbering, a page border, the note policy and the first page).
+RESOLVED = {name for name in CALLS if kind(name) == "tracked"} | {
+    "Table.grid_widths", "Run.style_id", "Paragraph.numbering", "SectionHandle.set_page_border",
+    "SectionHandle.different_first_page_header_footer", "SectionHandle.set_note_policy",
+}
+for _name in sorted(CALLS):
+    if kind(_name) == "formatting":
+        RESOLVED.add(next(n for n in sorted(CALLS) if kind(n) == "formatting" and n.split(".")[0] == _name.split(".")[0]))
 
 
 @pytest.mark.parametrize("name", sorted(CALLS - set(NOT_RUN)))
@@ -193,9 +232,20 @@ def test_every_call_behaves_as_its_class(saved, name):
             call()
     after = doc.to_bytes()
     if kind(name) == "refused":
-        assert after == before
-    if kind(name) not in ("tracked", "formatting"):
-        assert session.revision_ids == ()
+        assert session.revision_ids == () and after == before
+        if name in WHOLE:
+            return  # a whole-document recipe only has well formed arguments, a refused one never reads them
+        call()  # the document it left is the one it was opened as: the call runs as without a session
+        oxdocx.Document.from_bytes(doc.to_bytes())
+        return
+    # Without a session the call runs, and the document it leaves saves and opens again.
+    twin = oxdocx.Document.open(saved)
+    ready(twin, name)()
+    twin_bytes = twin.to_bytes()
+    oxdocx.Document.from_bytes(twin_bytes)
+    if kind(name) == "untracked":
+        # Word records no revision for it: the session runs it as a plain call does.
+        assert session.revision_ids == () and parts(after) == parts(twin_bytes)
         return
     xml = kind(name) == "formatting"
     # A call that sets what the document already holds writes nothing.
@@ -203,10 +253,9 @@ def test_every_call_behaves_as_its_class(saved, name):
     # A grid change has an id alone, as Word writes it.
     authors = {r.author for r in doc.revisions if r.id in session.revision_ids and r.kind != "table_grid_change"}
     assert authors <= {AUTHOR}
-    twin = oxdocx.Document.open(saved)
-    ready(twin, name)()
-    assert view(after, "accept_all", xml) == view(twin.to_bytes(), "accept_all", xml)
-    assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
+    if name in RESOLVED:
+        assert view(after, "accept_all", xml) == view(twin_bytes, "accept_all", xml)
+        assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
 
 
 def test_a_session_runs_until_it_stops():

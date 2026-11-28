@@ -5,13 +5,10 @@ Rust matrix (crates/oxoffice-docx/tests/docx/block_locations.rs) checks every op
 import io
 import re
 import zipfile
-from pathlib import Path
 
 import pytest
 
 import oxoffice.docx as ox
-
-CORPUS = Path(__file__).resolve().parents[3] / "tests" / "corpus" / "files"
 
 
 def p(text):
@@ -169,11 +166,22 @@ def test_a_paragraph_of_a_header_control_is_reached_by_its_location():
 
 
 def test_a_toc_entry_is_added_after_the_last_one():
-    doc = ox.Document.from_bytes((CORPUS / "word" / "thesis.docx").read_bytes())
+    """A table of contents in a block control, its field begun in the first entry and ended in the last (what Word
+    and Google Docs write): a copy of an entry goes before the one that ends the field, which takes a paragraph before
+    it through its handle; one that holds the field's begin or end is not copied."""
+    field = lambda kind: f'<w:r><w:fldChar w:fldCharType="{kind}"/></w:r>'
+    entries = (
+        f'<w:p>{field("begin")}<w:r><w:instrText> TOC \\o "1-3" </w:instrText></w:r>{field("separate")}'
+        '<w:r><w:t>1 Introduction</w:t></w:r></w:p>'
+        + p("2 Method")
+        + f'<w:p><w:r><w:t>3 Results</w:t></w:r>{field("end")}</w:p>'
+    )
+    doc = document(p("Contents") + sdt("Table of Contents", entries) + p("Chapter"))
     toc = next(i for i in doc.story_items if i.kind == "content_control" and b"Table of Contents" in i.xml)
     entries = lambda: [sp for sp in doc.story_paragraphs if len(sp.index_path) == 2 and sp.index_path[0] == toc.index_path[0]]
     location = lambda sp: ox.ContentLocation(body(doc), "paragraph", sp.index_path)
     texts_before = [sp.text for sp in entries()]
+    assert len(texts_before) == 3
     doc.clone_content(location(entries()[-2]), location(entries()[-1]))
     with pytest.raises(ox.DocxError, match="of a complex field"):
         doc.clone_content(location(entries()[-1]), location(entries()[-1]))

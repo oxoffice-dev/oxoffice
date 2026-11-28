@@ -18,8 +18,8 @@ How work lands in oxoffice. Short on purpose.
 5. **Independent review**, posted on the pull request, then answer every
    finding (see [Independent review](#independent-review)).
 6. **CI all green**, squash merge: `gh pr checks` shows every check
-   passed, `Test (ubuntu-latest)`, `(macos-latest)` and `(windows-latest)`
-   among them. A pull request whose base was changed to `main` may have no
+   passed, the `Rust tests` and `Python tests` of every platform among
+   them. A pull request whose base was changed to `main` may have no
    run on that base: push a new commit, or close and reopen it, first. A
    documentation-only pull request runs no build, only the title check.
    The squash commit takes the title, so
@@ -153,6 +153,7 @@ by type.
 cargo check -p <crate> --all-targets
 cargo test -p <crate>                     # one crate
 cargo test -p <crate> --test <file>       # one integration binary
+cargo nextest run --profile smoke ...     # what macOS and Windows run on a pull request (CI uses cargo-nextest)
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo clippy --workspace --all-targets --all-features --profile scaling -- -D warnings   # without debug assertions, as lint does
 cargo fmt --all
@@ -210,8 +211,10 @@ OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call (full-chec
 
 Without `OXOFFICE_SCALING`, only the check that every mutating call is timed
 runs, and every timed docx call is made once, untimed, on a small document,
-which is then saved and opened again: on a debug build that puts each of them
-under the whole-document cross-checks.
+which is then saved and opened again (by the class matrix of
+`test_docx_tracked_changes.py` for the calls it names, by
+`test_every_timed_call_runs_once` for the others): on a debug build that puts
+each of them under the whole-document cross-checks.
 A docx call of `GROWING` is a strict xfail tied to its issue: when a fix
 makes it flat, the XPASS fails the run until the call leaves the set. A call
 outside the band it is expected in (under 2.5 times, or 1.5 to 24 times for a
@@ -326,24 +329,47 @@ merge variant).
   --generate-hashes X.in -o X.txt`, installed with `pip install
   --require-hashes -r X.txt`.
 - **One CI for pull requests and main** (`ci.yml`): every pull request,
-  drafts and stacked ones included, and every push to `main` run the same
-  jobs on Linux, macOS and Windows, in about 10 minutes: lint (with the
-  WebAssembly check and the PowerPoint tests without the `render` feature:
-  the WebAssembly bindings build the facade, so an edit must not need the
-  rendering crates); `Test` on the three platforms, built without debug
-  assertions (`--profile scaling`); `Timings` on Linux, the QUICK scaling
-  sets. Debug assertions run in every local debug build and `cargo test`, in
-  lint's pptx tests without `render`, and in the full checks (the writings
-  walk apart). A push to `main` runs in full, beside the runs before it, so
-  every merge has its own verdict. See
-  [the spec](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
+  drafts and stacked ones included, every push to `main` and every
+  dispatch run lint (with the WebAssembly check and the PowerPoint tests
+  without the `render` feature: the WebAssembly bindings build the facade,
+  so an edit must not need the rendering crates), the Rust tests, the Python
+  tests and, on Linux, `Timings` (the QUICK scaling sets). Tests build
+  without debug assertions (`--profile scaling`). Debug assertions run in
+  every local debug build and `cargo test`, in lint's pptx tests without
+  `render`, and in the full checks (the writings walk apart).
+  - **Rust tests and Python tests are separate jobs, each split into
+    shards** that run side by side: the Rust tests with cargo-nextest
+    (`--partition hash:N/3`, by test name, the tests of one binary
+    included; `.config/nextest.toml`), the Python tests with
+    `OXOFFICE_SHARD=N/4` (`conftest.py`: a test goes to the shard its
+    id's checksum picks). Every Python shard builds the wheel itself.
+    The number of shards is in the `plan` job of `ci.yml`.
+  - **On a pull request, Linux runs the whole suites** (the Rust shards
+    take 6 to 7 minutes, the Python shards about 4), **macOS and Windows a
+    smoke** each: the Rust tests of the code that touches
+    the operating system (`cargo nextest run --profile smoke`, the profile
+    is in `.config/nextest.toml`: files written in place, paths, the
+    command line, system fonts, the save and stack tests of the facades)
+    and a few Python test files, on a wheel built there. A pull request
+    took 6.9 minutes on the run that measured it (17 to 20 before),
+    bounded by the Linux Rust shards, then lint (5.5 minutes).
+  - **On every push to `main`, the whole suites run on Linux, macOS and
+    Windows**, sharded the same way (macOS in at most 5 jobs, the org's
+    cap on concurrent macOS jobs): a failure that only one platform shows
+    outside the smoke shows there, after the merge. No test run is
+    scheduled.
+  A push to `main` runs in full, beside the runs before it, so every merge
+  has its own verdict. See
+  [the spec](../specs/2026-11-28-faster-pull-request-ci.md) and
+  [the earlier one](../specs/2026-11-22-one-ci-for-pull-requests-and-main.md).
 - **The full sets run on demand** (`full-checks.yml`, "Full checks", about
   an hour, no schedule): on Linux, the Rust tests (four shards side by
   side; the writings walk without debug assertions) and the Python tests
   under debug assertions with the whole render corpus and every producer's
   copy in the workflow walks, and the stack of a release-profile wheel; every scaling call on Linux and Windows. The render
   is the same bytes on every platform and the walks are platform-free, so
-  macOS and Windows run the tests in the CI of pull requests only.
+  macOS and Windows run the tests in the CI (the smoke on a pull request,
+  the whole suites on main) only.
 - **The full checks do not grow.** Their budget is about an hour, the
   longest job; a set added to them takes the place of another or runs a
   sample, and the pull request that adds one says which, with the timings
@@ -360,7 +386,10 @@ merge variant).
   `workflow_call`, granting `issues: write`.
 - **Merge only once `gh pr checks` is all green**: `main` requires no status
   check, so nothing stops a merge whose macOS or Windows run is red or still
-  queued.
+  queued. The smoke of those two is not the whole suites, so a failure only
+  one platform shows lands on `main` by design, and a red CI run on `main`
+  opens no issue: whoever merged watches the run on `main`
+  (`gh run list --branch main`) and fixes a red one the same day.
 - **A change of base to `main` runs nothing**, whether GitHub moves a stacked
   pull request when its base merges or the author changes it by hand. Push a
   new commit, or close and reopen the pull request, so that its last run is
@@ -375,7 +404,11 @@ merge variant).
   request, and the skills follow at the next release.
 - **Rust caches are saved by runs on `main` only** (pushes, a dispatch on
   `main`), even when a test fails after the compile; pull requests and the
-  full checks restore them and save nothing. A new pull request used to save
+  full checks restore them and save nothing. One key, `test`, holds the
+  third-party crates of the wheel build and of the test build; on a key
+  miss, the first Python shard of each platform on `main` compiles the Rust
+  tests right after its wheel, so that it saves both, and only once both
+  builds have succeeded. A new pull request used to save
   about 2.25 GB of caches that only its own later runs could read: five of
   them filled the 10 GB of the Actions cache and evicted `main`'s.
 - **Lint runs clippy without debug assertions** too (`cargo clippy

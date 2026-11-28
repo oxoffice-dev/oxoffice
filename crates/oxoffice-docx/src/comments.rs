@@ -2474,6 +2474,26 @@ impl Document {
                 )
             },
         )?;
+        self.add_person_to(people, author).map(|_| ())
+    }
+
+    /// Add `author` to `people.xml`, as Q8 has it: only when the file has
+    /// that part and does not list the author yet, with Word's `providerId`
+    /// for an author it knows no account of. Also for the authors of the
+    /// revisions oxoffice writes. Whether the author was added.
+    pub(crate) fn add_person(&mut self, author: &str) -> Result<bool> {
+        match self.comment_companion(&PEOPLE) {
+            Ok(people) => self.add_person_to(people, author),
+            // A part that does not read takes no entry.
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn add_person_to(
+        &mut self,
+        people: Option<(String, Vec<CommentPartEntry>)>,
+        author: &str,
+    ) -> Result<bool> {
         if let Some((part, people)) = people
             && !people
                 .iter()
@@ -2485,8 +2505,9 @@ impl Document {
                     r#"<{p}:person{declaration} {p}:author="{author}"><{p}:presenceInfo {p}:providerId="None" {p}:userId="{author}"/></{p}:person>"#
                 )
             })?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Append to the root of `part`, a part of `companion` (made when
@@ -5529,14 +5550,9 @@ impl Document {
                     "cannot remove part of comment {id}; its source graph survives or is ambiguous"
                 )));
             }
+            // Its replies go with it, their anchors too, as Word removes a
+            // thread whose root goes (W9).
             removed.extend(original.descendants(id));
-        }
-        for id in &removed {
-            if after_counts.get(id).is_some_and(|counts| *counts != [0; 3]) {
-                return Err(Error::Other(format!(
-                    "cannot remove comment {id}; a descendant source anchor survives"
-                )));
-            }
         }
         if !removed.is_empty() {
             self.remove_comment_ids_staged_at(owner, &removed)?;
