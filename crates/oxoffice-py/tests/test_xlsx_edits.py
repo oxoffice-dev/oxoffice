@@ -100,7 +100,7 @@ def test_import_csv_takes_a_str_bytes_or_a_path(tmp_path):
     assert ws.values("A1:B1") == [["x", "1"]]
     path = tmp_path / "data.csv"
     path.write_bytes(b"TRUE,2026-01-05\n")
-    ws.import_csv(path, at="A10")
+    ws.import_csv(path, at=(9, 0))
     assert ws.cell("A10").value is True and ws.cell("B10").text == "2026-01-05"
     with pytest.raises(ValueError, match="not UTF-8"):
         ws.import_csv(b"caf\xe9")

@@ -181,7 +181,7 @@ impl CellInput {
         if text.eq_ignore_ascii_case("false") {
             return CellInput::Value(Value::Boolean(false));
         }
-        if let Some(date) = iso_date(text) {
+        if let Some(date) = iso_date(text, false) {
             return CellInput::Date(date);
         }
         CellInput::Value(Value::Text(text.to_owned()))
@@ -283,9 +283,20 @@ fn strict_number(text: &str) -> Option<f64> {
     text.parse::<f64>().ok().filter(|number| number.is_finite())
 }
 
-/// `YYYY-MM-DD`, with ` HH:MM[:SS]` or `THH:MM[:SS]` or not; `HH:MM[:SS]`
-/// alone is a time of day. A date the calendar lacks is none.
-pub(crate) fn iso_date(text: &str) -> Option<DateValue> {
+impl DateValue {
+    /// The date, date and time, or time of day `text` writes:
+    /// `YYYY-MM-DD`, with ` HH:MM[:SS]` or `THH:MM[:SS]` or not, or
+    /// `HH:MM[:SS]` alone. A date the calendar lacks is none.
+    pub fn parse(text: &str) -> Option<DateValue> {
+        iso_date(text, true)
+    }
+}
+
+/// `YYYY-MM-DD`, with ` HH:MM[:SS]` or `THH:MM[:SS]` or not; with
+/// `time_alone`, `HH:MM[:SS]` alone too, a time of day. A date the calendar
+/// lacks is none: checked in the 1900 system, which holds the 1904 one's
+/// dates, the workbook's system deciding only the serial.
+fn iso_date(text: &str, time_alone: bool) -> Option<DateValue> {
     fn number(part: &str, length: usize) -> Option<u32> {
         (part.len() == length && part.bytes().all(|byte| byte.is_ascii_digit()))
             .then(|| part.parse().ok())?
@@ -299,6 +310,9 @@ pub(crate) fn iso_date(text: &str) -> Option<DateValue> {
             .then_some((hour, minute, second))
     }
     if text.len() <= 8 && text.contains(':') {
+        if !time_alone {
+            return None;
+        }
         let (hour, minute, second) = time(text)?;
         return Some(DateValue::Time {
             hour,
@@ -335,7 +349,7 @@ pub(crate) fn iso_date(text: &str) -> Option<DateValue> {
         None => DateValue::Date { year, month, day },
     };
     // A date the calendar lacks (a 30 February) is text.
-    value.serial(DateSystem::Date1904).ok()?;
+    value.serial(DateSystem::Date1900).ok()?;
     Some(value)
 }
 
@@ -1081,26 +1095,35 @@ impl WorksheetMut<'_> {
         self.clear_cells(range, what)
     }
 
-    /// Clears the cells `range` names: contents, formats or both.
+    /// Clears the cells `range` names: contents, formats or both. A clear
+    /// of formats reaches every cell of the range, those the sheet does not
+    /// write too: one under a styled row or column is written with the
+    /// default format, so that a value written there later is not styled.
     fn clear_cells(&mut self, range: &str, what: Clear) -> Result<()> {
         let Some(rectangle) = self.read().range(range)? else {
             return Ok(());
         };
+        let formats = matches!(what, Clear::Formats | Clear::All);
+        let contents = matches!(what, Clear::Contents | Clear::All);
+        if formats {
+            let count = (u64::from(rectangle.last.row - rectangle.first.row) + 1)
+                * (u64::from(rectangle.last.column - rectangle.first.column) + 1);
+            if count > crate::format::MAX_STYLED_CELLS {
+                return Err(Error::Refused(format!(
+                    "{rectangle} holds {count} cells, and the formats of at most {} are cleared at once",
+                    crate::format::MAX_STYLED_CELLS
+                )));
+            }
+        }
         let rows = self.rows_in(rectangle.first.row, rectangle.last.row)?;
         let mut writes = Vec::new();
         for (&number, row) in &rows {
             for (column, cell) in columns(row) {
                 let at = CellRef::new(number, column);
-                if !rectangle.contains(at) {
-                    continue;
-                }
-                let contents = matches!(what, Clear::Contents | Clear::All) && holds_content(cell);
-                let formats =
-                    matches!(what, Clear::Formats | Clear::All) && cell.tag.get("s").is_some();
-                if contents || formats {
+                if contents && rectangle.contains(at) && holds_content(cell) {
                     writes.push(CellWrite {
                         at,
-                        content: contents.then_some(Content::Empty),
+                        content: Some(Content::Empty),
                         date_code: None,
                         style: if formats {
                             StyleChange::Remove
@@ -1110,6 +1133,23 @@ impl WorksheetMut<'_> {
                     });
                 }
             }
+        }
+        if formats {
+            // Every cell of the range: the path keeps those that change.
+            for row in rectangle.first.row..=rectangle.last.row {
+                for column in rectangle.first.column..=rectangle.last.column {
+                    writes.push(CellWrite {
+                        at: CellRef::new(row, column),
+                        content: None,
+                        date_code: None,
+                        style: StyleChange::Remove,
+                    });
+                }
+            }
+            // A content cleared goes with its format: the first write of a
+            // cell is the one with its content.
+            writes.sort_by_key(|write| (write.at, write.content.is_none()));
+            writes.dedup_by_key(|write| write.at);
         }
         self.apply(writes, Region::Rectangle(rectangle), None)
     }
@@ -1439,9 +1479,11 @@ impl WorksheetMut<'_> {
                 let at = write.at;
                 let style = new_styles[position];
                 let existing = index.columns.get(&at.column).copied();
+                // A cell the sheet does not write is written when its style
+                // is not the one its row or column gives it.
                 let needs_cell = match &write.content {
                     Some(Content::Empty) | None => {
-                        existing.is_some() || style.is_some_and(|s| s != old_styles[position])
+                        existing.is_some() || style.unwrap_or(0) != old_styles[position]
                     }
                     Some(_) => true,
                 };
@@ -1515,7 +1557,9 @@ impl WorksheetMut<'_> {
                     Some(s) if s != current => cell.tag.set("s", Some(&s.to_string())),
                     _ => {}
                 }
-                let bare = is_bare(cell);
+                // A cell that says nothing stays only when its row or column
+                // would give it a style it does not have.
+                let bare = is_bare(cell) && absent[position] == 0;
                 if !bare {
                     touched = Some(match touched {
                         Some(range) => union(range, CellRange::new(at, at)),
@@ -1525,7 +1569,7 @@ impl WorksheetMut<'_> {
                 // A cell that says nothing goes, unless its row or column
                 // would give it a style it does not have.
                 match (existing, new_cell) {
-                    (Some(child), _) if bare && absent[position] == 0 => removed.push(child),
+                    (Some(child), _) if bare => removed.push(child),
                     (None, Some(cell)) if !bare => added.push((at.column, cell)),
                     _ => {}
                 }
@@ -1560,9 +1604,18 @@ impl WorksheetMut<'_> {
         let changed = self.stage_rows(changes);
         self.workbook.count_string_references(references);
         if !arrays.is_empty() {
+            // The lookup follows the edit, in place: rebuilding it would make
+            // each write of an array formula cost the sheet's.
             let entry = &mut self.workbook.sheets[self.position];
+            if let Some(lookup) = entry.ranges.get_mut() {
+                for (anchor, formula) in &arrays {
+                    lookup.remove(*anchor);
+                    if let Some(formula) = formula {
+                        lookup.insert(formula);
+                    }
+                }
+            }
             entry.array_edits.extend(arrays);
-            entry.ranges = OnceLock::new();
         }
         if formula_written && changed {
             self.workbook.require_calculation();

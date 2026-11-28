@@ -1,7 +1,7 @@
 """xlsx: a read costs the cells it reads, an edit the rows it writes. A bulk read (cells, values, CSV, Markdown) of a
 sheet of 4N rows, each with an array formula and its own cell style, takes about 4 times what it takes at N rows, not
 16; so does the first read of a workbook of 4N cell styles, and a read of one row of 4W cells; and N single-cell reads,
-writes or style edits take about the same time whatever the size of the sheet (measured on a build without debug
+writes (spilling formulas among them) or style edits take about the same time whatever the size of the sheet (measured on a build without debug
 assertions, 2026-11-28).
 
 The workbooks are written here: a tall sheet (N rows: a number, an array formula over its own cell, a number in one of
@@ -110,6 +110,11 @@ TIMED = {
     "Worksheet.cell x N": (lambda book: [book.ws.cell((row, 1)) for row in range(N)], False),
     "Worksheet.cells, one wide row": (lambda book: book.ws.cells(book.used), True),
     "Worksheet.set_value x N": (lambda book: [book.ws.set_value((row, 3), row) for row in range(N)], False),
+    # Each write replaces a dynamic array formula: the array lookup follows, it is not rebuilt.
+    "Worksheet.set_formula spill x N": (
+        lambda book: [book.ws.set_formula((row, 5), "1", spill=True) for row in range(N)],
+        False,
+    ),
     "Worksheet.set_style x N": (
         lambda book: [book.ws.set_style(f"E{row + 1}", bold=row % 2 == 0) for row in range(N)],
         False,

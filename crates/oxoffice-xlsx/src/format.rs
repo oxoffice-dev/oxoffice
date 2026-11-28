@@ -29,7 +29,7 @@ use crate::{Error, Result, Workbook, WorksheetMut};
 
 /// The most cells a style edit writes at once: a cell an edit names is
 /// written even when it holds nothing.
-const MAX_STYLED_CELLS: u64 = 1_000_000;
+pub(crate) const MAX_STYLED_CELLS: u64 = 1_000_000;
 
 /// The longest number format code Excel reads.
 const MAX_FORMAT_CODE: usize = 255;
@@ -280,8 +280,52 @@ fn key(record: &Element) -> String {
         return format!("raw {}", String::from_utf8_lossy(&record.to_xml()));
     }
     let mut out = String::new();
-    write(record, &mut out);
+    write(&meaning(record).unwrap_or_else(|| record.clone()), &mut out);
     out
+}
+
+/// `element` with the defaults the schema gives written out and what says
+/// nothing left out, so that two writings of the same meaning are equal:
+/// `<b/>`, `<b val="true"/>` and `<b val="1"/>` are bold, `<b val="0"/>` is
+/// no `b`, `<u/>` is a single underline, `<left/>` a side of style `none`, a
+/// `patternFill` without its type `none`. `None` for an element that says
+/// nothing.
+fn meaning(element: &Element) -> Option<Element> {
+    let mut element = element.clone();
+    let val = element.tag.get("val");
+    match element.tag.local_name().as_str() {
+        "b" | "i" | "strike" | "condense" | "extend" | "outline" | "shadow" => {
+            match val.as_deref() {
+                None => element.tag.set("val", Some("1")),
+                Some("0" | "false") => return None,
+                Some(_) => {}
+            }
+        }
+        "u" => match val.as_deref() {
+            None => element.tag.set("val", Some("single")),
+            Some("none") => return None,
+            Some(_) => {}
+        },
+        "vertAlign" if val.as_deref() == Some("baseline") => return None,
+        "patternFill" if element.tag.get("patternType").is_none() => {
+            element.tag.set("patternType", Some("none"));
+        }
+        "left" | "right" | "top" | "bottom" | "diagonal" | "start" | "end" | "vertical"
+        | "horizontal"
+            if element.tag.get("style").is_none() =>
+        {
+            element.tag.set("style", Some("none"));
+        }
+        _ => {}
+    }
+    element.children = std::mem::take(&mut element.children)
+        .into_iter()
+        .filter_map(|child| match child {
+            Node::Element(child) => meaning(&child).map(Node::Element),
+            other => Some(other),
+        })
+        .collect();
+    Some(element)
 }
 
 /// The records of the styles part by what they say: what finds an identical
@@ -973,6 +1017,26 @@ mod tests {
             (
                 r#"<font><b/><sz val="11"/></font>"#,
                 r#"<font><sz val="11"/><b/></font>"#,
+                false,
+            ),
+            (
+                r#"<font><b/><u/><i val="0"/></font>"#,
+                r#"<font><b val="true"/><u val="single"/></font>"#,
+                true,
+            ),
+            (
+                r#"<border><left/><right style="thin"/></border>"#,
+                r#"<border><left style="none"/><right style="thin"/></border>"#,
+                true,
+            ),
+            (
+                r#"<fill><patternFill/></fill>"#,
+                r#"<fill><patternFill patternType="none"/></fill>"#,
+                true,
+            ),
+            (
+                r#"<font><b val="1"/></font>"#,
+                r#"<font><b val="0"/></font>"#,
                 false,
             ),
             (

@@ -216,11 +216,45 @@ mod tests {
                 })),
             ),
             ("2026-02-30", text("2026-02-30")),
+            (
+                "1902-06-15",
+                CellInput::Date(DateValue::Date {
+                    year: 1902,
+                    month: 6,
+                    day: 15,
+                }),
+            ),
+            ("08:30", text("08:30")),
+            ("08:30:15", text("08:30:15")),
             ("2026-1-5", text("2026-1-5")),
             ("=SUM(A1:A3)", text("=SUM(A1:A3)")),
             ("", CellInput::Value(Value::Empty)),
         ] {
             assert_eq!(CellInput::infer(field), expected, "{field:?}");
+        }
+        // A date, a date and time, or a time alone (the edit map's `date`).
+        for (text, parsed) in [
+            (
+                "08:30",
+                Some("Time { hour: 8, minute: 30, second: 0, millisecond: 0 }"),
+            ),
+            ("2026-01-05", Some("Date { year: 2026, month: 1, day: 5 }")),
+            (
+                "1902-06-15T08:30",
+                Some(
+                    "DateTime(DateTime { year: 1902, month: 6, day: 15, hour: 8, minute: 30, second: 0, millisecond: 0 })",
+                ),
+            ),
+            ("25:00", None),
+            ("noon", None),
+        ] {
+            assert_eq!(
+                DateValue::parse(text)
+                    .map(|value| format!("{value:?}"))
+                    .as_deref(),
+                parsed,
+                "{text}"
+            );
         }
     }
 }

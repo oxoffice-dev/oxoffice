@@ -291,6 +291,8 @@ fn set_import_csv_and_the_edit_map_write_cells_values_formulas_and_styles() {
         &["set", "'Q1 data'!B2", "x"],
         &["set", "B1", "SORT(A1:A3)", "--formula", "--spill"],
         &["set", "H1", "SORT(A1:A3)", "--formula", "--spill", "H1:H3"],
+        &["set", "A6", "-5"],
+        &["set", "A7", "-A2*2", "--formula"],
     ]
     .iter()
     .enumerate()
@@ -312,6 +314,9 @@ fn set_import_csv_and_the_edit_map_write_cells_values_formulas_and_styles() {
     assert_eq!(field(&by_ref("A5"), "formula"), json!("SUM(A2:A2)*2"));
     assert_eq!(field(&by_ref("B1"), "formula_kind"), json!("array"));
     assert_eq!(field(&by_ref("B1"), "array_range"), json!("B1"));
+    let negative = cells(&current, "A6:A7");
+    assert_eq!(negative[0]["value"], json!(-5.0));
+    assert_eq!(negative[1]["formula"], json!("-A2*2"));
     let spilled = cells(&current, "H1");
     assert_eq!(spilled[0]["array_range"], json!("H1:H3"));
     let other = cells(&current, "'Q1 data'!B2");
@@ -396,5 +401,60 @@ fn set_import_csv_and_the_edit_map_write_cells_values_formulas_and_styles() {
     let sheet = part(&edited, "xl/worksheets/sheet1.xml");
     assert!(sheet.contains("<f>SUM(A2:A2)*2</f></c>"), "{sheet}");
     assert!(part(&edited, "xl/workbook.xml").contains(r#"fullCalcOnLoad="1""#));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_edit_map_writes_into_the_first_visible_worksheet_when_no_sheet_is_named() {
+    use std::io::Write;
+
+    let dir = scratch("visible");
+    let source = dir.join("source.xlsx");
+    let made = oxoffice(&[
+        "new",
+        "--sheet",
+        "Config",
+        "--sheet",
+        "Data",
+        "-o",
+        source.to_str().unwrap(),
+    ]);
+    assert!(made.status.success(), "{}", stderr(&made));
+    // The first sheet hidden, as a workbook keeps its settings.
+    let mut zip = zip::ZipArchive::new(Cursor::new(fs::read(&source).unwrap())).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).unwrap();
+        if name == "xl/workbook.xml" {
+            data = String::from_utf8(data)
+                .unwrap()
+                .replace(
+                    r#"<sheet name="Config""#,
+                    r#"<sheet state="hidden" name="Config""#,
+                )
+                .into_bytes();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        out.write_all(&data).unwrap();
+    }
+    fs::write(&source, out.finish().unwrap().into_inner()).unwrap();
+    let map = dir.join("map.json");
+    fs::write(&map, json!([{"cell": "B2", "value": 3}]).to_string()).unwrap();
+    let edited = dir.join("edited.xlsx");
+    let output = oxoffice(&[
+        "edit",
+        source.to_str().unwrap(),
+        "--map",
+        map.to_str().unwrap(),
+        "-o",
+        edited.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(part(&edited, "xl/worksheets/sheet2.xml").contains(r#"<c r="B2"><v>3</v></c>"#));
+    assert!(!part(&edited, "xl/worksheets/sheet1.xml").contains("B2"));
     let _ = fs::remove_dir_all(&dir);
 }

@@ -313,7 +313,8 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   `{"cell": "D2", "formula": "B2*C2"}`, `{"cell": "E2", "date": "2026-01-05"}`, `{"range": "A1:F1", "style":
   {"bold": true, "fill": "FFFF00"}}`, `{"range": "C2:C8", "number_format": "0.00"}`, `{"range": "A20:B30",
   "clear": "contents"}`, and, from PR 7, `add_sheet`, widths, heights and freeze (section 7). `sheet` is a name or a
-  number from 1 and defaults to the entry before it, then the first sheet.
+  number from 1 and defaults to the entry before it, then the first visible worksheet, as the commands that read
+  cells take it. `date` takes `YYYY-MM-DD`, with a time or not, or a time alone.
 - **Shared formulas stay valid.** A content edit (value, formula, clear) of any cell of a shared group dissolves the
   group: every other member becomes a plain formula with its moved text (its row rewritten), the edited cell takes
   its new content. No master moves and no `ref` shrinks, so no reader can place a 1D or 2D group's master wrongly.
@@ -325,8 +326,9 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   `sheetData`). An edited row's `spans` widens to its cells.
 - **Styles are deduplicated.** A style edit builds the cell's record with the changed parts (`apply*="1"` on them, as
   Excel writes) and reuses an identical `cellXfs` record, else appends one; the font, fill, border it needs are reused
-  when an identical record exists (compared on what the model reads; a record with unmodelled content only when its
-  bytes match), else appended. A number format code reuses a built-in id only when `oxoffice-numfmt` says the id is
+  when an identical record exists (compared on what the model reads: `<b/>`, `<b val="true"/>` and `<b val="1"/>` are
+  bold, `<u/>` is `<u val="single"/>`, `<left/>` a side of style `none`; a record with unmodelled content only when its
+  bytes match), else appended; a style edit that changes nothing stages nothing. A number format code reuses a built-in id only when `oxoffice-numfmt` says the id is
   locale-independent (`is_locale_independent`: General, the numbers, percentages, scientific, fractions, text and the
   duration `[h]:mm:ss`, id 46, which Excel in French shows and keeps as 46; Excel in French saves `hh:mm:ss` as id 21
   and shows id 44 in euros, so no date, time of day, currency or accounting id),
@@ -341,12 +343,16 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   width, `defaultColWidth` or `baseColWidth` rounded up to 8 pixels) or the row (`s`, `customFormat="1"`, a row the
   sheet lacks made, at most 100,000 at once), every cell they hold, and a cell where a styled row meets a styled
   column, holding both: so a cell typed later takes the style, and a cell the sheet does not write reads it (row
-  first, then column). `clear` of formats on whole columns or rows takes their style away the same way.
+  first, then column). `clear` of formats on whole columns or rows takes their style away the same way; on a range
+  (at most 1,000,000 cells), it writes the cells the sheet does not write under a styled row or column with the
+  default format, so that a value written there later is not styled.
 - **CSV import** writes the rectangle the CSV covers from `at`; an empty field clears that cell's content. UTF-8 (a
   BOM skipped, another encoding refused naming the first bad byte; Python also takes a `str`). Types inferred
   strictly: `-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?` with no leading zero but `0` itself and at most 15 significant
   digits (`007` and a 16-digit card number stay text) is a number, `TRUE` / `FALSE` (any case) a boolean,
-  `YYYY-MM-DD[( |T)HH:MM[:SS]]` a date, anything else text, a leading `=` included (no formula from a CSV). `--text` /
+  `YYYY-MM-DD[( |T)HH:MM[:SS]]` a date (its calendar checked in the 1900 system, which holds the 1904 one's dates; the
+  workbook's system decides only the serial, and refuses a date before 1904 in a 1904 workbook), anything else text (a
+  time alone too), a leading `=` included (no formula from a CSV). `--text` /
   `infer=False` keeps every field text; per-column types wait. The CLI `set` reads its `VALUE` by the same rules
   (`CellInput::infer` in Rust). A line shorter than the longest clears the rest of its row of the rectangle.
 

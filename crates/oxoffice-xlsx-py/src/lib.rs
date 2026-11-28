@@ -593,16 +593,21 @@ impl PyWorksheet {
         self.edit(py, |sheet| sheet.set_style(range, &patch))
     }
 
-    /// Writes a CSV from the cell `at`: `source` is its text (a str), its
-    /// bytes in UTF-8, or the path of its file.
-    #[pyo3(signature = (source, *, at = "A1", infer = true))]
+    /// Writes a CSV from the cell `at` (`"B3"` or a 0-based `(row,
+    /// column)`, `A1` by default): `source` is its text (a str), its bytes in
+    /// UTF-8, or the path of its file.
+    #[pyo3(signature = (source, *, at = None, infer = true))]
     fn import_csv(
         &self,
         py: Python<'_>,
         source: &Bound<'_, PyAny>,
-        at: &str,
+        at: Option<&Bound<'_, PyAny>>,
         infer: bool,
     ) -> PyResult<()> {
+        let at = match at {
+            Some(at) => cell_argument(at)?,
+            None => "A1".to_owned(),
+        };
         let bytes: Vec<u8> = if let Ok(text) = source.cast::<pyo3::types::PyString>() {
             text.to_str()?.as_bytes().to_vec()
         } else if let Ok(bytes) = source.cast::<PyBytes>() {
@@ -622,7 +627,7 @@ impl PyWorksheet {
             ));
         };
         self.edit(py, |sheet| {
-            sheet.import_csv(at, &bytes, CsvImport { infer })
+            sheet.import_csv(&at, &bytes, CsvImport { infer })
         })
     }
 

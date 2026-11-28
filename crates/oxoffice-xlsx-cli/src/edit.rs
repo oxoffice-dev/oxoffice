@@ -6,10 +6,12 @@
 //! `clear` of a `range`; `add_sheet`, `columns` (with `width`), `rows` (with
 //! `height`) or `freeze`. An entry names the sheet it edits with `sheet`, a
 //! name or a number from 1; without it, it edits the sheet of the entry
-//! before it, and the first entry the first sheet. A refusal names the
-//! entry, counted from 0.
+//! before it, and the first entry the first visible worksheet. A refusal
+//! names the entry, counted from 0.
 
-use oxoffice_xlsx::{CellInput, CellRange, Clear, FormulaOptions, Spill, StylePatch, Workbook};
+use oxoffice_xlsx::{
+    CellInput, CellRange, Clear, DateValue, FormulaOptions, Spill, StylePatch, Workbook,
+};
 use serde_json::{Map, Value};
 
 use crate::Result;
@@ -162,7 +164,7 @@ fn parse_entry(entry: &Value) -> std::result::Result<Edit, String> {
             ),
             "date" => {
                 let date = text(entry, "date")?;
-                let CellInput::Date(value) = CellInput::infer(&date) else {
+                let Some(value) = DateValue::parse(&date) else {
                     return Err(format!(
                         "date is YYYY-MM-DD, with a time HH:MM[:SS] after a space or a T, or a time alone, not {date:?}"
                     ));
@@ -330,7 +332,14 @@ fn position(workbook: &Workbook, reference: &SheetRef) -> std::result::Result<us
 /// Makes `edits` in `workbook`, in order; the first that is refused ends it,
 /// named by its place in the map.
 pub(crate) fn apply(workbook: &mut Workbook, edits: &[Edit]) -> Result<()> {
-    let mut current = 0;
+    // The first visible worksheet, as the commands that read cells take it.
+    let mut current = workbook
+        .sheets()
+        .find(|sheet| {
+            sheet.kind() == oxoffice_xlsx::SheetKind::Worksheet
+                && sheet.state() == oxoffice_xlsx::SheetState::Visible
+        })
+        .map_or(0, |sheet| sheet.position());
     for (index, edit) in edits.iter().enumerate() {
         let refused = |message: String| format!("entry {index}: {message}");
         if let Some(reference) = &edit.sheet {

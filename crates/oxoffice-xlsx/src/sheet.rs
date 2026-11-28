@@ -94,8 +94,8 @@ pub(crate) struct SheetEntry {
     /// and children as they now are, the rest of the part kept as read.
     pub(crate) edits: SheetEdits,
     /// The array formulas and data tables, found by the cell; read from the
-    /// index and the edits the first time a cell needs them, and again after
-    /// an edit adds or removes one.
+    /// index and the edits the first time a cell needs them, then kept up to
+    /// date by the edits that add or remove one.
     pub(crate) ranges: std::sync::OnceLock<crate::ranges::RangeLookup>,
     /// The array formulas edits added (`Some`) or removed (`None`), by the
     /// cell that holds them: what the index, read from the part as it was,

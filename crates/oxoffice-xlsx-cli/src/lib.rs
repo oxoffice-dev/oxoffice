@@ -136,7 +136,7 @@ enum Command {
     /// the columns left of a cell, {"freeze": null} removes the frozen
     /// panes. An entry names its sheet with "sheet" (a name, or a number
     /// from 1); without it, it takes the sheet of the entry before it, and
-    /// the first entry the first sheet.
+    /// the first entry the first visible worksheet.
     Edit {
         file: PathBuf,
         /// The JSON file of the edits
@@ -165,6 +165,9 @@ enum Command {
         file: PathBuf,
         /// A1 reference of the cell, with a sheet prefix or not ('Q1 data'!B3)
         cell: String,
+        /// The value, or the formula with --formula; one that starts with `-`
+        /// (a negative number, `-A1*2`) is taken as it is
+        #[arg(allow_hyphen_values = true)]
         value: String,
         /// The sheet, by name or number from 1 (the first visible worksheet by default)
         #[arg(long)]

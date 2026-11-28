@@ -341,6 +341,18 @@ fn a_date_writes_its_serial_and_a_cell_shown_as_general_a_format_that_shows_it()
     assert_eq!(styles.list(StyleList::NumFmts).len(), 4);
     assert!(styles.cell_xfs().any(|xf| xf.num_fmt_id() == 46));
     assert_eq!(styles.list(StyleList::CellXfs).len(), 6);
+    // A date from 1900 to 1903 is a date in the 1900 system, and refused in
+    // the 1904 one, which starts after it.
+    let mut d1900 = workbook_with_sheet(&self::sheet("<sheetData/>"));
+    d1900
+        .sheet_at_mut(0)
+        .unwrap()
+        .set_value("A9", date(1902, 6, 15))
+        .unwrap();
+    assert_eq!(
+        d1900.sheet_at(0).unwrap().cell("A9").unwrap().text,
+        "1902-06-15"
+    );
     // In the 1904 system, the serial of that system.
     let mut d1904 = Workbook::from_bytes(&corpus_bytes("excel/dates1904.xlsx")).unwrap();
     d1904
@@ -351,6 +363,17 @@ fn a_date_writes_its_serial_and_a_cell_shown_as_general_a_format_that_shows_it()
     assert_eq!(
         d1904.sheet_at(0).unwrap().cell("H1").unwrap().value,
         Value::Number(44565.0)
+    );
+    let error = d1904
+        .sheet_at_mut(0)
+        .unwrap()
+        .set_value("H2", date(1902, 6, 15))
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("1902-06-15 is not a date the workbook can hold"),
+        "{error}"
     );
 }
 
@@ -917,6 +940,22 @@ fn a_style_edit_reuses_identical_records_and_appends_what_is_missing() {
     assert!(style.font.bold && style.font.color.as_ref().unwrap().rgb.as_deref() == Some("1F4E79"));
     assert_eq!(style.number_format, "#,##0.00");
 
+    // LibreOffice's bold header says <b val="true"/>: bold again changes
+    // nothing, as <b/> says the same.
+    let lo = corpus_bytes("libreoffice/review.xlsx");
+    let mut header = Workbook::from_bytes(&lo).unwrap();
+    let patch = StylePatch {
+        bold: Some(true),
+        ..StylePatch::default()
+    };
+    let untouched = header.to_bytes().unwrap();
+    header
+        .sheet_at_mut(0)
+        .unwrap()
+        .set_style("A1:G1", &patch)
+        .unwrap();
+    assert_eq!(header.to_bytes().unwrap(), untouched);
+
     // A patch that says what a cell's style says already changes nothing.
     let mut plain = workbook_with_sheet(&sheet(
         r#"<sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData>"#,
@@ -1072,6 +1111,22 @@ fn whole_columns_and_rows_take_the_style_themselves_so_cells_typed_later_take_it
         let font = sheet_read.cell(cell).unwrap().style.font.clone();
         assert_eq!((font.bold, font.italic), (bold, italic), "{cell}");
     }
+    // Clearing the formats of a range under a styled column or row writes its
+    // empty cells with the default format, so a value written there later is
+    // not styled.
+    let mut data = workbook.sheet_at_mut(0).unwrap();
+    data.clear("B2:C5", Clear::Formats).unwrap();
+    data.set_value("B3", 2.0).unwrap();
+    let sheet_read = workbook.sheet_at(0).unwrap();
+    for cell in ["B3", "B4", "C5", "B6"] {
+        let font = sheet_read.cell(cell).unwrap().style.font.clone();
+        assert_eq!(font.bold || font.italic, cell == "B6", "{cell}");
+    }
+    let xml = part_text(&workbook.to_bytes().unwrap(), "xl/worksheets/sheet1.xml");
+    assert!(
+        xml.contains(r#"<row r="5" s="2" customFormat="1"><c r="B5"/><c r="C5"/></row>"#),
+        "{xml}"
+    );
     let error = workbook
         .sheet_at_mut(0)
         .unwrap()

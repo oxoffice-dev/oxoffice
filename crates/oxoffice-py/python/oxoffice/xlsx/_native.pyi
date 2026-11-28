@@ -258,7 +258,9 @@ class Worksheet:
         it; a range of cells writes at most 1,000,000 of them.
         """
 
-    def import_csv(self, source: str | bytes | os.PathLike[str], *, at: str = "A1", infer: bool = True) -> None:
+    def import_csv(
+        self, source: str | bytes | os.PathLike[str], *, at: _CellAddress = "A1", infer: bool = True
+    ) -> None:
         """Writes a CSV from the cell ``at``: ``source`` is its text, its UTF-8 bytes or the path of its file.
 
         The rectangle it covers is written, an empty field clearing its cell. With ``infer``, a field is a number
