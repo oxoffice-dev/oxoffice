@@ -45,6 +45,7 @@ J2#	-
 ROUND(A2:A10,1)	9x1
 ROUND(A2:A10,{0,1,2})	9x3
 LEN(A2:C3)	2x3
+CONCATENATE(A1:A3,"x")	3x1
 IFERROR(A2:A10/B2:B10,"")	9x1
 COUNTIF(A:A,D2:D5)	4x1
 COUNTIFS(A:A,D2:D5,B:B,">0")	4x1
@@ -56,6 +57,7 @@ EDATE(A2:A10,1)	-
 # One value whatever the arguments.
 SUM(A2:A10*B2:B10)	1x1
 _xlfn.TEXTJOIN(",",TRUE,A2:A10)	1x1
+_xlfn.CONCAT(A1:A3,"x")	1x1
 ROWS(A2:A10)	1x1
 NOW()	1x1
 # Arrays built from shapes and constants.
