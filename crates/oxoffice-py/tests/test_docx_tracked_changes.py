@@ -446,6 +446,56 @@ def test_a_paragraph_inserted_before_one_of_another_story_resolves_both_ways(whe
     assert view(after, "reject_all") == view(before, "reject_all")
 
 
+@pytest.mark.parametrize("where", ["header", "footer", "footnote", "endnote"])
+def test_a_block_added_to_a_header_or_a_note_keeps_every_other_handle(where):
+    doc = oxdocx.Document()
+    body = doc.add_paragraph("Body.")
+    head = doc.section(0).header.add_paragraph("Head.")
+    doc.add_table(1, 1).cell(0, 0).text = "Cell."
+    owner = {"header": lambda: doc.section(0).header, "footer": lambda: doc.section(0).footer,
+             "footnote": lambda: doc.add_footnote(body, "The note."),
+             "endnote": lambda: doc.add_endnote(body, "The end.")}[where]()
+    cell = doc.tables[0].cell(0, 0)
+    with doc.track_changes(AUTHOR, timestamp=STAMP):
+        assert owner.add_paragraph("New.").text == "New."
+        owner.add_table(1, 1)
+    assert [body.text, cell.text] == ["Body.", "Cell."]
+    if where.endswith("note"):
+        assert head.text == "Head."
+
+
+@pytest.mark.parametrize("where", ["header", "footer"])
+def test_a_block_added_beside_a_text_box_is_tracked_on_a_staged_copy(tmp_path, where):
+    """A part holding a text box's two copies keeps the staged route: the block is tracked all the same, and the
+    publication retires the handles taken before."""
+    d = docx.Document()
+    d.add_paragraph("Body.")
+    owner = getattr(d.sections[0], where)
+    owner.paragraphs[0].text = "Head "
+    box = '<w:p><w:r><w:t>Boxed.</w:t></w:r></w:p>'
+    owner.paragraphs[0]._p.append(parse_xml(
+        f'<w:r {BOX_NAMESPACES}><mc:AlternateContent><mc:Choice Requires="wps">'
+        '<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Box"/><a:graphic>'
+        '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp>'
+        f'<wps:cNvSpPr txBox="1"/><wps:spPr/><wps:txbx><w:txbxContent>{box}</w:txbxContent></wps:txbx><wps:bodyPr/>'
+        '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape>'
+        f'<v:textbox><w:txbxContent>{box}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>'
+        '</mc:AlternateContent></w:r>'))
+    d.save(tmp_path / "boxed.docx")
+    doc = oxdocx.Document.open(tmp_path / "boxed.docx")
+    body = doc.paragraphs[0]
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+        assert getattr(doc.section(0), where).add_paragraph("New.").text == "New."
+        assert session.revision_ids
+    with pytest.raises(oxdocx.StaleElementError):
+        body.text
+    after = doc.to_bytes()
+    texts = {resolve: [paragraph[1] for paragraph in view(after, resolve)] for resolve in ("accept_all", "reject_all")}
+    assert "New." in texts["accept_all"] and "New." not in texts["reject_all"]
+    assert view(after, "reject_all") == view(before, "reject_all")
+
+
 def test_two_paragraphs_added_to_a_header_resolve_both_ways():
     def edit(doc):
         header = doc.section(0).header

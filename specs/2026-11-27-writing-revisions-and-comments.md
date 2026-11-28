@@ -578,6 +578,16 @@ What PR 3e settles:
   content as inserted. The note's mark, its story's final one, stays unmarked (W12). Rejecting it removes the note,
   and accepting it keeps it. A note reference added any other way stays refused in an insertion.
 
+## Amendment: PR 3f (2026-11-28)
+
+- Under a session, `HeaderFooter.add_paragraph`/`add_table` and `FootnoteEndnote.add_paragraph`/`add_table` insert
+  their block in place and mark it there (`Document::mark_story_insertion_in_place`): the story's part is written
+  again once, with the marked block and the mark before it, at the cost of that part. The handles of the other
+  stories stay; their tracked twins leave `GROWING`.
+- A header, footer or notes part holding alternate content (a text box's two copies) keeps the staged route: a
+  replacement there would have to pair the copies.
+- `Cell.add_paragraph`/`add_table` keep the staged route: their untracked calls grow with the body too (#6).
+
 ## Open questions
 
 ### Product (maintainer)

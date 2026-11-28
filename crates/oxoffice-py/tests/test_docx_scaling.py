@@ -899,10 +899,6 @@ GROWING = {
 }
 # A tracked call costs what its untracked call does, so it grows only where that one does.
 GROWING |= {f"{name} (tracked)" for name in GROWING if f"{name} (tracked)" in TIMED}
-# Under a session these adders take a staged route (spec, "What PR 3d settles"), until their in-place story
-# publication: their tracked twins grow with the document where the untracked calls stay flat.
-GROWING |= {"HeaderFooter.add_paragraph (tracked)", "HeaderFooter.add_table (tracked)",
-            "FootnoteEndnote.add_paragraph (tracked)", "FootnoteEndnote.add_table (tracked)"}
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 
 # A body splice costs its own block (oxoffice-dev/oxoffice#466): these calls are held to SPLICE_RATIO times plus
