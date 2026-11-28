@@ -2894,6 +2894,11 @@ impl PyDocument {
             .begin_list_item(kind, text, level)
             .map_err(|error| docx_to_pyerr(py, error))?;
         let paragraph = oxoffice_docx::Document::list_item_paragraph(text, num_id, level);
+        if document.inner.tracks_changes() {
+            // The numbering it made is no tracked change, as in Word.
+            return Self::append_tracked_paragraph(&slf, py, document, paragraph, operation)
+                .inspect_err(|_| slf.borrow_mut(py).inner.undo_numbering_edit(journal));
+        }
         let staged = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             Self::stage_appended_paragraph(
                 &slf,
@@ -2949,7 +2954,12 @@ impl PyDocument {
     ) -> PyResult<StagedAppend> {
         let publication = WordPublication::AppendBody;
         let path = smallvec![PathSeg::Body(0), PathSeg::Para(index)];
-        if let Ok(Some(facts)) = document.inner.direct_body_paragraph_facts(paragraph)
+        // A paragraph a session wrote as inserted holds its runs in insertions.
+        let facts = match document.inner.tracks_changes() {
+            true => document.inner.inserted_body_paragraph_facts(paragraph),
+            false => document.inner.direct_body_paragraph_facts(paragraph),
+        };
+        if let Ok(Some(facts)) = facts
             && let Some(plan) = document.plan_body_splice(
                 py,
                 BodySplice {
@@ -2987,6 +2997,89 @@ impl PyDocument {
         Ok(StagedAppend::Revision(Box::new(candidate), result))
     }
 
+    /// Under a session, `block`, about to be placed at body `slot`, written
+    /// as inserted (`last`: it ends the body); else `block`.
+    pub(crate) fn tracked_inserted_block(
+        &mut self,
+        py: Python<'_>,
+        block: oxoffice_docx_oxml::BodyContent,
+        slot: usize,
+        last: bool,
+    ) -> PyResult<oxoffice_docx_oxml::BodyContent> {
+        self.inner
+            .marked_inserted_block(block, slot, last)
+            .map_err(|error| docx_to_pyerr(py, error))
+    }
+
+    /// Under a session, after blocks `slot..slot + count` were placed and
+    /// published, the mark of the paragraph before them written as inserted
+    /// when they end the body with a paragraph (Word check W12). The mark
+    /// changes neither the paragraph's text nor what it holds, which its
+    /// owner keeps.
+    pub(crate) fn mark_before_inserted_blocks(
+        &mut self,
+        py: Python<'_>,
+        slot: usize,
+        count: usize,
+    ) -> PyResult<()> {
+        if let Some(before) = self.inner.mark_before_insertion(slot, count) {
+            self.inner
+                .mark_paragraph_mark_inserted(before)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            #[cfg(debug_assertions)]
+            self.assert_word_inventory_rebuilds(false);
+        }
+        Ok(())
+    }
+
+    /// [`Self::append_paragraph_candidate`] under a session: the paragraph
+    /// written as inserted, appended as a list item is, then the mark before.
+    fn append_tracked_paragraph(
+        slf: &Py<Self>,
+        py: Python<'_>,
+        mut document: PyRefMut<'_, Self>,
+        paragraph: oxoffice_docx_oxml::CT_P,
+        operation: &'static str,
+    ) -> PyResult<Py<PyParagraph>> {
+        let index = document.inner.paragraph_count();
+        let slot = document.inner.content_count();
+        let oxoffice_docx_oxml::BodyContent::Paragraph(paragraph) = document
+            .tracked_inserted_block(
+                py,
+                oxoffice_docx_oxml::BodyContent::Paragraph(Box::new(paragraph)),
+                slot,
+                true,
+            )?
+        else {
+            unreachable!("a paragraph is marked as a paragraph")
+        };
+        let staged = Self::stage_appended_paragraph(
+            slf,
+            py,
+            &mut document,
+            index,
+            slot,
+            &paragraph,
+            operation,
+        )?;
+        let result = match staged {
+            StagedAppend::Splice(prepared, result) => {
+                document.inner.append_body_paragraph(*paragraph);
+                document.commit_body_splice(*prepared, &WordPublication::AppendBody)?;
+                document
+                    .inner
+                    .keep_body_savable_after_typed_insert(slot, true);
+                result
+            }
+            StagedAppend::Revision(candidate, result) => {
+                document.install_inner(*candidate);
+                result
+            }
+        };
+        document.mark_before_inserted_blocks(py, slot, 1)?;
+        Ok(result)
+    }
+
     pub(super) fn append_paragraph_candidate(
         slf: Py<Self>,
         py: Python<'_>,
@@ -3017,6 +3110,15 @@ impl PyDocument {
         };
         let mut appended = oxoffice_docx::Document::detached_text_paragraph(text);
         edit(&mut oxoffice_docx::Paragraph::detached(&mut appended));
+        if document.inner.tracks_changes() {
+            return Self::append_tracked_paragraph(
+                &slf,
+                py,
+                document,
+                appended,
+                "Document.add_paragraph",
+            );
+        }
         let slot = document.inner.content_count();
         let splice = document.inner.direct_body_paragraph_facts(&appended);
         if let Ok(Some(facts)) = splice

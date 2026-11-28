@@ -586,6 +586,56 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             unlike_compare: true,
         },
         Row {
+            shape: "a paragraph inserted between two",
+            document: || doc_with_body(&(paragraph(&run("First.")) + &paragraph(&run("Last.")))),
+            tracked: |doc| {
+                doc.insert_paragraph(1, "Middle.").unwrap();
+            },
+            untracked: |doc| {
+                doc.insert_paragraph(1, "Middle.");
+            },
+            revisions: &[
+                (RevisionKind::Insertion, ""),
+                (RevisionKind::Insertion, "Middle."),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a paragraph appended, the final mark unmarked (W12)",
+            document: || doc_with_body(&paragraph(&run("First."))),
+            tracked: |doc| {
+                doc.add_paragraph("End.").unwrap();
+            },
+            untracked: |doc| {
+                doc.add_paragraph("End.");
+            },
+            revisions: &[
+                (RevisionKind::Insertion, ""),
+                (RevisionKind::Insertion, "End."),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a table inserted, each row marked",
+            document: || doc_with_body(&(paragraph(&run("First.")) + &paragraph(&run("Last.")))),
+            tracked: |doc| {
+                doc.insert_table(1, 1, 2).unwrap();
+            },
+            untracked: |doc| {
+                doc.insert_table(1, 1, 2);
+            },
+            // The row and each cell's mark.
+            revisions: &[
+                (RevisionKind::Insertion, ""),
+                (RevisionKind::Insertion, ""),
+                (RevisionKind::Insertion, ""),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
             shape: "a cell paragraph",
             document: || {
                 doc_with_body(&format!(

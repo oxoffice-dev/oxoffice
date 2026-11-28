@@ -188,6 +188,9 @@ impl PyDocument {
             .detach(|| candidate.insert_html_fragment(&destination, html, &resources))
             .map_err(|error| docx_to_pyerr(py, error))?;
         let diagnostics = html_diagnostics(py, result.diagnostics)?;
+        candidate
+            .mark_body_insertion_since(&document.inner)
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document.publish_api_candidate(py, candidate, "Document.insert_html")?;
         Ok(diagnostics)
     }
@@ -1247,6 +1250,9 @@ impl PyDocument {
                 policy.map(|p| p.inner).unwrap_or_default(),
             )
             .map_err(|e| docx_to_pyerr(py, e))?;
+        candidate
+            .mark_body_insertion_since(&document.inner)
+            .map_err(|error| docx_to_pyerr(py, error))?;
         document.publish_api_candidate(py, candidate, "Document.import_fragment")
     }
     #[pyo3(signature = (other, *, at, policy=None))]
@@ -1280,6 +1286,9 @@ impl PyDocument {
                 oxoffice_docx::FragmentConflictPolicy::for_insert_document(policy.map(|p| p.inner)),
             )
             .map_err(|e| docx_to_pyerr(py, e))?;
+        candidate
+            .mark_body_insertion_since(&self.inner)
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.publish_api_candidate(py, candidate, "Document.insert_document")
     }
     #[getter]
@@ -3364,10 +3373,14 @@ impl PyDocument {
         // facade's staged restart.
         let mut document = slf.borrow_mut(py);
         let index = document.inner.paragraph_count();
+        let slot = document.inner.content_count();
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .try_add_numbered_list_item_with_restart(text, level as u32, restart)
             .map(|_| ())
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        candidate
+            .mark_inserted_body_blocks(slot, 1)
             .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
@@ -4895,9 +4908,24 @@ impl PyDocument {
         let index = document.inner.table_count();
         document.refuse_unsavable_body_edit(py)?;
         // A style may add its definition, so only a plain table splices.
+        let slot = document.inner.content_count();
         if style.is_none() {
-            let appended = oxoffice_docx::Document::detached_table(rows, cols);
-            let slot = document.inner.content_count();
+            let mut appended = oxoffice_docx::Document::detached_table(rows, cols);
+            // Under a session, the table placed is written as inserted.
+            let tracked = document.inner.tracks_changes();
+            if tracked {
+                let oxoffice_docx_oxml::BodyContent::Table(marked) = document
+                    .tracked_inserted_block(
+                        py,
+                        oxoffice_docx_oxml::BodyContent::Table(Box::new(appended)),
+                        slot,
+                        true,
+                    )?
+                else {
+                    unreachable!("a table is marked as a table")
+                };
+                appended = *marked;
+            }
             if let Ok((xml, snapshots)) = document.inner.detached_table_owner_snapshots(&appended)
                 && let Some(plan) = document.plan_body_splice(
                     py,
@@ -4922,7 +4950,15 @@ impl PyDocument {
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
                 let savable = document.inner.unsavable_body_edit().is_none();
-                document.inner.add_table(rows, cols);
+                match tracked {
+                    true => document.inner.insert_body_block(
+                        slot,
+                        oxoffice_docx_oxml::BodyContent::Table(Box::new(appended)),
+                    ),
+                    false => {
+                        document.inner.add_table(rows, cols);
+                    }
+                }
                 debug_assert_eq!(prepared.plan.table, index);
                 document.commit_body_splice(prepared, &publication)?;
                 document
@@ -4939,6 +4975,9 @@ impl PyDocument {
         if let Some(style) = style {
             table.set_style(&style);
         }
+        candidate
+            .mark_inserted_body_blocks(slot, 1)
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -5141,7 +5180,33 @@ impl PyDocument {
             };
             let mut inserted = oxoffice_docx::Document::detached_text_paragraph(text);
             edit(&mut oxoffice_docx::Paragraph::detached(&mut inserted));
-            let splice = document.inner.direct_body_paragraph_facts(&inserted);
+            // Under a session, the paragraph placed is written as inserted.
+            let tracked = document.inner.tracks_changes();
+            if tracked {
+                let last = index == document.inner.content_count();
+                let oxoffice_docx_oxml::BodyContent::Paragraph(marked) = document
+                    .tracked_inserted_block(
+                        py,
+                        oxoffice_docx_oxml::BodyContent::Paragraph(Box::new(inserted)),
+                        index,
+                        last,
+                    )?
+                else {
+                    unreachable!("a paragraph is marked as a paragraph")
+                };
+                inserted = *marked;
+            }
+            let place = |document: &mut oxoffice_docx::Document| match tracked {
+                true => document.insert_body_block(
+                    index,
+                    oxoffice_docx_oxml::BodyContent::Paragraph(Box::new(inserted.clone())),
+                ),
+                false => edit(&mut document.insert_paragraph(index, text)),
+            };
+            let splice = match tracked {
+                true => document.inner.inserted_body_paragraph_facts(&inserted),
+                false => document.inner.direct_body_paragraph_facts(&inserted),
+            };
             if let Ok(Some(facts)) = splice
                 && let Some(plan) = document.plan_body_splice(
                     py,
@@ -5172,7 +5237,7 @@ impl PyDocument {
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
                 let savable = document.inner.unsavable_body_edit().is_none();
-                edit(&mut document.inner.insert_paragraph(index, text));
+                place(&mut document.inner);
                 debug_assert_eq!(
                     document.inner.paragraph_index_of_content(index),
                     Some(prepared.plan.paragraph)
@@ -5181,10 +5246,11 @@ impl PyDocument {
                 document
                     .inner
                     .keep_body_savable_after_typed_insert(index, savable);
+                document.mark_before_inserted_blocks(py, index, 1)?;
                 return Ok(result);
             }
             let mut candidate = document.inner.clone_for_staging();
-            edit(&mut candidate.insert_paragraph(index, text));
+            place(&mut candidate);
             let paragraph = candidate
                 .paragraph_index_of_content(index)
                 .expect("an inserted body paragraph has a paragraph index");
@@ -5208,6 +5274,7 @@ impl PyDocument {
             )?;
             document.commit_word_revision(prepared)?;
             document.install_inner(candidate);
+            document.mark_before_inserted_blocks(py, index, 1)?;
             result
         };
         Ok(result)
@@ -5230,7 +5297,31 @@ impl PyDocument {
             // at `index`, as the native insertion places it.
             let index = document.inner.block_insertion_index(index);
             document.refuse_unsavable_body_edit(py)?;
-            let inserted = oxoffice_docx::Document::detached_table(rows, cols);
+            let mut inserted = oxoffice_docx::Document::detached_table(rows, cols);
+            // Under a session, the table placed is written as inserted.
+            let tracked = document.inner.tracks_changes();
+            if tracked {
+                let oxoffice_docx_oxml::BodyContent::Table(marked) = document
+                    .tracked_inserted_block(
+                        py,
+                        oxoffice_docx_oxml::BodyContent::Table(Box::new(inserted)),
+                        index,
+                        false,
+                    )?
+                else {
+                    unreachable!("a table is marked as a table")
+                };
+                inserted = *marked;
+            }
+            let place = |document: &mut oxoffice_docx::Document| match tracked {
+                true => document.insert_body_block(
+                    index,
+                    oxoffice_docx_oxml::BodyContent::Table(Box::new(inserted.clone())),
+                ),
+                false => {
+                    document.insert_table(index, rows, cols);
+                }
+            };
             if let Ok((xml, snapshots)) = document.inner.detached_table_owner_snapshots(&inserted)
                 && let Some(plan) = document.plan_body_splice(
                     py,
@@ -5258,7 +5349,7 @@ impl PyDocument {
                         .bind_prepared_splice(&document, &prepared)?,
                 )?;
                 let savable = document.inner.unsavable_body_edit().is_none();
-                document.inner.insert_table(index, rows, cols);
+                place(&mut document.inner);
                 debug_assert_eq!(
                     document.inner.content_index_of_table(prepared.plan.table),
                     Some(index)
@@ -5270,7 +5361,7 @@ impl PyDocument {
                 return Ok(result);
             }
             let mut candidate = document.inner.clone_for_staging();
-            candidate.insert_table(index, rows, cols);
+            place(&mut candidate);
             // Preserve the direct body table ordinal while capturing its physical owner.
             let table = (0..candidate.table_count())
                 .find(|table| candidate.content_index_of_table(*table) == Some(index))
@@ -5375,6 +5466,9 @@ impl PyDocument {
         candidate
             .insert_content(&location, fragment)
             .map_err(|error| docx_to_pyerr(py, error))?;
+        candidate
+            .mark_body_insertion_since(&document.inner)
+            .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -5398,6 +5492,9 @@ impl PyDocument {
         let mut candidate = document.inner.clone_for_staging();
         candidate
             .clone_content(&source, &destination)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        candidate
+            .mark_body_insertion_since(&document.inner)
             .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
