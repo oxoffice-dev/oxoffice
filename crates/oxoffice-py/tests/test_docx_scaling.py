@@ -744,7 +744,8 @@ TIMED.update({
     "SectionHandle.page_width (tracked)": tracked(setter(section, "page_width", Inches(9))),
     **{f"{name} (tracked)": tracked(TIMED[name]) for name in (
         "Document.add_paragraph", "Document.add_heading", "Document.add_bullet_list_item", "Document.add_table",
-        "Document.insert_paragraph", "Document.insert_table")},
+        "Document.insert_paragraph", "Document.insert_table", "Document.remove_content",
+        "Document.remove_content_range", "Document.pop_content")},
     "Paragraph.replace_xml (tracked)": tracked(on_made(
         with_xml(tracked_para, lambda xml, k: xml.replace(f"tracked {k} ", "changed ")),
         lambda doc, made: made[0].replace_xml(made[1]))),

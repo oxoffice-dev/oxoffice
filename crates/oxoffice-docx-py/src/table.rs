@@ -1304,6 +1304,16 @@ impl PyTable {
         let current_related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
         let mut candidate = document.inner.clone_for_staging();
+        let tracked = candidate.tracks_changes();
+        if tracked && current_related.is_some() {
+            return Err(docx_to_pyerr(
+                py,
+                oxoffice_docx::Error::Other(
+                    "a row added to a table outside the body is not recorded as a tracked change yet"
+                        .to_owned(),
+                ),
+            ));
+        }
         let inserted = match &current_related.clone() {
             None => candidate.add_empty_table_row(index),
             Some(location) => {
@@ -1317,6 +1327,12 @@ impl PyTable {
             }
         }
         .map_err(|error| docx_to_pyerr(py, error))?;
+        // Under a session, the row is written as inserted.
+        if tracked {
+            candidate
+                .mark_body_table_row(index, inserted, false)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+        }
         let publication = crate::document::WordPublication::TableGrid(
             document
                 .table_route(index, &current_related)
@@ -1418,6 +1434,16 @@ impl PyTable {
             if insert_at > row_count {
                 return Err(PyIndexError::new_err("row insertion index out of range"));
             }
+            let tracked = candidate.tracks_changes();
+            if tracked && current_related.is_some() {
+                return Err(docx_to_pyerr(
+                    py,
+                    oxoffice_docx::Error::Other(
+                        "a row copied in a table outside the body is not recorded as a tracked change yet"
+                            .to_owned(),
+                    ),
+                ));
+            }
             let inserted = match &current_related.clone() {
                 Some(location) => {
                     let location = TableLocation::refreshed(&candidate, location)
@@ -1427,6 +1453,12 @@ impl PyTable {
                 None => candidate.clone_table_row(table_index, source, insert_at),
             }
             .map_err(|error| docx_to_pyerr(py, error))?;
+            // Under a session, the copy is written as inserted.
+            if tracked {
+                candidate
+                    .mark_body_table_row(table_index, inserted, false)
+                    .map_err(|error| docx_to_pyerr(py, error))?;
+            }
             let prepared = document.prepare_word_revision(
                 py,
                 &candidate,
@@ -1467,6 +1499,31 @@ impl PyTable {
             .read(&candidate, |table| table.row_count())
             .map_err(|error| docx_to_pyerr(py, error))?;
         let row_index = normalize_index(index, row_count, "row")?;
+        // Under a session, the row stays, written as removed.
+        if candidate.tracks_changes() {
+            if current_related.is_some() {
+                return Err(docx_to_pyerr(
+                    py,
+                    oxoffice_docx::Error::Other(
+                        "a row removed from a table outside the body is not recorded as a tracked change yet"
+                            .to_owned(),
+                    ),
+                ));
+            }
+            candidate
+                .mark_body_table_row(table_index, row_index, true)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            let publication = crate::document::WordPublication::TableGrid(
+                document
+                    .table_route(table_index, &current_related)
+                    .map_err(|error| docx_to_pyerr(py, error))?,
+            );
+            let prepared =
+                document.prepare_word_revision(py, &candidate, "Table.remove_row", publication)?;
+            document.commit_word_revision(prepared)?;
+            document.install_inner(candidate);
+            return Ok(());
+        }
         match &current_related.clone() {
             Some(location) => {
                 let location = TableLocation::refreshed(&candidate, location)

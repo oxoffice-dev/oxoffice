@@ -438,10 +438,25 @@ impl Document {
     /// drop the section break.
     #[doc(hidden)]
     pub fn marked_paragraph_mark(&mut self, slot: usize) -> Result<CT_P> {
-        let Some(tracking) = self.tracking.clone() else {
+        self.marked_paragraph_mark_as(slot, false)
+    }
+
+    /// [`Self::marked_paragraph_mark`], the mark written as inserted, or as
+    /// deleted when the blocks after it are removed to the body's end.
+    fn marked_paragraph_mark_as(&mut self, slot: usize, deleted: bool) -> Result<CT_P> {
+        let (xml, marked) = self.paragraph_mark_xml(slot, deleted)?;
+        self.marked_mark_with_ids(&xml, &marked, deleted)
+    }
+
+    /// Body paragraph `slot` as written, and with its mark written as
+    /// inserted or deleted, its id to be given: every refusal comes here,
+    /// before an id is taken.
+    fn paragraph_mark_xml(&self, slot: usize, deleted: bool) -> Result<(String, String)> {
+        let Some(tracking) = &self.tracking else {
             return Err(Error::Other("no tracked changes session is on".to_owned()));
         };
-        let Some(BodyContent::Paragraph(paragraph)) = self.document.body.content.get(slot) else {
+        let Some(block @ BodyContent::Paragraph(paragraph)) = self.document.body.content.get(slot)
+        else {
             return Err(Error::Other("body paragraph index out of range".to_owned()));
         };
         if paragraph
@@ -449,15 +464,34 @@ impl Document {
             .as_ref()
             .is_some_and(|properties| properties.sect_pr.is_some())
         {
+            return Err(super::redline::refused(match deleted {
+                true => "the removal of the paragraphs after a section break",
+                false => "a paragraph added after a section break",
+            }));
+        }
+        if self.block_holds_nested_namespace_owner(block)? {
             return Err(super::redline::refused(
-                "a paragraph added after a section break",
+                "a change of a paragraph that declares namespaces of its own",
             ));
         }
-        let xml = block_xml(&BodyContent::Paragraph(paragraph.clone()))?;
-        let marked = super::redline::inserted_block_xml(&xml, &tracking, false, false, None)?;
+        let xml = block_xml(block)?;
+        let marked = match deleted {
+            true => super::redline::deleted_block_xml(&xml, tracking, false, false, None)?,
+            false => super::redline::inserted_block_xml(&xml, tracking, false, false, None)?,
+        };
+        Ok((xml, marked))
+    }
+
+    /// `marked`, from [`Self::paragraph_mark_xml`], with its id given.
+    fn marked_mark_with_ids(&mut self, xml: &str, marked: &str, deleted: bool) -> Result<CT_P> {
+        let tracking = self.tracking.clone().expect("a session is on");
         let marked =
-            super::redline::give_ids(&marked, &tracking, &mut self.identifiers, |marked| {
-                super::redline::check_inserted(marked, &xml)
+            super::redline::give_ids(marked, &tracking, &mut self.identifiers, |marked| {
+                match deleted {
+                    // The content stays: rejected, the paragraph is as it was.
+                    true => super::redline::check_rejected(marked, xml),
+                    false => super::redline::check_inserted(marked, xml),
+                }
             })?;
         Ok(CT_P::from_xml_fragment(marked.as_bytes())?)
     }
@@ -490,6 +524,221 @@ impl Document {
             self.place_marked_mark(before, mark);
         }
         Ok(())
+    }
+
+    /// Under a session, body blocks `start..end` written as removed, in
+    /// place, as Word writes the deletion of whole blocks: each paragraph's
+    /// content and mark, each row of a table. When they end the body with a
+    /// paragraph, its mark, the story's final mark, stays and takes the
+    /// properties of the paragraph before them, whose mark is the deleted one
+    /// (Word check W12). Returns the blocks as they were, and that paragraph
+    /// as it was.
+    #[doc(hidden)]
+    pub fn mark_removed_body_blocks(
+        &mut self,
+        start: usize,
+        end: usize,
+    ) -> Result<(Vec<BodyContent>, Option<CT_P>)> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Err(Error::Other("no tracked changes session is on".to_owned()));
+        };
+        let content = &self.document.body.content;
+        if start >= end || end > content.len() {
+            return Err(Error::Other(
+                "content range is reversed or out of range".to_owned(),
+            ));
+        }
+        // A bookmark or another zero-width marker written between blocks
+        // stays where it is, as no text of its own goes.
+        let marker = |block: &BodyContent| match block {
+            BodyContent::RawXml(raw) => raw_local_name(raw).is_some_and(|local| {
+                local.ends_with("RangeStart")
+                    || local.ends_with("RangeEnd")
+                    || matches!(local, "bookmarkStart" | "bookmarkEnd" | "proofErr")
+            }),
+            _ => false,
+        };
+        // The paragraph whose mark is the story's final one, when the blocks
+        // take it: its mark stays and the one before them is the deleted
+        // one (Word check W12).
+        let kept = content
+            .iter()
+            .rposition(|block| matches!(block, BodyContent::Paragraph(_) | BodyContent::Table(_)))
+            .filter(|&slot| {
+                (start..end).contains(&slot) && matches!(content[slot], BodyContent::Paragraph(_))
+            });
+        let before = match kept.map(|_| content[..start].iter().rposition(|block| !marker(block))) {
+            None => None,
+            Some(Some(slot)) if matches!(content[slot], BodyContent::Paragraph(_)) => Some(slot),
+            Some(Some(_)) => {
+                return Err(super::redline::refused(
+                    "the removal of the body's last paragraphs after a table or a content control",
+                ));
+            }
+            Some(None) => {
+                return Err(super::redline::refused(
+                    "the removal of every paragraph of the body",
+                ));
+            }
+        };
+        let previous = before.map(|slot| block_xml(&content[slot])).transpose()?;
+        // Every refusal before any id is taken: each block's kind, then each
+        // block written as removed.
+        let mut written = Vec::with_capacity(end - start);
+        for slot in start..end {
+            let block = &self.document.body.content[slot];
+            match block {
+                _ if marker(block) => continue,
+                BodyContent::RawXml(raw) => {
+                    return Err(super::redline::refused(&format!(
+                        "the removal of a {} between blocks",
+                        raw_local_name(raw).unwrap_or("raw element")
+                    )));
+                }
+                BodyContent::ContentControl(_) => {
+                    return Err(super::redline::refused("the removal of a content control"));
+                }
+                BodyContent::Paragraph(paragraph)
+                    if paragraph
+                        .properties
+                        .as_ref()
+                        .is_some_and(|properties| properties.sect_pr.is_some()) =>
+                {
+                    return Err(super::redline::refused("the removal of a section break"));
+                }
+                BodyContent::Paragraph(_) | BodyContent::Table(_) => {}
+            }
+            if self.block_holds_nested_namespace_owner(block)? {
+                return Err(super::redline::refused(
+                    "the removal of a block that declares namespaces of its own",
+                ));
+            }
+            let xml = block_xml(block)?;
+            let keep = kept == Some(slot);
+            let marked = super::redline::deleted_block_xml(
+                &xml,
+                &tracking,
+                keep,
+                true,
+                previous.as_deref().filter(|_| keep),
+            )?;
+            written.push((slot, xml, marked));
+        }
+        let mark = before
+            .map(|slot| self.paragraph_mark_xml(slot, true))
+            .transpose()?;
+        // The ids, once nothing is refused.
+        let mark = mark
+            .map(|(xml, marked)| self.marked_mark_with_ids(&xml, &marked, true))
+            .transpose()?;
+        let mut marked = Vec::with_capacity(written.len());
+        for (slot, xml, written) in written {
+            let written =
+                super::redline::give_ids(&written, &tracking, &mut self.identifiers, |written| {
+                    super::redline::check_removed(written, &xml)
+                })?;
+            marked.push((
+                slot,
+                match &self.document.body.content[slot] {
+                    BodyContent::Paragraph(_) => BodyContent::Paragraph(Box::new(
+                        CT_P::from_xml_fragment(written.as_bytes())?,
+                    )),
+                    _ => BodyContent::Table(Box::new(CT_Tbl::from_xml_fragment_checked(
+                        written.as_bytes(),
+                    )?)),
+                },
+            ));
+        }
+        let savable = matches!(self.unsavable_body_edit_cache.get(), Some(None));
+        let mut old = self.document.body.content[start..end].to_vec();
+        for (slot, block) in marked {
+            old[slot - start] = std::mem::replace(&mut self.document.body.content[slot], block);
+        }
+        self.invalidate_layout();
+        self.keep_body_savable_after_typed_edits(start..end, savable);
+        let before = match (before, mark) {
+            (Some(slot), Some(mark)) => {
+                let Some(BodyContent::Paragraph(old)) = self.document.body.content.get(slot) else {
+                    unreachable!("the paragraph before was read above");
+                };
+                let old = (**old).clone();
+                self.place_marked_mark(slot, mark);
+                Some(old)
+            }
+            _ => None,
+        };
+        Ok((old, before))
+    }
+
+    /// Under a session, row `row` of body table `index` written as inserted
+    /// (a row added or copied) or as removed (it stays, marked), as Word
+    /// writes them: `w:trPr/w:ins` or `w:trPr/w:del`, its cells' paragraphs
+    /// marked too. Costs that row alone.
+    #[doc(hidden)]
+    pub fn mark_body_table_row(&mut self, index: usize, row: usize, deleted: bool) -> Result<()> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(());
+        };
+        let table = nth_table_in_body_ref(&self.document.body.content, &mut index.clone())
+            .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
+        if crate::table::table_holds_controls(table) {
+            return Err(super::redline::refused(
+                "a row of a table that holds a content control",
+            ));
+        }
+        if self.block_holds_nested_namespace_owner(&BodyContent::Table(Box::new(table.clone())))? {
+            return Err(super::redline::refused(
+                "a row of a table that declares namespaces of its own",
+            ));
+        }
+        let current = crate::table::table_row(table, row)
+            .ok_or_else(|| Error::Other("row index out of range".to_owned()))?
+            .clone();
+        // The table's properties and grid with the row alone.
+        let frame = CT_Tbl {
+            properties: table.properties.clone(),
+            grid: table.grid.clone(),
+            rows: vec![current],
+            extra_xml: Vec::new(),
+            content_controls: Vec::new(),
+        };
+        let xml = block_xml(&BodyContent::Table(Box::new(frame)))?;
+        let marked = match deleted {
+            true => super::redline::deleted_block_xml(&xml, &tracking, false, true, None)?,
+            false => super::redline::inserted_block_xml(&xml, &tracking, false, true, None)?,
+        };
+        let marked =
+            super::redline::give_ids(&marked, &tracking, &mut self.identifiers, |marked| {
+                match deleted {
+                    true => super::redline::check_removed(marked, &xml),
+                    false => super::redline::check_inserted(marked, &xml),
+                }
+            })?;
+        let mut parsed = CT_Tbl::from_xml_fragment_checked(marked.as_bytes())?;
+        let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
+            .expect("the table read above");
+        *crate::table::table_row_mut(table, row).expect("the row read above") =
+            parsed.rows.remove(0);
+        self.invalidate_layout();
+        Ok(())
+    }
+
+    /// Put back the blocks [`Self::mark_removed_body_blocks`] marked from
+    /// `start`, and the paragraph before them.
+    #[doc(hidden)]
+    pub fn restore_removed_body_blocks(
+        &mut self,
+        start: usize,
+        blocks: Vec<BodyContent>,
+        before: Option<CT_P>,
+    ) {
+        for (offset, block) in blocks.into_iter().enumerate() {
+            self.document.body.content[start + offset] = block;
+        }
+        if let Some(paragraph) = before {
+            self.document.body.content[start - 1] = BodyContent::Paragraph(Box::new(paragraph));
+        }
+        self.invalidate_layout();
     }
 
     /// Under a session, the body blocks `self` holds that `before`, the
@@ -1005,6 +1254,12 @@ impl TrackedDocument<'_> {
         })
     }
 
+    /// [`Document::remove_content_range`] written as a deletion, as Word
+    /// writes it: the blocks stay, marked removed.
+    pub fn remove_content_range(&mut self, start: usize, end: usize) -> Result<()> {
+        self.run(|document| document.mark_removed_body_blocks(start, end).map(|_| ()))
+    }
+
     /// [`Document::insert_table`] written as an insertion, each row marked:
     /// the body index of the new table.
     pub fn insert_table(&mut self, index: usize, rows: usize, cols: usize) -> Result<usize> {
@@ -1173,4 +1428,11 @@ impl Document {
         *self.paragraph_mut(index).ok_or_else(missing)?.inner = redlined;
         Ok(value)
     }
+}
+
+/// The local name of the element `raw` is written as.
+fn raw_local_name(raw: &[u8]) -> Option<&str> {
+    let tag = oxoffice_core::xml_element::start_tag(raw).ok()?;
+    let name = std::str::from_utf8(raw.get(1..1 + tag.name.len())?).ok()?;
+    name.rsplit(':').next()
 }

@@ -658,6 +658,93 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             unlike_compare: false,
         },
         Row {
+            shape: "a paragraph removed between two",
+            document: || {
+                doc_with_body(
+                    &(paragraph(&run("First."))
+                        + &paragraph(&run("Middle."))
+                        + &paragraph(&run("Last."))),
+                )
+            },
+            tracked: |doc| doc.remove_content_range(1, 2).unwrap(),
+            untracked: |doc| {
+                doc.remove_content_range(1, 2).unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, "Middle."),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "a heading removed with its bookmark start between blocks, which stays (Google)",
+            document: || {
+                doc_with_body(&format!(
+                    r#"{}<w:bookmarkStart w:id="1" w:name="h.1"/><w:p><w:r><w:t>Heading</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>{}"#,
+                    paragraph(&run("First.")),
+                    paragraph(&run("Last."))
+                ))
+            },
+            tracked: |doc| doc.remove_content_range(1, 3).unwrap(),
+            untracked: |doc| {
+                doc.remove_content_range(1, 3).unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, "Heading"),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "the last paragraphs removed, the final mark kept (W12)",
+            document: || {
+                doc_with_body(
+                    &(paragraph(&run("First."))
+                        + &paragraph(&run("Second."))
+                        + r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Last.</w:t></w:r></w:p>"#),
+                )
+            },
+            tracked: |doc| doc.remove_content_range(1, 3).unwrap(),
+            untracked: |doc| {
+                doc.remove_content_range(1, 3).unwrap();
+            },
+            // The mark before them, theirs but the final one, their content,
+            // and the final paragraph's properties, which take the first's.
+            revisions: &[
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, "Second."),
+                (RevisionKind::ParagraphPropertyChange, ""),
+                (RevisionKind::Deletion, "Last."),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a table removed, each row marked",
+            document: || {
+                doc_with_body(&format!(
+                    r#"{}<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>{}"#,
+                    paragraph(&run("First.")),
+                    paragraph(&run("Last."))
+                ))
+            },
+            tracked: |doc| doc.remove_content_range(1, 2).unwrap(),
+            untracked: |doc| {
+                doc.remove_content_range(1, 2).unwrap();
+            },
+            // The row, its cell's mark and content.
+            revisions: &[
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, "cell"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
             shape: "a cell paragraph",
             document: || {
                 doc_with_body(&format!(
@@ -1273,6 +1360,57 @@ fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
     };
     let rows: Vec<(&str, Document, Edit, &str)> = vec![
         (
+            "a section break removed",
+            doc_with_body(&format!(
+                r#"{}<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr><w:r><w:t>Section.</w:t></w:r></w:p>{}"#,
+                paragraph(&run("First.")),
+                paragraph(&run("Last."))
+            )),
+            |doc| doc.remove_content_range(1, 2),
+            not_yet,
+        ),
+        (
+            "a content control removed",
+            doc_with_body(&format!(
+                r#"<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>{}"#,
+                paragraph(&run("Inside.")),
+                paragraph(&run("Last."))
+            )),
+            |doc| doc.remove_content_range(0, 1),
+            not_yet,
+        ),
+        (
+            "blocks removed, a later one holding a revision: none takes an id",
+            doc_with_body(&format!(
+                "{}{}{}{}",
+                paragraph(&run("First.")),
+                paragraph(&run("Second.")),
+                paragraph(&by("Other", "ins", 9, &run("Third."))),
+                paragraph(&run("Last."))
+            )),
+            |doc| doc.remove_content_range(1, 3),
+            not_yet,
+        ),
+        (
+            "a field removed",
+            doc_with_body(&format!(
+                r#"<w:p><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>{}"#,
+                paragraph(&run("Last."))
+            )),
+            |doc| doc.remove_content_range(0, 1),
+            not_yet,
+        ),
+        (
+            "the last paragraph removed after a table",
+            doc_with_body(&format!(
+                r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc>{}</w:tc></w:tr></w:tbl>{}"#,
+                paragraph(&run("cell")),
+                paragraph(&run("Last."))
+            )),
+            |doc| doc.remove_content_range(1, 2),
+            not_yet,
+        ),
+        (
             "a paragraph added after a section break",
             doc_with_body(
                 r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr><w:r><w:t>Section.</w:t></w:r></w:p>"#,
@@ -1643,4 +1781,29 @@ fn a_rejected_section_change_keeps_its_references_first() {
         !section.contains("sectPrChange") && !section.contains("15000"),
         "{section}"
     );
+}
+
+/// A copy that ends the body, whose properties a session rewrites, gives
+/// every revision it brings an id of its own, one in its mark's properties
+/// too: the source keeps its ids.
+#[test]
+fn a_copy_ending_the_body_gives_its_revisions_ids_of_their_own() {
+    let source = r#"<w:p><w:pPr><w:jc w:val="center"/><w:rPr><w:b/><w:rPrChange w:id="7" w:author="Other" w:date="2026-11-01T00:00:00Z"><w:rPr/></w:rPrChange></w:rPr></w:pPr><w:ins w:id="8" w:author="Other" w:date="2026-11-01T00:00:00Z"><w:r><w:t>Copied.</w:t></w:r></w:ins></w:p>"#;
+    let mut doc = doc_with_body(&(source.to_owned() + &paragraph(&run("Last."))));
+    let changes = changes();
+    doc.start_tracked_changes(&changes).unwrap();
+    let copy = doc.body_children()[0].clone();
+    let slot = doc.content_count();
+    let marked = doc.marked_inserted_block(copy, slot, true).unwrap();
+    doc.insert_body_block(slot, marked);
+    doc.stop_tracked_changes();
+    let xml = reopen(&mut doc).part_xml("/word/document.xml").unwrap();
+    let ids = xml
+        .match_indices(r#" w:id=""#)
+        .map(|(at, _)| xml[at + 7..].split('"').next().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let mut unique = ids.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
 }

@@ -40,7 +40,8 @@ TRACKED = {
     "Document.add_numbered_list_item", "Document.add_page_break", "Document.add_paragraph", "Document.add_table",
     "Document.insert_paragraph", "Document.insert_table", "Paragraph.insert_paragraph_before",
     "Document.clone_content", "Document.import_fragment", "Document.insert_content", "Document.insert_document",
-    "Document.insert_html",
+    "Document.insert_html", "Document.pop_content", "Document.remove_content", "Document.remove_content_range",
+    "Table.add_row", "Table.clone_row", "Table.remove_row",
     "Document.replace_all", "Document.replace_all_regex",
     "Document.replace_all_regex_expected", "Document.replace_text_at", "Document.set_story_text",
     "Document.try_replace_text", "Paragraph.add_run", "Paragraph.replace_text", "Paragraph.replace_xml",
@@ -281,6 +282,83 @@ def test_copied_tracked_content_keeps_one_mark_and_ids_of_its_own():
     assert "<w:pPr><w:rPr><w:ins" not in last
     assert view(after, "reject_all") == view(before, "reject_all")
     assert [p.text for p in oxdocx.Document.from_bytes(after).paragraphs] == ["New.", "One.", "New.", "Two.", "New."]
+
+
+def test_copied_content_holding_a_deletion_is_refused():
+    # A paragraph whose mark another author deleted: rejecting the session would bring the copy's deletion back.
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    doc = oxdocx.Document()
+    for text in ("One.", "Two.", "Three."):
+        doc.add_paragraph(text)
+    doc.paragraphs[1].replace_xml(
+        f'<w:p xmlns:w="{w}"><w:pPr><w:rPr><w:del w:id="5" w:author="Other" w:date="{STAMP}"/></w:rPr></w:pPr>'
+        '<w:r><w:t>Two.</w:t></w:r></w:p>')
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+        with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+            doc.clone_content(doc.paragraphs[1], 0)
+    assert doc.to_bytes() == before and session.revision_ids == ()
+
+
+def test_a_removal_keeps_the_block_in_view_until_resolved():
+    doc = oxdocx.Document()
+    for text in ("A.", "B.", "C."):
+        doc.add_paragraph(text)
+    doc.add_table(2, 2)
+    doc.add_paragraph("D.")
+    doc.section(0).header.add_table(1, 1)
+    kept = doc.paragraphs[2]
+    with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+        assert doc.remove_content(1)
+        doc.tables[0].remove_row(0)
+        # The removed block keeps its index and reads as its accepted text; the removed row still counts.
+        assert [p.text for p in doc.paragraphs] == ["A.", "", "C.", "D."]
+        assert len(doc.tables[0].rows) == 2 and kept.text == "C."
+        ids = session.revision_ids
+        for call in (lambda: doc.pop_content(doc.paragraphs[0]), lambda: doc.section(0).header.tables[0].remove_row(0)):
+            with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+                call()
+        assert session.revision_ids == ids
+    doc.accept_all()
+    assert [p.text for p in doc.paragraphs] == ["A.", "C.", "D."] and len(doc.tables[0].rows) == 1
+
+
+def test_a_removal_of_a_block_declaring_namespaces_of_its_own_is_refused():
+    # A paragraph, then a table, holding a text box and declaring the namespaces the box uses, as Word may write
+    # them: rewritten in place, the body could no longer be saved.
+    declared = ('xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+                'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+                'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"')
+    box = ('<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="914400" cy="457200"/>'
+           '<wp:docPr id="1" name="Text Box"/><a:graphic><a:graphicData '
+           'uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/>'
+           '<wps:spPr/><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed.</w:t></w:r></w:p></w:txbxContent></wps:txbx>'
+           '<wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>')
+    paragraph = f'<w:p {declared}><w:r><w:t>Two.</w:t></w:r>{box}</w:p>'
+    table = (f'<w:tbl {declared}><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>'
+             f'<w:tr><w:tc><w:p>{box}</w:p></w:tc></w:tr></w:tbl>')
+    with zipfile.ZipFile(io.BytesIO(oxdocx.Document().to_bytes())) as source:
+        parts = {item: source.read(item) for item in source.namelist()}
+    main = parts["word/document.xml"].decode()
+    start = main.index("<w:body>") + len("<w:body>")
+    for block, calls in (
+        (paragraph, (lambda doc: doc.remove_content(1), lambda doc: doc.remove_content_range(1, 2),
+                     lambda doc: doc.pop_content(1))),
+        (table, (lambda doc: doc.tables[0].remove_row(0),)),
+    ):
+        body = f"<w:p><w:r><w:t>One.</w:t></w:r></w:p>{block}<w:p><w:r><w:t>Three.</w:t></w:r></w:p>"
+        parts["word/document.xml"] = (main[:start] + body + main[main.index("<w:sectPr"):]).encode()
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as target:
+            for name, data in parts.items():
+                target.writestr(name, data)
+        doc = oxdocx.Document.from_bytes(out.getvalue())
+        before = doc.to_bytes()
+        with doc.track_changes(AUTHOR, timestamp=STAMP):
+            for call in calls:
+                with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+                    call(doc)
+        assert doc.to_bytes() == before
 
 
 def test_an_insertion_outside_the_body_is_refused():
