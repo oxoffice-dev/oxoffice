@@ -205,19 +205,22 @@ def test_every_call_behaves_as_its_class(saved, name):
         else:
             call()
     after = doc.to_bytes()
-    if kind(name) == "refused":
-        assert after == before
-    if kind(name) not in ("tracked", "formatting") and name in WHOLE:
+    if kind(name) not in ("tracked", "formatting"):
         assert session.revision_ids == ()
-        return          # a whole-document recipe only has well formed arguments, a refused one never reads them
+        if kind(name) == "refused":
+            assert after == before
+            if name in WHOLE:
+                return  # a whole-document recipe only has well formed arguments, a refused one never reads them
+            call()  # the document it left is the one it was opened as: the call runs as without a session
+            after = doc.to_bytes()
+        # An untracked call ran as without a session, and the document it leaves saves and opens again.
+        oxdocx.Document.from_bytes(after)
+        return
     # Without a session the call runs, and the document it leaves saves and opens again.
     twin = oxdocx.Document.open(saved)
     ready(twin, name)()
     twin_bytes = twin.to_bytes()
     oxdocx.Document.from_bytes(twin_bytes)
-    if kind(name) not in ("tracked", "formatting"):
-        assert session.revision_ids == ()
-        return
     xml = kind(name) == "formatting"
     # A call that sets what the document already holds writes nothing.
     assert session.revision_ids or view(after, None, xml) == view(before, None, xml)

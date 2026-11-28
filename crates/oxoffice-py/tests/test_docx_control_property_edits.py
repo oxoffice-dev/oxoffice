@@ -92,6 +92,9 @@ SETTERS = {
 }
 
 TAGS = ["probe0", "inline", "cell", "boxed"]
+# Every setter edits through one route (the body block that holds the control), which depends on where the control sits
+# and not on the property: each setter on the block control, and the tag on each of the other places.
+PLACED = [(setter, "probe0") for setter in sorted(SETTERS)] + [("tag", tag) for tag in TAGS[1:]]
 
 
 class Bound:
@@ -118,8 +121,7 @@ def control_xml(doc, tag):
                 if it.kind == "content_control" and f'<w:tag w:val="{tag}"/>'.encode() in it.xml)
 
 
-@pytest.mark.parametrize("tag", TAGS)
-@pytest.mark.parametrize("setter", sorted(SETTERS))
+@pytest.mark.parametrize(("setter", "tag"), PLACED)
 def test_setting_a_body_control_property_keeps_every_handle(saved, setter, tag):
     holder = opened(saved, setter)
     doc = holder.doc
@@ -143,8 +145,7 @@ def test_setting_a_body_control_property_keeps_every_handle(saved, setter, tag):
     assert again.paragraphs[7].runs[1].text == "edited beside"
 
 
-@pytest.mark.parametrize("tag", TAGS)
-@pytest.mark.parametrize("setter", sorted(SETTERS))
+@pytest.mark.parametrize(("setter", "tag"), PLACED)
 def test_setting_the_same_property_twice_reads_the_same_document(saved, setter, tag):
     holder = opened(saved, setter)
     doc = holder.doc
@@ -169,8 +170,7 @@ REFUSED = {
 }
 
 
-@pytest.mark.parametrize("tag", TAGS)
-@pytest.mark.parametrize("refused", sorted(REFUSED))
+@pytest.mark.parametrize(("refused", "tag"), [(r, "probe0") for r in sorted(REFUSED)] + [("tag", t) for t in TAGS[1:]])
 def test_a_refused_property_leaves_the_document_as_it_was(saved, refused, tag):
     holder = opened(saved, "binding")
     doc = holder.doc

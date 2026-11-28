@@ -63,9 +63,22 @@ READS = [
 ]
 
 
-@BOTH
-@pytest.mark.parametrize("field", FIELDS)
-@pytest.mark.parametrize(("text", "expected"), READS, ids=[text for text, _ in READS])
+def placed(rows):
+    """Every text on one field of one package (one parser reads them all), and a few on each of the others."""
+    few = [row for row in rows if row[0] in ("2026-11-21T10:00:00Z", "2026-11-21T10:00:00-05:30", "not a date")]
+    every = [(oxdocx, "created", *row) for row in rows]
+    return every + [(package, field, *row) for package in (oxdocx, oxpptx) for field in FIELDS
+                    if (package, field) != (oxdocx, "created") for row in few]
+
+
+def ids(cases):
+    return [f"{package.__name__.split('.')[-1]}-{field}-{text}" for package, field, text, _ in cases]
+
+
+READ_CASES = placed(READS)
+
+
+@pytest.mark.parametrize(("package", "field", "text", "expected"), READ_CASES, ids=ids(READ_CASES))
 def test_a_stored_date_reads_as_its_utc_instant_or_none(package, field, text, expected):
     read = getattr(with_stored_date(package, field, text).core_properties, field)
     assert read == expected
@@ -83,9 +96,10 @@ TAILS = [
 ]
 
 
-@BOTH
-@pytest.mark.parametrize("field", FIELDS)
-@pytest.mark.parametrize(("text", "expected"), TAILS, ids=[text for text, _ in TAILS])
+TAIL_CASES = placed(TAILS)
+
+
+@pytest.mark.parametrize(("package", "field", "text", "expected"), TAIL_CASES, ids=ids(TAIL_CASES))
 def test_a_date_is_read_at_its_right_instant_or_not_at_all(package, field, text, expected):
     read = getattr(with_stored_date(package, field, text).core_properties, field)
     assert read == expected
