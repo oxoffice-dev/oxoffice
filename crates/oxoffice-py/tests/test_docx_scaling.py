@@ -719,6 +719,20 @@ def tracked(setup):
     return wrapped
 
 
+def tracked_on_made_target(setup):
+    """setup's call made under a session, its target made outside it (a note, which a session does not create)."""
+    def wrapped(doc):
+        ready = setup(doc)
+        def ready_tracked(k):
+            if doc.tracked_changes is not None:
+                doc.tracked_changes.stop()
+            call = ready(k)
+            doc.track_changes("Reviewer", timestamp=STAMP)
+            return call
+        return ready_tracked
+    return wrapped
+
+
 TIMED.update({
     "Document.track_changes": on_made(lambda doc, k: None,
                                       lambda doc, _: doc.track_changes("Reviewer", timestamp=STAMP).stop()),
@@ -749,6 +763,10 @@ TIMED.update({
     "Run.add_field (tracked)": tracked(method(lambda doc, k: tracked_para(doc, k).runs[0], "add_field", "PAGE", "1")),
     "Run.add_picture (tracked)": tracked(TIMED["Run.add_picture"]),
     "Paragraph.add_hyperlink (tracked)": tracked(TIMED["Paragraph.add_hyperlink"]),
+    **{f"{name} (tracked)": tracked(TIMED[name]) for name in (
+        "HeaderFooter.add_paragraph", "HeaderFooter.add_table", "Cell.add_paragraph", "Cell.add_table")},
+    **{f"{name} (tracked)": tracked_on_made_target(TIMED[name]) for name in (
+        "FootnoteEndnote.add_paragraph", "FootnoteEndnote.add_table")},
     "Paragraph.replace_xml (tracked)": tracked(on_made(
         with_xml(tracked_para, lambda xml, k: xml.replace(f"tracked {k} ", "changed ")),
         lambda doc, made: made[0].replace_xml(made[1]))),
@@ -881,6 +899,10 @@ GROWING = {
 }
 # A tracked call costs what its untracked call does, so it grows only where that one does.
 GROWING |= {f"{name} (tracked)" for name in GROWING if f"{name} (tracked)" in TIMED}
+# Under a session these adders take a staged route (spec, "What PR 3d settles"), until their in-place story
+# publication: their tracked twins grow with the document where the untracked calls stay flat.
+GROWING |= {"HeaderFooter.add_paragraph (tracked)", "HeaderFooter.add_table (tracked)",
+            "FootnoteEndnote.add_paragraph (tracked)", "FootnoteEndnote.add_table (tracked)"}
 GROWS = "cost grows with the body, see oxoffice-dev/oxoffice#6"
 
 # A body splice costs its own block (oxoffice-dev/oxoffice#466): these calls are held to SPLICE_RATIO times plus
