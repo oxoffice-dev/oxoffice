@@ -40,6 +40,22 @@ pub(crate) struct ReadParts {
     persons: Lazy<Vec<Person>>,
 }
 
+/// A lazily read value, or the error its read gave, as the facade's error
+/// naming `part`, which is only looked for when there is an error.
+fn lazy_named<T>(
+    cell: &Lazy<T>,
+    part: impl FnOnce() -> String,
+    read: impl FnOnce() -> std::result::Result<T, String>,
+) -> Result<&T> {
+    match cell.get_or_init(read) {
+        Ok(value) => Ok(value),
+        Err(message) => Err(Error::MalformedPart {
+            part: part(),
+            message: message.clone(),
+        }),
+    }
+}
+
 /// A lazily read value, or the error its read gave, as the facade's error.
 fn lazy<'a, T>(
     cell: &'a Lazy<T>,
@@ -80,12 +96,15 @@ impl Workbook {
             })
     }
 
-    /// The shared strings, `None` for a workbook without them.
+    /// The shared strings, `None` for a workbook without them. Only the
+    /// first call looks for the part.
     pub(crate) fn shared_strings(&self) -> Result<Option<&SharedStrings>> {
-        let part = self.related_part(rel_types::SHARED_STRINGS);
-        let name = part.clone().unwrap_or_default();
-        lazy(&self.read.shared_strings, &name, || {
-            let Some(part) = part else {
+        let name = || {
+            self.related_part(rel_types::SHARED_STRINGS)
+                .unwrap_or_default()
+        };
+        lazy_named(&self.read.shared_strings, name, || {
+            let Some(part) = self.related_part(rel_types::SHARED_STRINGS) else {
                 return Ok(None);
             };
             let bytes = self
@@ -99,30 +118,36 @@ impl Workbook {
         .map(Option::as_ref)
     }
 
-    /// The styles part, `None` for a workbook without one.
+    /// The styles part, `None` for a workbook without one. Only the first
+    /// call looks for the part.
     pub(crate) fn styles_xml(&self) -> Result<Option<&StylesXml>> {
-        let part = self.related_part(rel_types::STYLES);
-        let name = part.clone().unwrap_or_default();
-        lazy(&self.read.styles_xml, &name, || match &part {
-            Some(part) => {
-                let bytes = self
-                    .package
-                    .get_part_shared(part)
-                    .ok_or_else(|| format!("package part is missing: {part}"))?;
-                StylesXml::parse(Arc::clone(bytes))
-                    .map(Some)
-                    .map_err(|error| error.to_string())
+        let name = || self.related_part(rel_types::STYLES).unwrap_or_default();
+        lazy_named(&self.read.styles_xml, name, || {
+            match &self.related_part(rel_types::STYLES) {
+                Some(part) => {
+                    let bytes = self
+                        .package
+                        .get_part_shared(part)
+                        .ok_or_else(|| format!("package part is missing: {part}"))?;
+                    StylesXml::parse(Arc::clone(bytes))
+                        .map(Some)
+                        .map_err(|error| error.to_string())
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
         })
         .map(Option::as_ref)
     }
 
-    /// The cell formats, resolved once.
+    /// The cell formats, resolved once: a cell read after the first costs no
+    /// look for a part.
     pub(crate) fn style_table(&self) -> Result<&StyleTable> {
+        if let Some(Ok(table)) = self.read.styles.get() {
+            return Ok(table);
+        }
         let styles = self.styles_xml()?;
-        let name = self.related_part(rel_types::STYLES).unwrap_or_default();
-        lazy(&self.read.styles, &name, || {
+        let name = || self.related_part(rel_types::STYLES).unwrap_or_default();
+        lazy_named(&self.read.styles, name, || {
             // A theme that does not read, like one the workbook lacks,
             // leaves the theme colours unresolved: no cell read needs it.
             let theme = self

@@ -548,6 +548,31 @@ fn a_spilling_formula_finds_or_appends_its_metadata_and_makes_the_part_when_miss
     let mut data = workbook.sheet_at_mut(0).unwrap();
     data.set_formula("H1", "SEQUENCE(3)", spill_over("H1:H3"))
         .unwrap();
+    // Its own empty cells count as written: written again, and over another
+    // range, by its own call.
+    data.set_formula("H1", "SEQUENCE(4)", spill_over("H1:H4"))
+        .unwrap();
+    data.set_formula("H1", "SEQUENCE(3)", spill_over("H1:H3"))
+        .unwrap();
+    // In one bulk write, two ranges that meet, or a value inside a range.
+    let spill = |text: &str, range: &str| CellInput::Formula(text.to_owned(), spill_over(range));
+    for (rows, message) in [
+        (
+            vec![
+                vec![spill("SEQUENCE(4)", "K1:K4")],
+                vec![CellInput::Value(Value::Empty)],
+                vec![spill("SEQUENCE(4)", "K3:K6")],
+            ],
+            "K3:K6 meets K1:K4, spilled by the same write",
+        ),
+        (
+            vec![vec![spill("SEQUENCE(3)", "K1:K3")], vec![number(5.0)]],
+            "K2 is written inside K1:K3, where the formula of K1 spills",
+        ),
+    ] {
+        let error = data.write("K1", rows).unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
+    }
     for (cell, range, message) in [
         ("H5", "H4:H9", "the range H4:H9 starts at H4, not at H5"),
         ("C1", "C1:D2", "D1 holds a value or a formula: clear it"),
@@ -1116,6 +1141,15 @@ fn whole_columns_and_rows_take_the_style_themselves_so_cells_typed_later_take_it
     // not styled.
     let mut data = workbook.sheet_at_mut(0).unwrap();
     data.clear("B2:C5", Clear::Formats).unwrap();
+    // The cap counts the cells written under a styled row or column only.
+    data.clear("D7:Z100000", Clear::All).unwrap();
+    let error = data.clear("B10:B1048576", Clear::Formats).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("writes more than 1000000 cells under a styled row or column"),
+        "{error}"
+    );
     data.set_value("B3", 2.0).unwrap();
     let sheet_read = workbook.sheet_at(0).unwrap();
     for cell in ["B3", "B4", "C5", "B6"] {

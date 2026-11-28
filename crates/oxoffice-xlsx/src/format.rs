@@ -686,7 +686,8 @@ impl WorksheetMut<'_> {
     /// Changes the parts of the style of every cell of `range` that `patch`
     /// names (`A1:F1`, `B3`), at most 1,000,000 cells at once: a cell the
     /// sheet does not write is written, with its style. Whole columns (`A:C`)
-    /// or rows (`2:5`) take the style themselves, in their `col` spans or
+    /// or rows (`2:5`, at most 100,000 rows, and 1,000,000 cells where styled
+    /// rows and columns meet) take the style themselves, in their `col` spans or
     /// their row (`s` and `customFormat`), so that a cell typed later takes
     /// it, with every cell they hold and, where a styled row meets a styled
     /// column, a cell for the two styles. The records are reused when

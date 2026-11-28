@@ -211,8 +211,9 @@ class Worksheet:
 
         ``stored`` takes the form the file stores (``_xlfn.XLOOKUP(...)``); ``spill`` writes a dynamic array
         formula that Excel spills from the cell: ``True``, or its range (``"J2:J5"``, from the cell, its other cells
-        empty) so that Google Sheets, which takes the range from the file, spills it too. A formula Excel would repair (``IF(B2>0;1;0)``, ``B2*``,
-        ``IF(1,2,3,4)``) raises ``ValueError``. Written without a cached value, the workbook is calculated on open.
+        empty) so that Google Sheets, which takes the range from the file, spills it too. A formula Excel would repair
+        (``IF(B2>0;1;0)``, ``B2*``, ``IF(1,2,3,4)``) raises ``ValueError``. Written without a cached value, the workbook
+        is calculated on open.
         """
 
     def write(self, cell: _CellAddress, rows: Sequence[Sequence[_Input]]) -> None:
@@ -224,8 +225,9 @@ class Worksheet:
     def clear(self, range: str, *, contents: bool = True, formats: bool = False) -> None:
         """Clears ``range`` (``"A1:C10"``, ``"B3"``, ``"A:C"``, ``"2:5"``): its contents, its formats, or both.
 
-        The formats of whole columns or rows go from the columns or rows themselves too. A whole array formula is
-        removed; part of one raises ``XlsxError``.
+        The formats of whole columns or rows go from the columns or rows themselves too; on a range, a cell the sheet
+        does not write under a styled row or column is written with the default format, at most 1,000,000 of them
+        (``XlsxError`` past that). A whole array formula is removed; part of one raises ``XlsxError``.
         """
 
     def set_number_format(self, range: str, code: str) -> None:
@@ -255,7 +257,8 @@ class Worksheet:
         Colours are ``"RRGGBB"``; ``fill`` is a solid fill, ``border`` the style of the four sides (``"thin"``,
         ``"medium"``, ``"thick"``, ``"double"``, ``"none"``...). Identical style records are reused, others
         appended. Whole columns (``"A:C"``) or rows (``"2:5"``) take the style themselves, so a cell typed later takes
-        it; a range of cells writes at most 1,000,000 of them.
+        it; a range of cells writes at most 1,000,000 of them, whole rows at most 100,000 rows (``XlsxError`` past
+        either).
         """
 
     def import_csv(

@@ -11,7 +11,7 @@
 //! each created when the workbook lacks it. An edit costs its rows, and the
 //! rows of a shared group it dissolves, once.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
 use oxoffice_numfmt::DateTime;
@@ -824,6 +824,54 @@ fn area(range: CellRange) -> u64 {
         * u64::from(range.last.column - range.first.column + 1)
 }
 
+/// Refuses, in the contents one call writes, two spill ranges that meet or a
+/// value written inside another formula's spill range: the sheet as it was
+/// does not show them, and Excel repairs the overlapping `ref`s.
+fn check_batch_spills(contents: &[(CellRef, &Content)]) -> Result<()> {
+    let spills: Vec<RangeFormula> = contents
+        .iter()
+        .filter_map(|(at, content)| match content {
+            Content::Formula {
+                spill: Some(range), ..
+            } => Some(RangeFormula {
+                cell: *at,
+                range: *range,
+                kind: RangeFormulaKind::Array,
+                volatile: false,
+            }),
+            _ => None,
+        })
+        .collect();
+    if spills.is_empty() {
+        return Ok(());
+    }
+    let batch = crate::ranges::RangeLookup::new(&spills);
+    for spill in &spills {
+        if let Some(other) = batch
+            .meeting(spill.range)
+            .into_iter()
+            .find(|other| other.range.first != spill.cell)
+        {
+            return Err(Error::Refused(format!(
+                "{} meets {}, spilled by the same write: give ranges apart",
+                other.range, spill.range
+            )));
+        }
+    }
+    for (at, content) in contents {
+        if **content != Content::Empty
+            && let Some(entry) = batch.find(*at)
+            && entry.range.first != *at
+        {
+            return Err(Error::Refused(format!(
+                "{at} is written inside {}, where the formula of {} spills: write it elsewhere, or give a range that stops before it",
+                entry.range, entry.range.first
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Whether each write is of nothing over a cell that holds nothing: a
 /// write that changes nothing.
 fn noop_clears(writes: &[CellWrite], rows: &BTreeMap<u32, CT_Row>) -> Vec<bool> {
@@ -1078,8 +1126,11 @@ impl WorksheetMut<'_> {
 
     /// Clears `range` (`A1:C10`, `B3`, whole columns `A:C` or rows `2:5`):
     /// its contents, its formats, or both. Contents are cleared in the cells
-    /// the sheet holds; the formats of whole columns or rows go from their
-    /// `col` spans or rows too, as [`WorksheetMut::set_style`] writes them. A
+    /// the sheet holds; formats there too, and a cell the sheet does not write
+    /// under a styled row or column is written with the default format (at
+    /// most 1,000,000 such cells at once); the formats of whole columns or
+    /// rows go from their `col` spans or rows too, as
+    /// [`WorksheetMut::set_style`] writes them. A
     /// clear of a whole array formula removes it; part of one is refused.
     pub fn clear(&mut self, range: &str, what: Clear) -> Result<()> {
         self.require_worksheet("cells")?;
@@ -1105,51 +1156,92 @@ impl WorksheetMut<'_> {
         };
         let formats = matches!(what, Clear::Formats | Clear::All);
         let contents = matches!(what, Clear::Contents | Clear::All);
-        if formats {
-            let count = (u64::from(rectangle.last.row - rectangle.first.row) + 1)
-                * (u64::from(rectangle.last.column - rectangle.first.column) + 1);
-            if count > crate::format::MAX_STYLED_CELLS {
-                return Err(Error::Refused(format!(
-                    "{rectangle} holds {count} cells, and the formats of at most {} are cleared at once",
-                    crate::format::MAX_STYLED_CELLS
-                )));
-            }
-        }
         let rows = self.rows_in(rectangle.first.row, rectangle.last.row)?;
+        let style = if formats {
+            StyleChange::Remove
+        } else {
+            StyleChange::Keep
+        };
         let mut writes = Vec::new();
         for (&number, row) in &rows {
             for (column, cell) in columns(row) {
                 let at = CellRef::new(number, column);
-                if contents && rectangle.contains(at) && holds_content(cell) {
+                if !rectangle.contains(at) {
+                    continue;
+                }
+                let content = contents && holds_content(cell);
+                if content || (formats && cell.tag.get("s").is_some()) {
                     writes.push(CellWrite {
                         at,
-                        content: Some(Content::Empty),
+                        content: content.then_some(Content::Empty),
                         date_code: None,
-                        style: if formats {
-                            StyleChange::Remove
-                        } else {
-                            StyleChange::Keep
-                        },
+                        style,
                     });
                 }
             }
         }
         if formats {
-            // Every cell of the range: the path keeps those that change.
-            for row in rectangle.first.row..=rectangle.last.row {
-                for column in rectangle.first.column..=rectangle.last.column {
-                    writes.push(CellWrite {
-                        at: CellRef::new(row, column),
-                        content: None,
-                        date_code: None,
-                        style: StyleChange::Remove,
-                    });
+            // The cells the sheet does not write under a styled row or column
+            // are written with the default format: at most 1,000,000.
+            let styled_columns: Vec<(u32, u32)> = self
+                .read()
+                .column_styles()?
+                .into_iter()
+                .filter(|(min, max, style)| {
+                    *style != 0 && *max >= rectangle.first.column && *min <= rectangle.last.column
+                })
+                .map(|(min, max, _)| {
+                    (
+                        min.max(rectangle.first.column),
+                        max.min(rectangle.last.column),
+                    )
+                })
+                .collect();
+            let mut covered = Vec::new();
+            let mut each_row = |number: u32, row: Option<&CT_Row>| -> Result<()> {
+                let styled_row = row
+                    .filter(|row| row.custom_format())
+                    .and_then(CT_Row::s)
+                    .is_some_and(|s| s != 0);
+                let written: HashSet<u32> = row
+                    .map(|row| columns(row).into_iter().map(|(column, _)| column).collect())
+                    .unwrap_or_default();
+                let spans: Vec<(u32, u32)> = if styled_row {
+                    vec![(rectangle.first.column, rectangle.last.column)]
+                } else {
+                    styled_columns.clone()
+                };
+                for (first, last) in spans {
+                    for column in first..=last {
+                        if !written.contains(&column) {
+                            covered.push(CellRef::new(number, column));
+                            if covered.len() as u64 > crate::format::MAX_STYLED_CELLS {
+                                return Err(Error::Refused(format!(
+                                    "clearing the formats of {rectangle} writes more than {} cells under a styled row or column at once: clear a smaller range",
+                                    crate::format::MAX_STYLED_CELLS
+                                )));
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            };
+            if styled_columns.is_empty() {
+                // Only the rows the sheet writes can be styled.
+                for (&number, row) in &rows {
+                    each_row(number, Some(row))?;
+                }
+            } else {
+                for number in rectangle.first.row..=rectangle.last.row {
+                    each_row(number, rows.get(&number))?;
                 }
             }
-            // A content cleared goes with its format: the first write of a
-            // cell is the one with its content.
-            writes.sort_by_key(|write| (write.at, write.content.is_none()));
-            writes.dedup_by_key(|write| write.at);
+            writes.extend(covered.into_iter().map(|at| CellWrite {
+                at,
+                content: None,
+                date_code: None,
+                style: StyleChange::Remove,
+            }));
         }
         self.apply(writes, Region::Rectangle(rectangle), None)
     }
@@ -1270,10 +1362,34 @@ impl WorksheetMut<'_> {
                     .1 += 1;
             }
         }
+        let mut addressed: Option<HashSet<CellRef>> = None;
         for (entry, written) in reached.values() {
             let range = entry.range;
             let whole = match region {
-                Region::Cells => *written == area(range),
+                // Every cell of the range that holds something is written: a
+                // spill range this library wrote holds nothing but its formula,
+                // so its own call rewrites or retargets it; an array saved by
+                // Excel, its cells holding cached values, is written whole or
+                // not at all.
+                Region::Cells => {
+                    *written == area(range) || {
+                        let addressed = addressed
+                            .get_or_insert_with(|| contents.iter().map(|(at, _)| *at).collect());
+                        let mut held_written = true;
+                        for (number, row) in self.read().rows_in(range.first.row, range.last.row)? {
+                            for (column, cell) in columns(&row) {
+                                let at = CellRef::new(number, column);
+                                if range.contains(at)
+                                    && holds_content(cell)
+                                    && !addressed.contains(&at)
+                                {
+                                    held_written = false;
+                                }
+                            }
+                        }
+                        held_written
+                    }
+                }
                 Region::Rectangle(rectangle) => {
                     rectangle.contains(range.first) && rectangle.contains(range.last)
                 }
@@ -1348,7 +1464,7 @@ impl WorksheetMut<'_> {
                 self.check_spill_range(*at, *range, lookup, &guards.merges)?;
             }
         }
-        Ok(())
+        check_batch_spills(&contents)
     }
 
     /// Refuses a spill range whose cells other than the formula's hold a

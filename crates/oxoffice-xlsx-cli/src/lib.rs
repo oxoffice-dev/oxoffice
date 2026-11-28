@@ -128,7 +128,10 @@ enum Command {
     /// strike, font_name, font_size, font_color, fill, border, border_color,
     /// horizontal, vertical, wrap_text, number_format); {"range": "C2:C8",
     /// "number_format": "0.00"} sets the number format; {"range": "A20:B30",
-    /// "clear": "contents"} clears contents, formats or all;
+    /// "clear": "contents"} clears contents, formats or all. A style of a
+    /// range of cells writes at most 1,000,000 of them, of whole rows at most
+    /// 100,000 rows; a clear of formats writes at most 1,000,000 cells under a
+    /// styled row or column.
     /// {"add_sheet": "Summary"} adds a sheet after the others and makes it
     /// the sheet of the entries after it; {"columns": "A:C", "width": 20}
     /// sets column widths, in characters; {"rows": "2:5", "height": 30} sets
@@ -161,13 +164,16 @@ enum Command {
     /// zero, at most 15 significant digits), TRUE or FALSE, a date
     /// YYYY-MM-DD with a time or not, an empty text clearing the cell, any
     /// other text as it is. --text keeps it text, --formula makes it a formula.
+    /// Options go before or after CELL and VALUE; a VALUE that starts with `-`
+    /// and is not a number goes last, after `--`.
     Set {
         file: PathBuf,
         /// A1 reference of the cell, with a sheet prefix or not ('Q1 data'!B3)
         cell: String,
-        /// The value, or the formula with --formula; one that starts with `-`
-        /// (a negative number, `-A1*2`) is taken as it is
-        #[arg(allow_hyphen_values = true)]
+        /// The value, or the formula with --formula. A negative number is a
+        /// value; any other text that starts with `-` goes after `--`, the
+        /// options before it (`set FILE A1 --formula -o OUT -- -A1*2`)
+        #[arg(allow_negative_numbers = true)]
         value: String,
         /// The sheet, by name or number from 1 (the first visible worksheet by default)
         #[arg(long)]
@@ -181,16 +187,19 @@ enum Command {
         /// The formula is in the form the file stores (`_xlfn.XLOOKUP(...)`)
         #[arg(long, requires = "formula")]
         stored: bool,
-        /// A dynamic array formula that spills from the cell (Excel 365); with
-        /// its range (`J2:J5`, from the cell), Google Sheets spills it too
+        /// A dynamic array formula that spills from the cell (Excel 365), over
+        /// the range Excel finds; Google Sheets shows its first value alone
+        #[arg(long, requires = "formula")]
+        spill: bool,
+        /// A dynamic array formula that spills over this range, from the cell
+        /// (`J2:J5`): Google Sheets spills it too
         #[arg(
             long,
             requires = "formula",
-            num_args = 0..=1,
-            default_missing_value = "",
+            conflicts_with = "spill",
             value_name = "RANGE"
         )]
-        spill: Option<String>,
+        spill_range: Option<String>,
         /// The file to write, never the input and never replaced unless --force
         #[arg(short = 'o', long)]
         output: PathBuf,
@@ -276,13 +285,17 @@ pub fn run(cli: Cli) {
             formula,
             stored,
             spill,
+            spill_range,
             output,
             force,
             drop_cached_values,
             json,
         } => (|| -> Result<()> {
             let input = if formula {
-                let spill = spill.as_deref().map(spill_option).transpose()?;
+                let spill = match spill_range {
+                    Some(range) => Some(spill_option(&range)?),
+                    None => spill.then_some(Spill::Anchor),
+                };
                 CellInput::Formula(value, FormulaOptions { stored, spill })
             } else if text {
                 CellInput::Value(if value.is_empty() {
@@ -493,15 +506,11 @@ fn new(sheets: &[String], output: &Path, force: bool, as_json: bool) -> Result<(
     )
 }
 
-/// Where `--spill` says a formula spills: from its cell over what Excel finds
-/// (no range), or over a range.
+/// The range `--spill-range` gives a spilling formula.
 fn spill_option(range: &str) -> Result<Spill> {
-    if range.is_empty() {
-        return Ok(Spill::Anchor);
-    }
     CellRange::parse(range)
         .map(Spill::Range)
-        .ok_or_else(|| format!("--spill takes a range such as J2:J5, not {range:?}").into())
+        .ok_or_else(|| format!("--spill-range takes a range such as J2:J5, not {range:?}").into())
 }
 
 /// Where an edited workbook is written, and how.
