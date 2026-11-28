@@ -490,8 +490,7 @@ impl Document {
             body_namespace_bindings: namespace_scopes.body_bindings,
             plain_local_edit_blocked,
             tracking: None,
-            written_revisions: HashSet::new(),
-            written_authors: Default::default(),
+            written_revisions: HashMap::new(),
             local_cell_source,
             unsavable_body_edit_cache,
             styles,
@@ -782,8 +781,7 @@ impl Document {
     fn staged_current_output(&self) -> Result<(Self, bool)> {
         self.validate_model_resource_limits()?;
         let mut candidate = self.clone_for_staging();
-        let mut normalized = candidate.prepare_staged_output()?;
-        normalized |= candidate.finish_written_revisions()?;
+        let normalized = candidate.prepare_staged_output()?;
         crate::embedded::persist_invalidated_package_signature(
             &mut candidate.package,
             candidate.package_signatures_invalidated,
@@ -791,23 +789,24 @@ impl Document {
         Ok((candidate, normalized))
     }
 
-    /// What Word writes beside the revisions oxoffice wrote: each dated in
-    /// UTC too (see `dated_in_utc`), in each story part, its root declaring
-    /// `w16du`, and their authors in `people.xml` (Q8). Whether a part
-    /// changed.
-    fn finish_written_revisions(&mut self) -> Result<bool> {
-        let mut ids = self.written_revisions.clone();
-        let mut authors = self.written_authors.clone();
+    /// What Word writes beside the revisions oxoffice wrote and no save
+    /// dated yet: each dated in UTC too (see `dated_in_utc`), in each story
+    /// part, its root declaring `w16du`, and the authors of those the parts
+    /// still hold in `people.xml` (Q8): a revision rejected or accepted away
+    /// lists no one. They are then done. Whether a part changed.
+    pub(super) fn finish_written_revisions(&mut self) -> Result<bool> {
+        let mut written = std::mem::take(&mut self.written_revisions);
         if let Some(tracking) = &self.tracking {
-            let held = tracking.held_ids();
-            if !held.is_empty() {
-                authors.insert(tracking.changes.author().to_owned());
+            for id in tracking.held_ids() {
+                written
+                    .entry(id)
+                    .or_insert_with(|| tracking.changes.author().to_owned());
             }
-            ids.extend(held);
         }
-        if ids.is_empty() {
+        if written.is_empty() {
             return Ok(false);
         }
+        let ids = written.keys().copied().collect::<HashSet<_>>();
         let mut parts = vec![self.doc_part_name.clone()];
         if let Some(relationships) = self.package.get_part_rels(&self.doc_part_name) {
             parts.extend(
@@ -830,18 +829,25 @@ impl Document {
                     }),
             );
         }
-        let mut changed = false;
+        let (mut changed, mut held) = (false, HashSet::new());
         for part in parts {
             let Some(xml) = self.package.get_part(&part) else {
                 continue;
             };
-            if let Some(mut written) = crate::revision::dated_in_utc(xml, &ids)? {
-                oxoffice_docx_oxml::text::declare_w16du_on_part_root(&mut written)?;
-                self.package.set_part(&part, written);
+            let (dated, found) = crate::revision::dated_in_utc(xml, &ids)?;
+            held.extend(found);
+            if let Some(mut dated) = dated {
+                oxoffice_docx_oxml::text::declare_w16du_on_part_root(&mut dated)?;
+                self.package.set_part(&part, dated);
                 changed = true;
             }
         }
-        for author in &authors {
+        let authors = written
+            .iter()
+            .filter(|(id, _)| held.contains(id))
+            .map(|(_, author)| author)
+            .collect::<std::collections::BTreeSet<_>>();
+        for author in authors {
             changed |= self.add_person(author)?;
         }
         Ok(changed)

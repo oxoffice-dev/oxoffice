@@ -900,11 +900,11 @@ pub struct Document {
     /// The tracked changes session a [`TrackedDocument`] call runs in, whose
     /// edits are written as revisions; `None` outside one.
     pub(crate) tracking: Option<tracked::Tracking>,
-    /// The ids of the revisions a session or a comparison wrote in this
-    /// document, which a save dates in UTC as well (`w16du:dateUtc`).
-    pub(crate) written_revisions: HashSet<i32>,
-    /// Their authors, whom a save adds to `people.xml` (Q8).
-    pub(crate) written_authors: std::collections::BTreeSet<String>,
+    /// The revisions a session or a comparison wrote in this document and
+    /// no save dated yet, by id, with their author: a save dates them in UTC
+    /// as well (`w16du:dateUtc`) and adds the authors of those it finds to
+    /// `people.xml` (Q8).
+    pub(crate) written_revisions: HashMap<i32, String>,
     local_cell_source: Option<LocalCellSource>,
     /// Save failure a checked body edit must return before it changes the model.
     /// Cleared when the typed body or the saved main part changes.
@@ -1679,8 +1679,7 @@ impl Document {
             body_namespace_bindings: Vec::new(),
             plain_local_edit_blocked: false,
             tracking: None,
-            written_revisions: HashSet::new(),
-            written_authors: Default::default(),
+            written_revisions: HashMap::new(),
             local_cell_source,
             unsavable_body_edit_cache: OnceLock::from(None),
             styles,

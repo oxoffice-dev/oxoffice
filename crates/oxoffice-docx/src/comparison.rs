@@ -1537,10 +1537,9 @@ impl Document {
             }
         }
         // A save dates them in UTC and lists their author.
-        candidate.written_revisions.extend(new_ids.iter().copied());
-        if !new_ids.is_empty() {
-            candidate.written_authors.insert(author.to_owned());
-        }
+        candidate
+            .written_revisions
+            .extend(new_ids.iter().map(|&id| (id, author.to_owned())));
         self.commit_staged_mutation(candidate);
         Ok(diagnostics)
     }

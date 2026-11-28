@@ -75,7 +75,6 @@ impl Document {
             plain_local_edit_blocked: self.plain_local_edit_blocked,
             tracking: self.tracking.clone(),
             written_revisions: self.written_revisions.clone(),
-            written_authors: self.written_authors.clone(),
             local_cell_source: self.local_cell_source.clone(),
             parsed: self.parsed.clone(),
             main_body_scans: Arc::clone(&self.main_body_scans),

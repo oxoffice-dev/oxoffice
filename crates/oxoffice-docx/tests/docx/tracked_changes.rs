@@ -2098,10 +2098,12 @@ fn a_story_insertion_not_marked_in_place_is_refused_whole() {
 }
 
 /// What Word writes beside a revision it writes, on each revision oxoffice
-/// writes, in a session or a comparison: `w16du:dateUtc`, the date in UTC,
-/// the part's root declaring `w16du` ignorable, and the author in
-/// `people.xml` when the file has that part (Q8). A producer's revisions,
-/// and an undated one, are left as they are.
+/// writes, in a session or a comparison, in any story and through any output
+/// (a save, a part read): `w16du:dateUtc`, the date in UTC, the part's root
+/// declaring `w16du` ignorable, and the author in `people.xml` when the file
+/// has that part (Q8). A producer's revisions, an undated one, the range
+/// marks of a move (W7) and a revision rejected before the save are left
+/// out.
 #[test]
 fn a_written_revision_carries_its_utc_date_and_its_author_as_word_writes_them() {
     const PEOPLE: &str = concat!(
@@ -2110,9 +2112,14 @@ fn a_written_revision_carries_its_utc_date_and_its_author_as_word_writes_them() 
         r#"<w15:person w15:author="Ann"><w15:presenceInfo w15:providerId="Windows Live" w15:userId="1"/></w15:person>"#,
         "</w15:people>"
     );
-    // `xml` as the main part's body, `people` as `people.xml` when given.
+    const MAIN: &str = "/word/document.xml";
+    const REV: &str = r#"<w15:person w15:author="Rev"><w15:presenceInfo w15:providerId="None" w15:userId="Rev"/></w15:person>"#;
+    // `body` as the main part's body, `people` as `people.xml` when given.
     let document = |body: &str, people: Option<&str>| {
         let mut doc = doc_with_body(body);
+        doc.set_header("Draft for review");
+        let note = doc.add_footnote("Old note");
+        doc.paragraph_mut(0).unwrap().add_footnote_ref(note);
         let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
         if let Some(people) = people {
             package.set_part("/word/people.xml", people.as_bytes().to_vec());
@@ -2120,7 +2127,7 @@ fn a_written_revision_carries_its_utc_date_and_its_author_as_word_writes_them() 
                 "/word/people.xml",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml",
             );
-            package.get_or_create_part_rels("/word/document.xml").add(
+            package.get_or_create_part_rels(MAIN).add(
                 "http://schemas.microsoft.com/office/2011/relationships/people",
                 "people.xml",
             );
@@ -2129,74 +2136,214 @@ fn a_written_revision_carries_its_utc_date_and_its_author_as_word_writes_them() 
         package.write_to(&mut out).unwrap();
         Document::from_bytes(&out.into_inner()).unwrap()
     };
-    let plain = paragraph(&run("Alpha beta."));
-    let produced = paragraph(&(run("Alpha beta.") + &by("Other", "ins", 70, &run(" Theirs."))));
-    let session = |date: RevisionDate<'static>| {
+    let plain =
+        paragraph(&run("Alpha beta.")) + &paragraph(&run("Gamma.")) + &paragraph(&run("Last."));
+    let produced = paragraph(&(run("Alpha beta.") + &by("Other", "ins", 70, &run(" Theirs."))))
+        + &paragraph(&run("Last."));
+    let replaced = |doc: &mut Document, date: RevisionDate<'static>| {
+        let changes = TrackedChanges::new(AUTHOR, date).unwrap();
+        doc.track_changes(&changes)
+            .try_replace_text("beta", "delta")
+            .unwrap();
+    };
+    let story = |kind: StoryKind, text: &'static str| {
         move |doc: &mut Document| {
-            let changes = TrackedChanges::new(AUTHOR, date).unwrap();
+            let location = located(doc, kind);
+            let changes = changes();
             doc.track_changes(&changes)
-                .try_replace_text("beta", "gamma")
+                .set_story_text(&location, text)
                 .unwrap();
         }
     };
-    let compared = |doc: &mut Document| {
-        let mut edited = doc_with_body(&paragraph(&run("Alpha gamma.")));
-        let edited = reopen(&mut edited);
-        doc.compare(&edited, AUTHOR, DATE).unwrap();
-    };
     type Edit = Box<dyn Fn(&mut Document)>;
-    let rows: [(&str, Document, Edit, Option<&str>, &str); 6] = [
+    // Name, body, people, edit, part, UTC date, Rev listed, read without a save.
+    type Row<'a> = (
+        &'a str,
+        &'a str,
+        Option<&'a str>,
+        Edit,
+        &'a str,
+        Option<&'a str>,
+        bool,
+        bool,
+    );
+    let rows: Vec<Row> = vec![
         (
             "a session, its date in UTC already",
-            document(&plain, None),
-            Box::new(session(RevisionDate::At(DATE))),
+            &plain,
+            None,
+            Box::new(move |doc| replaced(doc, RevisionDate::At(DATE))),
+            MAIN,
             Some("2026-11-27T10:00:00Z"),
-            "",
+            false,
+            false,
         ),
         (
             "a session dated with an offset",
-            document(&plain, None),
-            Box::new(session(RevisionDate::At("2026-11-27T12:30:00+02:00"))),
+            &plain,
+            None,
+            Box::new(move |doc| replaced(doc, RevisionDate::At("2026-11-27T12:30:00+02:00"))),
+            MAIN,
             Some("2026-11-27T10:30:00Z"),
-            "",
+            false,
+            false,
         ),
         (
             "an undated session",
-            document(&plain, None),
-            Box::new(session(RevisionDate::Undated)),
+            &plain,
             None,
-            "",
+            Box::new(move |doc| replaced(doc, RevisionDate::Undated)),
+            MAIN,
+            None,
+            false,
+            false,
         ),
         (
             "a comparison",
-            document(&plain, None),
-            Box::new(compared),
+            &plain,
+            None,
+            Box::new(|doc| {
+                let mut edited = reopen(doc);
+                edited
+                    .paragraph_mut(1)
+                    .unwrap()
+                    .set_text("Gamma ray.")
+                    .unwrap();
+                let edited = reopen(&mut edited);
+                doc.compare(&edited, AUTHOR, DATE).unwrap();
+            }),
+            MAIN,
             Some("2026-11-27T10:00:00Z"),
-            "",
+            false,
+            false,
         ),
         (
-            "a session, a producer's revision beside",
-            document(&produced, None),
-            Box::new(session(RevisionDate::At(DATE))),
+            "a move, its range marks dated by w:date alone",
+            &plain,
+            None,
+            Box::new(|doc| {
+                // "Gamma." before the first paragraph, which holds the note.
+                let (source, destination) = (
+                    doc.direct_body_item_location(1).unwrap().unwrap(),
+                    doc.direct_body_item_location(0).unwrap().unwrap(),
+                );
+                let changes = changes();
+                doc.track_changes(&changes)
+                    .move_content(&source, &destination)
+                    .unwrap();
+            }),
+            MAIN,
             Some("2026-11-27T10:00:00Z"),
-            "",
+            false,
+            false,
         ),
         (
-            "a session in a file with people.xml",
-            document(&plain, Some(PEOPLE)),
-            Box::new(session(RevisionDate::At(DATE))),
+            "a header",
+            &plain,
+            None,
+            Box::new(story(StoryKind::Header, "Final for review")),
+            "/word/header1.xml",
             Some("2026-11-27T10:00:00Z"),
-            r#"<w15:person w15:author="Rev"><w15:presenceInfo w15:providerId="None" w15:userId="Rev"/></w15:person>"#,
+            false,
+            false,
+        ),
+        (
+            "a footnote",
+            &plain,
+            None,
+            Box::new(story(StoryKind::Footnote, "New note")),
+            "/word/footnotes.xml",
+            Some("2026-11-27T10:00:00Z"),
+            false,
+            false,
+        ),
+        (
+            "read through part_xml, before any save",
+            &plain,
+            Some(PEOPLE),
+            Box::new(move |doc| replaced(doc, RevisionDate::At(DATE))),
+            MAIN,
+            Some("2026-11-27T10:00:00Z"),
+            true,
+            true,
+        ),
+        (
+            "a session still open at the save",
+            &plain,
+            Some(PEOPLE),
+            Box::new(|doc| {
+                let changes = changes();
+                doc.start_tracked_changes(&changes).unwrap();
+                doc.try_replace_text("beta", "delta").unwrap();
+            }),
+            MAIN,
+            Some("2026-11-27T10:00:00Z"),
+            true,
+            false,
+        ),
+        (
+            "a session stopped before the save",
+            &plain,
+            Some(PEOPLE),
+            Box::new(|doc| {
+                let changes = changes();
+                doc.start_tracked_changes(&changes).unwrap();
+                doc.try_replace_text("beta", "delta").unwrap();
+                doc.stop_tracked_changes();
+            }),
+            MAIN,
+            Some("2026-11-27T10:00:00Z"),
+            true,
+            false,
+        ),
+        (
+            "a session, then a producer's revision accepted (a staged reopen)",
+            &produced,
+            Some(PEOPLE),
+            Box::new(move |doc| {
+                replaced(doc, RevisionDate::At(DATE));
+                doc.accept_revision_id(70).unwrap();
+            }),
+            MAIN,
+            Some("2026-11-27T10:00:00Z"),
+            true,
+            false,
+        ),
+        (
+            "a session rejected before the save",
+            &plain,
+            Some(PEOPLE),
+            Box::new(move |doc| {
+                replaced(doc, RevisionDate::At(DATE));
+                doc.reject_all().unwrap();
+            }),
+            MAIN,
+            None,
+            false,
+            false,
         ),
     ];
     let mut failed = Vec::new();
-    for (row, mut doc, edit, utc, person) in rows {
+    for (row, body, people, edit, part, utc, listed, unsaved) in rows {
+        let mut doc = document(body, people);
         edit(&mut doc);
-        let mut doc = reopen(&mut doc);
-        let xml = doc.part_xml("/word/document.xml").unwrap();
-        let root = &xml[..xml.find("<w:body>").unwrap()];
+        let mut doc = match unsaved {
+            true => doc,
+            false => reopen(&mut doc),
+        };
+        let xml = doc.part_xml(part).unwrap();
+        let opens = xml.find("?>").map_or(0, |at| at + 2);
+        let root = &xml[opens..opens + xml[opens..].find('>').unwrap() + 1];
         let mut problems = Vec::new();
-        let written = xml.matches(&format!(r#"w:author="{AUTHOR}""#)).count();
+        // The revisions written, the range marks of a move left out.
+        let starts = xml.match_indices("RangeStart ").collect::<Vec<_>>();
+        let written = xml.matches(&format!(r#"w:author="{AUTHOR}""#)).count() - starts.len();
+        if starts
+            .iter()
+            .any(|(at, _)| xml[*at..at + xml[*at..].find('>').unwrap()].contains("dateUtc"))
+        {
+            problems.push("a move's range mark dated");
+        }
         match utc {
             Some(utc) => {
                 if written == 0
@@ -2205,39 +2352,33 @@ fn a_written_revision_carries_its_utc_date_and_its_author_as_word_writes_them() 
                     || !root.contains(
                         r#"xmlns:w16du="http://schemas.microsoft.com/office/word/2023/wordml/word16du""#,
                     )
-                    || !root.contains(r#"mc:Ignorable="w16du""#)
+                    || !root.contains("w16du\"")
                 {
                     problems.push("utc date");
                 }
             }
             None => {
-                if xml.contains("w16du") {
-                    problems.push("an undated revision dated");
+                if xml.contains("w16du:dateUtc") {
+                    problems.push("dated");
                 }
             }
         }
-        let people = doc.part_xml("/word/people.xml").ok();
-        match (person.is_empty(), &people) {
-            (true, None) => {}
-            (false, Some(people))
-                if people.contains(person) && people.matches("w15:person ").count() == 2 =>
-            {
-                // Saved again, the author is not listed twice.
-                let mut again = reopen(&mut doc);
-                let changes = changes();
-                again
-                    .track_changes(&changes)
-                    .try_replace_text("Alpha", "Omega")
-                    .unwrap();
-                assert!(again.revisions().len() > written, "{row}");
-                if reopen(&mut again)
-                    .part_xml("/word/people.xml")
-                    .unwrap()
-                    .matches("w15:person ")
-                    .count()
-                    != 2
-                {
-                    problems.push("an author listed twice");
+        let people_xml = doc.part_xml("/word/people.xml").ok();
+        match (people, &people_xml) {
+            (None, None) => {}
+            (Some(_), Some(people_xml)) if people_xml.contains(REV) == listed => {
+                // Saved again, after another session, the author is listed once.
+                if listed {
+                    let mut again = reopen(&mut doc);
+                    let changes = changes();
+                    again
+                        .track_changes(&changes)
+                        .try_replace_text("Last", "Final")
+                        .unwrap();
+                    let people_xml = reopen(&mut again).part_xml("/word/people.xml").unwrap();
+                    if people_xml.matches(REV).count() != 1 {
+                        problems.push("an author listed twice");
+                    }
                 }
             }
             _ => problems.push("people.xml"),
@@ -2246,7 +2387,7 @@ fn a_written_revision_carries_its_utc_date_and_its_author_as_word_writes_them() 
             problems.push("validation");
         }
         if !problems.is_empty() {
-            failed.push(format!("{row}: {problems:?}: {xml} {people:?}"));
+            failed.push(format!("{row}: {problems:?}: {xml} {people_xml:?}"));
         }
     }
     assert!(failed.is_empty(), "{failed:#?}");

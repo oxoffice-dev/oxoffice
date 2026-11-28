@@ -5643,38 +5643,28 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 
 /// A story part's XML with `w16du:dateUtc`, its date in UTC, on each dated
 /// revision of these ids that has none, as Word writes it beside the local
-/// `w:date` (the part's root then declares `w16du`); `None` when none takes
-/// one. The revisions are those oxoffice wrote: a producer's own are left
-/// as they are.
-pub(crate) fn dated_in_utc(xml: &[u8], ids: &HashSet<i32>) -> Result<Option<Vec<u8>>> {
+/// `w:date` (the part's root then declares `w16du`), `None` when none takes
+/// one; and the ids of these the part holds. The revisions are those
+/// oxoffice wrote: a producer's own are left as they are, and so are the
+/// range marks of a move, which Word writes with `w:date` alone (W7).
+pub(crate) fn dated_in_utc(
+    xml: &[u8],
+    ids: &HashSet<i32>,
+) -> Result<(Option<Vec<u8>>, HashSet<i32>)> {
     let tree = XmlTree::parse(xml)?;
-    let mut inserts = Vec::new();
-    for (index, element) in tree.elements.iter().enumerate() {
-        if !element.word {
-            continue;
-        }
-        let (id, date) = match &element.revision {
-            Some(metadata) => (Some(metadata.id), metadata.timestamp.clone()),
-            None if matches!(
-                element.local.as_str(),
-                "moveFromRangeStart" | "moveToRangeStart"
-            ) =>
-            {
-                (
-                    tree.word_attribute(index, "id")?
-                        .and_then(|id| id.trim().parse().ok()),
-                    tree.word_attribute(index, "date")?,
-                )
-            }
-            None => continue,
-        };
-        let (Some(id), Some(date)) = (id, date) else {
+    let (mut inserts, mut held) = (Vec::new(), HashSet::new());
+    for element in &tree.elements {
+        let Some(metadata) = element.revision.as_ref().filter(|_| element.word) else {
             continue;
         };
-        if !ids.contains(&id) {
+        if !ids.contains(&metadata.id) {
             continue;
         }
-        let Some(utc) = utc_rfc3339(&date) else {
+        held.insert(metadata.id);
+        let Some(date) = &metadata.timestamp else {
+            continue;
+        };
+        let Some(utc) = utc_rfc3339(date) else {
             continue;
         };
         let tag = oxoffice_core::xml_element::start_tag(&xml[element.start..])?;
@@ -5699,7 +5689,7 @@ pub(crate) fn dated_in_utc(xml: &[u8], ids: &HashSet<i32>) -> Result<Option<Vec<
         }
     }
     if inserts.is_empty() {
-        return Ok(None);
+        return Ok((None, held));
     }
     let mut out = Vec::with_capacity(xml.len() + inserts.len() * 40);
     let mut cursor = 0;
@@ -5709,7 +5699,7 @@ pub(crate) fn dated_in_utc(xml: &[u8], ids: &HashSet<i32>) -> Result<Option<Vec<
         cursor = at;
     }
     out.extend_from_slice(&xml[cursor..]);
-    Ok(Some(out))
+    Ok((Some(out), held))
 }
 
 /// The current time as an RFC 3339 UTC timestamp to the second, the form

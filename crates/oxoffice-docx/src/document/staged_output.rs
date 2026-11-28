@@ -327,7 +327,9 @@ impl Document {
                 .as_ref()
                 != Some(comments);
         }
-        let normalized = self.prepare_staged_package()?;
+        let mut normalized = self.prepare_staged_package()?;
+        // Every output: a save, the bytes of a class, Flat OPC, a part read.
+        normalized |= self.finish_written_revisions()?;
         #[cfg(debug_assertions)]
         IdentifierSummary::of_package(self).assert_reads_back(&IdentifierSummary::of(self));
         // Content `remove_content_at` freed leaves the written copy only: a
@@ -452,7 +454,6 @@ impl Document {
         let custom_properties_owned = self.custom_properties_owned;
         let tracking = self.tracking.clone();
         let written_revisions = self.written_revisions.clone();
-        let written_authors = self.written_authors.clone();
         let settings_owned = self.settings_owned;
         let owned_settings = settings_owned.then(|| self.settings.clone());
         let web_settings_owned = self.web_settings_owned;
@@ -496,7 +497,6 @@ impl Document {
         // reopens.
         reopened.tracking = tracking;
         reopened.written_revisions = written_revisions;
-        reopened.written_authors = written_authors;
         reopened.settings_owned = settings_owned;
         if let Some(settings) = owned_settings {
             reopened.settings = settings;

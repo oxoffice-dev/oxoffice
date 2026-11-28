@@ -1599,14 +1599,10 @@ impl TrackedDocument<'_> {
     /// lists (see `finish_written_revisions`).
     fn keep_since(&mut self, written: usize) {
         let ids = self.tracking.ids();
-        if ids.len() > written {
-            self.document
-                .written_revisions
-                .extend(ids[written..].iter().copied());
-            self.document
-                .written_authors
-                .insert(self.tracking.changes.author().to_owned());
-        }
+        let author = self.tracking.changes.author().to_owned();
+        self.document
+            .written_revisions
+            .extend(ids.iter().skip(written).map(|&id| (id, author.clone())));
     }
 
     /// [`Self::run`] for a call that refuses with `Ok(Err(_))`: that refusal
@@ -1848,11 +1844,9 @@ impl Document {
         if let Ok(held) = session.revision_ids(self) {
             // A save dates them in UTC and lists their author (see
             // `finish_written_revisions`).
-            if !held.is_empty() {
-                self.written_revisions.extend(held.iter().copied());
-                self.written_authors
-                    .insert(session.0.changes.author().to_owned());
-            }
+            let author = session.0.changes.author();
+            self.written_revisions
+                .extend(held.iter().map(|&id| (id, author.to_owned())));
             *session.0.ids.lock().expect("tracking ids") = held;
         }
         self.tracking = None;

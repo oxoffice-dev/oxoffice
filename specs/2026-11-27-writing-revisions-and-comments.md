@@ -633,13 +633,15 @@ PR 5b settles"). **5c** (Closes #469) writes the rest:
 
 - **`w16du:dateUtc`** on each dated revision oxoffice writes, in a session or a comparison: the same instant as
   `w:date`, in UTC to the second, as Word writes it beside its local `w:date`. The revisions are written with
-  `w:date` alone; a save adds `w16du:dateUtc` to those whose ids the document noted as written by oxoffice (a
-  producer's own revisions are left as they are), declares `w16du` on the root of each story part that holds one,
-  and adds it to `mc:Ignorable` there (`mc` declared when the root does not), so a reader that does not know it
-  skips it. Dating at save keeps the namespace out of every fragment the redliner parses and resolves.
-- **The authors of revisions in `people.xml`** per Q8: on save, the author of the revisions oxoffice wrote joins
-  `people.xml` when the file has the part and does not list the author, with `providerId="None"`, as a comment
-  author does (5a). The part is never made.
+  `w:date` alone; every output (a save, the bytes of a class, Flat OPC, a part read) adds `w16du:dateUtc` to those
+  whose ids the document noted as written by oxoffice (a producer's own revisions, and the range marks of a move,
+  which Word dates by `w:date` alone (W7), are left as they are), declares `w16du` on the root of each story part
+  that holds one, and adds it to `mc:Ignorable` there (`mc` declared when the root does not), so a reader that does
+  not know it skips it. Dating at output keeps the namespace out of every fragment the redliner parses and
+  resolves. A save that installs its output has dated them, and the document forgets them.
+- **The authors of revisions in `people.xml`** per Q8: at output, the author of the revisions oxoffice wrote that
+  the parts still hold (none rejected or accepted away) joins `people.xml` when the file has the part and does not
+  list the author, with `providerId="None"`, as a comment author does (5a). The part is never made.
 
 What PR 5b settles (Q6 option C, W9):
 
