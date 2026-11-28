@@ -1941,24 +1941,47 @@ impl WorksheetMut<'_> {
         old_styles: &[u32],
         patch: Option<&StylePatch>,
     ) -> Result<Vec<Option<u32>>> {
-        let mut styles = Vec::with_capacity(writes.len());
-        let mut patched: HashMap<(u32, Option<&str>), u32> = HashMap::new();
+        // What each cell takes: the default format (`None`), its style as
+        // it is, or patched by the call's patch or by a date's format.
+        #[derive(Clone, Copy)]
+        enum Change<'c> {
+            Default,
+            Same,
+            Patched(Option<&'c str>),
+        }
+        let mut changes = Vec::with_capacity(writes.len());
         for (write, &old) in writes.iter().zip(old_styles) {
-            let code = match (write.style, write.date_code) {
-                (StyleChange::Remove, _) => {
-                    styles.push(None);
-                    continue;
-                }
-                (StyleChange::Patch, _) => None,
+            changes.push(match (write.style, write.date_code) {
+                (StyleChange::Remove, _) => Change::Default,
+                (StyleChange::Patch, _) => Change::Patched(None),
                 (StyleChange::Keep, Some(code))
                     if self.workbook.style_table()?.get(old).style.number_format == "General" =>
                 {
-                    Some(code)
+                    Change::Patched(Some(code))
                 }
-                (StyleChange::Keep, _) => {
+                (StyleChange::Keep, _) => Change::Same,
+            });
+        }
+        // The number formats the edit adds, refused before anything changes.
+        let codes = changes.iter().filter_map(|change| match change {
+            Change::Patched(Some(code)) => Some(*code),
+            Change::Patched(None) => patch.and_then(|patch| patch.number_format.as_deref()),
+            _ => None,
+        });
+        self.workbook.check_new_number_formats(codes)?;
+        let mut styles = Vec::with_capacity(writes.len());
+        let mut patched: HashMap<(u32, Option<&str>), u32> = HashMap::new();
+        for (change, &old) in changes.into_iter().zip(old_styles) {
+            let code = match change {
+                Change::Default => {
+                    styles.push(None);
+                    continue;
+                }
+                Change::Same => {
                     styles.push(Some(old));
                     continue;
                 }
+                Change::Patched(code) => code,
             };
             let new = match patched.get(&(old, code)) {
                 Some(&new) => new,

@@ -233,7 +233,11 @@ class Worksheet:
         """
 
     def set_number_format(self, range: str, code: str) -> None:
-        """Sets the number format code (``"0.00"``, ``"yyyy-mm-dd"``) of every cell of ``range``."""
+        """Sets the number format code (``"0.00"``, ``"yyyy-mm-dd"``) of every cell of ``range``.
+
+        A code that would add a custom format to a workbook holding 200 raises ``XlsxError``: Excel keeps only the
+        first 200 to 250, depending on its language, and shows the cells of the others as General.
+        """
 
     def set_style(
         self,

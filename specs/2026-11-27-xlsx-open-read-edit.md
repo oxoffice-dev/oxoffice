@@ -355,7 +355,11 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   percentages, scientific, fractions, text and the duration `[h]:mm:ss`, id 46, which Excel in French shows and keeps as
   46; Excel in French saves `hh:mm:ss` as id 21 and shows id 44 in euros, so no date, time of day, currency or
   accounting id), else an identical custom `numFmt`, else a new id after the largest (164 at least; LibreOffice's 164 is
-  General). Colours are written as `rgb` (`FF` + RRGGBB); writing theme colours is not in this set. `StylePatch` (Python
+  General), refused, with nothing changed, when it would take the workbook past 200 custom formats (a style edit, a
+  number format, a date written in a General cell): Excel keeps only the first 200 to 250, depending on its language
+  (Microsoft's figure; Excel for Mac 16.115 kept ids 164 to 378 and dropped the rest on open without a word, their
+  cells shown as General); the formats the file holds stay, and the message names the way out, a format the workbook
+  holds or a built-in one. Colours are written as `rgb` (`FF` + RRGGBB); writing theme colours is not in this set. `StylePatch` (Python
   keywords, edit map keys): `bold`, `italic`, `underline` (single), `strike`, `font_name` (drops the theme `scheme`,
   `family` and `charset`, which would win over it), `font_size`, `font_color`, `fill` (solid, `bgColor indexed="64"` as
   Excel writes it), `border` and `border_color` (the four sides; automatic is `indexed="64"`), `horizontal`, `vertical`,

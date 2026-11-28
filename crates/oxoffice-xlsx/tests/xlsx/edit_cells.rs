@@ -817,6 +817,31 @@ fn a_write_into_a_shared_formula_group_turns_its_other_cells_into_plain_formulas
     }
 }
 
+/// A workbook of one sheet whose styles hold `count` custom number formats.
+fn workbook_with_number_formats(xml: &str, count: usize) -> Workbook {
+    let bytes = workbook_with_sheet(xml).to_bytes().unwrap();
+    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
+    let styles = String::from_utf8(package.get_part("/xl/styles.xml").unwrap().to_vec()).unwrap();
+    let formats: String = (0..count)
+        .map(|n| {
+            format!(
+                r#"<numFmt numFmtId="{}" formatCode="0.0&quot; u{n}&quot;"/>"#,
+                164 + n
+            )
+        })
+        .collect();
+    let at = styles.find("<fonts").unwrap();
+    let styles = format!(
+        r#"{}<numFmts count="{count}">{formats}</numFmts>{}"#,
+        &styles[..at],
+        &styles[at..]
+    );
+    package.set_part("/xl/styles.xml", styles.into_bytes());
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    Workbook::from_bytes(bytes.get_ref()).unwrap()
+}
+
 #[test]
 fn what_excel_would_repair_or_this_version_does_not_write_is_refused_and_changes_nothing() {
     let pivot_and_array = sheet(concat!(
@@ -953,22 +978,30 @@ fn what_excel_would_repair_or_this_version_does_not_write_is_refused_and_changes
             "at most 1000000 are styled at once",
         ),
         (
+            "a custom number format past the 200 every Excel keeps",
+            Op::NumberFormat("B5", "0.000"),
+            "the workbook holds 200 custom number formats, and `0.000` would add one: Excel keeps only the first 200 to 250",
+        ),
+        (
             "a CSV not in UTF-8",
             Op::Csv("A5", b"caf\xe9", true),
             "byte 3 (0xE9)",
         ),
     ];
     for (case, op, message) in cases {
-        let mut workbook = workbook_with_sheet(&pivot_and_array);
+        let mut workbook = workbook_with_number_formats(&pivot_and_array, 200);
         let before = workbook.to_bytes().unwrap();
         let error = apply(&mut workbook.sheet_at_mut(0).unwrap(), vec![op]).unwrap_err();
         assert!(error.to_string().contains(message), "{case}: {error}");
         assert_eq!(workbook.to_bytes().unwrap(), before, "{case}");
     }
     // A whole array is written and cleared; a merged range's first cell and
-    // its other cells' styles are written.
-    let mut workbook = workbook_with_sheet(&pivot_and_array);
+    // its other cells' styles are written; a number format the workbook
+    // holds, or a built-in one, is written at the limit.
+    let mut workbook = workbook_with_number_formats(&pivot_and_array, 200);
     let mut data = workbook.sheet_at_mut(0).unwrap();
+    data.set_number_format("B5", "0.0\" u7\"").unwrap();
+    data.set_number_format("B6:B7", "0.00").unwrap();
     data.write("A1", vec![vec![number(1.0)], vec![number(2.0)]])
         .unwrap();
     data.clear("C1:D1", Clear::Contents).unwrap();
