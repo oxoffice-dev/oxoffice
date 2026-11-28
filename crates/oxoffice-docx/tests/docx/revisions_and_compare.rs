@@ -5830,8 +5830,23 @@ fn a_container_empty_in_one_version_reads_as_holding_one_empty_paragraph() {
         let mut doc = doc_with(&["Hello brave world"]);
         doc.add_comment_on_text("brave", "Ada", "Note", Default::default())
             .unwrap();
-        let mut doc = with_part_edited(&mut doc, "word/commentsExtended.xml", |xml| {
-            xml.replace(r#"<w15:commentEx w15:paraId="00000001"/>"#, "")
+        // Without paragraphs, its entries keyed by them go.
+        for (part, entry) in [
+            (
+                "word/commentsExtended.xml",
+                r#"<w15:commentEx w15:paraId="00000001" w15:done="0"/>"#,
+            ),
+            (
+                "word/commentsIds.xml",
+                r#"<w16cid:commentId w16cid:paraId="00000001" w16cid:durableId="00000001"/>"#,
+            ),
+        ] {
+            doc = with_part_edited(&mut doc, part, |xml| xml.replace(entry, ""));
+        }
+        let mut doc = with_part_edited(&mut doc, "word/commentsExtensible.xml", |xml| {
+            let start = xml.find("<w16cex:commentExtensible ").unwrap();
+            let end = start + xml[start..].find('>').unwrap() + 1;
+            format!("{}{}", &xml[..start], &xml[end..])
         });
         with_part_edited(&mut doc, "word/comments.xml", |xml| {
             let open = xml.find("<w:comment ").unwrap();

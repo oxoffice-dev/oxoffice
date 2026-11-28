@@ -20,6 +20,8 @@ comments[].anchor_issue
 comments[].anchor_text
 comments[].author
 comments[].date
+comments[].date_utc
+comments[].durable_id
 comments[].id
 comments[].initials
 comments[].parent_id

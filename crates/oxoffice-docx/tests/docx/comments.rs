@@ -310,8 +310,10 @@ fn a_date_is_kept_as_written_and_a_date_that_is_not_rfc_3339_is_refused() {
     );
 }
 
+/// Threads are flat, as Word rewrites them (W11): a reply to a reply names
+/// the thread's root.
 #[test]
-fn a_thread_keeps_every_reply_under_its_own_parent() {
+fn a_thread_keeps_every_reply_under_its_root() {
     let mut doc = doc_with(&["Hello brave world"]);
     let root = doc
         .add_comment_on_text(
@@ -340,7 +342,7 @@ fn a_thread_keeps_every_reply_under_its_own_parent() {
             (root, None),
             (first, Some(root)),
             (second, Some(root)),
-            (nested, Some(first)),
+            (nested, Some(root)),
         ]
     );
 }
@@ -1071,7 +1073,7 @@ fn comment_paragraph_ids(bytes: &[u8]) -> (Vec<CommentParagraphs>, Vec<CommentEn
 
 /// Word and Google Docs key a comment's thread and resolved state on its
 /// last paragraph: a reply names its parent's last paragraph, and the done
-/// mark sits on the entry of the resolved comment's last paragraph.
+/// mark sits on the entry of each comment of the resolved thread (W10).
 #[test]
 fn threads_and_resolved_state_are_written_on_the_last_paragraph_of_a_comment() {
     let mut doc = doc_with(&["The fees are due within thirty days."]);
@@ -1110,7 +1112,7 @@ fn threads_and_resolved_state_are_written_on_the_last_paragraph_of_a_comment() {
         "{entries:?}"
     );
     assert!(
-        entries.contains(&(reply_last, Some(parent_last), false)),
+        entries.contains(&(reply_last, Some(parent_last), true)),
         "{entries:?}"
     );
     let firsts = by_comment
@@ -1653,4 +1655,219 @@ fn a_first_comment_on_text_reserves_the_styles_part_it_adds() {
     assert_eq!(distinct.len(), ids.len(), "{ids:?}");
     assert!(ids.contains(&link.as_str()), "{ids:?}");
     assert_eq!(Document::from_bytes(&saved).unwrap().comments().len(), 1);
+}
+
+/// Ann's comment on "brave", dated in a zone an hour east of UTC, or undated.
+fn ann_comments(doc: &mut Document, date: CommentDate<'_>) -> i32 {
+    doc.add_comment_on_text(
+        "brave",
+        "Ann",
+        "root",
+        TextCommentOptions {
+            date,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+/// "Hello brave world" with Ann's dated comment on "brave".
+fn commented() -> (Document, i32) {
+    let mut doc = doc_with(&["Hello brave world"]);
+    let id = ann_comments(&mut doc, CommentDate::At("2026-11-27T18:52:00+01:00"));
+    (doc, id)
+}
+
+/// `doc` saved, each part through `edit` (its name, its text), opened again.
+fn rewritten(doc: &mut Document, edit: impl Fn(&str, String) -> String) -> Document {
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    let names = package.parts.keys().cloned().collect::<Vec<_>>();
+    for name in names.iter().filter(|name| name.ends_with(".xml")) {
+        let xml = String::from_utf8(package.get_part(name).unwrap().to_vec()).unwrap();
+        package.set_part(name, edit(name, xml).into_bytes());
+    }
+    if names.iter().all(|name| name != "/word/people.xml") {
+        let people = edit("/word/people.xml", String::new());
+        if !people.is_empty() {
+            package.set_part("/word/people.xml", people.into_bytes());
+            package.content_types.add_override(
+                "/word/people.xml",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml",
+            );
+            package.get_or_create_part_rels("/word/document.xml").add(
+                "http://schemas.microsoft.com/office/2011/relationships/people",
+                "people.xml",
+            );
+        }
+    }
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    Document::from_bytes(&out.into_inner()).unwrap()
+}
+
+/// What Word keeps beside a comment (W10, W11, Q8), as each edit leaves it:
+/// the entry a part holds.
+#[test]
+fn new_comments_and_replies_carry_the_metadata_word_writes() {
+    type Row = (&'static str, fn() -> Document, &'static str, &'static str);
+    let rows: [Row; 10] = [
+        (
+            "a comment has a durable id",
+            || commented().0,
+            "word/commentsIds.xml",
+            r#"<w16cid:commentId w16cid:paraId="00000001" w16cid:durableId="00000001"/>"#,
+        ),
+        (
+            "and its instant in UTC under it",
+            || commented().0,
+            "word/commentsExtensible.xml",
+            r#"<w16cex:commentExtensible w16cex:durableId="00000001" w16cex:dateUtc="2026-11-27T17:52:00Z"/>"#,
+        ),
+        (
+            "an undated comment has no UTC date",
+            || {
+                let mut doc = doc_with(&["Hello brave world"]);
+                ann_comments(&mut doc, CommentDate::Undated);
+                doc
+            },
+            "word/commentsExtensible.xml",
+            r#"<w16cex:commentExtensible w16cex:durableId="00000001"/>"#,
+        ),
+        (
+            "a new thread is open",
+            || commented().0,
+            "word/commentsExtended.xml",
+            r#"<w15:commentEx w15:paraId="00000001" w15:done="0"/>"#,
+        ),
+        (
+            "a reply has ids of its own",
+            || {
+                let (mut doc, root) = commented();
+                doc.reply_to(root, "Ben", "first").unwrap();
+                doc
+            },
+            "word/commentsIds.xml",
+            r#"<w16cid:commentId w16cid:paraId="00000002" w16cid:durableId="00000002"/>"#,
+        ),
+        (
+            "a reply to a reply names the root",
+            || {
+                let (mut doc, root) = commented();
+                let first = doc.reply_to(root, "Ben", "first").unwrap();
+                doc.reply_to(first, "Cy", "second").unwrap();
+                doc
+            },
+            "word/commentsExtended.xml",
+            r#"<w15:commentEx w15:paraId="00000003" w15:paraIdParent="00000001" w15:done="0"/>"#,
+        ),
+        (
+            "resolving a reply resolves its whole thread",
+            || {
+                let (mut doc, root) = commented();
+                let reply = doc.reply_to(root, "Ben", "first").unwrap();
+                doc.resolve_comment(reply, true).unwrap();
+                doc
+            },
+            "word/commentsExtended.xml",
+            concat!(
+                r#"<w15:commentEx w15:paraId="00000001" w15:done="1"/>"#,
+                r#"<w15:commentEx w15:paraId="00000002" w15:paraIdParent="00000001" w15:done="1"/>"#,
+            ),
+        ),
+        (
+            "a reply to a resolved thread keeps it resolved",
+            || {
+                let (mut doc, root) = commented();
+                doc.resolve_comment(root, true).unwrap();
+                doc.reply_to(root, "Ben", "first").unwrap();
+                doc
+            },
+            "word/commentsExtended.xml",
+            r#"<w15:commentEx w15:paraId="00000002" w15:paraIdParent="00000001" w15:done="1"/>"#,
+        ),
+        (
+            "an author new to people.xml joins it, a known one does not again",
+            || {
+                let mut doc = rewritten(&mut doc_with(&["Hello brave world"]), |name, xml| {
+                    match name {
+                        "/word/people.xml" => concat!(
+                            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+                            r#"<w15:people xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">"#,
+                            r#"<w15:person w15:author="Ann"><w15:presenceInfo w15:providerId="Windows Live" w15:userId="1"/></w15:person>"#,
+                            "</w15:people>",
+                        )
+                        .to_owned(),
+                        _ => xml,
+                    }
+                });
+                let root = ann_comments(&mut doc, CommentDate::Undated);
+                doc.reply_to(root, "Ben & Co", "first").unwrap();
+                doc
+            },
+            "word/people.xml",
+            concat!(
+                r#"<w15:presenceInfo w15:providerId="Windows Live" w15:userId="1"/></w15:person>"#,
+                r#"<w15:person w15:author="Ben &amp; Co"><w15:presenceInfo w15:providerId="None" w15:userId="Ben &amp; Co"/></w15:person></w15:people>"#,
+            ),
+        ),
+        (
+            "ids stay within MS-DOCX bounds",
+            || {
+                // Word's highest paragraph id and durable id taken.
+                let mut doc = rewritten(&mut commented().0, |_, xml| {
+                    xml.replace(r#"paraId="00000001""#, r#"paraId="7FFFFFFF""#)
+                        .replace(r#"durableId="00000001""#, r#"durableId="7FFFFFFE""#)
+                });
+                doc.reply_to(0, "Ben", "first").unwrap();
+                doc
+            },
+            "word/commentsIds.xml",
+            r#"<w16cid:commentId w16cid:paraId="00000001" w16cid:durableId="00000001"/>"#,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (name, build, part, entry) in rows {
+        let mut doc = build();
+        let report = doc.validate().unwrap();
+        assert!(report.is_valid(), "{name}: {:?}", report.findings);
+        let parts = crate::support::package_parts(&doc.to_bytes().unwrap());
+        let xml = parts
+            .get(part)
+            .map(|xml| String::from_utf8_lossy(xml).into_owned());
+        if !xml.as_ref().is_some_and(|xml| xml.contains(entry)) {
+            failures.push(format!("{name}: {part} holds no {entry}\n{xml:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+    // The last new comment removed takes the parts it made.
+    let (mut doc, root) = commented();
+    assert!(doc.remove_comment(root).unwrap());
+    let parts = crate::support::package_parts(&doc.to_bytes().unwrap());
+    assert!(
+        !parts.keys().any(|part| part.starts_with("word/comments")),
+        "{:?}",
+        parts.keys()
+    );
+}
+
+#[test]
+fn a_comment_reads_back_its_durable_id_and_utc_date() {
+    let (mut doc, root) = commented();
+    let undated = doc
+        .reply_to_with_date(root, "Ben", "first", CommentDate::Undated)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(
+        comment(&doc, root).durable_id().as_deref(),
+        Some("00000001")
+    );
+    assert_eq!(
+        comment(&doc, root).date_utc().as_deref(),
+        Some("2026-11-27T17:52:00Z")
+    );
+    assert_eq!(
+        comment(&doc, undated).durable_id().as_deref(),
+        Some("00000002")
+    );
+    assert_eq!(comment(&doc, undated).date_utc(), None);
 }

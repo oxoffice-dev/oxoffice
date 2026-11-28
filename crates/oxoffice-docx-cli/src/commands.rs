@@ -1813,9 +1813,9 @@ pub fn comment_list(file: &Path, json_output: bool) -> Result<()> {
         .iter()
         .map(|comment| -> Result<Value> {
             let (anchor, anchor_text, anchor_issue) = if json_output {
-                let snapshot = anchors.remove(&comment.id()).ok_or_else(|| {
-                    io::Error::other("checked comment ownership record missing")
-                })?;
+                let snapshot = anchors
+                    .remove(&comment.id())
+                    .ok_or_else(|| io::Error::other("checked comment ownership record missing"))?;
                 // A comment whose anchor cannot be read or placed keeps its
                 // record. The reason is that comment's issue.
                 match snapshot
@@ -1841,7 +1841,8 @@ pub fn comment_list(file: &Path, json_output: bool) -> Result<()> {
             Ok(json!({
                 "id": comment.id(), "author": comment.author(), "initials": comment.initials(),
                 "date": comment.date(), "text": comment.text(), "parent_id": comment.parent_id(),
-                "resolved": comment.resolved() == Some(true), "anchor_text": anchor_text, "anchor": anchor,
+                "resolved": comment.resolved() == Some(true), "durable_id": comment.durable_id(),
+                "date_utc": comment.date_utc(), "anchor_text": anchor_text, "anchor": anchor,
                 "anchor_issue": anchor_issue,
             }))
         })

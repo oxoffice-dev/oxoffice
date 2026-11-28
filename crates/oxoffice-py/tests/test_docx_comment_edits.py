@@ -96,7 +96,7 @@ def test_resolving_an_unknown_comment_leaves_the_document_as_it_was(saved):
     assert reads(taken) == before(taken)
 
 
-def test_resolving_a_thread_keeps_every_handle_and_marks_its_root(saved):
+def test_resolving_a_thread_keeps_every_handle_and_marks_the_whole_thread(saved):
     doc = oxdocx.Document.open(saved)
     parent = the_comment(doc).id
     reply = doc.reply_to(parent, author="Ben", text="agreed")
@@ -107,7 +107,20 @@ def test_resolving_a_thread_keeps_every_handle_and_marks_its_root(saved):
     again = oxdocx.Document.from_bytes(doc.to_bytes())
     by_id = {comment.id: comment for comment in again.comments}
     assert by_id[parent].resolved is True
+    assert by_id[reply].resolved is True
     assert by_id[reply].parent_id == parent
+
+
+def test_a_comment_reads_the_durable_id_and_utc_date_word_keeps_beside_it(saved):
+    doc = oxdocx.Document.open(saved)
+    paragraph = doc.paragraphs[3]
+    doc.add_comment_on_text(paragraph.runs[0].text, author="Ann", text="dated", date="2026-11-27T18:52:00+01:00")
+    (comment,) = [comment for comment in oxdocx.Document.from_bytes(doc.to_bytes()).comments if comment.text == "dated"]
+    assert re.fullmatch("[0-9A-F]{8}", comment.durable_id)
+    assert comment.date_utc == "2026-11-27T17:52:00Z"
+    made = oxdocx.Comment(id=1, author=None, initials=None, date=None, text="", parent_id=None, resolved=None,
+                          durable_id="0000000A", date_utc="2026-01-01T00:00:00Z")
+    assert (made.durable_id, made.date_utc) == ("0000000A", "2026-01-01T00:00:00Z")
 
 
 def without_comments_extended(source):

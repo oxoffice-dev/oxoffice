@@ -163,7 +163,7 @@ pub(super) fn retain_styles_root_attributes(source: &[u8], serialized: Vec<u8>) 
     Ok(output)
 }
 
-pub(super) fn root_namespace_declarations(xml: &[u8]) -> Result<Vec<(String, String)>> {
+pub(crate) fn root_namespace_declarations(xml: &[u8]) -> Result<Vec<(String, String)>> {
     let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
     let mut buffer = Vec::new();
     loop {

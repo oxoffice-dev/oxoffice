@@ -2208,6 +2208,8 @@ impl PyDocument {
                     text: comment.text(),
                     parent_id: comment.parent_id(),
                     resolved: comment.resolved(),
+                    durable_id: comment.durable_id(),
+                    date_utc: comment.date_utc(),
                     anchor_text,
                     anchor,
                     anchor_issue,

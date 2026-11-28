@@ -65,6 +65,8 @@ pub struct PyComment {
     pub text: String,
     pub parent_id: Option<i32>,
     pub resolved: Option<bool>,
+    pub durable_id: Option<String>,
+    pub date_utc: Option<String>,
     pub anchor_text: Option<String>,
     pub anchor: Option<PyStoryRunRange>,
     pub anchor_issue: Option<String>,
@@ -81,6 +83,8 @@ impl PartialEq for PyComment {
             && self.text == other.text
             && self.parent_id == other.parent_id
             && self.resolved == other.resolved
+            && self.durable_id == other.durable_id
+            && self.date_utc == other.date_utc
     }
 }
 
@@ -89,8 +93,8 @@ impl Eq for PyComment {}
 #[pymethods]
 impl PyComment {
     #[new]
-    #[pyo3(signature = (*, id, author, initials, date, text, parent_id, resolved, anchor_text=None, anchor=None, anchor_issue=None))]
-    #[allow(clippy::too_many_arguments)] // Preserve seven original fields plus optional anchor snapshots.
+    #[pyo3(signature = (*, id, author, initials, date, text, parent_id, resolved, anchor_text=None, anchor=None, anchor_issue=None, durable_id=None, date_utc=None))]
+    #[allow(clippy::too_many_arguments)] // Preserve seven original fields plus optional anchor snapshots and Word's metadata.
     fn new(
         id: i32,
         author: Option<String>,
@@ -102,8 +106,12 @@ impl PyComment {
         anchor_text: Option<String>,
         anchor: Option<PyRef<'_, PyStoryRunRange>>,
         anchor_issue: Option<String>,
+        durable_id: Option<String>,
+        date_utc: Option<String>,
     ) -> Self {
         Self {
+            durable_id,
+            date_utc,
             anchor_text,
             anchor: anchor.map(|range| (*range).clone()),
             anchor_issue,

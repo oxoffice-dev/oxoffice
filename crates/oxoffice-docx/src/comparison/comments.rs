@@ -9,10 +9,15 @@ pub(crate) const COMMENT_COMPARISON_OPEN: &str =
     "<rdocx:comparisonComments xmlns:rdocx=\"urn:rdocx:comparison:comments:1\">";
 pub(crate) const COMMENT_COMPARISON_CLOSE: &str = "</rdocx:comparisonComments>";
 
+/// A part a comment owns, which a comparison carries with the comments: the
+/// durable ids and UTC dates go with the comments they name.
 fn comment_relationship(relationship: &Relationship) -> bool {
     matches!(
         relationship.rel_type.as_str(),
-        rel_types::COMMENTS | crate::comments::COMMENTS_EXTENDED_REL_TYPE
+        rel_types::COMMENTS
+            | crate::comments::COMMENTS_EXTENDED_REL_TYPE
+            | crate::comments::COMMENTS_IDS_REL_TYPE
+            | crate::comments::COMMENTS_EXTENSIBLE_REL_TYPE
     )
 }
 

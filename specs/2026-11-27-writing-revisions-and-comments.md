@@ -568,6 +568,30 @@ What PR 3d settles:
 - Creating a note (`add_footnote`, `add_endnote`) stays refused: rejecting it would leave the note's story behind
   (PR 3e: the resolver drops a note whose only reference a resolution removes, as Word does for comments, W9).
 
+## Amendment: PR 5 in two (2026-11-28, before PR 5)
+
+PR 5 is cut in two, as the comparison half waits for PR 4, which also changes `comparison.rs`:
+
+- **5a `feat(docx): modern comment metadata`** (Refs #469). A new comment or reply gets an entry in
+  `commentsIds` (its last paragraph's `paraId` to a durable id) and one in `commentsExtensible` (that durable id and
+  the comment's instant in UTC, none when undated), each part made with its first entry; `w15:done="0"`. A reply to
+  a reply names the thread's root (W11) and takes the thread's state, so a thread stays one state; resolving any
+  comment of a thread sets `done` on all of it (W10). Paragraph ids stay below 0x80000000 and durable ids above 0 and
+  below 0x7FFFFFFF (MS-DOCX), unique in their part; a paragraph id of a table kept in a comment counts. `people.xml`
+  per Q8: never made, a new comment author appended with `providerId="None"`. The last comment removed in the
+  session takes the companion parts it made. `Comment.durable_id` and `Comment.date_utc` read in Rust, Python and
+  `comment list --json`. A comparison carries `commentsIds` and `commentsExtensible` with the comments part, so
+  accepting the removal of a comment no longer leaves an entry for it (seen with Word files, which have the parts).
+- **5b** (Closes #469), after PR 4: compare writes an added or removed comment as its reference run in `w:ins` or
+  `w:del` (Q6 option C, W9); `w16du:dateUtc` beside `w:date` on the revisions the session and compare write, with
+  the namespace and `mc:Ignorable` on each story part's root; the authors of revisions in `people.xml` per Q8. These
+  touch the redliner and the comparison, which PR 4 changes.
+
+Word check from the UI (`w10-ui/` on `probe/rev-word-checks`, fb0c7334): a reply typed in Word is keyed on its last
+paragraph with `paraIdParent` = the root's, `done="0"` on both, a true UTC `dateUtc`, no new person for a known
+author, and its range from right after the root's start to after the root's reference run, as `reply_to` writes it.
+The resolve was not captured; W10's round trip stands. Not observed: Word's state for a reply to a resolved thread.
+
 ## Open questions
 
 ### Product (maintainer)
