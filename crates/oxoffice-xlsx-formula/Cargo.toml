@@ -1,6 +1,6 @@
 [package]
 name = "oxoffice-xlsx-formula"
-description = "Spreadsheet formulas: tokens, stored and displayed forms, moved references, syntax check"
+description = "Spreadsheet formulas: tokens, stored and displayed forms, moved references, syntax check, result extents"
 readme = "README.md"
 version.workspace = true
 edition.workspace = true

@@ -240,9 +240,9 @@ fn text(entry: &Map<String, Value>, key: &str) -> std::result::Result<String, St
     }
 }
 
-/// Where `"spill"` says a formula spills: `true` from its cell over what
-/// Excel finds, a range (`"J2:J5"`) over that range, `false` or nothing not
-/// at all.
+/// Where `"spill"` says a formula spills: `true` from its cell over its
+/// result, a range (`"J2:J5"`) over that range, `false` or nothing not at
+/// all.
 fn spill(entry: &Map<String, Value>) -> std::result::Result<Option<Spill>, String> {
     match entry.get("spill") {
         None | Some(Value::Bool(false)) => Ok(None),

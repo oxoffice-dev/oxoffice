@@ -10,8 +10,9 @@
 //! does not know (`extLst`). A record is appended only when none matches, so
 //! the indexes of every other cell stay valid. A number format reuses a
 //! built-in id only when every language of Excel shows it the same, else an
-//! identical custom `numFmt`, else takes a new id from 164 up. Colours are
-//! written as `rgb`, `FF` and the six hex digits.
+//! identical custom `numFmt`, else takes a new id from 164 up, while the
+//! workbook holds fewer than the 200 custom formats every Excel keeps.
+//! Colours are written as `rgb`, `FF` and the six hex digits.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -341,6 +342,12 @@ pub(crate) struct StyleIndex {
     next_id: u32,
 }
 
+/// The custom number formats a workbook may hold for an edit to add one:
+/// Excel keeps the first 200 to 250, depending on its language, and drops
+/// the others on open without a word, their cells then shown as General
+/// (Excel for Mac 16.115 kept 215).
+const MAX_CUSTOM_NUMBER_FORMATS: usize = 200;
+
 const INDEXED: [(StyleList, &str); 4] = [
     (StyleList::Fonts, "fonts"),
     (StyleList::Fills, "fills"),
@@ -368,6 +375,19 @@ impl StyleIndex {
         }
         index.next_id = highest + 1;
         index
+    }
+
+    /// The id of a number format the workbook has for `code`: a built-in id
+    /// every language of Excel shows the same, else an identical custom
+    /// `numFmt`.
+    fn existing_id(&self, code: &str) -> Option<u32> {
+        (0..50)
+            .find(|&id| {
+                is_locale_independent(id)
+                    && builtin_code(id, Locale::EnUs) == Some(code)
+                    && self.custom_ids.get(&id).is_none_or(|custom| custom == code)
+            })
+            .or_else(|| self.codes.get(code).copied())
     }
 }
 
@@ -409,18 +429,7 @@ impl StyleEditor<'_> {
 
     /// The id of a number format showing `code`.
     fn number_format(&mut self, code: &str) -> u32 {
-        if let Some(id) = (0..50).find(|&id| {
-            is_locale_independent(id)
-                && builtin_code(id, Locale::EnUs) == Some(code)
-                && self
-                    .index
-                    .custom_ids
-                    .get(&id)
-                    .is_none_or(|custom| custom == code)
-        }) {
-            return id;
-        }
-        if let Some(&id) = self.index.codes.get(code) {
+        if let Some(id) = self.index.existing_id(code) {
             return id;
         }
         let id = self.index.next_id;
@@ -640,6 +649,44 @@ impl Workbook {
     /// else one appended with the font, fill, border and number format it
     /// needs.
     pub(crate) fn styled(&mut self, s: u32, patch: &StylePatch) -> Result<u32> {
+        Ok(self.style_editor()?.patched(s, patch))
+    }
+
+    /// Refuses the number format codes an edit writes when the custom
+    /// formats they add would take the workbook past the 200 every Excel
+    /// keeps; the formats the workbook holds stay as they are. Checked
+    /// before the edit changes anything.
+    pub(crate) fn check_new_number_formats<'c>(
+        &mut self,
+        codes: impl IntoIterator<Item = &'c str>,
+    ) -> Result<()> {
+        let codes: BTreeSet<&str> = codes.into_iter().collect();
+        if codes.is_empty() {
+            return Ok(());
+        }
+        let editor = self.style_editor()?;
+        let new: Vec<&str> = codes
+            .into_iter()
+            .filter(|code| editor.index.existing_id(code).is_none())
+            .collect();
+        // Every `numFmt` counts, used or not: stricter than what Excel
+        // drops, never past it.
+        let held = editor.styles.list(StyleList::NumFmts).len();
+        if new.is_empty() || held + new.len() <= MAX_CUSTOM_NUMBER_FORMATS {
+            return Ok(());
+        }
+        let codes: Vec<String> = new.iter().map(|code| format!("`{code}`")).collect();
+        let adds = match new.len() {
+            1 => format!("{} would add one", codes[0]),
+            count => format!("{} would add {count}", codes.join(", ")),
+        };
+        Err(Error::Refused(format!(
+            "the workbook holds {held} custom number formats, and {adds}: Excel keeps only the first 200 to 250, depending on its language, and shows the cells of the others as General; use a format the workbook holds or a built-in one"
+        )))
+    }
+
+    /// What a style edit writes into, read for it.
+    fn style_editor(&mut self) -> Result<StyleEditor<'_>> {
         self.style_table()?;
         if self.styles_xml()?.is_none() {
             return Err(Error::Refused(
@@ -656,12 +703,11 @@ impl Workbook {
             .edit
             .styles
             .get_or_insert_with(|| StyleIndex::new(styles));
-        let mut editor = StyleEditor {
+        Ok(StyleEditor {
             styles,
             table: std::sync::Arc::make_mut(table),
             index,
-        };
-        Ok(editor.patched(s, patch))
+        })
     }
 }
 
@@ -731,7 +777,9 @@ impl WorksheetMut<'_> {
     }
 
     /// Sets the number format code of every cell of `range` (`0.00`,
-    /// `yyyy-mm-dd`), as [`WorksheetMut::set_style`] sets a style.
+    /// `yyyy-mm-dd`), as [`WorksheetMut::set_style`] sets a style. A code
+    /// that would add a custom format to a workbook holding 200 is refused:
+    /// Excel keeps only the first 200 to 250, depending on its language.
     pub fn set_number_format(&mut self, range: &str, code: &str) -> Result<()> {
         self.set_style(
             range,
@@ -855,6 +903,10 @@ impl WorksheetMut<'_> {
         restyle: Restyle<'_>,
     ) -> Result<()> {
         let targets = self.whole_targets(reference)?;
+        if let Restyle::Patch(patch) = restyle {
+            self.workbook
+                .check_new_number_formats(patch.number_format.as_deref())?;
+        }
         let mut map: HashMap<u32, u32> = HashMap::new();
         for &old in &targets.olds {
             let new = match restyle {

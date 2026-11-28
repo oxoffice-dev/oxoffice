@@ -11,8 +11,9 @@ use oxoffice_xlsx::{
 
 /// A formula, for a bulk write or a value: its text as Excel displays it
 /// (an `=` accepted), or as the file stores it with `stored`; `spill` for a
-/// dynamic array formula that spills from its cell: `True`, or its range
-/// (`"J2:J5"`) for Google Sheets to spill it too.
+/// dynamic array formula that spills from its cell: `True` (over its
+/// result's range, or the most the data can fill, when the formula gives
+/// it), or its range (`"J2:J5"`).
 #[pyclass(
     name = "Formula",
     module = "oxoffice.xlsx",
@@ -28,7 +29,7 @@ pub struct PyFormula {
 }
 
 /// Where `spill` says a formula spills: `False` not at all, `True` from its
-/// cell over what Excel finds, a range such as `"J2:J5"` over that range.
+/// cell over its result, a range such as `"J2:J5"` over that range.
 pub fn spill_argument(value: &Bound<'_, PyAny>) -> PyResult<Option<Spill>> {
     if value.is_instance_of::<PyBool>() {
         return Ok(value.extract::<bool>()?.then_some(Spill::Anchor));

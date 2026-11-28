@@ -23,11 +23,17 @@ and as Excel displays them.
   array constants, `,` between arguments, each built-in function's argument
   count, at most 255 arguments, 64 nested functions and 8,192 characters,
   with a plain message.
+- How large a formula's result is, from its parse tree: exactly when its
+  text decides it (a range, `A2:A10*2`, `SORT`, `SEQUENCE(5)`, `TAKE` with
+  constants...), at most when the data decide how much of the range it reads
+  it fills (`FILTER`, `UNIQUE`), unknown otherwise: what a dynamic array
+  formula spills over, without an evaluator.
 
 ## Use it when
 
-Use this crate to show, write or check a workbook formula, or to read a
-shared formula's members. It depends on no oxoffice crate; the xlsx facade
+Use this crate to show, write or check a workbook formula, to read a
+shared formula's members, or to know the range a dynamic array formula
+spills over. It depends on no oxoffice crate; the xlsx facade
 uses it, and the evaluator will build on it.
 
 ## Example

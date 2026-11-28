@@ -188,7 +188,9 @@ enum Command {
         #[arg(long, requires = "formula")]
         stored: bool,
         /// A dynamic array formula that spills from the cell (Excel 365), over
-        /// the range Excel finds; Google Sheets shows its first value alone
+        /// its result's range, or the most the data can fill, when the formula
+        /// gives it, else from the cell alone (Google Sheets then shows its
+        /// first value alone)
         #[arg(long, requires = "formula")]
         spill: bool,
         /// A dynamic array formula that spills over this range, from the cell
