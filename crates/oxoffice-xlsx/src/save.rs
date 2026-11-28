@@ -1,6 +1,7 @@
 //! Saving a workbook: to bytes or to a file, staged in a sibling file and
 //! renamed over the path, never over the file it was opened from unless
-//! asked; the extension selects the class.
+//! asked; the extension selects the class, and one that names another format
+//! is refused.
 
 use std::borrow::Cow;
 use std::io::Cursor;
@@ -65,6 +66,16 @@ impl WorkbookClass {
         })
     }
 
+    /// The extension of the class, without its dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            WorkbookClass::Workbook => "xlsx",
+            WorkbookClass::MacroEnabledWorkbook => "xlsm",
+            WorkbookClass::Template => "xltx",
+            WorkbookClass::MacroEnabledTemplate => "xltm",
+        }
+    }
+
     /// The main content type of the class.
     pub fn content_type(self) -> &'static str {
         match self {
@@ -82,6 +93,14 @@ impl WorkbookClass {
         )
     }
 }
+
+/// The extensions of other formats, which a save refuses: Excel's own
+/// (binary, legacy and add-in workbooks and templates), OpenDocument, text
+/// and web exports, the Word and PowerPoint formats, and PDF.
+const OTHER_FORMAT_EXTENSIONS: &[&str] = &[
+    "xls", "xlsb", "xla", "xlam", "xlt", "xlw", "ods", "csv", "tsv", "txt", "xml", "html", "htm",
+    "json", "md", "doc", "docx", "docm", "dotx", "dotm", "ppt", "pptx", "pptm", "potx", "pdf",
+];
 
 impl Workbook {
     /// The bytes of the workbook as it stands, in its class.
@@ -104,9 +123,13 @@ impl Workbook {
     /// file it names replaced; on Unix that file keeps its permission bits.
     ///
     /// A `.xlsx`, `.xlsm`, `.xltx` or `.xltm` extension selects the main
-    /// content type; any other extension keeps the class the workbook was
-    /// opened with. A workbook that carries a VBA project cannot be saved
-    /// under a macro-free extension ([`Error::MacroFreeExtension`]).
+    /// content type. An extension that names another format (see
+    /// [`Error::OtherFormatExtension`]: `.xls`, `.xlsb`, `.ods`, `.csv`,
+    /// `.docx`, `.pdf` and the like) is refused, the file written being an
+    /// Open XML workbook; only the last extension counts (`a.xls.xlsx` is
+    /// saved). Any other extension, or none, keeps the class the workbook
+    /// was opened with. A workbook that carries a VBA project cannot be
+    /// saved under a macro-free extension ([`Error::MacroFreeExtension`]).
     ///
     /// A workbook opened from a file refuses to be saved over it, whatever
     /// the spelling of `path` (a symbolic link, a relative path, a hard
@@ -184,6 +207,7 @@ impl Workbook {
 
     /// The class a save to `path` writes, when it is not the workbook's.
     fn class_for_path(&self, path: &Path) -> Result<Option<WorkbookClass>> {
+        self.refuse_other_format(path)?;
         let Some(target) = WorkbookClass::from_path(path).filter(|target| *target != self.class)
         else {
             return Ok(None);
@@ -203,6 +227,31 @@ impl Workbook {
             });
         }
         Ok(Some(target))
+    }
+
+    /// Refuses an extension that names another format than the workbook
+    /// written: the file would be an Open XML workbook under a legacy or
+    /// foreign name, which Excel opens with a format warning.
+    fn refuse_other_format(&self, path: &Path) -> Result<()> {
+        let Some(extension) = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .filter(|extension| OTHER_FORMAT_EXTENSIONS.contains(&extension.as_str()))
+        else {
+            return Ok(());
+        };
+        let suggestion = match (extension.as_str(), self.class.is_macro_enabled()) {
+            ("xlt", true) => "a .xltm template",
+            ("xlt", false) => "a .xltx template",
+            (_, true) => "a .xlsm workbook",
+            (_, false) => "a .xlsx workbook",
+        };
+        Err(Error::OtherFormatExtension {
+            path: path.to_path_buf(),
+            extension,
+            suggestion,
+        })
     }
 
     /// The package a save writes: the workbook's own while nothing changes

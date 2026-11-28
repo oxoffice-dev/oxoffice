@@ -37,9 +37,10 @@ fn xlsx_to_pyerr(py: Python<'_>, error: Error) -> PyErr {
             Error::InvalidReference { .. }
             | Error::NotACell { .. }
             | Error::RangeTooLarge { .. } => return PyValueError::new_err(message),
-            Error::MacroFreeExtension { .. } | Error::Refused(_) | Error::NotAWorksheet { .. } => {
-                "XlsxError"
-            }
+            Error::MacroFreeExtension { .. }
+            | Error::OtherFormatExtension { .. }
+            | Error::Refused(_)
+            | Error::NotAWorksheet { .. } => "XlsxError",
             _ => "PackageError",
         }
     };

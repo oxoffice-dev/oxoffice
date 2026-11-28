@@ -103,6 +103,16 @@ fn new_makes_the_same_workbook_every_time_and_replaces_nothing_unless_asked() {
     );
     assert!(!path("refused.xlsx").exists());
 
+    // An extension that names another format writes nothing and says which to use.
+    let output = run(&[], "report.xls");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("save it as a .xlsx workbook"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!path("report.xls").exists());
+
     let _ = fs::remove_dir_all(&dir);
 }
 

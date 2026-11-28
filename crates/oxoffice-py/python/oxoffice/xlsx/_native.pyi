@@ -127,7 +127,9 @@ class Workbook:
         """Saves to ``path``, staged and renamed so a failed save changes nothing.
 
         The extension (``.xlsx``, ``.xlsm``, ``.xltx``, ``.xltm``) selects the
-        class. A workbook opened from a file refuses to replace it unless
+        class; one that names another format (``.xls``, ``.xlsb``, ``.ods``,
+        ``.csv``, ``.docx``, ``.pdf``...) raises ``XlsxError``, since the file
+        is an Open XML workbook. A workbook opened from a file refuses to replace it unless
         ``overwrite_source`` is true. ``drop_cached_values`` drops the cached
         value of every formula, so that LibreOffice, which does not calculate
         on open by default, computes them (a function it lacks then shows an
