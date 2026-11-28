@@ -107,6 +107,7 @@ impl Workbook {
             signature_invalid,
             signature_baseline,
             read: Default::default(),
+            edit: Default::default(),
         })
     }
 }

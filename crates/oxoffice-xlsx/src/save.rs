@@ -19,6 +19,13 @@ pub struct SaveOptions {
     /// refuses that file, so an edit never silently replaces its input.
     /// Saves to bytes ignore it.
     pub overwrite_source: bool,
+    /// Drop the cached value of every formula (and of every cell of an array
+    /// formula's range), so that an application that does not calculate on
+    /// open, as LibreOffice by default, computes them: the save asks for a
+    /// calculation on open and removes the calculation chain, as a save
+    /// after an edit does, even without one. A workbook without a formula is
+    /// saved as it would be without it.
+    pub drop_cached_values: bool,
 }
 
 /// The class of a workbook package, from its main content type.
@@ -203,15 +210,16 @@ impl Workbook {
     /// A package signature the package no longer matches is marked invalidated.
     fn saved_package(
         &self,
-        _options: SaveOptions,
+        options: SaveOptions,
         class: Option<WorkbookClass>,
     ) -> Result<Cow<'_, OpcPackage>> {
-        let saved = if class.is_none() && !self.edited {
+        let drop = options.drop_cached_values && (self.calculates || self.holds_formula());
+        let saved = if class.is_none() && !self.edited && !drop {
             Cow::Borrowed(&self.package)
         } else {
             let mut package = self.package.clone();
-            if self.edited {
-                self.write_staged_parts(&mut package)?;
+            if self.edited || drop {
+                self.write_staged_parts(&mut package, drop)?;
             }
             if let Some(class) = class {
                 package

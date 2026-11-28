@@ -1,6 +1,9 @@
 //! LibreOffice opens the workbooks this crate makes and edits: it names
 //! their sheets, shows their cells as the source did, and reads back the
-//! widths, heights and panes written (checked in the workbook it saves).
+//! widths, heights and panes written (checked in the workbook it saves);
+//! every corpus copy with its cells, a style, formulas and a date written
+//! opens, and, saved with `drop_cached_values`, LibreOffice calculates the
+//! total an edited value feeds, which it does not do on its own.
 //!
 //! It runs where `soffice` is installed and says so when it is not; the
 //! pull request that adds it was checked on a machine that has it. Each run
@@ -10,9 +13,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use oxoffice_xlsx::{SheetKind, Workbook};
+use oxoffice_xlsx::{
+    DateValue, FormulaOptions, SaveOptions, SheetKind, StylePatch, Value, Workbook,
+};
 
-use crate::support::{child_of, corpus_bytes, package_parts, row_of};
+use crate::support::{child_of, corpus_bytes, corpus_workbooks, package_parts, row_of};
 
 fn soffice() -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
@@ -219,6 +224,109 @@ fn libreoffice_opens_what_is_made_and_edited_and_reads_the_widths_heights_and_pa
                 "{name}: {attribute}"
             );
         }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A value that feeds a formula in each family: the sheet of the value, the
+/// cell written, the sheet and cell of the formula that adds it to others.
+fn feeds(family: &str) -> (&'static str, &'static str, &'static str, &'static str) {
+    match family {
+        "budget" => ("Budget", "B4", "Budget", "F4"),
+        "multi" => ("Sales", "C2", "Summary", "B4"),
+        "dates1904" => ("Dates", "B2", "Dates", "C2"),
+        "stream" => ("Log", "E2", "Log", "B30"),
+        _ => ("Orders", "D2", "Orders", "D38"),
+    }
+}
+
+fn number(workbook: &Workbook, sheet: &str, cell: &str) -> f64 {
+    match workbook.sheet(sheet).unwrap().cell(cell).unwrap().value {
+        Value::Number(number) => number,
+        other => panic!("{sheet}!{cell} holds {other:?}"),
+    }
+}
+
+#[test]
+fn libreoffice_opens_every_edited_copy_and_calculates_what_an_edit_feeds_once_cached_values_drop() {
+    let Some(soffice) = soffice() else {
+        eprintln!("skipped: soffice is not on the PATH");
+        return;
+    };
+    let dir = scratch("dropped");
+    let (profile, input, saved) = (dir.join("profile"), dir.join("in"), dir.join("saved"));
+    for folder in [&input, &saved] {
+        fs::create_dir_all(folder).unwrap();
+    }
+    let options = SaveOptions {
+        drop_cached_values: true,
+        ..SaveOptions::default()
+    };
+    let bold = StylePatch {
+        bold: Some(true),
+        fill: Some("FFF2CC".to_owned()),
+        border: Some("thin".to_owned()),
+        ..StylePatch::default()
+    };
+    let mut expected = Vec::new();
+    let mut paths = Vec::new();
+    for file in corpus_workbooks() {
+        let name = file
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .trim_end_matches(".xlsx");
+        let family = match name {
+            "threads" | "strict" => "review",
+            name => name,
+        };
+        let (sheet, written, total_sheet, total) = feeds(family);
+        let mut workbook = Workbook::from_bytes(&file.bytes()).unwrap();
+        let before = number(&workbook, sheet, written);
+        let total_before = number(&workbook, total_sheet, total);
+        let mut edited = workbook.sheet_mut(sheet).unwrap();
+        edited.set_value(written, before + 1000.0).unwrap();
+        edited.set_style("A1:B1", &bold).unwrap();
+        edited.set_number_format(written, "0.0").unwrap();
+        edited
+            .set_formula("Z1", "1+1", FormulaOptions::default())
+            .unwrap();
+        edited
+            .set_formula("Z2", "SUM(Z1:Z1)*3", FormulaOptions::default())
+            .unwrap();
+        edited
+            .set_value(
+                "Z3",
+                DateValue::Date {
+                    year: 2026,
+                    month: 1,
+                    day: 5,
+                },
+            )
+            .unwrap();
+        let copy = file.path.replace('/', "-");
+        let path = input.join(&copy);
+        fs::write(&path, workbook.to_bytes_with_options(options).unwrap()).unwrap();
+        paths.push(path);
+        expected.push((copy, sheet, total_sheet, total, total_before + 1000.0));
+    }
+    convert(
+        &soffice,
+        &profile,
+        "xlsx:Calc MS Excel 2007 XML",
+        &paths,
+        &saved,
+    );
+    for (copy, sheet, total_sheet, total, value) in expected {
+        let reread = Workbook::open(saved.join(&copy))
+            .unwrap_or_else(|error| panic!("{copy}: LibreOffice saved no workbook: {error}"));
+        let read = number(&reread, total_sheet, total);
+        assert!(
+            (read - value).abs() < 1e-6,
+            "{copy}: LibreOffice reads {total} as {read}, not {value}"
+        );
+        assert_eq!(number(&reread, sheet, "Z2"), 6.0, "{copy}");
     }
     let _ = fs::remove_dir_all(&dir);
 }

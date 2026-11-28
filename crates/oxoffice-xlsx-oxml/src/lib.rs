@@ -1,5 +1,5 @@
 //! SpreadsheetML parts read and written without loss: the workbook part,
-//! shared strings, styles and worksheets of an `.xlsx` package, and the
+//! shared strings, styles, worksheets and metadata of an `.xlsx` package, and the
 //! comment parts, read only.
 //!
 //! What a part's model reads goes through typed accessors over its elements
@@ -11,6 +11,7 @@
 
 pub mod app_properties;
 pub mod comments;
+pub mod metadata;
 pub mod namespaces;
 mod part;
 pub mod reference;

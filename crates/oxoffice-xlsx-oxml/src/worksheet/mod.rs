@@ -148,6 +148,10 @@ pub struct SheetIndex {
     ascending: bool,
     /// The masters of the shared formula groups, by group (`si`).
     pub shared_formulas: BTreeMap<u32, SharedFormula>,
+    /// The smallest range holding every cell of each shared formula group,
+    /// master and members, by group: the rows an edit that dissolves the
+    /// group reads, whatever the master's `ref` says.
+    pub shared_extents: BTreeMap<u32, CellRange>,
     /// The array formulas and data tables, in the order written.
     pub range_formulas: Vec<RangeFormula>,
 }
@@ -175,6 +179,7 @@ impl SheetIndex {
             by_row: HashMap::new(),
             ascending: true,
             shared_formulas: BTreeMap::new(),
+            shared_extents: BTreeMap::new(),
             range_formulas: Vec::new(),
         };
         if root.empty {
@@ -317,13 +322,30 @@ impl SheetIndex {
                     let text = source.text(&formula)?;
                     let range = tag.get("ref").as_deref().and_then(CellRange::parse);
                     match tag.get("t").as_deref() {
-                        Some("shared") if !text.is_empty() => {
+                        Some("shared") => {
                             if let Some(si) = tag.u32("si") {
-                                self.shared_formulas.entry(si).or_insert(SharedFormula {
-                                    cell,
-                                    text,
-                                    range,
-                                });
+                                self.shared_extents
+                                    .entry(si)
+                                    .and_modify(|extent| {
+                                        *extent = CellRange::new(
+                                            CellRef::new(
+                                                extent.first.row.min(cell.row),
+                                                extent.first.column.min(cell.column),
+                                            ),
+                                            CellRef::new(
+                                                extent.last.row.max(cell.row),
+                                                extent.last.column.max(cell.column),
+                                            ),
+                                        )
+                                    })
+                                    .or_insert(CellRange::new(cell, cell));
+                                if !text.is_empty() {
+                                    self.shared_formulas.entry(si).or_insert(SharedFormula {
+                                        cell,
+                                        text,
+                                        range,
+                                    });
+                                }
                             }
                         }
                         Some(kind @ ("array" | "dataTable")) => {

@@ -19,6 +19,13 @@
 //! resolved style. Sheets also give their used range, merges, comments and
 //! page setup, and the workbook its text as Markdown or a sheet as CSV.
 //!
+//! A sheet to edit ([`WorksheetMut`]) takes values, dates, formulas (checked,
+//! stored as Excel stores them), clears, bulk writes, CSV imports, styles and
+//! number formats; a write into a shared formula's range keeps the other
+//! cells' formulas, and what Excel would repair is refused with nothing
+//! changed. There is no evaluator: an edited workbook that holds a formula
+//! asks Excel to calculate it on open, and its cached values read as stale.
+//!
 //! ```no_run
 //! use oxoffice_xlsx::Workbook;
 //!
@@ -29,6 +36,12 @@
 //! for row in sheet.values("A1:G5")? {
 //!     println!("{row:?}");
 //! }
+//!
+//! let mut workbook = Workbook::open("review.xlsx")?;
+//! let mut orders = workbook.sheet_mut("Orders").expect("a sheet named Orders");
+//! orders.set_value("D2", 12.0)?;
+//! orders.set_formula("H2", "D2*E2", oxoffice_xlsx::FormulaOptions::default())?;
+//! workbook.save("edited.xlsx")?;
 //! # Ok::<(), oxoffice_xlsx::Error>(())
 //! ```
 //!
@@ -38,7 +51,9 @@
 
 mod cell;
 mod comments;
+mod csv_import;
 mod edit;
+mod format;
 mod grid;
 mod new_workbook;
 mod open;
@@ -50,6 +65,7 @@ mod sheet;
 mod signature;
 mod style;
 mod text;
+mod write;
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -60,7 +76,9 @@ use thiserror::Error;
 
 pub use cell::{Cell, CellError, FormulaKind, Value};
 pub use comments::{Comment, CommentKind, Reply};
+pub use csv_import::CsvImport;
 pub use edit::WorksheetMut;
+pub use format::StylePatch;
 pub use oxoffice_numfmt::DateTime;
 pub use oxoffice_xlsx_oxml::{CellRange, CellRef};
 pub use page_setup::{
@@ -75,6 +93,7 @@ pub use style::{
     ResolvedStyle,
 };
 pub use text::CsvOptions;
+pub use write::{CellInput, Clear, DateValue, FormulaOptions};
 
 /// A result of the `oxoffice-xlsx` facade.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -212,6 +231,9 @@ pub struct Workbook {
     signature_baseline: Option<Arc<OpcPackage>>,
     /// The parts cells read, each read the first time a cell needs it.
     read: read::ReadParts,
+    /// The parts edits write that cells do not read, and the indexes that
+    /// find what the parts hold.
+    edit: write::EditParts,
 }
 
 impl Workbook {

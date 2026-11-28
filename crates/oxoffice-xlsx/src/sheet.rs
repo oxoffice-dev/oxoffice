@@ -6,9 +6,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oxoffice_opc::OpcPackage;
+use oxoffice_xlsx_oxml::CellRef;
 use oxoffice_xlsx_oxml::namespaces::{rel_types, transitional_relationship_type};
 use oxoffice_xlsx_oxml::workbook::WorkbookXml;
-use oxoffice_xlsx_oxml::worksheet::{CT_Row, PageSetupElements, SheetEdits, SheetIndex};
+use oxoffice_xlsx_oxml::worksheet::{
+    CT_Row, PageSetupElements, RangeFormula, SheetEdits, SheetIndex,
+};
 
 use crate::open::is_external;
 use crate::page_setup::PageSetup;
@@ -91,11 +94,19 @@ pub(crate) struct SheetEntry {
     /// and children as they now are, the rest of the part kept as read.
     pub(crate) edits: SheetEdits,
     /// The array formulas and data tables, found by the cell; read from the
-    /// index the first time a cell needs them.
+    /// index and the edits the first time a cell needs them, and again after
+    /// an edit adds or removes one.
     pub(crate) ranges: std::sync::OnceLock<crate::ranges::RangeLookup>,
+    /// The array formulas edits added (`Some`) or removed (`None`), by the
+    /// cell that holds them: what the index, read from the part as it was,
+    /// no longer says.
+    pub(crate) array_edits: BTreeMap<CellRef, Option<RangeFormula>>,
     /// The used range, read the first time it is asked for. An edit of
     /// the sheet's cells resets it.
     pub(crate) used: Lazy<Option<oxoffice_xlsx_oxml::CellRange>>,
+    /// What a write of a cell's content may not change (merges, table
+    /// headers, pivot tables), read at the first write.
+    pub(crate) guards: Lazy<crate::write::Guards>,
 }
 
 impl SheetEntry {
@@ -111,7 +122,9 @@ impl SheetEntry {
             index: Lazy::new(),
             edits: SheetEdits::default(),
             ranges: Default::default(),
+            array_edits: BTreeMap::new(),
             used: Lazy::new(),
+            guards: Lazy::new(),
         }
     }
 }
@@ -163,7 +176,9 @@ impl SheetEntry {
                 index: Lazy::new(),
                 edits: SheetEdits::default(),
                 ranges: Default::default(),
+                array_edits: BTreeMap::new(),
                 used: Lazy::new(),
+                guards: Lazy::new(),
             });
         }
         Ok(sheets)
@@ -254,6 +269,23 @@ impl<'a> Worksheet<'a> {
                 message: message.clone(),
             }),
         }
+    }
+
+    /// The array formulas and data tables of the sheet as it stands, found
+    /// by the cell.
+    pub(crate) fn range_lookup(&self) -> Result<&'a crate::ranges::RangeLookup> {
+        let (_, index) = self.index()?;
+        let entry = self.entry();
+        Ok(entry.ranges.get_or_init(|| {
+            let formulas: Vec<RangeFormula> = index
+                .range_formulas
+                .iter()
+                .filter(|formula| !entry.array_edits.contains_key(&formula.cell))
+                .cloned()
+                .chain(entry.array_edits.values().flatten().cloned())
+                .collect();
+            crate::ranges::RangeLookup::new(&formulas)
+        }))
     }
 
     fn part_bytes(&self) -> Result<&'a [u8]> {

@@ -4,6 +4,7 @@
 mod cells;
 mod comments;
 mod corpus;
+mod edit_cells;
 mod equivalent_writings;
 mod grid;
 mod libreoffice;

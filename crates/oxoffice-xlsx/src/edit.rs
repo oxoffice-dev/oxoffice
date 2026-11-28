@@ -32,7 +32,9 @@ use std::collections::BTreeMap;
 
 use oxoffice_opc::OpcPackage;
 use oxoffice_xlsx_oxml::namespaces::{rel_types, transitional_relationship_type};
-use oxoffice_xlsx_oxml::worksheet::{CT_Row, holds_formula, splice};
+use oxoffice_xlsx_oxml::worksheet::{
+    CT_Row, CellChild, RowChild, SheetEdits, holds_formula, splice,
+};
 use oxoffice_xlsx_oxml::{Element, OxmlError};
 
 use crate::open::is_external;
@@ -82,7 +84,7 @@ impl Workbook {
     /// Whether any sheet holds a formula, as the sheets were read: one scan
     /// of their bytes, kept. An edit that writes a formula does not wait for
     /// it to be found there, it calls [`Workbook::require_calculation`].
-    fn holds_formula(&self) -> bool {
+    pub(crate) fn holds_formula(&self) -> bool {
         *self.formulas.get_or_init(|| {
             self.sheets
                 .iter()
@@ -99,45 +101,149 @@ impl Workbook {
             return;
         }
         self.workbook.set_full_calc_on_load();
-        let chain = |relationship: &oxoffice_opc::Relationship| {
-            transitional_relationship_type(&relationship.rel_type) == rel_types::CALC_CHAIN
-                && !is_external(relationship)
-        };
-        let removed = self
-            .package
-            .remove_relationships_where(&self.workbook_part, chain);
-        for relationship in removed {
-            let part = OpcPackage::resolve_rel_target(&self.workbook_part, &relationship.target);
-            self.package.remove_part(&part);
-            self.package.remove_content_type_override(&part);
-        }
+        remove_calculation_chain(&mut self.package, &self.workbook_part);
     }
 
     /// Writes into `package`, a copy of the workbook's own, every part an
     /// edit changed: the sheets with their staged rows and children
-    /// spliced in, the workbook part with its new records and `calcPr`.
-    pub(crate) fn write_staged_parts(&self, package: &mut OpcPackage) -> Result<()> {
+    /// spliced in, the workbook part with its new records and `calcPr`, the
+    /// shared strings, styles and metadata edits wrote into. With
+    /// `drop_cached_values`, every formula's cached value goes too, and the
+    /// workbook asks to be calculated on open.
+    pub(crate) fn write_staged_parts(
+        &self,
+        package: &mut OpcPackage,
+        drop_cached_values: bool,
+    ) -> Result<()> {
         for position in 0..self.sheets.len() {
             let entry = &self.sheets[position];
-            if entry.edits.is_empty() {
-                continue;
-            }
-            let (xml, index) = Worksheet {
+            let sheet = Worksheet {
                 workbook: self,
                 position,
+            };
+            let dropped;
+            let edits = if drop_cached_values && entry.kind == SheetKind::Worksheet {
+                dropped = sheet.without_cached_values()?;
+                &dropped
+            } else {
+                &entry.edits
+            };
+            if edits.is_empty() {
+                continue;
             }
-            .index()?;
-            let spliced =
-                splice(xml, index, &entry.edits).map_err(|error| Error::MalformedPart {
-                    part: entry.part.clone(),
-                    message: error.to_string(),
-                })?;
+            let (xml, index) = sheet.index()?;
+            let spliced = splice(xml, index, edits).map_err(|error| Error::MalformedPart {
+                part: entry.part.clone(),
+                message: error.to_string(),
+            })?;
             package.set_part(&entry.part, spliced);
         }
-        if self.workbook.part().is_changed() {
+        if drop_cached_values && !self.calculates {
+            let mut workbook = self.workbook.clone();
+            workbook.set_full_calc_on_load();
+            remove_calculation_chain(package, &self.workbook_part);
+            if workbook.part().is_changed() {
+                package.set_part(&self.workbook_part, workbook.to_xml());
+            }
+        } else if self.workbook.part().is_changed() {
             package.set_part(&self.workbook_part, self.workbook.to_xml());
         }
+        let mut write = |rel_type: &str, bytes: Vec<u8>| {
+            if let Some(part) = self.related_part(rel_type) {
+                package.set_part(&part, bytes);
+            }
+        };
+        if let Some(Ok(Some(strings))) = self.read.shared_strings.get()
+            && strings.is_changed()
+        {
+            write(rel_types::SHARED_STRINGS, strings.to_xml());
+        }
+        if let Some(Ok(Some(styles))) = self.read.styles_xml.get()
+            && styles.part().is_changed()
+        {
+            write(rel_types::STYLES, styles.to_xml());
+        }
+        if let Some(metadata) = &self.edit.metadata
+            && metadata.is_changed()
+        {
+            write(rel_types::SHEET_METADATA, metadata.to_xml());
+        }
         Ok(())
+    }
+}
+
+/// Removes the calculation chain of the workbook part from `package`: its
+/// relationship, its part and its content type.
+fn remove_calculation_chain(package: &mut OpcPackage, workbook_part: &str) {
+    let chain = |relationship: &oxoffice_opc::Relationship| {
+        transitional_relationship_type(&relationship.rel_type) == rel_types::CALC_CHAIN
+            && !is_external(relationship)
+    };
+    let removed = package.remove_relationships_where(workbook_part, chain);
+    for relationship in removed {
+        let part = OpcPackage::resolve_rel_target(workbook_part, &relationship.target);
+        package.remove_part(&part);
+        package.remove_content_type_override(&part);
+    }
+}
+
+impl Worksheet<'_> {
+    /// The sheet's edits with every formula's cached value dropped, and those
+    /// of the cells of array formulas' and data tables' ranges: the rows
+    /// that hold one, as edits staged them or as written, without their `v`,
+    /// `is`, `t` and `vm`.
+    fn without_cached_values(&self) -> Result<SheetEdits> {
+        let entry = self.entry();
+        let mut edits = entry.edits.clone();
+        let (xml, index) = self.index()?;
+        let lookup = self.range_lookup()?;
+        let mut numbers: std::collections::BTreeSet<u32> = index
+            .rows
+            .iter()
+            .filter(|span| holds_formula(&xml[span.range.clone()]))
+            .map(|span| span.row)
+            .collect();
+        for formula in index
+            .range_formulas
+            .iter()
+            .chain(entry.array_edits.values().flatten())
+        {
+            numbers.extend(formula.range.first.row..=formula.range.last.row);
+        }
+        numbers.extend(entry.edits.rows.keys());
+        for number in numbers {
+            let Some(mut row) = self.rows_in(number, number)?.remove(&number) else {
+                continue;
+            };
+            let ranges = lookup.in_row(number);
+            let mut changed = false;
+            let cells: Vec<u32> = crate::read::columns(&row)
+                .into_iter()
+                .map(|(column, _)| column)
+                .collect();
+            let mut at = 0;
+            for child in &mut row.children {
+                let RowChild::Cell(cell) = child else {
+                    continue;
+                };
+                let column = cells.get(at).copied().unwrap_or(u32::MAX);
+                at += 1;
+                if cell.formula().is_none() && ranges.find(column).is_none() {
+                    continue;
+                }
+                let before = cell.clone();
+                cell.children.retain(|child| {
+                    !matches!(child, CellChild::Value(_) | CellChild::InlineString(_))
+                });
+                cell.tag.set("t", None);
+                cell.tag.set("vm", None);
+                changed |= *cell != before;
+            }
+            if changed {
+                edits.rows.insert(number, Some(row));
+            }
+        }
+        Ok(edits)
     }
 }
 
@@ -158,7 +264,7 @@ impl<'a> WorksheetMut<'a> {
         self.read().relationship_id()
     }
 
-    fn read(&self) -> Worksheet<'_> {
+    pub(crate) fn read(&self) -> Worksheet<'_> {
         Worksheet {
             workbook: self.workbook,
             position: self.position,
@@ -237,7 +343,8 @@ impl<'a> WorksheetMut<'a> {
 
     /// Stages the rows given (number, row as it was, row as it is now). A row
     /// that is as it was is not staged; a change marks the workbook edited.
-    pub(crate) fn stage_rows(&mut self, rows: Vec<(u32, Option<CT_Row>, CT_Row)>) {
+    /// Gives whether a row changed.
+    pub(crate) fn stage_rows(&mut self, rows: Vec<(u32, Option<CT_Row>, CT_Row)>) -> bool {
         let mut changed = false;
         for (number, before, after) in rows {
             if before.as_ref() == Some(&after) {
@@ -254,5 +361,6 @@ impl<'a> WorksheetMut<'a> {
             self.workbook.sheets[self.position].used = Default::default();
             self.workbook.mark_edited();
         }
+        changed
     }
 }

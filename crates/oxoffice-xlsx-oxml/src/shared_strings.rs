@@ -85,7 +85,9 @@ pub struct SharedStrings {
     /// follows the items.
     append_at: Option<usize>,
     added: Vec<CT_Rst>,
-    references_added: u64,
+    /// Cells pointing at an item added, less those removed: what `count`
+    /// moves by.
+    references_added: i64,
 }
 
 impl SharedStrings {
@@ -188,13 +190,14 @@ impl SharedStrings {
         self.len() - 1
     }
 
-    /// Counts `references` more cells pointing at an item, for `count`.
-    pub fn add_references(&mut self, references: u64) {
+    /// Counts `references` more cells pointing at an item (fewer when
+    /// negative: cells that no longer do), for `count`.
+    pub fn add_references(&mut self, references: i64) {
         self.references_added += references;
     }
 
     pub fn is_changed(&self) -> bool {
-        !self.added.is_empty() || self.references_added > 0
+        !self.added.is_empty() || self.references_added != 0
     }
 
     /// The part as it stands: its source bytes when nothing changed, else
@@ -208,7 +211,7 @@ impl SharedStrings {
             tag.set("uniqueCount", Some(&self.len().to_string()));
         }
         if let Some(count) = tag.u32("count") {
-            let count = u64::from(count) + self.references_added;
+            let count = (i64::from(count) + self.references_added).max(0);
             tag.set("count", Some(&count.to_string()));
         }
         let mut content = Vec::new();
