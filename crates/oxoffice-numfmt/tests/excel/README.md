@@ -2,7 +2,7 @@
 
 `../cases.tsv` holds every case the number format test checks, with the text Excel displayed for it. The
 cases are grouped in rounds, each checked once in Excel (round 1: 526 cases, round 2: 71, round 3: 24, round 4:
-484, round 5: 241, round 6: 1326, round 7: 60, round 8: 63, round 10: 9, in Excel for Mac 16.115, en-US).
+484, round 5: 241, round 6: 1326, round 7: 60, round 8: 63, round 9: 138, round 10: 9, in Excel for Mac 16.115, en-US).
 
 A round:
 

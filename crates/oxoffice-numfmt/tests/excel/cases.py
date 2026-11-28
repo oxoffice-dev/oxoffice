@@ -561,6 +561,58 @@ for lcid in ["4", "7804", "7C04"]:
     add(f"r8p-{lcid}", f"[$-{lcid}]h AM/PM", MORNING, EVENING)
 
 
+# Round 9: the Japanese eras under `[$-411]` (round 7 pinned one date of each of three eras): each era's first day and
+# the day before, the era year as `e` and `ee`, the era tokens with times, under the other forms of the tag, under a
+# tag with no era, and the dates the 1900 system holds before Meiji 45 (serials 1, 59, 60, 61). Meiji began in 1868,
+# before the first date a workbook holds, so its first day cannot be asked.
+ROUND = 9
+ERA_DATE = 'ggge"年"m"月"d"日"'
+ERA_STARTS = {  # era: (first day, the day before)
+    "taisho": (serial(1912, 7, 30), serial(1912, 7, 29)),
+    "showa": (serial(1926, 12, 25), serial(1926, 12, 24)),
+    "heisei": (serial(1989, 1, 8), serial(1989, 1, 7)),
+    "reiwa": (serial(2019, 5, 1), serial(2019, 4, 30)),
+}
+BOUNDARIES = [day for pair in ERA_STARTS.values() for day in pair]
+for era, days in ERA_STARTS.items():
+    add(f"r9a-{era}", f"[$-411]{ERA_DATE}", *days)
+    add(f"r9g-{era}", '[$-411]g"|"gg"|"ggg', *days)
+    add(f"r9e-{era}", '[$-411]e"|"ee', *days)
+# The era years: the first, the tenth, the last of Showa, a two-digit year of Heisei, the first Reiwa year as Gannen.
+YEARS = [serial(1900, 3, 1), serial(1912, 7, 29), serial(1935, 6, 15), serial(1964, 10, 10), serial(1989, 1, 7),
+         serial(1998, 2, 1), serial(2019, 4, 30), serial(2019, 12, 31), serial(2020, 1, 1), serial(2025, 12, 31)]
+add("r9y", f"[$-411]{ERA_DATE}", *YEARS)
+add("r9y", '[$-411]e"|"ee', *YEARS)
+add("r9y", '[$-411]ggge/m/d', *YEARS[:5])
+add("r9y", '[$-411]gge.mm.dd', *YEARS[:5])
+add("r9y", '[$-411]yyyy"|"yy"|"e"|"ggg', *YEARS[2:5])
+# The dates of the 1900 system before the first real boundary, and the dates the system gets wrong.
+add("r9s", f"[$-411]{ERA_DATE}", 1, 59, 60, 61, 0.5)
+add("r9s", '[$-411]g"|"gg"|"ggg"|"e"|"ee', 1, 60)
+# Times: the era with a time of day, a time that rounds across a boundary, and a time alone.
+add("r9t", f'[$-411]{ERA_DATE} h:mm:ss', *[days[1] + 0.75 for days in ERA_STARTS.values()], serial(2019, 5, 1, 0, 0, 1))
+add("r9t", f'[$-411]{ERA_DATE} h:mm AM/PM', serial(2019, 5, 1, 9, 5), serial(2019, 4, 30, 21, 5))
+add("r9t", f'[$-411]{ERA_DATE} h:mm:ss', 43585.9999999, 43585.99999)
+add("r9t", f'[$-411]{ERA_DATE}', 43585.9999999, 43585.99999)
+add("r9t", '[$-411]ggge"年"m"月"d"日" hh:mm', serial(2024, 9, 4, 14, 30))
+add("r9t", '[$-411]h:mm:ss', 0.5)
+# The other forms of the tag: a neutral LCID, a zero-padded one, and the text tags.
+for tag in ["11", "0411", "ja", "ja-JP", "ja-jp", "JA-JP"]:
+    add(f"r9f-{tag}", f"[$-{tag}]{ERA_DATE}", SEPTEMBER, serial(2019, 5, 1), serial(1989, 1, 7))
+    add(f"r9f-{tag}", f'[$-{tag}]g"|"gg"|"ggg"|"e"|"ee', serial(2019, 5, 1), serial(1989, 1, 7))
+# A tag that writes the Gregorian year, none, and the codes where Excel shows nothing for the era tokens.
+for tag in ["409", "404", "412", "804", "40C", "41F", ""]:
+    prefix = f"[$-{tag}]" if tag else ""
+    add(f"r9n-{tag or 'none'}", f'{prefix}g"|"gg"|"ggg"|"e"|"ee', SEPTEMBER, serial(2019, 5, 1), serial(1989, 1, 7))
+add("r9n-none", ERA_DATE, SEPTEMBER, serial(1989, 1, 7))
+add("r9n-409", f"[$-409]{ERA_DATE}", SEPTEMBER, serial(1989, 1, 7))
+add("r9n-none", 'ggg"|"gg"|"g', SEPTEMBER)
+# The 1904 system: the same dates.
+add("r9z", f"[$-411]{ERA_DATE}", serial(2019, 5, 1, system=1904), serial(2019, 4, 30, system=1904),
+    serial(1989, 1, 8, system=1904), system=1904)
+add("r9z", '[$-411]e"|"ee', serial(2019, 5, 1, system=1904), serial(1989, 1, 7, system=1904), system=1904)
+
+
 # Round 10: a tag with a script and a region (what BCP 47 producers write): which of the two Excel reads, for Chinese.
 ROUND = 10
 for tag in ["zh-Hans-CN", "zh-Hans-SG", "zh-Hans-HK", "zh-Hans-TW", "zh-Hant-HK", "zh-Hant-TW", "zh-Hant-MO",
@@ -646,3 +698,4 @@ def main(out, number):
 
 if __name__ == "__main__":
     main(pathlib.Path(sys.argv[1]), int(sys.argv[2]))
+

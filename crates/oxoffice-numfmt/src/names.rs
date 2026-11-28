@@ -52,6 +52,13 @@ impl Names {
         self.short_days[weekday as usize]
     }
 
+    /// Whether these are the Japanese names, the language that shows the eras of its calendar (`g`, `e`).
+    pub(crate) fn is_japanese(&self) -> bool {
+        tables::LANGUAGES
+            .iter()
+            .any(|(primary, _, names)| *primary == 0x11 && std::ptr::eq(self, *names))
+    }
+
     /// The designator of the morning and of the afternoon.
     pub fn day_period(&self, afternoon: bool) -> &'static str {
         self.day_periods[usize::from(afternoon)]

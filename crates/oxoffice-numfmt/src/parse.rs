@@ -49,6 +49,11 @@ pub(crate) enum Token {
     Text,
     General,
     Year(usize),
+    /// `e`, `ee`: the year of the era under a Japanese tag, the Gregorian year under any other.
+    EraYear(usize),
+    /// `g`, `gg`, `ggg`: the era under a Japanese tag (its initial letter, its first character, its name),
+    /// nothing under any other.
+    Era(usize),
     Month(usize),
     Day(usize),
     Hour(usize),
@@ -271,6 +276,16 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
             // Excel's own spelling (`[$-804]aaaa`); Excel showed them so under
             // every tag and under none. A longer run, and `a` or `aa` (not
             // asked), are literals.
+            // `g`, `gg` and `ggg` are the era; a longer run (not asked) is literal.
+            'g' => {
+                let count = run_of(&chars[at - 1..], 'g');
+                at += count - 1;
+                if count <= 3 {
+                    Token::Era(count)
+                } else {
+                    Token::Literal("g".repeat(count))
+                }
+            }
             'a' if run_of(&chars[at - 1..], 'a') >= 3 => {
                 let count = run_of(&chars[at - 1..], 'a');
                 at += count - 1;
@@ -291,9 +306,8 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                     at += 1;
                 }
                 match lower {
-                    // `e` is the year of the era: the Gregorian year in en-US.
                     'y' => Token::Year(count),
-                    'e' => Token::Year(4),
+                    'e' => Token::EraYear(count),
                     'm' if count <= 2 => Token::MonthOrMinute(count),
                     'm' => Token::Month(count),
                     'd' => Token::Day(count),
@@ -454,6 +468,8 @@ impl RawSection {
             matches!(
                 token,
                 Token::Year(_)
+                    | Token::EraYear(_)
+                    | Token::Era(_)
                     | Token::Month(_)
                     | Token::Day(_)
                     | Token::Hour(_)
