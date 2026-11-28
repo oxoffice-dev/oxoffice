@@ -549,6 +549,25 @@ What PR 3c settles:
   this library does not yet.
 - A note reference stays refused in an insertion until the note it shows can be written as inserted with it.
 
+What PR 3d settles:
+
+- **A block inserted in a header, a footer, a note or a table cell** (`HeaderFooter.add_paragraph`/`add_table`,
+  `FootnoteEndnote.add_paragraph`/`add_table`, `Cell.add_paragraph`/`add_table`, `Paragraph.insert_paragraph_before`
+  on a paragraph of those stories) is written as inserted, as in the body: when it ends its story with a paragraph,
+  that mark stays and takes the properties of the paragraph before as a `w:pPrChange`, and the mark before is the
+  inserted one (W12). A table added to a cell brings a new paragraph that ends the cell: that paragraph keeps the
+  cell's final mark unmarked and takes the properties of the cell's previous last paragraph as a `w:pPrChange`, and
+  that previous paragraph's mark is the inserted one, as at the end of any story. W12 was checked in the body only:
+  the end of a header, a note or a cell, and an inserted mark followed by an inserted table in a cell, are not
+  probed in Word (open question).
+- Under a session these calls take a staged route (a copy, marked, then published `Conservative`), so their cost
+  grows with the document where the untracked header and note adders stay flat, and the publication retires every
+  handle taken before the call; the returned handle reads the new block. PR 3f moves them to the in-place story
+  publication. An insertion in a comment, a text box, a table of a comment or of a text box, or inside a content
+  control is refused.
+- Creating a note (`add_footnote`, `add_endnote`) stays refused: rejecting it would leave the note's story behind
+  (PR 3e: the resolver drops a note whose only reference a resolution removes, as Word does for comments, W9).
+
 ## Open questions
 
 ### Product (maintainer)

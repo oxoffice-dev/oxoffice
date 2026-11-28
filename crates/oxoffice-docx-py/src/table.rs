@@ -2775,6 +2775,18 @@ impl PyCell {
             .last()
             .cloned()
             .ok_or_else(|| PyValueError::new_err("nested table was not published"))?;
+        // Under a session, the table is written as inserted, with the
+        // paragraph that ends the cell after it when the insertion added one.
+        if candidate.tracks_changes() {
+            let items = candidate
+                .story_items(&story)
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .len();
+            let count = items - location.index_path()[0];
+            candidate
+                .mark_story_insertion(&location, count.min(2))
+                .map_err(|error| docx_to_pyerr(py, error))?;
+        }
         let publication = document
             .table_route(table, &current_related)
             .map(|location| crate::document::WordPublication::CellInsert(location, row, cell))
@@ -2896,6 +2908,25 @@ impl PyCell {
                     Ok(paragraph)
                 })
                 .map_err(|error| docx_to_pyerr(py, error))?;
+            // Under a session, the paragraph is written as inserted.
+            if candidate.tracks_changes() {
+                let story =
+                    self.physical_story(py, &candidate, &current_related, table, row, cell)?;
+                let count = candidate
+                    .story_items(&story)
+                    .map_err(|error| docx_to_pyerr(py, error))?
+                    .len();
+                candidate
+                    .mark_story_insertion(
+                        &oxoffice_docx::ContentLocation::new(
+                            story,
+                            oxoffice_docx::StoryItemKind::Paragraph,
+                            vec![count - 1],
+                        ),
+                        1,
+                    )
+                    .map_err(|error| docx_to_pyerr(py, error))?;
+            }
             let publication = document
                 .table_route(table, &current_related)
                 .map(|location| crate::document::WordPublication::CellInsert(location, row, cell))

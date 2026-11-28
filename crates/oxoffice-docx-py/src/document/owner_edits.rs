@@ -3040,6 +3040,33 @@ impl PyDocument {
         }
     }
 
+    /// Under a session, `insert` on a copy of the document, the block it
+    /// placed in a story other than the body written as inserted
+    /// ([`oxoffice_docx::Document::mark_story_insertion`]), and the copy
+    /// published as a staged revision: the block's location.
+    pub(crate) fn staged_story_insertion(
+        &mut self,
+        py: Python<'_>,
+        operation: &'static str,
+        insert: impl FnOnce(
+            &mut oxoffice_docx::Document,
+        ) -> oxoffice_docx::Result<oxoffice_docx::ContentLocation>,
+    ) -> PyResult<oxoffice_docx::ContentLocation> {
+        let mut candidate = self.inner.clone_for_staging();
+        let location = insert(&mut candidate)
+            .and_then(|location| {
+                candidate
+                    .mark_story_insertion(&location, 1)
+                    .map(|()| location)
+            })
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let prepared =
+            self.prepare_word_revision(py, &candidate, operation, WordPublication::Conservative)?;
+        self.commit_word_revision(prepared)?;
+        self.install_inner(candidate);
+        Ok(location)
+    }
+
     /// [`Self::append_paragraph_candidate`] under a session: the paragraph
     /// written as inserted, appended as a list item is, then the mark before.
     fn append_tracked_paragraph(

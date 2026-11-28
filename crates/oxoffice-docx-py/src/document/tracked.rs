@@ -13,6 +13,8 @@ use super::*;
 /// runs every mutating call under a session and checks its class.
 const SESSION_OPERATIONS: &[&str] = &[
     // Tracked.
+    "Cell.add_paragraph",
+    "Cell.add_table",
     "Cell.replace_text",
     "Cell.text",
     "Document.add_bullet_list_item",
@@ -35,8 +37,13 @@ const SESSION_OPERATIONS: &[&str] = &[
     "Document.replace_text_at",
     "Document.set_story_text",
     "Document.try_replace_text",
+    "HeaderFooter.add_paragraph",
+    "HeaderFooter.add_table",
+    "Note.add_paragraph",
+    "Note.add_table",
     "Paragraph.add_hyperlink",
     "Paragraph.add_run",
+    "Paragraph.insert_paragraph_before",
     "Paragraph.replace_text",
     "Paragraph.replace_xml",
     "Paragraph.text",
