@@ -279,6 +279,15 @@ impl PyHeaderFooter {
         kind: oxoffice_docx::StoryItemKind,
     ) -> PyResult<(oxoffice_docx::ContentLocation, ContentPath)> {
         let (index, header_kind, variant) = (self.index, self.kind, self.variant);
+        let tracked = document.inner.tracks_changes();
+        // Under a session, the block is written as inserted where it stands;
+        // in a part with alternate content, on a staged copy.
+        let staged = tracked
+            && document
+                .inner
+                .section_story(index, header_kind, variant)
+                .map_err(|error| docx_to_pyerr(py, error))?
+                .is_some_and(|story| !document.inner.marks_story_insertion_in_place(story.story()));
         let insert = move |document: &mut oxoffice_docx::Document| {
             let story = match document.section_story(index, header_kind, variant)? {
                 Some(story) => story.story().clone(),
@@ -293,14 +302,14 @@ impl PyHeaderFooter {
                         "header/footer disappeared during insertion".to_owned(),
                     )
                 })?;
-            Ok(oxoffice_docx::ContentLocation::new(
-                current.story().clone(),
-                kind,
-                vec![position],
-            ))
+            let location =
+                oxoffice_docx::ContentLocation::new(current.story().clone(), kind, vec![position]);
+            if tracked && !staged {
+                document.mark_story_insertion_in_place(&location, 1)?;
+            }
+            Ok(location)
         };
-        // Under a session, the block is written as inserted on a staged copy.
-        let location = match document.inner.tracks_changes() {
+        let location = match staged {
             true => document.staged_story_insertion(py, operation, insert)?,
             false => document.edit_story_parts(py, operation, insert)?.0,
         };

@@ -5,7 +5,9 @@ Reads from the round directory:
 - excel-rN.tsv: id and Excel's `string value` (Range.Text) of column C, one row per case, a header line;
 - excel-csv-rN-1900.csv and excel-csv-rN-1904.csv: the workbooks saved as CSV by Excel, in UTF-8;
 - optionally excel-csv-rN-<system>-lossy.txt: the ids of the rows whose CSV text lost characters (a CSV Excel
-  saves in Mac Roman writes `_` for the others); those rows take Range.Text. Lines starting with `#` are notes.
+  saves in Mac Roman writes `_` for the others); those rows take Range.Text. Lines starting with `#` are notes;
+- optionally excel-rN-<name>.tsv (id, displayed, ...): rows Excel could not show in their workbook (it keeps the
+  first 215 custom number formats of one: the others read General), read from another copy; they take its text.
 
 The `excel` column takes Range.Text, or the CSV text where they differ: Range.Text depends on the column
 width for fills, accounting formats and `#####`, the CSV does not. A cell full of `#` is written `#####`.
@@ -46,12 +48,19 @@ def csv_texts(paths):
 
 def main(directory, number):
     cases = rows(directory / f"cases-r{number}.tsv")
+    overrides = set()
     shown = dict(rows(directory / f"excel-r{number}.tsv"))
+    for path in sorted(directory.glob(f"excel-r{number}-*.tsv")):
+        shown.update((row[0], row[1]) for row in rows(path))
+        overrides.update(row[0] for row in rows(path))
     exported = csv_texts(sorted(directory.glob(f"excel-csv-r{number}-*.csv")))
     lossy = lossy_ids(sorted(directory.glob(f"excel-csv-r{number}-*-lossy.txt")))
     table = {row[0]: row for row in rows(TABLE)} if TABLE.exists() else {}
     for case_id, code, value, system, kind in cases:
-        excel = shown[case_id] if shown[case_id] == exported[case_id] or case_id in lossy else exported[case_id]
+        if case_id in overrides or shown[case_id] == exported[case_id] or case_id in lossy:
+            excel = shown[case_id]
+        else:
+            excel = exported[case_id]
         if len(excel) >= 5 and set(excel) == {"#"}:
             excel = "#####"
         ours, why = table[case_id][6:8] if case_id in table else ("", "")

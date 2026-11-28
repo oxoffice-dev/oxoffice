@@ -323,7 +323,7 @@ fn set_import_csv_and_the_edit_map_write_cells_values_formulas_and_styles() {
     assert_eq!(field(&by_ref("A4"), "text"), json!("2026-01-05"));
     assert_eq!(field(&by_ref("A5"), "formula"), json!("SUM(A2:A2)*2"));
     assert_eq!(field(&by_ref("B1"), "formula_kind"), json!("array"));
-    assert_eq!(field(&by_ref("B1"), "array_range"), json!("B1"));
+    assert_eq!(field(&by_ref("B1"), "array_range"), json!("B1:B3"));
     let negative = cells(&current, "A6:A7");
     assert_eq!(negative[0]["value"], json!(-5.0));
     assert_eq!(negative[1]["formula"], json!("-A2*2"));
@@ -350,6 +350,28 @@ fn set_import_csv_and_the_edit_map_write_cells_values_formulas_and_styles() {
         stderr(&output)
     );
     assert!(!path("refused.xlsx").exists());
+    // Past the 200 custom number formats every Excel keeps (the date of A4
+    // took one), an edit map is refused whole.
+    let formats: Vec<String> = (0..200)
+        .map(|n| format!(r#"{{"range": "A1", "number_format": "0.0\" u{n}\""}}"#))
+        .collect();
+    let map = path("formats.json");
+    fs::write(&map, format!("[{}]", formats.join(","))).unwrap();
+    let output = oxoffice(&[
+        "edit",
+        current.to_str().unwrap(),
+        "--map",
+        map.to_str().unwrap(),
+        "-o",
+        path("formats.xlsx").to_str().unwrap(),
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("entry 199: the workbook holds 200 custom number formats"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!path("formats.xlsx").exists());
 
     // A CSV from a cell, typed or as text.
     let csv = path("data.csv");

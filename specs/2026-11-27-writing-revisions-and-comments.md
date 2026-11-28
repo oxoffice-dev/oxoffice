@@ -594,6 +594,16 @@ What PR 4 settles:
   named range. A move at the body's end, whose mark sits on a paragraph it does not move, keeps its previous shape.
   The moves in text boxes and other stories keep theirs too.
 
+## Amendment: PR 3f (2026-11-28)
+
+- Under a session, `HeaderFooter.add_paragraph`/`add_table` and `FootnoteEndnote.add_paragraph`/`add_table` insert
+  their block in place and mark it there (`Document::mark_story_insertion_in_place`): the story's part is written
+  again once, with the marked block and the mark before it, at the cost of that part. The handles of the other
+  stories stay; their tracked twins leave `GROWING`.
+- A header, footer or notes part holding alternate content (a text box's two copies) keeps the staged route: a
+  replacement there would have to pair the copies.
+- `Cell.add_paragraph`/`add_table` keep the staged route: their untracked calls grow with the body too (#6).
+
 ## Open questions
 
 ### Product (maintainer)

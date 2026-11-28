@@ -4,7 +4,9 @@ Writes the cases of one round into an output directory:
 - cases-rN.tsv: id, code, value, date_system, kind (one row per case);
 - cases-rN-1900.xlsx and cases-rN-1904.xlsx: the cases of each date system (a workbook setting), sheet
   "cases": A id, B code (text), C the value written with the code applied (the cell Excel reads), D the
-  kind. Column C is 40 characters wide.
+  kind. Column C is 40 characters wide. Excel keeps the first 215 custom number formats of a workbook and
+  reads the others as General: a workbook holds at most MAX_FORMATS codes, and a round with more is written in
+  parts, cases-rN-1900-p2.xlsx and so on (pin.py takes the CSV of every part).
 
 Conventions:
 - code `builtin:N` is the built-in format id N, written as numFmtId N with no numFmt record;
@@ -449,6 +451,193 @@ add("r5s", '[$-40C]d mmmm yyyy;@', D)
 add("r5s", '[$-40C]d mmmm yyyy;@', "abc", system=1900, kind="text")
 
 
+# Round 6: the names of the languages round 4 saw with no table (#707): Japanese, Chinese, Korean, Russian, Polish,
+# Swedish, Turkish, Catalan and Arabic. For each region of each language, the 12 months (`mmm`, `mmmm`, `mmmmm`), the
+# 7 weekdays (`ddd`, `dddd`) and the day period of a morning and an afternoon; for the first region of each language
+# the other spellings of the day period and the day period at midnight and noon; then what may change a month's form
+# (Russian and Polish use a genitive month after a day number in their system data), full date formats as a user
+# picks them, and the tag as text or as a neutral LCID. The ids carry the table: `r6m-<LCID>-NN` is month NN,
+# `r6d-<LCID>-NN` weekday NN (Sunday first), `r6p-<LCID>-01` and `-02` the morning and the afternoon.
+ROUND = 6
+EVENING = PM5  # 2024-01-15 17:05:09
+SMALL_HOURS = serial(2024, 1, 15, 0, 30, 0)
+AFTER_NOON = serial(2024, 1, 15, 12, 30, 0)
+SEPTEMBER = serial(2024, 9, 4, 14, 30, 45)  # a Wednesday
+LANGUAGES = [  # (language, the first region asked, the other regions asked)
+    ("ja", "411", []),
+    ("zh", "804", ["404", "C04", "1004", "1404"]),
+    ("ko", "412", []),
+    ("ru", "419", ["819"]),
+    ("pl", "415", []),
+    ("sv", "41D", ["81D"]),
+    ("tr", "41F", []),
+    ("ca", "403", ["803"]),
+    ("ar", "401", ["801", "C01", "1001", "1401", "1801", "1C01", "2001", "2401", "2801", "2C01", "3001", "3401",
+                   "3801", "3C01", "4001"]),
+]
+for _language, first, others in LANGUAGES:
+    for lcid in [first, *others]:
+        for month in range(1, 13):
+            add(f"r6m-{lcid}", f"[$-{lcid}]{MONTH_CODE}", serial(2024, month, 15))
+        for day in range(14, 21):
+            add(f"r6d-{lcid}", f"[$-{lcid}]{DAY_CODE}", serial(2024, 1, day))
+        add(f"r6p-{lcid}", f"[$-{lcid}]h AM/PM", MORNING, EVENING)
+    for spelling in ["am/pm", "A/P", "a/p"]:
+        add(f"r6p-{first}", f"[$-{first}]h {spelling}", MORNING, EVENING)
+    add(f"r6p-{first}", f"[$-{first}]h AM/PM", SMALL_HOURS, AFTER_NOON)
+
+# Does a month take another form next to a day number? Russian and Polish: every month, five codes, then where the
+# day number may stand and what else may count (three months: January, March and May, whose short forms differ in
+# Russian).
+FIVE = ["d mmmm", "d mmm", "dd mmmm yyyy", "mmmm yyyy", "mmmm d"]
+WHERE = ["dddd mmmm", "ddd d mmm", "mmmm yyyy d", "m/d/yyyy mmmm", 'd"."mmmm', 'd" x "mmmm', 'mmmm" x "d', "d-mmm-yy",
+         "d mmmmm", "dddd, d mmmm yyyy"]
+for lcid in ["419", "415"]:
+    for code in FIVE:
+        for month in range(1, 13):
+            add(f"r6c-{lcid}", f"[$-{lcid}]{code}", serial(2024, month, 15))
+    for code in WHERE:
+        add(f"r6c-{lcid}", f"[$-{lcid}]{code}", *[serial(2024, month, 15) for month in (1, 3, 5)])
+# The other languages: the two codes with a day number for every month, and three more for January and September.
+for lcid in ["411", "804", "404", "412", "41D", "41F", "403", "401", "801"]:
+    for code in ["d mmmm", "d mmm"]:
+        for month in range(1, 13):
+            add(f"r6c-{lcid}", f"[$-{lcid}]{code}", serial(2024, month, 15))
+    for code in ["dd mmmm yyyy", "mmmm yyyy", "mmmm d"]:
+        add(f"r6c-{lcid}", f"[$-{lcid}]{code}", serial(2024, 1, 15), serial(2024, 9, 15))
+
+# Full date formats as a user picks them, on one date (a Wednesday afternoon), the first two on a January one too.
+FULL = ["dddd, mmmm d, yyyy", "dddd, d mmmm yyyy", "d mmmm yyyy", "d-mmm-yy", "mmm d, yyyy", "ddd, d mmm yyyy",
+        "mmmm yyyy", "dddd, mmmm d, yyyy h:mm AM/PM", "d mmmm yyyy h:mm:ss"]
+LANGUAGE_FULL = {
+    "411": ['yyyy"年"m"月"d"日" dddd', 'm"月"d"日" ddd'],
+    "804": ['yyyy"年"m"月"d"日" dddd', 'm"月"d"日" ddd'],
+    "404": ['yyyy"年"m"月"d"日" dddd'],
+    "412": ['yyyy"년" m"월" d"일" dddd'],
+    "419": ['d mmmm yyyy "г."', 'dddd, d mmmm yyyy "г."'],
+    "415": ['d mmmm yyyy "r."', 'dddd, d mmmm yyyy "r."'],
+    "41F": ["d mmmm yyyy dddd"],
+}
+for lcid in ["411", "804", "404", "412", "419", "415", "41D", "41F", "403", "401"]:
+    for code in FULL + LANGUAGE_FULL.get(lcid, []):
+        add(f"r6f-{lcid}", f"[$-{lcid}]{code}", SEPTEMBER)
+    if lcid in ("419", "415"):
+        for code in FULL[:3]:
+            add(f"r6f-{lcid}", f"[$-{lcid}]{code}", serial(2024, 1, 15, 14, 30, 45))
+
+# The tag as text, as newer Excel writes it, and as a neutral LCID (a language with no region): one case each, the
+# names of a Wednesday of September and the day period of an afternoon.
+TAG_CODE = 'ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM'
+for tag in ["ja", "ja-JP", "ja-jp", "zh", "zh-CN", "zh-Hans", "zh-TW", "zh-Hant", "zh-HK", "zh-SG", "zh-MO", "ko",
+            "ko-KR", "ru", "ru-RU", "ru-ru", "ru-MD", "pl", "pl-PL", "sv", "sv-SE", "sv-FI", "tr", "tr-TR", "ca",
+            "ca-ES", "ca-ES-valencia", "ar", "ar-SA", "ar-EG", "ar-JO", "ar-IQ", "ar-MA", "ar-DZ", "ar-AE", "ar-TN"]:
+    add("r6t", f"[$-{tag}]{TAG_CODE}", SEPTEMBER)
+for lcid in ["1", "3", "4", "7C04", "11", "12", "15", "19", "1D", "1F"]:  # the neutral LCIDs of these languages
+    add("r6n", f"[$-{lcid}]{TAG_CODE}", SEPTEMBER)
+
+# Round 7: what round 6 may not read as a name: `aaa` and `aaaa`, the weekday of East Asian Excel (`[$-804]aaaa` is
+# Chinese Excel's own weekday format), and the eras (`g`, `gg`, `ggg`, `e`) of the Japanese, Taiwanese and Korean
+# calendars. Separate from round 6: a code Excel cannot read may repair the file on open.
+ROUND = 7
+for tag in ["", "409", "411", "804", "404", "412", "419", "401"]:
+    prefix = f"[$-{tag}]" if tag else ""
+    add("r7a", f'{prefix}aaa"|"aaaa', SEPTEMBER)
+for lcid in ["411", "804", "404", "412"]:
+    for day in range(14, 21):
+        add(f"r7w-{lcid}", f'[$-{lcid}]aaa"|"aaaa', serial(2024, 1, day))
+for code in ['[$-411]ggge"年"m"月"d"日"', '[$-411]g"|"gg"|"ggg', '[$-411]e', '[$-404]ggge"年"m"月"d"日"',
+             '[$-404]e', '[$-412]e', '[$-804]e', 'e']:
+    add("r7e", code, SEPTEMBER, serial(2019, 5, 1), serial(1989, 1, 7))
+
+
+# Round 8: what round 6 left open: the Chinese tags with no region, as Excel rewrites `zh` and `zh-Hans` (`7804` and
+# `4`), and `zh-Hant` (`7C04`): their twelve months, seven weekdays and day period.
+ROUND = 8
+for lcid in ["4", "7804", "7C04"]:
+    for month in range(1, 13):
+        add(f"r8m-{lcid}", f"[$-{lcid}]{MONTH_CODE}", serial(2024, month, 15))
+    for day in range(14, 21):
+        add(f"r8d-{lcid}", f"[$-{lcid}]{DAY_CODE}", serial(2024, 1, day))
+    add(f"r8p-{lcid}", f"[$-{lcid}]h AM/PM", MORNING, EVENING)
+
+
+# Round 9: the Japanese eras under `[$-411]` (round 7 pinned one date of each of three eras): each era's first day and
+# the day before, the era year as `e` and `ee`, the era tokens with times, under the other forms of the tag, under a
+# tag with no era, and the dates the 1900 system holds before Meiji 45 (serials 1, 59, 60, 61). Meiji began in 1868,
+# before the first date a workbook holds, so its first day cannot be asked.
+ROUND = 9
+ERA_DATE = 'ggge"年"m"月"d"日"'
+ERA_STARTS = {  # era: (first day, the day before)
+    "taisho": (serial(1912, 7, 30), serial(1912, 7, 29)),
+    "showa": (serial(1926, 12, 25), serial(1926, 12, 24)),
+    "heisei": (serial(1989, 1, 8), serial(1989, 1, 7)),
+    "reiwa": (serial(2019, 5, 1), serial(2019, 4, 30)),
+}
+BOUNDARIES = [day for pair in ERA_STARTS.values() for day in pair]
+for era, days in ERA_STARTS.items():
+    add(f"r9a-{era}", f"[$-411]{ERA_DATE}", *days)
+    add(f"r9g-{era}", '[$-411]g"|"gg"|"ggg', *days)
+    add(f"r9e-{era}", '[$-411]e"|"ee', *days)
+# The era years: the first, the tenth, the last of Showa, a two-digit year of Heisei, the first Reiwa year as Gannen.
+YEARS = [serial(1900, 3, 1), serial(1912, 7, 29), serial(1935, 6, 15), serial(1964, 10, 10), serial(1989, 1, 7),
+         serial(1998, 2, 1), serial(2019, 4, 30), serial(2019, 12, 31), serial(2020, 1, 1), serial(2025, 12, 31)]
+add("r9y", f"[$-411]{ERA_DATE}", *YEARS)
+add("r9y", '[$-411]e"|"ee', *YEARS)
+add("r9y", '[$-411]ggge/m/d', *YEARS[:5])
+add("r9y", '[$-411]gge.mm.dd', *YEARS[:5])
+add("r9y", '[$-411]yyyy"|"yy"|"e"|"ggg', *YEARS[2:5])
+# The dates of the 1900 system before the first real boundary, and the dates the system gets wrong.
+add("r9s", f"[$-411]{ERA_DATE}", 1, 59, 60, 61, 0.5)
+add("r9s", '[$-411]g"|"gg"|"ggg"|"e"|"ee', 1, 60)
+# Times: the era with a time of day, a time that rounds across a boundary, and a time alone.
+add("r9t", f'[$-411]{ERA_DATE} h:mm:ss', *[days[1] + 0.75 for days in ERA_STARTS.values()], serial(2019, 5, 1, 0, 0, 1))
+add("r9t", f'[$-411]{ERA_DATE} h:mm AM/PM', serial(2019, 5, 1, 9, 5), serial(2019, 4, 30, 21, 5))
+add("r9t", f'[$-411]{ERA_DATE} h:mm:ss', 43585.9999999, 43585.99999)
+add("r9t", f'[$-411]{ERA_DATE}', 43585.9999999, 43585.99999)
+add("r9t", '[$-411]ggge"年"m"月"d"日" hh:mm', serial(2024, 9, 4, 14, 30))
+add("r9t", '[$-411]h:mm:ss', 0.5)
+# The other forms of the tag: a neutral LCID, a zero-padded one, and the text tags.
+for tag in ["11", "0411", "ja", "ja-JP", "ja-jp", "JA-JP"]:
+    add(f"r9f-{tag}", f"[$-{tag}]{ERA_DATE}", SEPTEMBER, serial(2019, 5, 1), serial(1989, 1, 7))
+    add(f"r9f-{tag}", f'[$-{tag}]g"|"gg"|"ggg"|"e"|"ee', serial(2019, 5, 1), serial(1989, 1, 7))
+# A tag that writes the Gregorian year, none, and the codes where Excel shows nothing for the era tokens.
+for tag in ["409", "404", "412", "804", "40C", "41F", ""]:
+    prefix = f"[$-{tag}]" if tag else ""
+    add(f"r9n-{tag or 'none'}", f'{prefix}g"|"gg"|"ggg"|"e"|"ee', SEPTEMBER, serial(2019, 5, 1), serial(1989, 1, 7))
+add("r9n-none", ERA_DATE, SEPTEMBER, serial(1989, 1, 7))
+add("r9n-409", f"[$-409]{ERA_DATE}", SEPTEMBER, serial(1989, 1, 7))
+add("r9n-none", 'ggg"|"gg"|"g', SEPTEMBER)
+# The 1904 system: the same dates.
+add("r9z", f"[$-411]{ERA_DATE}", serial(2019, 5, 1, system=1904), serial(2019, 4, 30, system=1904),
+    serial(1989, 1, 8, system=1904), system=1904)
+add("r9z", '[$-411]e"|"ee', serial(2019, 5, 1, system=1904), serial(1989, 1, 7, system=1904), system=1904)
+
+
+# Round 10: a tag with a script and a region (what BCP 47 producers write): which of the two Excel reads, for Chinese.
+ROUND = 10
+for tag in ["zh-Hans-CN", "zh-Hans-SG", "zh-Hans-HK", "zh-Hans-TW", "zh-Hant-HK", "zh-Hant-TW", "zh-Hant-MO",
+            "zh-Hant-CN", "zh-Hant-SG"]:
+    add("r10t", f"[$-{tag}]{TAG_CODE}", SEPTEMBER)
+
+
+# Round 11: what the review of the era change asked: a bare `g` or `e` outside a date section (in a number code, a
+# text section, a code with a unit), the upper-case era tokens, a longer run of `e` and `g` under the Japanese tag,
+# and the upper-case tokens with no tag. Separate from the others: a code Excel cannot read may repair the file on open.
+ROUND = 11
+REIWA1 = serial(2019, 5, 1)
+SHOWA64 = serial(1989, 1, 7)
+for tag, code in [("g1", "0 g"), ("g2", "0.0 g"), ("g3", "0.0 kg"), ("g4", "0;0;0;g"), ("g5", "@ g"),
+                  ("e1", "0 e"), ("e2", "0.0 e"), ("e3", "0;0;0;e")]:
+    add(f"r11-{tag}", code, "5", "-5", "0", "0.5")
+    text(f"r11-{tag}", code, "abc")
+for tag in ["[$-411]", ""]:
+    name = "ja" if tag else "none"
+    for code in ['GGGE"年"m"月"d"日"', 'GGGe"年"', 'gggE"年"', 'G"|"GG"|"GGG', 'E"|"EE"|"e"|"ee']:
+        add(f"r11-{name}-upper", f"{tag}{code}", SEPTEMBER, REIWA1, SHOWA64)
+for code in ['eee', 'eeee', 'eeeee', 'gggg', 'ggggg', 'gggge', 'ggggg"|"e']:
+    add("r11-ja-run", f"[$-411]{code}", SEPTEMBER, REIWA1, SHOWA64)
+
+
 def check_values():
     for case_id, _code, value, _system, kind, _round in CASES:
         if kind != "number":
@@ -490,6 +679,24 @@ def write_workbook(path, system, cases):
     workbook.close()
 
 
+MAX_FORMATS = 200  # custom number formats of one workbook: Excel keeps the first 215 and reads the rest as General
+
+
+def parts(cases):
+    """The cases in order, cut into workbooks of at most MAX_FORMATS distinct codes."""
+    chunks, codes = [[]], set()
+    for case in cases:
+        code = case[1]
+        custom = not code.startswith("builtin:") and code != "General"
+        if custom and code not in codes and len(codes) == MAX_FORMATS:
+            chunks.append([])
+            codes = set()
+        if custom:
+            codes.add(code)
+        chunks[-1].append(case)
+    return chunks
+
+
 def main(out, number):
     check_values()
     ids = [case[0] for case in CASES]
@@ -501,8 +708,9 @@ def main(out, number):
     write_tsv(out / f"cases-r{number}.tsv", cases)
     for system in ("1900", "1904"):
         of_system = [case for case in cases if case[3] == system]
-        if of_system:
-            write_workbook(out / f"cases-r{number}-{system}.xlsx", int(system), of_system)
+        for index, part in enumerate(parts(of_system) if of_system else [], start=1):
+            suffix = "" if index == 1 else f"-p{index}"
+            write_workbook(out / f"cases-r{number}-{system}{suffix}.xlsx", int(system), part)
     print(f"round {number}: {len(cases)} cases in {out}")
 
 

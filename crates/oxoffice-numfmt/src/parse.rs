@@ -49,6 +49,11 @@ pub(crate) enum Token {
     Text,
     General,
     Year(usize),
+    /// `e`, `ee`: the year of the era under a Japanese tag, the Gregorian year under any other.
+    EraYear(usize),
+    /// `g`, `gg`, `ggg`: the era under a Japanese tag (its initial letter, its first character, its name),
+    /// nothing under any other.
+    Era(usize),
     Month(usize),
     Day(usize),
     Hour(usize),
@@ -267,6 +272,29 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                 at += "a/p".len() - 1;
                 Token::AmPm { short: Some(short) }
             }
+            // `g`, `gg` and `ggg` are the era, in either case; Excel cuts a longer run to `ggg` (`gggge` is
+            // `ggge`).
+            'G' | 'g' => {
+                let count = chars[at - 1..]
+                    .iter()
+                    .take_while(|next| next.eq_ignore_ascii_case(&'g'))
+                    .count();
+                at += count - 1;
+                Token::Era(count.min(3))
+            }
+            // `aaa` and `aaaa` are the weekday of `ddd` and `dddd`, East Asian
+            // Excel's own spelling (`[$-804]aaaa`); Excel showed them so under
+            // every tag and under none. A longer run, and `a` or `aa` (not
+            // asked), are literals.
+            'a' if run_of(&chars[at - 1..], 'a') >= 3 => {
+                let count = run_of(&chars[at - 1..], 'a');
+                at += count - 1;
+                if count <= 4 {
+                    Token::Day(count)
+                } else {
+                    Token::Literal("a".repeat(count))
+                }
+            }
             'y' | 'Y' | 'e' | 'E' | 'm' | 'M' | 'd' | 'D' | 'h' | 'H' | 's' | 'S' => {
                 let lower = c.to_ascii_lowercase();
                 let mut count = 1;
@@ -277,10 +305,14 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                     count += 1;
                     at += 1;
                 }
+                // Excel reads no code with an upper-case `E` that is no exponent: it shows it as General. A
+                // lower-case run is cut to `ee`.
+                if lower == 'e' && chars[at - count..at].contains(&'E') {
+                    return Err(invalid("an era year is written with a lowercase e"));
+                }
                 match lower {
-                    // `e` is the year of the era: the Gregorian year in en-US.
                     'y' => Token::Year(count),
-                    'e' => Token::Year(4),
+                    'e' => Token::EraYear(count.min(2)),
                     'm' if count <= 2 => Token::MonthOrMinute(count),
                     'm' => Token::Month(count),
                     'd' => Token::Day(count),
@@ -311,6 +343,11 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
         section.language = language;
     }
     Ok(sections)
+}
+
+/// How many times `c` repeats from the start of `chars`.
+fn run_of(chars: &[char], c: char) -> usize {
+    chars.iter().take_while(|next| **next == c).count()
 }
 
 fn starts_with_ignore_case(chars: &[char], word: &str) -> bool {
@@ -436,6 +473,8 @@ impl RawSection {
             matches!(
                 token,
                 Token::Year(_)
+                    | Token::EraYear(_)
+                    | Token::Era(_)
                     | Token::Month(_)
                     | Token::Day(_)
                     | Token::Hour(_)

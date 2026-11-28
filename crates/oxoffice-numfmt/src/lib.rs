@@ -19,9 +19,9 @@
 //! ```
 //!
 //! A date code tagged with a language (`[$-40C]mmmm`, `[$-fr-FR]mmmm`) shows
-//! the month names, day names and day period of that language, for the
-//! languages [`names`] holds; any other language shows English ones
-//! ([`NumberFormat::shows_unknown_names`]).
+//! the month names, day names (also `aaa` and `aaaa`) and day period of that
+//! language, for the languages [`names`] holds; any other language shows
+//! English ones ([`NumberFormat::shows_unknown_names`]).
 //!
 //! Booleans and error values are not formatted: Excel shows `TRUE`, `FALSE`
 //! and the error code (`#DIV/0!`) whatever the format, so the caller writes
@@ -30,6 +30,7 @@
 mod builtin;
 mod date;
 mod decimal;
+mod era;
 pub mod names;
 mod number;
 mod parse;
@@ -294,8 +295,16 @@ impl NumberFormat {
             return Some(DateKind::Duration);
         }
         let date = section.system == Some(parse::SystemFormat::LongDate)
-            || section
-                .has(|token| matches!(token, Token::Year(_) | Token::Month(_) | Token::Day(_)));
+            || section.has(|token| {
+                matches!(
+                    token,
+                    Token::Year(_)
+                        | Token::EraYear(_)
+                        | Token::Era(_)
+                        | Token::Month(_)
+                        | Token::Day(_)
+                )
+            });
         let time = section.system == Some(parse::SystemFormat::Time)
             || section.has(|token| {
                 matches!(
@@ -311,20 +320,16 @@ impl NumberFormat {
     }
 
     /// Whether a section tagged with a language this crate has no names for
-    /// (`[$-411]mmmm`, Japanese) shows month names, day names or a day
-    /// period Excel writes otherwise: Excel writes them in that language,
-    /// this crate in English. A language it knows ([`names`]) is not one, nor
-    /// is a day period of Russian or Polish, which Excel shows as `AM`
-    /// and `PM`.
+    /// (`[$-40D]mmmm`, Hebrew) shows month names, day names or a day period
+    /// Excel writes otherwise: Excel writes them in that language, this crate
+    /// in English. A language it knows ([`names`]) is not one.
     pub fn shows_unknown_names(&self) -> bool {
         self.sections.iter().any(|section| {
-            let Some(names::Language::Other { english_day_period }) = section.language else {
-                return false;
-            };
-            section.kind == Kind::Date
+            section.language == Some(names::Language::Other)
+                && section.kind == Kind::Date
                 && section.has(|token| match token {
                     Token::Month(count) | Token::Day(count) => *count >= 3,
-                    Token::AmPm { .. } => !english_day_period,
+                    Token::AmPm { .. } => true,
                     _ => false,
                 })
         })

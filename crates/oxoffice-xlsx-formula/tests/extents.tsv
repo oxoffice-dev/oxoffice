@@ -1,0 +1,162 @@
+# How large a formula's result is: rows x columns exactly, <= at most (the data decide how much of it the result
+# fills), or - when neither its text nor its inputs tell it. Names: Sales is Data!$B$2:$B$25, Rate 0.07, Local on
+# sheet Data or 'My data' $A$1:$C$3, Loop Loop+1, Calc OFFSET(A1,0,0,B1).
+# Inner on Data is Other*2, and Data's own Other $A$1:$A$5; the workbook's Other is $A$1:$A$9, its Outer Other.
+# Constants, references and names.
+1	1x1
+"a text"	1x1
+{1,2,3;4,5,6}	2x3
+{-1;"b";TRUE;#N/A}	4x1
+B3	1x1
+A2:A10	9x1
+$C$10:A1	10x3
+'Q1 data'!B2:D5	4x3
+[1]Rates!A1:B3	3x2
+A:A	1048576x1
+2:3	2x16384
+#REF!	1x1
+Jan:Dec!B2	-
+Tbl[Col]	-
+Sales	24x1
+Rate	1x1
+Data!Local	3x3
+'My data'!Local	3x3
+Local	-
+Data!Inner	5x1
+Outer	9x1
+[1]!Rate	-
+Loop	-
+Calc	-
+# Operators apply to each element: the largest operand, a dimension of 1 repeated.
+A2:A10*2	9x1
+-A2:A10%	9x1
+A2:A10&" "&B2:B10	9x1
+A2:A10*B1:D1	9x3
+(A2:A10>0)*{1,2}	9x2
+A2:A10+B2:B5	<=9x1
+(A1:A3,B1)	-
+A1:B5 B2:C3	-
+_xlfn.SINGLE(A2:A10)	1x1
+@A2:A10	1x1
+_xlfn.ANCHORARRAY(J2)	-
+J2#	-
+# Functions applied to each element of their values, ranges searched taken whole.
+ROUND(A2:A10,1)	9x1
+ROUND(A2:A10,{0,1,2})	9x3
+LEN(A2:C3)	2x3
+CONCATENATE(A1:A3,"x")	3x1
+IFERROR(A2:A10/B2:B10,"")	9x1
+COUNTIF(A:A,D2:D5)	4x1
+COUNTIFS(A:A,D2:D5,B:B,">0")	4x1
+SUMIFS(C:C,A:A,D2:D5,B:B,E1:G1)	4x3
+VLOOKUP(D2:D5,A:C,{2,3},FALSE)	4x2
+MATCH(D2:D5,A:A,0)	4x1
+LARGE(A2:A10,{1;2;3})	3x1
+EDATE(A2:A10,1)	-
+# One value whatever the arguments.
+SUM(A2:A10*B2:B10)	1x1
+_xlfn.TEXTJOIN(",",TRUE,A2:A10)	1x1
+_xlfn.CONCAT(A1:A3,"x")	1x1
+ROWS(A2:A10)	1x1
+NOW()	1x1
+# Arrays built from shapes and constants.
+_xlfn._xlws.SORT(B2:B7,,-1)	6x1
+_xlfn.SORTBY(A2:C10,B2:B10,-1)	9x3
+TRANSPOSE(A2:C10)	3x9
+TRANSPOSE(A:A)	-
+_xlfn.SEQUENCE(5)	5x1
+_xlfn.SEQUENCE(3,4,10,-1)	3x4
+_xlfn.SEQUENCE(ROWS(A2:A10))	9x1
+_xlfn.SEQUENCE(B1)	-
+_xlfn.SEQUENCE(ROWS(_xlfn.UNIQUE(A2:A10)))	-
+_xlfn.SEQUENCE(0)	-
+_xlfn.SEQUENCE(2.5)	-
+_xlfn.SEQUENCE(3,)	-
+_xlfn.RANDARRAY()	1x1
+_xlfn.RANDARRAY(2,3)	2x3
+_xlfn.MAKEARRAY(2,3,_xlfn.LAMBDA(_xlpm.r,_xlpm.c,_xlpm.r*_xlpm.c))	2x3
+_xlfn.MUNIT(3)	3x3
+_xlfn.TAKE(A2:C10,3)	3x3
+_xlfn.TAKE(A2:C10,-20,2)	9x2
+_xlfn.TAKE(A2:C10,,-1)	9x1
+_xlfn.TAKE(A2:C10,0)	-
+_xlfn.DROP(A2:C10,1)	8x3
+_xlfn.DROP(A2:C10,,-2)	9x1
+_xlfn.DROP(A2:C10,9)	-
+_xlfn.EXPAND(A2:B3,4,5,"")	4x5
+_xlfn.EXPAND(A2:B3,,3)	2x3
+_xlfn.EXPAND(A2:B3,1)	-
+_xlfn.CHOOSECOLS(A2:D10,1,-1,1)	9x3
+_xlfn.CHOOSECOLS(A2:D10,5)	-
+_xlfn.CHOOSEROWS(A2:D10,2)	1x4
+_xlfn.HSTACK(A2:A10,C2:D5)	9x3
+_xlfn.VSTACK(A1:C1,A2:B10)	10x3
+_xlfn.TOCOL(A2:C10)	27x1
+_xlfn.TOCOL(A2:C10,0,TRUE)	27x1
+_xlfn.TOROW(A2:C10)	1x27
+_xlfn.WRAPROWS(A1:A7,3)	3x3
+_xlfn.WRAPCOLS(A1:G1,3)	3x3
+_xlfn.WRAPROWS(A1:B7,3)	-
+_xlfn.WRAPROWS({1,2},5)	1x2
+_xlfn.WRAPCOLS({1,2},5)	2x1
+MMULT(A1:B3,D1:G2)	3x4
+MMULT(A1:B3,D1:G3)	-
+ROW(A2:C10)	9x1
+COLUMN(A2:C10)	1x3
+ROW()	1x1
+# Choices: on an array the largest of them all; on one value the largest choice, exactly when they share it.
+IF(A2:A10>0,B2:B10,"")	9x1
+IF(B1>0,A2:A10,C2:C10)	9x1
+IF(B1>0,A2:A10)	<=9x1
+CHOOSE({1,2},A2:A10,C2:C10)	9x2
+CHOOSE(B1,A2:A10,C2:C10)	9x1
+CHOOSE(B1,A2:A10,C2:E3)	<=9x3
+# The data size the result within what the formula reads.
+_xlfn.UNIQUE(A2:A10)	<=9x1
+_xlfn.UNIQUE(A2:C10,TRUE,B1)	<=9x3
+_xlfn.UNIQUE(A2)	1x1
+# A bound over whole columns or rows is none: Google Sheets keeps a grid that large.
+_xlfn.UNIQUE(A:A)	-
+_xlfn.UNIQUE(2:3)	-
+_xlfn.UNIQUE(A:A,TRUE)	-
+_xlfn.UNIQUE(A1:Z50000)	-
+_xlfn._xlws.FILTER(A:A,B:B="")	-
+_xlfn._xlws.SORT(_xlfn.UNIQUE(A:A*2))	-
+_xlfn.TAKE(A:A,B1)	-
+IF(B1>0,A:A)	-
+_xlfn._xlws.FILTER(A2:C10,B2:B10>0)	<=9x3
+_xlfn._xlws.FILTER(A2:C10,A1:C1<>"",{"none";"-"})	<=9x3
+_xlfn._xlws.FILTER(A2:A3,B2:B3>0,{"none","-","x"})	<=2x3
+FREQUENCY(A2:A50,{10;20;30})	<=4x1
+_xlfn.TAKE(A2:C10,B1)	<=9x3
+_xlfn.DROP(A2:C10,,B1)	<=9x3
+_xlfn.EXPAND(A2:B3,B1)	-
+_xlfn.CHOOSECOLS(A2:D10,B1,1)	<=9x2
+_xlfn.TOCOL(A2:C10,1)	<=27x1
+_xlfn.TOROW(A2:C10,B1)	<=1x27
+_xlfn._xlws.SORT(_xlfn.UNIQUE(A2:A10))	<=9x1
+_xlfn.TAKE(_xlfn.UNIQUE(A2:A10),5)	<=5x1
+_xlfn.TAKE(_xlfn.UNIQUE(A2:A10),20)	<=9x1
+_xlfn.TAKE(_xlfn.UNIQUE(A2:C10),1)	<=1x3
+_xlfn.TAKE(_xlfn.UNIQUE(A2:C10),1,1)	1x1
+_xlfn.EXPAND(_xlfn.UNIQUE(A2:A10),12)	12x1
+_xlfn.EXPAND(_xlfn.UNIQUE(A2:A10),5)	<=5x1
+_xlfn.HSTACK(_xlfn.UNIQUE(A2:A10),C2:C5)	<=9x2
+_xlfn.UNIQUE(A2:A10)*2	<=9x1
+_xlfn.UNIQUE(A2:A10)*B2:B10	<=9x1
+_xlfn.WRAPROWS(_xlfn.UNIQUE(A1:A7),3)	<=3x3
+MMULT(_xlfn.UNIQUE(A1:B3),D1:G2)	<=3x4
+# LET names in force, over a defined name of the same name; a LAMBDA is not followed.
+_xlfn.LET(_xlpm.x,A2:A10,_xlpm.y,_xlpm.x*2,_xlpm.y+{1,2})	9x2
+LET(x,A2:A10,x*2)	9x1
+LET(x,UNIQUE(A2:A10),x*2)	<=9x1
+_xlfn.LET(_xlpm.Sales,A1:A3,_xlpm.Sales)	3x1
+_xlfn.LET(_xlpm.f,_xlfn.LAMBDA(_xlpm.v,_xlpm.v*2),_xlpm.f(A2:A10))	-
+_xlfn.LAMBDA(_xlpm.x,_xlpm.x)(A2:A10)	-
+# Neither the text nor the inputs tell it, or the table does not list the function.
+_xlfn.GROUPBY(A2:A10,B2:B10,_xleta.SUM)	-
+_xlfn.TEXTSPLIT(A2,",")	-
+INDEX(A2:C10,0,2)	-
+OFFSET(A1,0,0,3)	-
+MyUdf(A2:A10)	-
+SUM(	-

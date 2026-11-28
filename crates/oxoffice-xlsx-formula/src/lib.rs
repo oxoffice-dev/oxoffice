@@ -16,7 +16,10 @@
 //!   [`check_stored`]): operands, operators, calls and array constants, `,`
 //!   between arguments, each built-in function's argument count
 //!   ([`function`]), at most 255 arguments, 64 nested functions and 8,192
-//!   characters.
+//!   characters;
+//! - how large its result is, exactly or at most, when its text and the
+//!   ranges it reads tell it ([`result_extent`]): what a dynamic array
+//!   formula spills over.
 //!
 //! ```
 //! use oxoffice_xlsx_formula::{move_references, to_displayed, to_stored};
@@ -36,6 +39,7 @@
 //! The parser, the evaluator and the reference updates of inserted rows
 //! come later, on these tokens. See `specs/2026-11-27-xlsx-open-read-edit.md`.
 
+mod extent;
 mod forms;
 mod functions;
 mod lexer;
@@ -43,6 +47,7 @@ mod mover;
 mod parser;
 mod reference;
 
+pub use extent::{DefinedName, Extent, NameLookup, NameScope, Shape, result_extent};
 pub use forms::{check_stored, to_displayed, to_stored};
 pub use functions::{Function, Prefix, function};
 pub use lexer::{Token, TokenKind, tokenize};

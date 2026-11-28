@@ -2037,3 +2037,62 @@ fn a_move_word_would_not_write_is_refused() {
     }
     assert!(failed.is_empty(), "{failed:#?}");
 }
+
+/// An insertion the in-place route does not mark (a paragraph inside a
+/// header's control, a header holding a text box's two copies) is refused
+/// with nothing changed and no id taken.
+#[test]
+fn a_story_insertion_not_marked_in_place_is_refused_whole() {
+    let mut doc = doc_with_body(&paragraph(&run("Body.")));
+    doc.set_header("Head");
+    let mut doc = reopen(&mut doc);
+    let in_control = |xml: &str| {
+        let at = xml.find("<w:p>").or_else(|| xml.find("<w:p ")).unwrap();
+        format!(
+            "{}<w:sdt><w:sdtContent><w:p><w:r><w:t>In.</w:t></w:r></w:p></w:sdtContent></w:sdt>{}",
+            &xml[..at],
+            &xml[at..]
+        )
+    };
+    let boxed = |xml: &str| {
+        let at = xml.find("<w:r>").unwrap();
+        format!(
+            r#"{}<w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="wps"/><mc:Fallback/></mc:AlternateContent></w:r>{}"#,
+            &xml[..at],
+            &xml[at..]
+        )
+    };
+    for (case, edit, path, message) in [
+        (
+            "in a control",
+            &in_control as &dyn Fn(&str) -> String,
+            vec![0, 0],
+            "inside a block",
+        ),
+        ("beside a text box", &boxed, vec![0], "not marked in place"),
+    ] {
+        let mut doc = with_header(&mut doc, edit);
+        let story = doc
+            .stories()
+            .unwrap()
+            .into_iter()
+            .find(|story| story.kind() == oxoffice_docx::StoryKind::Header)
+            .unwrap();
+        let before = doc.to_bytes().unwrap();
+        let session = doc.start_tracked_changes(&changes()).unwrap();
+        let location = oxoffice_docx::ContentLocation::new(
+            story,
+            oxoffice_docx::StoryItemKind::Paragraph,
+            path,
+        );
+        let error = doc.mark_story_insertion_in_place(&location, 1).unwrap_err();
+        assert!(error.to_string().contains(message), "{case}: {error}");
+        assert_eq!(
+            session.revision_ids(&doc).unwrap(),
+            Vec::<i32>::new(),
+            "{case}"
+        );
+        doc.stop_tracked_changes().unwrap();
+        assert_eq!(doc.to_bytes().unwrap(), before, "{case}");
+    }
+}

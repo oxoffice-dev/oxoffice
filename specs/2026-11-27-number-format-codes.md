@@ -30,7 +30,7 @@ every rule below was checked in Excel for Mac 16.115 (en-US) on the case table, 
 | `format_text(text)` | through the text section, the text as it is without one |
 | `date_kind()`, `is_date_format(code)` | `Date`, `Time`, `DateTime` or `Duration` (`[h]`) when a positive number shows as one, for a reader that types cells |
 | `builtin_code(id, Locale)` | a built-in id (a style with no `numFmt` record) to its code; `None` shows as General |
-| `shows_unknown_names()` | the code is tagged with a language `names` holds no table of (`[$-411]mmmm`) and shows month names, day names or a day period: this crate writes them in English, Excel in that language |
+| `shows_unknown_names()` | the code is tagged with a language `names` holds no table of (`[$-40D]mmmm`, Hebrew) and shows month names, day names or a day period: this crate writes them in English, Excel in that language |
 | `names` | the month names, day names and day periods of the languages below, by region, shared with Word's date controls (`oxoffice-docx-oxml` depends on this crate for them) |
 | `FormatOptions` | `date_system` (`Date1900`, `Date1904`), `locale` (`EnUs` only, `non_exhaustive`) |
 
@@ -88,9 +88,11 @@ A literal-only or fraction section shows the minus of a nonzero value even when 
 | after 9999-12-31 (2958465, 2957003): overflow | |
 | the value rounds to the second, or to the decimals shown (`.0` to `.000`), before the date is taken, in decimal (12:00:00.4999999999968 is noon) | `m/d/yyyy`: 45306.9999999 → `1/16/2024` |
 | `m`/`mm` is the minute right after an hour or right before a second (literals between them aside), the month elsewhere | `h "h" m "m"` → `17 h 5 m` |
-| `y`, `yy` two digits; `yyy` and more, and `e`, four; `mmm`, `mmmm`, `mmmmm`, `ddd`, `dddd` the names of the locale (English), or of the tag's language | |
+| `y`, `yy` two digits; `yyy` and more, four; `mmm`, `mmmm`, `mmmmm`, `ddd`, `dddd` the names of the locale (English), or of the tag's language | |
+| `aaa`, `aaaa` (lower case): the weekday as `ddd`, `dddd`, under every tag and none (East Asian Excel's own spelling: `[$-804]aaaa` is `星期三`); other runs of `a` are literals | `[$-411]aaa`: 水 |
 | `AM/PM` shows `AM`/`PM` whatever its case; `A/P` the letter as written | `a/p` → `p` |
 | under a language tag, every spelling (`AM/PM`, `am/pm`, `A/P`, `a/p`) shows the designator of the tag's region: `AM` (en-US, fr-FR, de-DE...), `am` (en-GB), `a.m.` (fr-CA), `a. m.` (es-MX) | `[$-809]h A/P`: 5 am |
+| eras, under a Japanese tag (`[$-411]`, `[$-11]`, `[$-ja-JP]`, `[$-ja]`, any spelling of it): `ggg` the era's name (`令和`), `gg` its first character (`令`), `g` its initial letter (`R`); `e` the year in the era, `ee` on two digits; the eras begin on 1912-07-30 (Taisho), 1926-12-25 (Showa), 1989-01-08 (Heisei) and 2019-05-01 (Reiwa), Meiji before; the first year is `1`, not `元`; the date is the one the value rounds to (43585.9999999 is `令和1年5月1日`); 1900-01-00 and 1900-02-29 are Meiji 33; `yy` and `yyyy` stay Gregorian. Under any other tag or none, `g`, `gg`, `ggg` show nothing and `e`, `ee` are the Gregorian year on four digits; `G` reads as `g`, a run of `g` beyond three is `ggg` and a run of `e` beyond two is `ee` (Excel rewrites the code so); an upper-case `E` (no exponent) makes the code General | `[$-411]ggge"年"m"月"d"日"`: 45539 → `令和6年9月4日` |
 | `[h]`, `[mm]`, `[ss]`: the whole duration in that unit | `[h]:mm:ss`: 1.5 → `36:00:00` |
 | `[$-F800]`, `[$-x-sysdate]`: the long date `dddd, mmmm d, yyyy`; `[$-F400]`, `[$-x-systime]`: the time `h:mm:ss AM/PM` | |
 | `[$-40C]` or `[$-fr-FR]`: the names and day period of that language and region (next section); the tag may stand anywhere in its section, and only the first section's counts: it speaks for every section, and a tag of another section changes nothing | `[$-407]mmmm;[$-40C]mmmm`: 30000 → `Februar` |
@@ -115,9 +117,9 @@ English and reads as English, a higher high word was not asked and counts as a l
 no primary language, `[$-400]`, names none) or a language tag (`fr-FR`, `fr`; case does not matter; a language alone,
 `de`, is no LCID). A neutral LCID (`[$-A]`, `[$-16]`) reads as the tag with no region (`[$-es]`, `[$-pt]`): our
 choice, since Excel showed those tables other than Spain's and Brazil's and no producer writes a neutral LCID.
-Excel for Mac, asked for 32 tags in rounds 4 and 5 (`tests/cases.tsv`; 29 with their twelve months, seven weekdays
-and day period, and en-NZ, en-IE and en-ZA for the day period only), shows names that depend on the region, not
-only the language:
+Excel for Mac, asked for 32 tags in rounds 4 and 5 and 34 more in rounds 6 and 8 (`tests/cases.tsv`; each with its
+twelve months, seven weekdays and day period, except en-NZ, en-IE and en-ZA, asked for the day period only), shows
+names that depend on the region, not only the language:
 
 | Language | Regions asked, with their own table | Same table as |
 | --- | --- | --- |
@@ -128,21 +130,45 @@ only the language:
 | Italian | it-IT | it-CH |
 | Portuguese | pt-BR, pt-PT, and `pt` | |
 | Dutch | nl-NL | nl-BE |
+| Japanese | ja-JP | |
+| Chinese | zh-CN (`一月`, `周三`), zh-TW (`9月`, `週三`), zh-HK (`九月` for the short month too, `週三`), zh-SG (`九月`, `周三`), `zh` and `zh-Hans` (`一月`, `1月`, `週三`) | zh-MO and `zh-Hant`: zh-TW; another region: zh-CN |
+| Korean | ko-KR | |
+| Russian | ru-RU (the day period is `AM`, `PM`) | ru-MD |
+| Polish | pl-PL (`AM`, `PM`) | |
+| Swedish | sv-SE (`fm`, `em`) | sv-FI |
+| Turkish | tr-TR (`ÖÖ`, `ÖS`) | |
+| Catalan | ca-ES (`a.\u{202f}m.`) | ca-ES-valencia |
+| Arabic | ar-SA (`يناير`; the short names are the full ones) and its eleven regions Egypt, Libya, Algeria, Morocco, Tunisia, Oman, Yemen, Kuwait, UAE, Bahrain, Qatar; the Levant, ar-IQ, ar-SY, ar-JO, ar-LB (`كانون الثاني`, `شباط`) | `ar`: ar-SA; the neutral LCID `[$-1]` shows English |
 
-The full names agree in every region asked, except `Jänner`, and with the tables of Word's date controls
+The full names agree in every region asked of the languages of rounds 4 and 5, except `Jänner`, and with the tables of Word's date controls
 (`oxoffice-docx-oxml`, which now reads them from this crate). Short names and the day period differ by region
 (`ene.` in Spain and Colombia, `ene` in Argentina and the United States, `set` for September in `es`; `a.\u{202f}m.`
 in Spain, `a.\u{a0}m.` in Colombia and Chile, `a. m.` in Mexico). Where a language is tagged with a region not
 asked, it takes the table of its most widespread region (en-US, fr-FR, de-DE, es-ES, pt-BR) or, for a tag with no
-region, as asked. The one-letter month is the first letter of the full name, as written (`j`, `s`).
+region, as asked. The one-letter month is the first letter of the full name, as written (`j`, `s`, `9`, `九`).
+
+A tag with a script and a region (`zh-Hans-CN`, `zh-Hant-HK`) reads as the pair, as Excel read it in round 10:
+`zh-Hans-CN` is zh-CN, `zh-Hans-SG` zh-SG, `zh-Hant-HK` zh-HK, `zh-Hant-TW` and `-MO` zh-TW, `zh-Hans-HK` zh-CN,
+`zh-Hans-TW` the tag `zh`, `zh-Hant-CN` and `-SG` `zh-Hant`; a pair not asked takes the script's table.
+
+A month name does not change next to a day number: Excel for Mac writes `15 январь` and `15 styczeń`, not the genitive
+(`января`, `stycznia`) that Russian and Polish system data holds, whatever the codes (`d mmmm`, `dd mmmm yyyy`,
+`mmmm d`, `d-mmm-yy`, `dddd, d mmmm yyyy`, a literal between): every month of both, five codes (round 6).
+Digits stay Western in Arabic (`4 سبتمبر 2024`). The day period in the morning and in the afternoon, and at
+midnight and noon, are the two designators whatever the spelling (`AM/PM`, `am/pm`, `A/P`, `a/p`).
 
 ### What we do not do
 
-- A tag of a language with no table (`[$-411]`, Japanese: Excel shows `水曜日`, `9月`, `午後`) shows English names and
-  `AM`/`PM`. `shows_unknown_names()` says so, and the chart keeps such a code unsupported (General, with its
-  diagnostic), except for what Excel showed as we do: the day period of Russian and Polish (`PM`, the morning
-  designator was not asked). The xlsx text export shows the English names: the limitation
-  `xlsx-date-names-language`, which says why a table is not enough.
+- A tag of a language with no table (`[$-40D]`, Hebrew) shows English names and `AM`/`PM`.
+  `shows_unknown_names()` says so, and the chart keeps such a code unsupported (General, with its diagnostic). Every
+  language Excel was asked of in rounds 4 to 8 has its table, so a file saved by a producer in one of the sixteen
+  languages reads right; one more language is one Excel round and an entry in `tests/excel/names.py`.
+- Eras: the era tokens of the Japanese calendar are the Japanese tag's alone; Meiji's first day (1868) is before
+  any date a workbook holds, so its start is not asked (the table keeps 1868-01-25 for its order). The era of a date
+  in Excel's 1900-02-29 and in day 0 is Meiji 33 as the rows show (r9s-*). `g` and `e` outside a date section (`0 g`,
+  `0.0 kg`, `@ g`, `0;0;0;g`, `0 e`) make the code General, as Excel reads none of them (r11-g*, r11-e*). Other
+  calendars (`[$-404]`'s Minguo, Buddhist `b`) are not modelled: under those tags the era tokens show nothing and `e`
+  is the Gregorian year, as pinned (r7e-*, r9n-*).
 - A region of English, French, German, Spanish or Portuguese that Excel was not asked for takes the table of the
   widespread region of its language: its short names and day period can differ.
 - `[$-F400]` and id 14 follow the operating system in Excel: the en-US defaults are written above.
@@ -171,7 +197,15 @@ names other than English stay refused there on purpose). Two rounds of Excel cas
 LCIDs, each with its twelve months, seven weekdays and day period; 18 text tags; nine languages with no table; the
 position and number of tags) and round 5 (241: each spelling of the day period alone, six more regions, `es` and
 `pt`, three more English regions for the day period, the high word of an LCID, which sections a tag speaks for). The chart keeps its diagnostic for a language with
-no table only. The text export says so with the limitation `xlsx-date-names-language`.
+no table only.
+
+Pull request for #707 (the languages with no table): Excel rounds 6, 7 and 8 (1,449 cases) ask for Japanese, Chinese
+(five regions and the tags with no region), Korean, Russian, Polish, Swedish, Turkish, Catalan and Arabic (sixteen
+regions): their months, weekdays and day period per region, whether a month changes form next to a day number (no),
+full date formats as a user picks them, the tags as text and as neutral LCIDs, and `aaa`, `aaaa` and the eras. The
+tables are no longer written by hand: `tests/excel/names.py` writes `src/names/tables.rs` from the pinned rows, and
+`names` finds a region by its LCID or its tag in that data (`REGIONS`) before the language's default. The chart's
+diagnostic is kept for a language with no table only, and the limitation `xlsx-date-names-language` is removed.
 
 ## Links
 

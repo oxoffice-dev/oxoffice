@@ -28,8 +28,9 @@ built by the `oxoffice-cli` crate.
 - `oxoffice xlsx set FILE CELL VALUE [--sheet S] [--text | --formula
   [--stored] [--spill | --spill-range J2:J5]] -o OUT`: one cell, `VALUE`
   typed as a CSV field (`007` stays text), as text, or a formula; a spilling
-  formula over the range Excel finds, or over the range given, which Google
-  Sheets spills too. A negative number is a value; other text that starts
+  formula over its result's range (or the most the data can fill) when the
+  formula gives it, else from its cell alone, or over the range given; Google
+  Sheets spills over the range written. A negative number is a value; other text that starts
   with `-` goes after `--`.
 - `oxoffice xlsx import-csv FILE CSV [--sheet S] [--at A1] [--text] -o OUT`:
   a UTF-8 CSV written from a cell, fields typed strictly or kept as text.
