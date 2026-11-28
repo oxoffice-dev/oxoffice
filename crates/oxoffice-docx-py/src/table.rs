@@ -854,10 +854,19 @@ impl PyTable {
         let index = self.validate(py)?;
         let related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
-        document
-            .inner
-            .refuse_under_tracked_changes("a change of table properties")
-            .map_err(|e| docx_to_pyerr(py, e))?;
+        // Under tracked changes, the table's property change on its tracked
+        // route, then the style made where styles are (untracked), so that a
+        // refused change leaves no style behind.
+        if document.inner.tracks_changes() {
+            let style_id = checked_table_style(py, &mut document.inner.clone_for_staging(), value)?;
+            drop(document);
+            self.edit(py, |table| {
+                table.set_style(&style_id);
+                Ok(())
+            })?;
+            checked_table_style(py, &mut self.document.borrow_mut(py).inner, value)?;
+            return Ok(());
+        }
         let mut candidate = document.inner.clone_for_staging();
         let style_id = checked_table_style(py, &mut candidate, value)?;
         TableLocation::new(index, &related)
@@ -1281,6 +1290,12 @@ impl PyTable {
     ) -> PyResult<()> {
         let merge = vertical_merge_from_name(merge)?;
         let (row, col) = self.cell_coordinates(py, row, col)?;
+        // Word does not track a cell merge (Word check W8).
+        self.document
+            .borrow(py)
+            .inner
+            .refuse_under_tracked_changes("Table.set_cell_vertical_merge")
+            .map_err(|error| docx_to_pyerr(py, error))?;
         self.edit(py, |table| table.set_cell_vertical_merge(row, col, merge))
     }
 

@@ -1733,3 +1733,375 @@ pub(super) fn redline_part_paragraphs(
     output.push_str(&new[copied..]);
     Ok(output.into_bytes())
 }
+
+/// The first WordprocessingML element `local` of `xml`.
+fn first_word_element(xml: &str, local: &str) -> Result<Node> {
+    let mut reader = NsReader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    loop {
+        let before = reader.buffer_position() as usize;
+        let (namespace, event) = reader.read_resolved_event().map_err(xml_error)?;
+        let word =
+            matches!(namespace, ResolveResult::Bound(Namespace(uri)) if uri == W_NS.as_bytes());
+        let after = reader.buffer_position() as usize;
+        let (start, empty) = match event {
+            Event::Start(start) => (start.into_owned(), false),
+            Event::Empty(start) => (start.into_owned(), true),
+            Event::Eof => return Err(xml_error(format!("no w:{local}"))),
+            _ => continue,
+        };
+        if word && start.local_name().as_ref() == local.as_bytes() {
+            return element(&mut reader, xml, &start, true, before..after, empty);
+        }
+    }
+}
+
+fn word_children<'a>(node: &'a Node, local: &'a str) -> impl Iterator<Item = &'a Node> + 'a {
+    node.children.iter().filter_map(move |child| match child {
+        Child::Element(element) if element.word && element.local == local => Some(element),
+        _ => None,
+    })
+}
+
+/// Properties `props` read as the old ones of an unchanged owner: Word's
+/// shape for a row's change, whose table, grid and cells take changes that
+/// hold what they hold now (Word check W8).
+fn as_old(props: &Props) -> Props {
+    Props {
+        prior: props.prior.clone(),
+        base: props.base.clone(),
+        ..Props::default()
+    }
+}
+
+/// The property elements of the first table of `xml` resolved as `how`:
+/// its properties, grid, row and cell properties.
+fn table_properties(xml: &str, how: Resolution) -> Result<Vec<String>> {
+    let wrapped = format!("<w:document xmlns:w=\"{W_NS}\"><w:body>{xml}</w:body></w:document>");
+    let (output, _) = resolve_story_xml(wrapped.as_bytes(), how, RevisionScope::All)?;
+    let output = String::from_utf8(output).map_err(xml_error)?;
+    let table = first_word_element(&output, "tbl")?;
+    // An owner without properties reads as none: a rejected row change whose
+    // row had none leaves an empty `w:trPr`.
+    let text = |node: Option<&Node>| {
+        node.map_or(String::new(), |node| {
+            let text = without_declarations(&output[node.span()]);
+            match text.matches('<').count() == 1
+                || text.contains("></") && text.matches('<').count() == 2
+            {
+                true => String::new(),
+                false => text,
+            }
+        })
+    };
+    let mut found = vec![
+        text(word_children(&table, "tblPr").next()),
+        text(word_children(&table, "tblGrid").next()),
+    ];
+    for row in word_children(&table, "tr") {
+        found.push(text(word_children(row, "trPr").next()));
+        for cell in word_children(row, "tc") {
+            found.push(text(word_children(cell, "tcPr").next()));
+        }
+    }
+    Ok(found)
+}
+
+/// `xml` without its namespace declarations, which a resolution places
+/// where its output needs them.
+fn without_declarations(xml: &str) -> String {
+    let mut output = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(at) = rest.find(" xmlns") {
+        output.push_str(&rest[..at]);
+        let value = rest[at..]
+            .find('"')
+            .map_or(rest.len(), |open| at + open + 1);
+        let end = rest[value..]
+            .find('"')
+            .map_or(rest.len(), |close| value + close + 1);
+        rest = &rest[end..];
+    }
+    output.push_str(rest);
+    output
+}
+
+/// Give each [`ID_MARK`] of `xml` a new revision id of the session, in
+/// order, and hold them once `check` passes.
+fn give_ids(
+    xml: &str,
+    tracking: &Tracking,
+    identifiers: &mut DocumentIdentifiers,
+    check: impl FnOnce(&str) -> Result<()>,
+) -> Result<String> {
+    let ids = identifiers.free_revision_ids(xml.matches(ID_MARK).count())?;
+    let mut output = String::with_capacity(xml.len() + ids.len() * 4);
+    let mut rest = xml;
+    for id in &ids {
+        let at = rest.find(ID_MARK).expect("one mark per id");
+        output.push_str(&rest[..at]);
+        output.push_str(&id.to_string());
+        rest = &rest[at + ID_MARK.len()..];
+    }
+    output.push_str(rest);
+    check(&output)?;
+    identifiers.hold_revision_ids(&ids);
+    tracking.record(&ids);
+    Ok(output)
+}
+
+/// `after`, a table an edit of its properties made from `before`, with the
+/// changes written as tracked changes, as Word writes them: a `w:tblPrChange`,
+/// a `w:tblGridChange` (an id alone) and a `w:tcPrChange` of each owner
+/// that changed. A row's changed properties take a `w:trPrChange`, which a
+/// rejection undoes as Word's does, beside what Word writes for them: its
+/// table, its grid and each cell of the row take a change holding what they
+/// hold now (Word check W8). Content, rows or cells changed are refused.
+pub(super) fn redline_table_xml(
+    before: &str,
+    after: &str,
+    tracking: &Tracking,
+    identifiers: &mut DocumentIdentifiers,
+) -> Result<String> {
+    let (old, new) = (
+        first_word_element(before, "tbl")?,
+        first_word_element(after, "tbl")?,
+    );
+    let prefix = new
+        .name
+        .split_once(':')
+        .map_or(String::new(), |(prefix, _)| format!("{prefix}:"));
+    let read = |xml: &str, node: Option<&Node>, change: &str, kept: &[&str]| {
+        node.map_or(Ok(Props::default()), |node| props(xml, node, change, kept))
+    };
+    let (old_rows, new_rows) = (
+        word_children(&old, "tr").collect::<Vec<_>>(),
+        word_children(&new, "tr").collect::<Vec<_>>(),
+    );
+    if old_rows.len() != new_rows.len() {
+        return Err(refused("a change of a table's rows"));
+    }
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    let mut rows_changed = false;
+    let mut cells = Vec::new();
+    for (old_row, new_row) in old_rows.iter().zip(&new_rows) {
+        let trpr = |xml: &str, row: &Node| {
+            read(
+                xml,
+                word_children(row, "trPr").next(),
+                "trPrChange",
+                &["ins", "del"],
+            )
+        };
+        let (old_trpr, new_trpr) = (trpr(before, old_row)?, trpr(after, new_row)?);
+        let row_changed = old_trpr.base != new_trpr.base;
+        rows_changed |= row_changed;
+        // The row's own change, which a rejection undoes (Word's Reject All
+        // brings a row's height back, W8), beside the changes Word writes.
+        if row_changed {
+            let written = changed_props(
+                &new_trpr,
+                &old_trpr,
+                &prefix,
+                "trPr",
+                "trPrChange",
+                tracking,
+            );
+            edits.push(match word_children(new_row, "trPr").next() {
+                Some(properties) => (properties.span(), written),
+                None => {
+                    let at = word_children(new_row, "tblPrEx")
+                        .next()
+                        .map_or(new_row.start.end, |exceptions| exceptions.span().end);
+                    (at..at, written)
+                }
+            });
+        }
+        let (old_cells, new_cells) = (
+            word_children(old_row, "tc").collect::<Vec<_>>(),
+            word_children(new_row, "tc").collect::<Vec<_>>(),
+        );
+        if old_cells.len() != new_cells.len() {
+            return Err(refused("a change of a row's cells"));
+        }
+        for (old_cell, new_cell) in old_cells.into_iter().zip(new_cells) {
+            let content = |xml: &str, cell: &Node| {
+                cell.children
+                    .iter()
+                    .filter_map(|child| match child {
+                        Child::Element(element) if !(element.word && element.local == "tcPr") => {
+                            Some(&xml[element.span()])
+                        }
+                        _ => None,
+                    })
+                    .collect::<String>()
+            };
+            if content(before, old_cell) != content(after, new_cell) {
+                return Err(refused("an edit of a cell's content with its properties"));
+            }
+            cells.push((old_cell, new_cell, row_changed));
+        }
+    }
+    let kept = ["cellIns", "cellDel", "cellMerge"];
+    for (old_cell, new_cell, row_changed) in cells {
+        let (old_tcpr, new_tcpr) = (
+            word_children(old_cell, "tcPr").next(),
+            word_children(new_cell, "tcPr").next(),
+        );
+        let (old_props, new_props) = (
+            read(before, old_tcpr, "tcPrChange", &kept)?,
+            read(after, new_tcpr, "tcPrChange", &kept)?,
+        );
+        let old_props = match (old_props.base != new_props.base, row_changed) {
+            (true, _) => old_props,
+            (false, true) => as_old(&new_props),
+            (false, false) => continue,
+        };
+        let written = changed_props(
+            &new_props,
+            &old_props,
+            &prefix,
+            "tcPr",
+            "tcPrChange",
+            tracking,
+        );
+        edits.push(match new_tcpr {
+            Some(tcpr) => (tcpr.span(), written),
+            None => (new_cell.start.end..new_cell.start.end, written),
+        });
+    }
+    let (old_tblpr, new_tblpr) = (
+        word_children(&old, "tblPr").next(),
+        word_children(&new, "tblPr").next(),
+    );
+    let (old_props, new_props) = (
+        read(before, old_tblpr, "tblPrChange", &[])?,
+        read(after, new_tblpr, "tblPrChange", &[])?,
+    );
+    if old_props.base != new_props.base || rows_changed {
+        let old_props = match old_props.base != new_props.base {
+            true => old_props,
+            false => as_old(&new_props),
+        };
+        let written = changed_props(
+            &new_props,
+            &old_props,
+            &prefix,
+            "tblPr",
+            "tblPrChange",
+            tracking,
+        );
+        edits.push(match new_tblpr {
+            Some(tblpr) => (tblpr.span(), written),
+            None => (new.start.end..new.start.end, written),
+        });
+    }
+    let (old_grid, new_grid) = (
+        word_children(&old, "tblGrid").next(),
+        word_children(&new, "tblGrid").next(),
+    );
+    let (old_props, new_props) = (
+        read(before, old_grid, "tblGridChange", &[])?,
+        read(after, new_grid, "tblGridChange", &[])?,
+    );
+    if let Some(grid) = new_grid
+        && (old_props.base != new_props.base || rows_changed)
+    {
+        let old_props = match old_props.base != new_props.base {
+            true => old_props,
+            false => as_old(&new_props),
+        };
+        let prior = match old_props.prior {
+            Some(prior) if !prior.is_empty() => prior,
+            _ => format!("<{prefix}tblGrid>{}</{prefix}tblGrid>", old_props.base),
+        };
+        edits.push((
+            grid.span(),
+            format!(
+                "{}{}<{prefix}tblGridChange {prefix}id=\"{ID_MARK}\">{prior}</{prefix}tblGridChange>{}",
+                new_props.open, new_props.base, new_props.end
+            ),
+        ));
+    }
+    edits.sort_by_key(|(range, _)| range.start);
+    let mut written = String::with_capacity(after.len() + edits.len() * 128);
+    let mut copied = 0;
+    for (range, text) in &edits {
+        written.push_str(&after[copied..range.start]);
+        written.push_str(text);
+        copied = range.end;
+    }
+    written.push_str(&after[copied..]);
+    give_ids(&written, tracking, identifiers, |redlined| {
+        let accepted = table_properties(redlined, Resolution::Accept)?
+            == table_properties(after, Resolution::Accept)?;
+        let rejected = table_properties(redlined, Resolution::Reject)?
+            == table_properties(before, Resolution::Reject)?;
+        match accepted && rejected {
+            true => Ok(()),
+            false => Err(Error::Other(
+                "this table edit cannot be written as a tracked change".to_owned(),
+            )),
+        }
+    })
+}
+
+/// `after`, section properties an edit made from `before`, with the change
+/// written as one `w:sectPrChange`, last, holding the old properties without
+/// the header and footer references, as for the other property changes.
+pub(super) fn redline_section_xml(
+    before: &str,
+    after: &str,
+    tracking: &Tracking,
+    identifiers: &mut DocumentIdentifiers,
+) -> Result<String> {
+    let (old, new) = (
+        first_word_element(before, "sectPr")?,
+        first_word_element(after, "sectPr")?,
+    );
+    let prefix = new
+        .name
+        .split_once(':')
+        .map_or(String::new(), |(prefix, _)| format!("{prefix}:"));
+    let references = ["headerReference", "footerReference"];
+    let old_props = props(before, &old, "sectPrChange", &references)?;
+    let new_props = props(after, &new, "sectPrChange", &references)?;
+    if old_props.base == new_props.base {
+        return Ok(after.to_owned());
+    }
+    let prior = match &old_props.prior {
+        Some(prior) if !prior.is_empty() => prior.clone(),
+        _ => format!("<{prefix}sectPr>{}</{prefix}sectPr>", old_props.base),
+    };
+    let author = quick_xml::escape::escape(tracking.changes.author());
+    let date = tracking.changes.timestamp().map_or(String::new(), |date| {
+        format!(" {prefix}date=\"{}\"", quick_xml::escape::escape(date))
+    });
+    // The references first, as the schema orders them.
+    let written = format!(
+        "{}{}{}{}<{prefix}sectPrChange {prefix}id=\"{ID_MARK}\" {prefix}author=\"{author}\"{date}>{prior}</{prefix}sectPrChange>{}",
+        &after[..new.start.start],
+        new_props.open,
+        new_props.kept,
+        new_props.base,
+        new_props.end
+    ) + &after[new.span().end..];
+    give_ids(&written, tracking, identifiers, |redlined| {
+        let resolved = |xml: &str, how| -> Result<String> {
+            let wrapped =
+                format!("<w:document xmlns:w=\"{W_NS}\"><w:body>{xml}</w:body></w:document>");
+            let (output, _) = resolve_story_xml(wrapped.as_bytes(), how, RevisionScope::All)?;
+            let output = String::from_utf8(output).map_err(xml_error)?;
+            let section = first_word_element(&output, "sectPr")?;
+            Ok(without_declarations(&output[section.span()]))
+        };
+        match resolved(redlined, Resolution::Accept)? == resolved(after, Resolution::Accept)?
+            && resolved(redlined, Resolution::Reject)? == resolved(before, Resolution::Reject)?
+        {
+            true => Ok(()),
+            false => Err(Error::Other(
+                "this section edit cannot be written as a tracked change".to_owned(),
+            )),
+        }
+    })
+}

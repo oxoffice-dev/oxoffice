@@ -1402,3 +1402,165 @@ fn a_panic_in_a_tracked_edit_leaves_later_edits_untracked() {
     assert!(doc.story_revisions().unwrap().is_empty());
     assert_eq!(doc.paragraphs()[0].text(), "Other words.");
 }
+
+/// Table, row, cell and section property edits under a session, as their
+/// routes make them: each writes the changes Word writes (W8), accepting
+/// them gives the untracked edit, and rejecting gives the document back.
+#[test]
+fn every_table_and_section_property_edit_writes_a_property_change() {
+    type Edit = fn(&mut Document);
+    let table = || {
+        doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr><w:tblW w:w="4000" w:type="dxa"/></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{0}</w:tc><w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/></w:tcPr>{0}</w:tc></w:tr></w:tbl>{0}"#,
+            paragraph(&run("cell"))
+        ))
+    };
+    use RevisionKind::*;
+    let rows: [(&str, Edit, &[RevisionKind]); 5] = [
+        (
+            "a table's width",
+            |doc| {
+                doc.edit_table_properties_in_place(0, |table| {
+                    table.set_width(oxoffice_docx::Length::twips(5000));
+                    Ok(())
+                })
+                .unwrap()
+                .unwrap()
+            },
+            &[TablePropertyChange],
+        ),
+        (
+            "a column's width",
+            |doc| {
+                doc.edit_table_properties_in_place(0, |table| {
+                    table.set_column_width(0, oxoffice_docx::Length::twips(3000));
+                    Ok(())
+                })
+                .unwrap()
+                .unwrap()
+            },
+            // Its cell and the table's width follow it.
+            &[TablePropertyChange, TableGridChange, CellPropertyChange],
+        ),
+        (
+            "a cell's shading",
+            |doc| {
+                doc.edit_table_cell_properties_in_place(0, 0, 0, |cell| {
+                    cell.set_shading("FF0000");
+                    Ok(())
+                })
+                .unwrap()
+                .unwrap()
+            },
+            &[CellPropertyChange],
+        ),
+        (
+            "a row's height, as Word writes it (W8)",
+            |doc| {
+                doc.edit_table_row_properties_in_place(0, 0, |row| {
+                    row.set_height(oxoffice_docx::Length::twips(800));
+                    Ok(())
+                })
+                .unwrap()
+                .unwrap()
+            },
+            &[
+                TablePropertyChange,
+                TableGridChange,
+                RowPropertyChange,
+                CellPropertyChange,
+                CellPropertyChange,
+            ],
+        ),
+        (
+            "a section's page size",
+            |doc| {
+                let before = doc.section_properties_before_edit(0);
+                doc.section_mut(0)
+                    .unwrap()
+                    .set_page_size(
+                        oxoffice_docx::Length::twips(15000),
+                        oxoffice_docx::Length::twips(15840),
+                    )
+                    .unwrap();
+                if let Some(before) = before {
+                    doc.redline_section_edit(0, before).unwrap();
+                }
+            },
+            &[SectionPropertyChange],
+        ),
+    ];
+    let shown = |doc: &mut Document| {
+        let xml = reopen(doc).part_xml("/word/document.xml").unwrap();
+        let start = xml.find("<w:body>").unwrap();
+        xml[start..].to_owned()
+    };
+    for (shape, edit, kinds) in rows {
+        let mut tracked = table();
+        let original = shown(&mut tracked);
+        let changes = changes();
+        tracked.start_tracked_changes(&changes).unwrap();
+        edit(&mut tracked);
+        let session = tracked.stop_tracked_changes().unwrap();
+        let ids = session.revision_ids(&tracked).unwrap();
+        let mut written = tracked
+            .story_revisions()
+            .unwrap()
+            .into_iter()
+            .filter(|revision| ids.contains(&revision.id()))
+            .map(|revision| revision.kind())
+            .collect::<Vec<_>>();
+        written.sort_by_key(|kind| format!("{kind:?}"));
+        let mut expected = kinds.to_vec();
+        expected.sort_by_key(|kind| format!("{kind:?}"));
+        assert_eq!(written, expected, "{shape}");
+        let mut untracked = table();
+        edit(&mut untracked);
+        let mut accepted = reopen(&mut tracked);
+        accepted.accept_all().unwrap();
+        assert_eq!(
+            shown(&mut accepted),
+            shown(&mut untracked),
+            "{shape}: accept all"
+        );
+        let mut rejected = reopen(&mut tracked);
+        rejected.reject_all().unwrap();
+        assert_eq!(shown(&mut rejected), original, "{shape}: reject all");
+    }
+}
+
+/// A section's change rejected keeps its header reference, which its old
+/// value leaves out, first, as the schema orders it.
+#[test]
+fn a_rejected_section_change_keeps_its_references_first() {
+    let mut doc = doc_with_body(&paragraph(&run("Body.")));
+    doc.set_header("Head");
+    let mut doc = reopen(&mut doc);
+    let changes = changes();
+    doc.start_tracked_changes(&changes).unwrap();
+    let before = doc.section_properties_before_edit(0).unwrap();
+    doc.section_mut(0)
+        .unwrap()
+        .set_page_size(
+            oxoffice_docx::Length::twips(15000),
+            oxoffice_docx::Length::twips(15840),
+        )
+        .unwrap();
+    doc.redline_section_edit(0, before).unwrap();
+    doc.stop_tracked_changes().unwrap();
+    let mut rejected = reopen(&mut doc);
+    rejected.reject_all().unwrap();
+    let xml = reopen(&mut rejected)
+        .part_xml("/word/document.xml")
+        .unwrap();
+    let section = &xml[xml.rfind("<w:sectPr").unwrap()..];
+    let first = section[1..]
+        .find("<w:")
+        .map(|at| &section[at + 4..])
+        .unwrap();
+    assert!(first.starts_with("headerReference"), "{section}");
+    assert!(
+        !section.contains("sectPrChange") && !section.contains("15000"),
+        "{section}"
+    );
+}

@@ -662,7 +662,7 @@ fn push_control_rows_mut<'a>(control: &'a mut CT_Sdt, rows: &mut Vec<&'a mut CT_
 }
 
 /// Row `index` of [`table_rows`].
-fn table_row(table: &CT_Tbl, index: usize) -> Option<&CT_Row> {
+pub(crate) fn table_row(table: &CT_Tbl, index: usize) -> Option<&CT_Row> {
     if table.content_controls.is_empty() {
         table.rows.get(index)
     } else {

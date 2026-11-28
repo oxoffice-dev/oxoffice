@@ -7327,3 +7327,48 @@ fn a_google_table_with_a_grid_change_compares_with_a_property_change() {
     let mut redlined = Document::from_bytes(&bytes).unwrap();
     redlined.compare(&edited, AUTHOR, DATE).expect("comparison");
 }
+
+/// A cell given shading compares as a `w:tcPrChange`, as Word writes it, a
+/// row kept together as a `w:trPrChange` (W8), each beside a text change of
+/// its cell, and resolves to either version.
+#[test]
+fn a_cell_or_row_property_change_compares_as_its_change() {
+    let table = |cell: &str, row: &str, text: &str| {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{row}<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{cell}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        ));
+        reopen(&mut doc)
+    };
+    let shading = r#"<w:shd w:val="clear" w:color="auto" w:fill="FF0000"/>"#;
+    let together = "<w:trPr><w:cantSplit/></w:trPr>";
+    let xml = |doc: &mut Document| reopen(doc).part_xml("/word/document.xml").unwrap();
+    for (cell, row, kind, mark) in [
+        (shading, "", RevisionKind::CellPropertyChange, "FF0000"),
+        ("", together, RevisionKind::RowPropertyChange, "cantSplit"),
+    ] {
+        for text in ["cell", "cell changed"] {
+            let edited = table(cell, row, text);
+            let mut redlined = table("", "", "cell");
+            let diagnostics = redlined.compare(&edited, AUTHOR, DATE).unwrap();
+            assert!(diagnostics.is_empty(), "{mark} {text}: {diagnostics:?}");
+            let mut redlined = reopen(&mut redlined);
+            let kinds = redlined
+                .story_revisions()
+                .unwrap()
+                .iter()
+                .map(|revision| revision.kind())
+                .collect::<Vec<_>>();
+            assert!(kinds.contains(&kind), "{mark} {text}: {kinds:?}");
+            let accepted = xml(&mut accepted(&mut redlined));
+            assert!(
+                accepted.contains(mark) && accepted.contains(text),
+                "{accepted}"
+            );
+            let rejected = xml(&mut rejected(&mut redlined));
+            assert!(
+                !rejected.contains(mark) && !rejected.contains("changed"),
+                "{rejected}"
+            );
+        }
+    }
+}
