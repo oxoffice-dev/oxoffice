@@ -69,6 +69,8 @@ fn the_extension_selects_the_class_and_keeps_a_vba_project_macro_enabled() {
         ),
         (&macros, "copy.xlsx", None),
         (&macros, "copy.xltx", None),
+        (&plain, "copy", Some(WorkbookClass::Workbook)),
+        (&plain, "copy.xls.xlsx", Some(WorkbookClass::Workbook)),
     ]
     .into_iter()
     .enumerate()
@@ -81,6 +83,51 @@ fn the_extension_selects_the_class_and_keeps_a_vba_project_macro_enabled() {
             }
             (Err(Error::MacroFreeExtension { .. }), None) => assert!(!path.exists(), "{name}"),
             (result, _) => panic!("{name}: {result:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_extension_that_names_another_format_is_refused_with_the_one_to_use() {
+    let dir = scratch("formats");
+    let plain = Workbook::from_bytes(&corpus_bytes("excel/review.xlsx")).unwrap();
+    let macros = Workbook::from_bytes(&with_macros()).unwrap();
+    for (row, (workbook, name, to_use)) in [
+        (&plain, "copy.xls", ".xlsx"),
+        (&plain, "copy.backup.xls", ".xlsx"),
+        (&plain, "copy.doc", ".xlsx"),
+        (&plain, "copy.html", ".xlsx"),
+        (&plain, "copy.XLSB", ".xlsx"),
+        (&plain, "copy.xlt", ".xltx"),
+        (&plain, "copy.ods", ".xlsx"),
+        (&plain, "copy.csv", ".xlsx"),
+        (&plain, "copy.docx", ".xlsx"),
+        (&plain, "copy.pdf", ".xlsx"),
+        (&macros, "copy.xls", ".xlsm"),
+        (&macros, "copy.xlt", ".xltm"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let path = dir.join(format!("{row}-{name}"));
+        let extension = name.rsplit('.').next().unwrap().to_ascii_lowercase();
+        fs::write(&path, "kept").unwrap();
+        let mut saves = vec![workbook.save(&path)];
+        saves.push(workbook.save_encrypted(&path, "secret"));
+        for result in saves {
+            let Err(error @ Error::OtherFormatExtension { .. }) = result else {
+                panic!("{name}: {result:?}");
+            };
+            let message = error.to_string();
+            assert!(
+                message.contains(&format!(".{extension} ")),
+                "{name}: {message}"
+            );
+            assert!(
+                message.contains(&format!("save it as a {to_use}")),
+                "{name}: {message}"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), "kept", "{name}");
         }
     }
 }

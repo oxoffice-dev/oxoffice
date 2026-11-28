@@ -172,6 +172,16 @@ pub enum Error {
     )]
     MacroFreeExtension { path: PathBuf },
 
+    #[error(
+        "{} cannot be written: the extension .{extension} names another format and a save writes an Open XML workbook, save it as {suggestion}",
+        path.display()
+    )]
+    OtherFormatExtension {
+        path: PathBuf,
+        extension: String,
+        suggestion: &'static str,
+    },
+
     #[error("`{reference}` is not a cell or a range: write B3, A1:C10, A:C or 2:5")]
     InvalidReference { reference: String },
 
