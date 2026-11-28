@@ -1710,7 +1710,7 @@ fn rewritten(doc: &mut Document, edit: impl Fn(&str, String) -> String) -> Docum
 #[test]
 fn new_comments_and_replies_carry_the_metadata_word_writes() {
     type Row = (&'static str, fn() -> Document, &'static str, &'static str);
-    let rows: [Row; 10] = [
+    let rows: [Row; 11] = [
         (
             "a comment has a durable id",
             || commented().0,
@@ -1811,6 +1811,28 @@ fn new_comments_and_replies_carry_the_metadata_word_writes() {
             ),
         ),
         (
+            "a parent named by a first paragraph is resolved with its reply",
+            || {
+                let mut doc = doc_with(&["Hello brave world"]);
+                doc.add_comment_on_text(
+                    "brave",
+                    "Ann",
+                    "first\nlast",
+                    TextCommentOptions::default(),
+                )
+                .unwrap();
+                doc.reply_to(0, "Ben", "reply").unwrap();
+                // An older producer names the parent's first paragraph.
+                let mut doc = rewritten(&mut doc, |_, xml| {
+                    xml.replace(r#"paraIdParent="00000002""#, r#"paraIdParent="00000001""#)
+                });
+                doc.resolve_comment(1, true).unwrap();
+                doc
+            },
+            "word/commentsExtended.xml",
+            r#"<w15:commentEx w15:paraId="00000002" w15:done="1"/>"#,
+        ),
+        (
             "ids stay within MS-DOCX bounds",
             || {
                 // Word's highest paragraph id and durable id taken.
@@ -1850,6 +1872,51 @@ fn new_comments_and_replies_carry_the_metadata_word_writes() {
     );
 }
 
+/// A part beside the comments that does not read, or two of a kind, takes
+/// no entry: the comment is added all the same. (A reply reads the thread
+/// links, which such a part leaves unproved, and is refused.)
+#[test]
+fn a_comment_beside_an_unreadable_metadata_part_is_added_without_its_entries() {
+    let (mut doc, _) = commented();
+    let mut broken = rewritten(&mut doc, |name, xml| match name {
+        "/word/commentsIds.xml" => xml.replace("w16cid:commentsIds", "w16cid:other"),
+        _ => xml,
+    });
+    let added = ann_comments(&mut broken, CommentDate::Undated);
+    assert_eq!(comment(&broken, added).durable_id(), None);
+    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
+    package.get_or_create_part_rels("/word/document.xml").add(
+        "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible",
+        "commentsExtensible.xml",
+    );
+    let mut out = Cursor::new(Vec::new());
+    package.write_to(&mut out).unwrap();
+    let mut twice = Document::from_bytes(&out.into_inner()).unwrap();
+    ann_comments(&mut twice, CommentDate::Undated);
+}
+
+/// A reply resolved, then removed, on the files Word and Google Docs saved:
+/// each stays valid, and the parts a session made and emptied go.
+#[test]
+fn a_reply_resolved_and_removed_leaves_word_and_google_files_valid() {
+    for producer in ["word", "google"] {
+        let mut doc = crate::support::corpus_doc(&format!("{producer}/report.docx"));
+        let parts = |doc: &mut Document| {
+            crate::support::package_parts(&doc.to_bytes().unwrap())
+                .into_keys()
+                .collect::<Vec<_>>()
+        };
+        let before = parts(&mut doc);
+        let root = doc.comments()[0].id();
+        let reply = doc.reply_to(root, "Ben", "agreed").unwrap();
+        doc.resolve_comment(reply, true).unwrap();
+        assert!(doc.validate().unwrap().is_valid(), "{producer}: resolved");
+        assert!(doc.remove_comment(reply).unwrap());
+        assert!(doc.validate().unwrap().is_valid(), "{producer}: removed");
+        assert_eq!(parts(&mut doc), before, "{producer}");
+    }
+}
+
 #[test]
 fn a_comment_reads_back_its_durable_id_and_utc_date() {
     let (mut doc, root) = commented();
@@ -1870,4 +1937,10 @@ fn a_comment_reads_back_its_durable_id_and_utc_date() {
         Some("00000002")
     );
     assert_eq!(comment(&doc, undated).date_utc(), None);
+    let metadata = doc.comment_metadata();
+    assert_eq!(
+        metadata[&root].date_utc.as_deref(),
+        Some("2026-11-27T17:52:00Z")
+    );
+    assert_eq!(metadata[&undated].durable_id.as_deref(), Some("00000002"));
 }

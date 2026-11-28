@@ -925,24 +925,56 @@ impl CommentRef<'_> {
 
     /// The durable id Word keeps for the comment in `commentsIds.xml`, eight
     /// hexadecimal digits keyed by its last paragraph; `None` when the file
-    /// holds none for it.
+    /// holds none for it. It reads that part: for many comments,
+    /// [`Document::comment_metadata`] reads it once.
     pub fn durable_id(&self) -> Option<String> {
-        let para_id = last_para_id(self.inner)?;
         self.document
-            .comment_companion_value(&COMMENT_IDS, "paraId", para_id, "durableId")
+            .comment_metadata_lookup()
+            .of(self.inner)
+            .durable_id
     }
 
     /// The comment's instant in UTC, as Word writes it in
     /// `commentsExtensible.xml` beside the local time of [`Self::date`];
-    /// `None` when the file holds none for it.
+    /// `None` when the file holds none for it. As [`Self::durable_id`], it
+    /// reads the parts.
     pub fn date_utc(&self) -> Option<String> {
-        let durable_id = self.durable_id()?;
-        self.document.comment_companion_value(
-            &COMMENT_EXTENSIBLE,
-            "durableId",
-            &durable_id,
-            "dateUtc",
-        )
+        self.document
+            .comment_metadata_lookup()
+            .of(self.inner)
+            .date_utc
+    }
+}
+
+/// What Word keeps beside a comment, in the parts next to `comments.xml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommentMetadata {
+    /// Its durable id, eight hexadecimal digits (`commentsIds.xml`).
+    pub durable_id: Option<String>,
+    /// Its instant in UTC (`commentsExtensible.xml`).
+    pub date_utc: Option<String>,
+}
+
+/// The durable ids by paragraph id, and the UTC dates by durable id, both
+/// keys in upper case: an unreadable part reads as empty.
+struct CommentMetadataLookup {
+    durable_ids: HashMap<String, String>,
+    dates: HashMap<String, String>,
+}
+
+impl CommentMetadataLookup {
+    fn of(&self, comment: &CT_Comment) -> CommentMetadata {
+        let durable_id = last_para_id(comment)
+            .and_then(|para_id| self.durable_ids.get(&para_id.to_ascii_uppercase()))
+            .cloned();
+        let date_utc = durable_id
+            .as_ref()
+            .and_then(|durable_id| self.dates.get(&durable_id.to_ascii_uppercase()))
+            .cloned();
+        CommentMetadata {
+            durable_id,
+            date_utc,
+        }
     }
 }
 
@@ -2362,25 +2394,34 @@ impl Document {
         Ok(Some((part, entries)))
     }
 
-    /// Attribute `wanted` of the entry of `companion` whose `key` is `value`.
-    fn comment_companion_value(
-        &self,
-        companion: &Companion,
-        key: &str,
-        value: &str,
-        wanted: &str,
-    ) -> Option<String> {
-        let (_, entries) = self.comment_companion(companion).ok()??;
-        entries
-            .into_iter()
-            .find(|entry| {
-                entry
-                    .attributes
-                    .get(key)
-                    .is_some_and(|found| found.eq_ignore_ascii_case(value))
-            })?
-            .attributes
-            .remove(wanted)
+    /// The durable id and UTC date of every comment, by id, each part read
+    /// once; a comment the parts hold nothing for is absent.
+    pub fn comment_metadata(&self) -> HashMap<i32, CommentMetadata> {
+        let lookup = self.comment_metadata_lookup();
+        self.comments
+            .iter()
+            .flat_map(|comments| &comments.comments)
+            .map(|comment| (comment.id, lookup.of(comment)))
+            .filter(|(_, metadata)| metadata != &CommentMetadata::default())
+            .collect()
+    }
+
+    fn comment_metadata_lookup(&self) -> CommentMetadataLookup {
+        let map = |companion: &Companion, key: &str, value: &str| {
+            let entries = self.comment_companion(companion).ok().flatten();
+            entries
+                .into_iter()
+                .flat_map(|(_, entries)| entries)
+                .filter_map(|mut entry| {
+                    let key = entry.attributes.remove(key)?.to_ascii_uppercase();
+                    Some((key, entry.attributes.remove(value)?))
+                })
+                .collect()
+        };
+        CommentMetadataLookup {
+            durable_ids: map(&COMMENT_IDS, "paraId", "durableId"),
+            dates: map(&COMMENT_EXTENSIBLE, "durableId", "dateUtc"),
+        }
     }
 
     /// Write what Word keeps beside a new comment or reply whose last
@@ -2394,8 +2435,15 @@ impl Document {
         author: &str,
         date: Option<&str>,
     ) -> Result<()> {
-        let ids = self.comment_companion(&COMMENT_IDS)?;
-        let extensible = self.comment_companion(&COMMENT_EXTENSIBLE)?;
+        // Parts that do not read, or two of a kind, take no entry: the
+        // comment needs none, and Word gives it one on its next save.
+        let (Ok(ids), Ok(extensible), Ok(people)) = (
+            self.comment_companion(&COMMENT_IDS),
+            self.comment_companion(&COMMENT_EXTENSIBLE),
+            self.comment_companion(&PEOPLE),
+        ) else {
+            return Ok(());
+        };
         let mut occupied = ids
             .iter()
             .chain(&extensible)
@@ -2426,7 +2474,7 @@ impl Document {
                 )
             },
         )?;
-        if let Some((part, people)) = self.comment_companion(&PEOPLE)?
+        if let Some((part, people)) = people
             && !people
                 .iter()
                 .any(|person| person.attributes.get("author").map(String::as_str) == Some(author))
@@ -2788,7 +2836,7 @@ impl Document {
         }
         // Threads are flat: a reply to a reply names the thread's root, as
         // Word rewrites it (W11), and takes the thread's state (W10).
-        let root_para_id = thread_root_para_id(extended, &parent_para_id);
+        let root_para_id = thread_root_para_id(self.comments.as_ref(), extended, &parent_para_id);
         let done = extended
             .comments
             .iter()
@@ -2932,7 +2980,7 @@ impl Document {
             .comments_extended
             .as_mut()
             .expect("model was initialized");
-        let root_para_id = thread_root_para_id(extended, &para_id);
+        let root_para_id = thread_root_para_id(self.comments.as_ref(), extended, &para_id);
         if extended
             .comments
             .iter()
@@ -2949,7 +2997,10 @@ impl Document {
         let thread = extended
             .comments
             .iter()
-            .map(|entry| thread_root_para_id(extended, &entry.para_id) == root_para_id)
+            .map(|entry| {
+                thread_root_para_id(self.comments.as_ref(), extended, &entry.para_id)
+                    == root_para_id
+            })
             .collect::<Vec<_>>();
         for (entry, in_thread) in extended.comments.iter_mut().zip(thread) {
             if in_thread {
@@ -3040,7 +3091,40 @@ impl Document {
         if comments.iter().all(|comment| ids.contains(&comment.id())) {
             return Ok(None);
         }
+        // A removal that empties a metadata part this session made: the
+        // staged route removes the part.
+        let removed = comments
+            .iter()
+            .filter(|comment| ids.contains(&comment.id()))
+            .filter_map(|comment| last_para_id(comment.inner))
+            .map(str::to_ascii_uppercase)
+            .collect::<HashSet<_>>();
         drop(comments);
+        let mut removed_durable = HashSet::new();
+        for (companion, key) in [(&COMMENT_IDS, "paraId"), (&COMMENT_EXTENSIBLE, "durableId")] {
+            let Ok(Some((part, entries))) = self.comment_companion(companion) else {
+                continue;
+            };
+            let gone = |value: &String| match key {
+                "paraId" => removed.contains(&value.to_ascii_uppercase()),
+                _ => removed_durable.contains(&value.to_ascii_uppercase()),
+            };
+            if !entries.is_empty()
+                && !self.identifiers.part_is_preserved(&part)
+                && entries
+                    .iter()
+                    .all(|entry| entry.attributes.get(key).is_some_and(gone))
+            {
+                return Ok(None);
+            }
+            let durable = entries
+                .iter()
+                .filter(|entry| entry.attributes.get("paraId").is_some_and(gone))
+                .filter_map(|entry| entry.attributes.get("durableId"))
+                .map(|value| value.to_ascii_uppercase())
+                .collect::<Vec<_>>();
+            removed_durable.extend(durable);
+        }
         let hits = self.body_slots_referencing_comments(&ids);
         if hits.is_empty() {
             return Ok(None);
@@ -3106,6 +3190,19 @@ impl Document {
             .chain([crate::EditUnit::Comments, crate::EditUnit::Parts])
             .collect::<Vec<_>>();
         self.edit_in_place_with_body_blocks(&units, blocks, |document| {
+            // The thread entries as the model holds them, which the staged
+            // route flushes first: a reply's entry may not be written yet.
+            if let (Some(model), Some(part)) = (
+                &document.comments_extended,
+                document.comments_extended_part_name.as_deref(),
+            ) && document
+                .package
+                .get_part(part)
+                .is_some_and(|xml| CT_CommentsEx::from_xml(xml).ok().as_ref() != Some(model))
+            {
+                let xml = model.to_xml()?;
+                document.package.set_part(part, xml);
+            }
             let owner = document.doc_part_name.clone();
             document.remove_comment_ids_with(&owner, &ids, Some(&main))
         })?;
@@ -3245,14 +3342,14 @@ impl Document {
             }
             self.comments = None;
             self.comments_owned = false;
-            // The durable ids and UTC dates parts this session made with it.
-            for companion in [&COMMENT_IDS, &COMMENT_EXTENSIBLE] {
-                if let Ok(Some((part, entries))) = self.comment_companion(companion)
-                    && entries.is_empty()
-                    && !self.identifiers.part_is_preserved(&part)
-                {
-                    remove_owned_part(self, &part, companion.relationship);
-                }
+        }
+        // The durable ids and UTC dates parts this session made, left empty.
+        for companion in [&COMMENT_IDS, &COMMENT_EXTENSIBLE] {
+            if let Ok(Some((part, entries))) = self.comment_companion(companion)
+                && entries.is_empty()
+                && !self.identifiers.part_is_preserved(&part)
+            {
+                remove_owned_part(self, &part, companion.relationship);
             }
         }
         if self.comments_extended.as_ref().is_some_and(|extended| {
@@ -3858,8 +3955,24 @@ fn take_paragraph<'a>(paragraph: &'a CT_P, remaining: &mut usize) -> Option<&'a 
     }
 }
 
-fn thread_root_para_id(extended: &CT_CommentsEx, para_id: &str) -> String {
-    let mut current = para_id.to_owned();
+/// The last paragraph id of the thread root of the comment whose paragraph
+/// is `para_id`. A parent link may name any paragraph of the parent, as
+/// older producers wrote: it is read as the parent's last paragraph.
+fn thread_root_para_id(
+    comments: Option<&CT_Comments>,
+    extended: &CT_CommentsEx,
+    para_id: &str,
+) -> String {
+    let last = |para_id: &str| {
+        comments
+            .into_iter()
+            .flat_map(|comments| &comments.comments)
+            .find(|comment| para_ids(comment).any(|id| id == para_id))
+            .and_then(last_para_id)
+            .unwrap_or(para_id)
+            .to_owned()
+    };
+    let mut current = last(para_id);
     let mut seen = HashSet::new();
     while seen.insert(current.clone()) {
         let Some(parent) = extended
@@ -3870,7 +3983,7 @@ fn thread_root_para_id(extended: &CT_CommentsEx, para_id: &str) -> String {
         else {
             break;
         };
-        current.clone_from(parent);
+        current = last(parent);
     }
     current
 }

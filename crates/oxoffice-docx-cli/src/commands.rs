@@ -1796,6 +1796,7 @@ fn comment_position_json(
 pub fn comment_list(file: &Path, json_output: bool) -> Result<()> {
     let doc = Document::open(file)?;
     let comments = doc.comments();
+    let metadata = doc.comment_metadata();
     let mut anchors = if json_output {
         doc.comment_anchor_snapshot_results()?
     } else {
@@ -1838,11 +1839,12 @@ pub fn comment_list(file: &Path, json_output: bool) -> Result<()> {
             } else {
                 (None, None, None)
             };
+            let metadata = metadata.get(&comment.id()).cloned().unwrap_or_default();
             Ok(json!({
                 "id": comment.id(), "author": comment.author(), "initials": comment.initials(),
                 "date": comment.date(), "text": comment.text(), "parent_id": comment.parent_id(),
-                "resolved": comment.resolved() == Some(true), "durable_id": comment.durable_id(),
-                "date_utc": comment.date_utc(), "anchor_text": anchor_text, "anchor": anchor,
+                "resolved": comment.resolved() == Some(true), "durable_id": metadata.durable_id,
+                "date_utc": metadata.date_utc, "anchor_text": anchor_text, "anchor": anchor,
                 "anchor_issue": anchor_issue,
             }))
         })
