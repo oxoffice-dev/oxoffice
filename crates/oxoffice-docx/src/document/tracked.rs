@@ -860,7 +860,8 @@ impl Document {
 
     /// [`Self::mark_story_insertion`] on the live document, for a story
     /// [`Self::marks_story_insertion_in_place`] takes: its part is written
-    /// again, at the cost of that part, and a refusal leaves it as it was.
+    /// again, at the cost of that part. A refusal, before or after the ids
+    /// are taken, leaves the document and its free ids as they were.
     /// `location` names the story as it is after the insertion.
     #[doc(hidden)]
     pub fn mark_story_insertion_in_place(
@@ -899,7 +900,8 @@ impl Document {
 
     /// Write each block of `marks`, in `story`, in place of the block it
     /// names, as [`Self::replace_story_content`] writes it, in one write of
-    /// the story's part.
+    /// the story's part. It may refuse once the marks hold their ids: the
+    /// in-place edit around it gives them back with the rest.
     fn write_story_marks(
         &mut self,
         story: &StoryId,
@@ -937,8 +939,8 @@ impl Document {
 
     /// The blocks `count` from `location`, in a story other than the body,
     /// and the mark before them, each written as inserted with its ids, and
-    /// where it goes: what [`Self::mark_story_insertion`] writes. Every
-    /// refusal comes before any id is taken.
+    /// where it goes: what [`Self::mark_story_insertion`] writes. Its
+    /// refusals come before it takes an id.
     fn story_insertion_marks(
         &mut self,
         location: &ContentLocation,
