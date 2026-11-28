@@ -1,9 +1,0 @@
-{
-  "id": "xlsx-date-names-language",
-  "format": "xlsx",
-  "area": "displayed text",
-  "title": "A date or time format tagged with a language other than English, French, German, Spanish, Italian, Portuguese or Dutch shows English names",
-  "symptom": "a number format code that asks for the language of its tag (`[$-411]dddd` Japanese, `[$-419]mmmm` Russian, `[$-41F]h AM/PM` Turkish) makes Excel show the month names, day names and day period of that language; `oxoffice-numfmt` formats it with English names (`NumberFormat::format_number` gives `Wednesday`, `September`, `PM`, and `shows_unknown_names()` is true), and a chart label or axis of a Word or PowerPoint file with such a code shows its value as General, with the diagnostic \"number format ... is not supported and its labels use General\"; the displayed text, Markdown and CSV of a workbook (the xlsx read, to come) will show the English names. The seven languages above show Excel's own names for the regions Excel for Mac was asked for, and those of the language's most widespread region for the others (their short names and day period can differ). Not fixed now because a table is not enough: each language needs rules of its own probed in Excel, one round per language and region (Japanese, Chinese and Korean write `水曜日`, `9月` and `九月`, Arabic its own script; whether a month name changes form next to a day number, as in Russian and Polish, and what the day period is in the morning, were not asked)",
-  "workaround": "for a chart, change the number format to a date code with no month or day name (`dd/mm/yyyy`); for the displayed text, use the cell's value (its date or its serial number) and format it with the language's own conventions",
-  "issue": 707
-}

@@ -1079,24 +1079,24 @@ r4t-15	[$-nl]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	wo|woensdag|sep|s
 r4t-16	[$-en-GB]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Wed|Wednesday|Sep|September|S		
 r4t-17	[$-en-US]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Wed|Wednesday|Sep|September|S		
 r4t-18	[$-en]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Wed|Wednesday|Sep|September|S		
-r4o-01	[$-411]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	水|水曜日|9月|9月|9	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
-r4o-02	[$-411]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 午後|午後|午後|午後	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
-r4o-03	[$-804]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	周三|星期三|9月|九月|九	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
-r4o-04	[$-804]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 下午|下午|下午|下午	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
-r4o-05	[$-412]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	수|수요일|9월|9월|9	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
-r4o-06	[$-412]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 오후|오후|오후|오후	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
-r4o-07	[$-419]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Ср|среда|сент.|сентябрь|с	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-01	[$-411]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	水|水曜日|9月|9月|9		
+r4o-02	[$-411]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 午後|午後|午後|午後		
+r4o-03	[$-804]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	周三|星期三|9月|九月|九		
+r4o-04	[$-804]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 下午|下午|下午|下午		
+r4o-05	[$-412]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	수|수요일|9월|9월|9		
+r4o-06	[$-412]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 오후|오후|오후|오후		
+r4o-07	[$-419]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Ср|среда|сент.|сентябрь|с		
 r4o-08	[$-419]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
-r4o-09	[$-415]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	śr.|środa|wrz|wrzesień|w	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
+r4o-09	[$-415]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	śr.|środa|wrz|wrzesień|w		
 r4o-10	[$-415]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 PM|PM|PM|PM		
-r4o-11	[$-41D]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	ons|onsdag|sep.|september|s	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
-r4o-12	[$-41D]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 em|em|em|em	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
-r4o-13	[$-41F]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Çar|Çarşamba|Eyl|Eylül|E	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
-r4o-14	[$-41F]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 ÖS|ÖS|ÖS|ÖS	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
-r4o-15	[$-403]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	dc|dimecres|set.|setembre|s	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
-r4o-16	[$-403]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 p. m.|p. m.|p. m.|p. m.	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
-r4o-17	[$-401]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س	Wed|Wednesday|Sep|September|S	a language this crate has no names for: English names and AM/PM
-r4o-18	[$-401]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 م|م|م|م	5 PM|PM|PM|PM	a language this crate has no names for: English names and AM/PM
+r4o-11	[$-41D]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	ons|onsdag|sep.|september|s		
+r4o-12	[$-41D]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 em|em|em|em		
+r4o-13	[$-41F]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	Çar|Çarşamba|Eyl|Eylül|E		
+r4o-14	[$-41F]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 ÖS|ÖS|ÖS|ÖS		
+r4o-15	[$-403]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	dc|dimecres|set.|setembre|s		
+r4o-16	[$-403]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 p. m.|p. m.|p. m.|p. m.		
+r4o-17	[$-401]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm	45539	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س		
+r4o-18	[$-401]h AM/PM"|"am/pm"|"A/P"|"a/p	45306.7119097222	1900	number	5 م|م|م|م		
 r4s-01	dddd d mmmm[$-40C]	45306	1900	number	lundi 15 janvier		
 r4s-02	[$-40C][$-407]mmmm	45306	1900	number	45306		
 r4s-03	[$-407][$-40C]mmmm	45306	1900	number	45306		
@@ -1345,3 +1345,1461 @@ r5s-06	[<40000][$-407]mmmm;[>=40000][$-40C]mmmm	45306	1900	number	Januar
 r5s-07	[<40000][$-407]mmmm;[>=40000][$-40C]mmmm	30000	1900	number	Februar		
 r5s-08	[$-40C]d mmmm yyyy;@	45306	1900	number	15 janvier 2024		
 r5s-09	[$-40C]d mmmm yyyy;@	abc	1900	text	abc		
+r6m-411-01	[$-411]mmm"|"mmmm"|"mmmmm	45306	1900	number	1月|1月|1		
+r6m-411-02	[$-411]mmm"|"mmmm"|"mmmmm	45337	1900	number	2月|2月|2		
+r6m-411-03	[$-411]mmm"|"mmmm"|"mmmmm	45366	1900	number	3月|3月|3		
+r6m-411-04	[$-411]mmm"|"mmmm"|"mmmmm	45397	1900	number	4月|4月|4		
+r6m-411-05	[$-411]mmm"|"mmmm"|"mmmmm	45427	1900	number	5月|5月|5		
+r6m-411-06	[$-411]mmm"|"mmmm"|"mmmmm	45458	1900	number	6月|6月|6		
+r6m-411-07	[$-411]mmm"|"mmmm"|"mmmmm	45488	1900	number	7月|7月|7		
+r6m-411-08	[$-411]mmm"|"mmmm"|"mmmmm	45519	1900	number	8月|8月|8		
+r6m-411-09	[$-411]mmm"|"mmmm"|"mmmmm	45550	1900	number	9月|9月|9		
+r6m-411-10	[$-411]mmm"|"mmmm"|"mmmmm	45580	1900	number	10月|10月|1		
+r6m-411-11	[$-411]mmm"|"mmmm"|"mmmmm	45611	1900	number	11月|11月|1		
+r6m-411-12	[$-411]mmm"|"mmmm"|"mmmmm	45641	1900	number	12月|12月|1		
+r6d-411-01	[$-411]ddd"|"dddd	45305	1900	number	日|日曜日		
+r6d-411-02	[$-411]ddd"|"dddd	45306	1900	number	月|月曜日		
+r6d-411-03	[$-411]ddd"|"dddd	45307	1900	number	火|火曜日		
+r6d-411-04	[$-411]ddd"|"dddd	45308	1900	number	水|水曜日		
+r6d-411-05	[$-411]ddd"|"dddd	45309	1900	number	木|木曜日		
+r6d-411-06	[$-411]ddd"|"dddd	45310	1900	number	金|金曜日		
+r6d-411-07	[$-411]ddd"|"dddd	45311	1900	number	土|土曜日		
+r6p-411-01	[$-411]h AM/PM	45306.2145833333	1900	number	5 午前		
+r6p-411-02	[$-411]h AM/PM	45306.7119097222	1900	number	5 午後		
+r6p-411-03	[$-411]h am/pm	45306.2145833333	1900	number	5 午前		
+r6p-411-04	[$-411]h am/pm	45306.7119097222	1900	number	5 午後		
+r6p-411-05	[$-411]h A/P	45306.2145833333	1900	number	5 午前		
+r6p-411-06	[$-411]h A/P	45306.7119097222	1900	number	5 午後		
+r6p-411-07	[$-411]h a/p	45306.2145833333	1900	number	5 午前		
+r6p-411-08	[$-411]h a/p	45306.7119097222	1900	number	5 午後		
+r6p-411-09	[$-411]h AM/PM	45306.0208333333	1900	number	12 午前		
+r6p-411-10	[$-411]h AM/PM	45306.5208333333	1900	number	12 午後		
+r6m-804-01	[$-804]mmm"|"mmmm"|"mmmmm	45306	1900	number	1月|一月|一		
+r6m-804-02	[$-804]mmm"|"mmmm"|"mmmmm	45337	1900	number	2月|二月|二		
+r6m-804-03	[$-804]mmm"|"mmmm"|"mmmmm	45366	1900	number	3月|三月|三		
+r6m-804-04	[$-804]mmm"|"mmmm"|"mmmmm	45397	1900	number	4月|四月|四		
+r6m-804-05	[$-804]mmm"|"mmmm"|"mmmmm	45427	1900	number	5月|五月|五		
+r6m-804-06	[$-804]mmm"|"mmmm"|"mmmmm	45458	1900	number	6月|六月|六		
+r6m-804-07	[$-804]mmm"|"mmmm"|"mmmmm	45488	1900	number	7月|七月|七		
+r6m-804-08	[$-804]mmm"|"mmmm"|"mmmmm	45519	1900	number	8月|八月|八		
+r6m-804-09	[$-804]mmm"|"mmmm"|"mmmmm	45550	1900	number	9月|九月|九		
+r6m-804-10	[$-804]mmm"|"mmmm"|"mmmmm	45580	1900	number	10月|十月|十		
+r6m-804-11	[$-804]mmm"|"mmmm"|"mmmmm	45611	1900	number	11月|十一月|十		
+r6m-804-12	[$-804]mmm"|"mmmm"|"mmmmm	45641	1900	number	12月|十二月|十		
+r6d-804-01	[$-804]ddd"|"dddd	45305	1900	number	周日|星期日		
+r6d-804-02	[$-804]ddd"|"dddd	45306	1900	number	周一|星期一		
+r6d-804-03	[$-804]ddd"|"dddd	45307	1900	number	周二|星期二		
+r6d-804-04	[$-804]ddd"|"dddd	45308	1900	number	周三|星期三		
+r6d-804-05	[$-804]ddd"|"dddd	45309	1900	number	周四|星期四		
+r6d-804-06	[$-804]ddd"|"dddd	45310	1900	number	周五|星期五		
+r6d-804-07	[$-804]ddd"|"dddd	45311	1900	number	周六|星期六		
+r6p-804-01	[$-804]h AM/PM	45306.2145833333	1900	number	5 上午		
+r6p-804-02	[$-804]h AM/PM	45306.7119097222	1900	number	5 下午		
+r6m-404-01	[$-404]mmm"|"mmmm"|"mmmmm	45306	1900	number	1月|1月|1		
+r6m-404-02	[$-404]mmm"|"mmmm"|"mmmmm	45337	1900	number	2月|2月|2		
+r6m-404-03	[$-404]mmm"|"mmmm"|"mmmmm	45366	1900	number	3月|3月|3		
+r6m-404-04	[$-404]mmm"|"mmmm"|"mmmmm	45397	1900	number	4月|4月|4		
+r6m-404-05	[$-404]mmm"|"mmmm"|"mmmmm	45427	1900	number	5月|5月|5		
+r6m-404-06	[$-404]mmm"|"mmmm"|"mmmmm	45458	1900	number	6月|6月|6		
+r6m-404-07	[$-404]mmm"|"mmmm"|"mmmmm	45488	1900	number	7月|7月|7		
+r6m-404-08	[$-404]mmm"|"mmmm"|"mmmmm	45519	1900	number	8月|8月|8		
+r6m-404-09	[$-404]mmm"|"mmmm"|"mmmmm	45550	1900	number	9月|9月|9		
+r6m-404-10	[$-404]mmm"|"mmmm"|"mmmmm	45580	1900	number	10月|10月|1		
+r6m-404-11	[$-404]mmm"|"mmmm"|"mmmmm	45611	1900	number	11月|11月|1		
+r6m-404-12	[$-404]mmm"|"mmmm"|"mmmmm	45641	1900	number	12月|12月|1		
+r6d-404-01	[$-404]ddd"|"dddd	45305	1900	number	週日|星期日		
+r6d-404-02	[$-404]ddd"|"dddd	45306	1900	number	週一|星期一		
+r6d-404-03	[$-404]ddd"|"dddd	45307	1900	number	週二|星期二		
+r6d-404-04	[$-404]ddd"|"dddd	45308	1900	number	週三|星期三		
+r6d-404-05	[$-404]ddd"|"dddd	45309	1900	number	週四|星期四		
+r6d-404-06	[$-404]ddd"|"dddd	45310	1900	number	週五|星期五		
+r6d-404-07	[$-404]ddd"|"dddd	45311	1900	number	週六|星期六		
+r6p-404-01	[$-404]h AM/PM	45306.2145833333	1900	number	5 上午		
+r6p-404-02	[$-404]h AM/PM	45306.7119097222	1900	number	5 下午		
+r6m-C04-01	[$-C04]mmm"|"mmmm"|"mmmmm	45306	1900	number	一月|一月|一		
+r6m-C04-02	[$-C04]mmm"|"mmmm"|"mmmmm	45337	1900	number	二月|二月|二		
+r6m-C04-03	[$-C04]mmm"|"mmmm"|"mmmmm	45366	1900	number	三月|三月|三		
+r6m-C04-04	[$-C04]mmm"|"mmmm"|"mmmmm	45397	1900	number	四月|四月|四		
+r6m-C04-05	[$-C04]mmm"|"mmmm"|"mmmmm	45427	1900	number	五月|五月|五		
+r6m-C04-06	[$-C04]mmm"|"mmmm"|"mmmmm	45458	1900	number	六月|六月|六		
+r6m-C04-07	[$-C04]mmm"|"mmmm"|"mmmmm	45488	1900	number	七月|七月|七		
+r6m-C04-08	[$-C04]mmm"|"mmmm"|"mmmmm	45519	1900	number	八月|八月|八		
+r6m-C04-09	[$-C04]mmm"|"mmmm"|"mmmmm	45550	1900	number	九月|九月|九		
+r6m-C04-10	[$-C04]mmm"|"mmmm"|"mmmmm	45580	1900	number	十月|十月|十		
+r6m-C04-11	[$-C04]mmm"|"mmmm"|"mmmmm	45611	1900	number	十一月|十一月|十		
+r6m-C04-12	[$-C04]mmm"|"mmmm"|"mmmmm	45641	1900	number	十二月|十二月|十		
+r6d-C04-01	[$-C04]ddd"|"dddd	45305	1900	number	週日|星期日		
+r6d-C04-02	[$-C04]ddd"|"dddd	45306	1900	number	週一|星期一		
+r6d-C04-03	[$-C04]ddd"|"dddd	45307	1900	number	週二|星期二		
+r6d-C04-04	[$-C04]ddd"|"dddd	45308	1900	number	週三|星期三		
+r6d-C04-05	[$-C04]ddd"|"dddd	45309	1900	number	週四|星期四		
+r6d-C04-06	[$-C04]ddd"|"dddd	45310	1900	number	週五|星期五		
+r6d-C04-07	[$-C04]ddd"|"dddd	45311	1900	number	週六|星期六		
+r6p-C04-01	[$-C04]h AM/PM	45306.2145833333	1900	number	5 上午		
+r6p-C04-02	[$-C04]h AM/PM	45306.7119097222	1900	number	5 下午		
+r6m-1004-01	[$-1004]mmm"|"mmmm"|"mmmmm	45306	1900	number	一月|一月|一		
+r6m-1004-02	[$-1004]mmm"|"mmmm"|"mmmmm	45337	1900	number	二月|二月|二		
+r6m-1004-03	[$-1004]mmm"|"mmmm"|"mmmmm	45366	1900	number	三月|三月|三		
+r6m-1004-04	[$-1004]mmm"|"mmmm"|"mmmmm	45397	1900	number	四月|四月|四		
+r6m-1004-05	[$-1004]mmm"|"mmmm"|"mmmmm	45427	1900	number	五月|五月|五		
+r6m-1004-06	[$-1004]mmm"|"mmmm"|"mmmmm	45458	1900	number	六月|六月|六		
+r6m-1004-07	[$-1004]mmm"|"mmmm"|"mmmmm	45488	1900	number	七月|七月|七		
+r6m-1004-08	[$-1004]mmm"|"mmmm"|"mmmmm	45519	1900	number	八月|八月|八		
+r6m-1004-09	[$-1004]mmm"|"mmmm"|"mmmmm	45550	1900	number	九月|九月|九		
+r6m-1004-10	[$-1004]mmm"|"mmmm"|"mmmmm	45580	1900	number	十月|十月|十		
+r6m-1004-11	[$-1004]mmm"|"mmmm"|"mmmmm	45611	1900	number	十一月|十一月|十		
+r6m-1004-12	[$-1004]mmm"|"mmmm"|"mmmmm	45641	1900	number	十二月|十二月|十		
+r6d-1004-01	[$-1004]ddd"|"dddd	45305	1900	number	周日|星期日		
+r6d-1004-02	[$-1004]ddd"|"dddd	45306	1900	number	周一|星期一		
+r6d-1004-03	[$-1004]ddd"|"dddd	45307	1900	number	周二|星期二		
+r6d-1004-04	[$-1004]ddd"|"dddd	45308	1900	number	周三|星期三		
+r6d-1004-05	[$-1004]ddd"|"dddd	45309	1900	number	周四|星期四		
+r6d-1004-06	[$-1004]ddd"|"dddd	45310	1900	number	周五|星期五		
+r6d-1004-07	[$-1004]ddd"|"dddd	45311	1900	number	周六|星期六		
+r6p-1004-01	[$-1004]h AM/PM	45306.2145833333	1900	number	5 上午		
+r6p-1004-02	[$-1004]h AM/PM	45306.7119097222	1900	number	5 下午		
+r6m-1404-01	[$-1404]mmm"|"mmmm"|"mmmmm	45306	1900	number	1月|1月|1		
+r6m-1404-02	[$-1404]mmm"|"mmmm"|"mmmmm	45337	1900	number	2月|2月|2		
+r6m-1404-03	[$-1404]mmm"|"mmmm"|"mmmmm	45366	1900	number	3月|3月|3		
+r6m-1404-04	[$-1404]mmm"|"mmmm"|"mmmmm	45397	1900	number	4月|4月|4		
+r6m-1404-05	[$-1404]mmm"|"mmmm"|"mmmmm	45427	1900	number	5月|5月|5		
+r6m-1404-06	[$-1404]mmm"|"mmmm"|"mmmmm	45458	1900	number	6月|6月|6		
+r6m-1404-07	[$-1404]mmm"|"mmmm"|"mmmmm	45488	1900	number	7月|7月|7		
+r6m-1404-08	[$-1404]mmm"|"mmmm"|"mmmmm	45519	1900	number	8月|8月|8		
+r6m-1404-09	[$-1404]mmm"|"mmmm"|"mmmmm	45550	1900	number	9月|9月|9		
+r6m-1404-10	[$-1404]mmm"|"mmmm"|"mmmmm	45580	1900	number	10月|10月|1		
+r6m-1404-11	[$-1404]mmm"|"mmmm"|"mmmmm	45611	1900	number	11月|11月|1		
+r6m-1404-12	[$-1404]mmm"|"mmmm"|"mmmmm	45641	1900	number	12月|12月|1		
+r6d-1404-01	[$-1404]ddd"|"dddd	45305	1900	number	週日|星期日		
+r6d-1404-02	[$-1404]ddd"|"dddd	45306	1900	number	週一|星期一		
+r6d-1404-03	[$-1404]ddd"|"dddd	45307	1900	number	週二|星期二		
+r6d-1404-04	[$-1404]ddd"|"dddd	45308	1900	number	週三|星期三		
+r6d-1404-05	[$-1404]ddd"|"dddd	45309	1900	number	週四|星期四		
+r6d-1404-06	[$-1404]ddd"|"dddd	45310	1900	number	週五|星期五		
+r6d-1404-07	[$-1404]ddd"|"dddd	45311	1900	number	週六|星期六		
+r6p-1404-01	[$-1404]h AM/PM	45306.2145833333	1900	number	5 上午		
+r6p-1404-02	[$-1404]h AM/PM	45306.7119097222	1900	number	5 下午		
+r6p-804-03	[$-804]h am/pm	45306.2145833333	1900	number	5 上午		
+r6p-804-04	[$-804]h am/pm	45306.7119097222	1900	number	5 下午		
+r6p-804-05	[$-804]h A/P	45306.2145833333	1900	number	5 上午		
+r6p-804-06	[$-804]h A/P	45306.7119097222	1900	number	5 下午		
+r6p-804-07	[$-804]h a/p	45306.2145833333	1900	number	5 上午		
+r6p-804-08	[$-804]h a/p	45306.7119097222	1900	number	5 下午		
+r6p-804-09	[$-804]h AM/PM	45306.0208333333	1900	number	12 上午		
+r6p-804-10	[$-804]h AM/PM	45306.5208333333	1900	number	12 下午		
+r6m-412-01	[$-412]mmm"|"mmmm"|"mmmmm	45306	1900	number	1월|1월|1		
+r6m-412-02	[$-412]mmm"|"mmmm"|"mmmmm	45337	1900	number	2월|2월|2		
+r6m-412-03	[$-412]mmm"|"mmmm"|"mmmmm	45366	1900	number	3월|3월|3		
+r6m-412-04	[$-412]mmm"|"mmmm"|"mmmmm	45397	1900	number	4월|4월|4		
+r6m-412-05	[$-412]mmm"|"mmmm"|"mmmmm	45427	1900	number	5월|5월|5		
+r6m-412-06	[$-412]mmm"|"mmmm"|"mmmmm	45458	1900	number	6월|6월|6		
+r6m-412-07	[$-412]mmm"|"mmmm"|"mmmmm	45488	1900	number	7월|7월|7		
+r6m-412-08	[$-412]mmm"|"mmmm"|"mmmmm	45519	1900	number	8월|8월|8		
+r6m-412-09	[$-412]mmm"|"mmmm"|"mmmmm	45550	1900	number	9월|9월|9		
+r6m-412-10	[$-412]mmm"|"mmmm"|"mmmmm	45580	1900	number	10월|10월|1		
+r6m-412-11	[$-412]mmm"|"mmmm"|"mmmmm	45611	1900	number	11월|11월|1		
+r6m-412-12	[$-412]mmm"|"mmmm"|"mmmmm	45641	1900	number	12월|12월|1		
+r6d-412-01	[$-412]ddd"|"dddd	45305	1900	number	일|일요일		
+r6d-412-02	[$-412]ddd"|"dddd	45306	1900	number	월|월요일		
+r6d-412-03	[$-412]ddd"|"dddd	45307	1900	number	화|화요일		
+r6d-412-04	[$-412]ddd"|"dddd	45308	1900	number	수|수요일		
+r6d-412-05	[$-412]ddd"|"dddd	45309	1900	number	목|목요일		
+r6d-412-06	[$-412]ddd"|"dddd	45310	1900	number	금|금요일		
+r6d-412-07	[$-412]ddd"|"dddd	45311	1900	number	토|토요일		
+r6p-412-01	[$-412]h AM/PM	45306.2145833333	1900	number	5 오전		
+r6p-412-02	[$-412]h AM/PM	45306.7119097222	1900	number	5 오후		
+r6p-412-03	[$-412]h am/pm	45306.2145833333	1900	number	5 오전		
+r6p-412-04	[$-412]h am/pm	45306.7119097222	1900	number	5 오후		
+r6p-412-05	[$-412]h A/P	45306.2145833333	1900	number	5 오전		
+r6p-412-06	[$-412]h A/P	45306.7119097222	1900	number	5 오후		
+r6p-412-07	[$-412]h a/p	45306.2145833333	1900	number	5 오전		
+r6p-412-08	[$-412]h a/p	45306.7119097222	1900	number	5 오후		
+r6p-412-09	[$-412]h AM/PM	45306.0208333333	1900	number	12 오전		
+r6p-412-10	[$-412]h AM/PM	45306.5208333333	1900	number	12 오후		
+r6m-419-01	[$-419]mmm"|"mmmm"|"mmmmm	45306	1900	number	янв.|январь|я		
+r6m-419-02	[$-419]mmm"|"mmmm"|"mmmmm	45337	1900	number	февр.|февраль|ф		
+r6m-419-03	[$-419]mmm"|"mmmm"|"mmmmm	45366	1900	number	март|март|м		
+r6m-419-04	[$-419]mmm"|"mmmm"|"mmmmm	45397	1900	number	апр.|апрель|а		
+r6m-419-05	[$-419]mmm"|"mmmm"|"mmmmm	45427	1900	number	май|май|м		
+r6m-419-06	[$-419]mmm"|"mmmm"|"mmmmm	45458	1900	number	июнь|июнь|и		
+r6m-419-07	[$-419]mmm"|"mmmm"|"mmmmm	45488	1900	number	июль|июль|и		
+r6m-419-08	[$-419]mmm"|"mmmm"|"mmmmm	45519	1900	number	авг.|август|а		
+r6m-419-09	[$-419]mmm"|"mmmm"|"mmmmm	45550	1900	number	сент.|сентябрь|с		
+r6m-419-10	[$-419]mmm"|"mmmm"|"mmmmm	45580	1900	number	окт.|октябрь|о		
+r6m-419-11	[$-419]mmm"|"mmmm"|"mmmmm	45611	1900	number	нояб.|ноябрь|н		
+r6m-419-12	[$-419]mmm"|"mmmm"|"mmmmm	45641	1900	number	дек.|декабрь|д		
+r6d-419-01	[$-419]ddd"|"dddd	45305	1900	number	Вс|воскресенье		
+r6d-419-02	[$-419]ddd"|"dddd	45306	1900	number	Пн|понедельник		
+r6d-419-03	[$-419]ddd"|"dddd	45307	1900	number	Вт|вторник		
+r6d-419-04	[$-419]ddd"|"dddd	45308	1900	number	Ср|среда		
+r6d-419-05	[$-419]ddd"|"dddd	45309	1900	number	Чт|четверг		
+r6d-419-06	[$-419]ddd"|"dddd	45310	1900	number	Пт|пятница		
+r6d-419-07	[$-419]ddd"|"dddd	45311	1900	number	Сб|суббота		
+r6p-419-01	[$-419]h AM/PM	45306.2145833333	1900	number	5 AM		
+r6p-419-02	[$-419]h AM/PM	45306.7119097222	1900	number	5 PM		
+r6m-819-01	[$-819]mmm"|"mmmm"|"mmmmm	45306	1900	number	янв.|январь|я		
+r6m-819-02	[$-819]mmm"|"mmmm"|"mmmmm	45337	1900	number	февр.|февраль|ф		
+r6m-819-03	[$-819]mmm"|"mmmm"|"mmmmm	45366	1900	number	март|март|м		
+r6m-819-04	[$-819]mmm"|"mmmm"|"mmmmm	45397	1900	number	апр.|апрель|а		
+r6m-819-05	[$-819]mmm"|"mmmm"|"mmmmm	45427	1900	number	май|май|м		
+r6m-819-06	[$-819]mmm"|"mmmm"|"mmmmm	45458	1900	number	июнь|июнь|и		
+r6m-819-07	[$-819]mmm"|"mmmm"|"mmmmm	45488	1900	number	июль|июль|и		
+r6m-819-08	[$-819]mmm"|"mmmm"|"mmmmm	45519	1900	number	авг.|август|а		
+r6m-819-09	[$-819]mmm"|"mmmm"|"mmmmm	45550	1900	number	сент.|сентябрь|с		
+r6m-819-10	[$-819]mmm"|"mmmm"|"mmmmm	45580	1900	number	окт.|октябрь|о		
+r6m-819-11	[$-819]mmm"|"mmmm"|"mmmmm	45611	1900	number	нояб.|ноябрь|н		
+r6m-819-12	[$-819]mmm"|"mmmm"|"mmmmm	45641	1900	number	дек.|декабрь|д		
+r6d-819-01	[$-819]ddd"|"dddd	45305	1900	number	Вс|воскресенье		
+r6d-819-02	[$-819]ddd"|"dddd	45306	1900	number	Пн|понедельник		
+r6d-819-03	[$-819]ddd"|"dddd	45307	1900	number	Вт|вторник		
+r6d-819-04	[$-819]ddd"|"dddd	45308	1900	number	Ср|среда		
+r6d-819-05	[$-819]ddd"|"dddd	45309	1900	number	Чт|четверг		
+r6d-819-06	[$-819]ddd"|"dddd	45310	1900	number	Пт|пятница		
+r6d-819-07	[$-819]ddd"|"dddd	45311	1900	number	Сб|суббота		
+r6p-819-01	[$-819]h AM/PM	45306.2145833333	1900	number	5 AM		
+r6p-819-02	[$-819]h AM/PM	45306.7119097222	1900	number	5 PM		
+r6p-419-03	[$-419]h am/pm	45306.2145833333	1900	number	5 AM		
+r6p-419-04	[$-419]h am/pm	45306.7119097222	1900	number	5 PM		
+r6p-419-05	[$-419]h A/P	45306.2145833333	1900	number	5 AM		
+r6p-419-06	[$-419]h A/P	45306.7119097222	1900	number	5 PM		
+r6p-419-07	[$-419]h a/p	45306.2145833333	1900	number	5 AM		
+r6p-419-08	[$-419]h a/p	45306.7119097222	1900	number	5 PM		
+r6p-419-09	[$-419]h AM/PM	45306.0208333333	1900	number	12 AM		
+r6p-419-10	[$-419]h AM/PM	45306.5208333333	1900	number	12 PM		
+r6m-415-01	[$-415]mmm"|"mmmm"|"mmmmm	45306	1900	number	sty|styczeń|s		
+r6m-415-02	[$-415]mmm"|"mmmm"|"mmmmm	45337	1900	number	lut|luty|l		
+r6m-415-03	[$-415]mmm"|"mmmm"|"mmmmm	45366	1900	number	mar|marzec|m		
+r6m-415-04	[$-415]mmm"|"mmmm"|"mmmmm	45397	1900	number	kwi|kwiecień|k		
+r6m-415-05	[$-415]mmm"|"mmmm"|"mmmmm	45427	1900	number	maj|maj|m		
+r6m-415-06	[$-415]mmm"|"mmmm"|"mmmmm	45458	1900	number	cze|czerwiec|c		
+r6m-415-07	[$-415]mmm"|"mmmm"|"mmmmm	45488	1900	number	lip|lipiec|l		
+r6m-415-08	[$-415]mmm"|"mmmm"|"mmmmm	45519	1900	number	sie|sierpień|s		
+r6m-415-09	[$-415]mmm"|"mmmm"|"mmmmm	45550	1900	number	wrz|wrzesień|w		
+r6m-415-10	[$-415]mmm"|"mmmm"|"mmmmm	45580	1900	number	paź|październik|p		
+r6m-415-11	[$-415]mmm"|"mmmm"|"mmmmm	45611	1900	number	lis|listopad|l		
+r6m-415-12	[$-415]mmm"|"mmmm"|"mmmmm	45641	1900	number	gru|grudzień|g		
+r6d-415-01	[$-415]ddd"|"dddd	45305	1900	number	niedz.|niedziela		
+r6d-415-02	[$-415]ddd"|"dddd	45306	1900	number	pon.|poniedziałek		
+r6d-415-03	[$-415]ddd"|"dddd	45307	1900	number	wt.|wtorek		
+r6d-415-04	[$-415]ddd"|"dddd	45308	1900	number	śr.|środa		
+r6d-415-05	[$-415]ddd"|"dddd	45309	1900	number	czw.|czwartek		
+r6d-415-06	[$-415]ddd"|"dddd	45310	1900	number	pt.|piątek		
+r6d-415-07	[$-415]ddd"|"dddd	45311	1900	number	sob.|sobota		
+r6p-415-01	[$-415]h AM/PM	45306.2145833333	1900	number	5 AM		
+r6p-415-02	[$-415]h AM/PM	45306.7119097222	1900	number	5 PM		
+r6p-415-03	[$-415]h am/pm	45306.2145833333	1900	number	5 AM		
+r6p-415-04	[$-415]h am/pm	45306.7119097222	1900	number	5 PM		
+r6p-415-05	[$-415]h A/P	45306.2145833333	1900	number	5 AM		
+r6p-415-06	[$-415]h A/P	45306.7119097222	1900	number	5 PM		
+r6p-415-07	[$-415]h a/p	45306.2145833333	1900	number	5 AM		
+r6p-415-08	[$-415]h a/p	45306.7119097222	1900	number	5 PM		
+r6p-415-09	[$-415]h AM/PM	45306.0208333333	1900	number	12 AM		
+r6p-415-10	[$-415]h AM/PM	45306.5208333333	1900	number	12 PM		
+r6m-41D-01	[$-41D]mmm"|"mmmm"|"mmmmm	45306	1900	number	jan.|januari|j		
+r6m-41D-02	[$-41D]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb.|februari|f		
+r6m-41D-03	[$-41D]mmm"|"mmmm"|"mmmmm	45366	1900	number	mars|mars|m		
+r6m-41D-04	[$-41D]mmm"|"mmmm"|"mmmmm	45397	1900	number	apr.|april|a		
+r6m-41D-05	[$-41D]mmm"|"mmmm"|"mmmmm	45427	1900	number	maj|maj|m		
+r6m-41D-06	[$-41D]mmm"|"mmmm"|"mmmmm	45458	1900	number	juni|juni|j		
+r6m-41D-07	[$-41D]mmm"|"mmmm"|"mmmmm	45488	1900	number	juli|juli|j		
+r6m-41D-08	[$-41D]mmm"|"mmmm"|"mmmmm	45519	1900	number	aug.|augusti|a		
+r6m-41D-09	[$-41D]mmm"|"mmmm"|"mmmmm	45550	1900	number	sep.|september|s		
+r6m-41D-10	[$-41D]mmm"|"mmmm"|"mmmmm	45580	1900	number	okt.|oktober|o		
+r6m-41D-11	[$-41D]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|november|n		
+r6m-41D-12	[$-41D]mmm"|"mmmm"|"mmmmm	45641	1900	number	dec.|december|d		
+r6d-41D-01	[$-41D]ddd"|"dddd	45305	1900	number	sön|söndag		
+r6d-41D-02	[$-41D]ddd"|"dddd	45306	1900	number	mån|måndag		
+r6d-41D-03	[$-41D]ddd"|"dddd	45307	1900	number	tis|tisdag		
+r6d-41D-04	[$-41D]ddd"|"dddd	45308	1900	number	ons|onsdag		
+r6d-41D-05	[$-41D]ddd"|"dddd	45309	1900	number	tor|torsdag		
+r6d-41D-06	[$-41D]ddd"|"dddd	45310	1900	number	fre|fredag		
+r6d-41D-07	[$-41D]ddd"|"dddd	45311	1900	number	lör|lördag		
+r6p-41D-01	[$-41D]h AM/PM	45306.2145833333	1900	number	5 fm		
+r6p-41D-02	[$-41D]h AM/PM	45306.7119097222	1900	number	5 em		
+r6m-81D-01	[$-81D]mmm"|"mmmm"|"mmmmm	45306	1900	number	jan.|januari|j		
+r6m-81D-02	[$-81D]mmm"|"mmmm"|"mmmmm	45337	1900	number	feb.|februari|f		
+r6m-81D-03	[$-81D]mmm"|"mmmm"|"mmmmm	45366	1900	number	mars|mars|m		
+r6m-81D-04	[$-81D]mmm"|"mmmm"|"mmmmm	45397	1900	number	apr.|april|a		
+r6m-81D-05	[$-81D]mmm"|"mmmm"|"mmmmm	45427	1900	number	maj|maj|m		
+r6m-81D-06	[$-81D]mmm"|"mmmm"|"mmmmm	45458	1900	number	juni|juni|j		
+r6m-81D-07	[$-81D]mmm"|"mmmm"|"mmmmm	45488	1900	number	juli|juli|j		
+r6m-81D-08	[$-81D]mmm"|"mmmm"|"mmmmm	45519	1900	number	aug.|augusti|a		
+r6m-81D-09	[$-81D]mmm"|"mmmm"|"mmmmm	45550	1900	number	sep.|september|s		
+r6m-81D-10	[$-81D]mmm"|"mmmm"|"mmmmm	45580	1900	number	okt.|oktober|o		
+r6m-81D-11	[$-81D]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|november|n		
+r6m-81D-12	[$-81D]mmm"|"mmmm"|"mmmmm	45641	1900	number	dec.|december|d		
+r6d-81D-01	[$-81D]ddd"|"dddd	45305	1900	number	sön|söndag		
+r6d-81D-02	[$-81D]ddd"|"dddd	45306	1900	number	mån|måndag		
+r6d-81D-03	[$-81D]ddd"|"dddd	45307	1900	number	tis|tisdag		
+r6d-81D-04	[$-81D]ddd"|"dddd	45308	1900	number	ons|onsdag		
+r6d-81D-05	[$-81D]ddd"|"dddd	45309	1900	number	tor|torsdag		
+r6d-81D-06	[$-81D]ddd"|"dddd	45310	1900	number	fre|fredag		
+r6d-81D-07	[$-81D]ddd"|"dddd	45311	1900	number	lör|lördag		
+r6p-81D-01	[$-81D]h AM/PM	45306.2145833333	1900	number	5 fm		
+r6p-81D-02	[$-81D]h AM/PM	45306.7119097222	1900	number	5 em		
+r6p-41D-03	[$-41D]h am/pm	45306.2145833333	1900	number	5 fm		
+r6p-41D-04	[$-41D]h am/pm	45306.7119097222	1900	number	5 em		
+r6p-41D-05	[$-41D]h A/P	45306.2145833333	1900	number	5 fm		
+r6p-41D-06	[$-41D]h A/P	45306.7119097222	1900	number	5 em		
+r6p-41D-07	[$-41D]h a/p	45306.2145833333	1900	number	5 fm		
+r6p-41D-08	[$-41D]h a/p	45306.7119097222	1900	number	5 em		
+r6p-41D-09	[$-41D]h AM/PM	45306.0208333333	1900	number	12 fm		
+r6p-41D-10	[$-41D]h AM/PM	45306.5208333333	1900	number	12 em		
+r6m-41F-01	[$-41F]mmm"|"mmmm"|"mmmmm	45306	1900	number	Oca|Ocak|O		
+r6m-41F-02	[$-41F]mmm"|"mmmm"|"mmmmm	45337	1900	number	Şub|Şubat|Ş		
+r6m-41F-03	[$-41F]mmm"|"mmmm"|"mmmmm	45366	1900	number	Mar|Mart|M		
+r6m-41F-04	[$-41F]mmm"|"mmmm"|"mmmmm	45397	1900	number	Nis|Nisan|N		
+r6m-41F-05	[$-41F]mmm"|"mmmm"|"mmmmm	45427	1900	number	May|Mayıs|M		
+r6m-41F-06	[$-41F]mmm"|"mmmm"|"mmmmm	45458	1900	number	Haz|Haziran|H		
+r6m-41F-07	[$-41F]mmm"|"mmmm"|"mmmmm	45488	1900	number	Tem|Temmuz|T		
+r6m-41F-08	[$-41F]mmm"|"mmmm"|"mmmmm	45519	1900	number	Ağu|Ağustos|A		
+r6m-41F-09	[$-41F]mmm"|"mmmm"|"mmmmm	45550	1900	number	Eyl|Eylül|E		
+r6m-41F-10	[$-41F]mmm"|"mmmm"|"mmmmm	45580	1900	number	Eki|Ekim|E		
+r6m-41F-11	[$-41F]mmm"|"mmmm"|"mmmmm	45611	1900	number	Kas|Kasım|K		
+r6m-41F-12	[$-41F]mmm"|"mmmm"|"mmmmm	45641	1900	number	Ara|Aralık|A		
+r6d-41F-01	[$-41F]ddd"|"dddd	45305	1900	number	Paz|Pazar		
+r6d-41F-02	[$-41F]ddd"|"dddd	45306	1900	number	Pzt|Pazartesi		
+r6d-41F-03	[$-41F]ddd"|"dddd	45307	1900	number	Sal|Salı		
+r6d-41F-04	[$-41F]ddd"|"dddd	45308	1900	number	Çar|Çarşamba		
+r6d-41F-05	[$-41F]ddd"|"dddd	45309	1900	number	Per|Perşembe		
+r6d-41F-06	[$-41F]ddd"|"dddd	45310	1900	number	Cum|Cuma		
+r6d-41F-07	[$-41F]ddd"|"dddd	45311	1900	number	Cmt|Cumartesi		
+r6p-41F-01	[$-41F]h AM/PM	45306.2145833333	1900	number	5 ÖÖ		
+r6p-41F-02	[$-41F]h AM/PM	45306.7119097222	1900	number	5 ÖS		
+r6p-41F-03	[$-41F]h am/pm	45306.2145833333	1900	number	5 ÖÖ		
+r6p-41F-04	[$-41F]h am/pm	45306.7119097222	1900	number	5 ÖS		
+r6p-41F-05	[$-41F]h A/P	45306.2145833333	1900	number	5 ÖÖ		
+r6p-41F-06	[$-41F]h A/P	45306.7119097222	1900	number	5 ÖS		
+r6p-41F-07	[$-41F]h a/p	45306.2145833333	1900	number	5 ÖÖ		
+r6p-41F-08	[$-41F]h a/p	45306.7119097222	1900	number	5 ÖS		
+r6p-41F-09	[$-41F]h AM/PM	45306.0208333333	1900	number	12 ÖÖ		
+r6p-41F-10	[$-41F]h AM/PM	45306.5208333333	1900	number	12 ÖS		
+r6m-403-01	[$-403]mmm"|"mmmm"|"mmmmm	45306	1900	number	gen.|gener|g		
+r6m-403-02	[$-403]mmm"|"mmmm"|"mmmmm	45337	1900	number	febr.|febrer|f		
+r6m-403-03	[$-403]mmm"|"mmmm"|"mmmmm	45366	1900	number	març|març|m		
+r6m-403-04	[$-403]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr.|abril|a		
+r6m-403-05	[$-403]mmm"|"mmmm"|"mmmmm	45427	1900	number	maig|maig|m		
+r6m-403-06	[$-403]mmm"|"mmmm"|"mmmmm	45458	1900	number	juny|juny|j		
+r6m-403-07	[$-403]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul.|juliol|j		
+r6m-403-08	[$-403]mmm"|"mmmm"|"mmmmm	45519	1900	number	ag.|agost|a		
+r6m-403-09	[$-403]mmm"|"mmmm"|"mmmmm	45550	1900	number	set.|setembre|s		
+r6m-403-10	[$-403]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octubre|o		
+r6m-403-11	[$-403]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|novembre|n		
+r6m-403-12	[$-403]mmm"|"mmmm"|"mmmmm	45641	1900	number	des.|desembre|d		
+r6d-403-01	[$-403]ddd"|"dddd	45305	1900	number	dg|diumenge		
+r6d-403-02	[$-403]ddd"|"dddd	45306	1900	number	dl|dilluns		
+r6d-403-03	[$-403]ddd"|"dddd	45307	1900	number	dt|dimarts		
+r6d-403-04	[$-403]ddd"|"dddd	45308	1900	number	dc|dimecres		
+r6d-403-05	[$-403]ddd"|"dddd	45309	1900	number	dj|dijous		
+r6d-403-06	[$-403]ddd"|"dddd	45310	1900	number	dv|divendres		
+r6d-403-07	[$-403]ddd"|"dddd	45311	1900	number	ds|dissabte		
+r6p-403-01	[$-403]h AM/PM	45306.2145833333	1900	number	5 a. m.		
+r6p-403-02	[$-403]h AM/PM	45306.7119097222	1900	number	5 p. m.		
+r6m-803-01	[$-803]mmm"|"mmmm"|"mmmmm	45306	1900	number	gen.|gener|g		
+r6m-803-02	[$-803]mmm"|"mmmm"|"mmmmm	45337	1900	number	febr.|febrer|f		
+r6m-803-03	[$-803]mmm"|"mmmm"|"mmmmm	45366	1900	number	març|març|m		
+r6m-803-04	[$-803]mmm"|"mmmm"|"mmmmm	45397	1900	number	abr.|abril|a		
+r6m-803-05	[$-803]mmm"|"mmmm"|"mmmmm	45427	1900	number	maig|maig|m		
+r6m-803-06	[$-803]mmm"|"mmmm"|"mmmmm	45458	1900	number	juny|juny|j		
+r6m-803-07	[$-803]mmm"|"mmmm"|"mmmmm	45488	1900	number	jul.|juliol|j		
+r6m-803-08	[$-803]mmm"|"mmmm"|"mmmmm	45519	1900	number	ag.|agost|a		
+r6m-803-09	[$-803]mmm"|"mmmm"|"mmmmm	45550	1900	number	set.|setembre|s		
+r6m-803-10	[$-803]mmm"|"mmmm"|"mmmmm	45580	1900	number	oct.|octubre|o		
+r6m-803-11	[$-803]mmm"|"mmmm"|"mmmmm	45611	1900	number	nov.|novembre|n		
+r6m-803-12	[$-803]mmm"|"mmmm"|"mmmmm	45641	1900	number	des.|desembre|d		
+r6d-803-01	[$-803]ddd"|"dddd	45305	1900	number	dg|diumenge		
+r6d-803-02	[$-803]ddd"|"dddd	45306	1900	number	dl|dilluns		
+r6d-803-03	[$-803]ddd"|"dddd	45307	1900	number	dt|dimarts		
+r6d-803-04	[$-803]ddd"|"dddd	45308	1900	number	dc|dimecres		
+r6d-803-05	[$-803]ddd"|"dddd	45309	1900	number	dj|dijous		
+r6d-803-06	[$-803]ddd"|"dddd	45310	1900	number	dv|divendres		
+r6d-803-07	[$-803]ddd"|"dddd	45311	1900	number	ds|dissabte		
+r6p-803-01	[$-803]h AM/PM	45306.2145833333	1900	number	5 a. m.		
+r6p-803-02	[$-803]h AM/PM	45306.7119097222	1900	number	5 p. m.		
+r6p-403-03	[$-403]h am/pm	45306.2145833333	1900	number	5 a. m.		
+r6p-403-04	[$-403]h am/pm	45306.7119097222	1900	number	5 p. m.		
+r6p-403-05	[$-403]h A/P	45306.2145833333	1900	number	5 a. m.		
+r6p-403-06	[$-403]h A/P	45306.7119097222	1900	number	5 p. m.		
+r6p-403-07	[$-403]h a/p	45306.2145833333	1900	number	5 a. m.		
+r6p-403-08	[$-403]h a/p	45306.7119097222	1900	number	5 p. m.		
+r6p-403-09	[$-403]h AM/PM	45306.0208333333	1900	number	12 a. m.		
+r6p-403-10	[$-403]h AM/PM	45306.5208333333	1900	number	12 p. m.		
+r6m-401-01	[$-401]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-401-02	[$-401]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-401-03	[$-401]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-401-04	[$-401]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-401-05	[$-401]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-401-06	[$-401]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-401-07	[$-401]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-401-08	[$-401]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-401-09	[$-401]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-401-10	[$-401]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-401-11	[$-401]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-401-12	[$-401]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-401-01	[$-401]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-401-02	[$-401]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-401-03	[$-401]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-401-04	[$-401]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-401-05	[$-401]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-401-06	[$-401]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-401-07	[$-401]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-401-01	[$-401]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-401-02	[$-401]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-801-01	[$-801]mmm"|"mmmm"|"mmmmm	45306	1900	number	كانون الثاني|كانون الثاني|ك		
+r6m-801-02	[$-801]mmm"|"mmmm"|"mmmmm	45337	1900	number	شباط|شباط|ش		
+r6m-801-03	[$-801]mmm"|"mmmm"|"mmmmm	45366	1900	number	آذار|آذار|آ		
+r6m-801-04	[$-801]mmm"|"mmmm"|"mmmmm	45397	1900	number	نيسان|نيسان|ن		
+r6m-801-05	[$-801]mmm"|"mmmm"|"mmmmm	45427	1900	number	أيار|أيار|أ		
+r6m-801-06	[$-801]mmm"|"mmmm"|"mmmmm	45458	1900	number	حزيران|حزيران|ح		
+r6m-801-07	[$-801]mmm"|"mmmm"|"mmmmm	45488	1900	number	تموز|تموز|ت		
+r6m-801-08	[$-801]mmm"|"mmmm"|"mmmmm	45519	1900	number	آب|آب|آ		
+r6m-801-09	[$-801]mmm"|"mmmm"|"mmmmm	45550	1900	number	أيلول|أيلول|أ		
+r6m-801-10	[$-801]mmm"|"mmmm"|"mmmmm	45580	1900	number	تشرين الأول|تشرين الأول|ت		
+r6m-801-11	[$-801]mmm"|"mmmm"|"mmmmm	45611	1900	number	تشرين الثاني|تشرين الثاني|ت		
+r6m-801-12	[$-801]mmm"|"mmmm"|"mmmmm	45641	1900	number	كانون الأول|كانون الأول|ك		
+r6d-801-01	[$-801]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-801-02	[$-801]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-801-03	[$-801]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-801-04	[$-801]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-801-05	[$-801]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-801-06	[$-801]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-801-07	[$-801]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-801-01	[$-801]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-801-02	[$-801]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-C01-01	[$-C01]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-C01-02	[$-C01]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-C01-03	[$-C01]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-C01-04	[$-C01]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-C01-05	[$-C01]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-C01-06	[$-C01]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-C01-07	[$-C01]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-C01-08	[$-C01]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-C01-09	[$-C01]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-C01-10	[$-C01]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-C01-11	[$-C01]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-C01-12	[$-C01]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-C01-01	[$-C01]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-C01-02	[$-C01]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-C01-03	[$-C01]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-C01-04	[$-C01]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-C01-05	[$-C01]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-C01-06	[$-C01]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-C01-07	[$-C01]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-C01-01	[$-C01]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-C01-02	[$-C01]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-1001-01	[$-1001]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-1001-02	[$-1001]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-1001-03	[$-1001]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-1001-04	[$-1001]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-1001-05	[$-1001]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-1001-06	[$-1001]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-1001-07	[$-1001]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-1001-08	[$-1001]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-1001-09	[$-1001]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-1001-10	[$-1001]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-1001-11	[$-1001]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-1001-12	[$-1001]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-1001-01	[$-1001]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-1001-02	[$-1001]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-1001-03	[$-1001]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-1001-04	[$-1001]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-1001-05	[$-1001]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-1001-06	[$-1001]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-1001-07	[$-1001]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-1001-01	[$-1001]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-1001-02	[$-1001]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-1401-01	[$-1401]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-1401-02	[$-1401]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-1401-03	[$-1401]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-1401-04	[$-1401]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-1401-05	[$-1401]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-1401-06	[$-1401]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-1401-07	[$-1401]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-1401-08	[$-1401]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-1401-09	[$-1401]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-1401-10	[$-1401]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-1401-11	[$-1401]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-1401-12	[$-1401]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-1401-01	[$-1401]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-1401-02	[$-1401]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-1401-03	[$-1401]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-1401-04	[$-1401]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-1401-05	[$-1401]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-1401-06	[$-1401]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-1401-07	[$-1401]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-1401-01	[$-1401]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-1401-02	[$-1401]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-1801-01	[$-1801]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-1801-02	[$-1801]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-1801-03	[$-1801]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-1801-04	[$-1801]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-1801-05	[$-1801]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-1801-06	[$-1801]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-1801-07	[$-1801]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-1801-08	[$-1801]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-1801-09	[$-1801]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-1801-10	[$-1801]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-1801-11	[$-1801]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-1801-12	[$-1801]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-1801-01	[$-1801]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-1801-02	[$-1801]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-1801-03	[$-1801]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-1801-04	[$-1801]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-1801-05	[$-1801]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-1801-06	[$-1801]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-1801-07	[$-1801]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-1801-01	[$-1801]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-1801-02	[$-1801]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-1C01-01	[$-1C01]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-1C01-02	[$-1C01]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-1C01-03	[$-1C01]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-1C01-04	[$-1C01]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-1C01-05	[$-1C01]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-1C01-06	[$-1C01]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-1C01-07	[$-1C01]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-1C01-08	[$-1C01]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-1C01-09	[$-1C01]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-1C01-10	[$-1C01]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-1C01-11	[$-1C01]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-1C01-12	[$-1C01]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-1C01-01	[$-1C01]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-1C01-02	[$-1C01]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-1C01-03	[$-1C01]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-1C01-04	[$-1C01]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-1C01-05	[$-1C01]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-1C01-06	[$-1C01]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-1C01-07	[$-1C01]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-1C01-01	[$-1C01]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-1C01-02	[$-1C01]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-2001-01	[$-2001]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-2001-02	[$-2001]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-2001-03	[$-2001]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-2001-04	[$-2001]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-2001-05	[$-2001]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-2001-06	[$-2001]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-2001-07	[$-2001]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-2001-08	[$-2001]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-2001-09	[$-2001]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-2001-10	[$-2001]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-2001-11	[$-2001]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-2001-12	[$-2001]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-2001-01	[$-2001]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-2001-02	[$-2001]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-2001-03	[$-2001]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-2001-04	[$-2001]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-2001-05	[$-2001]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-2001-06	[$-2001]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-2001-07	[$-2001]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-2001-01	[$-2001]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-2001-02	[$-2001]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-2401-01	[$-2401]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-2401-02	[$-2401]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-2401-03	[$-2401]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-2401-04	[$-2401]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-2401-05	[$-2401]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-2401-06	[$-2401]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-2401-07	[$-2401]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-2401-08	[$-2401]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-2401-09	[$-2401]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-2401-10	[$-2401]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-2401-11	[$-2401]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-2401-12	[$-2401]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-2401-01	[$-2401]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-2401-02	[$-2401]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-2401-03	[$-2401]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-2401-04	[$-2401]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-2401-05	[$-2401]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-2401-06	[$-2401]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-2401-07	[$-2401]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-2401-01	[$-2401]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-2401-02	[$-2401]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-2801-01	[$-2801]mmm"|"mmmm"|"mmmmm	45306	1900	number	كانون الثاني|كانون الثاني|ك		
+r6m-2801-02	[$-2801]mmm"|"mmmm"|"mmmmm	45337	1900	number	شباط|شباط|ش		
+r6m-2801-03	[$-2801]mmm"|"mmmm"|"mmmmm	45366	1900	number	آذار|آذار|آ		
+r6m-2801-04	[$-2801]mmm"|"mmmm"|"mmmmm	45397	1900	number	نيسان|نيسان|ن		
+r6m-2801-05	[$-2801]mmm"|"mmmm"|"mmmmm	45427	1900	number	أيار|أيار|أ		
+r6m-2801-06	[$-2801]mmm"|"mmmm"|"mmmmm	45458	1900	number	حزيران|حزيران|ح		
+r6m-2801-07	[$-2801]mmm"|"mmmm"|"mmmmm	45488	1900	number	تموز|تموز|ت		
+r6m-2801-08	[$-2801]mmm"|"mmmm"|"mmmmm	45519	1900	number	آب|آب|آ		
+r6m-2801-09	[$-2801]mmm"|"mmmm"|"mmmmm	45550	1900	number	أيلول|أيلول|أ		
+r6m-2801-10	[$-2801]mmm"|"mmmm"|"mmmmm	45580	1900	number	تشرين الأول|تشرين الأول|ت		
+r6m-2801-11	[$-2801]mmm"|"mmmm"|"mmmmm	45611	1900	number	تشرين الثاني|تشرين الثاني|ت		
+r6m-2801-12	[$-2801]mmm"|"mmmm"|"mmmmm	45641	1900	number	كانون الأول|كانون الأول|ك		
+r6d-2801-01	[$-2801]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-2801-02	[$-2801]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-2801-03	[$-2801]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-2801-04	[$-2801]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-2801-05	[$-2801]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-2801-06	[$-2801]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-2801-07	[$-2801]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-2801-01	[$-2801]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-2801-02	[$-2801]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-2C01-01	[$-2C01]mmm"|"mmmm"|"mmmmm	45306	1900	number	كانون الثاني|كانون الثاني|ك		
+r6m-2C01-02	[$-2C01]mmm"|"mmmm"|"mmmmm	45337	1900	number	شباط|شباط|ش		
+r6m-2C01-03	[$-2C01]mmm"|"mmmm"|"mmmmm	45366	1900	number	آذار|آذار|آ		
+r6m-2C01-04	[$-2C01]mmm"|"mmmm"|"mmmmm	45397	1900	number	نيسان|نيسان|ن		
+r6m-2C01-05	[$-2C01]mmm"|"mmmm"|"mmmmm	45427	1900	number	أيار|أيار|أ		
+r6m-2C01-06	[$-2C01]mmm"|"mmmm"|"mmmmm	45458	1900	number	حزيران|حزيران|ح		
+r6m-2C01-07	[$-2C01]mmm"|"mmmm"|"mmmmm	45488	1900	number	تموز|تموز|ت		
+r6m-2C01-08	[$-2C01]mmm"|"mmmm"|"mmmmm	45519	1900	number	آب|آب|آ		
+r6m-2C01-09	[$-2C01]mmm"|"mmmm"|"mmmmm	45550	1900	number	أيلول|أيلول|أ		
+r6m-2C01-10	[$-2C01]mmm"|"mmmm"|"mmmmm	45580	1900	number	تشرين الأول|تشرين الأول|ت		
+r6m-2C01-11	[$-2C01]mmm"|"mmmm"|"mmmmm	45611	1900	number	تشرين الثاني|تشرين الثاني|ت		
+r6m-2C01-12	[$-2C01]mmm"|"mmmm"|"mmmmm	45641	1900	number	كانون الأول|كانون الأول|ك		
+r6d-2C01-01	[$-2C01]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-2C01-02	[$-2C01]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-2C01-03	[$-2C01]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-2C01-04	[$-2C01]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-2C01-05	[$-2C01]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-2C01-06	[$-2C01]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-2C01-07	[$-2C01]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-2C01-01	[$-2C01]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-2C01-02	[$-2C01]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-3001-01	[$-3001]mmm"|"mmmm"|"mmmmm	45306	1900	number	كانون الثاني|كانون الثاني|ك		
+r6m-3001-02	[$-3001]mmm"|"mmmm"|"mmmmm	45337	1900	number	شباط|شباط|ش		
+r6m-3001-03	[$-3001]mmm"|"mmmm"|"mmmmm	45366	1900	number	آذار|آذار|آ		
+r6m-3001-04	[$-3001]mmm"|"mmmm"|"mmmmm	45397	1900	number	نيسان|نيسان|ن		
+r6m-3001-05	[$-3001]mmm"|"mmmm"|"mmmmm	45427	1900	number	أيار|أيار|أ		
+r6m-3001-06	[$-3001]mmm"|"mmmm"|"mmmmm	45458	1900	number	حزيران|حزيران|ح		
+r6m-3001-07	[$-3001]mmm"|"mmmm"|"mmmmm	45488	1900	number	تموز|تموز|ت		
+r6m-3001-08	[$-3001]mmm"|"mmmm"|"mmmmm	45519	1900	number	آب|آب|آ		
+r6m-3001-09	[$-3001]mmm"|"mmmm"|"mmmmm	45550	1900	number	أيلول|أيلول|أ		
+r6m-3001-10	[$-3001]mmm"|"mmmm"|"mmmmm	45580	1900	number	تشرين الأول|تشرين الأول|ت		
+r6m-3001-11	[$-3001]mmm"|"mmmm"|"mmmmm	45611	1900	number	تشرين الثاني|تشرين الثاني|ت		
+r6m-3001-12	[$-3001]mmm"|"mmmm"|"mmmmm	45641	1900	number	كانون الأول|كانون الأول|ك		
+r6d-3001-01	[$-3001]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-3001-02	[$-3001]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-3001-03	[$-3001]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-3001-04	[$-3001]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-3001-05	[$-3001]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-3001-06	[$-3001]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-3001-07	[$-3001]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-3001-01	[$-3001]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-3001-02	[$-3001]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-3401-01	[$-3401]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-3401-02	[$-3401]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-3401-03	[$-3401]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-3401-04	[$-3401]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-3401-05	[$-3401]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-3401-06	[$-3401]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-3401-07	[$-3401]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-3401-08	[$-3401]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-3401-09	[$-3401]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-3401-10	[$-3401]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-3401-11	[$-3401]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-3401-12	[$-3401]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-3401-01	[$-3401]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-3401-02	[$-3401]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-3401-03	[$-3401]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-3401-04	[$-3401]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-3401-05	[$-3401]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-3401-06	[$-3401]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-3401-07	[$-3401]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-3401-01	[$-3401]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-3401-02	[$-3401]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-3801-01	[$-3801]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-3801-02	[$-3801]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-3801-03	[$-3801]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-3801-04	[$-3801]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-3801-05	[$-3801]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-3801-06	[$-3801]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-3801-07	[$-3801]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-3801-08	[$-3801]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-3801-09	[$-3801]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-3801-10	[$-3801]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-3801-11	[$-3801]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-3801-12	[$-3801]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-3801-01	[$-3801]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-3801-02	[$-3801]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-3801-03	[$-3801]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-3801-04	[$-3801]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-3801-05	[$-3801]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-3801-06	[$-3801]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-3801-07	[$-3801]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-3801-01	[$-3801]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-3801-02	[$-3801]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-3C01-01	[$-3C01]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-3C01-02	[$-3C01]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-3C01-03	[$-3C01]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-3C01-04	[$-3C01]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-3C01-05	[$-3C01]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-3C01-06	[$-3C01]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-3C01-07	[$-3C01]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-3C01-08	[$-3C01]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-3C01-09	[$-3C01]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-3C01-10	[$-3C01]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-3C01-11	[$-3C01]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-3C01-12	[$-3C01]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-3C01-01	[$-3C01]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-3C01-02	[$-3C01]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-3C01-03	[$-3C01]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-3C01-04	[$-3C01]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-3C01-05	[$-3C01]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-3C01-06	[$-3C01]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-3C01-07	[$-3C01]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-3C01-01	[$-3C01]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-3C01-02	[$-3C01]h AM/PM	45306.7119097222	1900	number	5 م		
+r6m-4001-01	[$-4001]mmm"|"mmmm"|"mmmmm	45306	1900	number	يناير|يناير|ي		
+r6m-4001-02	[$-4001]mmm"|"mmmm"|"mmmmm	45337	1900	number	فبراير|فبراير|ف		
+r6m-4001-03	[$-4001]mmm"|"mmmm"|"mmmmm	45366	1900	number	مارس|مارس|م		
+r6m-4001-04	[$-4001]mmm"|"mmmm"|"mmmmm	45397	1900	number	أبريل|أبريل|أ		
+r6m-4001-05	[$-4001]mmm"|"mmmm"|"mmmmm	45427	1900	number	مايو|مايو|م		
+r6m-4001-06	[$-4001]mmm"|"mmmm"|"mmmmm	45458	1900	number	يونيو|يونيو|ي		
+r6m-4001-07	[$-4001]mmm"|"mmmm"|"mmmmm	45488	1900	number	يوليو|يوليو|ي		
+r6m-4001-08	[$-4001]mmm"|"mmmm"|"mmmmm	45519	1900	number	أغسطس|أغسطس|أ		
+r6m-4001-09	[$-4001]mmm"|"mmmm"|"mmmmm	45550	1900	number	سبتمبر|سبتمبر|س		
+r6m-4001-10	[$-4001]mmm"|"mmmm"|"mmmmm	45580	1900	number	أكتوبر|أكتوبر|أ		
+r6m-4001-11	[$-4001]mmm"|"mmmm"|"mmmmm	45611	1900	number	نوفمبر|نوفمبر|ن		
+r6m-4001-12	[$-4001]mmm"|"mmmm"|"mmmmm	45641	1900	number	ديسمبر|ديسمبر|د		
+r6d-4001-01	[$-4001]ddd"|"dddd	45305	1900	number	الأحد|الأحد		
+r6d-4001-02	[$-4001]ddd"|"dddd	45306	1900	number	الإثنين|الإثنين		
+r6d-4001-03	[$-4001]ddd"|"dddd	45307	1900	number	الثلاثاء|الثلاثاء		
+r6d-4001-04	[$-4001]ddd"|"dddd	45308	1900	number	الأربعاء|الأربعاء		
+r6d-4001-05	[$-4001]ddd"|"dddd	45309	1900	number	الخميس|الخميس		
+r6d-4001-06	[$-4001]ddd"|"dddd	45310	1900	number	الجمعة|الجمعة		
+r6d-4001-07	[$-4001]ddd"|"dddd	45311	1900	number	السبت|السبت		
+r6p-4001-01	[$-4001]h AM/PM	45306.2145833333	1900	number	5 ص		
+r6p-4001-02	[$-4001]h AM/PM	45306.7119097222	1900	number	5 م		
+r6p-401-03	[$-401]h am/pm	45306.2145833333	1900	number	5 ص		
+r6p-401-04	[$-401]h am/pm	45306.7119097222	1900	number	5 م		
+r6p-401-05	[$-401]h A/P	45306.2145833333	1900	number	5 ص		
+r6p-401-06	[$-401]h A/P	45306.7119097222	1900	number	5 م		
+r6p-401-07	[$-401]h a/p	45306.2145833333	1900	number	5 ص		
+r6p-401-08	[$-401]h a/p	45306.7119097222	1900	number	5 م		
+r6p-401-09	[$-401]h AM/PM	45306.0208333333	1900	number	12 ص		
+r6p-401-10	[$-401]h AM/PM	45306.5208333333	1900	number	12 م		
+r6c-419-01	[$-419]d mmmm	45306	1900	number	15 январь		
+r6c-419-02	[$-419]d mmmm	45337	1900	number	15 февраль		
+r6c-419-03	[$-419]d mmmm	45366	1900	number	15 март		
+r6c-419-04	[$-419]d mmmm	45397	1900	number	15 апрель		
+r6c-419-05	[$-419]d mmmm	45427	1900	number	15 май		
+r6c-419-06	[$-419]d mmmm	45458	1900	number	15 июнь		
+r6c-419-07	[$-419]d mmmm	45488	1900	number	15 июль		
+r6c-419-08	[$-419]d mmmm	45519	1900	number	15 август		
+r6c-419-09	[$-419]d mmmm	45550	1900	number	15 сентябрь		
+r6c-419-10	[$-419]d mmmm	45580	1900	number	15 октябрь		
+r6c-419-11	[$-419]d mmmm	45611	1900	number	15 ноябрь		
+r6c-419-12	[$-419]d mmmm	45641	1900	number	15 декабрь		
+r6c-419-13	[$-419]d mmm	45306	1900	number	15 янв.		
+r6c-419-14	[$-419]d mmm	45337	1900	number	15 февр.		
+r6c-419-15	[$-419]d mmm	45366	1900	number	15 март		
+r6c-419-16	[$-419]d mmm	45397	1900	number	15 апр.		
+r6c-419-17	[$-419]d mmm	45427	1900	number	15 май		
+r6c-419-18	[$-419]d mmm	45458	1900	number	15 июнь		
+r6c-419-19	[$-419]d mmm	45488	1900	number	15 июль		
+r6c-419-20	[$-419]d mmm	45519	1900	number	15 авг.		
+r6c-419-21	[$-419]d mmm	45550	1900	number	15 сент.		
+r6c-419-22	[$-419]d mmm	45580	1900	number	15 окт.		
+r6c-419-23	[$-419]d mmm	45611	1900	number	15 нояб.		
+r6c-419-24	[$-419]d mmm	45641	1900	number	15 дек.		
+r6c-419-25	[$-419]dd mmmm yyyy	45306	1900	number	15 январь 2024		
+r6c-419-26	[$-419]dd mmmm yyyy	45337	1900	number	15 февраль 2024		
+r6c-419-27	[$-419]dd mmmm yyyy	45366	1900	number	15 март 2024		
+r6c-419-28	[$-419]dd mmmm yyyy	45397	1900	number	15 апрель 2024		
+r6c-419-29	[$-419]dd mmmm yyyy	45427	1900	number	15 май 2024		
+r6c-419-30	[$-419]dd mmmm yyyy	45458	1900	number	15 июнь 2024		
+r6c-419-31	[$-419]dd mmmm yyyy	45488	1900	number	15 июль 2024		
+r6c-419-32	[$-419]dd mmmm yyyy	45519	1900	number	15 август 2024		
+r6c-419-33	[$-419]dd mmmm yyyy	45550	1900	number	15 сентябрь 2024		
+r6c-419-34	[$-419]dd mmmm yyyy	45580	1900	number	15 октябрь 2024		
+r6c-419-35	[$-419]dd mmmm yyyy	45611	1900	number	15 ноябрь 2024		
+r6c-419-36	[$-419]dd mmmm yyyy	45641	1900	number	15 декабрь 2024		
+r6c-419-37	[$-419]mmmm yyyy	45306	1900	number	январь 2024		
+r6c-419-38	[$-419]mmmm yyyy	45337	1900	number	февраль 2024		
+r6c-419-39	[$-419]mmmm yyyy	45366	1900	number	март 2024		
+r6c-419-40	[$-419]mmmm yyyy	45397	1900	number	апрель 2024		
+r6c-419-41	[$-419]mmmm yyyy	45427	1900	number	май 2024		
+r6c-419-42	[$-419]mmmm yyyy	45458	1900	number	июнь 2024		
+r6c-419-43	[$-419]mmmm yyyy	45488	1900	number	июль 2024		
+r6c-419-44	[$-419]mmmm yyyy	45519	1900	number	август 2024		
+r6c-419-45	[$-419]mmmm yyyy	45550	1900	number	сентябрь 2024		
+r6c-419-46	[$-419]mmmm yyyy	45580	1900	number	октябрь 2024		
+r6c-419-47	[$-419]mmmm yyyy	45611	1900	number	ноябрь 2024		
+r6c-419-48	[$-419]mmmm yyyy	45641	1900	number	декабрь 2024		
+r6c-419-49	[$-419]mmmm d	45306	1900	number	январь 15		
+r6c-419-50	[$-419]mmmm d	45337	1900	number	февраль 15		
+r6c-419-51	[$-419]mmmm d	45366	1900	number	март 15		
+r6c-419-52	[$-419]mmmm d	45397	1900	number	апрель 15		
+r6c-419-53	[$-419]mmmm d	45427	1900	number	май 15		
+r6c-419-54	[$-419]mmmm d	45458	1900	number	июнь 15		
+r6c-419-55	[$-419]mmmm d	45488	1900	number	июль 15		
+r6c-419-56	[$-419]mmmm d	45519	1900	number	август 15		
+r6c-419-57	[$-419]mmmm d	45550	1900	number	сентябрь 15		
+r6c-419-58	[$-419]mmmm d	45580	1900	number	октябрь 15		
+r6c-419-59	[$-419]mmmm d	45611	1900	number	ноябрь 15		
+r6c-419-60	[$-419]mmmm d	45641	1900	number	декабрь 15		
+r6c-419-61	[$-419]dddd mmmm	45306	1900	number	понедельник январь		
+r6c-419-62	[$-419]dddd mmmm	45366	1900	number	пятница март		
+r6c-419-63	[$-419]dddd mmmm	45427	1900	number	среда май		
+r6c-419-64	[$-419]ddd d mmm	45306	1900	number	Пн 15 янв.		
+r6c-419-65	[$-419]ddd d mmm	45366	1900	number	Пт 15 март		
+r6c-419-66	[$-419]ddd d mmm	45427	1900	number	Ср 15 май		
+r6c-419-67	[$-419]mmmm yyyy d	45306	1900	number	январь 2024 15		
+r6c-419-68	[$-419]mmmm yyyy d	45366	1900	number	март 2024 15		
+r6c-419-69	[$-419]mmmm yyyy d	45427	1900	number	май 2024 15		
+r6c-419-70	[$-419]m/d/yyyy mmmm	45306	1900	number	1/15/2024 январь		
+r6c-419-71	[$-419]m/d/yyyy mmmm	45366	1900	number	3/15/2024 март		
+r6c-419-72	[$-419]m/d/yyyy mmmm	45427	1900	number	5/15/2024 май		
+r6c-419-73	[$-419]d"."mmmm	45306	1900	number	15.январь		
+r6c-419-74	[$-419]d"."mmmm	45366	1900	number	15.март		
+r6c-419-75	[$-419]d"."mmmm	45427	1900	number	15.май		
+r6c-419-76	[$-419]d" x "mmmm	45306	1900	number	15 x январь		
+r6c-419-77	[$-419]d" x "mmmm	45366	1900	number	15 x март		
+r6c-419-78	[$-419]d" x "mmmm	45427	1900	number	15 x май		
+r6c-419-79	[$-419]mmmm" x "d	45306	1900	number	январь x 15		
+r6c-419-80	[$-419]mmmm" x "d	45366	1900	number	март x 15		
+r6c-419-81	[$-419]mmmm" x "d	45427	1900	number	май x 15		
+r6c-419-82	[$-419]d-mmm-yy	45306	1900	number	15-янв.-24		
+r6c-419-83	[$-419]d-mmm-yy	45366	1900	number	15-март-24		
+r6c-419-84	[$-419]d-mmm-yy	45427	1900	number	15-май-24		
+r6c-419-85	[$-419]d mmmmm	45306	1900	number	15 я		
+r6c-419-86	[$-419]d mmmmm	45366	1900	number	15 м		
+r6c-419-87	[$-419]d mmmmm	45427	1900	number	15 м		
+r6c-419-88	[$-419]dddd, d mmmm yyyy	45306	1900	number	понедельник, 15 январь 2024		
+r6c-419-89	[$-419]dddd, d mmmm yyyy	45366	1900	number	пятница, 15 март 2024		
+r6c-419-90	[$-419]dddd, d mmmm yyyy	45427	1900	number	среда, 15 май 2024		
+r6c-415-01	[$-415]d mmmm	45306	1900	number	15 styczeń		
+r6c-415-02	[$-415]d mmmm	45337	1900	number	15 luty		
+r6c-415-03	[$-415]d mmmm	45366	1900	number	15 marzec		
+r6c-415-04	[$-415]d mmmm	45397	1900	number	15 kwiecień		
+r6c-415-05	[$-415]d mmmm	45427	1900	number	15 maj		
+r6c-415-06	[$-415]d mmmm	45458	1900	number	15 czerwiec		
+r6c-415-07	[$-415]d mmmm	45488	1900	number	15 lipiec		
+r6c-415-08	[$-415]d mmmm	45519	1900	number	15 sierpień		
+r6c-415-09	[$-415]d mmmm	45550	1900	number	15 wrzesień		
+r6c-415-10	[$-415]d mmmm	45580	1900	number	15 październik		
+r6c-415-11	[$-415]d mmmm	45611	1900	number	15 listopad		
+r6c-415-12	[$-415]d mmmm	45641	1900	number	15 grudzień		
+r6c-415-13	[$-415]d mmm	45306	1900	number	15 sty		
+r6c-415-14	[$-415]d mmm	45337	1900	number	15 lut		
+r6c-415-15	[$-415]d mmm	45366	1900	number	15 mar		
+r6c-415-16	[$-415]d mmm	45397	1900	number	15 kwi		
+r6c-415-17	[$-415]d mmm	45427	1900	number	15 maj		
+r6c-415-18	[$-415]d mmm	45458	1900	number	15 cze		
+r6c-415-19	[$-415]d mmm	45488	1900	number	15 lip		
+r6c-415-20	[$-415]d mmm	45519	1900	number	15 sie		
+r6c-415-21	[$-415]d mmm	45550	1900	number	15 wrz		
+r6c-415-22	[$-415]d mmm	45580	1900	number	15 paź		
+r6c-415-23	[$-415]d mmm	45611	1900	number	15 lis		
+r6c-415-24	[$-415]d mmm	45641	1900	number	15 gru		
+r6c-415-25	[$-415]dd mmmm yyyy	45306	1900	number	15 styczeń 2024		
+r6c-415-26	[$-415]dd mmmm yyyy	45337	1900	number	15 luty 2024		
+r6c-415-27	[$-415]dd mmmm yyyy	45366	1900	number	15 marzec 2024		
+r6c-415-28	[$-415]dd mmmm yyyy	45397	1900	number	15 kwiecień 2024		
+r6c-415-29	[$-415]dd mmmm yyyy	45427	1900	number	15 maj 2024		
+r6c-415-30	[$-415]dd mmmm yyyy	45458	1900	number	15 czerwiec 2024		
+r6c-415-31	[$-415]dd mmmm yyyy	45488	1900	number	15 lipiec 2024		
+r6c-415-32	[$-415]dd mmmm yyyy	45519	1900	number	15 sierpień 2024		
+r6c-415-33	[$-415]dd mmmm yyyy	45550	1900	number	15 wrzesień 2024		
+r6c-415-34	[$-415]dd mmmm yyyy	45580	1900	number	15 październik 2024		
+r6c-415-35	[$-415]dd mmmm yyyy	45611	1900	number	15 listopad 2024		
+r6c-415-36	[$-415]dd mmmm yyyy	45641	1900	number	15 grudzień 2024		
+r6c-415-37	[$-415]mmmm yyyy	45306	1900	number	styczeń 2024		
+r6c-415-38	[$-415]mmmm yyyy	45337	1900	number	luty 2024		
+r6c-415-39	[$-415]mmmm yyyy	45366	1900	number	marzec 2024		
+r6c-415-40	[$-415]mmmm yyyy	45397	1900	number	kwiecień 2024		
+r6c-415-41	[$-415]mmmm yyyy	45427	1900	number	maj 2024		
+r6c-415-42	[$-415]mmmm yyyy	45458	1900	number	czerwiec 2024		
+r6c-415-43	[$-415]mmmm yyyy	45488	1900	number	lipiec 2024		
+r6c-415-44	[$-415]mmmm yyyy	45519	1900	number	sierpień 2024		
+r6c-415-45	[$-415]mmmm yyyy	45550	1900	number	wrzesień 2024		
+r6c-415-46	[$-415]mmmm yyyy	45580	1900	number	październik 2024		
+r6c-415-47	[$-415]mmmm yyyy	45611	1900	number	listopad 2024		
+r6c-415-48	[$-415]mmmm yyyy	45641	1900	number	grudzień 2024		
+r6c-415-49	[$-415]mmmm d	45306	1900	number	styczeń 15		
+r6c-415-50	[$-415]mmmm d	45337	1900	number	luty 15		
+r6c-415-51	[$-415]mmmm d	45366	1900	number	marzec 15		
+r6c-415-52	[$-415]mmmm d	45397	1900	number	kwiecień 15		
+r6c-415-53	[$-415]mmmm d	45427	1900	number	maj 15		
+r6c-415-54	[$-415]mmmm d	45458	1900	number	czerwiec 15		
+r6c-415-55	[$-415]mmmm d	45488	1900	number	lipiec 15		
+r6c-415-56	[$-415]mmmm d	45519	1900	number	sierpień 15		
+r6c-415-57	[$-415]mmmm d	45550	1900	number	wrzesień 15		
+r6c-415-58	[$-415]mmmm d	45580	1900	number	październik 15		
+r6c-415-59	[$-415]mmmm d	45611	1900	number	listopad 15		
+r6c-415-60	[$-415]mmmm d	45641	1900	number	grudzień 15		
+r6c-415-61	[$-415]dddd mmmm	45306	1900	number	poniedziałek styczeń		
+r6c-415-62	[$-415]dddd mmmm	45366	1900	number	piątek marzec		
+r6c-415-63	[$-415]dddd mmmm	45427	1900	number	środa maj		
+r6c-415-64	[$-415]ddd d mmm	45306	1900	number	pon. 15 sty		
+r6c-415-65	[$-415]ddd d mmm	45366	1900	number	pt. 15 mar		
+r6c-415-66	[$-415]ddd d mmm	45427	1900	number	śr. 15 maj		
+r6c-415-67	[$-415]mmmm yyyy d	45306	1900	number	styczeń 2024 15		
+r6c-415-68	[$-415]mmmm yyyy d	45366	1900	number	marzec 2024 15		
+r6c-415-69	[$-415]mmmm yyyy d	45427	1900	number	maj 2024 15		
+r6c-415-70	[$-415]m/d/yyyy mmmm	45306	1900	number	1/15/2024 styczeń		
+r6c-415-71	[$-415]m/d/yyyy mmmm	45366	1900	number	3/15/2024 marzec		
+r6c-415-72	[$-415]m/d/yyyy mmmm	45427	1900	number	5/15/2024 maj		
+r6c-415-73	[$-415]d"."mmmm	45306	1900	number	15.styczeń		
+r6c-415-74	[$-415]d"."mmmm	45366	1900	number	15.marzec		
+r6c-415-75	[$-415]d"."mmmm	45427	1900	number	15.maj		
+r6c-415-76	[$-415]d" x "mmmm	45306	1900	number	15 x styczeń		
+r6c-415-77	[$-415]d" x "mmmm	45366	1900	number	15 x marzec		
+r6c-415-78	[$-415]d" x "mmmm	45427	1900	number	15 x maj		
+r6c-415-79	[$-415]mmmm" x "d	45306	1900	number	styczeń x 15		
+r6c-415-80	[$-415]mmmm" x "d	45366	1900	number	marzec x 15		
+r6c-415-81	[$-415]mmmm" x "d	45427	1900	number	maj x 15		
+r6c-415-82	[$-415]d-mmm-yy	45306	1900	number	15-sty-24		
+r6c-415-83	[$-415]d-mmm-yy	45366	1900	number	15-mar-24		
+r6c-415-84	[$-415]d-mmm-yy	45427	1900	number	15-maj-24		
+r6c-415-85	[$-415]d mmmmm	45306	1900	number	15 s		
+r6c-415-86	[$-415]d mmmmm	45366	1900	number	15 m		
+r6c-415-87	[$-415]d mmmmm	45427	1900	number	15 m		
+r6c-415-88	[$-415]dddd, d mmmm yyyy	45306	1900	number	poniedziałek, 15 styczeń 2024		
+r6c-415-89	[$-415]dddd, d mmmm yyyy	45366	1900	number	piątek, 15 marzec 2024		
+r6c-415-90	[$-415]dddd, d mmmm yyyy	45427	1900	number	środa, 15 maj 2024		
+r6c-411-01	[$-411]d mmmm	45306	1900	number	15 1月		
+r6c-411-02	[$-411]d mmmm	45337	1900	number	15 2月		
+r6c-411-03	[$-411]d mmmm	45366	1900	number	15 3月		
+r6c-411-04	[$-411]d mmmm	45397	1900	number	15 4月		
+r6c-411-05	[$-411]d mmmm	45427	1900	number	15 5月		
+r6c-411-06	[$-411]d mmmm	45458	1900	number	15 6月		
+r6c-411-07	[$-411]d mmmm	45488	1900	number	15 7月		
+r6c-411-08	[$-411]d mmmm	45519	1900	number	15 8月		
+r6c-411-09	[$-411]d mmmm	45550	1900	number	15 9月		
+r6c-411-10	[$-411]d mmmm	45580	1900	number	15 10月		
+r6c-411-11	[$-411]d mmmm	45611	1900	number	15 11月		
+r6c-411-12	[$-411]d mmmm	45641	1900	number	15 12月		
+r6c-411-13	[$-411]d mmm	45306	1900	number	15 1月		
+r6c-411-14	[$-411]d mmm	45337	1900	number	15 2月		
+r6c-411-15	[$-411]d mmm	45366	1900	number	15 3月		
+r6c-411-16	[$-411]d mmm	45397	1900	number	15 4月		
+r6c-411-17	[$-411]d mmm	45427	1900	number	15 5月		
+r6c-411-18	[$-411]d mmm	45458	1900	number	15 6月		
+r6c-411-19	[$-411]d mmm	45488	1900	number	15 7月		
+r6c-411-20	[$-411]d mmm	45519	1900	number	15 8月		
+r6c-411-21	[$-411]d mmm	45550	1900	number	15 9月		
+r6c-411-22	[$-411]d mmm	45580	1900	number	15 10月		
+r6c-411-23	[$-411]d mmm	45611	1900	number	15 11月		
+r6c-411-24	[$-411]d mmm	45641	1900	number	15 12月		
+r6c-411-25	[$-411]dd mmmm yyyy	45306	1900	number	15 1月 2024		
+r6c-411-26	[$-411]dd mmmm yyyy	45550	1900	number	15 9月 2024		
+r6c-411-27	[$-411]mmmm yyyy	45306	1900	number	1月 2024		
+r6c-411-28	[$-411]mmmm yyyy	45550	1900	number	9月 2024		
+r6c-411-29	[$-411]mmmm d	45306	1900	number	1月 15		
+r6c-411-30	[$-411]mmmm d	45550	1900	number	9月 15		
+r6c-804-01	[$-804]d mmmm	45306	1900	number	15 一月		
+r6c-804-02	[$-804]d mmmm	45337	1900	number	15 二月		
+r6c-804-03	[$-804]d mmmm	45366	1900	number	15 三月		
+r6c-804-04	[$-804]d mmmm	45397	1900	number	15 四月		
+r6c-804-05	[$-804]d mmmm	45427	1900	number	15 五月		
+r6c-804-06	[$-804]d mmmm	45458	1900	number	15 六月		
+r6c-804-07	[$-804]d mmmm	45488	1900	number	15 七月		
+r6c-804-08	[$-804]d mmmm	45519	1900	number	15 八月		
+r6c-804-09	[$-804]d mmmm	45550	1900	number	15 九月		
+r6c-804-10	[$-804]d mmmm	45580	1900	number	15 十月		
+r6c-804-11	[$-804]d mmmm	45611	1900	number	15 十一月		
+r6c-804-12	[$-804]d mmmm	45641	1900	number	15 十二月		
+r6c-804-13	[$-804]d mmm	45306	1900	number	15 1月		
+r6c-804-14	[$-804]d mmm	45337	1900	number	15 2月		
+r6c-804-15	[$-804]d mmm	45366	1900	number	15 3月		
+r6c-804-16	[$-804]d mmm	45397	1900	number	15 4月		
+r6c-804-17	[$-804]d mmm	45427	1900	number	15 5月		
+r6c-804-18	[$-804]d mmm	45458	1900	number	15 6月		
+r6c-804-19	[$-804]d mmm	45488	1900	number	15 7月		
+r6c-804-20	[$-804]d mmm	45519	1900	number	15 8月		
+r6c-804-21	[$-804]d mmm	45550	1900	number	15 9月		
+r6c-804-22	[$-804]d mmm	45580	1900	number	15 10月		
+r6c-804-23	[$-804]d mmm	45611	1900	number	15 11月		
+r6c-804-24	[$-804]d mmm	45641	1900	number	15 12月		
+r6c-804-25	[$-804]dd mmmm yyyy	45306	1900	number	15 一月 2024		
+r6c-804-26	[$-804]dd mmmm yyyy	45550	1900	number	15 九月 2024		
+r6c-804-27	[$-804]mmmm yyyy	45306	1900	number	一月 2024		
+r6c-804-28	[$-804]mmmm yyyy	45550	1900	number	九月 2024		
+r6c-804-29	[$-804]mmmm d	45306	1900	number	一月 15		
+r6c-804-30	[$-804]mmmm d	45550	1900	number	九月 15		
+r6c-404-01	[$-404]d mmmm	45306	1900	number	15 1月		
+r6c-404-02	[$-404]d mmmm	45337	1900	number	15 2月		
+r6c-404-03	[$-404]d mmmm	45366	1900	number	15 3月		
+r6c-404-04	[$-404]d mmmm	45397	1900	number	15 4月		
+r6c-404-05	[$-404]d mmmm	45427	1900	number	15 5月		
+r6c-404-06	[$-404]d mmmm	45458	1900	number	15 6月		
+r6c-404-07	[$-404]d mmmm	45488	1900	number	15 7月		
+r6c-404-08	[$-404]d mmmm	45519	1900	number	15 8月		
+r6c-404-09	[$-404]d mmmm	45550	1900	number	15 9月		
+r6c-404-10	[$-404]d mmmm	45580	1900	number	15 10月		
+r6c-404-11	[$-404]d mmmm	45611	1900	number	15 11月		
+r6c-404-12	[$-404]d mmmm	45641	1900	number	15 12月		
+r6c-404-13	[$-404]d mmm	45306	1900	number	15 1月		
+r6c-404-14	[$-404]d mmm	45337	1900	number	15 2月		
+r6c-404-15	[$-404]d mmm	45366	1900	number	15 3月		
+r6c-404-16	[$-404]d mmm	45397	1900	number	15 4月		
+r6c-404-17	[$-404]d mmm	45427	1900	number	15 5月		
+r6c-404-18	[$-404]d mmm	45458	1900	number	15 6月		
+r6c-404-19	[$-404]d mmm	45488	1900	number	15 7月		
+r6c-404-20	[$-404]d mmm	45519	1900	number	15 8月		
+r6c-404-21	[$-404]d mmm	45550	1900	number	15 9月		
+r6c-404-22	[$-404]d mmm	45580	1900	number	15 10月		
+r6c-404-23	[$-404]d mmm	45611	1900	number	15 11月		
+r6c-404-24	[$-404]d mmm	45641	1900	number	15 12月		
+r6c-404-25	[$-404]dd mmmm yyyy	45306	1900	number	15 1月 2024		
+r6c-404-26	[$-404]dd mmmm yyyy	45550	1900	number	15 9月 2024		
+r6c-404-27	[$-404]mmmm yyyy	45306	1900	number	1月 2024		
+r6c-404-28	[$-404]mmmm yyyy	45550	1900	number	9月 2024		
+r6c-404-29	[$-404]mmmm d	45306	1900	number	1月 15		
+r6c-404-30	[$-404]mmmm d	45550	1900	number	9月 15		
+r6c-412-01	[$-412]d mmmm	45306	1900	number	15 1월		
+r6c-412-02	[$-412]d mmmm	45337	1900	number	15 2월		
+r6c-412-03	[$-412]d mmmm	45366	1900	number	15 3월		
+r6c-412-04	[$-412]d mmmm	45397	1900	number	15 4월		
+r6c-412-05	[$-412]d mmmm	45427	1900	number	15 5월		
+r6c-412-06	[$-412]d mmmm	45458	1900	number	15 6월		
+r6c-412-07	[$-412]d mmmm	45488	1900	number	15 7월		
+r6c-412-08	[$-412]d mmmm	45519	1900	number	15 8월		
+r6c-412-09	[$-412]d mmmm	45550	1900	number	15 9월		
+r6c-412-10	[$-412]d mmmm	45580	1900	number	15 10월		
+r6c-412-11	[$-412]d mmmm	45611	1900	number	15 11월		
+r6c-412-12	[$-412]d mmmm	45641	1900	number	15 12월		
+r6c-412-13	[$-412]d mmm	45306	1900	number	15 1월		
+r6c-412-14	[$-412]d mmm	45337	1900	number	15 2월		
+r6c-412-15	[$-412]d mmm	45366	1900	number	15 3월		
+r6c-412-16	[$-412]d mmm	45397	1900	number	15 4월		
+r6c-412-17	[$-412]d mmm	45427	1900	number	15 5월		
+r6c-412-18	[$-412]d mmm	45458	1900	number	15 6월		
+r6c-412-19	[$-412]d mmm	45488	1900	number	15 7월		
+r6c-412-20	[$-412]d mmm	45519	1900	number	15 8월		
+r6c-412-21	[$-412]d mmm	45550	1900	number	15 9월		
+r6c-412-22	[$-412]d mmm	45580	1900	number	15 10월		
+r6c-412-23	[$-412]d mmm	45611	1900	number	15 11월		
+r6c-412-24	[$-412]d mmm	45641	1900	number	15 12월		
+r6c-412-25	[$-412]dd mmmm yyyy	45306	1900	number	15 1월 2024		
+r6c-412-26	[$-412]dd mmmm yyyy	45550	1900	number	15 9월 2024		
+r6c-412-27	[$-412]mmmm yyyy	45306	1900	number	1월 2024		
+r6c-412-28	[$-412]mmmm yyyy	45550	1900	number	9월 2024		
+r6c-412-29	[$-412]mmmm d	45306	1900	number	1월 15		
+r6c-412-30	[$-412]mmmm d	45550	1900	number	9월 15		
+r6c-41D-01	[$-41D]d mmmm	45306	1900	number	15 januari		
+r6c-41D-02	[$-41D]d mmmm	45337	1900	number	15 februari		
+r6c-41D-03	[$-41D]d mmmm	45366	1900	number	15 mars		
+r6c-41D-04	[$-41D]d mmmm	45397	1900	number	15 april		
+r6c-41D-05	[$-41D]d mmmm	45427	1900	number	15 maj		
+r6c-41D-06	[$-41D]d mmmm	45458	1900	number	15 juni		
+r6c-41D-07	[$-41D]d mmmm	45488	1900	number	15 juli		
+r6c-41D-08	[$-41D]d mmmm	45519	1900	number	15 augusti		
+r6c-41D-09	[$-41D]d mmmm	45550	1900	number	15 september		
+r6c-41D-10	[$-41D]d mmmm	45580	1900	number	15 oktober		
+r6c-41D-11	[$-41D]d mmmm	45611	1900	number	15 november		
+r6c-41D-12	[$-41D]d mmmm	45641	1900	number	15 december		
+r6c-41D-13	[$-41D]d mmm	45306	1900	number	15 jan.		
+r6c-41D-14	[$-41D]d mmm	45337	1900	number	15 feb.		
+r6c-41D-15	[$-41D]d mmm	45366	1900	number	15 mars		
+r6c-41D-16	[$-41D]d mmm	45397	1900	number	15 apr.		
+r6c-41D-17	[$-41D]d mmm	45427	1900	number	15 maj		
+r6c-41D-18	[$-41D]d mmm	45458	1900	number	15 juni		
+r6c-41D-19	[$-41D]d mmm	45488	1900	number	15 juli		
+r6c-41D-20	[$-41D]d mmm	45519	1900	number	15 aug.		
+r6c-41D-21	[$-41D]d mmm	45550	1900	number	15 sep.		
+r6c-41D-22	[$-41D]d mmm	45580	1900	number	15 okt.		
+r6c-41D-23	[$-41D]d mmm	45611	1900	number	15 nov.		
+r6c-41D-24	[$-41D]d mmm	45641	1900	number	15 dec.		
+r6c-41D-25	[$-41D]dd mmmm yyyy	45306	1900	number	15 januari 2024		
+r6c-41D-26	[$-41D]dd mmmm yyyy	45550	1900	number	15 september 2024		
+r6c-41D-27	[$-41D]mmmm yyyy	45306	1900	number	januari 2024		
+r6c-41D-28	[$-41D]mmmm yyyy	45550	1900	number	september 2024		
+r6c-41D-29	[$-41D]mmmm d	45306	1900	number	januari 15		
+r6c-41D-30	[$-41D]mmmm d	45550	1900	number	september 15		
+r6c-41F-01	[$-41F]d mmmm	45306	1900	number	15 Ocak		
+r6c-41F-02	[$-41F]d mmmm	45337	1900	number	15 Şubat		
+r6c-41F-03	[$-41F]d mmmm	45366	1900	number	15 Mart		
+r6c-41F-04	[$-41F]d mmmm	45397	1900	number	15 Nisan		
+r6c-41F-05	[$-41F]d mmmm	45427	1900	number	15 Mayıs		
+r6c-41F-06	[$-41F]d mmmm	45458	1900	number	15 Haziran		
+r6c-41F-07	[$-41F]d mmmm	45488	1900	number	15 Temmuz		
+r6c-41F-08	[$-41F]d mmmm	45519	1900	number	15 Ağustos		
+r6c-41F-09	[$-41F]d mmmm	45550	1900	number	15 Eylül		
+r6c-41F-10	[$-41F]d mmmm	45580	1900	number	15 Ekim		
+r6c-41F-11	[$-41F]d mmmm	45611	1900	number	15 Kasım		
+r6c-41F-12	[$-41F]d mmmm	45641	1900	number	15 Aralık		
+r6c-41F-13	[$-41F]d mmm	45306	1900	number	15 Oca		
+r6c-41F-14	[$-41F]d mmm	45337	1900	number	15 Şub		
+r6c-41F-15	[$-41F]d mmm	45366	1900	number	15 Mar		
+r6c-41F-16	[$-41F]d mmm	45397	1900	number	15 Nis		
+r6c-41F-17	[$-41F]d mmm	45427	1900	number	15 May		
+r6c-41F-18	[$-41F]d mmm	45458	1900	number	15 Haz		
+r6c-41F-19	[$-41F]d mmm	45488	1900	number	15 Tem		
+r6c-41F-20	[$-41F]d mmm	45519	1900	number	15 Ağu		
+r6c-41F-21	[$-41F]d mmm	45550	1900	number	15 Eyl		
+r6c-41F-22	[$-41F]d mmm	45580	1900	number	15 Eki		
+r6c-41F-23	[$-41F]d mmm	45611	1900	number	15 Kas		
+r6c-41F-24	[$-41F]d mmm	45641	1900	number	15 Ara		
+r6c-41F-25	[$-41F]dd mmmm yyyy	45306	1900	number	15 Ocak 2024		
+r6c-41F-26	[$-41F]dd mmmm yyyy	45550	1900	number	15 Eylül 2024		
+r6c-41F-27	[$-41F]mmmm yyyy	45306	1900	number	Ocak 2024		
+r6c-41F-28	[$-41F]mmmm yyyy	45550	1900	number	Eylül 2024		
+r6c-41F-29	[$-41F]mmmm d	45306	1900	number	Ocak 15		
+r6c-41F-30	[$-41F]mmmm d	45550	1900	number	Eylül 15		
+r6c-403-01	[$-403]d mmmm	45306	1900	number	15 gener		
+r6c-403-02	[$-403]d mmmm	45337	1900	number	15 febrer		
+r6c-403-03	[$-403]d mmmm	45366	1900	number	15 març		
+r6c-403-04	[$-403]d mmmm	45397	1900	number	15 abril		
+r6c-403-05	[$-403]d mmmm	45427	1900	number	15 maig		
+r6c-403-06	[$-403]d mmmm	45458	1900	number	15 juny		
+r6c-403-07	[$-403]d mmmm	45488	1900	number	15 juliol		
+r6c-403-08	[$-403]d mmmm	45519	1900	number	15 agost		
+r6c-403-09	[$-403]d mmmm	45550	1900	number	15 setembre		
+r6c-403-10	[$-403]d mmmm	45580	1900	number	15 octubre		
+r6c-403-11	[$-403]d mmmm	45611	1900	number	15 novembre		
+r6c-403-12	[$-403]d mmmm	45641	1900	number	15 desembre		
+r6c-403-13	[$-403]d mmm	45306	1900	number	15 gen.		
+r6c-403-14	[$-403]d mmm	45337	1900	number	15 febr.		
+r6c-403-15	[$-403]d mmm	45366	1900	number	15 març		
+r6c-403-16	[$-403]d mmm	45397	1900	number	15 abr.		
+r6c-403-17	[$-403]d mmm	45427	1900	number	15 maig		
+r6c-403-18	[$-403]d mmm	45458	1900	number	15 juny		
+r6c-403-19	[$-403]d mmm	45488	1900	number	15 jul.		
+r6c-403-20	[$-403]d mmm	45519	1900	number	15 ag.		
+r6c-403-21	[$-403]d mmm	45550	1900	number	15 set.		
+r6c-403-22	[$-403]d mmm	45580	1900	number	15 oct.		
+r6c-403-23	[$-403]d mmm	45611	1900	number	15 nov.		
+r6c-403-24	[$-403]d mmm	45641	1900	number	15 des.		
+r6c-403-25	[$-403]dd mmmm yyyy	45306	1900	number	15 gener 2024		
+r6c-403-26	[$-403]dd mmmm yyyy	45550	1900	number	15 setembre 2024		
+r6c-403-27	[$-403]mmmm yyyy	45306	1900	number	gener 2024		
+r6c-403-28	[$-403]mmmm yyyy	45550	1900	number	setembre 2024		
+r6c-403-29	[$-403]mmmm d	45306	1900	number	gener 15		
+r6c-403-30	[$-403]mmmm d	45550	1900	number	setembre 15		
+r6c-401-01	[$-401]d mmmm	45306	1900	number	15 يناير		
+r6c-401-02	[$-401]d mmmm	45337	1900	number	15 فبراير		
+r6c-401-03	[$-401]d mmmm	45366	1900	number	15 مارس		
+r6c-401-04	[$-401]d mmmm	45397	1900	number	15 أبريل		
+r6c-401-05	[$-401]d mmmm	45427	1900	number	15 مايو		
+r6c-401-06	[$-401]d mmmm	45458	1900	number	15 يونيو		
+r6c-401-07	[$-401]d mmmm	45488	1900	number	15 يوليو		
+r6c-401-08	[$-401]d mmmm	45519	1900	number	15 أغسطس		
+r6c-401-09	[$-401]d mmmm	45550	1900	number	15 سبتمبر		
+r6c-401-10	[$-401]d mmmm	45580	1900	number	15 أكتوبر		
+r6c-401-11	[$-401]d mmmm	45611	1900	number	15 نوفمبر		
+r6c-401-12	[$-401]d mmmm	45641	1900	number	15 ديسمبر		
+r6c-401-13	[$-401]d mmm	45306	1900	number	15 يناير		
+r6c-401-14	[$-401]d mmm	45337	1900	number	15 فبراير		
+r6c-401-15	[$-401]d mmm	45366	1900	number	15 مارس		
+r6c-401-16	[$-401]d mmm	45397	1900	number	15 أبريل		
+r6c-401-17	[$-401]d mmm	45427	1900	number	15 مايو		
+r6c-401-18	[$-401]d mmm	45458	1900	number	15 يونيو		
+r6c-401-19	[$-401]d mmm	45488	1900	number	15 يوليو		
+r6c-401-20	[$-401]d mmm	45519	1900	number	15 أغسطس		
+r6c-401-21	[$-401]d mmm	45550	1900	number	15 سبتمبر		
+r6c-401-22	[$-401]d mmm	45580	1900	number	15 أكتوبر		
+r6c-401-23	[$-401]d mmm	45611	1900	number	15 نوفمبر		
+r6c-401-24	[$-401]d mmm	45641	1900	number	15 ديسمبر		
+r6c-401-25	[$-401]dd mmmm yyyy	45306	1900	number	15 يناير 2024		
+r6c-401-26	[$-401]dd mmmm yyyy	45550	1900	number	15 سبتمبر 2024		
+r6c-401-27	[$-401]mmmm yyyy	45306	1900	number	يناير 2024		
+r6c-401-28	[$-401]mmmm yyyy	45550	1900	number	سبتمبر 2024		
+r6c-401-29	[$-401]mmmm d	45306	1900	number	يناير 15		
+r6c-401-30	[$-401]mmmm d	45550	1900	number	سبتمبر 15		
+r6c-801-01	[$-801]d mmmm	45306	1900	number	15 كانون الثاني		
+r6c-801-02	[$-801]d mmmm	45337	1900	number	15 شباط		
+r6c-801-03	[$-801]d mmmm	45366	1900	number	15 آذار		
+r6c-801-04	[$-801]d mmmm	45397	1900	number	15 نيسان		
+r6c-801-05	[$-801]d mmmm	45427	1900	number	15 أيار		
+r6c-801-06	[$-801]d mmmm	45458	1900	number	15 حزيران		
+r6c-801-07	[$-801]d mmmm	45488	1900	number	15 تموز		
+r6c-801-08	[$-801]d mmmm	45519	1900	number	15 آب		
+r6c-801-09	[$-801]d mmmm	45550	1900	number	15 أيلول		
+r6c-801-10	[$-801]d mmmm	45580	1900	number	15 تشرين الأول		
+r6c-801-11	[$-801]d mmmm	45611	1900	number	15 تشرين الثاني		
+r6c-801-12	[$-801]d mmmm	45641	1900	number	15 كانون الأول		
+r6c-801-13	[$-801]d mmm	45306	1900	number	15 كانون الثاني		
+r6c-801-14	[$-801]d mmm	45337	1900	number	15 شباط		
+r6c-801-15	[$-801]d mmm	45366	1900	number	15 آذار		
+r6c-801-16	[$-801]d mmm	45397	1900	number	15 نيسان		
+r6c-801-17	[$-801]d mmm	45427	1900	number	15 أيار		
+r6c-801-18	[$-801]d mmm	45458	1900	number	15 حزيران		
+r6c-801-19	[$-801]d mmm	45488	1900	number	15 تموز		
+r6c-801-20	[$-801]d mmm	45519	1900	number	15 آب		
+r6c-801-21	[$-801]d mmm	45550	1900	number	15 أيلول		
+r6c-801-22	[$-801]d mmm	45580	1900	number	15 تشرين الأول		
+r6c-801-23	[$-801]d mmm	45611	1900	number	15 تشرين الثاني		
+r6c-801-24	[$-801]d mmm	45641	1900	number	15 كانون الأول		
+r6c-801-25	[$-801]dd mmmm yyyy	45306	1900	number	15 كانون الثاني 2024		
+r6c-801-26	[$-801]dd mmmm yyyy	45550	1900	number	15 أيلول 2024		
+r6c-801-27	[$-801]mmmm yyyy	45306	1900	number	كانون الثاني 2024		
+r6c-801-28	[$-801]mmmm yyyy	45550	1900	number	أيلول 2024		
+r6c-801-29	[$-801]mmmm d	45306	1900	number	كانون الثاني 15		
+r6c-801-30	[$-801]mmmm d	45550	1900	number	أيلول 15		
+r6f-411-01	[$-411]dddd, mmmm d, yyyy	45539.6046875	1900	number	水曜日, 9月 4, 2024		
+r6f-411-02	[$-411]dddd, d mmmm yyyy	45539.6046875	1900	number	水曜日, 4 9月 2024		
+r6f-411-03	[$-411]d mmmm yyyy	45539.6046875	1900	number	4 9月 2024		
+r6f-411-04	[$-411]d-mmm-yy	45539.6046875	1900	number	4-9月-24		
+r6f-411-05	[$-411]mmm d, yyyy	45539.6046875	1900	number	9月 4, 2024		
+r6f-411-06	[$-411]ddd, d mmm yyyy	45539.6046875	1900	number	水, 4 9月 2024		
+r6f-411-07	[$-411]mmmm yyyy	45539.6046875	1900	number	9月 2024		
+r6f-411-08	[$-411]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	水曜日, 9月 4, 2024 2:30 午後		
+r6f-411-09	[$-411]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 9月 2024 14:30:45		
+r6f-411-10	[$-411]yyyy"年"m"月"d"日" dddd	45539.6046875	1900	number	2024年9月4日 水曜日		
+r6f-411-11	[$-411]m"月"d"日" ddd	45539.6046875	1900	number	9月4日 水		
+r6f-804-01	[$-804]dddd, mmmm d, yyyy	45539.6046875	1900	number	星期三, 九月 4, 2024		
+r6f-804-02	[$-804]dddd, d mmmm yyyy	45539.6046875	1900	number	星期三, 4 九月 2024		
+r6f-804-03	[$-804]d mmmm yyyy	45539.6046875	1900	number	4 九月 2024		
+r6f-804-04	[$-804]d-mmm-yy	45539.6046875	1900	number	4-9月-24		
+r6f-804-05	[$-804]mmm d, yyyy	45539.6046875	1900	number	9月 4, 2024		
+r6f-804-06	[$-804]ddd, d mmm yyyy	45539.6046875	1900	number	周三, 4 9月 2024		
+r6f-804-07	[$-804]mmmm yyyy	45539.6046875	1900	number	九月 2024		
+r6f-804-08	[$-804]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	星期三, 九月 4, 2024 2:30 下午		
+r6f-804-09	[$-804]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 九月 2024 14:30:45		
+r6f-804-10	[$-804]yyyy"年"m"月"d"日" dddd	45539.6046875	1900	number	2024年9月4日 星期三		
+r6f-804-11	[$-804]m"月"d"日" ddd	45539.6046875	1900	number	9月4日 周三		
+r6f-404-01	[$-404]dddd, mmmm d, yyyy	45539.6046875	1900	number	星期三, 9月 4, 2024		
+r6f-404-02	[$-404]dddd, d mmmm yyyy	45539.6046875	1900	number	星期三, 4 9月 2024		
+r6f-404-03	[$-404]d mmmm yyyy	45539.6046875	1900	number	4 9月 2024		
+r6f-404-04	[$-404]d-mmm-yy	45539.6046875	1900	number	4-9月-24		
+r6f-404-05	[$-404]mmm d, yyyy	45539.6046875	1900	number	9月 4, 2024		
+r6f-404-06	[$-404]ddd, d mmm yyyy	45539.6046875	1900	number	週三, 4 9月 2024		
+r6f-404-07	[$-404]mmmm yyyy	45539.6046875	1900	number	9月 2024		
+r6f-404-08	[$-404]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	星期三, 9月 4, 2024 2:30 下午		
+r6f-404-09	[$-404]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 9月 2024 14:30:45		
+r6f-404-10	[$-404]yyyy"年"m"月"d"日" dddd	45539.6046875	1900	number	2024年9月4日 星期三		
+r6f-412-01	[$-412]dddd, mmmm d, yyyy	45539.6046875	1900	number	수요일, 9월 4, 2024		
+r6f-412-02	[$-412]dddd, d mmmm yyyy	45539.6046875	1900	number	수요일, 4 9월 2024		
+r6f-412-03	[$-412]d mmmm yyyy	45539.6046875	1900	number	4 9월 2024		
+r6f-412-04	[$-412]d-mmm-yy	45539.6046875	1900	number	4-9월-24		
+r6f-412-05	[$-412]mmm d, yyyy	45539.6046875	1900	number	9월 4, 2024		
+r6f-412-06	[$-412]ddd, d mmm yyyy	45539.6046875	1900	number	수, 4 9월 2024		
+r6f-412-07	[$-412]mmmm yyyy	45539.6046875	1900	number	9월 2024		
+r6f-412-08	[$-412]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	수요일, 9월 4, 2024 2:30 오후		
+r6f-412-09	[$-412]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 9월 2024 14:30:45		
+r6f-412-10	[$-412]yyyy"년" m"월" d"일" dddd	45539.6046875	1900	number	2024년 9월 4일 수요일		
+r6f-419-01	[$-419]dddd, mmmm d, yyyy	45539.6046875	1900	number	среда, сентябрь 4, 2024		
+r6f-419-02	[$-419]dddd, d mmmm yyyy	45539.6046875	1900	number	среда, 4 сентябрь 2024		
+r6f-419-03	[$-419]d mmmm yyyy	45539.6046875	1900	number	4 сентябрь 2024		
+r6f-419-04	[$-419]d-mmm-yy	45539.6046875	1900	number	4-сент.-24		
+r6f-419-05	[$-419]mmm d, yyyy	45539.6046875	1900	number	сент. 4, 2024		
+r6f-419-06	[$-419]ddd, d mmm yyyy	45539.6046875	1900	number	Ср, 4 сент. 2024		
+r6f-419-07	[$-419]mmmm yyyy	45539.6046875	1900	number	сентябрь 2024		
+r6f-419-08	[$-419]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	среда, сентябрь 4, 2024 2:30 PM		
+r6f-419-09	[$-419]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 сентябрь 2024 14:30:45		
+r6f-419-10	[$-419]d mmmm yyyy "г."	45539.6046875	1900	number	4 сентябрь 2024 г.		
+r6f-419-11	[$-419]dddd, d mmmm yyyy "г."	45539.6046875	1900	number	среда, 4 сентябрь 2024 г.		
+r6f-419-12	[$-419]dddd, mmmm d, yyyy	45306.6046875	1900	number	понедельник, январь 15, 2024		
+r6f-419-13	[$-419]dddd, d mmmm yyyy	45306.6046875	1900	number	понедельник, 15 январь 2024		
+r6f-419-14	[$-419]d mmmm yyyy	45306.6046875	1900	number	15 январь 2024		
+r6f-415-01	[$-415]dddd, mmmm d, yyyy	45539.6046875	1900	number	środa, wrzesień 4, 2024		
+r6f-415-02	[$-415]dddd, d mmmm yyyy	45539.6046875	1900	number	środa, 4 wrzesień 2024		
+r6f-415-03	[$-415]d mmmm yyyy	45539.6046875	1900	number	4 wrzesień 2024		
+r6f-415-04	[$-415]d-mmm-yy	45539.6046875	1900	number	4-wrz-24		
+r6f-415-05	[$-415]mmm d, yyyy	45539.6046875	1900	number	wrz 4, 2024		
+r6f-415-06	[$-415]ddd, d mmm yyyy	45539.6046875	1900	number	śr., 4 wrz 2024		
+r6f-415-07	[$-415]mmmm yyyy	45539.6046875	1900	number	wrzesień 2024		
+r6f-415-08	[$-415]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	środa, wrzesień 4, 2024 2:30 PM		
+r6f-415-09	[$-415]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 wrzesień 2024 14:30:45		
+r6f-415-10	[$-415]d mmmm yyyy "r."	45539.6046875	1900	number	4 wrzesień 2024 r.		
+r6f-415-11	[$-415]dddd, d mmmm yyyy "r."	45539.6046875	1900	number	środa, 4 wrzesień 2024 r.		
+r6f-415-12	[$-415]dddd, mmmm d, yyyy	45306.6046875	1900	number	poniedziałek, styczeń 15, 2024		
+r6f-415-13	[$-415]dddd, d mmmm yyyy	45306.6046875	1900	number	poniedziałek, 15 styczeń 2024		
+r6f-415-14	[$-415]d mmmm yyyy	45306.6046875	1900	number	15 styczeń 2024		
+r6f-41D-01	[$-41D]dddd, mmmm d, yyyy	45539.6046875	1900	number	onsdag, september 4, 2024		
+r6f-41D-02	[$-41D]dddd, d mmmm yyyy	45539.6046875	1900	number	onsdag, 4 september 2024		
+r6f-41D-03	[$-41D]d mmmm yyyy	45539.6046875	1900	number	4 september 2024		
+r6f-41D-04	[$-41D]d-mmm-yy	45539.6046875	1900	number	4-sep.-24		
+r6f-41D-05	[$-41D]mmm d, yyyy	45539.6046875	1900	number	sep. 4, 2024		
+r6f-41D-06	[$-41D]ddd, d mmm yyyy	45539.6046875	1900	number	ons, 4 sep. 2024		
+r6f-41D-07	[$-41D]mmmm yyyy	45539.6046875	1900	number	september 2024		
+r6f-41D-08	[$-41D]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	onsdag, september 4, 2024 2:30 em		
+r6f-41D-09	[$-41D]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 september 2024 14:30:45		
+r6f-41F-01	[$-41F]dddd, mmmm d, yyyy	45539.6046875	1900	number	Çarşamba, Eylül 4, 2024		
+r6f-41F-02	[$-41F]dddd, d mmmm yyyy	45539.6046875	1900	number	Çarşamba, 4 Eylül 2024		
+r6f-41F-03	[$-41F]d mmmm yyyy	45539.6046875	1900	number	4 Eylül 2024		
+r6f-41F-04	[$-41F]d-mmm-yy	45539.6046875	1900	number	4-Eyl-24		
+r6f-41F-05	[$-41F]mmm d, yyyy	45539.6046875	1900	number	Eyl 4, 2024		
+r6f-41F-06	[$-41F]ddd, d mmm yyyy	45539.6046875	1900	number	Çar, 4 Eyl 2024		
+r6f-41F-07	[$-41F]mmmm yyyy	45539.6046875	1900	number	Eylül 2024		
+r6f-41F-08	[$-41F]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	Çarşamba, Eylül 4, 2024 2:30 ÖS		
+r6f-41F-09	[$-41F]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 Eylül 2024 14:30:45		
+r6f-41F-10	[$-41F]d mmmm yyyy dddd	45539.6046875	1900	number	4 Eylül 2024 Çarşamba		
+r6f-403-01	[$-403]dddd, mmmm d, yyyy	45539.6046875	1900	number	dimecres, setembre 4, 2024		
+r6f-403-02	[$-403]dddd, d mmmm yyyy	45539.6046875	1900	number	dimecres, 4 setembre 2024		
+r6f-403-03	[$-403]d mmmm yyyy	45539.6046875	1900	number	4 setembre 2024		
+r6f-403-04	[$-403]d-mmm-yy	45539.6046875	1900	number	4-set.-24		
+r6f-403-05	[$-403]mmm d, yyyy	45539.6046875	1900	number	set. 4, 2024		
+r6f-403-06	[$-403]ddd, d mmm yyyy	45539.6046875	1900	number	dc, 4 set. 2024		
+r6f-403-07	[$-403]mmmm yyyy	45539.6046875	1900	number	setembre 2024		
+r6f-403-08	[$-403]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	dimecres, setembre 4, 2024 2:30 p. m.		
+r6f-403-09	[$-403]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 setembre 2024 14:30:45		
+r6f-401-01	[$-401]dddd, mmmm d, yyyy	45539.6046875	1900	number	الأربعاء, سبتمبر 4, 2024		
+r6f-401-02	[$-401]dddd, d mmmm yyyy	45539.6046875	1900	number	الأربعاء, 4 سبتمبر 2024		
+r6f-401-03	[$-401]d mmmm yyyy	45539.6046875	1900	number	4 سبتمبر 2024		
+r6f-401-04	[$-401]d-mmm-yy	45539.6046875	1900	number	4-سبتمبر-24		
+r6f-401-05	[$-401]mmm d, yyyy	45539.6046875	1900	number	سبتمبر 4, 2024		
+r6f-401-06	[$-401]ddd, d mmm yyyy	45539.6046875	1900	number	الأربعاء, 4 سبتمبر 2024		
+r6f-401-07	[$-401]mmmm yyyy	45539.6046875	1900	number	سبتمبر 2024		
+r6f-401-08	[$-401]dddd, mmmm d, yyyy h:mm AM/PM	45539.6046875	1900	number	الأربعاء, سبتمبر 4, 2024 2:30 م		
+r6f-401-09	[$-401]d mmmm yyyy h:mm:ss	45539.6046875	1900	number	4 سبتمبر 2024 14:30:45		
+r6t-01	[$-ja]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	水|水曜日|9月|9月|9|2 午後		
+r6t-02	[$-ja-JP]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	水|水曜日|9月|9月|9|2 午後		
+r6t-03	[$-ja-jp]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	水|水曜日|9月|9月|9|2 午後		
+r6t-04	[$-zh]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|九月|九|2 下午		
+r6t-05	[$-zh-CN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|9月|九月|九|2 下午		
+r6t-06	[$-zh-Hans]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|九月|九|2 下午		
+r6t-07	[$-zh-TW]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r6t-08	[$-zh-Hant]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r6t-09	[$-zh-HK]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|九月|九月|九|2 下午		
+r6t-10	[$-zh-SG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|九月|九月|九|2 下午		
+r6t-11	[$-zh-MO]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r6t-12	[$-ko]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	수|수요일|9월|9월|9|2 오후		
+r6t-13	[$-ko-KR]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	수|수요일|9월|9월|9|2 오후		
+r6t-14	[$-ru]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Ср|среда|сент.|сентябрь|с|2 PM		
+r6t-15	[$-ru-RU]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Ср|среда|сент.|сентябрь|с|2 PM		
+r6t-16	[$-ru-ru]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Ср|среда|сент.|сентябрь|с|2 PM		
+r6t-17	[$-ru-MD]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Ср|среда|сент.|сентябрь|с|2 PM		
+r6t-18	[$-pl]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	śr.|środa|wrz|wrzesień|w|2 PM		
+r6t-19	[$-pl-PL]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	śr.|środa|wrz|wrzesień|w|2 PM		
+r6t-20	[$-sv]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	ons|onsdag|sep.|september|s|2 em		
+r6t-21	[$-sv-SE]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	ons|onsdag|sep.|september|s|2 em		
+r6t-22	[$-sv-FI]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	ons|onsdag|sep.|september|s|2 em		
+r6t-23	[$-tr]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Çar|Çarşamba|Eyl|Eylül|E|2 ÖS		
+r6t-24	[$-tr-TR]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Çar|Çarşamba|Eyl|Eylül|E|2 ÖS		
+r6t-25	[$-ca]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	dc|dimecres|set.|setembre|s|2 p. m.		
+r6t-26	[$-ca-ES]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	dc|dimecres|set.|setembre|s|2 p. m.		
+r6t-27	[$-ca-ES-valencia]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	dc|dimecres|set.|setembre|s|2 p. m.		
+r6t-28	[$-ar]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س|2 م		
+r6t-29	[$-ar-SA]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س|2 م		
+r6t-30	[$-ar-EG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س|2 م		
+r6t-31	[$-ar-JO]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|أيلول|أيلول|أ|2 م		
+r6t-32	[$-ar-IQ]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|أيلول|أيلول|أ|2 م		
+r6t-33	[$-ar-MA]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س|2 م		
+r6t-34	[$-ar-DZ]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س|2 م		
+r6t-35	[$-ar-AE]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س|2 م		
+r6t-36	[$-ar-TN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	الأربعاء|الأربعاء|سبتمبر|سبتمبر|س|2 م		
+r6n-01	[$-1]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Wed|Wednesday|Sep|September|S|2 PM		
+r6n-02	[$-3]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	dc|dimecres|set.|setembre|s|2 p. m.		
+r6n-03	[$-4]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|九月|九|2 下午		
+r6n-04	[$-7C04]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r6n-05	[$-11]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	水|水曜日|9月|9月|9|2 午後		
+r6n-06	[$-12]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	수|수요일|9월|9월|9|2 오후		
+r6n-07	[$-15]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	śr.|środa|wrz|wrzesień|w|2 PM		
+r6n-08	[$-19]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Ср|среда|сент.|сентябрь|с|2 PM		
+r6n-09	[$-1D]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	ons|onsdag|sep.|september|s|2 em		
+r6n-10	[$-1F]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	Çar|Çarşamba|Eyl|Eylül|E|2 ÖS		
+r7a-01	aaa"|"aaaa	45539.6046875	1900	number	Wed|Wednesday		
+r7a-02	[$-409]aaa"|"aaaa	45539.6046875	1900	number	Wed|Wednesday		
+r7a-03	[$-411]aaa"|"aaaa	45539.6046875	1900	number	水|水曜日		
+r7a-04	[$-804]aaa"|"aaaa	45539.6046875	1900	number	周三|星期三		
+r7a-05	[$-404]aaa"|"aaaa	45539.6046875	1900	number	週三|星期三		
+r7a-06	[$-412]aaa"|"aaaa	45539.6046875	1900	number	수|수요일		
+r7a-07	[$-419]aaa"|"aaaa	45539.6046875	1900	number	Ср|среда		
+r7a-08	[$-401]aaa"|"aaaa	45539.6046875	1900	number	الأربعاء|الأربعاء		
+r7w-411-01	[$-411]aaa"|"aaaa	45305	1900	number	日|日曜日		
+r7w-411-02	[$-411]aaa"|"aaaa	45306	1900	number	月|月曜日		
+r7w-411-03	[$-411]aaa"|"aaaa	45307	1900	number	火|火曜日		
+r7w-411-04	[$-411]aaa"|"aaaa	45308	1900	number	水|水曜日		
+r7w-411-05	[$-411]aaa"|"aaaa	45309	1900	number	木|木曜日		
+r7w-411-06	[$-411]aaa"|"aaaa	45310	1900	number	金|金曜日		
+r7w-411-07	[$-411]aaa"|"aaaa	45311	1900	number	土|土曜日		
+r7w-804-01	[$-804]aaa"|"aaaa	45305	1900	number	周日|星期日		
+r7w-804-02	[$-804]aaa"|"aaaa	45306	1900	number	周一|星期一		
+r7w-804-03	[$-804]aaa"|"aaaa	45307	1900	number	周二|星期二		
+r7w-804-04	[$-804]aaa"|"aaaa	45308	1900	number	周三|星期三		
+r7w-804-05	[$-804]aaa"|"aaaa	45309	1900	number	周四|星期四		
+r7w-804-06	[$-804]aaa"|"aaaa	45310	1900	number	周五|星期五		
+r7w-804-07	[$-804]aaa"|"aaaa	45311	1900	number	周六|星期六		
+r7w-404-01	[$-404]aaa"|"aaaa	45305	1900	number	週日|星期日		
+r7w-404-02	[$-404]aaa"|"aaaa	45306	1900	number	週一|星期一		
+r7w-404-03	[$-404]aaa"|"aaaa	45307	1900	number	週二|星期二		
+r7w-404-04	[$-404]aaa"|"aaaa	45308	1900	number	週三|星期三		
+r7w-404-05	[$-404]aaa"|"aaaa	45309	1900	number	週四|星期四		
+r7w-404-06	[$-404]aaa"|"aaaa	45310	1900	number	週五|星期五		
+r7w-404-07	[$-404]aaa"|"aaaa	45311	1900	number	週六|星期六		
+r7w-412-01	[$-412]aaa"|"aaaa	45305	1900	number	일|일요일		
+r7w-412-02	[$-412]aaa"|"aaaa	45306	1900	number	월|월요일		
+r7w-412-03	[$-412]aaa"|"aaaa	45307	1900	number	화|화요일		
+r7w-412-04	[$-412]aaa"|"aaaa	45308	1900	number	수|수요일		
+r7w-412-05	[$-412]aaa"|"aaaa	45309	1900	number	목|목요일		
+r7w-412-06	[$-412]aaa"|"aaaa	45310	1900	number	금|금요일		
+r7w-412-07	[$-412]aaa"|"aaaa	45311	1900	number	토|토요일		
+r7e-01	[$-411]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日	ggg2024年9月4日	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-02	[$-411]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日	ggg2019年5月1日	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-03	[$-411]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日	ggg1989年1月7日	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-04	[$-411]g"|"gg"|"ggg	45539.6046875	1900	number	R|令|令和	g|gg|ggg	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-05	[$-411]g"|"gg"|"ggg	43586	1900	number	R|令|令和	g|gg|ggg	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-06	[$-411]g"|"gg"|"ggg	32515	1900	number	S|昭|昭和	g|gg|ggg	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-07	[$-411]e	45539.6046875	1900	number	6	2024	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-08	[$-411]e	43586	1900	number	1	2019	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-09	[$-411]e	32515	1900	number	64	1989	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
+r7e-10	[$-404]ggge"年"m"月"d"日"	45539.6046875	1900	number	2024年9月4日	ggg2024年9月4日	era tokens under a tag that writes no era: Excel shows nothing for `g`, `gg`, `ggg`; we show the letters (a calendar feature, its own change)
+r7e-11	[$-404]ggge"年"m"月"d"日"	43586	1900	number	2019年5月1日	ggg2019年5月1日	era tokens under a tag that writes no era: Excel shows nothing for `g`, `gg`, `ggg`; we show the letters (a calendar feature, its own change)
+r7e-12	[$-404]ggge"年"m"月"d"日"	32515	1900	number	1989年1月7日	ggg1989年1月7日	era tokens under a tag that writes no era: Excel shows nothing for `g`, `gg`, `ggg`; we show the letters (a calendar feature, its own change)
+r7e-13	[$-404]e	45539.6046875	1900	number	2024		
+r7e-14	[$-404]e	43586	1900	number	2019		
+r7e-15	[$-404]e	32515	1900	number	1989		
+r7e-16	[$-412]e	45539.6046875	1900	number	2024		
+r7e-17	[$-412]e	43586	1900	number	2019		
+r7e-18	[$-412]e	32515	1900	number	1989		
+r7e-19	[$-804]e	45539.6046875	1900	number	2024		
+r7e-20	[$-804]e	43586	1900	number	2019		
+r7e-21	[$-804]e	32515	1900	number	1989		
+r7e-22	e	45539.6046875	1900	number	2024		
+r7e-23	e	43586	1900	number	2019		
+r7e-24	e	32515	1900	number	1989		
+r8m-4-01	[$-4]mmm"|"mmmm"|"mmmmm	45306	1900	number	1月|一月|一		
+r8m-4-02	[$-4]mmm"|"mmmm"|"mmmmm	45337	1900	number	2月|二月|二		
+r8m-4-03	[$-4]mmm"|"mmmm"|"mmmmm	45366	1900	number	3月|三月|三		
+r8m-4-04	[$-4]mmm"|"mmmm"|"mmmmm	45397	1900	number	4月|四月|四		
+r8m-4-05	[$-4]mmm"|"mmmm"|"mmmmm	45427	1900	number	5月|五月|五		
+r8m-4-06	[$-4]mmm"|"mmmm"|"mmmmm	45458	1900	number	6月|六月|六		
+r8m-4-07	[$-4]mmm"|"mmmm"|"mmmmm	45488	1900	number	7月|七月|七		
+r8m-4-08	[$-4]mmm"|"mmmm"|"mmmmm	45519	1900	number	8月|八月|八		
+r8m-4-09	[$-4]mmm"|"mmmm"|"mmmmm	45550	1900	number	9月|九月|九		
+r8m-4-10	[$-4]mmm"|"mmmm"|"mmmmm	45580	1900	number	10月|十月|十		
+r8m-4-11	[$-4]mmm"|"mmmm"|"mmmmm	45611	1900	number	11月|十一月|十		
+r8m-4-12	[$-4]mmm"|"mmmm"|"mmmmm	45641	1900	number	12月|十二月|十		
+r8d-4-01	[$-4]ddd"|"dddd	45305	1900	number	週日|星期日		
+r8d-4-02	[$-4]ddd"|"dddd	45306	1900	number	週一|星期一		
+r8d-4-03	[$-4]ddd"|"dddd	45307	1900	number	週二|星期二		
+r8d-4-04	[$-4]ddd"|"dddd	45308	1900	number	週三|星期三		
+r8d-4-05	[$-4]ddd"|"dddd	45309	1900	number	週四|星期四		
+r8d-4-06	[$-4]ddd"|"dddd	45310	1900	number	週五|星期五		
+r8d-4-07	[$-4]ddd"|"dddd	45311	1900	number	週六|星期六		
+r8p-4-01	[$-4]h AM/PM	45306.2145833333	1900	number	5 上午		
+r8p-4-02	[$-4]h AM/PM	45306.7119097222	1900	number	5 下午		
+r8m-7804-01	[$-7804]mmm"|"mmmm"|"mmmmm	45306	1900	number	1月|一月|一		
+r8m-7804-02	[$-7804]mmm"|"mmmm"|"mmmmm	45337	1900	number	2月|二月|二		
+r8m-7804-03	[$-7804]mmm"|"mmmm"|"mmmmm	45366	1900	number	3月|三月|三		
+r8m-7804-04	[$-7804]mmm"|"mmmm"|"mmmmm	45397	1900	number	4月|四月|四		
+r8m-7804-05	[$-7804]mmm"|"mmmm"|"mmmmm	45427	1900	number	5月|五月|五		
+r8m-7804-06	[$-7804]mmm"|"mmmm"|"mmmmm	45458	1900	number	6月|六月|六		
+r8m-7804-07	[$-7804]mmm"|"mmmm"|"mmmmm	45488	1900	number	7月|七月|七		
+r8m-7804-08	[$-7804]mmm"|"mmmm"|"mmmmm	45519	1900	number	8月|八月|八		
+r8m-7804-09	[$-7804]mmm"|"mmmm"|"mmmmm	45550	1900	number	9月|九月|九		
+r8m-7804-10	[$-7804]mmm"|"mmmm"|"mmmmm	45580	1900	number	10月|十月|十		
+r8m-7804-11	[$-7804]mmm"|"mmmm"|"mmmmm	45611	1900	number	11月|十一月|十		
+r8m-7804-12	[$-7804]mmm"|"mmmm"|"mmmmm	45641	1900	number	12月|十二月|十		
+r8d-7804-01	[$-7804]ddd"|"dddd	45305	1900	number	週日|星期日		
+r8d-7804-02	[$-7804]ddd"|"dddd	45306	1900	number	週一|星期一		
+r8d-7804-03	[$-7804]ddd"|"dddd	45307	1900	number	週二|星期二		
+r8d-7804-04	[$-7804]ddd"|"dddd	45308	1900	number	週三|星期三		
+r8d-7804-05	[$-7804]ddd"|"dddd	45309	1900	number	週四|星期四		
+r8d-7804-06	[$-7804]ddd"|"dddd	45310	1900	number	週五|星期五		
+r8d-7804-07	[$-7804]ddd"|"dddd	45311	1900	number	週六|星期六		
+r8p-7804-01	[$-7804]h AM/PM	45306.2145833333	1900	number	5 上午		
+r8p-7804-02	[$-7804]h AM/PM	45306.7119097222	1900	number	5 下午		
+r8m-7C04-01	[$-7C04]mmm"|"mmmm"|"mmmmm	45306	1900	number	1月|1月|1		
+r8m-7C04-02	[$-7C04]mmm"|"mmmm"|"mmmmm	45337	1900	number	2月|2月|2		
+r8m-7C04-03	[$-7C04]mmm"|"mmmm"|"mmmmm	45366	1900	number	3月|3月|3		
+r8m-7C04-04	[$-7C04]mmm"|"mmmm"|"mmmmm	45397	1900	number	4月|4月|4		
+r8m-7C04-05	[$-7C04]mmm"|"mmmm"|"mmmmm	45427	1900	number	5月|5月|5		
+r8m-7C04-06	[$-7C04]mmm"|"mmmm"|"mmmmm	45458	1900	number	6月|6月|6		
+r8m-7C04-07	[$-7C04]mmm"|"mmmm"|"mmmmm	45488	1900	number	7月|7月|7		
+r8m-7C04-08	[$-7C04]mmm"|"mmmm"|"mmmmm	45519	1900	number	8月|8月|8		
+r8m-7C04-09	[$-7C04]mmm"|"mmmm"|"mmmmm	45550	1900	number	9月|9月|9		
+r8m-7C04-10	[$-7C04]mmm"|"mmmm"|"mmmmm	45580	1900	number	10月|10月|1		
+r8m-7C04-11	[$-7C04]mmm"|"mmmm"|"mmmmm	45611	1900	number	11月|11月|1		
+r8m-7C04-12	[$-7C04]mmm"|"mmmm"|"mmmmm	45641	1900	number	12月|12月|1		
+r8d-7C04-01	[$-7C04]ddd"|"dddd	45305	1900	number	週日|星期日		
+r8d-7C04-02	[$-7C04]ddd"|"dddd	45306	1900	number	週一|星期一		
+r8d-7C04-03	[$-7C04]ddd"|"dddd	45307	1900	number	週二|星期二		
+r8d-7C04-04	[$-7C04]ddd"|"dddd	45308	1900	number	週三|星期三		
+r8d-7C04-05	[$-7C04]ddd"|"dddd	45309	1900	number	週四|星期四		
+r8d-7C04-06	[$-7C04]ddd"|"dddd	45310	1900	number	週五|星期五		
+r8d-7C04-07	[$-7C04]ddd"|"dddd	45311	1900	number	週六|星期六		
+r8p-7C04-01	[$-7C04]h AM/PM	45306.2145833333	1900	number	5 上午		
+r8p-7C04-02	[$-7C04]h AM/PM	45306.7119097222	1900	number	5 下午		
+r10t-01	[$-zh-Hans-CN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|9月|九月|九|2 下午		
+r10t-02	[$-zh-Hans-SG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|九月|九月|九|2 下午		
+r10t-03	[$-zh-Hans-HK]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|9月|九月|九|2 下午		
+r10t-04	[$-zh-Hans-TW]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|九月|九|2 下午		
+r10t-05	[$-zh-Hant-HK]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|九月|九月|九|2 下午		
+r10t-06	[$-zh-Hant-TW]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r10t-07	[$-zh-Hant-MO]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r10t-08	[$-zh-Hant-CN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r10t-09	[$-zh-Hant-SG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		

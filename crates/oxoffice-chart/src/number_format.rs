@@ -137,7 +137,7 @@ impl NumberFormat {
 
     /// Whether the chart draws this code as Excel does: not when Excel
     /// cannot read it, nor when it asks for month or day names in a language
-    /// `oxoffice-numfmt` has no names for (`[$-411]mmmm`, Japanese). Their
+    /// `oxoffice-numfmt` has no names for (`[$-40D]mmmm`, Hebrew). Their
     /// values show as General, with a diagnostic.
     pub fn is_supported(&self) -> bool {
         oxoffice_numfmt::NumberFormat::parse(&self.format_code)

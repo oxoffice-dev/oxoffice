@@ -143,22 +143,30 @@ fn names_in_a_language_without_a_table_are_reported() {
         ("[$-407]dddd", false),
         ("[$-fr-FR]mmm", false),
         ("[$-40C]mmmm yyyy", false),
-        ("[$-411]mmmm", true),
-        ("[$-ja-JP]ddd", true),
-        ("[$-411]h:mm AM/PM", true),
-        ("[$-ru-RU]d mmmm", true),
-        // Excel showed `PM` for Russian and Polish (rows r4o-08, r4o-10),
-        // English for the tag `2040C` (r5h-02), and a tag with no primary
-        // language names none.
+        // Japanese, Chinese, Korean, Russian, Polish, Swedish, Turkish,
+        // Catalan and Arabic have tables (round 6), whatever they show.
+        ("[$-411]mmmm", false),
+        ("[$-ja-JP]ddd", false),
+        ("[$-411]h:mm AM/PM", false),
+        ("[$-411]aaaa", false),
+        ("[$-ru-RU]d mmmm", false),
         ("[$-419]h:mm AM/PM", false),
         ("[$-pl]h:mm AM/PM", false),
+        ("[$-401]mmm", false),
+        // English for the tag `2040C` (r5h-02); a tag with no primary
+        // language names none.
         ("[$-2040C]mmmm", false),
         ("[$-800]mmm yy", false),
-        // A high word nobody asked.
+        // A language with no table (Hebrew, Greek, Thai), and a high word
+        // nobody asked.
+        ("[$-40D]mmmm", true),
+        ("[$-he-IL]ddd", true),
+        ("[$-408]aaaa", true),
+        ("[$-41E]h:mm AM/PM", true),
         ("[$-3040C]mmmm", true),
         // Numbers in the tag's language need no names.
-        ("[$-411]dd/mm/yyyy", false),
-        ("#,##0.00 [$€-411]", false),
+        ("[$-40D]dd/mm/yyyy", false),
+        ("#,##0.00 [$€-40D]", false),
     ] {
         assert_eq!(format_of(code).shows_unknown_names(), unknown, "{code}");
     }
