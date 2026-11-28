@@ -631,14 +631,15 @@ The resolve was not captured; W10's round trip stands. Not observed: Word's stat
 What PR 5b settles (Q6 option C, W9):
 
 - **A comment goes with its reference** (W9): a resolution that removes every reference run of a comment removes
-  the comment and its range marks, wherever those stand. Behaviour change: LibreOffice writes the end and the mark of
+  the comment and its range marks, wherever those stand, and its replies with it, as Word removes a thread. Behaviour change: LibreOffice writes the end and the mark of
   a comment inside a deletion, and accepting that deletion now removes the comment, as Word does.
 - **Compare writes a comment added or removed whole as Word tracks it**: a comment marked with both range marks and
   a reference in one version's body text, and neither marked nor defined in the other, has its range marks taken
   out of the body comparison and put back where that version has them (counted in that version's text). Its
   reference run is compared as a run: written in `w:ins` or `w:del`, with no paragraph replaced whole. Under the
-  default whole-run granularity, a run the reference splits is still replaced whole. A redline that does not resolve
-  back to both versions this way is compared as before.
+  default whole-run granularity, a run the reference splits is still replaced whole. When that pass fails (its
+  redline does not resolve back to both versions, or anything else it refuses), it runs again without the marks
+  taken out, and the comment's paragraph is tracked as before.
 - **The private record only for what the revisions cannot undo**: compare drops it when accepting and rejecting the
   written revisions give back the edited and the original comments, comment parts left with no comment standing for
   none. Answers, text and resolution changes keep it.

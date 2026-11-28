@@ -307,6 +307,9 @@ struct RenderState<'a> {
     /// The comments whose every reference the resolution removes: they go,
     /// their range marks with them, wherever those stand (W9).
     going_comments: HashSet<String>,
+    /// The same, with the content a block removes whole (see
+    /// `comment_goes_whole`), by that content, each found once.
+    going_with_groups: std::cell::RefCell<HashMap<Vec<Range<usize>>, HashSet<String>>>,
 }
 
 impl RenderState<'_> {
@@ -572,6 +575,7 @@ impl Document {
             move_parts: HashSet::new(),
             move_marks: HashSet::new(),
             going_comments: HashSet::new(),
+            going_with_groups: Default::default(),
         };
         (state.move_parts, state.move_marks) = tree.selected_moves(&state.scope)?;
         state.going_comments = tree.going_comments(&state, &[]);
@@ -1290,6 +1294,7 @@ fn render_with_source_ranges(
         move_parts: HashSet::new(),
         move_marks: HashSet::new(),
         going_comments: HashSet::new(),
+        going_with_groups: Default::default(),
     };
     (state.move_parts, state.move_marks) = tree.selected_moves(&state.scope)?;
     state.going_comments = tree.going_comments(&state, &[]);
@@ -3232,7 +3237,12 @@ impl<'a> XmlTree<'a> {
         if group.is_empty() {
             return state.going_comments.contains(id);
         }
-        self.going_comments(state, group).contains(id)
+        state
+            .going_with_groups
+            .borrow_mut()
+            .entry(group.to_vec())
+            .or_insert_with(|| self.going_comments(state, group))
+            .contains(id)
     }
 
     /// The comments whose every reference goes with this resolution or with

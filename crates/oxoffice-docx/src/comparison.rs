@@ -598,9 +598,10 @@ impl Document {
             let mut again = None;
             let input = next.as_ref().unwrap_or(edited);
             // A comment added or removed whole is written as Word tracks it,
-            // its reference run inserted or deleted (Q6). Where that redline
-            // does not resolve back to both versions, the pass runs again
-            // and the comment's paragraph is tracked as before.
+            // its reference run inserted or deleted (Q6). When that pass
+            // fails (its redline does not resolve back to both versions, or
+            // anything else it refuses), the pass runs again without it, and
+            // the comment's paragraph is tracked as before.
             let mut marked = false;
             let pass = |document: &mut Self, again: &mut _, marks, marked: &mut bool| {
                 document.compare_pass(
@@ -877,14 +878,20 @@ impl Document {
                     .map(|comment| comment.id())
                     .collect::<HashSet<_>>()
             };
-            let [added, removed] = comment_marks::one_sided_comments(
-                (original_xml, &defined(&original)),
-                (edited_xml, &defined(&edited)),
-            )?;
+            let (original_defined, edited_defined) = (defined(&original), defined(&edited));
+            // A failure from here on runs the pass again without the marks.
+            *marked = !original_defined.is_empty() || !edited_defined.is_empty();
+            let [added, removed] = match *marked {
+                true => comment_marks::one_sided_comments(
+                    (original_xml, &original_defined),
+                    (edited_xml, &edited_defined),
+                )?,
+                false => Default::default(),
+            };
             if added.is_empty() && removed.is_empty() {
+                *marked = false;
                 (original_xml, edited_xml)
             } else {
-                *marked = true;
                 let (original_body, removed) =
                     comment_marks::take_comment_marks(original_xml, &removed)?;
                 let (edited_body, added) = comment_marks::take_comment_marks(edited_xml, &added)?;
@@ -1502,23 +1509,28 @@ impl Document {
             // The edited comments, which hold the added ones, or the
             // original's, which hold the removed ones.
             for comments in [None, Some(&original_comments)] {
-                let mut unrecorded = candidate.clone_for_staging();
-                comments::remove_comment_record(&mut unrecorded);
-                if let Some(comments) = comments {
-                    apply_comment_snapshot(&mut unrecorded, comments)?;
-                    unrecorded = reopen_staged(unrecorded)?;
-                }
-                let mut accepted = unrecorded.clone_for_staging();
-                accepted.accept_revision_ids(&new_ids)?;
-                let mut rejected = unrecorded.clone_for_staging();
-                rejected.reject_revision_ids(&new_ids)?;
-                if comments::comment_snapshots_agree(
-                    &comment_snapshot(&accepted)?,
-                    &edited_comments,
-                )? && comments::comment_snapshots_agree(
-                    &comment_snapshot(&rejected)?,
-                    &original_comments,
-                )? {
+                // A choice of comments the revisions do not fit is no choice.
+                let unrecorded = (|| -> Result<Option<Document>> {
+                    let mut unrecorded = candidate.clone_for_staging();
+                    comments::remove_comment_record(&mut unrecorded);
+                    if let Some(comments) = comments {
+                        apply_comment_snapshot(&mut unrecorded, comments)?;
+                        unrecorded = reopen_staged(unrecorded)?;
+                    }
+                    let mut accepted = unrecorded.clone_for_staging();
+                    accepted.accept_revision_ids(&new_ids)?;
+                    let mut rejected = unrecorded.clone_for_staging();
+                    rejected.reject_revision_ids(&new_ids)?;
+                    Ok((comments::comment_snapshots_agree(
+                        &comment_snapshot(&accepted)?,
+                        &edited_comments,
+                    )? && comments::comment_snapshots_agree(
+                        &comment_snapshot(&rejected)?,
+                        &original_comments,
+                    )?)
+                    .then_some(unrecorded))
+                })();
+                if let Ok(Some(unrecorded)) = unrecorded {
                     candidate = unrecorded;
                     break;
                 }

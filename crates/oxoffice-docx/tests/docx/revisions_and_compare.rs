@@ -6744,6 +6744,48 @@ fn accepting_only_the_deletion_with_a_comment_mark_removes_the_comment() {
     assert!(!xml.contains("commentRange"), "{xml}");
 }
 
+/// A thread goes with its root's reference, its replies with it, as Word
+/// removes a thread (W9): resolving by id the revision that holds only the
+/// root's reference run, in either direction.
+#[test]
+fn a_thread_goes_with_its_roots_reference_its_replies_with_it() {
+    for (wrapper, accept, goes) in [
+        ("ins", false, true),
+        ("del", true, true),
+        ("ins", true, false),
+        ("del", false, false),
+    ] {
+        let mut doc = doc_with(&["Hello brave world"]);
+        let root = doc
+            .add_comment_on_text("brave", "Ada", "Note", Default::default())
+            .unwrap();
+        doc.reply_to(root, "Bob", "Reply").unwrap();
+        let mut doc = with_part_edited(&mut doc, "word/document.xml", |xml| {
+            let reference = xml
+                .find(&format!(r#"<w:commentReference w:id="{root}"/>"#))
+                .unwrap();
+            let start = xml[..reference].rfind("<w:r>").unwrap();
+            let end = reference + xml[reference..].find("</w:r>").unwrap() + "</w:r>".len();
+            format!(
+                r#"{}<w:{wrapper} w:id="77" w:author="A" w:date="{DATE}">{}</w:{wrapper}>{}"#,
+                &xml[..start],
+                &xml[start..end],
+                &xml[end..]
+            )
+        });
+        let row = format!("{wrapper}, accept {accept}");
+        match accept {
+            true => doc.accept_revision_id(77),
+            false => doc.reject_revision_id(77),
+        }
+        .unwrap_or_else(|e| panic!("{row}: {e}"));
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("/word/document.xml").unwrap();
+        assert_eq!(doc.comments().len(), if goes { 0 } else { 2 }, "{row}");
+        assert_eq!(xml.contains("w:comment"), !goes, "{row}: {xml}");
+    }
+}
+
 #[test]
 fn a_comment_mark_in_a_deletion_inside_a_rejected_insertion_goes_with_it() {
     // ` days`, the end and the mark were inserted, then the end and the mark
@@ -7670,7 +7712,7 @@ fn a_compared_move_is_written_as_word_writes_one() {
 }
 
 /// A comment one version adds or removes whole is compared as Word tracks
-/// it (Q6, W9): its reference run inserted or deleted, its range marks
+/// it (Q6, W9): its reference run alone inserted or deleted, its range marks
 /// where the version that holds it has them, outside the revision, and no
 /// private record, since accepting and rejecting give back both versions'
 /// comments. Beside a comment whose text changed, the record stays.
@@ -7683,12 +7725,17 @@ fn a_comment_added_or_removed_whole_is_compared_as_word_tracks_it() {
         ..Default::default()
     };
     let plain = |text: &str| doc_with(&[text, "Second line"]);
-    let commented = |text: &str, note: &str| {
-        let mut doc = plain(text);
-        doc.add_comment_on_text("fox", "Ada", note, Default::default())
-            .unwrap();
+    let with = |mut doc: Document, anchors: &[(&str, &str)], removed: &[i32]| {
+        for (anchor, note) in anchors {
+            doc.add_comment_on_text(anchor, "Ada", note, Default::default())
+                .unwrap();
+        }
+        for &id in removed {
+            doc.remove_comment(id).unwrap();
+        }
         reopen(&mut doc)
     };
+    let commented = |text: &str, note: &str| with(plain(text), &[("fox", note)], &[]);
     // The comments of a document and the text each covers.
     let comments = |doc: &mut Document| {
         reopen(doc)
@@ -7697,60 +7744,133 @@ fn a_comment_added_or_removed_whole_is_compared_as_word_tracks_it() {
             .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
             .collect::<Vec<_>>()
     };
-    let fox = vec!["fox".to_owned()];
+    // The reference run of comment `id` alone in a revision, right after
+    // its range end.
+    let alone = |xml: &str, id: i32| {
+        let end = format!(r#"<w:commentRangeEnd w:id="{id}"/>"#);
+        xml.find(&end).is_some_and(|at| {
+            let rest = &xml[at + end.len()..];
+            let kind = ["ins", "del"]
+                .into_iter()
+                .find(|kind| rest.starts_with(&format!("<w:{kind} ")));
+            kind.is_some_and(|kind| {
+                let close = format!("</w:{kind}>");
+                rest.find(&close).is_some_and(|close| {
+                    let inside = &rest[..close];
+                    inside.contains(&format!(r#"<w:commentReference w:id="{id}"/>"#))
+                        && inside.matches("<w:r>").count() == 1
+                        && !inside.contains("<w:t")
+                        && !inside.contains("<w:delText")
+                })
+            })
+        })
+    };
+    let two_paragraphs = || {
+        let mut doc = plain(TEXT);
+        let range = oxoffice_docx::RunRange {
+            start: oxoffice_docx::RunPosition {
+                body_index: 0,
+                run_index: 0,
+            },
+            end: oxoffice_docx::RunPosition {
+                body_index: 1,
+                run_index: 0,
+            },
+        };
+        doc.add_comment_with_date(
+            range,
+            "Ada",
+            None,
+            "Both",
+            oxoffice_docx::CommentDate::Undated,
+        )
+        .unwrap();
+        reopen(&mut doc)
+    };
+    let table = |commented: bool| {
+        let mut doc = doc_with_body(concat!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>"#,
+            r#"<w:p><w:r><w:t>A cell with a few words in it</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+            r#"<w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+        ));
+        if commented {
+            doc.add_comment_on_text("few", "Ada", "Cell", Default::default())
+                .unwrap();
+        }
+        reopen(&mut doc)
+    };
     let mut failed = Vec::new();
-    for (row, original, edited, options, kind, record, (accept, reject)) in [
+    for (row, original, edited, options, alone_ids, record) in [
         (
             "added",
             plain(TEXT),
             commented(TEXT, "Note"),
             &word,
-            Some(RevisionKind::Insertion),
+            &[0][..],
             false,
-            (fox.clone(), vec![]),
         ),
         (
             "removed",
             commented(TEXT, "Note"),
             plain(TEXT),
             &word,
-            Some(RevisionKind::Deletion),
+            &[0],
             false,
-            (vec![], fox.clone()),
+        ),
+        // Both written as revisions; the record stays, since the comment
+        // parts the resolutions leave are not those of either version byte
+        // for byte.
+        (
+            "one added, another removed",
+            commented(TEXT, "Note"),
+            with(plain(TEXT), &[("fox", "Note"), ("dog", "New")], &[0]),
+            &word,
+            &[0, 1],
+            true,
         ),
         (
             "added, a word of its paragraph changed",
             plain(TEXT),
             commented(&TEXT.replace("lazy", "sleepy"), "Note"),
             &word,
-            None,
+            &[0],
             false,
-            (fox.clone(), vec![]),
+        ),
+        (
+            "added over two paragraphs",
+            plain(TEXT),
+            two_paragraphs(),
+            &word,
+            &[],
+            false,
+        ),
+        (
+            "added in a table",
+            table(false),
+            table(true),
+            &word,
+            &[0],
+            false,
         ),
         (
             "added, whole runs compared",
             plain(TEXT),
             commented(TEXT, "Note"),
             &ComparisonOptions::default(),
-            None,
+            &[],
             false,
-            (fox.clone(), vec![]),
         ),
         (
             "added beside a comment whose text changed",
             commented(TEXT, "Note"),
-            {
-                let mut doc = commented(TEXT, "Other note");
-                doc.add_comment_on_text("dog", "Ada", "New", Default::default())
-                    .unwrap();
-                reopen(&mut doc)
-            },
+            with(commented(TEXT, "Other note"), &[("dog", "New")], &[]),
             &word,
-            None,
+            &[1],
             true,
-            (vec!["fox".to_owned(), "dog".to_owned()], fox.clone()),
         ),
     ] {
+        let (mut original, mut edited) = (original, edited);
+        let (accept, reject) = (comments(&mut edited), comments(&mut original));
         let mut redlined = original;
         match redlined.compare_with_options(&edited, AUTHOR, DATE, options) {
             Ok(diagnostics) if diagnostics.is_empty() => {}
@@ -7765,9 +7885,7 @@ fn a_comment_added_or_removed_whole_is_compared_as_word_tracks_it() {
         if redlined.part_xml(RECORD).is_ok() != record {
             problems.push("record");
         }
-        if let Some(kind) = kind
-            && (kinds(&redlined) != [kind] || !xml.contains(r#"<w:commentRangeEnd w:id="0"/><w:"#))
-        {
+        if !alone_ids.iter().all(|&id| alone(&xml, id)) {
             problems.push("shape");
         }
         // No paragraph replaced whole: its mark stays as it was.
