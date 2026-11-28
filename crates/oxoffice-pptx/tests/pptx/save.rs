@@ -63,19 +63,21 @@ fn saving_over_the_opened_file_is_refused() {
 
 #[test]
 fn every_spelling_of_the_source_is_refused() {
-    // The same file by another name: a dot, a parent step, a hard link (every
-    // platform: the Windows comparison canonicalises, the Unix one reads the
-    // inode) and a symbolic link (Unix: Windows needs a privilege for one).
+    // The same file by another name: a dot and a parent step everywhere; a
+    // hard link and a symbolic link on Unix, where the comparison reads the
+    // inode (Windows compares canonical paths, which a hard link does not
+    // share, as `oxoffice_opc::is_same_file` says).
     let scratch = Scratch::new("spellings");
     fs::create_dir(scratch.0.join("sub")).unwrap();
     let path = scratch.deck("deck.pptx");
+    #[cfg(unix)]
     fs::hard_link(&path, scratch.0.join("hard.pptx")).unwrap();
     #[cfg(unix)]
     std::os::unix::fs::symlink(&path, scratch.0.join("link.pptx")).unwrap();
     let prs = Presentation::open(&path).unwrap();
     let spellings = ["./deck.pptx", "sub/../deck.pptx", "hard.pptx", "link.pptx"];
     for spelling in spellings {
-        if cfg!(unix) || spelling != "link.pptx" {
+        if cfg!(unix) || !matches!(spelling, "link.pptx" | "hard.pptx") {
             assert_refused(&prs, &scratch.0.join(spelling));
         }
     }
