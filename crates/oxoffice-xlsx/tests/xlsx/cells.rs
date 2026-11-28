@@ -355,19 +355,22 @@ fn a_sheet_without_cells_and_a_bad_reference_are_refused() {
         &[("relationships/worksheet", "relationships/chartsheet")],
     );
     let chartsheet = chart.sheet("Orders").unwrap();
-    // Every read of its cells is refused; its page setup reads.
+    // Its properties read as those of a sheet without cells; every read of
+    // its cells is refused; the workbook's Markdown lists it by its kind.
+    assert_eq!(chartsheet.used_range().unwrap(), None);
+    assert!(chartsheet.merged_ranges().unwrap().is_empty());
+    assert!(chartsheet.comments().unwrap().is_empty());
+    assert!(chartsheet.page_setup().is_ok());
+    assert_eq!(chart.to_markdown().unwrap(), "## Orders (chartsheet)\n");
     let refused = "sheet Orders is a chartsheet: it holds no cells to read";
     for error in [
-        chartsheet.used_range().map(|_| ()),
         chartsheet.cells("A1:B2").map(|_| ()),
-        chartsheet.merged_ranges().map(|_| ()),
-        chartsheet.comments().map(|_| ()),
+        chartsheet.values("A1:B2").map(|_| ()),
+        chartsheet.range("A:C").map(|_| ()),
         chartsheet.to_csv(&Default::default()).map(|_| ()),
-        chartsheet.to_markdown().map(|_| ()),
     ] {
         assert_eq!(error.unwrap_err().to_string(), refused);
     }
-    assert!(chartsheet.page_setup().is_ok());
     let workbook = Workbook::from_bytes(&corpus_bytes("excel/review.xlsx")).unwrap();
     let orders = workbook.sheet("Orders").unwrap();
     let cases: [(&str, Error, &str); 4] = [

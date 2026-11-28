@@ -4,7 +4,7 @@
 
 use oxoffice_xlsx::{Color, ColorSource, Fill, ResolvedStyle, Workbook};
 
-use crate::support::{corpus_bytes, edited};
+use crate::support::{corpus_bytes, edited, with_part};
 
 /// A style in one line: `font | fill | left/right/top/bottom | alignment |
 /// style name`.
@@ -159,6 +159,7 @@ fn a_cell_the_sheet_does_not_write_takes_its_row_style_then_its_column_style() {
         ("B40", "General", true, "Normal"),
         ("E40", "General", true, "Normal"),
         ("E50", "#,##0.00", false, "Normal"),
+        ("F50", "#,##0.00", false, "Normal"),
         ("G50", "#,##0.00", false, "Normal"),
         ("C50", "General", false, "Normal"),
         ("A40", "General", false, "Lien hypertexte"),
@@ -174,4 +175,23 @@ fn a_cell_the_sheet_does_not_write_takes_its_row_style_then_its_column_style() {
             "{cell}"
         );
     }
+}
+
+#[test]
+fn a_theme_that_does_not_read_leaves_its_colours_unresolved() {
+    // A colour scheme without its colours, nor the font and format schemes.
+    let workbook = with_part(
+        "excel/review.xlsx",
+        "xl/theme/theme1.xml",
+        concat!(
+            r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">"#,
+            r#"<a:themeElements><a:clrScheme name="Thin"><a:dk1><a:srgbClr val="112233"/></a:dk1>"#,
+            r#"</a:clrScheme></a:themeElements></a:theme>"#
+        )
+        .as_bytes(),
+    );
+    let cell = workbook.sheet("Orders").unwrap().cell("A1").unwrap();
+    assert_eq!(cell.text, "Item");
+    let color = cell.style.font.color.clone().unwrap();
+    assert_eq!((color.rgb, color.source), (None, ColorSource::Theme(1)));
 }

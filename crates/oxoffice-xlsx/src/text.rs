@@ -68,6 +68,7 @@ impl Worksheet<'_> {
     /// [`CsvOptions::raw`], the stored values. CRLF line ends, fields
     /// quoted as RFC 4180 asks.
     pub fn to_csv(&self, options: &CsvOptions) -> Result<String> {
+        self.require_cells()?;
         let mut out = String::new();
         if options.bom {
             out.push('\u{FEFF}');
@@ -100,9 +101,14 @@ impl Worksheet<'_> {
 
     /// The sheet as Markdown: `## <name>`, then a table of its used rows
     /// headed by the column letters, each row led by its number (no table
-    /// for a sheet without a used cell). See [`Workbook::to_markdown`].
+    /// for a sheet without a used cell). A sheet that holds no cells is
+    /// `## <name> (chartsheet)`, its kind named. See
+    /// [`Workbook::to_markdown`].
     pub fn to_markdown(&self) -> Result<String> {
-        let mut out = format!("## {}\n", self.name());
+        let mut out = match self.kind() {
+            SheetKind::Worksheet => format!("## {}\n", self.name()),
+            kind => format!("## {} ({})\n", self.name(), kind.as_str()),
+        };
         if let Some(table) = self.markdown_table()? {
             out.push('\n');
             out.push_str(&table);
@@ -152,15 +158,15 @@ impl Worksheet<'_> {
 }
 
 impl Workbook {
-    /// The workbook as Markdown: for each worksheet in tab order, hidden
-    /// ones included, `## <name>` and a table of its used rows headed by the
+    /// The workbook as Markdown: for each sheet in tab order, hidden ones
+    /// included, `## <name>` and a table of its used rows headed by the
     /// column letters, each row led by its number, so that every value
-    /// keeps its address. The texts are the displayed ones; `|` is escaped
-    /// and line breaks are written `<br>`.
+    /// keeps its address; a sheet that holds no cells is listed with its
+    /// kind. The texts are the displayed ones; `|` is escaped and line
+    /// breaks are written `<br>`.
     pub fn to_markdown(&self) -> Result<String> {
         let sections = self
             .sheets()
-            .filter(|sheet| sheet.kind() == SheetKind::Worksheet)
             .map(|sheet| sheet.to_markdown())
             .collect::<Result<Vec<_>>>()?;
         Ok(sections.join("\n"))

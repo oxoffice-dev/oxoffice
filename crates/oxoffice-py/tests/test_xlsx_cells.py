@@ -96,8 +96,11 @@ def test_styles_comments_and_page_setup_are_frozen_snapshots(tmp_path):
             if item.filename == "xl/_rels/workbook.xml.rels":
                 data = data.replace(b"relationships/worksheet", b"relationships/chartsheet")
             target.writestr(item, data)
-    sheet = oxlsx.Workbook(chart).sheets[0]
-    for read in (lambda: sheet.cell("A1"), lambda: sheet.used_range, sheet.to_csv):
+    charts = oxlsx.Workbook(chart)
+    sheet = charts.sheets[0]
+    assert (sheet.used_range, sheet.merged_ranges, sheet.comments) == (None, [], [])
+    assert charts.to_markdown() == "## Orders (chartsheet)\n"
+    for read in (lambda: sheet.cell("A1"), lambda: sheet.values("A1:B2"), sheet.to_csv):
         with pytest.raises(oxlsx.XlsxError, match="is a chartsheet: it holds no cells"):
             read()
     assert sheet.page_setup.paper_size == 1

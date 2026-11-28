@@ -37,7 +37,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Print the cells of each worksheet as Excel displays them
+    /// Print the cells of each sheet as Excel displays them
     Text {
         file: PathBuf,
         /// Output schema-1 JSON: values, formulas, merges and comments
@@ -47,7 +47,7 @@ enum Command {
         #[arg(long)]
         markdown: bool,
         /// A sheet to print, by name or number from 1 (repeatable; every
-        /// worksheet by default)
+        /// sheet by default)
         #[arg(long)]
         sheet: Vec<String>,
     },
@@ -85,10 +85,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Print the notes and comment threads of each worksheet
+    /// Print the notes and comment threads of each sheet
     Comments {
         file: PathBuf,
-        /// A sheet, by name or number from 1 (repeatable; every worksheet by default)
+        /// A sheet, by name or number from 1 (repeatable; every sheet by default)
         #[arg(long)]
         sheet: Vec<String>,
         /// Output schema-1 JSON
@@ -222,13 +222,10 @@ fn sheet<'a>(workbook: &'a Workbook, spec: &str) -> Result<Worksheet<'a>> {
         .ok_or_else(|| format!("no sheet is named or numbered {spec}").into())
 }
 
-/// The sheets `specs` name, or every worksheet when they name none.
+/// The sheets `specs` name, or every sheet when they name none.
 fn sheets<'a>(workbook: &'a Workbook, specs: &[String]) -> Result<Vec<Worksheet<'a>>> {
     if specs.is_empty() {
-        return Ok(workbook
-            .sheets()
-            .filter(|sheet| sheet.kind() == SheetKind::Worksheet)
-            .collect());
+        return Ok(workbook.sheets().collect());
     }
     specs.iter().map(|spec| sheet(workbook, spec)).collect()
 }
@@ -259,7 +256,7 @@ fn inspect(file: &Path, as_json: bool) -> Result<()> {
             } else {
                 serde_json::Value::Null
             };
-            let used_range = if worksheet { sheet.used_range()? } else { None };
+            let used_range = sheet.used_range()?;
             sheets.push(json!({
                 "sheet": sheet.position() + 1,
                 "name": sheet.name(),
@@ -298,9 +295,7 @@ fn inspect(file: &Path, as_json: bool) -> Result<()> {
         if sheet.state() != SheetState::Visible {
             details.push(sheet.state().as_str().to_owned());
         }
-        if sheet.kind() == SheetKind::Worksheet
-            && let Some(used) = sheet.used_range()?
-        {
+        if let Some(used) = sheet.used_range()? {
             details.push(used.to_string());
         }
         writeln!(
@@ -363,9 +358,13 @@ fn written(operation: &str, detail: serde_json::Value, output: &Path, as_json: b
 }
 
 /// A sheet as tab-separated displayed texts: `# <name>`, then each row that
-/// holds a value, from the first column of the used range.
+/// holds a value, from the first column of the used range; a sheet that
+/// holds no cells is `# <name> (chartsheet)`, its kind named.
 fn plain_text(sheet: &Worksheet<'_>) -> Result<String> {
-    let mut out = format!("# {}\n", sheet.name());
+    let mut out = match sheet.kind() {
+        SheetKind::Worksheet => format!("# {}\n", sheet.name()),
+        kind => format!("# {} ({})\n", sheet.name(), kind.as_str()),
+    };
     let Some(used) = sheet.used_range()? else {
         return Ok(out);
     };
@@ -406,6 +405,7 @@ fn text(file: &Path, as_json: bool, markdown: bool, specs: &[String]) -> Result<
                 "sheet": sheet.position() + 1,
                 "name": sheet.name(),
                 "state": sheet.state().as_str(),
+                "kind": sheet.kind().as_str(),
                 "used_range": used.map(|range| range.to_string()),
                 "cells": cells.iter().map(json::text_cell).collect::<Vec<_>>(),
                 "merged": sheet.merged_ranges()?.iter().map(ToString::to_string).collect::<Vec<_>>(),

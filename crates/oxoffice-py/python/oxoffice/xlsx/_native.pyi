@@ -84,7 +84,9 @@ class Workbook:
         """Whether the cached values of formulas may be out of date: the file asks for a recalculation on open."""
 
     def to_markdown(self) -> str:
-        """The workbook as Markdown: ``## <name>`` and a table per worksheet, hidden ones included.
+        """The workbook as Markdown: ``## <name>`` and a table per sheet, hidden ones included.
+
+        A chartsheet, dialogsheet or macrosheet is ``## <name> (chartsheet)``, with no table.
 
         Each table is headed by the column letters and each row led by its number, so every value keeps its
         address. The texts are the displayed ones; ``|`` is escaped and line breaks are written ``<br>``.
@@ -156,8 +158,8 @@ class Worksheet:
     def used_range(self) -> str | None:
         """The smallest range holding every cell with a value or a formula (``"A1:F16"``), ``None`` for none.
 
-        Read once. A chartsheet, dialogsheet or macrosheet raises ``XlsxError``, as every read of its cells does
-        (its page setup reads).
+        Read once. A chartsheet, dialogsheet or macrosheet has none, no merges and no comments; a read of its cells
+        (``cell``, ``values``, ``cells``, ``to_csv``) raises ``XlsxError``.
         """
 
     def cell(self, cell: _CellAddress) -> Cell:

@@ -165,7 +165,9 @@ jobs:
         run: python -m pytest crates/oxoffice-py/tests -q -n auto
 
   # The QUICK scaling sets time one call of each area, the edits of #6
-  # among them, at N and 16N (docx) or 4N (pptx): a call made linear fails.
+  # among them, at N and 16N (docx) or 4N (pptx), and the reads of a
+  # workbook at N and 4N rows (xlsx): a call made linear, a read made
+  # quadratic, fails.
   # Every call is timed in the full checks. The untimed run-once test is left to the
   # test jobs. Sequential: the timings need a quiet runner.
   timings:

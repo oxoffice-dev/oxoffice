@@ -82,10 +82,13 @@ pub(crate) fn merge(
     let mut thread_ids = HashSet::new();
     if let Some((part, threads)) = threads {
         // Ids are GUIDs, compared in any case.
-        let names: HashMap<String, &str> = persons
-            .iter()
-            .map(|person| (person.id.to_ascii_lowercase(), person.display_name.as_str()))
-            .collect();
+        // The first person of an id names it.
+        let mut names: HashMap<String, &str> = HashMap::new();
+        for person in persons {
+            names
+                .entry(person.id.to_ascii_lowercase())
+                .or_insert(person.display_name.as_str());
+        }
         let person = |id: &Option<String>| {
             let id = id.as_deref()?.to_ascii_lowercase();
             names.get(&id).and_then(|name| author(name))
@@ -144,4 +147,36 @@ pub(crate) fn merge(
     }
     comments.sort_by_key(|comment| comment.address);
     Ok(comments)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_person_of_an_id_names_the_threads() {
+        let person = |id: &str, name: &str| Person {
+            id: id.to_owned(),
+            display_name: name.to_owned(),
+        };
+        let thread = ThreadedComment {
+            reference: "B2".to_owned(),
+            id: "{T1}".to_owned(),
+            parent_id: None,
+            person_id: Some("{abc}".to_owned()),
+            date: None,
+            done: false,
+            text: "Check".to_owned(),
+        };
+        let comments = merge(
+            None,
+            Some((
+                "xl/threadedComments/threadedComment1.xml".to_owned(),
+                vec![thread],
+            )),
+            &[person("{ABC}", "Alice"), person("{abc}", "Bob")],
+        )
+        .unwrap();
+        assert_eq!(comments[0].author.as_deref(), Some("Alice"));
+    }
 }

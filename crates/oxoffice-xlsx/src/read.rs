@@ -111,15 +111,13 @@ impl Workbook {
                 }
                 None => None,
             };
-            let theme = match self.related_part(rel_types::THEME) {
-                Some(theme) => match self.package.get_part_shared(&theme) {
-                    Some(bytes) => {
-                        theme_colors(bytes).map_err(|error| format!("{theme}: {error}"))?
-                    }
-                    None => Default::default(),
-                },
-                None => Default::default(),
-            };
+            // A theme that does not read, like one the workbook lacks,
+            // leaves the theme colours unresolved: no cell read needs it.
+            let theme = self
+                .related_part(rel_types::THEME)
+                .and_then(|theme| self.package.get_part_shared(&theme))
+                .and_then(|bytes| theme_colors(bytes).ok())
+                .unwrap_or_default();
             Ok(Arc::new(StyleTable::build(styles.as_ref(), &theme)))
         })
         .map(Arc::as_ref)
@@ -269,7 +267,6 @@ struct SheetReader<'a> {
     xml: &'a [u8],
     index: &'a SheetIndex,
     ranges: &'a RangeLookup,
-    styles: &'a StyleTable,
     options: FormatOptions,
     recalculation: bool,
 }
@@ -434,7 +431,8 @@ impl<'a> SheetReader<'a> {
             Some(cell) => cell.s(),
             None => self.absent_style(row, address.column)?,
         };
-        let format = self.styles.get(s);
+        // The styles are read at the first cell, not for a used range.
+        let format = self.sheet.workbook.style_table()?.get(s);
         let (value, (stored, kind, ca)) = match cell {
             Some(cell) => (self.value(cell, address)?, self.formula(cell, address)?),
             None => (Value::Empty, (None, None, false)),
@@ -572,7 +570,6 @@ impl<'a> Worksheet<'a> {
                 .entry()
                 .ranges
                 .get_or_init(|| RangeLookup::new(&index.range_formulas)),
-            styles: self.workbook.style_table()?,
             options: self.workbook.format_options(),
             recalculation: self.workbook.recalculation_needed(),
         })
@@ -674,15 +671,22 @@ impl<'a> Worksheet<'a> {
     }
 
     /// The smallest range holding every cell with a value or a formula,
-    /// `None` for a sheet without one; read once. Neither `dimension`
-    /// (Google writes none) nor the rows written (Google pads them to 1000)
-    /// say it.
+    /// `None` for a sheet without one (a chartsheet, a dialogsheet, a
+    /// macrosheet among them); read once. Neither `dimension` (Google writes
+    /// none) nor the rows written (Google pads them to 1000) say it.
     pub fn used_range(&self) -> Result<Option<CellRange>> {
+        if self.kind() != SheetKind::Worksheet {
+            return Ok(None);
+        }
         self.reader()?.used_range()
     }
 
-    /// The merged ranges, in the order written.
+    /// The merged ranges, in the order written; none for a sheet that holds
+    /// no cells.
     pub fn merged_ranges(&self) -> Result<Vec<CellRange>> {
+        if self.kind() != SheetKind::Worksheet {
+            return Ok(Vec::new());
+        }
         let reader = self.reader()?;
         let Some(merges) = reader.index.child("mergeCells") else {
             return Ok(Vec::new());
@@ -700,10 +704,12 @@ impl<'a> Worksheet<'a> {
             .collect()
     }
 
-    /// The notes and comment threads of the sheet, by cell, row by row. See
-    /// [`Comment`].
+    /// The notes and comment threads of the sheet, by cell, row by row (none
+    /// for a sheet that holds no cells). See [`Comment`].
     pub fn comments(&self) -> Result<Vec<Comment>> {
-        self.require_cells()?;
+        if self.kind() != SheetKind::Worksheet {
+            return Ok(Vec::new());
+        }
         let workbook = self.workbook;
         let part = &self.entry().part;
         let read = |rel_type: &str| -> Result<Option<(String, &[u8])>> {
@@ -743,6 +749,48 @@ impl<'a> Worksheet<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_read_takes_the_rows_and_columns_an_edit_staged() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/files/excel/review.xlsx");
+        let mut workbook = Workbook::from_bytes(&std::fs::read(path).unwrap()).unwrap();
+        let used = |workbook: &Workbook| {
+            let sheet = workbook.sheet("Orders").unwrap();
+            sheet.used_range().unwrap().map(|range| range.to_string())
+        };
+        assert_eq!(used(&workbook).as_deref(), Some("A1:G40"));
+        // Row 40 changed, a cell added past the used range; column J styled.
+        let changed = CT_Row::parse(
+            concat!(
+                r#"<row r="40"><c r="A40" t="inlineStr"><is><t>Changed</t></is></c>"#,
+                r#"<c r="J40"><v>7</v></c></row>"#
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        let cols = Element::parse(br#"<cols><col min="10" max="10" width="9" style="3"/></cols>"#)
+            .unwrap();
+        let mut orders = workbook.sheet_mut("Orders").unwrap();
+        let before = orders.rows_in(39, 39).unwrap().remove(&39);
+        orders.stage_rows(vec![(39, before, changed)]);
+        let cols_before = orders.child("cols").unwrap();
+        orders.stage_child("cols", &cols_before, Some(cols));
+        let sheet = workbook.sheet("Orders").unwrap();
+        assert_eq!(sheet.cell("A40").unwrap().text, "Changed");
+        assert_eq!(sheet.cell("J40").unwrap().value, Value::Number(7.0));
+        let row: Vec<String> = sheet
+            .cells("40:40")
+            .unwrap()
+            .iter()
+            .map(|cell| cell.address.to_string())
+            .collect();
+        assert_eq!(row, ["A40", "J40"]);
+        assert_eq!(used(&workbook).as_deref(), Some("A1:J40"));
+        // An unwritten cell of column J takes the staged column's style.
+        let style = workbook.sheet("Orders").unwrap().cell("J50").unwrap();
+        assert_eq!(style.number_format, "#,##0.00");
+    }
 
     #[test]
     fn a_row_gives_each_column_once_in_the_order_written() {

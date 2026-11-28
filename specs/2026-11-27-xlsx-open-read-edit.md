@@ -203,8 +203,9 @@ and `1.0` alike); an error is a `CellError`, a `str` subclass (`== "#N/A"` works
 `stored_formula` belong to the cell that holds the formula; every cell of an array formula's or data table's range
 takes its `formula_kind`, `array_range` and staleness. A cell the sheet does not write
 reads as empty, with its row's style when the row has `customFormat`, else its column's. A bulk read of values past
-10,000,000 cells is refused, naming a smaller range. A chartsheet, dialogsheet or macrosheet refuses every read of
-cells (cells, values, used range, merges, comments, CSV, Markdown); its page setup reads. A read costs its cells: the
+10,000,000 cells is refused, naming a smaller range. A chartsheet, dialogsheet or macrosheet refuses a read of its
+cells (cell, cells, values, its CSV); its used range is `None`, its merges and comments are empty, its page setup reads,
+and the workbook's text, JSON and Markdown list it with its kind and no cells. A read costs its cells: the
 array ranges, the used range and the style names are each read once.
 
 **Displayed text**: `oxoffice-numfmt`, en-US, as in a column wide enough (no `####`, `General` at 11 characters);

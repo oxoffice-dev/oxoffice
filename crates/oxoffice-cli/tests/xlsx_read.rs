@@ -204,7 +204,7 @@ fn comments_print_notes_and_threads() {
 }
 
 #[test]
-fn a_chartsheet_is_refused_by_every_command_that_reads_cells() {
+fn a_chartsheet_is_listed_by_its_kind_and_refused_for_its_cells() {
     use std::io::{Read, Write};
 
     // excel/review.xlsx with its only sheet related as a chartsheet.
@@ -231,13 +231,11 @@ fn a_chartsheet_is_refused_by_every_command_that_reads_cells() {
     let chart = folder.join("chart.xlsx");
     std::fs::write(&chart, out.finish().unwrap().into_inner()).unwrap();
     let chart = chart.to_str().unwrap();
+    // A read of its cells is refused.
     for args in [
         vec!["xlsx", "csv", chart],
         vec!["xlsx", "csv", chart, "--sheet", "1"],
-        vec!["xlsx", "text", chart, "--sheet", "1"],
-        vec!["xlsx", "text", chart, "--json", "--sheet", "1"],
         vec!["xlsx", "cells", chart, "A1", "--sheet", "1"],
-        vec!["xlsx", "comments", chart, "--sheet", "1"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_oxoffice"))
             .args(&args)
@@ -251,6 +249,24 @@ fn a_chartsheet_is_refused_by_every_command_that_reads_cells() {
             "{args:?}: {error}"
         );
     }
+    // The workbook's text lists it with its kind and no cells.
+    assert_eq!(stdout(&["xlsx", "text", chart]), "# Orders (chartsheet)\n");
+    assert_eq!(
+        stdout(&["xlsx", "text", "--markdown", "--sheet", "1", chart]),
+        "## Orders (chartsheet)\n"
+    );
+    let record: Value = serde_json::from_str(&stdout(&["xlsx", "text", "--json", chart])).unwrap();
+    let sheet = &record["sheets"][0];
+    assert_eq!(
+        (
+            &sheet["kind"],
+            &sheet["used_range"],
+            &sheet["cells"],
+            &sheet["comments"]
+        ),
+        (&json!("chartsheet"), &Value::Null, &json!([]), &json!([]))
+    );
+    assert_eq!(stdout(&["xlsx", "comments", chart]), "");
     // inspect lists it, with no used range.
     let record: Value =
         serde_json::from_str(&stdout(&["xlsx", "inspect", "--json", chart])).unwrap();
