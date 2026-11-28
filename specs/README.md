@@ -115,3 +115,4 @@ dependency bumps and documentation.
 | 2026-11-27 | [Writing revisions and comments](2026-11-27-writing-revisions-and-comments.md) | accepted |
 | 2026-11-27 | [Workbooks: open and save without loss, read and edit cells, a new workbook](2026-11-27-xlsx-open-read-edit.md) | accepted |
 | 2026-11-27 | [Number format codes to the text Excel displays](2026-11-27-number-format-codes.md) | accepted |
+| 2026-11-28 | [A faster CI for pull requests: parallel, sharded, light on macOS and Windows](2026-11-28-faster-pull-request-ci.md) | accepted |

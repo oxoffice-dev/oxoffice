@@ -54,6 +54,9 @@ the debug test builds start from scratch, which nobody waits for.
 Amended 2026-11-25: the full sets run on demand, without a schedule, as
 `full-checks.yml`, label `ci-full-checks`; see
 [full checks on demand](2026-11-25-full-checks-on-demand.md).
+Amended 2026-11-28: the tests are split into shards, macOS and Windows run
+a smoke on a pull request and the whole suites on every push to main; see
+[a faster CI for pull requests](2026-11-28-faster-pull-request-ci.md).
 
 Every push, drafts and stacked pull requests included, now runs a macOS job.
 The night of 2026-11-21 queued on the 5 macOS jobs the organization could
