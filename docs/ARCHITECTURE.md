@@ -57,8 +57,9 @@ crates/
 
   # SpreadsheetML
   oxoffice-xlsx-formula  formula tokens, stored and displayed forms, shared
-                         formula members moved, the syntax check and the
-                         function table (prefixes, argument counts)
+                         formula members moved, the syntax check, the
+                         function table (prefixes, argument counts) and how
+                         large a result is, read from its formula
   oxoffice-xlsx-oxml     the parts of a workbook: workbook, shared strings,
                          styles, worksheets (the row index and the splice
                          writer, column widths, frozen panes), page setup,

@@ -21,7 +21,8 @@ Transitional or Strict Open XML.
 - Cells written: numbers, texts (to the shared strings, an identical plain
   item reused), booleans, errors, dates with a format that shows them,
   formulas (checked, stored as Excel stores them, spilling ones marked in
-  `metadata.xml`), clears, bulk writes, CSV imports with strict typing,
+  `metadata.xml` and written over their result's range, or the most the
+  data can fill, when the formula gives it), clears, bulk writes, CSV imports with strict typing,
   styles and number formats (identical records reused, the rest appended).
   A write into a shared formula's range turns its other cells into plain
   formulas; what Excel would repair is refused with nothing changed. Reads

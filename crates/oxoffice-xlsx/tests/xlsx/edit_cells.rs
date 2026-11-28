@@ -428,7 +428,17 @@ fn a_formula_is_written_in_its_stored_form_once_checked() {
         (
             "SORT(B2:B7,,-1)",
             SPILL,
-            r#"<c r="A1" cm="1"><f t="array" ref="A1">_xlfn._xlws.SORT(B2:B7,,-1)</f></c>"#,
+            r#"<c r="A1" cm="1"><f t="array" ref="A1:A6">_xlfn._xlws.SORT(B2:B7,,-1)</f></c>"#,
+        ),
+        (
+            "UNIQUE(B2:B7)",
+            SPILL,
+            r#"<c r="A1" cm="1"><f t="array" ref="A1:A6">_xlfn.UNIQUE(B2:B7)</f></c>"#,
+        ),
+        (
+            "SEQUENCE(B1)",
+            SPILL,
+            r#"<c r="A1" cm="1"><f t="array" ref="A1">_xlfn.SEQUENCE(B1)</f></c>"#,
         ),
         (
             "@A20:A22",
@@ -506,13 +516,13 @@ fn a_spilling_formula_finds_or_appends_its_metadata_and_makes_the_part_when_miss
     );
     assert!(
         formula_of(&part_text(&saved, "xl/worksheets/sheet1.xml"), "J2")
-            .starts_with(r#"<c r="J2" cm="1"><f t="array" ref="J2">_xlfn.UNIQUE(A4:A7)</f>"#)
+            .starts_with(r#"<c r="J2" cm="1"><f t="array" ref="J2:J5">_xlfn.UNIQUE(A4:A7)</f>"#)
     );
     let read = Workbook::from_bytes(&saved).unwrap();
     let cell = read.sheet_at(0).unwrap().cell("J2").unwrap();
     assert_eq!(
         cell.array_range.map(|range| range.to_string()).as_deref(),
-        Some("J2")
+        Some("J2:J5")
     );
 
     // LibreOffice drops it: the part is made, with its relationship and
@@ -594,6 +604,120 @@ fn a_spilling_formula_finds_or_appends_its_metadata_and_makes_the_part_when_miss
             read.array_range.map(|range| range.to_string()).as_deref(),
             Some("H1:H3"),
             "{cell}"
+        );
+    }
+}
+
+#[test]
+fn a_spilling_formula_without_its_range_spills_over_what_its_result_can_fill() {
+    // The dynamic array Excel saved, cleared and written again: the ref
+    // Excel wrote. A result the data size: the range it reads (Excel and
+    // Google Sheets fill as much as the result needs).
+    let original = corpus_bytes("excel/multi.xlsx");
+    let excel = formula_of(&part_text(&original, "xl/worksheets/sheet3.xml"), "F2");
+    let mut multi = Workbook::from_bytes(&original).unwrap();
+    let mut forecast = multi.sheet_mut("Q1 Forecast").unwrap();
+    forecast.clear("F2:F7", Clear::Contents).unwrap();
+    forecast
+        .set_formula("F2", "SORT(B2:B7,,-1)", SPILL)
+        .unwrap();
+    multi
+        .sheet_mut("Summary")
+        .unwrap()
+        .set_formula("J2", "UNIQUE(Sales!A2:A25)", SPILL)
+        .unwrap();
+    let saved = multi.to_bytes().unwrap();
+    let f = |cell: String| cell[cell.find("<f").unwrap()..cell.find("</f>").unwrap()].to_owned();
+    let written = f(formula_of(
+        &part_text(&saved, "xl/worksheets/sheet3.xml"),
+        "F2",
+    ));
+    assert_eq!(written, f(excel));
+    assert_eq!(
+        written,
+        r#"<f t="array" ref="F2:F7">_xlfn._xlws.SORT(B2:B7,,-1)"#
+    );
+    assert_eq!(
+        f(formula_of(
+            &part_text(&saved, "xl/worksheets/sheet1.xml"),
+            "J2"
+        )),
+        r#"<f t="array" ref="J2:J25">_xlfn.UNIQUE(Sales!A2:A25)"#
+    );
+
+    // Defined names as the budget's producers wrote them: Totals belongs to
+    // Budget, TaxRate to the workbook.
+    let mut budget = Workbook::from_bytes(&corpus_bytes("excel/budget.xlsx")).unwrap();
+    for (sheet, cell, formula, range) in [
+        ("Budget", "M4", "SORT(Totals)", "M4:M11"),
+        ("Ledger", "H2", "SORT(Totals)", "H2"),
+        ("Ledger", "J2", "SORT(budget!totals)", "J2:J9"),
+        ("Ledger", "L2", "TaxRate*{1,2}", "L2:M2"),
+    ] {
+        budget
+            .sheet_mut(sheet)
+            .unwrap()
+            .set_formula(cell, formula, SPILL)
+            .unwrap();
+        let read = budget.sheet(sheet).unwrap().cell(cell).unwrap();
+        assert_eq!(
+            read.array_range.map(|range| range.to_string()).as_deref(),
+            Some(range),
+            "{formula}"
+        );
+    }
+
+    // Its range must be free, as a range given must be, and its own call
+    // rewrites or retargets it; the way out names the range a result the
+    // data size fills, never a smaller one for a result of known shape. The
+    // most a result can fill stops at the edge of the sheet; a result
+    // known to pass it is refused.
+    let mut workbook = workbook_with_sheet(&sheet(
+        r#"<sheetData><row r="3"><c r="A3"><v>1</v></c></row></sheetData>"#,
+    ));
+    let mut data = workbook.sheet_at_mut(0).unwrap();
+    data.set_formula("E1", "SEQUENCE(3)", SPILL).unwrap();
+    data.set_formula("E1", "SEQUENCE(2)", SPILL).unwrap();
+    data.set_value("E3", number(1.0)).unwrap();
+    data.set_formula("G2", "UNIQUE(A:A)", SPILL).unwrap();
+    let spill = |text: &str| CellInput::Formula(text.to_owned(), SPILL);
+    for (result, message) in [
+        (
+            data.set_formula("A1", "SEQUENCE(5)", SPILL),
+            "the formula of A1 would spill over A1:A5, where A3 holds a value or a formula: clear it, or write the formula elsewhere",
+        ),
+        (
+            data.set_formula("A1", "UNIQUE(C1:C5)", SPILL),
+            "the formula of A1 can spill over A1:A5, where A3 holds a value or a formula: clear it, write the formula elsewhere, or give the range its result fills",
+        ),
+        (
+            data.set_formula("B2", "A:A", SPILL),
+            "the formula of B2 gives a result of 1048576 by 1 cells, which reaches past the edge of the sheet from B2, where Excel shows #SPILL!: write it where its result fits",
+        ),
+        (
+            data.write("C1", vec![vec![spill("SEQUENCE(3)")], vec![number(5.0)]]),
+            "C2 is written inside C1:C3, where the formula of C1 spills: write it elsewhere",
+        ),
+        (
+            data.write(
+                "C1",
+                vec![vec![spill("FILTER(A1:A3,A1:A3>0)")], vec![number(5.0)]],
+            ),
+            "C2 is written inside C1:C3, where the formula of C1 can spill: write it elsewhere, or give the range its result fills",
+        ),
+    ] {
+        assert_eq!(result.unwrap_err().to_string(), message);
+    }
+    let sheet = workbook.sheet_at(0).unwrap();
+    for (cell, range) in [("E1", "E1:E2"), ("G2", "G2:G1048576")] {
+        assert_eq!(
+            sheet
+                .cell(cell)
+                .unwrap()
+                .array_range
+                .map(|range| range.to_string())
+                .as_deref(),
+            Some(range)
         );
     }
 }

@@ -313,7 +313,7 @@ enum Form {
 
 /// A parameter name split from its prefix, and the key it is compared by
 /// (names compare in any case).
-fn parameter(text: &str) -> (&str, &str, String) {
+pub(crate) fn parameter(text: &str) -> (&str, &str, String) {
     for prefix in [PARAMETER, OPTIONAL_PARAMETER] {
         if let Some(bare) = text.strip_prefix(prefix) {
             return (prefix, bare, bare.to_lowercase());

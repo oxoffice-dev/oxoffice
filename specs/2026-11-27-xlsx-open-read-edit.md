@@ -36,7 +36,7 @@ under the plan. Producer facts come from LibreOffice 26.2 (probed here), a Googl
 | Crate | Role | Depends on (oxoffice) |
 | --- | --- | --- |
 | `oxoffice-numfmt` (PR 4, shared) | number format code + value -> displayed text, section colour, `_` and `*` hints; built-in ids; date serials 1900 / 1904 | none |
-| `oxoffice-xlsx-formula` | lexer, stored <-> displayed forms, reference mover, syntax check, function table (prefixes, arity); later the rest of the parser, the dependency graph, the evaluator, reference updates for inserted rows | none |
+| `oxoffice-xlsx-formula` | lexer, stored <-> displayed forms, reference mover, syntax check, function table (prefixes, arity), the extent of a result read from its formula (#715); later the rest of the parser, the dependency graph, the evaluator, reference updates for inserted rows | none |
 | `oxoffice-xlsx-oxml` | the SpreadsheetML types (`CT_*`), the worksheet row index, the splice writer | `core` |
 | `oxoffice-xlsx` | the facade: `Workbook`, `Worksheet`, cells, styles, comments, CSV, the new workbook | `opc`, `core`, `drawing`, `numfmt`, `xlsx-oxml`, `xlsx-formula` |
 | `oxoffice-xlsx-cli` | the `oxoffice xlsx` commands (library) | `xlsx`, `cli-support` |
@@ -300,16 +300,36 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   (section 2), still checked. A top-level `@` before one reference or defined name in a plain cell is stored without
   it (`@A20:A22` is `A20:A22`, `@MyName` is `MyName`, Excel's bytes), and kept before anything else (`@(A20+B20)` is
   `_xlfn.SINGLE((A20+B20))`, `@INDEX(A20:A22,2)` is `_xlfn.SINGLE(INDEX(A20:A22,2))`), checked on the Mac.
-- **Spill**: `<f t="array" ref>` on the anchor cell alone, as XlsxWriter writes it, Excel spilling it on load; `cm`
-  points to a `cellMetadata` block whose `rc` names the `XLDAPR` type of `metadata.xml`, found in place or appended, the
-  part created when absent (`cm` and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them). Google Sheets takes
-  the extent from `ref` (checked: the anchor alone shows one value, `ref="J2:J5"` without cached values spills): `spill`
-  also takes the range (Rust `Spill::Range`, Python `spill="J2:J5"`, CLI `--spill J2:J5`, edit map `"spill": "J2:J5"`),
-  which starts at the cell and whose other cells hold nothing, meet no other array formula and no merge (else refused,
-  as Excel would show `#SPILL!`), nor another range or a value written by the same call; its own empty cells count as
-  written, so its own call rewrites or retargets it; the anchor alone stays the default, the extent being the result's,
-  which only the evaluator knows: the known limitation `xlsx-spill-range-google` until then. A range wider than the
-  result was not checked in Google.
+- **Spill**: `<f t="array" ref>` on the anchor cell, Excel spilling it on load; `cm` points to a `cellMetadata` block
+  whose `rc` names the `XLDAPR` type of `metadata.xml`, found in place or appended, the part created when absent (`cm`
+  and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them). Google Sheets takes the extent from `ref` (checked:
+  the anchor alone shows one value, `ref="J2:J5"` without cached values spills), so `ref` covers the result whenever
+  the formula tells how large it is ([#715](https://github.com/oxoffice-dev/oxoffice/issues/715)), read by `oxoffice_xlsx_formula::result_extent` from the parse tree, its
+  defined names resolved from the formula's sheet (a sheet's own name first, then the workbook's):
+  - **exactly** when the text decides the shape: a range or a name of one (whole columns are 1,048,576 rows), an array
+    constant, operators and the functions applied to each element of their values (`A2:A10*2`, `ROUND(A2:A10,1)`, the
+    criteria of `COUNTIF`, the value `MATCH` looks up: the largest operand, a dimension of 1 repeated), aggregates
+    (one value), `SORT`, `SORTBY`, `TRANSPOSE`, `TOCOL` / `TOROW`, `HSTACK` / `VSTACK`, `MMULT`, `ROW` / `COLUMN`,
+    `SEQUENCE` / `RANDARRAY` / `MAKEARRAY` / `MUNIT` with constant sizes, `TAKE` / `DROP` / `EXPAND` / `CHOOSECOLS` /
+    `CHOOSEROWS` / `WRAPROWS` / `WRAPCOLS` with constant counts (`ROWS` and `COLUMNS` of an exact extent count as
+    constants), `IF` and `CHOOSE` on an array, `LET` names; Excel's own `SORT(B2:B7,,-1)` gets the `ref` Excel wrote;
+  - **at most** when the data decide how much of it the result fills: `FILTER` (what it filters, by rows or columns,
+    or `if_empty`), `UNIQUE` (what it reads, `by_col` either way), `FREQUENCY` (one more than its bins), `TAKE` / `DROP`
+    by a count and `CHOOSECOLS` / `CHOOSEROWS` by an index read from a cell, a `TOCOL` / `TOROW` that skips, `IF` and
+    `CHOOSE` on one value (the largest choice), and whatever takes such a result (`SORT(UNIQUE(...))`). A `ref` wider
+    than the result is harmless (checked on the Mac, Excel 16.115 and Google Sheets: `UNIQUE(A2:A20)` with `ref`
+    `J2:J20` shows its 5 values in `J2:J6` and leaves the rest empty, no repair prompt, and each app writes the true
+    size back when it saves); this bound stops at the edge of the sheet, where a larger result shows `#SPILL!` anyway.
+  An error that replaces the whole result shows in one cell, within any extent, so a value that can only make one is
+  not looked at. A result known to pass the edge of the sheet is refused. When neither tells the size (a size read from
+  a cell, `SEQUENCE(B1)`; `GROUPBY`, `PIVOTBY`, `TEXTSPLIT`; a function the table does not list, such as `XLOOKUP`,
+  `INDEX`, `OFFSET`, `MAP`; a table reference; a LAMBDA), the formula is written on its cell alone, as XlsxWriter
+  writes it: the known limitation `xlsx-spill-range-google` until the evaluator. `spill` also takes the range (Rust
+  `Spill::Range`, Python `spill="J2:J5"`, CLI `--spill-range J2:J5`, edit map `"spill": "J2:J5"`), kept as given. A range,
+  given or found, starts at the cell and its other cells hold nothing, meet no other array formula and no merge (else
+  refused, as Excel would show `#SPILL!`, the way out naming the range to give for an extent the data decide), nor
+  another range or a value written by the same call; its own empty cells count as written, so its own call rewrites
+  or retargets it.
 - **The edit map** (`oxoffice xlsx edit FILE --map EDITS.json -o OUT`): a JSON array applied in order, all or nothing,
   a refusal naming the zero-based entry, like `replace --map`: `{"sheet": "Data", "cell": "B2", "value": 3}`,
   `{"cell": "D2", "formula": "B2*C2"}`, `{"cell": "E2", "date": "2026-01-05"}`, `{"range": "A1:F1", "style":
@@ -523,7 +543,8 @@ write); `is_date_format(code)`; serial to date-time and back in both systems, se
 ## Links
 
 - [#365](https://github.com/oxoffice-dev/oxoffice/issues/365) and its plan comment; tensorbee/rdocx issue 281;
-  [#466](https://github.com/oxoffice-dev/oxoffice/issues/466).
+  [#466](https://github.com/oxoffice-dev/oxoffice/issues/466); [#715](https://github.com/oxoffice-dev/oxoffice/issues/715)
+  (the extent of a spilling formula).
 - [Number format codes](2026-11-27-number-format-codes.md) (PR 4);
   [One rule for every Python length argument](2026-11-21-one-rule-for-python-length-arguments.md);
   [Corpus at scale](2026-11-21-corpus-at-scale-and-behaviour-tests.md);

@@ -7,7 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use oxoffice_xlsx_formula::{
-    check_stored, function, move_references, to_displayed, to_stored, tokenize,
+    check_stored, function, move_references, result_extent, to_displayed, to_stored, tokenize,
 };
 use quick_xml::events::Event;
 
@@ -182,6 +182,31 @@ fn shared_formula_members_move_their_relative_references() {
             Ok(member),
             "{master}"
         );
+    }
+}
+
+#[test]
+fn a_result_is_as_large_as_its_formula_and_inputs_say() {
+    let names = |sheet: Option<&str>, name: &str| {
+        let refers = match (sheet, name) {
+            (None, "Sales") => "Data!$B$2:$B$25",
+            (None, "Rate") => "0.07",
+            (Some("Data" | "My data"), "Local") => "$A$1:$C$3",
+            (None, "Loop") => "Loop+1",
+            (None, "Calc") => "OFFSET(A1,0,0,B1)",
+            _ => return None,
+        };
+        Some(refers.to_owned())
+    };
+    for case in cases(include_str!("extents.tsv")) {
+        let [formula, expected] = case[..] else {
+            panic!("{case:?}")
+        };
+        let found = result_extent(formula, names).map_or("-".to_owned(), |extent| {
+            let bound = if extent.exact { "" } else { "<=" };
+            format!("{bound}{}x{}", extent.shape.rows, extent.shape.columns)
+        });
+        assert_eq!(found, expected, "{formula}");
     }
 }
 
@@ -375,5 +400,6 @@ fn no_text_makes_a_function_panic() {
         let _ = check_stored(&text);
         let _ = move_references(&text, 1, -1);
         let _ = to_displayed(&text);
+        let _ = result_extent(&text, |_, name| Some(name.to_owned()));
     }
 }

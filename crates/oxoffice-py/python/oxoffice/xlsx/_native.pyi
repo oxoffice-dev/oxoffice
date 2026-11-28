@@ -29,8 +29,8 @@ class Formula:
 
     ``text`` is the formula as Excel displays it after its ``=`` (an ``=`` is accepted), or as the file stores it
     with ``stored`` (``_xlfn.XLOOKUP(...)``); ``spill`` writes a dynamic array formula that spills from its cell:
-    ``True`` (Excel finds the range; Google Sheets shows the first value alone) or its range, ``"J2:J5"`` from the
-    cell, which Google Sheets spills over too.
+    ``True`` (over its result's range, or the most the data can fill, when the formula gives it; else on its cell
+    alone, where Google Sheets shows the first value alone) or its range, ``"J2:J5"`` from the cell.
     """
 
     def __init__(self, text: str, stored: bool = False, spill: bool | str = False) -> None: ...
@@ -210,8 +210,10 @@ class Worksheet:
         """Writes a formula into ``cell``, as Excel displays it after its ``=`` (an ``=`` is accepted).
 
         ``stored`` takes the form the file stores (``_xlfn.XLOOKUP(...)``); ``spill`` writes a dynamic array
-        formula that Excel spills from the cell: ``True``, or its range (``"J2:J5"``, from the cell, its other cells
-        empty) so that Google Sheets, which takes the range from the file, spills it too. A formula Excel would repair
+        formula that spills from the cell, over a range whose other cells are empty, which Google Sheets takes from
+        the file: ``True`` for its result's range (``SORT(A2:A10)``), or the most the data can fill
+        (``UNIQUE(A2:A10)``), when the formula gives it, else the cell alone (Google Sheets then shows one value); or
+        the range (``"J2:J5"``). A formula Excel would repair
         (``IF(B2>0;1;0)``, ``B2*``, ``IF(1,2,3,4)``) raises ``ValueError``. Written without a cached value, the workbook
         is calculated on open.
         """

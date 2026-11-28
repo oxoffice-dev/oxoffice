@@ -323,7 +323,7 @@ fn set_import_csv_and_the_edit_map_write_cells_values_formulas_and_styles() {
     assert_eq!(field(&by_ref("A4"), "text"), json!("2026-01-05"));
     assert_eq!(field(&by_ref("A5"), "formula"), json!("SUM(A2:A2)*2"));
     assert_eq!(field(&by_ref("B1"), "formula_kind"), json!("array"));
-    assert_eq!(field(&by_ref("B1"), "array_range"), json!("B1"));
+    assert_eq!(field(&by_ref("B1"), "array_range"), json!("B1:B3"));
     let negative = cells(&current, "A6:A7");
     assert_eq!(negative[0]["value"], json!(-5.0));
     assert_eq!(negative[1]["formula"], json!("-A2*2"));

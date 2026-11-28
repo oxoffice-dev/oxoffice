@@ -474,8 +474,8 @@ impl PyWorksheet {
 
     /// Writes a formula into `cell`, as Excel displays it (an `=` accepted),
     /// or as the file stores it with `stored`; `spill` for a dynamic array
-    /// formula: `True`, or its range (`"J2:J5"`) for Google Sheets to spill
-    /// it too.
+    /// formula: `True` (over its result's range, or the most the data can
+    /// fill, when the formula gives it), or its range (`"J2:J5"`).
     #[pyo3(signature = (cell, formula, *, stored = false, spill = None))]
     fn set_formula(
         &self,
