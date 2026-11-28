@@ -212,13 +212,13 @@ use namespace_replay::{
     replay_nested_namespace_declarations_in, replay_nested_namespace_declarations_with_spans,
     replay_unsavable_body_edit,
 };
+pub(crate) use namespaces::root_namespace_declarations;
 use namespaces::{
     DEFAULT_NAMESPACE_BELOW_ROOT, candidate_namespace_owner_markers, document_namespace_scopes,
     logical_owner_snapshot, marker_multiset_matches, modeled_owner_piece_spans,
     modeled_owner_spans, namespace_declarations, namespace_owners_from_spans, namespace_prefix,
-    nested_modeled_namespace_owners, retain_styles_root_attributes, root_namespace_declarations,
-    shadowed_namespace_diagnostic, unsafe_nested_namespace_prefix,
-    unsafe_serializer_namespace_prefix,
+    nested_modeled_namespace_owners, retain_styles_root_attributes, shadowed_namespace_diagnostic,
+    unsafe_nested_namespace_prefix, unsafe_serializer_namespace_prefix,
 };
 use new_package::{
     default_application_properties, is_app_version, new_word_compatible_package, new_word_package,

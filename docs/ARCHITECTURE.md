@@ -191,7 +191,9 @@ reads every tracked change and move range at open.
   keep the declarations they were read with, a default namespace included:
   the unmodelled XML kept without a prefix stays in it when the part is
   written again, beside the modelled elements written under `w:`. Comments,
-  numbering and styles keep their root's attributes, settings are edited in
+  numbering and styles keep their root's attributes (the comments' durable
+  ids, UTC dates and people parts stay as written, a new comment appending
+  its entries), settings are edited in
   their source, and an existing notes part takes typed additions into its
   own root. A SpreadsheetML element keeps its start tag as read; a row an
   edit writes again takes the fixed writing of the attributes the schema

@@ -1699,7 +1699,7 @@ impl DocumentIdentifiers {
             .is_some_and(|ids| ids.contains(id))
     }
 
-    pub(super) fn part_is_preserved(&self, part_name: &str) -> bool {
+    pub(crate) fn part_is_preserved(&self, part_name: &str) -> bool {
         self.preserved_part_names
             .contains(&part_name_identity(part_name))
     }

@@ -1,6 +1,6 @@
 //! `oxoffice docx comment add` and `comment reply` date a comment now unless
 //! given `--date`, and write none with `--undated`, on the Word and Google
-//! Docs files of the corpus.
+//! Docs files of the corpus; `comment list` reads its UTC date and durable id.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -149,6 +149,16 @@ fn date_writes_the_timestamp_and_undated_writes_none() {
         let dated = scratch.path(&format!("{producer}-dated.docx"));
         let id = add(&report(producer), &dated, &["--date", STAMP]);
         assert_eq!(date_of(&dated, id), STAMP, "{producer}");
+        let record = comments(&dated)
+            .into_iter()
+            .find(|comment| comment["id"] == id)
+            .unwrap();
+        assert_eq!(record["date_utc"], STAMP, "{producer}");
+        assert_eq!(
+            record["durable_id"].as_str().map(str::len),
+            Some(8),
+            "{producer}"
+        );
         let undated = scratch.path(&format!("{producer}-undated.docx"));
         let id = add(&report(producer), &undated, &["--undated"]);
         assert!(date_of(&undated, id).is_null(), "{producer}");

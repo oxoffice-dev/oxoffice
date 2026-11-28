@@ -735,7 +735,7 @@ pub(super) fn prepare_ref_comment_copy(
         if let Some(old) = &selected[0].durable_id {
             durable_map.insert(
                 old.clone(),
-                crate::comments::allocate_para_id_from_occupied(occupied_identities)?,
+                crate::comments::allocate_durable_id_from_occupied(occupied_identities)?,
             );
         }
         let mut companion_para_map = para_map.clone();

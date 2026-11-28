@@ -5464,3 +5464,24 @@ pub(crate) fn rfc3339_now() -> Result<String> {
         second_of_day % 60
     ))
 }
+
+/// The instant of RFC 3339 timestamp `value` in UTC, `Z` and its fraction of
+/// a second as given, as Word writes a comment's `dateUtc` beside its local
+/// `w:date`; `None` for a timestamp that is not RFC 3339 or before year 0.
+pub(crate) fn utc_rfc3339(value: &str) -> Option<String> {
+    let instant = parse_rfc3339(value)?;
+    let (year, month, day) = civil_from_days(instant.seconds.div_euclid(86_400));
+    let second_of_day = instant.seconds.rem_euclid(86_400);
+    let fraction = match instant.fraction.is_empty() {
+        true => String::new(),
+        false => format!(".{}", instant.fraction),
+    };
+    (0..=9999).contains(&year).then(|| {
+        format!(
+            "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}{fraction}Z",
+            second_of_day / 3_600,
+            second_of_day % 3_600 / 60,
+            second_of_day % 60
+        )
+    })
+}

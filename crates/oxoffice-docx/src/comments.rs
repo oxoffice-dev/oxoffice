@@ -40,6 +40,61 @@ pub(crate) const COMMENTS_EXTENDED_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml";
 const DEFAULT_COMMENTS_PART: &str = "/word/comments.xml";
 const DEFAULT_COMMENTS_EXTENDED_PART: &str = "/word/commentsExtended.xml";
+pub(crate) const COMMENTS_IDS_REL_TYPE: &str =
+    "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds";
+pub(crate) const COMMENTS_EXTENSIBLE_REL_TYPE: &str =
+    "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible";
+/// MS-DOCX bounds: a `w14:paraId` is below 0x80000000, a durable id of
+/// `commentsIds` above 0 and below 0x7FFFFFFF.
+const PARA_ID_LIMIT: u32 = 0x8000_0000;
+const DURABLE_ID_LIMIT: u32 = 0x7FFF_FFFF;
+
+/// A part beside the comments that oxoffice keeps as written, adding one
+/// entry for each new comment: its relationship from the main part, content
+/// type, namespace, root and entry names, and the name and prefix Word
+/// gives it.
+struct Companion {
+    relationship: &'static str,
+    content_type: &'static str,
+    namespace: &'static str,
+    root: &'static str,
+    item: &'static str,
+    part: &'static str,
+    prefix: &'static str,
+}
+
+/// Each comment's durable id, keyed by its last paragraph (W10).
+const COMMENT_IDS: Companion = Companion {
+    relationship: COMMENTS_IDS_REL_TYPE,
+    content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml",
+    namespace: "http://schemas.microsoft.com/office/word/2016/wordml/cid",
+    root: "commentsIds",
+    item: "commentId",
+    part: "/word/commentsIds.xml",
+    prefix: "w16cid",
+};
+
+/// Each comment's instant in UTC, keyed by its durable id (W10).
+const COMMENT_EXTENSIBLE: Companion = Companion {
+    relationship: COMMENTS_EXTENSIBLE_REL_TYPE,
+    content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtensible+xml",
+    namespace: "http://schemas.microsoft.com/office/word/2018/wordml/cex",
+    root: "commentsExtensible",
+    item: "commentExtensible",
+    part: "/word/commentsExtensible.xml",
+    prefix: "w16cex",
+};
+
+/// The authors Word knows (Q8): never made, only added to.
+const PEOPLE: Companion = Companion {
+    relationship: "http://schemas.microsoft.com/office/2011/relationships/people",
+    content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml",
+    namespace: oxoffice_docx_oxml::comments_extended::W15_NS,
+    root: "people",
+    item: "person",
+    part: "/word/people.xml",
+    prefix: "w15",
+};
 
 /// A stable insertion point between runs in a body paragraph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -866,6 +921,60 @@ impl CommentRef<'_> {
     /// A present entry with no `w15:done` is `Some(false)`.
     pub fn resolved(&self) -> Option<bool> {
         self.extension.map(|entry| entry.done.unwrap_or(false))
+    }
+
+    /// The durable id Word keeps for the comment in `commentsIds.xml`, eight
+    /// hexadecimal digits keyed by its last paragraph; `None` when the file
+    /// holds none for it. It reads that part: for many comments,
+    /// [`Document::comment_metadata`] reads it once.
+    pub fn durable_id(&self) -> Option<String> {
+        self.document
+            .comment_metadata_lookup()
+            .of(self.inner)
+            .durable_id
+    }
+
+    /// The comment's instant in UTC, as Word writes it in
+    /// `commentsExtensible.xml` beside the local time of [`Self::date`];
+    /// `None` when the file holds none for it. As [`Self::durable_id`], it
+    /// reads the parts.
+    pub fn date_utc(&self) -> Option<String> {
+        self.document
+            .comment_metadata_lookup()
+            .of(self.inner)
+            .date_utc
+    }
+}
+
+/// What Word keeps beside a comment, in the parts next to `comments.xml`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommentMetadata {
+    /// Its durable id, eight hexadecimal digits (`commentsIds.xml`).
+    pub durable_id: Option<String>,
+    /// Its instant in UTC (`commentsExtensible.xml`).
+    pub date_utc: Option<String>,
+}
+
+/// The durable ids by paragraph id, and the UTC dates by durable id, both
+/// keys in upper case: an unreadable part reads as empty.
+struct CommentMetadataLookup {
+    durable_ids: HashMap<String, String>,
+    dates: HashMap<String, String>,
+}
+
+impl CommentMetadataLookup {
+    fn of(&self, comment: &CT_Comment) -> CommentMetadata {
+        let durable_id = last_para_id(comment)
+            .and_then(|para_id| self.durable_ids.get(&para_id.to_ascii_uppercase()))
+            .cloned();
+        let date_utc = durable_id
+            .as_ref()
+            .and_then(|durable_id| self.dates.get(&durable_id.to_ascii_uppercase()))
+            .cloned();
+        CommentMetadata {
+            durable_id,
+            date_utc,
+        }
     }
 }
 
@@ -2258,11 +2367,179 @@ impl Document {
             .expect("comments-extended model was initialized")
             .comments
             .push(CT_CommentEx {
-                para_id,
+                para_id: para_id.clone(),
                 para_id_parent: None,
-                done: None,
+                done: Some(false),
                 extra_attributes: Vec::new(),
             });
+        self.push_comment_companions(&para_id, author, date)
+    }
+
+    /// The part `companion` names from the main part, and its entries.
+    fn comment_companion(
+        &self,
+        companion: &Companion,
+    ) -> Result<Option<(String, Vec<CommentPartEntry>)>> {
+        let Some(part) =
+            self.comment_relationship_part_at(&self.doc_part_name, companion.relationship)?
+        else {
+            return Ok(None);
+        };
+        let entries = comment_part_entries(
+            self.package.get_part(&part).expect("checked part"),
+            companion.namespace,
+            companion.root.as_bytes(),
+            companion.item.as_bytes(),
+        )?;
+        Ok(Some((part, entries)))
+    }
+
+    /// The durable id and UTC date of every comment, by id, each part read
+    /// once; a comment the parts hold nothing for is absent.
+    pub fn comment_metadata(&self) -> HashMap<i32, CommentMetadata> {
+        let lookup = self.comment_metadata_lookup();
+        self.comments
+            .iter()
+            .flat_map(|comments| &comments.comments)
+            .map(|comment| (comment.id, lookup.of(comment)))
+            .filter(|(_, metadata)| metadata != &CommentMetadata::default())
+            .collect()
+    }
+
+    fn comment_metadata_lookup(&self) -> CommentMetadataLookup {
+        let map = |companion: &Companion, key: &str, value: &str| {
+            let entries = self.comment_companion(companion).ok().flatten();
+            entries
+                .into_iter()
+                .flat_map(|(_, entries)| entries)
+                .filter_map(|mut entry| {
+                    let key = entry.attributes.remove(key)?.to_ascii_uppercase();
+                    Some((key, entry.attributes.remove(value)?))
+                })
+                .collect()
+        };
+        CommentMetadataLookup {
+            durable_ids: map(&COMMENT_IDS, "paraId", "durableId"),
+            dates: map(&COMMENT_EXTENSIBLE, "durableId", "dateUtc"),
+        }
+    }
+
+    /// Write what Word keeps beside a new comment or reply whose last
+    /// paragraph is `para_id` (W10): a durable id in `commentsIds`, and under
+    /// it the comment's instant in UTC in `commentsExtensible`, each part
+    /// made with its first entry; and its author in `people.xml`, only when
+    /// the file has that part and does not list the author yet (Q8).
+    fn push_comment_companions(
+        &mut self,
+        para_id: &str,
+        author: &str,
+        date: Option<&str>,
+    ) -> Result<()> {
+        // Parts that do not read, or two of a kind, take no entry: the
+        // comment needs none, and Word gives it one on its next save.
+        let (Ok(ids), Ok(extensible), Ok(people)) = (
+            self.comment_companion(&COMMENT_IDS),
+            self.comment_companion(&COMMENT_EXTENSIBLE),
+            self.comment_companion(&PEOPLE),
+        ) else {
+            return Ok(());
+        };
+        let mut occupied = ids
+            .iter()
+            .chain(&extensible)
+            .flat_map(|(_, entries)| entries)
+            .filter_map(|entry| entry.attributes.get("durableId"))
+            .filter_map(|value| parse_para_id(value))
+            .collect();
+        let durable_id = allocate_hex_id(&mut occupied, DURABLE_ID_LIMIT)?;
+        self.append_comment_companion_entry(
+            &COMMENT_IDS,
+            ids.map(|(part, _)| part),
+            |p, declaration| {
+                format!(
+                    r#"<{p}:commentId{declaration} {p}:paraId="{para_id}" {p}:durableId="{durable_id}"/>"#
+                )
+            },
+        )?;
+        let date_utc = date.and_then(crate::revision::utc_rfc3339);
+        self.append_comment_companion_entry(
+            &COMMENT_EXTENSIBLE,
+            extensible.map(|(part, _)| part),
+            |p, declaration| {
+                let date = date_utc
+                    .as_ref()
+                    .map_or(String::new(), |date| format!(r#" {p}:dateUtc="{date}""#));
+                format!(
+                    r#"<{p}:commentExtensible{declaration} {p}:durableId="{durable_id}"{date}/>"#
+                )
+            },
+        )?;
+        if let Some((part, people)) = people
+            && !people
+                .iter()
+                .any(|person| person.attributes.get("author").map(String::as_str) == Some(author))
+        {
+            let author = oxoffice_core::xml::escape_attribute_value(author);
+            self.append_comment_companion_entry(&PEOPLE, Some(part), |p, declaration| {
+                format!(
+                    r#"<{p}:person{declaration} {p}:author="{author}"><{p}:presenceInfo {p}:providerId="None" {p}:userId="{author}"/></{p}:person>"#
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Append to the root of `part`, a part of `companion` (made when
+    /// `None`), the entry `entry` writes with a prefix and the declaration
+    /// that prefix needs, empty when the root binds it.
+    fn append_comment_companion_entry(
+        &mut self,
+        companion: &Companion,
+        part: Option<String>,
+        entry: impl Fn(&str, &str) -> String,
+    ) -> Result<()> {
+        let (part, xml) = match part {
+            Some(part) => {
+                let xml = self.package.get_part(&part).expect("checked part").to_vec();
+                (part, xml)
+            }
+            None => {
+                let part = self.reserve_document_part_bundle(
+                    None,
+                    companion.part,
+                    companion.relationship,
+                    companion.content_type,
+                )?;
+                let p = companion.prefix;
+                let xml = format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<{p}:{} xmlns:mc=\"{}\" xmlns:{p}=\"{}\" mc:Ignorable=\"{p}\"/>",
+                    companion.root,
+                    oxoffice_docx_oxml::namespace::MC_NS,
+                    companion.namespace
+                );
+                (part, xml.into_bytes())
+            }
+        };
+        let root = oxoffice_core::xml_element::root_element_span(&xml)?;
+        let declarations = crate::document::root_namespace_declarations(&xml)?;
+        let prefix = declarations.iter().find_map(|(name, uri)| {
+            (uri == companion.namespace)
+                .then(|| name.strip_prefix("xmlns:"))
+                .flatten()
+        });
+        let addition = match prefix {
+            Some(prefix) => entry(prefix, ""),
+            None => entry(
+                companion.prefix,
+                &format!(" xmlns:{}=\"{}\"", companion.prefix, companion.namespace),
+            ),
+        };
+        let mut updated = xml[..root.start_tag.start].to_vec();
+        updated.extend(oxoffice_core::xml_element::append_content(
+            &xml[root.start_tag.start..],
+            &addition,
+        )?);
+        self.package.set_part(&part, updated);
         Ok(())
     }
 
@@ -2553,16 +2830,25 @@ impl Document {
             extended.comments.push(CT_CommentEx {
                 para_id: parent_para_id.clone(),
                 para_id_parent: None,
-                done: None,
+                done: Some(false),
                 extra_attributes: Vec::new(),
             });
         }
+        // Threads are flat: a reply to a reply names the thread's root, as
+        // Word rewrites it (W11), and takes the thread's state (W10).
+        let root_para_id = thread_root_para_id(self.comments.as_ref(), extended, &parent_para_id);
+        let done = extended
+            .comments
+            .iter()
+            .find(|entry| entry.para_id == root_para_id)
+            .map_or(Some(false), |root| Some(root.done.unwrap_or(false)));
         extended.comments.push(CT_CommentEx {
-            para_id,
-            para_id_parent: Some(parent_para_id),
-            done: None,
+            para_id: para_id.clone(),
+            para_id_parent: Some(root_para_id),
+            done,
             extra_attributes: Vec::new(),
         });
+        self.push_comment_companions(&para_id, author, date)?;
         self.comments_dirty = true;
         self.invalidate_layout();
         Ok(id)
@@ -2694,20 +2980,32 @@ impl Document {
             .comments_extended
             .as_mut()
             .expect("model was initialized");
-        let root_para_id = thread_root_para_id(extended, &para_id);
-        if let Some(entry) = extended
+        let root_para_id = thread_root_para_id(self.comments.as_ref(), extended, &para_id);
+        if extended
             .comments
-            .iter_mut()
-            .find(|entry| entry.para_id == root_para_id)
+            .iter()
+            .all(|entry| entry.para_id != root_para_id)
         {
-            entry.done = Some(resolved);
-        } else {
             extended.comments.push(CT_CommentEx {
-                para_id: root_para_id,
+                para_id: root_para_id.clone(),
                 para_id_parent: None,
-                done: Some(resolved),
+                done: None,
                 extra_attributes: Vec::new(),
             });
+        }
+        // The whole thread, as Word saves a resolved thread (W10).
+        let thread = extended
+            .comments
+            .iter()
+            .map(|entry| {
+                thread_root_para_id(self.comments.as_ref(), extended, &entry.para_id)
+                    == root_para_id
+            })
+            .collect::<Vec<_>>();
+        for (entry, in_thread) in extended.comments.iter_mut().zip(thread) {
+            if in_thread {
+                entry.done = Some(resolved);
+            }
         }
         self.comments_dirty = true;
         self.invalidate_layout();
@@ -2793,7 +3091,40 @@ impl Document {
         if comments.iter().all(|comment| ids.contains(&comment.id())) {
             return Ok(None);
         }
+        // A removal that empties a metadata part this session made: the
+        // staged route removes the part.
+        let removed = comments
+            .iter()
+            .filter(|comment| ids.contains(&comment.id()))
+            .filter_map(|comment| last_para_id(comment.inner))
+            .map(str::to_ascii_uppercase)
+            .collect::<HashSet<_>>();
         drop(comments);
+        let mut removed_durable = HashSet::new();
+        for (companion, key) in [(&COMMENT_IDS, "paraId"), (&COMMENT_EXTENSIBLE, "durableId")] {
+            let Ok(Some((part, entries))) = self.comment_companion(companion) else {
+                continue;
+            };
+            let gone = |value: &String| match key {
+                "paraId" => removed.contains(&value.to_ascii_uppercase()),
+                _ => removed_durable.contains(&value.to_ascii_uppercase()),
+            };
+            if !entries.is_empty()
+                && !self.identifiers.part_is_preserved(&part)
+                && entries
+                    .iter()
+                    .all(|entry| entry.attributes.get(key).is_some_and(gone))
+            {
+                return Ok(None);
+            }
+            let durable = entries
+                .iter()
+                .filter(|entry| entry.attributes.get("paraId").is_some_and(gone))
+                .filter_map(|entry| entry.attributes.get("durableId"))
+                .map(|value| value.to_ascii_uppercase())
+                .collect::<Vec<_>>();
+            removed_durable.extend(durable);
+        }
         let hits = self.body_slots_referencing_comments(&ids);
         if hits.is_empty() {
             return Ok(None);
@@ -2859,6 +3190,19 @@ impl Document {
             .chain([crate::EditUnit::Comments, crate::EditUnit::Parts])
             .collect::<Vec<_>>();
         self.edit_in_place_with_body_blocks(&units, blocks, |document| {
+            // The thread entries as the model holds them, which the staged
+            // route flushes first: a reply's entry may not be written yet.
+            if let (Some(model), Some(part)) = (
+                &document.comments_extended,
+                document.comments_extended_part_name.as_deref(),
+            ) && document
+                .package
+                .get_part(part)
+                .is_some_and(|xml| CT_CommentsEx::from_xml(xml).ok().as_ref() != Some(model))
+            {
+                let xml = model.to_xml()?;
+                document.package.set_part(part, xml);
+            }
             let owner = document.doc_part_name.clone();
             document.remove_comment_ids_with(&owner, &ids, Some(&main))
         })?;
@@ -2998,6 +3342,15 @@ impl Document {
             }
             self.comments = None;
             self.comments_owned = false;
+        }
+        // The durable ids and UTC dates parts this session made, left empty.
+        for companion in [&COMMENT_IDS, &COMMENT_EXTENSIBLE] {
+            if let Ok(Some((part, entries))) = self.comment_companion(companion)
+                && entries.is_empty()
+                && !self.identifiers.part_is_preserved(&part)
+            {
+                remove_owned_part(self, &part, companion.relationship);
+            }
         }
         if self.comments_extended.as_ref().is_some_and(|extended| {
             extended.comments.is_empty()
@@ -3602,8 +3955,24 @@ fn take_paragraph<'a>(paragraph: &'a CT_P, remaining: &mut usize) -> Option<&'a 
     }
 }
 
-fn thread_root_para_id(extended: &CT_CommentsEx, para_id: &str) -> String {
-    let mut current = para_id.to_owned();
+/// The last paragraph id of the thread root of the comment whose paragraph
+/// is `para_id`. A parent link may name any paragraph of the parent, as
+/// older producers wrote: it is read as the parent's last paragraph.
+fn thread_root_para_id(
+    comments: Option<&CT_Comments>,
+    extended: &CT_CommentsEx,
+    para_id: &str,
+) -> String {
+    let last = |para_id: &str| {
+        comments
+            .into_iter()
+            .flat_map(|comments| &comments.comments)
+            .find(|comment| para_ids(comment).any(|id| id == para_id))
+            .and_then(last_para_id)
+            .unwrap_or(para_id)
+            .to_owned()
+    };
+    let mut current = last(para_id);
     let mut seen = HashSet::new();
     while seen.insert(current.clone()) {
         let Some(parent) = extended
@@ -3614,7 +3983,7 @@ fn thread_root_para_id(extended: &CT_CommentsEx, para_id: &str) -> String {
         else {
             break;
         };
-        current.clone_from(parent);
+        current = last(parent);
     }
     current
 }
@@ -3637,6 +4006,14 @@ fn occupied_para_ids(
         .filter_map(Option::as_deref)
         .filter_map(parse_para_id)
         .collect::<HashSet<_>>();
+    // The paragraphs of a table in a comment are kept as written.
+    for (_, raw) in comments
+        .into_iter()
+        .flat_map(|comments| comments.comments.iter())
+        .flat_map(|comment| comment.extra_xml.iter())
+    {
+        occupied.extend(raw_para_ids(raw));
+    }
     occupied.extend(
         extended
             .into_iter()
@@ -3647,18 +4024,54 @@ fn occupied_para_ids(
 }
 
 pub(crate) fn allocate_para_id_from_occupied(occupied: &mut HashSet<u32>) -> Result<String> {
-    if let Some(max) = occupied.iter().copied().max()
-        && max < u32::MAX
-    {
-        let allocated = max + 1;
-        occupied.insert(allocated);
-        return Ok(format!("{allocated:08X}"));
-    }
-    let allocated = (1..=u32::MAX)
-        .find(|candidate| !occupied.contains(candidate))
-        .ok_or_else(|| Error::Other("no available comment paragraph id remains".to_owned()))?;
+    allocate_hex_id(occupied, PARA_ID_LIMIT)
+}
+
+pub(crate) fn allocate_durable_id_from_occupied(occupied: &mut HashSet<u32>) -> Result<String> {
+    allocate_hex_id(occupied, DURABLE_ID_LIMIT)
+}
+
+/// An id above every one of `occupied`, else the lowest free one, above 0
+/// and below `limit`, written as eight hexadecimal digits.
+fn allocate_hex_id(occupied: &mut HashSet<u32>, limit: u32) -> Result<String> {
+    let allocated = occupied
+        .iter()
+        .copied()
+        .max()
+        .map_or(1, |max| max.saturating_add(1));
+    let allocated = match allocated < limit && allocated > 0 {
+        true => allocated,
+        false => (1..limit)
+            .find(|candidate| !occupied.contains(candidate))
+            .ok_or_else(|| Error::Other("no available comment id remains".to_owned()))?,
+    };
     occupied.insert(allocated);
     Ok(format!("{allocated:08X}"))
+}
+
+/// The `paraId` attributes of `raw`, an element kept as written.
+fn raw_para_ids(raw: &[u8]) -> Vec<u32> {
+    let mut found = Vec::new();
+    let mut reader = NsReader::from_reader(raw);
+    let mut buffer = Vec::new();
+    while let Ok(event) = reader.read_event_into(&mut buffer) {
+        match event {
+            Event::Start(element) | Event::Empty(element) => {
+                for attribute in element.attributes().flatten() {
+                    if attribute.key.local_name().as_ref() == b"paraId"
+                        && let Ok(value) = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                    {
+                        found.extend(parse_para_id(&value));
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    found
 }
 
 fn parse_para_id(value: &str) -> Option<u32> {
@@ -4278,12 +4691,23 @@ impl Document {
         let Some(_part) = self
             .comment_relationship_part_at(owner, oxoffice_opc::relationship::rel_types::COMMENTS)?
         else {
-            if self.package.get_part_rels(owner).iter().flat_map(|rels| &rels.items).any(|relationship| {
-                matches!(relationship.rel_type.as_str(), COMMENTS_EXTENDED_REL_TYPE
-                    | "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds"
-                    | "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible")
-            }) {
-                return Err(Error::Other("glossary comment companions have no owned definitions relationship".into()));
+            if self
+                .package
+                .get_part_rels(owner)
+                .iter()
+                .flat_map(|rels| &rels.items)
+                .any(|relationship| {
+                    matches!(
+                        relationship.rel_type.as_str(),
+                        COMMENTS_EXTENDED_REL_TYPE
+                            | COMMENTS_IDS_REL_TYPE
+                            | COMMENTS_EXTENSIBLE_REL_TYPE
+                    )
+                })
+            {
+                return Err(Error::Other(
+                    "glossary comment companions have no owned definitions relationship".into(),
+                ));
             }
             return Ok(None);
         };
@@ -4300,8 +4724,8 @@ impl Document {
                 local.rel_type.as_str(),
                 oxoffice_opc::relationship::rel_types::COMMENTS
                     | COMMENTS_EXTENDED_REL_TYPE
-                    | "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds"
-                    | "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible"
+                    | COMMENTS_IDS_REL_TYPE
+                    | COMMENTS_EXTENSIBLE_REL_TYPE
             ) {
                 continue;
             }
@@ -4636,9 +5060,32 @@ impl Document {
                 updates.insert(part, xml);
             }
         }
-        // Preserve the existing last-paragraph-only law. In particular a
-        // present imported commentsIds part is never rewritten. If its old
-        // target cannot remain valid, this staged publication refuses here.
+        // The durable ids follow the last paragraph too: an entry of
+        // commentsIds is keyed by it (W10). Its other bytes stay as written.
+        if let Some((part, entries)) = self.comment_companion(&COMMENT_IDS)? {
+            let source_spellings = entries
+                .iter()
+                .filter_map(|entry| {
+                    let old_value = entry.attributes.get("paraId")?;
+                    let new_value = rebind.get(&old_value.to_ascii_uppercase())?;
+                    Some((old_value.clone(), new_value.clone()))
+                })
+                .collect::<BTreeMap<_, _>>();
+            if !source_spellings.is_empty() {
+                let source = self
+                    .package
+                    .get_part(&part)
+                    .expect("checked companion source");
+                let xml = crate::field::patch_ref_comment_identity_attributes(
+                    source,
+                    &BTreeMap::new(),
+                    &source_spellings,
+                    &BTreeMap::new(),
+                )?;
+                updates.insert(part, xml);
+            }
+        }
+        // A companion whose old target cannot remain valid refuses here.
         self.comment_owned_graph_at(&self.doc_part_name, Some(next), Some(&updates))?;
         for (part, xml) in updates {
             self.package.set_part(&part, xml);
@@ -4736,12 +5183,10 @@ impl Document {
         if let Some((part, _)) = source_definitions {
             ownership.entries.insert(part, definitions);
         }
-        const IDS_REL: &str =
-            "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds";
-        const EXTENSIBLE_REL: &str =
-            "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible";
-        const IDS_NS: &str = "http://schemas.microsoft.com/office/word/2016/wordml/cid";
-        const CEX_NS: &str = "http://schemas.microsoft.com/office/word/2018/wordml/cex";
+        const IDS_REL: &str = COMMENTS_IDS_REL_TYPE;
+        const EXTENSIBLE_REL: &str = COMMENTS_EXTENSIBLE_REL_TYPE;
+        const IDS_NS: &str = COMMENT_IDS.namespace;
+        const CEX_NS: &str = COMMENT_EXTENSIBLE.namespace;
         let mut by_durable = BTreeMap::new();
         for (relationship, namespace, root, item, key) in [
             (

@@ -2164,6 +2164,7 @@ impl PyDocument {
             .into_iter()
             .map(|item| (item.location().clone(), item))
             .collect::<HashMap<_, _>>();
+        let mut metadata = this.inner.comment_metadata();
         let records = this
             .inner
             .comments()
@@ -2200,6 +2201,7 @@ impl PyDocument {
                     Ok((anchor, text)) => (anchor, text, None),
                     Err(issue) => (None, None, Some(issue)),
                 };
+                let metadata = metadata.remove(&comment.id()).unwrap_or_default();
                 Ok(PyComment {
                     id: comment.id(),
                     author: comment.author().map(str::to_owned),
@@ -2208,6 +2210,8 @@ impl PyDocument {
                     text: comment.text(),
                     parent_id: comment.parent_id(),
                     resolved: comment.resolved(),
+                    durable_id: metadata.durable_id,
+                    date_utc: metadata.date_utc,
                     anchor_text,
                     anchor,
                     anchor_issue,
