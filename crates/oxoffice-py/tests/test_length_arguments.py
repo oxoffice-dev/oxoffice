@@ -593,23 +593,19 @@ def test_a_length_is_stored_as_given(name):
         assert read() == stored(valid(spec), spec.unit)
 
 
-def rounding_rows():
+@pytest.mark.parametrize("name", rows(lambda spec: spec.unit > EMU))
+def test_a_bare_integer_that_rounds_to_zero_is_refused(name):
     """12, and the largest bare integers that round to zero, one unit less than a unit on each side: a property tagged
     with a smaller unit than the one it is stored in takes them."""
-    return [pytest.param(name, value, id=f"{name}-{value}") for name, spec in ARGS.items() if spec.unit > EMU
-            for value in (12, spec.unit - 1, -(spec.unit - 1))]
-
-
-@pytest.mark.parametrize(("name", "value"), rounding_rows())
-def test_a_bare_integer_that_rounds_to_zero_is_refused(name, value):
     spec = ARGS[name]
     apply, read = spec.target()
     before = read() if read else None
     unit = {TWIPS: "twips", HALF_POINTS: "half-points", CENTIPOINTS: "hundredths of a point"}[spec.unit]
-    with pytest.raises(ValueError, match=f"^{label(name)}: bare integer {value} EMU would round to zero {unit};"):
-        apply(value)
-    if read:
-        assert read() == before
+    for value in (12, spec.unit - 1, -(spec.unit - 1)):
+        with pytest.raises(ValueError, match=f"^{label(name)}: bare integer {value} EMU would round to zero {unit};"):
+            apply(value)
+        if read:
+            assert read() == before, (name, value)
 
 
 @pytest.mark.parametrize("name", rows())
@@ -634,16 +630,14 @@ def test_a_length_that_rounds_to_zero_is_taken_as_given(name):
         assert read() == 0
 
 
-def refused_types():
-    return [pytest.param(name, value, id=f"{name}-{value!r}")
-            for name, spec in ARGS.items() for value in (True, False, 1.5) if not (spec.floats and value == 1.5)]
-
-
-@pytest.mark.parametrize(("name", "value"), refused_types())
-def test_bool_and_float_are_refused(name, value):
+@pytest.mark.parametrize("name", rows())
+def test_bool_and_float_are_refused(name):
     apply, _ = ARGS[name].target()
-    with pytest.raises(TypeError, match=f"^{label(name)} requires a Length"):
-        apply(value)
+    for value in (True, False, 1.5):
+        if ARGS[name].floats and value == 1.5:
+            continue
+        with pytest.raises(TypeError, match=f"^{label(name)} requires a Length"):
+            apply(value)
 
 
 @pytest.mark.parametrize("name", rows())

@@ -11,8 +11,10 @@ its runs and its XML about 13 times, the bytes of the package about 16 times. Ev
 body carries the identifiers Word writes when it saves, so that each call takes the route a saved body takes. Making a
 target costs about as much as a timed call, so the documents end with targets made in advance
 (builders.edit_cost_docx), and each timed call opens its documents again, so that no call sees the targets another one
-changed. `test_every_timed_call_runs_once` makes every timed call once on a small document, untimed: on a debug build
-each edit then also runs the whole-document cross-checks."""
+changed. `test_every_timed_call_runs_once` makes the timed calls that test_docx_tracked_changes does not run once on a
+small document, untimed (that file runs every other one, in its session when Word records no revision for it and
+without one for the others, then saves and reopens): on a debug build each edit then also runs the whole-document
+cross-checks."""
 import ast
 import datetime
 import io
@@ -1043,10 +1045,17 @@ def test_every_mutating_call_is_timed():
 
 @pytest.fixture(scope="module")
 def saved_document(tmp_path_factory):
-    return edit_cost_docx(tmp_path_factory.mktemp("once") / "saved.docx", 10, picture_side=8)
+    return edit_cost_docx(tmp_path_factory.mktemp("once") / "saved.docx", 10, picture_side=8, probes=2)
 
 
-@pytest.mark.parametrize("name", sorted(TIMED))
+# The calls test_docx_tracked_changes does not run (the matrix there runs every other call, in its session or
+# without one, then saves and reopens the document): the tracked variants, the session's own calls and the one that
+# needs a certificate.
+RUN_ONCE_HERE = sorted(n for n in TIMED if " (" in n or n in ("Document.sign", "Document.track_changes",
+                                                              "TrackedChanges.stop"))
+
+
+@pytest.mark.parametrize("name", RUN_ONCE_HERE)
 def test_every_timed_call_runs_once(saved_document, name):
     """The call, then a save of the document and an opening of the bytes saved, so that an edit that leaves the
     document unsavable fails here and not at a user's save."""

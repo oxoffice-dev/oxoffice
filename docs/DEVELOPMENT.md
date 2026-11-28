@@ -210,8 +210,10 @@ OXOFFICE_SCALING=full pytest crates/oxoffice-py/tests    # every call (full-chec
 
 Without `OXOFFICE_SCALING`, only the check that every mutating call is timed
 runs, and every timed docx call is made once, untimed, on a small document,
-which is then saved and opened again: on a debug build that puts each of them
-under the whole-document cross-checks.
+which is then saved and opened again (by the class matrix of
+`test_docx_tracked_changes.py` for the calls it names, by
+`test_every_timed_call_runs_once` for the others): on a debug build that puts
+each of them under the whole-document cross-checks.
 A docx call of `GROWING` is a strict xfail tied to its issue: when a fix
 makes it flat, the XPASS fails the run until the call leaves the set. A call
 outside the band it is expected in (under 2.5 times, or 1.5 to 24 times for a
