@@ -1845,10 +1845,27 @@ pub(super) fn give_ids(
     identifiers: &mut DocumentIdentifiers,
     check: impl FnOnce(&str) -> Result<()>,
 ) -> Result<String> {
-    let ids = identifiers.free_revision_ids(xml.matches(ID_MARK).count())?;
+    // The old ids of the revisions a copy brought, each given a new one too.
+    let mut foreign: Vec<&str> = Vec::new();
+    for piece in xml.split(FOREIGN_ID.0).skip(1) {
+        let old = piece.split(FOREIGN_ID.1).next().unwrap_or_default();
+        if !foreign.contains(&old) {
+            foreign.push(old);
+        }
+    }
+    let count = xml.matches(ID_MARK).count();
+    let all = identifiers.free_revision_ids(count + foreign.len())?;
+    let (ids, renumbered) = all.split_at(count);
+    let mut xml = xml.to_owned();
+    for (old, new) in foreign.iter().zip(renumbered) {
+        xml = xml.replace(
+            &format!("{}{old}{}", FOREIGN_ID.0, FOREIGN_ID.1),
+            &new.to_string(),
+        );
+    }
     let mut output = String::with_capacity(xml.len() + ids.len() * 4);
-    let mut rest = xml;
-    for id in &ids {
+    let mut rest = xml.as_str();
+    for id in ids {
         let at = rest.find(ID_MARK).expect("one mark per id");
         output.push_str(&rest[..at]);
         output.push_str(&id.to_string());
@@ -1856,8 +1873,8 @@ pub(super) fn give_ids(
     }
     output.push_str(rest);
     check(&output)?;
-    identifiers.hold_revision_ids(&ids);
-    tracking.record(&ids);
+    identifiers.hold_revision_ids(&all);
+    tracking.record(ids);
     Ok(output)
 }
 
@@ -2180,7 +2197,22 @@ pub(super) fn inserted_block_xml(
     }
     let mut rows = Vec::new();
     collect_word(&root, "tr", &mut rows);
+    if content
+        && holds_any(
+            &root,
+            &["del", "moveFrom", "moveTo", "cellDel", "moveFromRangeStart"],
+        )
+    {
+        return Err(refused(
+            "the insertion of content that holds a deletion or a move",
+        ));
+    }
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    // The revisions a copy brings take ids of their own (`FOREIGN_ID`).
+    let mut renumbered = Vec::new();
+    if content {
+        foreign_ids(xml, &root, &mut renumbered);
+    }
     let last = paragraphs.len().saturating_sub(1);
     for (index, paragraph) in paragraphs.iter().enumerate() {
         // The mark first: a new `w:pPr` goes before the first run's `w:ins`
@@ -2190,7 +2222,40 @@ pub(super) fn inserted_block_xml(
             false => Ok(()),
         };
         if keep_last_mark && index == last {
-            runs(&mut edits)?;
+            // The story's final mark holds no revision (Word check W12): one
+            // a copy brings is cleared. Its properties first: a new `w:pPr`
+            // goes before the first run's `w:ins` at the same place.
+            let properties = word_children(paragraph, "pPr").next();
+            let mark_revisions = properties
+                .and_then(|properties| word_children(properties, "rPr").next())
+                .into_iter()
+                .flat_map(|run| run.children.iter())
+                .filter_map(|child| match child {
+                    Child::Element(element)
+                        if element.word
+                            && matches!(
+                                element.local.as_str(),
+                                "ins" | "del" | "moveFrom" | "moveTo"
+                            ) =>
+                    {
+                        Some(element.span())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            // The mark's properties left with nothing but those revisions go
+            // with them, and the paragraph's properties so too.
+            let elements = |node: &Node| {
+                node.children
+                    .iter()
+                    .filter(|child| matches!(child, Child::Element(_)))
+                    .count()
+            };
+            let mark_properties =
+                properties.and_then(|properties| word_children(properties, "rPr").next());
+            let bare_mark = !mark_revisions.is_empty()
+                && mark_properties.is_some_and(|run| elements(run) == mark_revisions.len());
+            let mut changed = false;
             // The kept mark is the one of `previous`, whose properties it
             // takes: a change of them gives them back when rejected, as Word
             // writes properties given to a new last paragraph.
@@ -2203,8 +2268,20 @@ pub(super) fn inserted_block_xml(
                             props(xml, properties, "pPrChange", &["rPr", "sectPr"])
                         })
                 };
-                let (old, new) = (read(previous, &before)?, read(xml, paragraph)?);
+                let (old, mut new) = (read(previous, &before)?, read(xml, paragraph)?);
                 if old.base != new.base || old.prior.is_some() {
+                    changed = true;
+                    let kept = |local: &str| {
+                        properties
+                            .and_then(|properties| word_children(properties, local).next())
+                            .filter(|_| !(local == "rPr" && bare_mark))
+                            .map(Node::span)
+                    };
+                    new.kept = [kept("rPr"), kept("sectPr")]
+                        .into_iter()
+                        .flatten()
+                        .map(|span| without_spans(xml, span, &mark_revisions).unwrap_or_default())
+                        .collect();
                     let written = changed_props(&new, &old, &prefix, "pPr", "pPrChange", tracking);
                     edits.push(match word_children(paragraph, "pPr").next() {
                         Some(properties) => (properties.span(), written),
@@ -2221,6 +2298,16 @@ pub(super) fn inserted_block_xml(
                     });
                 }
             }
+            if !changed {
+                match (properties, mark_properties) {
+                    (Some(properties), Some(_)) if bare_mark && elements(properties) == 1 => {
+                        edits.push((properties.span(), String::new()));
+                    }
+                    (_, Some(run)) if bare_mark => edits.push((run.span(), String::new())),
+                    _ => edits.extend(mark_revisions.into_iter().map(|span| (span, String::new()))),
+                }
+            }
+            runs(&mut edits)?;
             continue;
         }
         let properties = word_children(paragraph, "pPr").next();
@@ -2238,6 +2325,8 @@ pub(super) fn inserted_block_xml(
             }
             None => edits.push((paragraph.start.end..paragraph.start.end, marked)),
             Some(properties) => match word_children(properties, "rPr").next() {
+                // A mark a copy brings already inserted keeps its own.
+                Some(run) if word_children(run, "ins").next().is_some() => {}
                 // First in the mark's properties, as the schema orders it.
                 Some(run) => edits.push((run.start.end..run.start.end, mark.clone())),
                 None => {
@@ -2270,6 +2359,13 @@ pub(super) fn inserted_block_xml(
             }
         }
     }
+    // An id inside a span another edit rewrites goes with that span.
+    renumbered.retain(|(at, _): &(Range<usize>, String)| {
+        !edits
+            .iter()
+            .any(|(range, _)| range.start <= at.start && at.end <= range.end && !range.is_empty())
+    });
+    edits.extend(renumbered);
     edits.sort_by_key(|(range, _)| range.start);
     let mut output = String::with_capacity(xml.len() + edits.len() * 96);
     let mut copied = 0;
@@ -2280,6 +2376,77 @@ pub(super) fn inserted_block_xml(
     }
     output.push_str(&xml[copied..]);
     Ok(output)
+}
+
+/// Where a revision a copied block brings has its id, until the ids are
+/// given: the old id between the two marks, so that ids shared by a range's
+/// start and end stay shared.
+const FOREIGN_ID: (&str, &str) = ("\u{2}", "\u{3}");
+
+/// The id of each revision under `node`, to be given anew.
+fn foreign_ids(xml: &str, node: &Node, found: &mut Vec<(Range<usize>, String)>) {
+    for child in &node.children {
+        let Child::Element(element) = child else {
+            continue;
+        };
+        if element.word
+            && matches!(
+                element.local.as_str(),
+                "ins"
+                    | "rPrChange"
+                    | "pPrChange"
+                    | "sectPrChange"
+                    | "tblPrChange"
+                    | "tblPrExChange"
+                    | "trPrChange"
+                    | "tcPrChange"
+                    | "tblGridChange"
+                    | "numberingChange"
+                    | "cellIns"
+                    | "cellMerge"
+            )
+        {
+            let open = &xml[element.start.clone()];
+            let prefix = &element.name[..element.name.len() - element.local.len()];
+            let attribute = format!(" {prefix}id=\"");
+            if let Some(at) = open.find(&attribute) {
+                let value = element.start.start + at + attribute.len();
+                if let Some(length) = xml[value..].find('"') {
+                    let old = &xml[value..value + length];
+                    found.push((
+                        value..value + length,
+                        format!("{}{old}{}", FOREIGN_ID.0, FOREIGN_ID.1),
+                    ));
+                }
+            }
+        }
+        foreign_ids(xml, element, found);
+    }
+}
+
+/// Whether `node` holds a Word element named one of `locals`.
+fn holds_any(node: &Node, locals: &[&str]) -> bool {
+    node.children.iter().any(|child| match child {
+        Child::Element(element) => {
+            (element.word && locals.contains(&element.local.as_str())) || holds_any(element, locals)
+        }
+        Child::Text(_) => false,
+    })
+}
+
+/// `xml[span]` without the `removed` spans inside it.
+fn without_spans(xml: &str, span: Range<usize>, removed: &[Range<usize>]) -> Option<String> {
+    let mut output = String::new();
+    let mut at = span.start;
+    for cut in removed
+        .iter()
+        .filter(|cut| span.start <= cut.start && cut.end <= span.end)
+    {
+        output.push_str(xml.get(at..cut.start)?);
+        at = cut.end;
+    }
+    output.push_str(xml.get(at..span.end)?);
+    Some(output)
 }
 
 fn collect_word<'a>(node: &'a Node, local: &str, found: &mut Vec<&'a Node>) {

@@ -497,6 +497,11 @@ What PR 3a settles:
 - **The staged insertions** (`insert_content`, `clone_content`, `import_fragment`, `insert_html`,
   `insert_document`) mark the blocks the edit added to the body, found by comparing the blocks as written; an edit
   that also changes another block or another story is refused.
+- **Copied content** that holds insertions keeps them, under revision ids of its own. A copied mark that is
+  already inserted gets no second mark, and the story's final mark keeps no revision. Copied content holding a
+  deletion or a move is refused: rejecting the session would bring that content back.
+- A paragraph added after a paragraph that ends the body with a section break is refused, because rejecting it would
+  drop the section break. A refused insertion places nothing and takes no revision id.
 - Insertions in a header, footer, note, comment, text box or table cell stay refused until PR 3c.
 
 ## Open questions

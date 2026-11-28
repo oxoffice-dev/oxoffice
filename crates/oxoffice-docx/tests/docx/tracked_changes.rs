@@ -618,6 +618,28 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             unlike_compare: false,
         },
         Row {
+            shape: "a paragraph appended after a styled one: its properties a change of that one's",
+            document: || {
+                doc_with_body(
+                    r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:spacing w:after="120"/></w:pPr><w:r><w:t>Title</w:t></w:r></w:p>"#,
+                )
+            },
+            tracked: |doc| {
+                doc.add_paragraph("Body.").unwrap();
+            },
+            untracked: |doc| {
+                doc.add_paragraph("Body.");
+            },
+            // The mark before, the new properties, the new text.
+            revisions: &[
+                (RevisionKind::Insertion, ""),
+                (RevisionKind::ParagraphPropertyChange, "Body."),
+                (RevisionKind::Insertion, "Body."),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
             shape: "a table inserted, each row marked",
             document: || doc_with_body(&(paragraph(&run("First.")) + &paragraph(&run("Last.")))),
             tracked: |doc| {
@@ -1250,6 +1272,14 @@ fn an_edit_a_session_cannot_write_is_refused_without_a_change() {
         Ok(())
     };
     let rows: Vec<(&str, Document, Edit, &str)> = vec![
+        (
+            "a paragraph added after a section break",
+            doc_with_body(
+                r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr><w:r><w:t>Section.</w:t></w:r></w:p>"#,
+            ),
+            |doc| doc.add_paragraph("End.").map(|_| ()),
+            not_yet,
+        ),
         (
             "the paragraph mark made bold",
             body(&run("Plain words.")),

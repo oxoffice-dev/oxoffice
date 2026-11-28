@@ -5180,8 +5180,14 @@ impl PyDocument {
             };
             let mut inserted = oxoffice_docx::Document::detached_text_paragraph(text);
             edit(&mut oxoffice_docx::Paragraph::detached(&mut inserted));
-            // Under a session, the paragraph placed is written as inserted.
+            // Under a session, the paragraph placed is written as inserted,
+            // after the mark before it, whose refusals come before any id is
+            // taken.
             let tracked = document.inner.tracks_changes();
+            let mark = match tracked {
+                true => document.mark_before_paragraph(py, index)?,
+                false => None,
+            };
             if tracked {
                 let last = index == document.inner.content_count();
                 let oxoffice_docx_oxml::BodyContent::Paragraph(marked) = document
@@ -5246,7 +5252,7 @@ impl PyDocument {
                 document
                     .inner
                     .keep_body_savable_after_typed_insert(index, savable);
-                document.mark_before_inserted_blocks(py, index, 1)?;
+                document.place_mark_before(mark);
                 return Ok(result);
             }
             let mut candidate = document.inner.clone_for_staging();
@@ -5274,7 +5280,7 @@ impl PyDocument {
             )?;
             document.commit_word_revision(prepared)?;
             document.install_inner(candidate);
-            document.mark_before_inserted_blocks(py, index, 1)?;
+            document.place_mark_before(mark);
             result
         };
         Ok(result)

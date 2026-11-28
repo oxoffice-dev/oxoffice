@@ -3011,25 +3011,33 @@ impl PyDocument {
             .map_err(|error| docx_to_pyerr(py, error))
     }
 
-    /// Under a session, after blocks `slot..slot + count` were placed and
-    /// published, the mark of the paragraph before them written as inserted
-    /// when they end the body with a paragraph (Word check W12). The mark
-    /// changes neither the paragraph's text nor what it holds, which its
-    /// owner keeps.
-    pub(crate) fn mark_before_inserted_blocks(
+    /// Under a session, the paragraph before a paragraph about to end the
+    /// body at `slot`, its mark written as inserted (Word check W12), for
+    /// [`Self::place_mark_before`] once that paragraph is placed: a refusal
+    /// comes before anything is placed.
+    pub(crate) fn mark_before_paragraph(
         &mut self,
         py: Python<'_>,
         slot: usize,
-        count: usize,
-    ) -> PyResult<()> {
-        if let Some(before) = self.inner.mark_before_insertion(slot, count) {
-            self.inner
-                .mark_paragraph_mark_inserted(before)
-                .map_err(|error| docx_to_pyerr(py, error))?;
+    ) -> PyResult<Option<(usize, oxoffice_docx_oxml::CT_P)>> {
+        let Some(before) = self.inner.mark_before_placing(slot, true) else {
+            return Ok(None);
+        };
+        let paragraph = self
+            .inner
+            .marked_paragraph_mark(before)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        Ok(Some((before, paragraph)))
+    }
+
+    /// Place the mark [`Self::mark_before_paragraph`] wrote. It changes
+    /// neither the paragraph's text nor what it holds, which its owner keeps.
+    pub(crate) fn place_mark_before(&mut self, mark: Option<(usize, oxoffice_docx_oxml::CT_P)>) {
+        if let Some((slot, paragraph)) = mark {
+            self.inner.place_marked_mark(slot, paragraph);
             #[cfg(debug_assertions)]
             self.assert_word_inventory_rebuilds(false);
         }
-        Ok(())
     }
 
     /// [`Self::append_paragraph_candidate`] under a session: the paragraph
@@ -3043,6 +3051,8 @@ impl PyDocument {
     ) -> PyResult<Py<PyParagraph>> {
         let index = document.inner.paragraph_count();
         let slot = document.inner.content_count();
+        // The mark before first: its refusals come before any id is taken.
+        let mark = document.mark_before_paragraph(py, slot)?;
         let oxoffice_docx_oxml::BodyContent::Paragraph(paragraph) = document
             .tracked_inserted_block(
                 py,
@@ -3076,7 +3086,7 @@ impl PyDocument {
                 result
             }
         };
-        document.mark_before_inserted_blocks(py, slot, 1)?;
+        document.place_mark_before(mark);
         Ok(result)
     }
 
