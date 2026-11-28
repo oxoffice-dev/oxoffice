@@ -158,7 +158,9 @@ setting, or Ctrl+Shift+F9), members of a group an edit dissolved included. Libre
 taken by every save, `to_bytes` and the encrypted ones included; Python the same keyword; CLI `--drop-cached-values`)
 makes the save a recalculating one even without an edit (`fullCalcOnLoad` set, chain removed) and drops the `<v>` and
 `t` of every formula and its array range, rewriting the rows that hold formulas in every sheet; LibreOffice then
-computes them on load, and a function it lacks (`LAMBDA`, `GROUPBY`) shows an error where the cached value was. The
+computes them on load, and a function it lacks (`LAMBDA`, `GROUPBY`) shows an error where the cached value was. A
+data table's range loses its values like an array's; `cm` stays with the formula, `vm` goes with the value. A
+workbook without a formula saves as it would without the option. The
 README says so; it is no known limitation. The dependency graph comes with the evaluator of the second set, which
 writes correct values and makes the option unnecessary.
 
@@ -275,19 +277,26 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 | style parts | `set_style(range, StylePatch)` | edit map | `set_style(range, *, bold=None, italic=None, ...)` |
 | CSV import | `import_csv(top_left, text, CsvImport)` | `import-csv FILE CSV [--sheet S] [--at A1] [--text] -o OUT` | `import_csv(source, *, at="A1", infer=True)` |
 
-- **Values**: number (finite), text (at most 32,767 characters, never read as a formula), boolean, error, empty; a
+- **Values**: number (finite), text (at most 32,767 characters, never read as a formula; an empty text clears, as
+  nothing does), boolean, error (the eight codes of section 2; a later Excel's `#SPILL!` is no constant), empty; a
   date or time writes its serial and, when the cell's format is `General`, the code `yyyy-mm-dd`, `yyyy-mm-dd
   hh:mm:ss` or `hh:mm:ss` (locale-independent, unlike built-in 14). Python maps `int`/`float`, `str`, `bool`,
   `CellError`, `None` (clears the content), `datetime`, `date`, `time`, `timedelta` (`[h]:mm:ss`); a formula in a
   bulk write is an `oxoffice.xlsx.Formula(...)`, so a string is never a formula. `stored` and `spill` reach every
-  writer: `set_formula`, the bulk write, the CLI `set` and the edit map (`"stored": true`, `"spill": true`).
+  writer: `set_formula`, the bulk write, the CLI `set` and the edit map (`"stored": true`, `"spill": true`). Rust
+  writes a `CellInput` (`Value`, `DateValue` or `Formula`), `From` a number, a text, a boolean, a `CellError` or a
+  `DateValue`. A new cell takes its row's style (`customFormat`) or its column's, as it read; a cell left with no
+  content and no style goes; an edited row's cells all take their `r`, so a cell written without one never moves.
+  A write of nothing over a cell that holds nothing changes nothing and meets no refusal.
 - **Formulas**: at most 8,192 characters, and they pass the syntax check of PR 5, the first half of the parser
   (operands, operators, function calls, array constants, `,` between arguments; a `;` outside an array constant is
   refused naming `,`; at most 255 arguments and 64 nested levels). Its function table carries each built-in
   function's minimum and maximum argument count (MS-XLSX's argument rules, checked against the MS-XLS function table,
   whose maximums are the 30 of `.xls`), which the evaluator reuses. So a formula Excel would repair (`IF(B2>0;1;0)`,
   `B2*`, `B2**C2`, `IF(1,2,3,4)`) is refused with a plain message. `stored=True` takes the stored form as is
-  (section 2), still checked.
+  (section 2), still checked. A top-level `@` before one reference in a plain cell is stored without it
+  (`@A20:A22` is `A20:A22`, Excel's bytes, job 8), and kept before anything else (`@(A20+B20)` is
+  `_xlfn.SINGLE((A20+B20))`).
 - **Spill**: `<f t="array" ref>` on the anchor cell alone, as XlsxWriter writes it, Excel spilling it on load; `cm`
   points to a `cellMetadata` block whose `rc` names the `XLDAPR` type of `metadata.xml`, found in place or appended,
   the part created when absent (`cm` and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them).
@@ -310,14 +319,22 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   Excel writes) and reuses an identical `cellXfs` record, else appends one; the font, fill, border it needs are reused
   when an identical record exists (compared on what the model reads; a record with unmodelled content only when its
   bytes match), else appended. A number format code reuses a built-in id only when `oxoffice-numfmt` says the id is
-  locale-independent, else an identical custom `numFmt`, else a new id from 164 up. Colours are written as `rgb`
-  (`FF` + RRGGBB); writing theme colours is not in this set.
+  locale-independent (`is_locale_independent`: General, the numbers, percentages, scientific, fractions and text;
+  Excel in French saves `hh:mm:ss` as id 21 and shows id 44 in euros, so no date, time, currency or accounting id),
+  else an identical custom `numFmt`, else a new id after the largest (164 at least; LibreOffice's 164 is General).
+  Colours are written as `rgb` (`FF` + RRGGBB); writing theme colours is not in this set. `StylePatch` (Python
+  keywords, edit map keys): `bold`, `italic`, `underline` (single), `strike`, `font_name` (drops the theme `scheme`,
+  `family` and `charset`, which would win over it), `font_size`, `font_color`, `fill` (solid, `bgColor indexed="64"`
+  as Excel writes it), `border` and `border_color` (the four sides; automatic is `indexed="64"`), `horizontal`,
+  `vertical`, `wrap_text`, `number_format`. A style edit writes every cell of its range (at most 1,000,000), whole
+  columns and rows clipped to the used range.
 - **CSV import** writes the rectangle the CSV covers from `at`; an empty field clears that cell's content. UTF-8 (a
   BOM skipped, another encoding refused naming the first bad byte; Python also takes a `str`). Types inferred
   strictly: `-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?` with no leading zero but `0` itself and at most 15 significant
   digits (`007` and a 16-digit card number stay text) is a number, `TRUE` / `FALSE` (any case) a boolean,
   `YYYY-MM-DD[( |T)HH:MM[:SS]]` a date, anything else text, a leading `=` included (no formula from a CSV). `--text` /
-  `infer=False` keeps every field text; per-column types wait. The CLI `set` reads its `VALUE` by the same rules.
+  `infer=False` keeps every field text; per-column types wait. The CLI `set` reads its `VALUE` by the same rules
+  (`CellInput::infer` in Rust). A line shorter than the longest clears the rest of its row of the rectangle.
 
 ### 7. New workbook, sheets and grid (PR 7)
 
@@ -340,12 +357,14 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 - **Column widths** in characters (`set_column_width("A:C", 20.0)`, above 0 to 255): the number Excel's Column Width
   box shows for the default font, stored as Excel stores it, `width = trunc(pixels / 7 * 256) / 256` with `pixels =
   trunc(characters * 7 + 0.5) + 5` (`trunc(characters * 12 + 0.5)` under 1 character), the conversion XlsxWriter makes
-  for a 7-pixel digit (Calibri 11, Arial 10); `20` is written `20.7109375`. The digit width of another default font
-  comes with `SheetGeometry`. `cols` spans are cut as needed and keep their style, `hidden` and outline level;
-  `customWidth="1"` is set, `bestFit` goes, spans that came to say the same merge. A width of 0 hides the column and
-  is refused until hiding is written. **Row heights** in points (`set_row_height("2:5", 30.0)`, above 0 to 409.5, at
-  most 100,000 rows a call): `ht`, `customHeight="1"`, an absent row created, a row's cells and other attributes
-  kept; a height of 0 is refused like a width of 0. Python takes numbers in these units, not EMU (the one-length-argument
+  for a 7-pixel digit (Calibri 11, Arial 10); `20` is written `20.7109375`. Excel for Mac shows that width as 19.83 in
+  its Column Width box (its pixel padding differs from Windows', checked on the Mac): the file keeps the Windows
+  conversion, as XlsxWriter does. The digit width of another default font comes with `SheetGeometry`. `cols` spans
+  are cut as needed and keep their style, `hidden` and outline level; `customWidth="1"` is set, `bestFit` goes, spans
+  that came to say the same merge. A width of 0 hides the column and is refused until hiding is written. **Row
+  heights** in points (`set_row_height("2:5", 30.0)`, above 0 to 409.5, at most 100,000 rows a call): `ht`,
+  `customHeight="1"`, an absent row created, a row's cells and other attributes kept; a height of 0 is refused like a
+  width of 0. Python takes numbers in these units, not EMU (the one-length-argument
   rule leaves such arguments alone); a `Length`, an EMU `int`, and a `bool` are refused with `TypeError`.
 - **Frozen panes** (`freeze_panes("B2")`, `None` to remove): the pane written as Excel writes a freeze at the cursor
   (`xSplit`, `ySplit`, `topLeftCell`, `activePane` `bottomRight` / `topRight` / `bottomLeft`, `state="frozen"`, the
