@@ -32,7 +32,8 @@ Transitional or Strict Open XML.
   a package signature that already fails verification gets its mark, as in
   docx and pptx. A save is atomic and never replaces the file the workbook
   was opened from unless asked; the extension selects the workbook, template
-  or macro-enabled class.
+  or macro-enabled class, and one that names another format (`.xls`, `.csv`,
+  `.ods`, `.docx`, `.pdf`...) is refused.
 - A new workbook, `Workbook::new()`: one empty sheet, Calibri 11 under the
   Office 2013-2022 theme, the same bytes every time. `add_sheet` adds a
   sheet after the others under Excel's naming rules, `set_column_width`,

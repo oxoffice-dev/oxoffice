@@ -70,6 +70,7 @@ fn the_extension_selects_the_class_and_keeps_a_vba_project_macro_enabled() {
         (&macros, "copy.xlsx", None),
         (&macros, "copy.xltx", None),
         (&plain, "copy", Some(WorkbookClass::Workbook)),
+        (&plain, "copy.xls.xlsx", Some(WorkbookClass::Workbook)),
     ]
     .into_iter()
     .enumerate()
@@ -93,6 +94,9 @@ fn an_extension_that_names_another_format_is_refused_with_the_one_to_use() {
     let macros = Workbook::from_bytes(&with_macros()).unwrap();
     for (row, (workbook, name, to_use)) in [
         (&plain, "copy.xls", ".xlsx"),
+        (&plain, "copy.backup.xls", ".xlsx"),
+        (&plain, "copy.doc", ".xlsx"),
+        (&plain, "copy.html", ".xlsx"),
         (&plain, "copy.XLSB", ".xlsx"),
         (&plain, "copy.xlt", ".xltx"),
         (&plain, "copy.ods", ".xlsx"),
@@ -107,6 +111,7 @@ fn an_extension_that_names_another_format_is_refused_with_the_one_to_use() {
     {
         let path = dir.join(format!("{row}-{name}"));
         let extension = name.rsplit('.').next().unwrap().to_ascii_lowercase();
+        fs::write(&path, "kept").unwrap();
         let mut saves = vec![workbook.save(&path)];
         saves.push(workbook.save_encrypted(&path, "secret"));
         for result in saves {
@@ -122,7 +127,7 @@ fn an_extension_that_names_another_format_is_refused_with_the_one_to_use() {
                 message.contains(&format!("save it as a {to_use}")),
                 "{name}: {message}"
             );
-            assert!(!path.exists(), "{name}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), "kept", "{name}");
         }
     }
 }

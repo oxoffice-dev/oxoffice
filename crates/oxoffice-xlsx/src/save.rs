@@ -95,10 +95,11 @@ impl WorkbookClass {
 }
 
 /// The extensions of other formats, which a save refuses: Excel's own
-/// (binary workbook, legacy workbook and template, add-ins), OpenDocument,
-/// text exports, and the other facades' packages and PDF.
-const OTHER_FORMAT_EXTENSIONS: [&str; 12] = [
-    "xls", "xlsb", "xla", "xlam", "xlt", "ods", "csv", "tsv", "txt", "docx", "pptx", "pdf",
+/// (binary, legacy and add-in workbooks and templates), OpenDocument, text
+/// and web exports, the Word and PowerPoint formats, and PDF.
+const OTHER_FORMAT_EXTENSIONS: &[&str] = &[
+    "xls", "xlsb", "xla", "xlam", "xlt", "xlw", "ods", "csv", "tsv", "txt", "xml", "html", "htm",
+    "json", "md", "doc", "docx", "docm", "dotx", "dotm", "ppt", "pptx", "pptm", "potx", "pdf",
 ];
 
 impl Workbook {
@@ -122,12 +123,13 @@ impl Workbook {
     /// file it names replaced; on Unix that file keeps its permission bits.
     ///
     /// A `.xlsx`, `.xlsm`, `.xltx` or `.xltm` extension selects the main
-    /// content type; an extension that names another format (`.xls`, `.xlsb`,
-    /// `.xla`, `.xlam`, `.xlt`, `.ods`, `.csv`, `.tsv`, `.txt`, `.docx`,
-    /// `.pptx`, `.pdf`) is refused with [`Error::OtherFormatExtension`],
-    /// since the file written is an Open XML workbook; any other extension, or
-    /// none, keeps the class the workbook was opened with. A workbook that carries a VBA project cannot be saved
-    /// under a macro-free extension ([`Error::MacroFreeExtension`]).
+    /// content type. An extension that names another format (see
+    /// [`Error::OtherFormatExtension`]: `.xls`, `.xlsb`, `.ods`, `.csv`,
+    /// `.docx`, `.pdf` and the like) is refused, the file written being an
+    /// Open XML workbook; only the last extension counts (`a.xls.xlsx` is
+    /// saved). Any other extension, or none, keeps the class the workbook
+    /// was opened with. A workbook that carries a VBA project cannot be
+    /// saved under a macro-free extension ([`Error::MacroFreeExtension`]).
     ///
     /// A workbook opened from a file refuses to be saved over it, whatever
     /// the spelling of `path` (a symbolic link, a relative path, a hard
