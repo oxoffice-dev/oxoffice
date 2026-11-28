@@ -175,7 +175,20 @@ def saved(tmp_path_factory):
 
 def test_the_class_table_names_calls_there_are():
     assert sorted((TRACKED | UNTRACKED | set(NOT_RUN) | set(WHOLE)) - CALLS) == []
+    # what the class matrix does not run, the scaling file runs once
+    assert sorted(set(scaling.TIMED) - (CALLS - set(WHOLE)) - set(scaling.RUN_ONCE_HERE)) == []
     assert sorted(set(scaling.WHOLE_DOCUMENT) - set(WHOLE) - set(NOT_RUN)) == []
+
+
+# The class matrix below checks, for every call, that the session does what its class says and that the call without
+# a session runs, saves and reopens. Resolving the changes both ways (the twin and the original document compared
+# after accept_all and reject_all, four reads of the document) is the Rust redliner's, tested there: here it runs for
+# every call that writes an edit of its own kind (tracked) and for the first call of each formatting class, whose
+# other calls differ by the property they set, not by how it is recorded.
+RESOLVED = {name for name in CALLS if kind(name) == "tracked"}
+for _name in sorted(CALLS):
+    if kind(_name) == "formatting":
+        RESOLVED.add(next(n for n in sorted(CALLS) if kind(n) == "formatting" and n.split(".")[0] == _name.split(".")[0]))
 
 
 @pytest.mark.parametrize("name", sorted(CALLS - set(NOT_RUN)))
@@ -194,6 +207,14 @@ def test_every_call_behaves_as_its_class(saved, name):
     after = doc.to_bytes()
     if kind(name) == "refused":
         assert after == before
+    if kind(name) not in ("tracked", "formatting") and name in WHOLE:
+        assert session.revision_ids == ()
+        return          # a whole-document recipe only has well formed arguments, a refused one never reads them
+    # Without a session the call runs, and the document it leaves saves and opens again.
+    twin = oxdocx.Document.open(saved)
+    ready(twin, name)()
+    twin_bytes = twin.to_bytes()
+    oxdocx.Document.from_bytes(twin_bytes)
     if kind(name) not in ("tracked", "formatting"):
         assert session.revision_ids == ()
         return
@@ -203,10 +224,9 @@ def test_every_call_behaves_as_its_class(saved, name):
     # A grid change has an id alone, as Word writes it.
     authors = {r.author for r in doc.revisions if r.id in session.revision_ids and r.kind != "table_grid_change"}
     assert authors <= {AUTHOR}
-    twin = oxdocx.Document.open(saved)
-    ready(twin, name)()
-    assert view(after, "accept_all", xml) == view(twin.to_bytes(), "accept_all", xml)
-    assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
+    if name in RESOLVED:
+        assert view(after, "accept_all", xml) == view(twin_bytes, "accept_all", xml)
+        assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
 
 
 def test_a_session_runs_until_it_stops():
