@@ -9,7 +9,7 @@
 //! before it, and the first entry the first sheet. A refusal names the
 //! entry, counted from 0.
 
-use oxoffice_xlsx::{CellInput, Clear, FormulaOptions, StylePatch, Workbook};
+use oxoffice_xlsx::{CellInput, CellRange, Clear, FormulaOptions, Spill, StylePatch, Workbook};
 use serde_json::{Map, Value};
 
 use crate::Result;
@@ -154,7 +154,7 @@ fn parse_entry(entry: &Value) -> std::result::Result<Edit, String> {
                         text(entry, "formula")?,
                         FormulaOptions {
                             stored: flag(entry, "stored")?.unwrap_or(false),
-                            spill: flag(entry, "spill")?.unwrap_or(false),
+                            spill: spill(entry)?,
                         },
                     ),
                 },
@@ -235,6 +235,22 @@ fn text(entry: &Map<String, Value>, key: &str) -> std::result::Result<String, St
     match entry.get(key) {
         Some(Value::String(text)) => Ok(text.clone()),
         _ => Err(format!("{key} is a string")),
+    }
+}
+
+/// Where `"spill"` says a formula spills: `true` from its cell over what
+/// Excel finds, a range (`"J2:J5"`) over that range, `false` or nothing not
+/// at all.
+fn spill(entry: &Map<String, Value>) -> std::result::Result<Option<Spill>, String> {
+    match entry.get("spill") {
+        None | Some(Value::Bool(false)) => Ok(None),
+        Some(Value::Bool(true)) => Ok(Some(Spill::Anchor)),
+        Some(Value::String(range)) => CellRange::parse(range)
+            .map(|range| Some(Spill::Range(range)))
+            .ok_or_else(|| {
+                format!("spill is true, false or a range such as \"J2:J5\", not {range:?}")
+            }),
+        Some(_) => Err("spill is true, false or a range such as \"J2:J5\"".to_owned()),
     }
 }
 
@@ -376,6 +392,7 @@ mod tests {
                 {"cell": "B3", "value": "3"},
                 {"cell": "B4", "value": null},
                 {"cell": "D2", "formula": "B2*C2", "spill": true},
+                {"cell": "F2", "formula": "SORT(A2:A5)", "spill": "F2:F5"},
                 {"cell": "E2", "date": "2026-01-05"},
                 {"range": "A1:F1", "style": {"bold": true, "fill": "FFFF00", "font_size": 12}},
                 {"range": "C2:C8", "number_format": "0.00"},
@@ -399,21 +416,34 @@ mod tests {
                         "B2*C2".to_owned(),
                         FormulaOptions {
                             stored: false,
-                            spill: true
+                            spill: Some(Spill::Anchor)
                         }
                     )
                 ),
             ]
         );
-        assert!(matches!(
+        assert_eq!(
             operations[4],
+            &write(
+                "F2",
+                CellInput::Formula(
+                    "SORT(A2:A5)".to_owned(),
+                    FormulaOptions {
+                        stored: false,
+                        spill: Some(Spill::Range(CellRange::parse("F2:F5").unwrap()))
+                    }
+                )
+            )
+        );
+        assert!(matches!(
+            operations[5],
             Operation::Write {
                 input: CellInput::Date(_),
                 ..
             }
         ));
         assert_eq!(
-            operations[5],
+            operations[6],
             &Operation::Style {
                 range: "A1:F1".to_owned(),
                 patch: StylePatch {
@@ -425,7 +455,7 @@ mod tests {
             }
         );
         assert_eq!(
-            operations[7],
+            operations[8],
             &Operation::Clear {
                 range: "A20:B30".to_owned(),
                 what: Clear::Contents
@@ -510,6 +540,11 @@ mod tests {
                 "a clear of something else",
                 r#"[{"range": "A1", "clear": "values"}]"#,
                 "entry 0: clear is \"contents\", \"formats\" or \"all\"",
+            ),
+            (
+                "a spill that is no range",
+                r#"[{"cell": "A1", "formula": "1", "spill": "down"}]"#,
+                "entry 0: spill is true, false or a range such as \"J2:J5\", not \"down\"",
             ),
             (
                 "stored as text",

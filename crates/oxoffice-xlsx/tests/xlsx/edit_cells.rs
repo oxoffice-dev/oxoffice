@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use oxoffice_numfmt::DateTime;
 use oxoffice_xlsx::{
-    CellError, CellInput, Clear, CsvImport, DateValue, Error, FormulaOptions, SaveOptions,
-    StylePatch, Value, Workbook, WorksheetMut,
+    CellError, CellInput, CellRange, Clear, CsvImport, DateValue, Error, FormulaOptions,
+    SaveOptions, Spill, StylePatch, Value, Workbook, WorksheetMut,
 };
 use oxoffice_xlsx_oxml::styles::{StyleList, StylesXml};
 
@@ -67,16 +67,24 @@ fn date(year: i32, month: u32, day: u32) -> CellInput {
 
 const PLAIN: FormulaOptions = FormulaOptions {
     stored: false,
-    spill: false,
+    spill: None,
 };
 const STORED: FormulaOptions = FormulaOptions {
     stored: true,
-    spill: false,
+    spill: None,
 };
 const SPILL: FormulaOptions = FormulaOptions {
     stored: false,
-    spill: true,
+    spill: Some(Spill::Anchor),
 };
+
+/// A formula that spills over `range`.
+fn spill_over(range: &str) -> FormulaOptions {
+    FormulaOptions {
+        stored: false,
+        spill: Some(Spill::Range(CellRange::parse(range).unwrap())),
+    }
+}
 
 /// The sheet, the shared strings and the styles of `saved`.
 fn parts(saved: &[u8]) -> (String, Option<String>, String) {
@@ -328,8 +336,10 @@ fn a_date_writes_its_serial_and_a_cell_shown_as_general_a_format_that_shows_it()
     let saved = workbook.to_bytes().unwrap();
     let styles =
         StylesXml::parse(Arc::new(package_parts(&saved)["xl/styles.xml"].clone())).unwrap();
-    // Five codes, one cell format each, after the first.
-    assert_eq!(styles.list(StyleList::NumFmts).len(), 5);
+    // Four codes and the built-in [h]:mm:ss (id 46, which French Excel keeps),
+    // one cell format each, after the first.
+    assert_eq!(styles.list(StyleList::NumFmts).len(), 4);
+    assert!(styles.cell_xfs().any(|xf| xf.num_fmt_id() == 46));
     assert_eq!(styles.list(StyleList::CellXfs).len(), 6);
     // In the 1904 system, the serial of that system.
     let mut d1904 = Workbook::from_bytes(&corpus_bytes("excel/dates1904.xlsx")).unwrap();
@@ -376,6 +386,12 @@ fn a_formula_is_written_in_its_stored_form_once_checked() {
             r#"<c r="A1"><f>_xlfn.GROUPBY(A2:A9,B2:B9,_xleta.SUM)</f></c>"#,
         ),
         ("@A20:A22", PLAIN, r#"<c r="A1"><f>A20:A22</f></c>"#),
+        ("@MyName", PLAIN, r#"<c r="A1"><f>MyName</f></c>"#),
+        (
+            "@INDEX(A20:A22,2)",
+            PLAIN,
+            r#"<c r="A1"><f>_xlfn.SINGLE(INDEX(A20:A22,2))</f></c>"#,
+        ),
         (
             "@(A20+B20)",
             PLAIN,
@@ -395,6 +411,11 @@ fn a_formula_is_written_in_its_stored_form_once_checked() {
             "@A20:A22",
             SPILL,
             r#"<c r="A1" cm="1"><f t="array" ref="A1">_xlfn.SINGLE(A20:A22)</f></c>"#,
+        ),
+        (
+            "SORT(B2:B7,,-1)",
+            spill_over("A1:A6"),
+            r#"<c r="A1" cm="1"><f t="array" ref="A1:A6">_xlfn._xlws.SORT(B2:B7,,-1)</f></c>"#,
         ),
     ];
     for (input, options, expected) in cases {
@@ -494,6 +515,39 @@ fn a_spilling_formula_finds_or_appends_its_metadata_and_makes_the_part_when_miss
         formula_of(&part_text(&saved, "xl/worksheets/sheet1.xml"), "K2")
             .starts_with(r#"<c r="K2" cm="1">"#)
     );
+
+    // A range given: written as the ref, so that Google Sheets spills it too,
+    // and read as the array's range. It must start at the cell and be free.
+    let mut workbook = workbook_with_sheet(&sheet(concat!(
+        r#"<sheetData><row r="1"><c r="B1"><f t="array" ref="B1:B3">1</f><v>1</v></c><c r="D1"><v>4</v></c></row></sheetData>"#,
+        r#"<mergeCells count="1"><mergeCell ref="F1:G2"/></mergeCells>"#
+    )));
+    let mut data = workbook.sheet_at_mut(0).unwrap();
+    data.set_formula("H1", "SEQUENCE(3)", spill_over("H1:H3"))
+        .unwrap();
+    for (cell, range, message) in [
+        ("H5", "H4:H9", "the range H4:H9 starts at H4, not at H5"),
+        ("C1", "C1:D2", "D1 holds a value or a formula: clear it"),
+        ("A2", "A2:B2", "B1:B3 holds an array formula"),
+        ("E2", "E2:F2", "F1:G2 is merged"),
+    ] {
+        let error = data
+            .set_formula(cell, "SEQUENCE(2)", spill_over(range))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains(message),
+            "{cell} {range}: {error}"
+        );
+    }
+    let sheet_read = workbook.sheet_at(0).unwrap();
+    for cell in ["H1", "H3"] {
+        let read = sheet_read.cell(cell).unwrap();
+        assert_eq!(
+            read.array_range.map(|range| range.to_string()).as_deref(),
+            Some("H1:H3"),
+            "{cell}"
+        );
+    }
 }
 
 #[test]

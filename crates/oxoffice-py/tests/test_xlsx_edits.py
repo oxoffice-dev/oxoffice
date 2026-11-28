@@ -58,6 +58,13 @@ def test_a_formula_is_told_from_a_text_by_formula():
     ws.set_value("A5", oxlsx.Formula("=A1*2"))
     assert ws.cell("A5").formula == "A1*2"
     assert repr(oxlsx.Formula("A1", spill=True)) == "Formula('A1', spill=True)"
+    ws.set_formula("E1", "SORT(A1:B1)", spill="E1:F1")
+    assert ws.cell("E1").array_range == "E1:F1"
+    assert oxlsx.Formula("SORT(A1:A3)", spill="J2:J4").spill == "J2:J4"
+    with pytest.raises(ValueError, match="a range such as"):
+        oxlsx.Formula("A1", spill="down")
+    with pytest.raises(ValueError, match="starts at E2, not at E3"):
+        ws.set_formula("E3", "SORT(A1:B1)", spill="E2:E4")
     with pytest.raises(ValueError, match="write `,` between arguments"):
         ws.set_formula("A6", "IF(A1>0;1;0)")
     with pytest.raises(TypeError):

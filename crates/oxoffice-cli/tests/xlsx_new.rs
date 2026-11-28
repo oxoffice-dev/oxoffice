@@ -290,6 +290,7 @@ fn set_import_csv_and_the_edit_map_write_cells_values_formulas_and_styles() {
         &["set", "A5", "=SUM(A2:A2)*2", "--formula"],
         &["set", "'Q1 data'!B2", "x"],
         &["set", "B1", "SORT(A1:A3)", "--formula", "--spill"],
+        &["set", "H1", "SORT(A1:A3)", "--formula", "--spill", "H1:H3"],
     ]
     .iter()
     .enumerate()
@@ -310,6 +311,9 @@ fn set_import_csv_and_the_edit_map_write_cells_values_formulas_and_styles() {
     assert_eq!(field(&by_ref("A4"), "text"), json!("2026-01-05"));
     assert_eq!(field(&by_ref("A5"), "formula"), json!("SUM(A2:A2)*2"));
     assert_eq!(field(&by_ref("B1"), "formula_kind"), json!("array"));
+    assert_eq!(field(&by_ref("B1"), "array_range"), json!("B1"));
+    let spilled = cells(&current, "H1");
+    assert_eq!(spilled[0]["array_range"], json!("H1:H3"));
     let other = cells(&current, "'Q1 data'!B2");
     assert_eq!(other[0]["value"], json!("x"));
 

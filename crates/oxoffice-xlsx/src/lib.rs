@@ -93,7 +93,7 @@ pub use style::{
     ResolvedStyle,
 };
 pub use text::CsvOptions;
-pub use write::{CellInput, Clear, DateValue, FormulaOptions};
+pub use write::{CellInput, Clear, DateValue, FormulaOptions, Spill};
 
 /// A result of the `oxoffice-xlsx` facade.
 pub type Result<T> = std::result::Result<T, Error>;

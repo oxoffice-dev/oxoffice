@@ -166,7 +166,7 @@ comments, tables and the render.
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
 | Workbooks | ✅ | ⚠️ | ⚠️ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind, used range), the date system, each sheet's page setup; a save without an edit keeps every part byte for byte (a package signature that already fails verification gets its mark, as in docx and pptx); `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out. A new workbook (the same bytes every time), a sheet added, column widths, row heights and frozen panes |
-| Cells, formulas and styles | ✅ | ✅ | ✅ | values, formulas as Excel displays them (shared ones moved to each cell) and as stored, cached values marked stale when the file asks for a recalculation or after an edit, the text Excel displays, dates, merges, the resolved style; the whole workbook as Markdown, a sheet as CSV. Values, dates, formulas (checked, stored as Excel stores them, spilling ones included), clears, bulk writes, CSV imports, styles and number formats, the records reused; a write into a shared formula's range keeps the other cells' formulas; what Excel would repair is refused. No evaluator yet: an edited workbook asks Excel and Google Sheets to calculate it on open, and `drop_cached_values` lets LibreOffice do it too (a function it lacks, such as `LAMBDA`, then shows an error) |
+| Cells, formulas and styles | ✅ | ⚠️ | ✅ | values, formulas as Excel displays them (shared ones moved to each cell) and as stored, cached values marked stale when the file asks for a recalculation or after an edit, the text Excel displays, dates, merges, the resolved style; the whole workbook as Markdown, a sheet as CSV. Values, dates, formulas (checked, stored as Excel stores them, spilling ones included), clears, bulk writes, CSV imports, styles and number formats, the records reused; a write into a shared formula's range keeps the other cells' formulas; what Excel would repair is refused. A spilling formula written without its range shows one value in Google Sheets (give the range). No evaluator yet: an edited workbook asks Excel and Google Sheets to calculate it on open, and `drop_cached_values` lets LibreOffice do it too (a function it lacks, such as `LAMBDA`, then shows an error) |
 | Comments | ✅ | ❌ | ❌ | notes and threads with their replies, authors and resolution |
 | Encryption | ✅ | — | ✅ | open and save with a password, from Rust and Python |
 
@@ -200,8 +200,10 @@ from oxoffice.xlsx import Formula
 
 ws.set_value("D2", 12)                          # the shared formulas of column F stay valid
 ws.set_value("I2", datetime.date(2026, 1, 5))   # yyyy-mm-dd in a cell shown as General
+ws.set_column_width("I", 12)                    # Excel shows ##### in a default-width column
 ws.set_formula("H2", "XLOOKUP(A2,A3:A37,F3:F37)")   # stored with _xlfn., as Excel stores it
 ws.write("A40", [["Total", None, None, Formula("SUM(D2:D37)")]])
+ws.set_formula("J2", "SORT(D2:D37)", spill="J2:J37")   # the range lets Google Sheets spill it too
 ws.set_style("A1:G1", bold=True, fill="FFFF00", border="thin")
 ws.set_number_format("F2:F38", "#,##0.00")
 ws.import_csv("north,12\nsouth,007\n", at="A50")  # 12 a number, 007 a str

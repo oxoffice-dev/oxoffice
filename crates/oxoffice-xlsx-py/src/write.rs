@@ -1,20 +1,22 @@
 //! What Python writes into cells: values, dates, formulas, and the
 //! `Formula` that tells a formula from a text in a bulk write.
 
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyString};
 
-use oxoffice_xlsx::{CellError, CellInput, DateTime, DateValue, FormulaOptions, Value};
+use oxoffice_xlsx::{
+    CellError, CellInput, CellRange, DateTime, DateValue, FormulaOptions, Spill, Value,
+};
 
 /// A formula, for a bulk write or a value: its text as Excel displays it
 /// (an `=` accepted), or as the file stores it with `stored`; `spill` for a
-/// dynamic array formula that spills from its cell.
+/// dynamic array formula that spills from its cell: `True`, or its range
+/// (`"J2:J5"`) for Google Sheets to spill it too.
 #[pyclass(
     name = "Formula",
     module = "oxoffice.xlsx",
     frozen,
-    get_all,
     eq,
     skip_from_py_object
 )]
@@ -22,19 +24,59 @@ use oxoffice_xlsx::{CellError, CellInput, DateTime, DateValue, FormulaOptions, V
 pub struct PyFormula {
     text: String,
     stored: bool,
-    spill: bool,
+    spill: Option<Spill>,
+}
+
+/// Where `spill` says a formula spills: `False` not at all, `True` from its
+/// cell over what Excel finds, a range such as `"J2:J5"` over that range.
+pub fn spill_argument(value: &Bound<'_, PyAny>) -> PyResult<Option<Spill>> {
+    if value.is_instance_of::<PyBool>() {
+        return Ok(value.extract::<bool>()?.then_some(Spill::Anchor));
+    }
+    if let Ok(range) = value.extract::<String>() {
+        return CellRange::parse(&range)
+            .map(|range| Some(Spill::Range(range)))
+            .ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "spill is True, False or a range such as \"J2:J5\", not {range:?}"
+                ))
+            });
+    }
+    Err(PyTypeError::new_err(
+        "spill is True, False or a range such as \"J2:J5\"",
+    ))
 }
 
 #[pymethods]
 impl PyFormula {
     #[new]
-    #[pyo3(signature = (text, stored = false, spill = false))]
-    fn new(text: String, stored: bool, spill: bool) -> Self {
-        PyFormula {
+    #[pyo3(signature = (text, stored = false, spill = None))]
+    fn new(text: String, stored: bool, spill: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        Ok(PyFormula {
             text,
             stored,
-            spill,
-        }
+            spill: spill.map(spill_argument).transpose()?.flatten(),
+        })
+    }
+
+    #[getter]
+    fn text(&self) -> String {
+        self.text.clone()
+    }
+
+    #[getter]
+    fn stored(&self) -> bool {
+        self.stored
+    }
+
+    /// `False`, `True`, or the range the formula spills over.
+    #[getter]
+    fn spill<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Ok(match self.spill {
+            None => PyBool::new(py, false).to_owned().into_any(),
+            Some(Spill::Anchor) => PyBool::new(py, true).to_owned().into_any(),
+            Some(Spill::Range(range)) => range.to_string().into_pyobject(py)?.into_any(),
+        })
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
@@ -43,8 +85,10 @@ impl PyFormula {
         if self.stored {
             options.push_str(", stored=True");
         }
-        if self.spill {
-            options.push_str(", spill=True");
+        match self.spill {
+            None => {}
+            Some(Spill::Anchor) => options.push_str(", spill=True"),
+            Some(Spill::Range(range)) => options.push_str(&format!(", spill='{range}'")),
         }
         Ok(format!("Formula({text}{options})"))
     }

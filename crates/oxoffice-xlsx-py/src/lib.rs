@@ -474,17 +474,19 @@ impl PyWorksheet {
 
     /// Writes a formula into `cell`, as Excel displays it (an `=` accepted),
     /// or as the file stores it with `stored`; `spill` for a dynamic array
-    /// formula.
-    #[pyo3(signature = (cell, formula, *, stored = false, spill = false))]
+    /// formula: `True`, or its range (`"J2:J5"`) for Google Sheets to spill
+    /// it too.
+    #[pyo3(signature = (cell, formula, *, stored = false, spill = None))]
     fn set_formula(
         &self,
         py: Python<'_>,
         cell: &Bound<'_, PyAny>,
         formula: &str,
         stored: bool,
-        spill: bool,
+        spill: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let cell = cell_argument(cell)?;
+        let spill = spill.map(write::spill_argument).transpose()?.flatten();
         let options = oxoffice_xlsx::FormulaOptions { stored, spill };
         self.edit(py, |sheet| sheet.set_formula(&cell, formula, options))
     }

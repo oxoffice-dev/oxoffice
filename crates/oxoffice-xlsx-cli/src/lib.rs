@@ -15,8 +15,8 @@ use oxoffice_cli_support::{
     StagedOutputSet, ensure_new_output_allowed, ensure_output_paths_allowed, json_envelope,
 };
 use oxoffice_xlsx::{
-    CellInput, CsvImport, CsvOptions, DateSystem, FormulaOptions, SaveOptions, SheetKind,
-    SheetState, Value, Workbook, WorkbookClass, Worksheet,
+    CellInput, CellRange, CsvImport, CsvOptions, DateSystem, FormulaOptions, SaveOptions,
+    SheetKind, SheetState, Spill, Value, Workbook, WorkbookClass, Worksheet,
 };
 use serde_json::json;
 
@@ -178,9 +178,16 @@ enum Command {
         /// The formula is in the form the file stores (`_xlfn.XLOOKUP(...)`)
         #[arg(long, requires = "formula")]
         stored: bool,
-        /// A dynamic array formula that spills from the cell (Excel 365)
-        #[arg(long, requires = "formula")]
-        spill: bool,
+        /// A dynamic array formula that spills from the cell (Excel 365); with
+        /// its range (`J2:J5`, from the cell), Google Sheets spills it too
+        #[arg(
+            long,
+            requires = "formula",
+            num_args = 0..=1,
+            default_missing_value = "",
+            value_name = "RANGE"
+        )]
+        spill: Option<String>,
         /// The file to write, never the input and never replaced unless --force
         #[arg(short = 'o', long)]
         output: PathBuf,
@@ -270,8 +277,9 @@ pub fn run(cli: Cli) {
             force,
             drop_cached_values,
             json,
-        } => {
+        } => (|| -> Result<()> {
             let input = if formula {
+                let spill = spill.as_deref().map(spill_option).transpose()?;
                 CellInput::Formula(value, FormulaOptions { stored, spill })
             } else if text {
                 CellInput::Value(if value.is_empty() {
@@ -294,7 +302,7 @@ pub fn run(cli: Cli) {
                     json,
                 },
             )
-        }
+        })(),
         Command::ImportCsv {
             file,
             csv,
@@ -480,6 +488,17 @@ fn new(sheets: &[String], output: &Path, force: bool, as_json: bool) -> Result<(
         output,
         as_json,
     )
+}
+
+/// Where `--spill` says a formula spills: from its cell over what Excel finds
+/// (no range), or over a range.
+fn spill_option(range: &str) -> Result<Spill> {
+    if range.is_empty() {
+        return Ok(Spill::Anchor);
+    }
+    CellRange::parse(range)
+        .map(Spill::Range)
+        .ok_or_else(|| format!("--spill takes a range such as J2:J5, not {range:?}").into())
 }
 
 /// Where an edited workbook is written, and how.

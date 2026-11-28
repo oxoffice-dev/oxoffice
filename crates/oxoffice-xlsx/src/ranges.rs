@@ -74,6 +74,48 @@ impl RangeLookup {
     pub(crate) fn find(&self, cell: CellRef) -> Option<RangeEntry> {
         self.in_row(cell.row).find(cell.column)
     }
+
+    /// The ranges that share a cell with `range`.
+    pub(crate) fn meeting(&self, range: CellRange) -> Vec<RangeEntry> {
+        let mut found = Vec::new();
+        self.collect_rows(
+            range.first.row,
+            range.last.row,
+            0,
+            self.entries.len(),
+            &mut found,
+        );
+        found
+            .into_iter()
+            .filter(|entry| entry.range.intersects(&range))
+            .copied()
+            .collect()
+    }
+
+    fn collect_rows<'a>(
+        &'a self,
+        first: u32,
+        last: u32,
+        low: usize,
+        high: usize,
+        found: &mut Vec<&'a RangeEntry>,
+    ) {
+        if low >= high {
+            return;
+        }
+        let middle = (low + high) / 2;
+        if self.reach[middle] < first {
+            return;
+        }
+        self.collect_rows(first, last, low, middle, found);
+        let entry = &self.entries[middle];
+        if entry.range.first.row <= last {
+            if entry.range.last.row >= first {
+                found.push(entry);
+            }
+            self.collect_rows(first, last, middle + 1, high, found);
+        }
+    }
 }
 
 /// The last row the ranges of `low..high` reach, kept at each subtree's
@@ -144,5 +186,17 @@ mod tests {
         assert!(tall.volatile && tall.kind == FormulaKind::Array);
         let table = lookup.find(CellRef::parse("E2").unwrap()).unwrap();
         assert_eq!(table.kind, FormulaKind::DataTable);
+        let meeting = |range: &str| -> Vec<String> {
+            let mut found: Vec<String> = lookup
+                .meeting(CellRange::parse(range).unwrap())
+                .iter()
+                .map(|entry| entry.range.to_string())
+                .collect();
+            found.sort();
+            found
+        };
+        assert_eq!(meeting("A999:C1002"), ["A1:A1000"]);
+        assert_eq!(meeting("C2:E9"), ["B2:C3", "E2"]);
+        assert!(meeting("F1:G9").is_empty());
     }
 }

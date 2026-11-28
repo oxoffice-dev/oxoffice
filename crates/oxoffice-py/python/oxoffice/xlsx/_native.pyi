@@ -28,16 +28,18 @@ class Formula:
     """A formula, for ``Worksheet.write`` and ``set_value``: a str is never a formula.
 
     ``text`` is the formula as Excel displays it after its ``=`` (an ``=`` is accepted), or as the file stores it
-    with ``stored`` (``_xlfn.XLOOKUP(...)``); ``spill`` writes a dynamic array formula that spills from its cell.
+    with ``stored`` (``_xlfn.XLOOKUP(...)``); ``spill`` writes a dynamic array formula that spills from its cell:
+    ``True`` (Excel finds the range; Google Sheets shows the first value alone) or its range, ``"J2:J5"`` from the
+    cell, which Google Sheets spills over too.
     """
 
-    def __init__(self, text: str, stored: bool = False, spill: bool = False) -> None: ...
+    def __init__(self, text: str, stored: bool = False, spill: bool | str = False) -> None: ...
     @property
     def text(self) -> str: ...
     @property
     def stored(self) -> bool: ...
     @property
-    def spill(self) -> bool: ...
+    def spill(self) -> bool | str: ...
 
 class Workbook:
     """An Excel-compatible workbook (``.xlsx``, ``.xlsm``, ``.xltx``, ``.xltm``).
@@ -194,17 +196,22 @@ class Worksheet:
         A number, a ``str`` (never read as a formula; ``""`` clears), a ``bool``, a ``CellError``, ``None`` (the
         content cleared), a ``datetime``, ``date``, ``time`` or ``timedelta`` (its serial; a cell shown as General
         takes ``yyyy-mm-dd``, ``yyyy-mm-dd hh:mm:ss``, ``hh:mm:ss`` or ``[h]:mm:ss``), or a ``Formula``. A write into
-        a shared formula's range turns the group's other cells into plain formulas. Raises ``XlsxError`` for a
+        a shared formula's range turns the group's other cells into plain formulas. A date in a column of the
+        default width shows ``#####`` in Excel until the column is widened (``set_column_width``): Excel widens it
+        when a date is typed, not when a file says it. Raises ``XlsxError`` for a
         cell of an array formula written alone, a value under a merged range but its first cell, a table header
         that would no longer name its column, a cell of a pivot table; ``ValueError`` for a value a cell cannot
         hold; ``TypeError`` for another type. A refusal changes nothing.
         """
 
-    def set_formula(self, cell: _CellAddress, formula: str, *, stored: bool = False, spill: bool = False) -> None:
+    def set_formula(
+        self, cell: _CellAddress, formula: str, *, stored: bool = False, spill: bool | str = False
+    ) -> None:
         """Writes a formula into ``cell``, as Excel displays it after its ``=`` (an ``=`` is accepted).
 
         ``stored`` takes the form the file stores (``_xlfn.XLOOKUP(...)``); ``spill`` writes a dynamic array
-        formula that Excel spills from the cell. A formula Excel would repair (``IF(B2>0;1;0)``, ``B2*``,
+        formula that Excel spills from the cell: ``True``, or its range (``"J2:J5"``, from the cell, its other cells
+        empty) so that Google Sheets, which takes the range from the file, spills it too. A formula Excel would repair (``IF(B2>0;1;0)``, ``B2*``,
         ``IF(1,2,3,4)``) raises ``ValueError``. Written without a cached value, the workbook is calculated on open.
         """
 

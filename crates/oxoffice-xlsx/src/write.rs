@@ -41,10 +41,24 @@ pub struct FormulaOptions {
     /// form Excel displays.
     pub stored: bool,
     /// A dynamic array formula that spills from its cell, as Excel 365
-    /// writes `SORT`, `FILTER` or `UNIQUE`: an array formula on the cell
-    /// alone, marked dynamic in `metadata.xml`. Excel spills it when it
-    /// opens the workbook.
-    pub spill: bool,
+    /// writes `SORT`, `FILTER` or `UNIQUE`: an array formula marked dynamic
+    /// in `metadata.xml`, over the range [`Spill`] says. `None` for a formula
+    /// of one cell.
+    pub spill: Option<Spill>,
+}
+
+/// Where a dynamic array formula spills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Spill {
+    /// Over the range Excel finds when it calculates the formula: written
+    /// on its cell alone (`ref` the cell), as XlsxWriter writes it. Excel
+    /// spills it on open; Google Sheets, which takes the range from the
+    /// file, shows the first value alone.
+    Anchor,
+    /// Over this range, which starts at the formula's cell and whose other
+    /// cells hold nothing: written as its `ref`, so Google Sheets spills it
+    /// too. A range wider than the result was not checked in Google.
+    Range(CellRange),
 }
 
 /// A date, a time of day, both, or a duration: written as the serial
@@ -334,10 +348,11 @@ pub(crate) enum Content {
     Boolean(bool),
     /// An error value's code.
     Error(&'static str),
-    /// A formula as stored.
+    /// A formula as stored, and the range a dynamic array formula spills
+    /// over (its cell alone for [`Spill::Anchor`]).
     Formula {
         stored: String,
-        spill: bool,
+        spill: Option<CellRange>,
     },
 }
 
@@ -407,22 +422,39 @@ pub(crate) struct EditParts {
 }
 
 impl Content {
-    /// The content `input` gives in a workbook of `system`, checked, with the
-    /// number format a date shows with.
-    fn of(input: CellInput, system: DateSystem) -> Result<(Content, Option<&'static str>)> {
+    /// The content `input` gives the cell `at` in a workbook of `system`,
+    /// checked, with the number format a date shows with.
+    fn of(
+        at: CellRef,
+        input: CellInput,
+        system: DateSystem,
+    ) -> Result<(Content, Option<&'static str>)> {
         Ok(match input {
             CellInput::Value(value) => (Content::of_value(value)?, None),
             CellInput::Date(date) => (
                 Content::Number(date.serial(system)?),
                 Some(date.number_format()),
             ),
-            CellInput::Formula(text, options) => (
-                Content::Formula {
-                    stored: stored_formula(&text, options)?,
-                    spill: options.spill,
-                },
-                None,
-            ),
+            CellInput::Formula(text, options) => {
+                let spill = match options.spill {
+                    None => None,
+                    Some(Spill::Anchor) => Some(CellRange::new(at, at)),
+                    Some(Spill::Range(range)) if range.first == at => Some(range),
+                    Some(Spill::Range(range)) => {
+                        return Err(Error::InvalidArgument(format!(
+                            "a formula spills from its cell: the range {range} starts at {}, not at {at}",
+                            range.first
+                        )));
+                    }
+                };
+                (
+                    Content::Formula {
+                        stored: stored_formula(&text, options)?,
+                        spill,
+                    },
+                    None,
+                )
+            }
         })
     }
 
@@ -469,9 +501,10 @@ impl Content {
 }
 
 /// The stored form of a formula written with `options`, checked. A plain
-/// cell's formula that is `@` before one reference is stored without its
-/// `@`, as Excel stores it (the implicit intersection of a formula without
-/// arrays).
+/// cell's formula that is `@` before one reference or defined name is
+/// stored without its `@`, as Excel stores it (the implicit intersection of
+/// a formula without arrays); `@` before anything else stays
+/// `_xlfn.SINGLE`.
 fn stored_formula(text: &str, options: FormulaOptions) -> Result<String> {
     let refused = |error: oxoffice_xlsx_formula::SyntaxError| {
         Error::InvalidArgument(format!(
@@ -485,12 +518,13 @@ fn stored_formula(text: &str, options: FormulaOptions) -> Result<String> {
     } else {
         to_stored(text).map_err(refused)?
     };
-    if !options.spill
+    if options.spill.is_none()
         && let Some(inner) = stored
             .strip_prefix("_xlfn.SINGLE(")
             .and_then(|rest| rest.strip_suffix(')'))
-        && tokenize(inner)
-            .is_ok_and(|tokens| tokens.len() == 1 && tokens[0].kind == TokenKind::Reference)
+        && tokenize(inner).is_ok_and(|tokens| {
+            tokens.len() == 1 && matches!(tokens[0].kind, TokenKind::Reference | TokenKind::Name)
+        })
     {
         return Ok(inner.to_owned());
     }
@@ -658,7 +692,11 @@ enum Written<'a> {
     SharedString(usize),
     Boolean(bool),
     Error(&'static str),
-    Formula { stored: &'a str, cm: Option<u32> },
+    /// A formula, and for a dynamic array its block and range.
+    Formula {
+        stored: &'a str,
+        spill: Option<(u32, CellRange)>,
+    },
 }
 
 /// Writes `content` into `cell`, at `at`: its value, formula and type go,
@@ -692,11 +730,16 @@ fn write_content(cell: &mut CT_Cell, at: CellRef, content: &Written<'_>, prefix:
             cell.tag.set("t", Some("e"));
             children.push(value((*code).to_owned()));
         }
-        Written::Formula { stored, cm } => {
+        Written::Formula { stored, spill } => {
             let mut tag = Tag::new(&qualified(prefix, "f"));
-            if let Some(cm) = cm {
+            if let Some((cm, range)) = spill {
+                let reference = if range.first == range.last {
+                    at.to_string()
+                } else {
+                    range.to_string()
+                };
                 tag.set("t", Some("array"));
-                tag.set("ref", Some(&at.to_string()));
+                tag.set("ref", Some(&reference));
                 cell.tag.set("cm", Some(&cm.to_string()));
             }
             children.push(CellChild::Formula(CT_CellFormula {
@@ -966,7 +1009,9 @@ impl WorksheetMut<'_> {
     ///
     /// The cell keeps its style; a date in a cell shown as General takes a
     /// format that shows it (`yyyy-mm-dd`, `hh:mm:ss`, `yyyy-mm-dd hh:mm:ss`
-    /// or `[h]:mm:ss`). Text goes to the shared strings, reusing an identical
+    /// or `[h]:mm:ss`). Excel shows such a date as `#####` in a column of
+    /// the default width until it is widened ([`WorksheetMut::set_column_width`]):
+    /// it widens a column when a date is typed, not when a file holds one. Text goes to the shared strings, reusing an identical
     /// plain item. A write into a shared formula's range turns the group's
     /// other cells into plain formulas with their own text. Refused, with
     /// the way out and nothing changed: a cell of an array formula or data
@@ -1074,7 +1119,7 @@ impl WorksheetMut<'_> {
         let system = self.workbook.date_system();
         let mut writes = Vec::with_capacity(inputs.len());
         for (at, input) in inputs {
-            let (content, date_code) = Content::of(input, system)?;
+            let (content, date_code) = Content::of(at, input, system)?;
             writes.push(CellWrite {
                 at,
                 content: Some(content),
@@ -1253,6 +1298,50 @@ impl WorksheetMut<'_> {
                     "{at} is in pivot table {name} ({range}), whose cells Excel computes from its source: edit the source data instead"
                 )));
             }
+            // A range given to a spilling formula is free: Excel shows
+            // #SPILL! over a value, another array formula or a merge.
+            if let Content::Formula {
+                spill: Some(range), ..
+            } = content
+                && range.first != range.last
+            {
+                self.check_spill_range(*at, *range, lookup, &guards.merges)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuses a spill range whose cells other than the formula's hold a
+    /// value or a formula, or meet another array formula or a merge.
+    fn check_spill_range(
+        &self,
+        at: CellRef,
+        range: CellRange,
+        lookup: &crate::ranges::RangeLookup,
+        merges: &[CellRange],
+    ) -> Result<()> {
+        let refused = |what: String| {
+            Err(Error::Refused(format!(
+                "the formula of {at} would spill over {range}, where {what}: clear it, or give a range that stops before it"
+            )))
+        };
+        for (number, row) in self.read().rows_in(range.first.row, range.last.row)? {
+            for (column, cell) in columns(&row) {
+                let cell_at = CellRef::new(number, column);
+                if cell_at != at && range.contains(cell_at) && holds_content(cell) {
+                    return refused(format!("{cell_at} holds a value or a formula"));
+                }
+            }
+        }
+        if let Some(entry) = lookup
+            .meeting(range)
+            .into_iter()
+            .find(|entry| entry.range.first != at)
+        {
+            return refused(format!("{} holds an array formula", entry.range));
+        }
+        if let Some(merge) = merges.iter().find(|merge| merge.intersects(&range)) {
+            return refused(format!("{merge} is merged"));
         }
         Ok(())
     }
@@ -1305,7 +1394,7 @@ impl WorksheetMut<'_> {
         }
         if writes
             .iter()
-            .any(|write| matches!(write.content, Some(Content::Formula { spill: true, .. })))
+            .any(|write| matches!(write.content, Some(Content::Formula { spill: Some(_), .. })))
         {
             self.workbook.read_metadata()?;
         }
@@ -1396,18 +1485,23 @@ impl WorksheetMut<'_> {
                         Content::Error(code) => Written::Error(code),
                         Content::Formula { stored, spill } => Written::Formula {
                             stored,
-                            cm: spill.then(|| spill_cm.expect("a spilling formula's block")),
+                            spill: spill.map(|range| {
+                                (spill_cm.expect("a spilling formula's block"), range)
+                            }),
                         },
                     };
                     write_content(cell, at, &written, &prefix);
                     formula_written |= content.is_formula();
-                    let spills = matches!(content, Content::Formula { spill: true, .. });
-                    if had_array || spills {
+                    let spill = match content {
+                        Content::Formula { spill, .. } => *spill,
+                        _ => None,
+                    };
+                    if had_array || spill.is_some() {
                         arrays.insert(
                             at,
-                            spills.then_some(RangeFormula {
+                            spill.map(|range| RangeFormula {
                                 cell: at,
-                                range: CellRange::new(at, at),
+                                range,
                                 kind: RangeFormulaKind::Array,
                                 volatile: false,
                             }),
@@ -1581,7 +1675,7 @@ impl WorksheetMut<'_> {
                 Some(Content::Text(text)) => Some(self.workbook.shared_string(text)?),
                 _ => None,
             });
-            if matches!(write.content, Some(Content::Formula { spill: true, .. }))
+            if matches!(write.content, Some(Content::Formula { spill: Some(_), .. }))
                 && spill_cm.is_none()
             {
                 spill_cm = Some(self.workbook.dynamic_array_cell()?);

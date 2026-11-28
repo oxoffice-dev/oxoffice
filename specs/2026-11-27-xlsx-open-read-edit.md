@@ -280,7 +280,9 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
 - **Values**: number (finite), text (at most 32,767 characters, never read as a formula; an empty text clears, as
   nothing does), boolean, error (the eight codes of section 2; a later Excel's `#SPILL!` is no constant), empty; a
   date or time writes its serial and, when the cell's format is `General`, the code `yyyy-mm-dd`, `yyyy-mm-dd
-  hh:mm:ss` or `hh:mm:ss` (locale-independent, unlike built-in 14). Python maps `int`/`float`, `str`, `bool`,
+  hh:mm:ss` or `hh:mm:ss` (locale-independent, unlike built-in 14). In a column of the default width Excel shows such
+  a date as `#####` until the column is widened: it widens a column when a date is typed, not when a file holds one
+  (checked on the Mac); `set_column_width` does it. Python maps `int`/`float`, `str`, `bool`,
   `CellError`, `None` (clears the content), `datetime`, `date`, `time`, `timedelta` (`[h]:mm:ss`); a formula in a
   bulk write is an `oxoffice.xlsx.Formula(...)`, so a string is never a formula. `stored` and `spill` reach every
   writer: `set_formula`, the bulk write, the CLI `set` and the edit map (`"stored": true`, `"spill": true`). Rust
@@ -294,12 +296,18 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   function's minimum and maximum argument count (MS-XLSX's argument rules, checked against the MS-XLS function table,
   whose maximums are the 30 of `.xls`), which the evaluator reuses. So a formula Excel would repair (`IF(B2>0;1;0)`,
   `B2*`, `B2**C2`, `IF(1,2,3,4)`) is refused with a plain message. `stored=True` takes the stored form as is
-  (section 2), still checked. A top-level `@` before one reference in a plain cell is stored without it
-  (`@A20:A22` is `A20:A22`, Excel's bytes, job 8), and kept before anything else (`@(A20+B20)` is
-  `_xlfn.SINGLE((A20+B20))`).
+  (section 2), still checked. A top-level `@` before one reference or defined name in a plain cell is stored without
+  it (`@A20:A22` is `A20:A22`, `@MyName` is `MyName`, Excel's bytes), and kept before anything else (`@(A20+B20)` is
+  `_xlfn.SINGLE((A20+B20))`, `@INDEX(A20:A22,2)` is `_xlfn.SINGLE(INDEX(A20:A22,2))`), checked on the Mac.
 - **Spill**: `<f t="array" ref>` on the anchor cell alone, as XlsxWriter writes it, Excel spilling it on load; `cm`
   points to a `cellMetadata` block whose `rc` names the `XLDAPR` type of `metadata.xml`, found in place or appended,
-  the part created when absent (`cm` and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them).
+  the part created when absent (`cm` and `t` 1-based, `v` 0-based, as Excel and XlsxWriter write them). Google Sheets
+  takes the extent from `ref` (checked: the anchor alone shows one value, `ref="J2:J5"` without cached values
+  spills): `spill` also takes the range (Rust `Spill::Range`, Python `spill="J2:J5"`, CLI `--spill J2:J5`, edit map
+  `"spill": "J2:J5"`), which starts at the cell and whose other cells hold nothing, meet no other array formula and
+  no merge (else refused, as Excel would show `#SPILL!`); the anchor alone stays the default, the extent being the
+  result's, which only the evaluator knows: the known limitation `xlsx-spill-range-google` until then. A range wider
+  than the result was not checked in Google.
 - **The edit map** (`oxoffice xlsx edit FILE --map EDITS.json -o OUT`): a JSON array applied in order, all or nothing,
   a refusal naming the zero-based entry, like `replace --map`: `{"sheet": "Data", "cell": "B2", "value": 3}`,
   `{"cell": "D2", "formula": "B2*C2"}`, `{"cell": "E2", "date": "2026-01-05"}`, `{"range": "A1:F1", "style":
@@ -319,8 +327,9 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   Excel writes) and reuses an identical `cellXfs` record, else appends one; the font, fill, border it needs are reused
   when an identical record exists (compared on what the model reads; a record with unmodelled content only when its
   bytes match), else appended. A number format code reuses a built-in id only when `oxoffice-numfmt` says the id is
-  locale-independent (`is_locale_independent`: General, the numbers, percentages, scientific, fractions and text;
-  Excel in French saves `hh:mm:ss` as id 21 and shows id 44 in euros, so no date, time, currency or accounting id),
+  locale-independent (`is_locale_independent`: General, the numbers, percentages, scientific, fractions, text and the
+  duration `[h]:mm:ss`, id 46, which Excel in French shows and keeps as 46; Excel in French saves `hh:mm:ss` as id 21
+  and shows id 44 in euros, so no date, time of day, currency or accounting id),
   else an identical custom `numFmt`, else a new id after the largest (164 at least; LibreOffice's 164 is General).
   Colours are written as `rgb` (`FF` + RRGGBB); writing theme colours is not in this set. `StylePatch` (Python
   keywords, edit map keys): `bold`, `italic`, `underline` (single), `strike`, `font_name` (drops the theme `scheme`,
