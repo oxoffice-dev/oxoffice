@@ -43,7 +43,7 @@ TRACKED = {
     "Document.insert_html", "Document.pop_content", "Document.remove_content", "Document.remove_content_range",
     "Table.add_row", "Table.clone_row", "Table.remove_row", "Run.add_field", "Run.add_picture",
     "Paragraph.add_hyperlink", "HeaderFooter.add_paragraph", "HeaderFooter.add_table", "FootnoteEndnote.add_paragraph",
-    "FootnoteEndnote.add_table", "Cell.add_paragraph", "Cell.add_table", "Document.add_footnote", "Document.add_endnote",
+    "FootnoteEndnote.add_table", "Cell.add_paragraph", "Cell.add_table", "Document.add_footnote", "Document.add_endnote", "Document.move_content",
     "Document.replace_all", "Document.replace_all_regex",
     "Document.replace_all_regex_expected", "Document.replace_text_at", "Document.set_story_text",
     "Document.try_replace_text", "Paragraph.add_run", "Paragraph.replace_text", "Paragraph.replace_xml",

@@ -1825,3 +1825,83 @@ fn a_copy_ending_the_body_gives_its_revisions_ids_of_their_own() {
     unique.dedup();
     assert_eq!(unique.len(), ids.len(), "{ids:?}");
 }
+
+/// A paragraph moved under a session, in Word's shape (W7): the source keeps
+/// its text in `w:moveFrom`, the copy goes in `w:moveTo`, each side covered
+/// by a range named alike; accepting gives the untracked move, rejecting the
+/// original, and one id resolves it whole.
+#[test]
+fn a_moved_paragraph_is_written_as_word_writes_a_move() {
+    let body = || {
+        doc_with_body(
+            &["Alpha.", "Beta.", "Gamma.", "Delta."]
+                .map(|text| paragraph(&run(text)))
+                .concat(),
+        )
+    };
+    let texts = |doc: &mut Document| {
+        reopen(doc)
+            .paragraphs()
+            .into_iter()
+            .map(|p| p.text())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+    };
+    let locations = |doc: &Document| {
+        (
+            doc.direct_body_item_location(1).unwrap().unwrap(),
+            doc.direct_body_item_location(3).unwrap().unwrap(),
+        )
+    };
+    let mut untracked = body();
+    let (source, destination) = locations(&untracked);
+    untracked.move_content(&source, &destination).unwrap();
+    let mut tracked = body();
+    let (source, destination) = locations(&tracked);
+    let changes = changes();
+    tracked
+        .track_changes(&changes)
+        .move_content(&source, &destination)
+        .unwrap();
+    let mut tracked = reopen(&mut tracked);
+    let xml = tracked.part_xml("/word/document.xml").unwrap();
+    for part in [
+        "moveFromRangeStart",
+        "moveFromRangeEnd",
+        "moveToRangeStart",
+        "moveToRangeEnd",
+    ] {
+        assert_eq!(xml.matches(part).count(), 1, "{part}: {xml}");
+    }
+    let names = xml.match_indices(r#"w:name="move"#).count();
+    assert_eq!(names, 2, "{xml}");
+    let mut ids = xml
+        .match_indices(r#" w:id=""#)
+        .map(|(at, _)| xml[at + 7..].split('"').next().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    // Two wrappers and two marks, two ranges whose start and end share an id.
+    assert_eq!(ids.len(), 6, "{xml}");
+    let mut accepted = reopen(&mut tracked);
+    accepted.accept_all().unwrap();
+    assert_eq!(texts(&mut accepted), texts(&mut untracked));
+    let mut rejected = reopen(&mut tracked);
+    rejected.reject_all().unwrap();
+    assert_eq!(texts(&mut rejected), texts(&mut body()));
+    let first = xml[xml.find("<w:moveFrom ").unwrap()..]
+        .split('"')
+        .nth(1)
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    let mut by_id = reopen(&mut tracked);
+    by_id.accept_revision_id(first).unwrap();
+    assert_eq!(texts(&mut by_id), texts(&mut untracked));
+    assert!(
+        !reopen(&mut by_id)
+            .part_xml("/word/document.xml")
+            .unwrap()
+            .contains("w:move")
+    );
+}

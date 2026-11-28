@@ -2197,6 +2197,13 @@ pub(super) fn deleted_block_xml(
     marked_block_xml(xml, tracking, "del", keep_last_mark, content, previous)
 }
 
+/// [`inserted_block_xml`] for one side of a move: `w:moveFrom` or
+/// `w:moveTo` (`marker`), texts kept as `w:t`, a block holding a revision
+/// refused (Word check W7).
+pub(super) fn moved_block_xml(xml: &str, tracking: &Tracking, marker: &str) -> Result<String> {
+    marked_block_xml(xml, tracking, marker, false, true, None)
+}
+
 fn marked_block_xml(
     xml: &str,
     tracking: &Tracking,
@@ -2252,8 +2259,11 @@ fn marked_block_xml(
     let open =
         format!("<{prefix}{marker} {prefix}id=\"{ID_MARK}\" {prefix}author=\"{author}\"{date}>");
     let close = format!("</{prefix}{marker}>");
-    if deleted && holds_revision(&root) {
-        return Err(refused("the removal of a block that holds a revision"));
+    if (deleted || marker.starts_with("move")) && holds_revision(&root) {
+        return Err(refused(match deleted {
+            true => "the removal of a block that holds a revision",
+            false => "the move of a block that holds a revision",
+        }));
     }
     let mut paragraphs = Vec::new();
     match root.word && root.local == "p" {
@@ -2690,4 +2700,13 @@ fn rename_deleted_texts(
         }
     }
     Ok(())
+}
+
+/// Where the content of `xml`, a paragraph written alone, starts: after its
+/// properties, or after its start tag when it has none.
+pub(super) fn after_paragraph_properties(xml: &str) -> Result<usize> {
+    let paragraph = first_word_element(xml, "p")?;
+    Ok(word_children(&paragraph, "pPr")
+        .next()
+        .map_or(paragraph.start.end, |properties| properties.span().end))
 }

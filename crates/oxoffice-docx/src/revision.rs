@@ -299,9 +299,22 @@ struct RenderState<'a> {
     /// merge has pulled into the control's last paragraph (see
     /// `merge_after_control`): their own place renders nothing.
     absorbed: HashSet<usize>,
+    /// The parts of the named moves the resolution selects (see
+    /// [`XmlTree::selected_moves`]): their wrappers and marks, which resolve
+    /// with any of them, and their range marks, which go.
+    move_parts: HashSet<usize>,
+    move_marks: HashSet<usize>,
+    /// The ids of `move_parts`.
+    move_ids: HashSet<i32>,
 }
 
 impl RenderState<'_> {
+    /// Whether the resolution selects the change `metadata`: by its scope,
+    /// or as a part of a move it selects.
+    fn chosen(&self, metadata: &RevisionMetadata) -> bool {
+        self.scope.matches(metadata) || self.move_ids.contains(&metadata.id)
+    }
+
     fn shift_leaves(&mut self, from: usize, offset: usize) {
         for &index in &self.leaf_updates[from..] {
             if let Some(range) = &mut self.leaf_ranges[index] {
@@ -555,7 +568,21 @@ impl Document {
                 .filter_map(|unit| unit.wrapped_body.clone())
                 .collect(),
             absorbed: HashSet::new(),
+            move_parts: HashSet::new(),
+            move_marks: HashSet::new(),
+            move_ids: HashSet::new(),
         };
+        (state.move_parts, state.move_marks) = tree.selected_moves(&state.scope)?;
+        state.move_ids = state
+            .move_parts
+            .iter()
+            .filter_map(|&part| {
+                tree.elements[part]
+                    .revision
+                    .as_ref()
+                    .map(|metadata| metadata.id)
+            })
+            .collect();
         state.retiring_simple_fields = tree.carried_simple_field_retirements(&state)?;
         let mut output = Vec::with_capacity(source.len());
         output.extend_from_slice(&source[..tree.elements[tree.root].start]);
@@ -1268,7 +1295,21 @@ fn render_with_source_ranges(
         retiring_simple_fields: HashSet::new(),
         custody_pairs: Vec::new(),
         absorbed: HashSet::new(),
+        move_parts: HashSet::new(),
+        move_marks: HashSet::new(),
+        move_ids: HashSet::new(),
     };
+    (state.move_parts, state.move_marks) = tree.selected_moves(&state.scope)?;
+    state.move_ids = state
+        .move_parts
+        .iter()
+        .filter_map(|&part| {
+            tree.elements[part]
+                .revision
+                .as_ref()
+                .map(|metadata| metadata.id)
+        })
+        .collect();
     state.retiring_simple_fields = tree.carried_simple_field_retirements(&state)?;
     let mut output = Vec::with_capacity(tree.source.len());
     output.extend_from_slice(&tree.source[..tree.elements[tree.root].start]);
@@ -2446,8 +2487,7 @@ impl<'a> XmlTree<'a> {
         for (index, element) in self.elements.iter().enumerate() {
             removed[index] = element.parent.is_some_and(|parent| removed[parent])
                 || element.revision.as_ref().is_some_and(|metadata| {
-                    state.scope.matches(metadata)
-                        && removes_content(state.resolution, metadata.kind)
+                    state.chosen(metadata) && removes_content(state.resolution, metadata.kind)
                 })
                 || self
                     .selected_owner_markers(index, state)
@@ -2465,7 +2505,7 @@ impl<'a> XmlTree<'a> {
             let unselected_revision = element
                 .revision
                 .as_ref()
-                .is_some_and(|metadata| !state.scope.matches(metadata));
+                .is_some_and(|metadata| !state.chosen(metadata));
             let live_run =
                 element.modeled && element.word && element.local == "r" && !removed[index];
             let unclaimed = !removed[index]
@@ -2654,6 +2694,108 @@ impl<'a> XmlTree<'a> {
     }
 
     /// Read a selected custody attribute in this tree's actual ancestor scope.
+    /// The named moves `scope` selects, as Word links a move's two sides by
+    /// the `w:name` of their range starts: the `w:moveFrom` and `w:moveTo`
+    /// wrappers and marks between each range start and its end (by id), and
+    /// the range marks. A move any part of which `scope` selects (one of its
+    /// ids, its author, its date, or every change) is selected whole (F2).
+    fn selected_moves(
+        &self,
+        scope: &RevisionScope<'_>,
+    ) -> Result<(HashSet<usize>, HashSet<usize>)> {
+        let mut starts: Vec<(usize, Option<String>, Option<String>)> = Vec::new();
+        let mut ends: HashMap<String, usize> = HashMap::new();
+        for (index, element) in self.elements.iter().enumerate() {
+            if !element.word {
+                continue;
+            }
+            match element.local.as_str() {
+                "moveFromRangeStart" | "moveToRangeStart" => starts.push((
+                    index,
+                    self.word_attribute(index, "id")?,
+                    self.word_attribute(index, "name")?,
+                )),
+                "moveFromRangeEnd" | "moveToRangeEnd" => {
+                    if let Some(id) = self.word_attribute(index, "id")? {
+                        ends.insert(
+                            format!("{}:{id}", &element.local[..element.local.len() - 3]),
+                            index,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        // A range mark as a change of its own: its id, author and date.
+        let mark_matches = |index: usize| -> Result<bool> {
+            Ok(match scope {
+                RevisionScope::All => true,
+                RevisionScope::Id(id) => {
+                    self.word_attribute(index, "id")?.as_deref() == Some(&id.to_string())
+                }
+                RevisionScope::Ids(ids) => self
+                    .word_attribute(index, "id")?
+                    .and_then(|id| id.trim().parse().ok())
+                    .is_some_and(|id: i32| ids.contains(&id)),
+                RevisionScope::Author(author) => {
+                    self.word_attribute(index, "author")?.as_deref() == Some(author)
+                }
+                RevisionScope::DateRange { start, end } => self
+                    .word_attribute(index, "date")?
+                    .and_then(|value| Instant::parse(&value).ok())
+                    .is_some_and(|instant| *start <= instant && instant <= *end),
+            })
+        };
+        let mut groups: HashMap<String, (Vec<usize>, Vec<usize>)> = HashMap::new();
+        for (start, id, name) in starts {
+            let local = &self.elements[start].local;
+            let end = id
+                .as_ref()
+                .and_then(|id| ends.get(&format!("{}:{id}", &local[..local.len() - 5])))
+                .copied();
+            // An unnamed range stands alone.
+            let key = name.unwrap_or_else(|| format!("\u{0}{start}"));
+            let (parts, marks) = groups.entry(key).or_default();
+            marks.push(start);
+            let Some(end) = end else {
+                continue;
+            };
+            marks.push(end);
+            let wrapper = if local.starts_with("moveFrom") {
+                "moveFrom"
+            } else {
+                "moveTo"
+            };
+            // The range starts after the first paragraph's properties, whose
+            // mark is a part of the move too.
+            let from = self.elements[start]
+                .parent
+                .filter(|&parent| self.elements[parent].word && self.elements[parent].local == "p")
+                .unwrap_or(start);
+            parts.extend((from + 1..end).filter(|&at| {
+                let element = &self.elements[at];
+                element.word && element.local == wrapper && element.revision.is_some()
+            }));
+        }
+        let (mut parts, mut marks) = (HashSet::new(), HashSet::new());
+        for (group_parts, group_marks) in groups.into_values() {
+            let mut selected = group_parts.iter().any(|&part| {
+                self.elements[part]
+                    .revision
+                    .as_ref()
+                    .is_some_and(|metadata| scope.matches(metadata))
+            });
+            for &mark in &group_marks {
+                selected = selected || mark_matches(mark)?;
+            }
+            if selected {
+                parts.extend(group_parts);
+                marks.extend(group_marks);
+            }
+        }
+        Ok((parts, marks))
+    }
+
     pub(crate) fn word_attribute(&self, index: usize, wanted: &str) -> Result<Option<String>> {
         let mut ancestors = Vec::new();
         let mut current = Some(index);
@@ -2815,6 +2957,10 @@ impl<'a> XmlTree<'a> {
         destination: &[(String, String)],
     ) -> Result<Vec<u8>> {
         let element = &self.elements[index];
+        // The range marks of a move the resolution settles go with it (F2).
+        if state.move_marks.contains(&index) {
+            return Ok(Vec::new());
+        }
         let semantic = self.semantic_element(index);
         if semantic && state.retiring_simple_fields.contains(&index) {
             self.validate_selected_descendants(index, state)?;
@@ -2832,8 +2978,8 @@ impl<'a> XmlTree<'a> {
             && self.selects(index, metadata, state)
         {
             // A grid change that goes with its table's change is not one of
-            // the changes the caller selected.
-            if state.scope.matches(metadata) {
+            // the changes the caller selected; the parts of a move are.
+            if state.chosen(metadata) {
                 state.resolved.insert(index);
             }
             return self.render_selected_revision(index, metadata.kind, state, destination);
@@ -2860,7 +3006,7 @@ impl<'a> XmlTree<'a> {
                     if self.elements[*selected]
                         .revision
                         .as_ref()
-                        .is_some_and(|metadata| state.scope.matches(metadata))
+                        .is_some_and(|metadata| state.chosen(metadata))
                     {
                         state.resolved.insert(*selected);
                     }
@@ -3085,7 +3231,7 @@ impl<'a> XmlTree<'a> {
         while let Some(ancestor) = current {
             if let Some(metadata) = &self.elements[ancestor].revision
                 && self.semantic_element(ancestor)
-                && state.scope.matches(metadata)
+                && state.chosen(metadata)
                 && !keeps_content(state.resolution, metadata.kind)
             {
                 return true;
@@ -3663,7 +3809,7 @@ impl<'a> XmlTree<'a> {
                 }
                 Some(metadata)
                     if metadata.kind == RevisionKind::RunPropertyChange
-                        && !state.scope.matches(metadata) =>
+                        && !state.chosen(metadata) =>
                 {
                     return Err(Error::Other(
                         "rejecting a paragraph property change whose prior properties hold the \
@@ -3768,7 +3914,7 @@ impl<'a> XmlTree<'a> {
                             | RevisionKind::Deletion
                             | RevisionKind::MoveFrom
                             | RevisionKind::MoveTo
-                    ) && state.scope.matches(metadata)
+                    ) && state.chosen(metadata)
                 })
                 || self.subtree_contains_selected_contextual_marker(*child, state)
         })
@@ -4076,7 +4222,7 @@ impl<'a> XmlTree<'a> {
         let element = &self.elements[index];
         if state.retiring_simple_fields.contains(&index)
             || element.revision.as_ref().is_some_and(|metadata| {
-                state.scope.matches(metadata) && removes_content(state.resolution, metadata.kind)
+                state.chosen(metadata) && removes_content(state.resolution, metadata.kind)
             })
         {
             return true;
@@ -4276,8 +4422,7 @@ impl<'a> XmlTree<'a> {
             cursor = inner.end;
             let removed_revision = self.semantic_element(child)
                 && inner.revision.as_ref().is_some_and(|metadata| {
-                    state.scope.matches(metadata)
-                        && removes_content(state.resolution, metadata.kind)
+                    state.chosen(metadata) && removes_content(state.resolution, metadata.kind)
                 });
             if inner.word && inner.local == "proofErr" {
                 continue;
@@ -4350,7 +4495,7 @@ impl<'a> XmlTree<'a> {
                         .revision
                         .as_ref()
                         .is_some_and(|metadata| {
-                            state.scope.matches(metadata)
+                            state.chosen(metadata)
                                 && removes_content(state.resolution, metadata.kind)
                         })
             })
@@ -4374,7 +4519,7 @@ impl<'a> XmlTree<'a> {
     /// with no author, as Word and Google Docs write it, goes with its
     /// table's property change, as well as by its id or with every change.
     fn selects(&self, index: usize, metadata: &RevisionMetadata, state: &RenderState<'_>) -> bool {
-        if state.scope.matches(metadata) {
+        if state.chosen(metadata) {
             return true;
         }
         // Not for the ids a caller names, as comparison names its own: those
@@ -4398,7 +4543,7 @@ impl<'a> XmlTree<'a> {
                 .flat_map(|properties| &self.elements[*properties].children)
                 .filter_map(|change| self.elements[*change].revision.as_ref())
                 .any(|change| {
-                    change.kind == RevisionKind::TablePropertyChange && state.scope.matches(change)
+                    change.kind == RevisionKind::TablePropertyChange && state.chosen(change)
                 })
         })
     }
@@ -4476,7 +4621,7 @@ impl<'a> XmlTree<'a> {
                         | RevisionKind::MoveTo
                         | RevisionKind::CellInsertion
                         | RevisionKind::CellDeletion
-                ) && state.scope.matches(metadata))
+                ) && state.chosen(metadata))
                 .then_some(*child)
             })
             .collect()
@@ -4543,7 +4688,7 @@ impl<'a> XmlTree<'a> {
                         | RevisionKind::Deletion
                         | RevisionKind::MoveFrom
                         | RevisionKind::MoveTo
-                ) && state.scope.matches(metadata))
+                ) && state.chosen(metadata))
                 .then_some(*child)
             })
             .collect()
@@ -5222,6 +5367,12 @@ fn range_marker(local: &str) -> bool {
             | "commentRangeEnd"
             | "permStart"
             | "permEnd"
+            // A move's range ends at body level after its last paragraph, as
+            // Word writes it (W7).
+            | "moveFromRangeStart"
+            | "moveFromRangeEnd"
+            | "moveToRangeStart"
+            | "moveToRangeEnd"
     )
 }
 

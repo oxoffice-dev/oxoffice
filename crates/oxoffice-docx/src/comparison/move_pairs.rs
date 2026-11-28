@@ -321,3 +321,135 @@ pub(super) fn crossing_reply_additions(
         replay,
     )))
 }
+
+/// `xml`, a compared main part, with each move the comparison wrote (its
+/// ids `written`) in Word's shape (Word checks W6 and W7): every element of
+/// it takes an id of its own, and each side is covered by a range, started
+/// in its first paragraph after the properties (before a table) and ended at
+/// body level after its last block, the two ranges named alike. Without
+/// them Word reads a deletion and an insertion (F3).
+pub(super) fn name_moves(
+    xml: &[u8],
+    written: impl Fn(i32) -> bool,
+    ids: &mut IdAllocator,
+) -> Result<Vec<u8>> {
+    let tree = crate::revision::XmlTree::parse(xml)?;
+    let elements = &tree.elements;
+    // Each written move, by id: its elements on each side, in order.
+    let mut moves: BTreeMap<i32, [Vec<usize>; 2]> = BTreeMap::new();
+    for (index, element) in elements.iter().enumerate() {
+        let side = match (element.word, element.local.as_str()) {
+            (true, "moveFrom") => 0,
+            (true, "moveTo") => 1,
+            _ => continue,
+        };
+        if let Some(metadata) = element
+            .revision
+            .as_ref()
+            .filter(|metadata| written(metadata.id))
+        {
+            moves.entry(metadata.id).or_default()[side].push(index);
+        }
+    }
+    // The block of the body an element is in.
+    let block = |mut index: usize| -> Option<usize> {
+        while let Some(parent) = elements[index].parent {
+            if elements[parent].word && elements[parent].local == "body" {
+                return Some(index);
+            }
+            index = parent;
+        }
+        None
+    };
+    let mut edits: Vec<(Range<usize>, String)> = Vec::new();
+    for (id, sides) in moves {
+        if sides.iter().any(Vec::is_empty) {
+            continue;
+        }
+        // A move at the body's end puts a mark on a paragraph it does not
+        // move (see `share_trailing_move`): such a move keeps its shape.
+        let whole = sides.iter().all(|parts| {
+            parts.iter().all(|&part| {
+                let held = block(part);
+                parts.iter().any(|&other| {
+                    block(other) == held
+                        && elements[other]
+                            .parent
+                            .is_none_or(|parent| elements[parent].local != "rPr")
+                })
+            })
+        });
+        if !whole {
+            continue;
+        }
+        let ranges = [ids.allocate()?, ids.allocate()?];
+        let name = format!("move{}", ranges[0]);
+        for (side, parts) in sides.iter().enumerate() {
+            let kind = ["moveFrom", "moveTo"][side];
+            // Every element but the first of the move takes an id of its own.
+            for &part in &parts[usize::from(side == 0)..] {
+                let element = &elements[part];
+                let open = std::str::from_utf8(&xml[element.start..element.open_end])
+                    .map_err(utf8_error)?;
+                let attribute = format!(
+                    r#" {}id=""#,
+                    &element.name[..element.name.len() - element.local.len()]
+                );
+                let at = open
+                    .find(&attribute)
+                    .map(|at| element.start + at + attribute.len())
+                    .ok_or_else(|| Error::Other("a written move part has no id".into()))?;
+                edits.push((at..at + id.to_string().len(), ids.allocate()?.to_string()));
+            }
+            let (Some(first), Some(last)) =
+                (block(parts[0]), parts.last().and_then(|part| block(*part)))
+            else {
+                return Err(Error::Other(
+                    "a written move part lies outside the body".into(),
+                ));
+            };
+            let metadata = elements[parts[0]]
+                .revision
+                .as_ref()
+                .expect("a move part is a revision");
+            let date = metadata.timestamp.as_deref().map_or(String::new(), |date| {
+                format!(r#" w:date="{}""#, quick_xml::escape::escape(date))
+            });
+            let start = format!(
+                r#"<w:{kind}RangeStart w:id="{}" w:author="{}"{date} w:name="{name}"/>"#,
+                ranges[side],
+                quick_xml::escape::escape(&metadata.author)
+            );
+            let first_element = &elements[first];
+            let at = match first_element.local.as_str() {
+                "p" => first_element
+                    .children
+                    .iter()
+                    .find(|child| elements[**child].word && elements[**child].local == "pPr")
+                    .map_or(first_element.open_end, |properties| {
+                        elements[*properties].end
+                    }),
+                _ => first_element.start,
+            };
+            edits.push((at..at, start));
+            let end = elements[last].end;
+            edits.push((
+                end..end,
+                format!(r#"<w:{kind}RangeEnd w:id="{}"/>"#, ranges[side]),
+            ));
+        }
+    }
+    if edits.is_empty() {
+        return Ok(xml.to_vec());
+    }
+    edits.sort_by_key(|(range, _)| range.start);
+    let mut output = Vec::with_capacity(xml.len() + edits.len() * 96);
+    let mut copied = 0;
+    for (range, text) in edits {
+        output.extend_from_slice(&xml[copied..range.start]);
+        output.extend_from_slice(text.as_bytes());
+        copied = range.end;
+    }
+    output.extend_from_slice(&xml[copied..]);
+    Ok(output)
+}
