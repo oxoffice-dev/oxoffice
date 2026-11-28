@@ -162,6 +162,12 @@ impl PyDocument {
         candidate
             .insert_content(&native, fragment)
             .map_err(|error| docx_to_pyerr(py, error))?;
+        // Under a session, the paragraph is written as inserted.
+        if candidate.tracks_changes() {
+            candidate
+                .mark_story_insertion(&at, 1)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+        }
         let prepared = document.prepare_word_revision(
             py,
             &candidate,

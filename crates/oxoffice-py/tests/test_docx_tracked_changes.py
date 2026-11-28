@@ -42,7 +42,8 @@ TRACKED = {
     "Document.clone_content", "Document.import_fragment", "Document.insert_content", "Document.insert_document",
     "Document.insert_html", "Document.pop_content", "Document.remove_content", "Document.remove_content_range",
     "Table.add_row", "Table.clone_row", "Table.remove_row", "Run.add_field", "Run.add_picture",
-    "Paragraph.add_hyperlink",
+    "Paragraph.add_hyperlink", "HeaderFooter.add_paragraph", "HeaderFooter.add_table", "FootnoteEndnote.add_paragraph",
+    "FootnoteEndnote.add_table", "Cell.add_paragraph", "Cell.add_table",
     "Document.replace_all", "Document.replace_all_regex",
     "Document.replace_all_regex_expected", "Document.replace_text_at", "Document.set_story_text",
     "Document.try_replace_text", "Paragraph.add_run", "Paragraph.replace_text", "Paragraph.replace_xml",
@@ -401,6 +402,19 @@ def test_a_field_added_in_a_header_is_tracked_there():
     assert view(doc.to_bytes(), "reject_all") == view(before, "reject_all")
 
 
+def test_an_insertion_in_a_comment_is_refused_without_an_id():
+    doc = oxdocx.Document()
+    doc.add_paragraph("Body.")
+    doc.add_comment_on_text("Body", author="Other", text="Note this.")
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+        comment = next(item.paragraph for item in doc.story_items
+                       if item.story.kind == "comment" and item.kind == "paragraph")
+        with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+            comment.insert_paragraph_before("More.")
+    assert doc.to_bytes() == before and session.revision_ids == ()
+
+
 def test_an_insertion_outside_the_body_is_refused():
     doc = oxdocx.Document()
     doc.add_paragraph("Body.")
@@ -408,8 +422,7 @@ def test_an_insertion_outside_the_body_is_refused():
     header.add_paragraph("Head.")
     before = doc.to_bytes()
     with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
-        for call in (lambda: doc.insert_html("<p>New.</p>", after=header.paragraphs[-1]),
-                     lambda: header.add_paragraph("More.")):
+        for call in (lambda: doc.insert_html("<p>New.</p>", after=header.paragraphs[-1]),):
             with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
                 call()
     assert doc.to_bytes() == before and session.revision_ids == ()

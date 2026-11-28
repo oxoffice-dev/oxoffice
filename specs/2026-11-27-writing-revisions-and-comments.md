@@ -549,6 +549,18 @@ What PR 3c settles:
   this library does not yet.
 - A note reference stays refused in an insertion until the note it shows can be written as inserted with it.
 
+What PR 3d settles:
+
+- **A block inserted in a header, a footer, a note or a table cell** (`HeaderFooter.add_paragraph`/`add_table`,
+  `FootnoteEndnote.add_paragraph`/`add_table`, `Cell.add_paragraph`/`add_table`, `Paragraph.insert_paragraph_before`
+  on a paragraph of those stories) is written as inserted, as in the body: when it ends its story with a paragraph,
+  that mark stays and takes the properties of the paragraph before as a `w:pPrChange`, and the mark before is the
+  inserted one (W12). A table added to a cell brings the paragraph that ends the cell, which is marked with it.
+- Under a session these calls take a staged route (a copy, marked, then published), so their cost grows with the
+  document where the untracked header and note adders stay flat. An insertion in a comment or a text box is refused.
+- Creating a note (`add_footnote`, `add_endnote`) stays refused: rejecting it would leave the note's story behind
+  (PR 3e: the resolver drops a note whose only reference a resolution removes, as Word does for comments, W9).
+
 ## Open questions
 
 ### Product (maintainer)

@@ -819,6 +819,143 @@ impl Document {
         }
     }
 
+    /// Under a session, the `count` blocks from `location`, which an
+    /// insertion just placed among the direct items of a story other than
+    /// the body (a header, a footer, a note, a table cell), written as
+    /// inserted, as in the body: when they end their story with a paragraph,
+    /// its mark stays, takes the properties of the paragraph before them as a
+    /// change, and that paragraph's mark is the inserted one (Word check
+    /// W12). Every refusal comes before any id is taken.
+    #[doc(hidden)]
+    pub fn mark_story_insertion(&mut self, location: &ContentLocation, count: usize) -> Result<()> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(());
+        };
+        if !matches!(
+            location.story.kind(),
+            StoryKind::Header
+                | StoryKind::Footer
+                | StoryKind::Footnote
+                | StoryKind::Endnote
+                | StoryKind::TableCell
+        ) {
+            return Err(super::redline::refused(
+                "an insertion in a comment or a text box",
+            ));
+        }
+        // The insertion may have given the story a new identity.
+        let location = &self.refreshed_location(location)?;
+        let [start] = location.index_path[..] else {
+            return Err(super::redline::refused(
+                "an insertion inside a block of a story",
+            ));
+        };
+        let (blocks, before) = {
+            let items = self.story_items(&location.story)?;
+            let blocks = items
+                .get(start..start + count)
+                .ok_or_else(|| Error::Other("the inserted blocks are out of range".to_owned()))?
+                .iter()
+                .map(|item| item.location().clone())
+                .collect::<Vec<_>>();
+            let ends = start + count == items.len()
+                && blocks
+                    .last()
+                    .is_some_and(|last| last.item_kind == StoryItemKind::Paragraph);
+            let before = start
+                .checked_sub(1)
+                .and_then(|before| items.get(before))
+                .filter(|item| ends && item.kind() == StoryItemKind::Paragraph)
+                .map(|item| item.location().clone());
+            (blocks, ends.then_some(before))
+        };
+        let last = before.is_some();
+        let before = before.flatten();
+        let previous = before
+            .as_ref()
+            .map(|before| self.standalone_story_item_xml(before))
+            .transpose()?;
+        let mut written = Vec::with_capacity(blocks.len());
+        for (offset, block) in blocks.iter().enumerate() {
+            let keep = last && offset + 1 == blocks.len();
+            let xml = self.standalone_story_item_xml(block)?;
+            let marked = super::redline::inserted_block_xml(
+                &xml,
+                &tracking,
+                keep,
+                true,
+                previous.as_deref().filter(|_| keep),
+            )?;
+            written.push((block.clone(), xml, marked));
+        }
+        let mark = previous
+            .as_deref()
+            .map(|previous| {
+                super::redline::inserted_block_xml(previous, &tracking, false, false, None)
+            })
+            .transpose()?;
+        let fragment = |xml: &str, location: &ContentLocation| -> Result<ContentFragment> {
+            let mut fragment = match location.item_kind {
+                StoryItemKind::Paragraph => {
+                    ContentFragment::paragraph(CT_P::from_xml_fragment(xml.as_bytes())?)?
+                }
+                _ => ContentFragment::table(CT_Tbl::from_xml_fragment_checked(xml.as_bytes())?)?,
+            };
+            fragment.source_part_name = Some(location.story.part_name.clone());
+            fragment.source_story_kind = Some(location.story.kind);
+            fragment.source_owner_index = Some(location.story.owner_index);
+            Ok(fragment)
+        };
+        // The ids, then the replacements, each in the story as it is then.
+        let mut replacements = Vec::new();
+        if let (Some(before), Some(previous), Some(mark)) = (&before, &previous, mark) {
+            let mark = super::redline::give_ids(&mark, &tracking, &mut self.identifiers, |mark| {
+                super::redline::check_inserted(mark, previous)
+            })?;
+            replacements.push((before.clone(), fragment(&mark, before)?));
+        }
+        for (block, xml, marked) in written {
+            let marked =
+                super::redline::give_ids(&marked, &tracking, &mut self.identifiers, |marked| {
+                    super::redline::check_inserted(marked, &xml)
+                })?;
+            replacements.push((block.clone(), fragment(&marked, &block)?));
+        }
+        for (block, fragment) in replacements {
+            let block = self.refreshed_location(&block)?;
+            self.replace_story_content(&block, fragment)?;
+        }
+        Ok(())
+    }
+
+    /// `location` in the story of the same kind, part and owner as it is
+    /// now, after an edit gave that story a new identity.
+    fn refreshed_location(&self, location: &ContentLocation) -> Result<ContentLocation> {
+        let story = self
+            .stories()?
+            .into_iter()
+            .find(|story| {
+                story.kind() == location.story.kind()
+                    && story.part_name() == location.story.part_name()
+                    && story.owner_index() == location.story.owner_index()
+            })
+            .ok_or_else(|| Error::Other("the story of an insertion disappeared".to_owned()))?;
+        Ok(ContentLocation::new(
+            story,
+            location.item_kind,
+            location.index_path.clone(),
+        ))
+    }
+
+    /// The item at `location` written alone, with the namespace
+    /// declarations its story gives it.
+    fn standalone_story_item_xml(&self, location: &ContentLocation) -> Result<String> {
+        let (source, item) = self.story_item_source(location)?;
+        let scope = story_namespace_scope_at(source.xml.as_ref(), item.full.start)?;
+        let xml = close_content_fragment_namespaces(&source.xml.as_ref()[item.full], &scope)?;
+        String::from_utf8(xml).map_err(|error| Error::Other(error.to_string()))
+    }
+
     /// Place `block` at body index `slot`, a block
     /// [`Self::marked_inserted_block`] wrote, where a splice placed its plan.
     #[doc(hidden)]

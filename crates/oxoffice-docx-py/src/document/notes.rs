@@ -174,6 +174,27 @@ impl PyNote {
             .story_items(&story)
             .map_err(|error| docx_to_pyerr(py, error))?
             .len();
+        let segment = match kind {
+            oxoffice_docx::StoryItemKind::Table => PathSeg::Body(index),
+            _ => PathSeg::Para(index),
+        };
+        // Under a session, the block is written as inserted on a staged copy.
+        if document.inner.tracks_changes() {
+            let location = document.staged_story_insertion(py, operation, |document| {
+                document.insert_content(
+                    &oxoffice_docx::ContentLocation::end(story.clone()),
+                    fragment,
+                )?;
+                Ok(oxoffice_docx::ContentLocation::new(
+                    story.clone(),
+                    kind,
+                    vec![index],
+                ))
+            })?;
+            let path = document.revisions.capture(smallvec![segment]);
+            self.path = document.revisions.capture(smallvec![]);
+            return Ok((path, location));
+        }
         #[cfg(debug_assertions)]
         let before = document.inner.clone_for_staging();
         document.inner.hold_edit_undo();
@@ -231,10 +252,6 @@ impl PyNote {
                 document.inner.undo_edit(undo);
                 std::panic::resume_unwind(panic);
             }
-        };
-        let segment = match kind {
-            oxoffice_docx::StoryItemKind::Table => PathSeg::Body(index),
-            _ => PathSeg::Para(index),
         };
         let path = document.revisions.capture(smallvec![segment]);
         self.path = document.revisions.capture(smallvec![]);

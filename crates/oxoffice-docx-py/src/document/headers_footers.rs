@@ -279,7 +279,7 @@ impl PyHeaderFooter {
         kind: oxoffice_docx::StoryItemKind,
     ) -> PyResult<(oxoffice_docx::ContentLocation, ContentPath)> {
         let (index, header_kind, variant) = (self.index, self.kind, self.variant);
-        let (location, _) = document.edit_story_parts(py, operation, |document| {
+        let insert = move |document: &mut oxoffice_docx::Document| {
             let story = match document.section_story(index, header_kind, variant)? {
                 Some(story) => story.story().clone(),
                 None => document.create_section_story(index, header_kind, variant)?,
@@ -298,7 +298,12 @@ impl PyHeaderFooter {
                 kind,
                 vec![position],
             ))
-        })?;
+        };
+        // Under a session, the block is written as inserted on a staged copy.
+        let location = match document.inner.tracks_changes() {
+            true => document.staged_story_insertion(py, operation, insert)?,
+            false => document.edit_story_parts(py, operation, insert)?.0,
+        };
         let next = document
             .capture_owner(
                 &WordOwnerLocation::Section(self.index),
