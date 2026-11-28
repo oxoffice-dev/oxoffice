@@ -1892,7 +1892,11 @@ fn a_comment_beside_an_unreadable_metadata_part_is_added_without_its_entries() {
     let mut out = Cursor::new(Vec::new());
     package.write_to(&mut out).unwrap();
     let mut twice = Document::from_bytes(&out.into_inner()).unwrap();
-    ann_comments(&mut twice, CommentDate::Undated);
+    let ids = twice.part_xml("/word/commentsIds.xml").unwrap();
+    let added = ann_comments(&mut twice, CommentDate::Undated);
+    assert_eq!(comment(&twice, added).text(), "root");
+    assert_eq!(comment(&twice, added).durable_id(), None);
+    assert_eq!(twice.part_xml("/word/commentsIds.xml").unwrap(), ids);
 }
 
 /// A reply resolved, then removed, on the files Word and Google Docs saved:
