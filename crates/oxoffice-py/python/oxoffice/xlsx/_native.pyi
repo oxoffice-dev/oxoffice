@@ -217,7 +217,8 @@ class Worksheet:
     def clear(self, range: str, *, contents: bool = True, formats: bool = False) -> None:
         """Clears ``range`` (``"A1:C10"``, ``"B3"``, ``"A:C"``, ``"2:5"``): its contents, its formats, or both.
 
-        A whole array formula is removed; part of one raises ``XlsxError``.
+        The formats of whole columns or rows go from the columns or rows themselves too. A whole array formula is
+        removed; part of one raises ``XlsxError``.
         """
 
     def set_number_format(self, range: str, code: str) -> None:
@@ -246,7 +247,8 @@ class Worksheet:
 
         Colours are ``"RRGGBB"``; ``fill`` is a solid fill, ``border`` the style of the four sides (``"thin"``,
         ``"medium"``, ``"thick"``, ``"double"``, ``"none"``...). Identical style records are reused, others
-        appended. Whole columns or rows are clipped to the used range; at most 1,000,000 cells at once.
+        appended. Whole columns (``"A:C"``) or rows (``"2:5"``) take the style themselves, so a cell typed later takes
+        it; a range of cells writes at most 1,000,000 of them.
         """
 
     def import_csv(self, source: str | bytes | os.PathLike[str], *, at: str = "A1", infer: bool = True) -> None:

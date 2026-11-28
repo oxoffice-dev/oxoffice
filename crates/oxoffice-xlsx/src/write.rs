@@ -26,7 +26,7 @@ use oxoffice_xlsx_oxml::worksheet::{
 use oxoffice_xlsx_oxml::{CellRange, CellRef, Element, Tag, format_f64, qualified, xstring};
 
 use crate::cell::{CellError, Reference, Value};
-use crate::format::{StyleIndex, StylePatch};
+use crate::format::{Restyle, StyleIndex, StylePatch};
 use crate::read::{columns, holds_content, related_parts};
 use crate::{DateSystem, Error, Result, Workbook, WorksheetMut};
 
@@ -507,13 +507,21 @@ fn checked_cell(reference: &str) -> Result<CellRef> {
     }
 }
 
+/// What the cells a call writes were.
+#[derive(Debug, Default)]
+struct OldCells {
+    styles: Vec<u32>,
+    absent: Vec<u32>,
+    strings: Vec<bool>,
+}
+
 /// The cells of a row by column: the child index of the first cell of each
 /// column, and whether the cells are written in ascending order, as every
 /// producer writes them.
 #[derive(Debug)]
-struct RowIndex {
-    columns: HashMap<u32, usize>,
-    ascending: bool,
+pub(crate) struct RowIndex {
+    pub(crate) columns: HashMap<u32, usize>,
+    pub(crate) ascending: bool,
 }
 
 impl Default for RowIndex {
@@ -526,7 +534,7 @@ impl Default for RowIndex {
 }
 
 impl RowIndex {
-    fn new(row: &CT_Row) -> Self {
+    pub(crate) fn new(row: &CT_Row) -> Self {
         let mut index = RowIndex::default();
         let mut next = 0;
         let mut last: Option<u32> = None;
@@ -553,7 +561,7 @@ impl RowIndex {
 /// `row` with the cells of `removed` (child indexes) gone and the cells of
 /// `added` (by column, in order) at their place; every cell takes its `r`,
 /// so that no cell written without one moves.
-fn rebuild_row(
+pub(crate) fn rebuild_row(
     row: &mut CT_Row,
     number: u32,
     added: Vec<(u32, CT_Cell)>,
@@ -707,7 +715,7 @@ fn is_bare(cell: &CT_Cell) -> bool {
 }
 
 /// Widens a row's `spans`, when it has one, to the cells it holds.
-fn widen_spans(row: &mut CT_Row) {
+pub(crate) fn widen_spans(row: &mut CT_Row) {
     let Some(spans) = row.tag.get("spans") else {
         return;
     };
@@ -744,7 +752,7 @@ fn widen_spans(row: &mut CT_Row) {
 }
 
 /// The smallest range holding both.
-fn union(a: CellRange, b: CellRange) -> CellRange {
+pub(crate) fn union(a: CellRange, b: CellRange) -> CellRange {
     CellRange::new(
         CellRef::new(
             a.first.row.min(b.first.row),
@@ -1009,11 +1017,27 @@ impl WorksheetMut<'_> {
         self.write_inputs(inputs)
     }
 
-    /// Clears `range` (`A1:C10`, `B3`, whole columns `A:C` or rows `2:5`
-    /// clipped to the used range): its contents, its formats, or both. A
+    /// Clears `range` (`A1:C10`, `B3`, whole columns `A:C` or rows `2:5`):
+    /// its contents, its formats, or both. Contents are cleared in the cells
+    /// the sheet holds; the formats of whole columns or rows go from their
+    /// `col` spans or rows too, as [`WorksheetMut::set_style`] writes them. A
     /// clear of a whole array formula removes it; part of one is refused.
     pub fn clear(&mut self, range: &str, what: Clear) -> Result<()> {
         self.require_worksheet("cells")?;
+        let reference = Reference::parse(range)?;
+        if reference.is_whole() && what != Clear::Contents {
+            // What could refuse the formats is read before the contents go.
+            self.whole_targets(reference)?;
+            if what == Clear::All {
+                self.clear_cells(range, Clear::Contents)?;
+            }
+            return self.restyle_whole(reference, Restyle::Clear);
+        }
+        self.clear_cells(range, what)
+    }
+
+    /// Clears the cells `range` names: contents, formats or both.
+    fn clear_cells(&mut self, range: &str, what: Clear) -> Result<()> {
         let Some(rectangle) = self.read().range(range)? else {
             return Ok(());
         };
@@ -1290,7 +1314,11 @@ impl WorksheetMut<'_> {
             .iter()
             .map(|(&number, row)| (number, RowIndex::new(row)))
             .collect();
-        let (old_styles, old_strings) = self.old_cells(&writes, &rows, &indexes)?;
+        let OldCells {
+            styles: old_styles,
+            absent,
+            strings: old_strings,
+        } = self.old_cells(&writes, &rows, &indexes)?;
 
         // The styles, each style the cells had patched once, and the contents
         // as written: texts in the shared strings, spilling formulas' metadata.
@@ -1400,8 +1428,10 @@ impl WorksheetMut<'_> {
                         None => CellRange::new(at, at),
                     });
                 }
+                // A cell that says nothing goes, unless its row or column
+                // would give it a style it does not have.
                 match (existing, new_cell) {
-                    (Some(child), _) if bare => removed.push(child),
+                    (Some(child), _) if bare && absent[position] == 0 => removed.push(child),
                     (None, Some(cell)) if !bare => added.push((at.column, cell)),
                     _ => {}
                 }
@@ -1449,42 +1479,41 @@ impl WorksheetMut<'_> {
         Ok(())
     }
 
-    /// The style each written cell has, or the one a cell the sheet does not
-    /// write takes (its row's, else its column's), and whether it holds a
-    /// shared string.
+    /// The style each written cell has, the one it would read without its
+    /// element (its row's, else its column's, else 0: what a cell the sheet
+    /// does not write takes), and whether it holds a shared string.
     fn old_cells(
         &self,
         writes: &[CellWrite],
         rows: &BTreeMap<u32, CT_Row>,
         indexes: &HashMap<u32, RowIndex>,
-    ) -> Result<(Vec<u32>, Vec<bool>)> {
+    ) -> Result<OldCells> {
         let mut column_styles: Option<Vec<(u32, u32, u32)>> = None;
-        let mut styles = Vec::with_capacity(writes.len());
-        let mut strings = Vec::with_capacity(writes.len());
+        let mut old = OldCells::default();
         for write in writes {
             let row = rows.get(&write.at.row);
             let cell = indexes
                 .get(&write.at.row)
                 .and_then(|index| index.cell(row?, write.at.column));
-            strings.push(cell.is_some_and(|cell| cell.t() == "s" && cell.value().is_some()));
-            styles.push(match cell {
-                Some(cell) => cell.s(),
-                None => match row.filter(|row| row.custom_format()).and_then(CT_Row::s) {
-                    Some(s) => s,
-                    None => {
-                        if column_styles.is_none() {
-                            column_styles = Some(self.read().column_styles()?);
-                        }
-                        column_styles
-                            .iter()
-                            .flatten()
-                            .find(|(min, max, _)| (*min..=*max).contains(&write.at.column))
-                            .map_or(0, |(_, _, style)| *style)
+            old.strings
+                .push(cell.is_some_and(|cell| cell.t() == "s" && cell.value().is_some()));
+            let absent = match row.filter(|row| row.custom_format()).and_then(CT_Row::s) {
+                Some(s) => s,
+                None => {
+                    if column_styles.is_none() {
+                        column_styles = Some(self.read().column_styles()?);
                     }
-                },
-            });
+                    column_styles
+                        .iter()
+                        .flatten()
+                        .find(|(min, max, _)| (*min..=*max).contains(&write.at.column))
+                        .map_or(0, |(_, _, style)| *style)
+                }
+            };
+            old.styles.push(cell.map_or(absent, CT_Cell::s));
+            old.absent.push(absent);
         }
-        Ok((styles, strings))
+        Ok(old)
     }
 
     /// The style each written cell takes (`None`: the default, `s` gone):
@@ -1655,7 +1684,7 @@ impl WorksheetMut<'_> {
     }
 
     /// Widens `dimension`, when the sheet has one, to hold `touched`.
-    fn widen_dimension(&mut self, touched: CellRange) -> Result<()> {
+    pub(crate) fn widen_dimension(&mut self, touched: CellRange) -> Result<()> {
         let before = self.child("dimension")?;
         let Some(mut dimension) = before.clone() else {
             return Ok(());

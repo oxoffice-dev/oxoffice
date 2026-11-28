@@ -541,7 +541,8 @@ impl PyWorksheet {
     }
 
     /// Changes the parts of the style of every cell of `range` that are
-    /// given; `None` leaves a part as it is.
+    /// given; `None` leaves a part as it is. Whole columns or rows take the
+    /// style themselves.
     #[pyo3(signature = (
         range, *, bold = None, italic = None, underline = None, strike = None,
         font_name = None, font_size = None, font_color = None, fill = None,

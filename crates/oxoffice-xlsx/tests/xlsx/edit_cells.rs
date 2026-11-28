@@ -163,11 +163,11 @@ fn each_value_is_written_where_the_sheet_says_it_is_as_excel_writes_it() {
             sheet(r#"<sheetData><row r="1"><c r="A1"><v>1</v></c><c r="B1" t="b"><v>0</v></c><c r="C1"><v>3</v></c></row><row r="2"><c r="A2"><v>4</v></c><c r="C2"><v>9</v></c></row></sheetData>"#),
         ),
         (
-            "a clear of contents, of formats and of both, whole columns clipped to the used range",
+            "a clear of contents, of formats and of both",
             sheet(r#"<sheetData><row r="1"><c r="A1" s="0"><v>1</v></c><c r="B1" s="0"><v>2</v></c><c r="C1" s="0"><v>3</v></c></row></sheetData>"#),
             vec![
                 Op::Clear("A1", Clear::Contents),
-                Op::Clear("B:B", Clear::Formats),
+                Op::Clear("B1:B5", Clear::Formats),
                 Op::Clear("C1:D9", Clear::All),
             ],
             sheet(r#"<sheetData><row r="1"><c r="A1" s="0"/><c r="B1"><v>2</v></c></row></sheetData>"#),
@@ -936,6 +936,99 @@ fn a_style_edit_reuses_identical_records_and_appends_what_is_missing() {
         .unwrap();
     let styles = part_text(&new.to_bytes().unwrap(), "xl/styles.xml");
     assert!(styles.contains(r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="0.000"/></numFmts><fonts"#), "{styles}");
+}
+
+#[test]
+fn whole_columns_and_rows_take_the_style_themselves_so_cells_typed_later_take_it() {
+    let bold = || StylePatch {
+        bold: Some(true),
+        ..StylePatch::default()
+    };
+    let italic = StylePatch {
+        italic: Some(true),
+        ..StylePatch::default()
+    };
+    let cases: Vec<(&str, String, Vec<Op>, String)> = vec![
+        (
+            "columns: a span cut keeps its width, a column without one gets the default width, their cells and a styled row's cells take the style",
+            sheet(
+                r#"<cols><col min="2" max="3" width="12" customWidth="1"/></cols><sheetData><row r="1"><c r="A1"><v>1</v></c><c r="C1"><v>3</v></c></row><row r="2" s="0" customFormat="1"/></sheetData>"#,
+            ),
+            vec![Op::Style("C:D", bold())],
+            sheet(concat!(
+                r#"<cols><col min="2" max="2" width="12" customWidth="1"/><col min="3" max="3" width="12" customWidth="1" style="1"/><col min="4" max="4" width="9.140625" style="1"/></cols>"#,
+                r#"<sheetData><row r="1"><c r="A1"><v>1</v></c><c r="C1" s="1"><v>3</v></c></row><row r="2" s="0" customFormat="1"><c r="C2" s="1"/><c r="D2" s="1"/></row></sheetData>"#
+            )),
+        ),
+        (
+            "rows: the row's style and its cells', a styled column's cell holding both, a row the sheet lacks made",
+            sheet(r#"<sheetData><row r="2"><c r="A2"><v>1</v></c></row></sheetData>"#),
+            vec![Op::Style("C:C", italic.clone()), Op::Style("2:3", bold())],
+            sheet(concat!(
+                r#"<cols><col min="3" max="3" width="9.140625" style="1"/></cols><sheetData>"#,
+                r#"<row r="2" s="2" customFormat="1"><c r="A2" s="2"><v>1</v></c><c r="C2" s="3"/></row>"#,
+                r#"<row r="3" s="2" customFormat="1"><c r="C3" s="3"/></row></sheetData>"#
+            )),
+        ),
+        (
+            "a number format of columns, then their formats cleared: the spans and cells lose the style",
+            sheet(r#"<sheetData><row r="1"><c r="B1"><v>1</v></c></row></sheetData>"#),
+            vec![
+                Op::NumberFormat("B:C", "0.00"),
+                Op::Clear("B:B", Clear::Formats),
+            ],
+            sheet(
+                r#"<cols><col min="2" max="2" width="9.140625"/><col min="3" max="3" width="9.140625" style="1"/></cols><sheetData><row r="1"><c r="B1"><v>1</v></c></row></sheetData>"#,
+            ),
+        ),
+        (
+            "rows cleared of everything: contents, the row's style and its cells'",
+            sheet(r#"<sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData>"#),
+            vec![Op::Style("1:1", bold()), Op::Clear("1:1", Clear::All)],
+            sheet(r#"<sheetData><row r="1"><c r="A1"/></row></sheetData>"#),
+        ),
+    ];
+    for (case, source, ops, expected) in cases {
+        let mut workbook = workbook_with_sheet(&source);
+        apply(&mut workbook.sheet_at_mut(0).unwrap(), ops)
+            .unwrap_or_else(|e| panic!("{case}: {e}"));
+        let saved = workbook.to_bytes().unwrap();
+        assert_eq!(
+            part_text(&saved, "xl/worksheets/sheet1.xml"),
+            expected,
+            "{case}"
+        );
+    }
+
+    // A cell typed later in a styled column or row takes the style, and so
+    // does a cell the sheet does not write.
+    let mut workbook = workbook_with_sheet(&sheet("<sheetData/>"));
+    let mut data = workbook.sheet_at_mut(0).unwrap();
+    data.set_style("B:B", &bold()).unwrap();
+    data.set_style("5:5", &italic).unwrap();
+    data.set_value("B9", 1.0).unwrap();
+    let sheet_read = workbook.sheet_at(0).unwrap();
+    for (cell, bold, italic) in [
+        ("B9", true, false),
+        ("B100", true, false),
+        ("C5", false, true),
+        ("B5", true, true),
+        ("A1", false, false),
+    ] {
+        let font = sheet_read.cell(cell).unwrap().style.font.clone();
+        assert_eq!((font.bold, font.italic), (bold, italic), "{cell}");
+    }
+    let error = workbook
+        .sheet_at_mut(0)
+        .unwrap()
+        .set_style("1:200000", &bold())
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("at most 100000 are styled at once"),
+        "{error}"
+    );
 }
 
 #[test]

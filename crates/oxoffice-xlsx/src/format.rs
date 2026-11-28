@@ -13,14 +13,18 @@
 //! identical custom `numFmt`, else takes a new id from 164 up. Colours are
 //! written as `rgb`, `FF` and the six hex digits.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use oxoffice_numfmt::{Locale, NumberFormat, builtin_code, is_locale_independent};
 use oxoffice_xlsx_oxml::styles::{StyleList, StylesXml};
-use oxoffice_xlsx_oxml::{CellRef, Element, Node, format_f64, qualified, xstring};
+use oxoffice_xlsx_oxml::worksheet::{CT_Cell, CT_Row, RowChild, set_column_style};
+use oxoffice_xlsx_oxml::{CellRange, CellRef, Element, Node, Tag, format_f64, qualified, xstring};
 
+use crate::cell::Reference;
+use crate::grid::{MAX_ROWS_AT_ONCE, default_column_width};
+use crate::read::columns;
 use crate::style::StyleTable;
-use crate::write::{CellWrite, Region, StyleChange};
+use crate::write::{CellWrite, Region, RowIndex, StyleChange, rebuild_row, union, widen_spans};
 use crate::{Error, Result, Workbook, WorksheetMut};
 
 /// The most cells a style edit writes at once: a cell an edit names is
@@ -617,17 +621,44 @@ impl Workbook {
     }
 }
 
+/// What a style edit of whole columns or rows does to each style.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Restyle<'p> {
+    Patch(&'p StylePatch),
+    /// The default format.
+    Clear,
+}
+
+/// What a style edit of whole columns or rows writes, read before anything
+/// changes: the rows it writes, as they are, and every style it changes.
+pub(crate) struct WholeTargets {
+    rows: BTreeMap<u32, CT_Row>,
+    /// The styled `col` spans the rows cross: `(first, last, style)`.
+    styled_columns: Vec<(u32, u32, u32)>,
+    olds: BTreeSet<u32>,
+}
+
 impl WorksheetMut<'_> {
     /// Changes the parts of the style of every cell of `range` that `patch`
-    /// names (`A1:F1`, `B3`, whole columns `A:C` or rows `2:5` clipped to
-    /// the used range), at most 1,000,000 cells at once: a cell the sheet
-    /// does not write is written, with its style. The records are reused
-    /// when identical ones exist, else appended (see the
+    /// names (`A1:F1`, `B3`), at most 1,000,000 cells at once: a cell the
+    /// sheet does not write is written, with its style. Whole columns (`A:C`)
+    /// or rows (`2:5`) take the style themselves, in their `col` spans or
+    /// their row (`s` and `customFormat`), so that a cell typed later takes
+    /// it, with every cell they hold and, where a styled row meets a styled
+    /// column, a cell for the two styles. The records are reused when
+    /// identical ones exist, else appended (see the
     /// [module](crate::format)).
     pub fn set_style(&mut self, range: &str, patch: &StylePatch) -> Result<()> {
         patch.check()?;
         self.require_worksheet("cells")?;
-        let Some(rectangle) = self.read().range(range)? else {
+        let reference = Reference::parse(range)?;
+        if reference.is_whole() {
+            if *patch == StylePatch::default() {
+                return Ok(());
+            }
+            return self.restyle_whole(reference, Restyle::Patch(patch));
+        }
+        let Some(rectangle) = reference.clipped(None) else {
             return Ok(());
         };
         let count = (u64::from(rectangle.last.row - rectangle.first.row) + 1)
@@ -664,6 +695,260 @@ impl WorksheetMut<'_> {
                 ..StylePatch::default()
             },
         )
+    }
+
+    /// What a style edit of whole columns or rows (`reference`) writes, and
+    /// the refusal of one that would write too many cells or rows.
+    pub(crate) fn whole_targets(&self, reference: Reference) -> Result<WholeTargets> {
+        let sheet = self.read();
+        let column_styles = sheet.column_styles()?;
+        let mut olds = BTreeSet::new();
+        let mut created = 0u64;
+        let targets = match reference {
+            Reference::Columns(first, last) => {
+                let crossed: Vec<&(u32, u32, u32)> = column_styles
+                    .iter()
+                    .filter(|(min, max, _)| *max >= first && *min <= last)
+                    .collect();
+                olds.extend(crossed.iter().map(|(_, _, style)| *style));
+                let named: u64 = crossed
+                    .iter()
+                    .map(|(min, max, _)| u64::from(max.min(&last) - min.max(&first) + 1))
+                    .sum();
+                if named < u64::from(last - first + 1) {
+                    // A column no span names has the default style.
+                    olds.insert(0);
+                }
+                let mut rows = BTreeMap::new();
+                for (number, row) in sheet.rows_in(0, u32::MAX)? {
+                    let cells: Vec<u32> = columns(&row)
+                        .into_iter()
+                        .filter(|(column, _)| (first..=last).contains(column))
+                        .map(|(_, cell)| {
+                            olds.insert(cell.s());
+                            cell.s()
+                        })
+                        .collect();
+                    let row_style = row.custom_format().then(|| row.s()).flatten();
+                    if let Some(style) = row_style {
+                        olds.insert(style);
+                        created += u64::from(last - first + 1) - cells.len() as u64;
+                    }
+                    if !cells.is_empty() || row_style.is_some() {
+                        rows.insert(number, row);
+                    }
+                }
+                WholeTargets {
+                    rows,
+                    styled_columns: Vec::new(),
+                    olds,
+                }
+            }
+            Reference::Rows(first, last) => {
+                if last - first >= MAX_ROWS_AT_ONCE {
+                    return Err(Error::Refused(format!(
+                        "{} rows are named, and at most {MAX_ROWS_AT_ONCE} are styled at once",
+                        last - first + 1
+                    )));
+                }
+                let styled_columns: Vec<(u32, u32, u32)> = column_styles
+                    .into_iter()
+                    .filter(|(_, _, style)| *style != 0)
+                    .collect();
+                olds.extend(styled_columns.iter().map(|(_, _, style)| *style));
+                let rows = sheet.rows_in(first, last)?;
+                for number in first..=last {
+                    let row = rows.get(&number);
+                    olds.insert(
+                        row.filter(|row| row.custom_format())
+                            .and_then(CT_Row::s)
+                            .unwrap_or(0),
+                    );
+                    let written: HashSet<u32> = row
+                        .map(|row| {
+                            columns(row)
+                                .into_iter()
+                                .map(|(column, cell)| {
+                                    olds.insert(cell.s());
+                                    column
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    for (min, max, _) in &styled_columns {
+                        let missing = (*min..=*max)
+                            .filter(|column| !written.contains(column))
+                            .count();
+                        created += missing as u64;
+                    }
+                    if created > MAX_STYLED_CELLS {
+                        break;
+                    }
+                }
+                WholeTargets {
+                    rows,
+                    styled_columns,
+                    olds,
+                }
+            }
+            _ => unreachable!("whole columns or rows"),
+        };
+        if created > MAX_STYLED_CELLS {
+            return Err(Error::Refused(format!(
+                "the styled rows and columns these meet would need more than {MAX_STYLED_CELLS} cells written at once: style fewer columns or rows"
+            )));
+        }
+        Ok(targets)
+    }
+
+    /// Changes the style of whole columns or rows (`reference`): their `col`
+    /// spans or rows, the cells they hold, and a cell where a styled row
+    /// meets a styled column. See [`WorksheetMut::set_style`].
+    pub(crate) fn restyle_whole(
+        &mut self,
+        reference: Reference,
+        restyle: Restyle<'_>,
+    ) -> Result<()> {
+        let targets = self.whole_targets(reference)?;
+        let mut map: HashMap<u32, u32> = HashMap::new();
+        for &old in &targets.olds {
+            let new = match restyle {
+                Restyle::Patch(patch) => self.workbook.styled(old, patch)?,
+                Restyle::Clear => 0,
+            };
+            map.insert(old, new);
+        }
+        let new_style = |old: u32| map.get(&old).copied().unwrap_or(old);
+        let set_style = |tag: &mut Tag, style: u32| {
+            let current = tag.u32("s").unwrap_or(0);
+            if style != current {
+                tag.set("s", (style != 0).then(|| style.to_string()).as_deref());
+            }
+        };
+        let prefix = self.prefix()?;
+        let new_cell = |at: CellRef, style: u32| {
+            let mut tag = Tag::new(&qualified(&prefix, "c"));
+            tag.set("r", Some(&at.to_string()));
+            if style != 0 {
+                tag.set("s", Some(&style.to_string()));
+            }
+            CT_Cell {
+                tag,
+                children: Vec::new(),
+            }
+        };
+        let mut changes = Vec::new();
+        let mut touched: Option<CellRange> = None;
+        let mut touch = |at: CellRef| {
+            touched = Some(match touched {
+                Some(range) => union(range, CellRange::new(at, at)),
+                None => CellRange::new(at, at),
+            });
+        };
+        match reference {
+            Reference::Columns(first, last) => {
+                for (number, before) in &targets.rows {
+                    let mut row = before.clone();
+                    let index = RowIndex::new(&row);
+                    for (&column, &child) in &index.columns {
+                        if (first..=last).contains(&column)
+                            && let RowChild::Cell(cell) = &mut row.children[child]
+                        {
+                            let style = new_style(cell.s());
+                            set_style(&mut cell.tag, style);
+                        }
+                    }
+                    let mut added = Vec::new();
+                    if let Some(style) = row.custom_format().then(|| row.s()).flatten() {
+                        let style = new_style(style);
+                        for column in first..=last {
+                            if !index.columns.contains_key(&column) {
+                                let at = CellRef::new(*number, column);
+                                touch(at);
+                                added.push((column, new_cell(at, style)));
+                            }
+                        }
+                    }
+                    if !added.is_empty() {
+                        rebuild_row(&mut row, *number, added, &[], index.ascending);
+                        widen_spans(&mut row);
+                    }
+                    changes.push((*number, Some(before.clone()), row));
+                }
+                let format = self.child("sheetFormatPr")?;
+                let before = self.child("cols")?;
+                let after = set_column_style(
+                    before.clone(),
+                    &prefix,
+                    first,
+                    last,
+                    &new_style,
+                    default_column_width(format.as_ref()),
+                );
+                if before.is_some() || !after.children.is_empty() {
+                    self.stage_child("cols", &before, Some(after));
+                }
+            }
+            Reference::Rows(first, last) => {
+                for number in first..=last {
+                    let before = targets.rows.get(&number).cloned();
+                    let mut row = before.clone().unwrap_or_else(|| {
+                        let mut tag = Tag::new(&qualified(&prefix, "row"));
+                        tag.set("r", Some(&(number + 1).to_string()));
+                        CT_Row {
+                            tag,
+                            children: Vec::new(),
+                        }
+                    });
+                    let old = row.custom_format().then(|| row.s()).flatten().unwrap_or(0);
+                    let new = new_style(old);
+                    if new != old {
+                        if new == 0 {
+                            row.tag.set("s", None);
+                            row.tag.set("customFormat", None);
+                        } else {
+                            row.tag.set("s", Some(&new.to_string()));
+                            row.tag.set_bool("customFormat", Some(true));
+                        }
+                    }
+                    let index = RowIndex::new(&row);
+                    for child in &mut row.children {
+                        if let RowChild::Cell(cell) = child {
+                            let style = new_style(cell.s());
+                            set_style(&mut cell.tag, style);
+                        }
+                    }
+                    let mut added = Vec::new();
+                    for (min, max, style) in &targets.styled_columns {
+                        let style = new_style(*style);
+                        for column in *min..=*max {
+                            if !index.columns.contains_key(&column) {
+                                let at = CellRef::new(number, column);
+                                touch(at);
+                                added.push((column, new_cell(at, style)));
+                            }
+                        }
+                    }
+                    if !added.is_empty() {
+                        added.sort_by_key(|(column, _)| *column);
+                        rebuild_row(&mut row, number, added, &[], index.ascending);
+                        widen_spans(&mut row);
+                    }
+                    if before.is_some()
+                        || !row.tag.attributes_except(&["r"]).is_empty()
+                        || !row.children.is_empty()
+                    {
+                        changes.push((number, before, row));
+                    }
+                }
+            }
+            _ => unreachable!("whole columns or rows"),
+        }
+        self.stage_rows(changes);
+        if let Some(touched) = touched {
+            self.widen_dimension(touched)?;
+        }
+        Ok(())
     }
 }
 

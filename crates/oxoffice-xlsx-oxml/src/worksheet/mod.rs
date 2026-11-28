@@ -23,7 +23,7 @@ use std::ops::Range;
 use oxoffice_core::OxmlError;
 use oxoffice_core::xml_element::ElementSpan;
 
-pub use cols::set_width as set_column_width;
+pub use cols::{set_style as set_column_style, set_width as set_column_width};
 pub use page_setup::{PAGE_SETUP_CHILDREN, PageSetupElements};
 pub use row::{
     CELL_ATTRIBUTES, CT_Cell, CT_CellFormula, CT_Row, CellChild, FORMULA_ATTRIBUTES,

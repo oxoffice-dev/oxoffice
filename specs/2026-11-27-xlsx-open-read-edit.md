@@ -326,8 +326,13 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   keywords, edit map keys): `bold`, `italic`, `underline` (single), `strike`, `font_name` (drops the theme `scheme`,
   `family` and `charset`, which would win over it), `font_size`, `font_color`, `fill` (solid, `bgColor indexed="64"`
   as Excel writes it), `border` and `border_color` (the four sides; automatic is `indexed="64"`), `horizontal`,
-  `vertical`, `wrap_text`, `number_format`. A style edit writes every cell of its range (at most 1,000,000), whole
-  columns and rows clipped to the used range.
+  `vertical`, `wrap_text`, `number_format`. A style edit of a range of cells writes every cell of it (at most
+  1,000,000). Whole columns (`A:C`) or rows (`2:5`) take the style themselves, as Excel writes them: the `col` spans
+  (cut as widths cut them, keeping width, `hidden` and outline level; a column no span names gets one of the default
+  width, `defaultColWidth` or `baseColWidth` rounded up to 8 pixels) or the row (`s`, `customFormat="1"`, a row the
+  sheet lacks made, at most 100,000 at once), every cell they hold, and a cell where a styled row meets a styled
+  column, holding both: so a cell typed later takes the style, and a cell the sheet does not write reads it (row
+  first, then column). `clear` of formats on whole columns or rows takes their style away the same way.
 - **CSV import** writes the rectangle the CSV covers from `at`; an empty field clears that cell's content. UTF-8 (a
   BOM skipped, another encoding refused naming the first bad byte; Python also takes a `str`). Types inferred
   strictly: `-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?` with no leading zero but `0` itself and at most 15 significant

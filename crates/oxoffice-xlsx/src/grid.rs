@@ -12,7 +12,7 @@ const MAX_COLUMN_WIDTH: f64 = 255.0;
 const MAX_ROW_HEIGHT: f64 = 409.5;
 /// The most rows a call writes: a row an edit names is written even when it
 /// holds nothing, so a span of the whole sheet is refused.
-const MAX_ROWS_AT_ONCE: u32 = 100_000;
+pub(crate) const MAX_ROWS_AT_ONCE: u32 = 100_000;
 
 /// The width of a digit of the default font, in pixels: Calibri 11 and
 /// Arial 10 at 96 dpi, Excel's usual. A column width counts characters of
@@ -29,6 +29,21 @@ pub(crate) fn stored_column_width(characters: f64) -> f64 {
     } else {
         (characters * MAX_DIGIT_WIDTH + 0.5).trunc() + PADDING
     };
+    (pixels / MAX_DIGIT_WIDTH * 256.0).trunc() / 256.0
+}
+
+/// The stored width of a column no `col` names: the sheet's
+/// `defaultColWidth`, else its `baseColWidth` (8 by default) characters with
+/// the padding, rounded up to a multiple of 8 pixels as Excel does: 8 gives
+/// `9.140625`, the 8.43 of a new sheet.
+pub(crate) fn default_column_width(format: Option<&oxoffice_xlsx_oxml::Element>) -> f64 {
+    if let Some(width) = format.and_then(|format| format.tag.f64("defaultColWidth")) {
+        return width;
+    }
+    let base = format
+        .and_then(|format| format.tag.u32("baseColWidth"))
+        .unwrap_or(8);
+    let pixels = ((f64::from(base) * MAX_DIGIT_WIDTH + PADDING) / 8.0).ceil() * 8.0;
     (pixels / MAX_DIGIT_WIDTH * 256.0).trunc() / 256.0
 }
 
@@ -173,6 +188,20 @@ mod tests {
             (0.5, 0.85546875),
         ] {
             assert_eq!(stored_column_width(characters), stored, "{characters}");
+        }
+        let format = |xml: &str| oxoffice_xlsx_oxml::Element::parse(xml.as_bytes()).unwrap();
+        for (format, width) in [
+            (None, 9.140625),
+            (
+                Some(format(r#"<sheetFormatPr baseColWidth="10"/>"#)),
+                11.42578125,
+            ),
+            (
+                Some(format(r#"<sheetFormatPr defaultColWidth="12.5"/>"#)),
+                12.5,
+            ),
+        ] {
+            assert_eq!(default_column_width(format.as_ref()), width, "{format:?}");
         }
     }
 }
