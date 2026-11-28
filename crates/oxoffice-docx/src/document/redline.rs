@@ -1828,6 +1828,30 @@ pub(super) fn without_declarations(xml: &str) -> String {
 
 /// Each paragraph of `xml`, blocks a splice inserted, as the accepted view
 /// reads it: the check that marking them changed nothing they show.
+/// Check that `marked`, blocks written as removed, rejected gives `original`
+/// back and accepted holds none of their content.
+pub(super) fn check_removed(marked: &str, original: &str) -> Result<()> {
+    let accepted = resolved(marked, Resolution::Accept)?;
+    match accepted.1.is_empty()
+        && resolved(marked, Resolution::Reject)? == resolved(original, Resolution::Reject)?
+    {
+        true => Ok(()),
+        false => Err(Error::Other(
+            "this removal cannot be written as a tracked change".to_owned(),
+        )),
+    }
+}
+
+/// Check that `marked`, rejected, gives `original` back.
+pub(super) fn check_rejected(marked: &str, original: &str) -> Result<()> {
+    match resolved(marked, Resolution::Reject)? == resolved(original, Resolution::Reject)? {
+        true => Ok(()),
+        false => Err(Error::Other(
+            "this removal cannot be written as a tracked change".to_owned(),
+        )),
+    }
+}
+
 pub(super) fn check_inserted(marked: &str, unmarked: &str) -> Result<()> {
     match resolved(marked, Resolution::Accept)? == resolved(unmarked, Resolution::Accept)? {
         true => Ok(()),
@@ -2146,6 +2170,33 @@ pub(super) fn inserted_block_xml(
     content: bool,
     previous: Option<&str>,
 ) -> Result<String> {
+    marked_block_xml(xml, tracking, "ins", keep_last_mark, content, previous)
+}
+
+/// [`inserted_block_xml`] for a block removed (`w:del`, its texts as
+/// `w:delText`). A kept last mark's paragraph takes the properties of
+/// `previous`, whose mark is the deleted one, with a change holding its own,
+/// so that a rejection gives them back. A block that holds a revision is
+/// refused.
+pub(super) fn deleted_block_xml(
+    xml: &str,
+    tracking: &Tracking,
+    keep_last_mark: bool,
+    content: bool,
+    previous: Option<&str>,
+) -> Result<String> {
+    marked_block_xml(xml, tracking, "del", keep_last_mark, content, previous)
+}
+
+fn marked_block_xml(
+    xml: &str,
+    tracking: &Tracking,
+    marker: &str,
+    keep_last_mark: bool,
+    content: bool,
+    previous: Option<&str>,
+) -> Result<String> {
+    let deleted = marker == "del";
     let mut reader = NsReader::from_str(xml);
     reader.config_mut().trim_text(false);
     let root = loop {
@@ -2187,9 +2238,14 @@ pub(super) fn inserted_block_xml(
     let date = tracking.changes.timestamp().map_or(String::new(), |date| {
         format!(" {prefix}date=\"{}\"", quick_xml::escape::escape(date))
     });
-    let mark = format!("<{prefix}ins {prefix}id=\"{ID_MARK}\" {prefix}author=\"{author}\"{date}/>");
-    let open = format!("<{prefix}ins {prefix}id=\"{ID_MARK}\" {prefix}author=\"{author}\"{date}>");
-    let close = format!("</{prefix}ins>");
+    let mark =
+        format!("<{prefix}{marker} {prefix}id=\"{ID_MARK}\" {prefix}author=\"{author}\"{date}/>");
+    let open =
+        format!("<{prefix}{marker} {prefix}id=\"{ID_MARK}\" {prefix}author=\"{author}\"{date}>");
+    let close = format!("</{prefix}{marker}>");
+    if deleted && holds_revision(&root) {
+        return Err(refused("the removal of a block that holds a revision"));
+    }
     let mut paragraphs = Vec::new();
     match root.word && root.local == "p" {
         true => paragraphs.push(&root),
@@ -2218,7 +2274,12 @@ pub(super) fn inserted_block_xml(
         // The mark first: a new `w:pPr` goes before the first run's `w:ins`
         // at the same place (the sort below keeps their order).
         let runs = |edits: &mut Vec<(Range<usize>, String)>| match content {
-            true => wrap_runs(paragraph, &open, &close, edits),
+            true => {
+                if deleted {
+                    rename_deleted_texts(xml, paragraph, edits)?;
+                }
+                wrap_runs(paragraph, &open, &close, edits)
+            }
             false => Ok(()),
         };
         if keep_last_mark && index == last {
@@ -2268,7 +2329,21 @@ pub(super) fn inserted_block_xml(
                             props(xml, properties, "pPrChange", &["rPr", "sectPr"])
                         })
                 };
-                let (old, mut new) = (read(previous, &before)?, read(xml, paragraph)?);
+                let (old, mut new) = match deleted {
+                    // The paragraph takes the properties of `previous`, and
+                    // keeps its mark's properties and its section.
+                    true => {
+                        let own = read(xml, paragraph)?;
+                        let taken = Props {
+                            kept: own.kept.clone(),
+                            open: own.open.clone(),
+                            end: own.end.clone(),
+                            ..read(previous, &before)?
+                        };
+                        (own, taken)
+                    }
+                    false => (read(previous, &before)?, read(xml, paragraph)?),
+                };
                 if old.base != new.base || old.prior.is_some() {
                     changed = true;
                     let kept = |local: &str| {
@@ -2534,4 +2609,71 @@ fn opened(xml: &str, node: &Node, content: &str) -> Result<String> {
     oxoffice_core::xml_element::replace_content(&xml[node.start.clone()], content)
         .map(|(opened, _)| opened)
         .map_err(xml_error)
+}
+
+/// Whether `node` holds a revision: a wrapper, a mark or a row marked, or a
+/// property change.
+fn holds_revision(node: &Node) -> bool {
+    node.children.iter().any(|child| match child {
+        Child::Element(element) => {
+            (element.word
+                && matches!(
+                    element.local.as_str(),
+                    "ins"
+                        | "del"
+                        | "moveFrom"
+                        | "moveTo"
+                        | "rPrChange"
+                        | "pPrChange"
+                        | "trPrChange"
+                        | "tcPrChange"
+                        | "tblPrChange"
+                        | "cellIns"
+                        | "cellDel"
+                        | "cellMerge"
+                ))
+                || holds_revision(element)
+        }
+        Child::Text(_) => false,
+    })
+}
+
+/// Rename the texts of the runs of `owner` (a paragraph, a link, a control's
+/// content) as a deletion writes them: `w:t` as `w:delText`, `w:instrText`
+/// as `w:delInstrText`.
+fn rename_deleted_texts(
+    xml: &str,
+    owner: &Node,
+    edits: &mut Vec<(Range<usize>, String)>,
+) -> Result<()> {
+    for child in &owner.children {
+        let Child::Element(element) = child else {
+            continue;
+        };
+        match (element.word, element.local.as_str()) {
+            (true, "r") => {
+                for text in word_children(element, "t").chain(word_children(element, "instrText")) {
+                    let renamed = match text.local.as_str() {
+                        "t" => "delText",
+                        _ => "delInstrText",
+                    };
+                    let prefix = &text.name[..text.name.len() - text.local.len()];
+                    let written = oxoffice_core::xml_element::rename(
+                        &xml[text.span()],
+                        &format!("{prefix}{renamed}"),
+                    )
+                    .map_err(xml_error)?;
+                    edits.push((text.span(), written));
+                }
+            }
+            (true, "hyperlink") => rename_deleted_texts(xml, element, edits)?,
+            (true, "sdt") => {
+                if let Some(content) = word_children(element, "sdtContent").next() {
+                    rename_deleted_texts(xml, content, edits)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }

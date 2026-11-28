@@ -658,6 +658,73 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             unlike_compare: false,
         },
         Row {
+            shape: "a paragraph removed between two",
+            document: || {
+                doc_with_body(
+                    &(paragraph(&run("First."))
+                        + &paragraph(&run("Middle."))
+                        + &paragraph(&run("Last."))),
+                )
+            },
+            tracked: |doc| doc.remove_content_range(1, 2).unwrap(),
+            untracked: |doc| {
+                doc.remove_content_range(1, 2).unwrap();
+            },
+            revisions: &[
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, "Middle."),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
+            shape: "the last paragraphs removed, the final mark kept (W12)",
+            document: || {
+                doc_with_body(
+                    &(paragraph(&run("First."))
+                        + &paragraph(&run("Second."))
+                        + r#"<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>Last.</w:t></w:r></w:p>"#),
+                )
+            },
+            tracked: |doc| doc.remove_content_range(1, 3).unwrap(),
+            untracked: |doc| {
+                doc.remove_content_range(1, 3).unwrap();
+            },
+            // The mark before them, theirs but the final one, their content,
+            // and the final paragraph's properties, which take the first's.
+            revisions: &[
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, "Second."),
+                (RevisionKind::ParagraphPropertyChange, ""),
+                (RevisionKind::Deletion, "Last."),
+            ],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
+            shape: "a table removed, each row marked",
+            document: || {
+                doc_with_body(&format!(
+                    r#"{}<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>{}"#,
+                    paragraph(&run("First.")),
+                    paragraph(&run("Last."))
+                ))
+            },
+            tracked: |doc| doc.remove_content_range(1, 2).unwrap(),
+            untracked: |doc| {
+                doc.remove_content_range(1, 2).unwrap();
+            },
+            // The row, its cell's mark and content.
+            revisions: &[
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, ""),
+                (RevisionKind::Deletion, "cell"),
+            ],
+            reject_own: true,
+            unlike_compare: false,
+        },
+        Row {
             shape: "a cell paragraph",
             document: || {
                 doc_with_body(&format!(

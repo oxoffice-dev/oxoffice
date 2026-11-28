@@ -237,18 +237,11 @@ impl Document {
         Ok(())
     }
 
-    /// [`Self::remove_content_at`] for the direct body block at `slot`, in
-    /// place: the block is removed with the bookmark markers it owns, and its
-    /// fragment is built from the block and those markers alone. `Ok(None)`
-    /// changes nothing, as [`Self::remove_body_blocks_in_place`] refuses.
+    /// The fragment of direct body block `slot`, with the bookmark markers
+    /// of `range` around it, as [`Self::pop_body_block_in_place`] returns
+    /// it.
     #[doc(hidden)]
-    pub fn pop_body_block_in_place(
-        &mut self,
-        slot: usize,
-    ) -> Result<Option<(ContentFragment, RemovedBodyBlocks)>> {
-        let Some(range) = self.removable_body_range(slot, slot + 1)? else {
-            return Ok(None);
-        };
+    pub fn body_block_fragment(&self, slot: usize, range: Range<usize>) -> Result<ContentFragment> {
         let story = StoryId::new(StoryKind::Body, self.doc_part_name.clone(), 0);
         let item_xml = |document: &Self, block: &BodyContent| -> Result<_> {
             let part = document.document.standalone_body_item_xml(block)?;
@@ -285,6 +278,22 @@ impl Document {
             before: (range.start..slot).map(marker).collect::<Result<_>>()?,
             after: (slot + 1..range.end).map(marker).collect::<Result<_>>()?,
         };
+        Ok(fragment)
+    }
+
+    /// [`Self::remove_content_at`] for the direct body block at `slot`, in
+    /// place: the block is removed with the bookmark markers it owns, and its
+    /// fragment is built from the block and those markers alone. `Ok(None)`
+    /// changes nothing, as [`Self::remove_body_blocks_in_place`] refuses.
+    #[doc(hidden)]
+    pub fn pop_body_block_in_place(
+        &mut self,
+        slot: usize,
+    ) -> Result<Option<(ContentFragment, RemovedBodyBlocks)>> {
+        let Some(range) = self.removable_body_range(slot, slot + 1)? else {
+            return Ok(None);
+        };
+        let fragment = self.body_block_fragment(slot, range.clone())?;
         let freed = fragment
             .relationships
             .iter()

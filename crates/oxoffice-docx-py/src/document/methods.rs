@@ -4999,6 +4999,14 @@ impl PyDocument {
     }
 
     fn remove_content(&mut self, py: Python<'_>, index: usize) -> PyResult<bool> {
+        // Under a session, the block stays, marked removed.
+        if self.inner.tracks_changes() {
+            if index >= self.inner.content_count() {
+                return Ok(false);
+            }
+            self.remove_body_blocks_tracked(py, index, index + 1, "Document.remove_content")?;
+            return Ok(true);
+        }
         // A paragraph that ends a section is not removable in place: its
         // removal merges two sections, which the kept section owners would
         // not follow.
@@ -5087,6 +5095,11 @@ impl PyDocument {
         }
         if start == end {
             return Ok(0);
+        }
+        // Under a session, the blocks stay, marked removed.
+        if self.inner.tracks_changes() {
+            self.remove_body_blocks_tracked(py, start, end, "Document.remove_content_range")?;
+            return Ok(end - start);
         }
         if let Some(removed) =
             self.remove_body_blocks_local(py, start, end, "Document.remove_content_range")?
@@ -5399,6 +5412,25 @@ impl PyDocument {
         py: Python<'_>,
         index: &Bound<'_, PyAny>,
     ) -> PyResult<Py<PyContentFragment>> {
+        // Under a session, a body block named by its index stays, marked
+        // removed; its fragment is the block as it was.
+        if slf.borrow(py).inner.tracks_changes() {
+            let index = body_index_argument(
+                index,
+                "under a tracked changes session, pop_content takes a body index",
+            )?;
+            let mut document = slf.borrow_mut(py);
+            if index >= document.inner.content_count() {
+                return Err(PyIndexError::new_err("content index out of range"));
+            }
+            let fragment = document
+                .inner
+                .body_block_fragment(index, index..index + 1)
+                .map_err(|error| docx_to_pyerr(py, error))?;
+            document.remove_body_blocks_tracked(py, index, index + 1, "Document.pop_content")?;
+            drop(document);
+            return Py::new(py, PyContentFragment { inner: fragment });
+        }
         // A direct body item is taken in place when the splice of its
         // owners publishes it; any other item, or a refusal, stages.
         let location = if let Ok(item) = index.cast::<PyStoryItem>() {

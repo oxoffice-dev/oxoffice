@@ -705,6 +705,58 @@ impl PyDocument {
     /// the number of body items removed, or `None` with the document and
     /// every handle as they were when the facade or the splice refuses, so
     /// that the caller takes its staged route.
+    /// Under a session, direct body blocks `start..end` written as removed
+    /// in place (they stay, marked) and published as a splice of their
+    /// owners, as a removal is: theirs retire, those of the marked blocks are
+    /// born, every other owner keeps its states. The staged route when the
+    /// splice does not take them.
+    pub(super) fn remove_body_blocks_tracked(
+        &mut self,
+        py: Python<'_>,
+        start: usize,
+        end: usize,
+        operation: &'static str,
+    ) -> PyResult<()> {
+        self.ensure_word_authority(py)?;
+        let (old, before) = self
+            .inner
+            .mark_removed_body_blocks(start, end)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let published = match self.indexes.items.ready() && self.pieces.is_some() {
+            true => self.publish_body_blocks_replaced(
+                py,
+                start,
+                &old,
+                end - start,
+                operation,
+                BlockRetention::Spliced,
+            ),
+            false => Ok(BlocksPublication::WholeRoute),
+        };
+        match published {
+            Ok(BlocksPublication::WholeRoute) => {}
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                self.inner.restore_removed_body_blocks(start, old, before);
+                return Err(error);
+            }
+        }
+        self.inner.restore_removed_body_blocks(start, old, before);
+        let mut candidate = self.inner.clone_for_staging();
+        candidate
+            .mark_removed_body_blocks(start, end)
+            .map_err(|error| docx_to_pyerr(py, error))?;
+        let prepared = self.prepare_word_revision(
+            py,
+            &candidate,
+            operation,
+            crate::document::WordPublication::Conservative,
+        )?;
+        self.commit_word_revision(prepared)?;
+        self.install_inner(candidate);
+        Ok(())
+    }
+
     pub(super) fn remove_body_blocks_local(
         &mut self,
         py: Python<'_>,
