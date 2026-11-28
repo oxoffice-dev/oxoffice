@@ -178,8 +178,10 @@ impl PyNote {
             oxoffice_docx::StoryItemKind::Table => PathSeg::Body(index),
             _ => PathSeg::Para(index),
         };
-        // Under a session, the block is written as inserted on a staged copy.
-        if document.inner.tracks_changes() {
+        // Under a session, the block is written as inserted where it stands;
+        // in a notes part with alternate content, on a staged copy.
+        let tracked = document.inner.tracks_changes();
+        if tracked && !document.inner.marks_story_insertion_in_place(&story) {
             let location = document.staged_story_insertion(py, operation, |document| {
                 document.insert_content(
                     &oxoffice_docx::ContentLocation::end(story.clone()),
@@ -204,9 +206,25 @@ impl PyNote {
             document: &mut document.inner,
             armed: true,
         };
+        let (endnote, id) = (self.endnote, self.id);
         let inserted = held
             .document
-            .insert_content(&oxoffice_docx::ContentLocation::end(story), fragment);
+            .insert_content(&oxoffice_docx::ContentLocation::end(story), fragment)
+            .and_then(|()| {
+                if !tracked {
+                    return Ok(());
+                }
+                // The insertion gave the note's story a new identity.
+                let story = match endnote {
+                    true => held.document.endnote_story(id),
+                    false => held.document.footnote_story(id),
+                }?
+                .ok_or_else(|| {
+                    oxoffice_docx::Error::Other("note disappeared during insertion".to_owned())
+                })?;
+                let location = oxoffice_docx::ContentLocation::new(story, kind, vec![index]);
+                held.document.mark_story_insertion_in_place(&location, 1)
+            });
         if let Err(error) = inserted {
             drop(held);
             return Err(docx_to_pyerr(py, error));

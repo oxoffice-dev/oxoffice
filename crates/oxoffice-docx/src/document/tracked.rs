@@ -832,11 +832,121 @@ impl Document {
     /// W12). Every refusal comes before any id is taken.
     #[doc(hidden)]
     pub fn mark_story_insertion(&mut self, location: &ContentLocation, count: usize) -> Result<()> {
-        let Some(tracking) = self.tracking.clone() else {
+        if self.tracking.is_none() {
             return Ok(());
-        };
+        }
         // The insertion may have given the story a new identity.
         let location = &self.refreshed_location(location)?;
+        for (block, fragment) in self.story_insertion_marks(location, count)? {
+            let block = self.refreshed_location(&block)?;
+            self.replace_story_content(&block, fragment)?;
+        }
+        Ok(())
+    }
+
+    /// Whether [`Self::mark_story_insertion_in_place`] takes an insertion
+    /// in `story`: a header, a footer or a note whose part holds no
+    /// alternate content, whose copies a replacement would have to pair.
+    #[doc(hidden)]
+    pub fn marks_story_insertion_in_place(&self, story: &StoryId) -> bool {
+        matches!(
+            story.kind(),
+            StoryKind::Header | StoryKind::Footer | StoryKind::Footnote | StoryKind::Endnote
+        ) && self.package.get_part(story.part_name()).is_none_or(|xml| {
+            !xml.windows(b"AlternateContent".len())
+                .any(|window| window == b"AlternateContent")
+        })
+    }
+
+    /// [`Self::mark_story_insertion`] on the live document, for a story
+    /// [`Self::marks_story_insertion_in_place`] takes: its part is written
+    /// again, at the cost of that part, and a refusal leaves it as it was.
+    /// `location` names the story as it is after the insertion.
+    #[doc(hidden)]
+    pub fn mark_story_insertion_in_place(
+        &mut self,
+        location: &ContentLocation,
+        count: usize,
+    ) -> Result<()> {
+        if self.tracking.is_none() {
+            return Ok(());
+        }
+        if !self.marks_story_insertion_in_place(&location.story) {
+            return Err(Error::Other(
+                "this insertion is not marked in place: mark it on a staged copy".to_owned(),
+            ));
+        }
+        let units: &[crate::EditUnit] = match location.story.kind() {
+            StoryKind::Header | StoryKind::Footer => &[crate::EditUnit::Parts],
+            _ => &[
+                crate::EditUnit::Footnotes,
+                crate::EditUnit::Endnotes,
+                crate::EditUnit::Comments,
+            ],
+        };
+        #[cfg(debug_assertions)]
+        let before = self.clone_for_staging();
+        let result = self.edit_in_place(units, |document| {
+            let marks = document.story_insertion_marks(location, count)?;
+            document.write_story_marks(&location.story, marks)
+        });
+        #[cfg(debug_assertions)]
+        self.assert_in_place_matches_staged(before, &result, |staged| {
+            staged.mark_story_insertion(location, count)
+        });
+        result
+    }
+
+    /// Write each block of `marks`, in `story`, in place of the block it
+    /// names, as [`Self::replace_story_content`] writes it, in one write of
+    /// the story's part.
+    fn write_story_marks(
+        &mut self,
+        story: &StoryId,
+        marks: Vec<(ContentLocation, ContentFragment)>,
+    ) -> Result<()> {
+        let mut source = None;
+        let mut edits = Vec::with_capacity(marks.len());
+        for (block, fragment) in &marks {
+            let (read, item) = self.story_item_source(block)?;
+            let (part_name, xml) =
+                source.get_or_insert_with(|| (read.part_name.clone(), read.xml.into_owned()));
+            if *part_name != story.part_name() {
+                return Err(Error::Other(
+                    "a marked block is outside its story's part".to_owned(),
+                ));
+            }
+            let replacement = content_fragment_for_insertion(self, story, fragment)?;
+            let scope = story_namespace_scope_at(xml, item.full.start)?;
+            let replacement = close_content_fragment_namespaces(&replacement, &scope)?;
+            let replacement =
+                without_inherited_root_declarations(&xml[item.full.clone()], replacement, &scope);
+            edits.push((item.full, replacement));
+        }
+        let Some((part_name, mut xml)) = source else {
+            return Ok(());
+        };
+        edits.sort_by_key(|(range, _)| range.start);
+        for (range, replacement) in edits.into_iter().rev() {
+            xml.splice(range, replacement);
+        }
+        set_story_source_xml(self, &part_name, xml)?;
+        self.invalidate_layout();
+        Ok(())
+    }
+
+    /// The blocks `count` from `location`, in a story other than the body,
+    /// and the mark before them, each written as inserted with its ids, and
+    /// where it goes: what [`Self::mark_story_insertion`] writes. Every
+    /// refusal comes before any id is taken.
+    fn story_insertion_marks(
+        &mut self,
+        location: &ContentLocation,
+        count: usize,
+    ) -> Result<Vec<(ContentLocation, ContentFragment)>> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(Vec::new());
+        };
         // A cell is a story of its own, also in a comment or a text box,
         // which a session does not write yet (a text box's two copies).
         let in_comment = self.comments_part_name.as_deref() == Some(location.story.part_name());
@@ -938,11 +1048,7 @@ impl Document {
                 })?;
             replacements.push((block.clone(), fragment(&marked, &block)?));
         }
-        for (block, fragment) in replacements {
-            let block = self.refreshed_location(&block)?;
-            self.replace_story_content(&block, fragment)?;
-        }
-        Ok(())
+        Ok(replacements)
     }
 
     /// `location` in the story of the same kind, part and owner as it is

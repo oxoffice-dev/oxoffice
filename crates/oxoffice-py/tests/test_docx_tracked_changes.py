@@ -446,6 +446,23 @@ def test_a_paragraph_inserted_before_one_of_another_story_resolves_both_ways(whe
     assert view(after, "reject_all") == view(before, "reject_all")
 
 
+@pytest.mark.parametrize("where", ["header", "footnote"])
+def test_a_block_added_to_a_header_or_a_note_keeps_every_other_handle(where):
+    doc = oxdocx.Document()
+    body = doc.add_paragraph("Body.")
+    head = doc.section(0).header.add_paragraph("Head.")
+    doc.add_table(1, 1).cell(0, 0).text = "Cell."
+    note = doc.add_footnote(body, "The note.")
+    cell = doc.tables[0].cell(0, 0)
+    owner = doc.section(0).header if where == "header" else note
+    with doc.track_changes(AUTHOR, timestamp=STAMP):
+        assert owner.add_paragraph("New.").text == "New."
+        owner.add_table(1, 1)
+    assert [body.text, cell.text] == ["Body.", "Cell."]
+    if where == "footnote":
+        assert head.text == "Head."
+
+
 def test_two_paragraphs_added_to_a_header_resolve_both_ways():
     def edit(doc):
         header = doc.section(0).header
