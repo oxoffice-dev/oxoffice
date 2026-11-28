@@ -2080,7 +2080,13 @@ class Document:
         complex field is refused."""
     def move_content(self, source: _Location, destination: _Location) -> None:
         """Move the block at `source` within its story, into or out of a block content control too. A block holding
-        only part of a complex field is refused, and so is the only block of a control, header, note or text box."""
+        only part of a complex field is refused, and so is the only block of a control, header, note or text box.
+
+        Under a tracked changes session, a body paragraph is moved as Word tracks a move: the source stays as moved
+        from, the copy goes in as moved to, each side in a range named alike, and one revision id resolves both.
+        Refused there: a block outside the body or inside another, a move to the body's end, a table, a content
+        control, a section break, the body's last paragraph, and a block that holds a revision, declares namespaces
+        of its own, or holds a bookmark, a comment, a note reference or a drawing."""
 
     def add_heading(self, text: str = "", level: int = 1) -> Paragraph: ...
     def add_page_break(self) -> Paragraph: ...

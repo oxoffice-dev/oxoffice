@@ -1007,10 +1007,11 @@ impl Document {
             return Err(Error::Other("no tracked changes session is on".to_owned()));
         };
         let slot = |document: &Document, location: &ContentLocation| -> Result<Option<usize>> {
-            if location.story.kind() != StoryKind::Body
-                || location.story.part_name() != document.doc_part_name
-            {
+            if location.story.part_name() != document.doc_part_name {
                 return Err(super::redline::refused("a move outside the body"));
+            }
+            if location.story.kind() != StoryKind::Body {
+                return Err(super::redline::refused("a move inside a block"));
             }
             if location.is_end {
                 return Ok(None);

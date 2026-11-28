@@ -2265,6 +2265,13 @@ fn marked_block_xml(
             false => "the move of a block that holds a revision",
         }));
     }
+    // A move writes its block twice; what one document holds once would be
+    // twice in it.
+    if marker.starts_with("move") && holds_word(&root, ONCE_IN_A_DOCUMENT) {
+        return Err(refused(
+            "the move of a block that holds a bookmark, a comment, a note reference or a drawing",
+        ));
+    }
     let mut paragraphs = Vec::new();
     match root.word && root.local == "p" {
         true => paragraphs.push(&root),
@@ -2637,6 +2644,30 @@ fn opened(xml: &str, node: &Node, content: &str) -> Result<String> {
 
 /// Whether `node` holds a revision: a wrapper, a mark or a row marked, or a
 /// property change.
+/// The elements a document holds once, by their id or name.
+const ONCE_IN_A_DOCUMENT: &[&str] = &[
+    "bookmarkStart",
+    "bookmarkEnd",
+    "commentRangeStart",
+    "commentRangeEnd",
+    "commentReference",
+    "footnoteReference",
+    "endnoteReference",
+    "drawing",
+    "pict",
+    "object",
+];
+
+/// Whether `node` holds a WordprocessingML element of one of these names.
+fn holds_word(node: &Node, names: &[&str]) -> bool {
+    node.children.iter().any(|child| match child {
+        Child::Element(element) => {
+            (element.word && names.contains(&element.local.as_str())) || holds_word(element, names)
+        }
+        Child::Text(_) => false,
+    })
+}
+
 fn holds_revision(node: &Node) -> bool {
     node.children.iter().any(|child| match child {
         Child::Element(element) => {
