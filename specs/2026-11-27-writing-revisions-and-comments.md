@@ -525,6 +525,30 @@ What PR 3b settles:
   revisions are resolved, and the indexes and the handles of the other blocks do not move. A removed block's own
   handle retires, as after an untracked removal.
 
+## Amendment: PR 3c in two (2026-11-28, during PR 3c)
+
+PR 3c lands the inline insertions, which the paragraph redliner writes; the insertions that bring a note and those in
+the other stories (header, footer, note, table cell) go to a PR 3d, whose note references need a story of their own
+marked.
+
+What PR 3c settles:
+
+- **A drawing, a field or a reference** a paragraph edit adds goes into the insertion with its run, as Word writes
+  it. The paragraph redliner refused them before.
+- `Run.add_picture` is tracked through its staged route (the paragraph redlined against the document before the
+  edit). The picture's part and relationship are not revisions.
+- `Run.add_field` under a session writes the field as `w:fldChar` runs, which an insertion can hold, rather than a
+  `w:fldSimple`.
+- `Paragraph.add_hyperlink` under a session writes a `HYPERLINK` field (with `\o` for a tooltip). It needs no
+  relationship, and accepting it reads as the link's text.
+- `Run.add_picture` in a story other than the body is refused. `Run.add_field` and `Paragraph.add_hyperlink` in a
+  header, a footer, a note or a table cell are tracked there, through the paragraph edits of those stories, which
+  redline.
+- Rejecting a tracked picture removes its drawing, but the picture's part and relationship stay in the package as
+  unused, as for any picture whose drawing an edit removes after the file was opened. Word drops such parts on save;
+  this library does not yet.
+- A note reference stays refused in an insertion until the note it shows can be written as inserted with it.
+
 ## Open questions
 
 ### Product (maintainer)

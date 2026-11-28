@@ -781,6 +781,27 @@ impl Document {
         if prefix + suffix != old.len() {
             return Err(super::redline::refused("a change of existing blocks"));
         }
+        self.refuse_edits_outside_the_body(before)?;
+        let count = new.len() - old.len();
+        self.mark_inserted_body_blocks(prefix, count)
+    }
+
+    /// Under a session, the body paragraphs `self` changed from `before`,
+    /// the document a staged edit was made from, written as tracked changes
+    /// (a picture or a field added to a run). An edit that adds or removes
+    /// a paragraph, or that changes another story, is refused.
+    #[doc(hidden)]
+    pub fn redline_body_since(&mut self, before: &Document) -> Result<()> {
+        if self.tracking.is_none() {
+            return Ok(());
+        }
+        self.refuse_edits_outside_the_body(before)?;
+        self.redline_body(&before.document.body.content)
+    }
+
+    /// Refuse an edit that changed a story other than the body from
+    /// `before`, as written.
+    fn refuse_edits_outside_the_body(&self, before: &Document) -> Result<()> {
         let elsewhere = |document: &Document| -> Result<Vec<(ContentLocation, String)>> {
             Ok(document
                 .story_item_snapshots()?
@@ -792,11 +813,10 @@ impl Document {
                 })
                 .collect())
         };
-        if elsewhere(before)? != elsewhere(self)? {
-            return Err(super::redline::refused("an insertion outside the body"));
+        match elsewhere(before)? == elsewhere(self)? {
+            true => Ok(()),
+            false => Err(super::redline::refused("an insertion outside the body")),
         }
-        let count = new.len() - old.len();
-        self.mark_inserted_body_blocks(prefix, count)
     }
 
     /// Place `block` at body index `slot`, a block

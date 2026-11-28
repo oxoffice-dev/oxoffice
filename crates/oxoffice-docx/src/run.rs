@@ -627,6 +627,45 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
+    /// [`Self::add_field`] written as a complex field (`w:fldChar` runs), the
+    /// shape a tracked insertion of a field takes.
+    #[doc(hidden)]
+    pub fn add_complex_field(&mut self, instruction: &str, cached_result: &str) -> Result<()> {
+        self.add_styled_complex_field(instruction, cached_result, None)
+    }
+
+    /// [`Self::add_complex_field`] whose result run takes character style
+    /// `style` (a link's `Hyperlink`).
+    #[doc(hidden)]
+    pub fn add_styled_complex_field(
+        &mut self,
+        instruction: &str,
+        cached_result: &str,
+        style: Option<&str>,
+    ) -> Result<()> {
+        oxoffice_core::xml::reject_non_xml_characters("field instruction", instruction)?;
+        oxoffice_core::xml::reject_non_xml_characters("field result", cached_result)?;
+        let parsed = Field::new(instruction, cached_result).instruction;
+        if parsed.name.is_empty() {
+            return Err(Error::Other(
+                "field instruction must contain a field name".to_owned(),
+            ));
+        }
+        let mut result = CT_R::new(cached_result);
+        if let Some(style) = style {
+            result.properties = Some(CT_RPr {
+                style_id: Some(style.to_owned()),
+                ..Default::default()
+            });
+        }
+        let field = Field::from_instruction(
+            parsed,
+            oxoffice_docx_oxml::text::FieldForm::Complex,
+            vec![result],
+        )?;
+        self.add_field_value(field)
+    }
+
     /// Append a checked simple or complex field with its ordered cached content.
     pub fn add_field_value(&mut self, field: Field) -> Result<()> {
         field.validate_for_attachment()?;

@@ -933,6 +933,9 @@ impl Document {
         position: &crate::StoryRunPosition,
         options: &CitationOptions,
     ) -> Result<()> {
+        // A citation brings its source with it, which a session does not
+        // record yet, now that the field alone could be written as tracked.
+        self.refuse_under_tracked_changes("Document.insert_citation")?;
         self.insert_field(position, Self::citation_field(options)?)
     }
 
