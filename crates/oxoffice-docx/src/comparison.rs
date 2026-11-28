@@ -43,6 +43,7 @@ type PropertyChildren = Vec<((String, usize), Range<usize>)>;
 use oxoffice_opc::OpcPackage;
 use oxoffice_opc::relationship::{Relationship, rel_types};
 
+mod comment_marks;
 mod comments;
 mod footnotes;
 
@@ -596,8 +597,30 @@ impl Document {
         loop {
             let mut again = None;
             let input = next.as_ref().unwrap_or(edited);
-            let diagnostics =
-                self.compare_pass(input, author, timestamp, options, &renumbered, &mut again)?;
+            // A comment added or removed whole is written as Word tracks it,
+            // its reference run inserted or deleted (Q6). Where that redline
+            // does not resolve back to both versions, the pass runs again
+            // and the comment's paragraph is tracked as before.
+            let mut marked = false;
+            let pass = |document: &mut Self, again: &mut _, marks, marked: &mut bool| {
+                document.compare_pass(
+                    input,
+                    author,
+                    timestamp,
+                    options,
+                    &renumbered,
+                    again,
+                    marks,
+                    marked,
+                )
+            };
+            let diagnostics = match pass(self, &mut again, true, &mut marked) {
+                Err(_) if marked => {
+                    again = None;
+                    pass(self, &mut again, false, &mut marked)?
+                }
+                result => result?,
+            };
             let Some((document, ids)) = again else {
                 return Ok(diagnostics);
             };
@@ -609,6 +632,7 @@ impl Document {
     /// One comparison pass. `renumbered` holds the ids an earlier pass gave
     /// the edited notes whose reference moved: they stay new notes. A pass
     /// that finds more sets `again` and writes nothing.
+    #[allow(clippy::too_many_arguments)]
     fn compare_pass(
         &mut self,
         edited: &Document,
@@ -617,6 +641,8 @@ impl Document {
         options: &ComparisonOptions,
         renumbered: &[(NoteKind, i32)],
         again: &mut Option<(Document, RenumberedNotes)>,
+        comment_marks: bool,
+        marked: &mut bool,
     ) -> Result<Vec<ComparisonDiagnostic>> {
         validate_revision_timestamp(timestamp)?;
         validate_comparison_options(options)?;
@@ -833,6 +859,42 @@ impl Document {
             .package
             .get_part(&edited.doc_part_name)
             .ok_or_else(|| Error::Other(format!("missing main story {}", edited.doc_part_name)))?;
+        // The range marks of the comments one version adds or removes whole
+        // stand outside the comparison of the body, put back after it: the
+        // added from the edited version, the removed from the original.
+        let mut taken_marks = [Vec::new(), Vec::new()];
+        let unmarked;
+        let (original_xml, edited_xml) = if comment_marks
+            && added_reply_ids.is_empty()
+            && !comments_ignored
+            && !options.ignore_comments
+            && !story_ignored(options, ComparisonStoryKind::Main)
+        {
+            let defined = |document: &Document| {
+                document
+                    .comments()
+                    .iter()
+                    .map(|comment| comment.id())
+                    .collect::<HashSet<_>>()
+            };
+            let [added, removed] = comment_marks::one_sided_comments(
+                (original_xml, &defined(&original)),
+                (edited_xml, &defined(&edited)),
+            )?;
+            if added.is_empty() && removed.is_empty() {
+                (original_xml, edited_xml)
+            } else {
+                *marked = true;
+                let (original_body, removed) =
+                    comment_marks::take_comment_marks(original_xml, &removed)?;
+                let (edited_body, added) = comment_marks::take_comment_marks(edited_xml, &added)?;
+                taken_marks = [added, removed];
+                unmarked = [original_body, edited_body];
+                (&unmarked[0][..], &unmarked[1][..])
+            }
+        } else {
+            (original_xml, edited_xml)
+        };
         if original_xml == edited_xml {
             let mut stories_unchanged = true;
             for story in &original_stories {
@@ -1001,6 +1063,12 @@ impl Document {
         tracked_xml = deleted_text_box_contents(&tracked_xml, written, &mut metadata)?;
         // Moves in Word's shape, which Word reads as moves (F3).
         tracked_xml = move_pairs::name_moves(&tracked_xml, written, &mut metadata.ids)?;
+        for (marks, hidden) in taken_marks.iter().zip([
+            [crate::RevisionKind::Deletion, crate::RevisionKind::MoveFrom],
+            [crate::RevisionKind::Insertion, crate::RevisionKind::MoveTo],
+        ]) {
+            tracked_xml = comment_marks::place_comment_marks(&tracked_xml, marks, &hidden, written)?;
+        }
         // Content from the edited document can use the `w14` its own root
         // declares, which the original root may not.
         declare_w14_on_part_root(&mut tracked_xml)?;
@@ -1425,6 +1493,35 @@ impl Document {
                     .collect::<Result<BTreeMap<_, _>>>()?
         {
             return Ok(diagnostics);
+        }
+        // The private record of the comments goes when the revisions alone
+        // give back both versions' comments: comments added or removed whole
+        // (Q6). Comment parts left with no comment stand for none.
+        if snapshot_comments && *marked {
+            // The edited comments, which hold the added ones, or the
+            // original's, which hold the removed ones.
+            for comments in [None, Some(&original_comments)] {
+                let mut unrecorded = candidate.clone_for_staging();
+                comments::remove_comment_record(&mut unrecorded);
+                if let Some(comments) = comments {
+                    apply_comment_snapshot(&mut unrecorded, comments)?;
+                    unrecorded = reopen_staged(unrecorded)?;
+                }
+                let mut accepted = unrecorded.clone_for_staging();
+                accepted.accept_revision_ids(&new_ids)?;
+                let mut rejected = unrecorded.clone_for_staging();
+                rejected.reject_revision_ids(&new_ids)?;
+                if comments::comment_snapshots_agree(
+                    &comment_snapshot(&accepted)?,
+                    &edited_comments,
+                )? && comments::comment_snapshots_agree(
+                    &comment_snapshot(&rejected)?,
+                    &original_comments,
+                )? {
+                    candidate = unrecorded;
+                    break;
+                }
+            }
         }
         self.commit_staged_mutation(candidate);
         Ok(diagnostics)
