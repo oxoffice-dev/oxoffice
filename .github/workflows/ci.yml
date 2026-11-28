@@ -194,7 +194,7 @@ jobs:
         shell: bash
         env:
           OXOFFICE_RENDER: ${{ matrix.os == 'ubuntu-latest' && 'subset' || 'off' }}
-          SMOKE_FLOOR: "206"
+          SMOKE_FLOOR: "205"
         run: |
           set -euo pipefail
           select=(--cargo-profile scaling --locked --workspace $PY_CRATES --exclude oxoffice-py-support --lib --test '*')

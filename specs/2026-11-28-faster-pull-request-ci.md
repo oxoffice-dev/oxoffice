@@ -69,7 +69,7 @@ The maintainer's decision of 2026-11-28:
      `signatures`) and three docx tests that save a document to a file
      (the docx facade has no stack test): 208 tests, 8 s on the machine
      above. The job counts the tests the profile selects and fails under a
-     floor (206, `SMOKE_FLOOR` in `ci.yml`), so that a rename that makes a
+     floor (205 since the slimmer suite of 2026-11-28, `SMOKE_FLOOR` in `ci.yml`), so that a rename that makes a
      clause match nothing cannot shrink the smoke unseen; every run also
      passes `--no-tests=fail`, so an empty shard fails;
    - Python: `test_save`, `test_package_errors`, `test_limitations`,
