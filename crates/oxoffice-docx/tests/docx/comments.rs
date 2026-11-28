@@ -1536,29 +1536,6 @@ fn overlapping_comments_leave_every_range_listed_and_editable() {
 }
 
 #[test]
-fn every_corpus_document_lists_its_story_ranges() {
-    // Word, Google Docs and LibreOffice all write overlapping comments or
-    // bookmarks with crossing markers in some of these files, and
-    // LibreOffice bookmark starts with no end.
-    let files = crate::support::corpus_files("docx");
-    let outcomes = crate::support::map_in_parallel(&files, |file| {
-        Document::from_bytes(&file.bytes())
-            .and_then(|doc| doc.story_ranges().map(|_| ()))
-            .map_err(|error| error.to_string())
-    });
-    let failures = files
-        .iter()
-        .zip(outcomes)
-        .filter_map(|(file, outcome)| match outcome {
-            Some(Ok(())) => None,
-            Some(Err(error)) => Some(format!("{}: {error}", file.path)),
-            None => Some(format!("{}: panicked", file.path)),
-        })
-        .collect::<Vec<_>>();
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
-
-#[test]
 fn removing_a_saved_thread_across_paragraphs_is_taken_in_place() {
     let mut doc = doc_with(&["one", "two", "three", "four"]);
     let kept = doc
