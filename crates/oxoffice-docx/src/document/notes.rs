@@ -263,7 +263,11 @@ impl Document {
             candidate.flush_to_package()?;
         }
         let id = candidate.push_note(kind, &mark_style, text)?;
-        candidate.insert_story_run_staged(position, note_reference_run(kind, id, &mark_style))?;
+        candidate.insert_story_run_staged_as(
+            position,
+            note_reference_run(kind, id, &mark_style),
+            true,
+        )?;
         let reopened = candidate.prepare_and_reopen_staged()?;
         self.commit_staged_mutation(reopened);
         Ok(id)
@@ -289,6 +293,9 @@ impl Document {
         paragraph.runs.push(note_marker);
         paragraph.add_run(" ");
         paragraph.add_run(text);
+        // Under a session, the note's content is written as inserted; its
+        // mark, the note's final one, stays as Word keeps it (W12).
+        let paragraph = self.marked_inserted_note_paragraph(paragraph)?;
         if kind == StoryKind::Footnote {
             let specials = missing_note_specials(
                 &self.footnotes,

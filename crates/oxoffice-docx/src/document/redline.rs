@@ -1129,6 +1129,7 @@ pub(super) fn redline_xml(
                 // for its note to be written as inserted with it.
                 let leaf = &new.leaves[new_tokens[j]];
                 if let Item::Opaque(xml) = &leaf.item
+                    && !tracking.note_reference
                     && oxoffice_core::xml_element::start_tag(xml).is_ok_and(|tag| {
                         matches!(
                             tag.name.rsplit(':').next(),

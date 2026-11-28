@@ -565,8 +565,18 @@ What PR 3d settles:
   handle taken before the call; the returned handle reads the new block. PR 3f moves them to the in-place story
   publication. An insertion in a comment, a text box, a table of a comment or of a text box, or inside a content
   control is refused.
-- Creating a note (`add_footnote`, `add_endnote`) stays refused: rejecting it would leave the note's story behind
-  (PR 3e: the resolver drops a note whose only reference a resolution removes, as Word does for comments, W9).
+- Creating a note (`add_footnote`, `add_endnote`) is tracked from PR 3e on.
+
+What PR 3e settles:
+
+- **A note goes with the only reference a resolution removes, when the resolution empties it too** (the rejection of
+  a note inserted with its reference, the acceptance of one deleted with it), as Word removes a comment whose anchor
+  goes (W9). This holds for files from Word as for a session's own insertions. A note that keeps another reference,
+  or keeps its text, stays: a compared version may hold a note without a reference, which the comparison reproduces.
+  A compared redline's note custody settles its notes first.
+- **Creating a note** (`add_footnote`, `add_endnote`) under a session writes the reference in a `w:ins` and the note's
+  content as inserted. The note's mark, its story's final one, stays unmarked (W12). Rejecting it removes the note,
+  and accepting it keeps it. A note reference added any other way stays refused in an insertion.
 
 ## Open questions
 

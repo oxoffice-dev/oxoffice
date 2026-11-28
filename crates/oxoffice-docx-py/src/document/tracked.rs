@@ -18,6 +18,7 @@ const SESSION_OPERATIONS: &[&str] = &[
     "Cell.replace_text",
     "Cell.text",
     "Document.add_bullet_list_item",
+    "Document.add_note",
     "Document.add_numbered_list_item",
     "Document.add_paragraph",
     "Document.add_table",

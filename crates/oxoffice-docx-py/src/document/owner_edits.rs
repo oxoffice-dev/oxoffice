@@ -2381,9 +2381,15 @@ impl PyDocument {
                 "note reference must be a Paragraph or Run",
             ));
         };
-        let in_place = slf
-            .borrow_mut()
-            .create_note_in_place(py, &paragraph, boundary, text, endnote)?;
+        // Under a session, the staged route writes the reference and the note
+        // as inserted.
+        let tracked = slf.borrow().inner.tracks_changes();
+        let in_place = match tracked {
+            true => None,
+            false => slf
+                .borrow_mut()
+                .create_note_in_place(py, &paragraph, boundary, text, endnote)?,
+        };
         if let Some((id, path)) = in_place {
             return Py::new(
                 py,

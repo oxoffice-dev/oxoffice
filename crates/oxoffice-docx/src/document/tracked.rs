@@ -57,6 +57,10 @@ pub(crate) struct Tracking {
     /// What the replacement under way searches and writes: Word deletes each
     /// whole match and inserts the whole replacement (Word check W12).
     pub(crate) pattern: Option<Arc<ReplacePattern>>,
+    /// Whether the edit under way creates the note its new reference shows,
+    /// written as inserted with it: only then does a note reference go into
+    /// an insertion.
+    pub(crate) note_reference: bool,
 }
 
 /// The pair of a replacement made under tracked changes.
@@ -969,6 +973,22 @@ impl Document {
         String::from_utf8(xml).map_err(|error| Error::Other(error.to_string()))
     }
 
+    /// Under a session, `paragraph`, the only one of a new note, with its
+    /// content written as inserted and its mark, the note's final one,
+    /// kept as Word keeps a story's final mark (Word check W12).
+    pub(crate) fn marked_inserted_note_paragraph(&mut self, paragraph: CT_P) -> Result<CT_P> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(paragraph);
+        };
+        let xml = block_xml(&BodyContent::Paragraph(Box::new(paragraph)))?;
+        let marked = super::redline::inserted_block_xml(&xml, &tracking, true, true, None)?;
+        let marked =
+            super::redline::give_ids(&marked, &tracking, &mut self.identifiers, |marked| {
+                super::redline::check_inserted(marked, &xml)
+            })?;
+        Ok(CT_P::from_xml_fragment(marked.as_bytes())?)
+    }
+
     /// Place `block` at body index `slot`, a block
     /// [`Self::marked_inserted_block`] wrote, where a splice placed its plan.
     #[doc(hidden)]
@@ -1159,7 +1179,23 @@ impl Document {
                 changes: changes.clone(),
                 ids: Arc::default(),
                 pattern: None,
+                note_reference: false,
             },
+        }
+    }
+
+    /// [`Self::redline_edited_paragraph`] for the paragraph that takes the
+    /// reference of a note the edit creates, written as inserted with it.
+    pub(crate) fn redline_note_reference(&mut self, before: &CT_P, after: CT_P) -> Result<CT_P> {
+        match &self.tracking {
+            Some(tracking) => {
+                let tracking = Tracking {
+                    note_reference: true,
+                    ..tracking.clone()
+                };
+                super::redline::redline_paragraph(before, &after, &tracking, &mut self.identifiers)
+            }
+            None => Ok(after),
         }
     }
 
@@ -1535,6 +1571,7 @@ impl Document {
             changes: changes.clone(),
             ids: Arc::default(),
             pattern: None,
+            note_reference: false,
         };
         self.tracking = Some(tracking.clone());
         Ok(TrackedSession(tracking))

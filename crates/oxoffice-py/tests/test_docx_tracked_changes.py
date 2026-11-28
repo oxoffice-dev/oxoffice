@@ -43,7 +43,7 @@ TRACKED = {
     "Document.insert_html", "Document.pop_content", "Document.remove_content", "Document.remove_content_range",
     "Table.add_row", "Table.clone_row", "Table.remove_row", "Run.add_field", "Run.add_picture",
     "Paragraph.add_hyperlink", "HeaderFooter.add_paragraph", "HeaderFooter.add_table", "FootnoteEndnote.add_paragraph",
-    "FootnoteEndnote.add_table", "Cell.add_paragraph", "Cell.add_table",
+    "FootnoteEndnote.add_table", "Cell.add_paragraph", "Cell.add_table", "Document.add_footnote", "Document.add_endnote",
     "Document.replace_all", "Document.replace_all_regex",
     "Document.replace_all_regex_expected", "Document.replace_text_at", "Document.set_story_text",
     "Document.try_replace_text", "Paragraph.add_run", "Paragraph.replace_text", "Paragraph.replace_xml",
@@ -502,6 +502,98 @@ def test_an_insertion_in_a_table_of_a_comment_or_a_text_box_is_refused(tmp_path)
             with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
                 cell.insert_paragraph_before("More.")
         assert doc.to_bytes() == before and session.revision_ids == ()
+
+
+def test_a_note_goes_with_the_only_reference_a_resolution_removes():
+    # As Word removes a comment whose anchor goes (W9): rejecting a note inserted with its reference, or accepting one
+    # deleted with it, removes the note, in a file from Word as in a session's own insertion. A note that keeps its
+    # text stays.
+    for marker, resolve in (("ins", "reject_all"), ("del", "accept_all")):
+        doc = oxdocx.Document()
+        doc.add_paragraph("Body.")
+        note = doc.add_footnote(doc.paragraphs[0], "The note.")
+        wrapped = rf'<w:{marker} w:id="ID" w:author="Other" w:date="{STAMP}">\1</w:{marker}>'
+        texts = (lambda xml: xml.replace("<w:t>", "<w:delText>").replace("<w:t ", "<w:delText ")
+                 .replace("</w:t>", "</w:delText>")) if marker == "del" else (lambda xml: xml)
+        for number, paragraph in ((8, note.paragraphs[0]), (9, doc.paragraphs[0])):
+            runs = r"(<w:r>(?:(?!</w:r>).)*<w:footnoteRef/>.*</w:r>)" if number == 8 else \
+                r"(<w:r>(?:(?!</w:r>).)*<w:footnoteReference [^>]*/>(?:(?!</w:r>).)*</w:r>)"
+            paragraph.replace_xml(texts(re.sub(runs, wrapped.replace("ID", str(number)), paragraph.xml)))
+        resolved = oxdocx.Document.from_bytes(doc.to_bytes())
+        getattr(resolved, resolve)()
+        assert [p.kind for p in resolved.story_paragraphs if p.kind == "footnote"] == [], marker
+    # A tracked note, rejected, leaves nothing; accepted, it stays.
+    doc = oxdocx.Document()
+    doc.add_paragraph("Body.")
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP):
+        doc.add_footnote(doc.paragraphs[0], "The note.")
+    assert re.search(r"<w:ins [^>]*>(?:(?!</w:ins>).)*<w:footnoteReference", main_xml(doc.to_bytes()))
+    assert view(doc.to_bytes(), "reject_all") == view(before, "reject_all")
+    accepted = oxdocx.Document.from_bytes(doc.to_bytes())
+    accepted.accept_all()
+    assert [p.text for p in accepted.story_paragraphs if p.kind == "footnote"] == [" The note."]
+
+
+def word_note(reference=True, content=True, second=False, table=False):
+    """A document whose footnote Word wrote inserted: its reference (id 9) and its content (id 8) in w:ins as asked,
+    a second plain reference to it, a table in it."""
+    doc = oxdocx.Document()
+    doc.add_paragraph("Body.")
+    note = doc.add_footnote(doc.paragraphs[0], "The note.")
+    if table:
+        note.add_table(1, 1)
+    def wrap(xml, pattern, number):
+        return re.sub(pattern, rf'<w:ins w:id="{number}" w:author="Other" w:date="{STAMP}">\1</w:ins>', xml, count=1)
+    reference = r"(<w:r>(?:(?!</w:r>).)*<w:footnoteReference [^>]*/>(?:(?!</w:r>).)*</w:r>)"
+    if content:
+        paragraph = note.paragraphs[0]
+        paragraph.replace_xml(wrap(paragraph.xml, r"(<w:r>(?:(?!</w:r>).)*<w:footnoteRef/>.*</w:r>)", 8))
+    body = doc.paragraphs[0].xml
+    plain = re.search(reference, body).group(1)
+    if reference:
+        body = wrap(body, reference, 9)
+    if second:
+        body = body.replace("</w:p>", plain + "</w:p>")
+    doc.paragraphs[0].replace_xml(body)
+    return oxdocx.Document.from_bytes(doc.to_bytes())
+
+
+def footnotes(doc):
+    return [p.text for p in doc.story_paragraphs if p.kind == "footnote"]
+
+
+def test_a_note_goes_only_once_it_holds_nothing_and_nothing_shows_it():
+    # In two calls, either order: the note goes with the second.
+    for first, second in ((9, 8), (8, 9)):
+        doc = word_note()
+        doc.reject_revision_id(first)
+        assert footnotes(doc), first
+        doc.reject_revision_id(second)
+        assert footnotes(doc) == [], (first, second)
+    # It stays while another reference shows it, while it keeps its text, and while it holds a table.
+    for shape, doc in (("second reference", word_note(second=True)), ("text kept", word_note(content=False)),
+                       ("table", word_note(table=True))):
+        doc.reject_all()
+        assert footnotes(doc), shape
+    # A tracked note goes when its author's changes are rejected; a tracked endnote too, and its ids are its own.
+    for add in (lambda doc: doc.add_footnote(doc.paragraphs[0], "The note."),
+                lambda doc: doc.add_endnote(doc.paragraphs[0], "The note.")):
+        doc = oxdocx.Document()
+        doc.add_paragraph("Body.")
+        with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+            add(doc)
+        ids = [r.id for r in doc.revisions]
+        assert len(ids) == len(set(ids)) and set(session.revision_ids) <= set(ids)
+        doc.reject_revisions_by_author(AUTHOR)
+        assert [p.kind for p in doc.story_paragraphs if p.kind != "body"] == []
+    # A reference added any other way stays refused in an insertion.
+    doc = word_note(reference=False, content=False)
+    body = doc.paragraphs[0].xml
+    added = re.search(r"(<w:r>(?:(?!</w:r>).)*<w:footnoteReference [^>]*/>(?:(?!</w:r>).)*</w:r>)", body).group(1)
+    with doc.track_changes(AUTHOR, timestamp=STAMP):
+        with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+            doc.paragraphs[0].replace_xml(body.replace("</w:p>", added + "</w:p>"))
 
 
 def test_an_insertion_outside_the_body_is_refused():

@@ -132,6 +132,17 @@ impl Document {
         position: &crate::StoryRunPosition,
         run: CT_R,
     ) -> Result<()> {
+        self.insert_story_run_staged_as(position, run, false)
+    }
+
+    /// [`Self::insert_story_run_staged`]; with `note_reference`, the run is
+    /// the reference of a note the edit creates.
+    pub(crate) fn insert_story_run_staged_as(
+        &mut self,
+        position: &crate::StoryRunPosition,
+        run: CT_R,
+        note_reference: bool,
+    ) -> Result<()> {
         let (source, item) = self.story_range_paragraph_source(&position.location)?;
         if item.kind != StoryItemKind::Paragraph {
             return Err(Error::Other(
@@ -143,9 +154,16 @@ impl Document {
         let scope = story_namespace_scope_at(&xml, item.full.start)?;
         let closed = close_content_fragment_namespaces(&xml[item.full.clone()], &scope)?;
         let mut paragraph = CT_P::from_xml_fragment(&closed)?;
+        // Under a session, the reference of a note the edit creates is
+        // written as inserted; the binding refuses the other staged run
+        // insertions under a session, as their in-place routes do.
+        let before = (self.tracking.is_some() && note_reference).then(|| paragraph.clone());
         paragraph
             .insert_accepted_run(position.run_index, run)
             .map_err(|error| Error::Other(format!("field insertion boundary: {error}")))?;
+        if let Some(before) = before {
+            paragraph = self.redline_note_reference(&before, paragraph)?;
+        }
         let replacement = serialize_content_fragment(BodyContent::Paragraph(Box::new(paragraph)))?;
         let replacement = close_content_fragment_namespaces(&replacement, &scope)?;
         let replacement =
