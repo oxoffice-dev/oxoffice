@@ -628,11 +628,27 @@ paragraph with `paraIdParent` = the root's, `done="0"` on both, a true UTC `date
 author, and its range from right after the root's start to after the root's reference run, as `reply_to` writes it.
 The resolve was not captured; W10's round trip stands. Not observed: Word's state for a reply to a resolved thread.
 
+Later cut (2026-11-28, during 5b): 5b, over 900 lines, is cut in two. **5b** writes the comments as revisions ("What
+PR 5b settles"). **5c** (Closes #469) writes the rest:
+
+- **`w16du:dateUtc`** on each dated revision oxoffice writes, in a session or a comparison: the same instant as
+  `w:date`, in UTC to the second, as Word writes it beside its local `w:date`. The revisions are written with
+  `w:date` alone; every output (a save, the bytes of a class, Flat OPC, a part read) adds `w16du:dateUtc` to those
+  whose ids the document noted as written by oxoffice (a producer's own revisions, and the range marks of a move,
+  which Word dates by `w:date` alone (W7), are left as they are), declares `w16du` on the root of each story part
+  that holds one, and adds it to `mc:Ignorable` there (`mc` declared when the root does not), so a reader that does
+  not know it skips it. Dating at output keeps the namespace out of every fragment the redliner parses and
+  resolves. A save that installs its output has dated them, and the document forgets them.
+- **The authors of revisions in `people.xml`** per Q8: at output, the author of the revisions oxoffice wrote that
+  the parts still hold (none rejected or accepted away) joins `people.xml` when the file has the part and does not
+  list the author, with `providerId="None"`, as a comment author does (5a). The part is never made.
+
 What PR 5b settles (Q6 option C, W9):
 
 - **A comment goes with its reference** (W9): a resolution that removes every reference run of a comment removes
-  the comment and its range marks, wherever those stand, and its replies with it, as Word removes a thread. Behaviour change: LibreOffice writes the end and the mark of
-  a comment inside a deletion, and accepting that deletion now removes the comment, as Word does.
+  the comment and its range marks, wherever those stand, and its replies with it, as Word removes a thread.
+  Behaviour change: LibreOffice writes the end and the mark of a comment inside a deletion, and accepting that
+  deletion now removes the comment, as Word does.
 - **Compare writes a comment added or removed whole as Word tracks it**: a comment marked with both range marks and
   a reference in one version's body text, and neither marked nor defined in the other, has its range marks taken
   out of the body comparison and put back where that version has them (counted in that version's text). Its

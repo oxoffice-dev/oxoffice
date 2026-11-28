@@ -2474,6 +2474,26 @@ impl Document {
                 )
             },
         )?;
+        self.add_person_to(people, author).map(|_| ())
+    }
+
+    /// Add `author` to `people.xml`, as Q8 has it: only when the file has
+    /// that part and does not list the author yet, with Word's `providerId`
+    /// for an author it knows no account of. Also for the authors of the
+    /// revisions oxoffice writes. Whether the author was added.
+    pub(crate) fn add_person(&mut self, author: &str) -> Result<bool> {
+        match self.comment_companion(&PEOPLE) {
+            Ok(people) => self.add_person_to(people, author),
+            // A part that does not read takes no entry.
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn add_person_to(
+        &mut self,
+        people: Option<(String, Vec<CommentPartEntry>)>,
+        author: &str,
+    ) -> Result<bool> {
         if let Some((part, people)) = people
             && !people
                 .iter()
@@ -2485,8 +2505,9 @@ impl Document {
                     r#"<{p}:person{declaration} {p}:author="{author}"><{p}:presenceInfo {p}:providerId="None" {p}:userId="{author}"/></{p}:person>"#
                 )
             })?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Append to the root of `part`, a part of `companion` (made when

@@ -1536,6 +1536,10 @@ impl Document {
                 }
             }
         }
+        // A save dates them in UTC and lists their author.
+        candidate
+            .written_revisions
+            .extend(new_ids.iter().map(|&id| (id, author.to_owned())));
         self.commit_staged_mutation(candidate);
         Ok(diagnostics)
     }
