@@ -620,6 +620,24 @@ for tag in ["zh-Hans-CN", "zh-Hans-SG", "zh-Hans-HK", "zh-Hans-TW", "zh-Hant-HK"
     add("r10t", f"[$-{tag}]{TAG_CODE}", SEPTEMBER)
 
 
+# Round 11: what the review of the era change asked: a bare `g` or `e` outside a date section (in a number code, a
+# text section, a code with a unit), the upper-case era tokens, a longer run of `e` and `g` under the Japanese tag,
+# and the upper-case tokens with no tag. Separate from the others: a code Excel cannot read may repair the file on open.
+ROUND = 11
+REIWA1 = serial(2019, 5, 1)
+SHOWA64 = serial(1989, 1, 7)
+for tag, code in [("g1", "0 g"), ("g2", "0.0 g"), ("g3", "0.0 kg"), ("g4", "0;0;0;g"), ("g5", "@ g"),
+                  ("e1", "0 e"), ("e2", "0.0 e"), ("e3", "0;0;0;e")]:
+    add(f"r11-{tag}", code, "5", "-5", "0", "0.5")
+    text(f"r11-{tag}", code, "abc")
+for tag in ["[$-411]", ""]:
+    name = "ja" if tag else "none"
+    for code in ['GGGE"年"m"月"d"日"', 'GGGe"年"', 'gggE"年"', 'G"|"GG"|"GGG', 'E"|"EE"|"e"|"ee']:
+        add(f"r11-{name}-upper", f"{tag}{code}", SEPTEMBER, REIWA1, SHOWA64)
+for code in ['eee', 'eeee', 'eeeee', 'gggg', 'ggggg', 'gggge', 'ggggg"|"e']:
+    add("r11-ja-run", f"[$-411]{code}", SEPTEMBER, REIWA1, SHOWA64)
+
+
 def check_values():
     for case_id, _code, value, _system, kind, _round in CASES:
         if kind != "number":
@@ -698,4 +716,3 @@ def main(out, number):
 
 if __name__ == "__main__":
     main(pathlib.Path(sys.argv[1]), int(sys.argv[2]))
-

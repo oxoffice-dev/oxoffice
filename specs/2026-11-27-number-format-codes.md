@@ -92,7 +92,7 @@ A literal-only or fraction section shows the minus of a nonzero value even when 
 | `aaa`, `aaaa` (lower case): the weekday as `ddd`, `dddd`, under every tag and none (East Asian Excel's own spelling: `[$-804]aaaa` is `星期三`); other runs of `a` are literals | `[$-411]aaa`: 水 |
 | `AM/PM` shows `AM`/`PM` whatever its case; `A/P` the letter as written | `a/p` → `p` |
 | under a language tag, every spelling (`AM/PM`, `am/pm`, `A/P`, `a/p`) shows the designator of the tag's region: `AM` (en-US, fr-FR, de-DE...), `am` (en-GB), `a.m.` (fr-CA), `a. m.` (es-MX) | `[$-809]h A/P`: 5 am |
-| eras, under a Japanese tag (`[$-411]`, `[$-11]`, `[$-ja-JP]`, `[$-ja]`, any spelling of it): `ggg` the era's name (`令和`), `gg` its first character (`令`), `g` its initial letter (`R`); `e` the year in the era, `ee` on two digits; the eras begin on 1912-07-30 (Taisho), 1926-12-25 (Showa), 1989-01-08 (Heisei) and 2019-05-01 (Reiwa), Meiji before; the first year is `1`, not `元`; the date is the one the value rounds to (43585.9999999 is `令和1年5月1日`); 1900-01-00 and 1900-02-29 are Meiji 33; `yy` and `yyyy` stay Gregorian. Under any other tag or none, `g`, `gg`, `ggg` show nothing and `e`, `ee` are the Gregorian year on four digits; a run of `g` beyond three (not asked) is literal | `[$-411]ggge"年"m"月"d"日"`: 45539 → `令和6年9月4日` |
+| eras, under a Japanese tag (`[$-411]`, `[$-11]`, `[$-ja-JP]`, `[$-ja]`, any spelling of it): `ggg` the era's name (`令和`), `gg` its first character (`令`), `g` its initial letter (`R`); `e` the year in the era, `ee` on two digits; the eras begin on 1912-07-30 (Taisho), 1926-12-25 (Showa), 1989-01-08 (Heisei) and 2019-05-01 (Reiwa), Meiji before; the first year is `1`, not `元`; the date is the one the value rounds to (43585.9999999 is `令和1年5月1日`); 1900-01-00 and 1900-02-29 are Meiji 33; `yy` and `yyyy` stay Gregorian. Under any other tag or none, `g`, `gg`, `ggg` show nothing and `e`, `ee` are the Gregorian year on four digits; `G` reads as `g`, a run of `g` beyond three is `ggg` and a run of `e` beyond two is `ee` (Excel rewrites the code so); an upper-case `E` (no exponent) makes the code General | `[$-411]ggge"年"m"月"d"日"`: 45539 → `令和6年9月4日` |
 | `[h]`, `[mm]`, `[ss]`: the whole duration in that unit | `[h]:mm:ss`: 1.5 → `36:00:00` |
 | `[$-F800]`, `[$-x-sysdate]`: the long date `dddd, mmmm d, yyyy`; `[$-F400]`, `[$-x-systime]`: the time `h:mm:ss AM/PM` | |
 | `[$-40C]` or `[$-fr-FR]`: the names and day period of that language and region (next section); the tag may stand anywhere in its section, and only the first section's counts: it speaks for every section, and a tag of another section changes nothing | `[$-407]mmmm;[$-40C]mmmm`: 30000 → `Februar` |
@@ -165,9 +165,10 @@ midnight and noon, are the two designators whatever the spelling (`AM/PM`, `am/p
   languages reads right; one more language is one Excel round and an entry in `tests/excel/names.py`.
 - Eras: the era tokens of the Japanese calendar are the Japanese tag's alone; Meiji's first day (1868) is before
   any date a workbook holds, so its start is not asked (the table keeps 1868-01-25 for its order). The era of a date
-  in Excel's 1900-02-29 and in day 0 is Meiji 33 as the rows show (r9s-*). Only lower-case `g` is an era token (as
-  `aaa`): `G` stays a literal, as before (not asked). Other calendars (`[$-404]`'s Minguo, Buddhist `b`) are not
-  modelled: under those tags the era tokens show nothing and `e` is the Gregorian year, as pinned (r7e-*, r9n-*).
+  in Excel's 1900-02-29 and in day 0 is Meiji 33 as the rows show (r9s-*). `g` and `e` outside a date section (`0 g`,
+  `0.0 kg`, `@ g`, `0;0;0;g`, `0 e`) make the code General, as Excel reads none of them (r11-g*, r11-e*). Other
+  calendars (`[$-404]`'s Minguo, Buddhist `b`) are not modelled: under those tags the era tokens show nothing and `e`
+  is the Gregorian year, as pinned (r7e-*, r9n-*).
 - A region of English, French, German, Spanish or Portuguese that Excel was not asked for takes the table of the
   widespread region of its language: its short names and day period can differ.
 - `[$-F400]` and id 14 follow the operating system in Excel: the en-US defaults are written above.

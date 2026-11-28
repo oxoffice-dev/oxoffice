@@ -2941,3 +2941,94 @@ r10t-06	[$-zh-Hant-TW]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	19
 r10t-07	[$-zh-Hant-MO]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
 r10t-08	[$-zh-Hant-CN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
 r10t-09	[$-zh-Hant-SG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r11-g1-01	0 g	5	1900	number	5		
+r11-g1-02	0 g	-5	1900	number	-5		
+r11-g1-03	0 g	0	1900	number	0		
+r11-g1-04	0 g	0.5	1900	number	0.5		
+r11-g1-05	0 g	abc	1900	text	abc		
+r11-g2-01	0.0 g	5	1900	number	5		
+r11-g2-02	0.0 g	-5	1900	number	-5		
+r11-g2-03	0.0 g	0	1900	number	0		
+r11-g2-04	0.0 g	0.5	1900	number	0.5		
+r11-g2-05	0.0 g	abc	1900	text	abc		
+r11-g3-01	0.0 kg	5	1900	number	5		
+r11-g3-02	0.0 kg	-5	1900	number	-5		
+r11-g3-03	0.0 kg	0	1900	number	0		
+r11-g3-04	0.0 kg	0.5	1900	number	0.5		
+r11-g3-05	0.0 kg	abc	1900	text	abc		
+r11-g4-01	0;0;0;g	5	1900	number	5		
+r11-g4-02	0;0;0;g	-5	1900	number	-5		
+r11-g4-03	0;0;0;g	0	1900	number	0		
+r11-g4-04	0;0;0;g	0.5	1900	number	0.5		
+r11-g4-05	0;0;0;g	abc	1900	text	abc		
+r11-g5-01	@ g	5	1900	number	5		
+r11-g5-02	@ g	-5	1900	number	-5		
+r11-g5-03	@ g	0	1900	number	0		
+r11-g5-04	@ g	0.5	1900	number	0.5		
+r11-g5-05	@ g	abc	1900	text	abc		
+r11-e1-01	0 e	5	1900	number	5		
+r11-e1-02	0 e	-5	1900	number	-5		
+r11-e1-03	0 e	0	1900	number	0		
+r11-e1-04	0 e	0.5	1900	number	0.5		
+r11-e1-05	0 e	abc	1900	text	abc		
+r11-e2-01	0.0 e	5	1900	number	5		
+r11-e2-02	0.0 e	-5	1900	number	-5		
+r11-e2-03	0.0 e	0	1900	number	0		
+r11-e2-04	0.0 e	0.5	1900	number	0.5		
+r11-e2-05	0.0 e	abc	1900	text	abc		
+r11-e3-01	0;0;0;e	5	1900	number	5		
+r11-e3-02	0;0;0;e	-5	1900	number	-5		
+r11-e3-03	0;0;0;e	0	1900	number	0		
+r11-e3-04	0;0;0;e	0.5	1900	number	0.5		
+r11-e3-05	0;0;0;e	abc	1900	text	abc		
+r11-ja-upper-01	[$-411]GGGE"年"m"月"d"日"	45539.6046875	1900	number	45539.60469		
+r11-ja-upper-02	[$-411]GGGE"年"m"月"d"日"	43586	1900	number	43586		
+r11-ja-upper-03	[$-411]GGGE"年"m"月"d"日"	32515	1900	number	32515		
+r11-ja-upper-04	[$-411]GGGe"年"	45539.6046875	1900	number	令和6年		
+r11-ja-upper-05	[$-411]GGGe"年"	43586	1900	number	令和1年		
+r11-ja-upper-06	[$-411]GGGe"年"	32515	1900	number	昭和64年		
+r11-ja-upper-07	[$-411]gggE"年"	45539.6046875	1900	number	45539.60469		
+r11-ja-upper-08	[$-411]gggE"年"	43586	1900	number	43586		
+r11-ja-upper-09	[$-411]gggE"年"	32515	1900	number	32515		
+r11-ja-upper-10	[$-411]G"|"GG"|"GGG	45539.6046875	1900	number	R|令|令和		
+r11-ja-upper-11	[$-411]G"|"GG"|"GGG	43586	1900	number	R|令|令和		
+r11-ja-upper-12	[$-411]G"|"GG"|"GGG	32515	1900	number	S|昭|昭和		
+r11-ja-upper-13	[$-411]E"|"EE"|"e"|"ee	45539.6046875	1900	number	45539.60469		
+r11-ja-upper-14	[$-411]E"|"EE"|"e"|"ee	43586	1900	number	43586		
+r11-ja-upper-15	[$-411]E"|"EE"|"e"|"ee	32515	1900	number	32515		
+r11-none-upper-01	GGGE"年"m"月"d"日"	45539.6046875	1900	number	45539.60469		
+r11-none-upper-02	GGGE"年"m"月"d"日"	43586	1900	number	43586		
+r11-none-upper-03	GGGE"年"m"月"d"日"	32515	1900	number	32515		
+r11-none-upper-04	GGGe"年"	45539.6046875	1900	number	2024年		
+r11-none-upper-05	GGGe"年"	43586	1900	number	2019年		
+r11-none-upper-06	GGGe"年"	32515	1900	number	1989年		
+r11-none-upper-07	gggE"年"	45539.6046875	1900	number	45539.60469		
+r11-none-upper-08	gggE"年"	43586	1900	number	43586		
+r11-none-upper-09	gggE"年"	32515	1900	number	32515		
+r11-none-upper-10	G"|"GG"|"GGG	45539.6046875	1900	number	||		
+r11-none-upper-11	G"|"GG"|"GGG	43586	1900	number	||		
+r11-none-upper-12	G"|"GG"|"GGG	32515	1900	number	||		
+r11-none-upper-13	E"|"EE"|"e"|"ee	45539.6046875	1900	number	45539.60469		
+r11-none-upper-14	E"|"EE"|"e"|"ee	43586	1900	number	43586		
+r11-none-upper-15	E"|"EE"|"e"|"ee	32515	1900	number	32515		
+r11-ja-run-01	[$-411]eee	45539.6046875	1900	number	06		
+r11-ja-run-02	[$-411]eee	43586	1900	number	01		
+r11-ja-run-03	[$-411]eee	32515	1900	number	64		
+r11-ja-run-04	[$-411]eeee	45539.6046875	1900	number	06		
+r11-ja-run-05	[$-411]eeee	43586	1900	number	01		
+r11-ja-run-06	[$-411]eeee	32515	1900	number	64		
+r11-ja-run-07	[$-411]eeeee	45539.6046875	1900	number	06		
+r11-ja-run-08	[$-411]eeeee	43586	1900	number	01		
+r11-ja-run-09	[$-411]eeeee	32515	1900	number	64		
+r11-ja-run-10	[$-411]gggg	45539.6046875	1900	number	令和		
+r11-ja-run-11	[$-411]gggg	43586	1900	number	令和		
+r11-ja-run-12	[$-411]gggg	32515	1900	number	昭和		
+r11-ja-run-13	[$-411]ggggg	45539.6046875	1900	number	令和		
+r11-ja-run-14	[$-411]ggggg	43586	1900	number	令和		
+r11-ja-run-15	[$-411]ggggg	32515	1900	number	昭和		
+r11-ja-run-16	[$-411]gggge	45539.6046875	1900	number	令和6		
+r11-ja-run-17	[$-411]gggge	43586	1900	number	令和1		
+r11-ja-run-18	[$-411]gggge	32515	1900	number	昭和64		
+r11-ja-run-19	[$-411]ggggg"|"e	45539.6046875	1900	number	令和|6		
+r11-ja-run-20	[$-411]ggggg"|"e	43586	1900	number	令和|1		
+r11-ja-run-21	[$-411]ggggg"|"e	32515	1900	number	昭和|64		

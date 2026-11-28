@@ -272,20 +272,20 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                 at += "a/p".len() - 1;
                 Token::AmPm { short: Some(short) }
             }
+            // `g`, `gg` and `ggg` are the era, in either case; Excel cuts a longer run to `ggg` (`gggge` is
+            // `ggge`).
+            'G' | 'g' => {
+                let count = chars[at - 1..]
+                    .iter()
+                    .take_while(|next| next.eq_ignore_ascii_case(&'g'))
+                    .count();
+                at += count - 1;
+                Token::Era(count.min(3))
+            }
             // `aaa` and `aaaa` are the weekday of `ddd` and `dddd`, East Asian
             // Excel's own spelling (`[$-804]aaaa`); Excel showed them so under
             // every tag and under none. A longer run, and `a` or `aa` (not
             // asked), are literals.
-            // `g`, `gg` and `ggg` are the era; a longer run (not asked) is literal.
-            'g' => {
-                let count = run_of(&chars[at - 1..], 'g');
-                at += count - 1;
-                if count <= 3 {
-                    Token::Era(count)
-                } else {
-                    Token::Literal("g".repeat(count))
-                }
-            }
             'a' if run_of(&chars[at - 1..], 'a') >= 3 => {
                 let count = run_of(&chars[at - 1..], 'a');
                 at += count - 1;
@@ -305,9 +305,14 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                     count += 1;
                     at += 1;
                 }
+                // Excel reads no code with an upper-case `E` that is no exponent: it shows it as General. A
+                // lower-case run is cut to `ee`.
+                if lower == 'e' && chars[at - count..at].contains(&'E') {
+                    return Err(invalid("an era year is written with a lowercase e"));
+                }
                 match lower {
                     'y' => Token::Year(count),
-                    'e' => Token::EraYear(count),
+                    'e' => Token::EraYear(count.min(2)),
                     'm' if count <= 2 => Token::MonthOrMinute(count),
                     'm' => Token::Month(count),
                     'd' => Token::Day(count),
