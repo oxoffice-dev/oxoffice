@@ -377,6 +377,247 @@ impl Document {
         Ok(CT_Tbl::from_xml_fragment_checked(redlined.as_bytes())?)
     }
 
+    /// Under a session, `block`, a body block placed (or about to be) at body
+    /// index `slot`, written as inserted, as Word writes it: a paragraph's
+    /// content and mark, each row of a table. With `last`, the block ends the
+    /// body: a paragraph's mark becomes the story's final mark, which is
+    /// never marked (Word check W12); the mark of the paragraph before it is
+    /// the inserted one ([`Self::marked_paragraph_mark`]), and the
+    /// new paragraph's properties, which that mark takes, are a change of
+    /// that paragraph's.
+    #[doc(hidden)]
+    pub fn marked_inserted_block(
+        &mut self,
+        block: BodyContent,
+        slot: usize,
+        last: bool,
+    ) -> Result<BodyContent> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Ok(block);
+        };
+        let local = match &block {
+            BodyContent::Paragraph(_) => "p",
+            BodyContent::Table(_) => "tbl",
+            _ => {
+                return Err(super::redline::refused(
+                    "the insertion of a content control",
+                ));
+            }
+        };
+        let xml = block_xml(&block)?;
+        let previous = match slot
+            .checked_sub(1)
+            .map(|slot| &self.document.body.content[slot])
+        {
+            Some(paragraph @ BodyContent::Paragraph(_)) if last => Some(block_xml(paragraph)?),
+            _ => None,
+        };
+        let marked = super::redline::inserted_block_xml(
+            &xml,
+            &tracking,
+            last && local == "p",
+            true,
+            previous.as_deref(),
+        )?;
+        let marked =
+            super::redline::give_ids(&marked, &tracking, &mut self.identifiers, |marked| {
+                super::redline::check_inserted(marked, &xml)
+            })?;
+        Ok(match local {
+            "p" => BodyContent::Paragraph(Box::new(CT_P::from_xml_fragment(marked.as_bytes())?)),
+            _ => BodyContent::Table(Box::new(CT_Tbl::from_xml_fragment_checked(
+                marked.as_bytes(),
+            )?)),
+        })
+    }
+
+    /// Under a session, body paragraph `slot` with its mark written as
+    /// inserted, as a paragraph appended after it writes it (Word check
+    /// W12), for [`Self::place_marked_mark`]; nothing is placed yet. The mark
+    /// of a paragraph that ends a section is refused: rejecting it would
+    /// drop the section break.
+    #[doc(hidden)]
+    pub fn marked_paragraph_mark(&mut self, slot: usize) -> Result<CT_P> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Err(Error::Other("no tracked changes session is on".to_owned()));
+        };
+        let Some(BodyContent::Paragraph(paragraph)) = self.document.body.content.get(slot) else {
+            return Err(Error::Other("body paragraph index out of range".to_owned()));
+        };
+        if paragraph
+            .properties
+            .as_ref()
+            .is_some_and(|properties| properties.sect_pr.is_some())
+        {
+            return Err(super::redline::refused(
+                "a paragraph added after a section break",
+            ));
+        }
+        let xml = block_xml(&BodyContent::Paragraph(paragraph.clone()))?;
+        let marked = super::redline::inserted_block_xml(&xml, &tracking, false, false, None)?;
+        let marked =
+            super::redline::give_ids(&marked, &tracking, &mut self.identifiers, |marked| {
+                super::redline::check_inserted(marked, &xml)
+            })?;
+        Ok(CT_P::from_xml_fragment(marked.as_bytes())?)
+    }
+
+    /// Put `paragraph`, which [`Self::marked_paragraph_mark`] wrote, at body
+    /// slot `slot`; the body stays as savable as it was.
+    #[doc(hidden)]
+    pub fn place_marked_mark(&mut self, slot: usize, paragraph: CT_P) {
+        let savable = matches!(self.unsavable_body_edit_cache.get(), Some(None));
+        self.document.body.content[slot] = BodyContent::Paragraph(Box::new(paragraph));
+        self.invalidate_layout();
+        self.keep_body_savable_after_typed_edits(slot..slot + 1, savable);
+    }
+
+    /// Under a session, `block` written as inserted and placed at body
+    /// `slot`, with the mark before it when it ends the body (Word check
+    /// W12); a refusal places nothing.
+    #[doc(hidden)]
+    pub fn insert_tracked_block(&mut self, slot: usize, block: BodyContent) -> Result<()> {
+        let paragraph = matches!(block, BodyContent::Paragraph(_));
+        let last = slot == self.document.body.content.len();
+        // The mark before first: its refusals come before any id is taken.
+        let before = self.mark_before_placing(slot, paragraph);
+        let mark = before
+            .map(|before| self.marked_paragraph_mark(before))
+            .transpose()?;
+        let marked = self.marked_inserted_block(block, slot, last)?;
+        self.insert_body_block(slot, marked);
+        if let (Some(before), Some(mark)) = (before, mark) {
+            self.place_marked_mark(before, mark);
+        }
+        Ok(())
+    }
+
+    /// Under a session, the body blocks `self` holds that `before`, the
+    /// document a staged insertion was made from, does not: written as
+    /// inserted. An edit that also changes another body block or another
+    /// story is refused.
+    #[doc(hidden)]
+    pub fn mark_body_insertion_since(&mut self, before: &Document) -> Result<()> {
+        if self.tracking.is_none() {
+            return Ok(());
+        }
+        // Blocks compared as written, as a staged edit may bind their
+        // namespaces anew.
+        let written = |document: &Document| -> Result<Vec<String>> {
+            document
+                .document
+                .body
+                .content
+                .iter()
+                .map(|block| {
+                    let xml = document.standalone_body_item(block)?.1;
+                    Ok(super::redline::without_declarations(
+                        &String::from_utf8_lossy(&xml),
+                    ))
+                })
+                .collect()
+        };
+        let (old, new) = (written(before)?, written(self)?);
+        let prefix = old
+            .iter()
+            .zip(&new)
+            .take_while(|(old, new)| old == new)
+            .count();
+        let suffix = old[prefix..]
+            .iter()
+            .rev()
+            .zip(new[prefix..].iter().rev())
+            .take_while(|(old, new)| old == new)
+            .count();
+        if prefix + suffix != old.len() {
+            return Err(super::redline::refused("a change of existing blocks"));
+        }
+        let elsewhere = |document: &Document| -> Result<Vec<(ContentLocation, String)>> {
+            Ok(document
+                .story_item_snapshots()?
+                .into_iter()
+                .filter(|item| item.location.story().kind() != StoryKind::Body)
+                .map(|item| {
+                    let xml = String::from_utf8_lossy(&item.xml).into_owned();
+                    (item.location, super::redline::without_declarations(&xml))
+                })
+                .collect())
+        };
+        if elsewhere(before)? != elsewhere(self)? {
+            return Err(super::redline::refused("an insertion outside the body"));
+        }
+        let count = new.len() - old.len();
+        self.mark_inserted_body_blocks(prefix, count)
+    }
+
+    /// Place `block` at body index `slot`, a block
+    /// [`Self::marked_inserted_block`] wrote, where a splice placed its plan.
+    #[doc(hidden)]
+    pub fn insert_body_block(&mut self, slot: usize, block: BodyContent) {
+        self.invalidate_layout();
+        self.document.body.content.insert(slot, block);
+    }
+
+    /// The body paragraph whose mark the blocks `slot..slot + count`, just
+    /// placed, must write as inserted: under a session, the paragraph before
+    /// blocks that end the body with a paragraph (Word check W12).
+    #[doc(hidden)]
+    pub fn mark_before_insertion(&self, slot: usize, count: usize) -> Option<usize> {
+        let content = &self.document.body.content;
+        (self.tracking.is_some()
+            && slot > 0
+            && slot + count == content.len()
+            && matches!(content.last(), Some(BodyContent::Paragraph(_)))
+            && matches!(content.get(slot - 1), Some(BodyContent::Paragraph(_))))
+        .then(|| slot - 1)
+    }
+
+    /// [`Self::mark_before_insertion`] for a block, a paragraph or not, to
+    /// be placed at `slot`.
+    #[doc(hidden)]
+    pub fn mark_before_placing(&self, slot: usize, paragraph: bool) -> Option<usize> {
+        let content = &self.document.body.content;
+        (self.tracking.is_some()
+            && paragraph
+            && slot > 0
+            && slot == content.len()
+            && matches!(content.get(slot - 1), Some(BodyContent::Paragraph(_))))
+        .then(|| slot - 1)
+    }
+
+    /// Under a session, body blocks `slot..slot + count`, which a splice
+    /// just put there, written as inserted (see
+    /// [`Self::marked_inserted_block`]), with the mark before them when
+    /// they follow the body's last paragraph.
+    #[doc(hidden)]
+    pub fn mark_inserted_body_blocks(&mut self, slot: usize, count: usize) -> Result<()> {
+        let len = self.document.body.content.len();
+        if self.tracking.is_none() || count == 0 || slot + count > len {
+            return Ok(());
+        }
+        let last = slot + count == len;
+        for index in slot..slot + count {
+            let block = std::mem::replace(
+                &mut self.document.body.content[index],
+                BodyContent::Paragraph(Box::default()),
+            );
+            let marked = self.marked_inserted_block(block.clone(), index, last && index == len - 1);
+            self.document.body.content[index] = match marked {
+                Ok(marked) => marked,
+                Err(error) => {
+                    self.document.body.content[index] = block;
+                    return Err(error);
+                }
+            };
+        }
+        if let Some(before) = self.mark_before_insertion(slot, count) {
+            let mark = self.marked_paragraph_mark(before)?;
+            self.place_marked_mark(before, mark);
+        }
+        self.invalidate_layout();
+        Ok(())
+    }
+
     /// The properties of section `index`, to give
     /// [`Self::redline_section_edit`] once they are edited.
     #[doc(hidden)]
@@ -430,6 +671,20 @@ impl Document {
             }
         }
     }
+}
+
+/// `block` written alone, with its namespace declarations.
+fn block_xml(block: &BodyContent) -> Result<String> {
+    let fragment = match block {
+        BodyContent::Paragraph(paragraph) => ContentFragment::paragraph((**paragraph).clone())?,
+        BodyContent::Table(table) => ContentFragment::table((**table).clone())?,
+        _ => {
+            return Err(super::redline::refused(
+                "the insertion of a content control",
+            ));
+        }
+    };
+    String::from_utf8(fragment.xml).map_err(|error| Error::Other(error.to_string()))
 }
 
 impl Tracking {
@@ -723,6 +978,45 @@ impl TrackedDocument<'_> {
     /// edit, the first run's formatting kept, then its redline.
     pub fn set_story_text(&mut self, location: &ContentLocation, value: &str) -> Result<()> {
         self.run(|document| document.set_story_text(location, value))
+    }
+
+    /// [`Document::insert_paragraph`] written as an insertion, as Word writes
+    /// it: the body index of the new paragraph.
+    pub fn insert_paragraph(&mut self, index: usize, text: &str) -> Result<usize> {
+        self.run(|document| {
+            if index > document.content_count() {
+                return Err(Error::Other("body index out of range".to_owned()));
+            }
+            let slot = document.block_insertion_index(index);
+            let paragraph = Document::detached_text_paragraph(text);
+            document.insert_tracked_block(slot, BodyContent::Paragraph(Box::new(paragraph)))?;
+            Ok(slot)
+        })
+    }
+
+    /// [`Document::add_paragraph`] written as an insertion: the body index
+    /// of the new paragraph.
+    pub fn add_paragraph(&mut self, text: &str) -> Result<usize> {
+        self.run(|document| {
+            let slot = document.content_count();
+            let paragraph = Document::detached_text_paragraph(text);
+            document.insert_tracked_block(slot, BodyContent::Paragraph(Box::new(paragraph)))?;
+            Ok(slot)
+        })
+    }
+
+    /// [`Document::insert_table`] written as an insertion, each row marked:
+    /// the body index of the new table.
+    pub fn insert_table(&mut self, index: usize, rows: usize, cols: usize) -> Result<usize> {
+        self.run(|document| {
+            if index > document.content_count() {
+                return Err(Error::Other("body index out of range".to_owned()));
+            }
+            let slot = document.block_insertion_index(index);
+            let table = Document::detached_table(rows, cols);
+            document.insert_tracked_block(slot, BodyContent::Table(Box::new(table)))?;
+            Ok(slot)
+        })
     }
 
     /// [`Document::try_replace_text`], written as tracked changes as Word's

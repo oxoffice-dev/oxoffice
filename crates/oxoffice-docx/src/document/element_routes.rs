@@ -416,6 +416,44 @@ impl Document {
         Ok(Some((parsed.accepted_text(), parsed.accepted_run_paths())))
     }
 
+    /// [`Self::direct_body_paragraph_facts`] for a paragraph a session wrote
+    /// as inserted ([`Self::marked_inserted_block`]): plain but for the
+    /// insertions that hold its runs.
+    #[doc(hidden)]
+    pub fn inserted_body_paragraph_facts(
+        &self,
+        paragraph: &CT_P,
+    ) -> Result<Option<(String, Vec<oxoffice_docx_oxml::text::AcceptedRunPath>)>> {
+        let mut bare = paragraph.clone();
+        if bare.revisions.iter().any(|(_, _, revision)| {
+            revision.kind() != oxoffice_docx_oxml::revision::RevisionKind::Insertion
+        }) {
+            return Ok(None);
+        }
+        // The insertions are kept as written beside their projections.
+        bare.revisions.clear();
+        bare.extra_xml.retain(|(_, raw)| {
+            let name = raw[1..]
+                .split(|byte| matches!(byte, b' ' | b'>' | b'/'))
+                .next()
+                .unwrap_or_default();
+            name.rsplit(|byte| *byte == b':').next() != Some(b"ins".as_slice())
+        });
+        if !paragraph_is_plain(&bare)
+            || paragraph
+                .properties
+                .as_ref()
+                .is_some_and(|properties| properties.sect_pr.is_some())
+        {
+            return Ok(None);
+        }
+        paragraph.validate_resource_limits()?;
+        let (_, xml) =
+            self.standalone_body_item(&BodyContent::Paragraph(Box::new(paragraph.clone())))?;
+        let parsed = CT_P::from_xml_fragment(&xml)?;
+        Ok(Some((parsed.accepted_text(), parsed.accepted_run_paths())))
+    }
+
     /// Read plain opened body paragraphs under one exact opening proof.
     ///
     /// This finite reader-invariance proof returns facts only, never Source

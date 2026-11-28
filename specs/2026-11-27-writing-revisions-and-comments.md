@@ -477,6 +477,33 @@ What PR 2c settles:
   that holds a revision of its own (an insertion, a deletion, a move or an earlier change) keeps its properties with
   a diagnostic.
 
+## Amendment: PR 3 in three (2026-11-28, before PR 3)
+
+PR 3 measured about 1,300 product lines, so it is three stacked PRs: 3a the insertions of body blocks, 3b their
+removals and the row edits, 3c the inline insertions that bring a part and the insertions in the other stories.
+
+What PR 3a settles:
+
+- **A block inserted in the body** (`add_paragraph`, `add_heading`, `add_page_break`, the list item adders,
+  `insert_paragraph`, `Paragraph.insert_paragraph_before` on a body paragraph, `add_table`, `insert_table`) is
+  written as inserted before it is placed, so its route in place stays: a paragraph's content in `w:ins` and its mark
+  in `w:pPr/w:rPr/w:ins`, each row of a table in `w:trPr/w:ins` with its cells' paragraphs marked, as compare's
+  `marked_row` writes them.
+- **After the body's last paragraph** (W12), the new last paragraph keeps the story's final mark unmarked, and the
+  mark of the paragraph before it is the inserted one. The new paragraph's properties, which that mark now ends, are
+  a `w:pPrChange` of the properties of the paragraph before, so that a rejection gives that paragraph back as it was
+  (an appended heading leaves no heading behind). That paragraph keeps its handle: its text and what it holds do not
+  change.
+- **The staged insertions** (`insert_content`, `clone_content`, `import_fragment`, `insert_html`,
+  `insert_document`) mark the blocks the edit added to the body, found by comparing the blocks as written; an edit
+  that also changes another block or another story is refused.
+- **Copied content** that holds insertions keeps them, under revision ids of its own. A copied mark that is
+  already inserted gets no second mark, and the story's final mark keeps no revision. Copied content holding a
+  deletion or a move is refused: rejecting the session would bring that content back.
+- A paragraph added after a paragraph that ends the body with a section break is refused, because rejecting it would
+  drop the section break. A refused insertion places nothing and takes no revision id.
+- Insertions in a header, footer, note, comment, text box or table cell stay refused until PR 3c.
+
 ## Open questions
 
 ### Product (maintainer)

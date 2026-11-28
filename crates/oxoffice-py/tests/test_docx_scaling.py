@@ -742,6 +742,9 @@ TIMED.update({
     "Paragraph.alignment (tracked)": tracked(setter(tracked_para, "alignment", WD_ALIGN_PARAGRAPH.CENTER)),
     "Table.width (tracked)": tracked(setter(table, "width", Inches(5))),
     "SectionHandle.page_width (tracked)": tracked(setter(section, "page_width", Inches(9))),
+    **{f"{name} (tracked)": tracked(TIMED[name]) for name in (
+        "Document.add_paragraph", "Document.add_heading", "Document.add_bullet_list_item", "Document.add_table",
+        "Document.insert_paragraph", "Document.insert_table")},
     "Paragraph.replace_xml (tracked)": tracked(on_made(
         with_xml(tracked_para, lambda xml, k: xml.replace(f"tracked {k} ", "changed ")),
         lambda doc, made: made[0].replace_xml(made[1]))),

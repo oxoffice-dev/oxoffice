@@ -36,7 +36,12 @@ FORMATTING = {
     "SectionHandle.set_page_border", "SectionHandle.top_margin",
 }
 TRACKED = {
-    "Cell.replace_text", "Cell.text", "Document.replace_all", "Document.replace_all_regex",
+    "Cell.replace_text", "Cell.text", "Document.add_bullet_list_item", "Document.add_heading",
+    "Document.add_numbered_list_item", "Document.add_page_break", "Document.add_paragraph", "Document.add_table",
+    "Document.insert_paragraph", "Document.insert_table", "Paragraph.insert_paragraph_before",
+    "Document.clone_content", "Document.import_fragment", "Document.insert_content", "Document.insert_document",
+    "Document.insert_html",
+    "Document.replace_all", "Document.replace_all_regex",
     "Document.replace_all_regex_expected", "Document.replace_text_at", "Document.set_story_text",
     "Document.try_replace_text", "Paragraph.add_run", "Paragraph.replace_text", "Paragraph.replace_xml",
     "Paragraph.text", "Run.add_break", "Run.add_tab", "Run.remove", "Run.text",
@@ -235,6 +240,61 @@ def test_a_refused_call_leaves_no_revision_ids():
     with doc.track_changes("Other", timestamp=STAMP) as other:
         doc.replace_all([("quick", "slow", 1)])
     assert session.revision_ids == () and len(other.revision_ids) == 2
+
+
+def test_paragraphs_appended_after_styled_ones_resolve_both_ways():
+    def made(tracked):
+        doc = oxdocx.Document()
+        doc.add_heading("Start", level=2)
+        before = doc.to_bytes()
+        session = doc.track_changes(AUTHOR, timestamp=STAMP) if tracked else None
+        doc.add_heading("Title", level=1)
+        doc.add_paragraph("Body.")
+        doc.add_bullet_list_item("Item.")
+        if session:
+            session.stop()
+        return before, doc.to_bytes()
+    before, after = made(True)
+    assert view(after, "accept_all") == view(made(False)[1], "accept_all")
+    assert view(after, "reject_all") == view(before, "reject_all")
+
+
+def test_copied_tracked_content_keeps_one_mark_and_ids_of_its_own():
+    old, new = oxdocx.Document(), oxdocx.Document()
+    for doc, texts in ((old, ("One.", "Two.")), (new, ("One.", "New.", "Two."))):
+        for text in texts:
+            doc.add_paragraph(text)
+    old.compare(new, "Other", STAMP)
+    doc = oxdocx.Document.from_bytes(old.to_bytes())
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP):
+        doc.clone_content(doc.paragraphs[1], 0)
+        doc.clone_content(doc.paragraphs[2], len(doc.paragraphs))
+    after = doc.to_bytes()
+    with zipfile.ZipFile(io.BytesIO(after)) as z:
+        main = z.read("word/document.xml").decode()
+    assert not re.search(r"<w:rPr>(?:(?!</w:rPr>).)*<w:ins (?:(?!</w:rPr>).)*<w:ins ", main)
+    ids = re.findall(r"<w:(?:ins|del|rPrChange|pPrChange) w:id=\"(\d+)\"", main)
+    assert len(ids) == len(set(ids))
+    # The story's final mark holds no revision.
+    last = main[main.rfind("<w:p>"):main.rfind("<w:sectPr")]
+    assert "<w:pPr><w:rPr><w:ins" not in last
+    assert view(after, "reject_all") == view(before, "reject_all")
+    assert [p.text for p in oxdocx.Document.from_bytes(after).paragraphs] == ["New.", "One.", "New.", "Two.", "New."]
+
+
+def test_an_insertion_outside_the_body_is_refused():
+    doc = oxdocx.Document()
+    doc.add_paragraph("Body.")
+    header = doc.section(0).header
+    header.add_paragraph("Head.")
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+        for call in (lambda: doc.insert_html("<p>New.</p>", after=header.paragraphs[-1]),
+                     lambda: header.add_paragraph("More.")):
+            with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+                call()
+    assert doc.to_bytes() == before and session.revision_ids == ()
 
 
 def test_a_refused_table_style_adds_no_style():
