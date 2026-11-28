@@ -2556,6 +2556,11 @@ fn wrap_runs(
     close: &str,
     edits: &mut Vec<(Range<usize>, String)>,
 ) -> Result<()> {
+    // The change these runs take, for the refusal's words.
+    let change = match open.contains("del ") {
+        true => "removal",
+        false => "insertion",
+    };
     let mut stretch: Option<Range<usize>> = None;
     let end = |stretch: &mut Option<Range<usize>>, edits: &mut Vec<(Range<usize>, String)>| {
         if let Some(range) = stretch.take() {
@@ -2593,9 +2598,9 @@ fn wrap_runs(
             }
             (true, "ins") => end(&mut stretch, edits),
             _ => {
-                return Err(refused(
-                    "the insertion of a field, an equation or other inline content",
-                ));
+                return Err(refused(&format!(
+                    "the {change} of a field, an equation or other inline content"
+                )));
             }
         }
     }

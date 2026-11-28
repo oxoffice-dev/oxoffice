@@ -511,8 +511,11 @@ What PR 3b settles:
   of a table in `w:trPr/w:del` with its cells' paragraphs marked. Removing the paragraphs that end the body leaves
   the final mark unmarked (W12). The mark of the paragraph before them is the deleted one, and the final paragraph
   takes that paragraph's properties as a `w:pPrChange` of its own, so accepting gives what the untracked removal
-  gives and rejecting gives the original. A block holding a revision, a section break or a content control is
-  refused. `pop_content` returns the block as it was.
+  gives and rejecting gives the original. Bookmark markers written between blocks stay where they are. Refused, with
+  nothing changed and no id taken: a block holding a revision (the session's own included, so a block removed or
+  inserted in the session is not removed again), a section break, a content control, or an element that declares
+  namespaces of its own (which the body could no longer save, as for the untracked removal). `pop_content` takes a
+  body index under a session and returns the block as it was.
 - **Rows** of a body table: `Table.add_row` and `Table.clone_row` write the new row as inserted (`w:trPr/w:ins`,
   its cells' paragraphs marked). `Table.remove_row` keeps the row, written as removed. Rows of a table outside the
   body stay refused.

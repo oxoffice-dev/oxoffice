@@ -5415,10 +5415,16 @@ impl PyDocument {
         // Under a session, a body block named by its index stays, marked
         // removed; its fragment is the block as it was.
         if slf.borrow(py).inner.tracks_changes() {
-            let index = body_index_argument(
-                index,
-                "under a tracked changes session, pop_content takes a body index",
-            )?;
+            if index.is_instance_of::<PyBool>() || !index.is_instance_of::<pyo3::types::PyInt>() {
+                return Err(docx_to_pyerr(
+                    py,
+                    oxoffice_docx::Error::Other(
+                        "pop_content of a handle or a location is not recorded as a tracked change yet; pass its body index"
+                            .to_owned(),
+                    ),
+                ));
+            }
+            let index = body_index_argument(index, "index must be an int")?;
             let mut document = slf.borrow_mut(py);
             if index >= document.inner.content_count() {
                 return Err(PyIndexError::new_err("content index out of range"));

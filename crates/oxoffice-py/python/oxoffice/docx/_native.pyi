@@ -2011,6 +2011,11 @@ class Document:
         the bookmark ends written just after it, go too, with those ends and the ends just after it that
         close a bookmark started inside it; each start that goes moves the later items back by one more
         index.
+
+        Under a tracked changes session the item stays, written as removed (Word's deletion): it keeps its index and
+        reads as its accepted text, ``""`` for a paragraph, until the revisions are resolved. Bookmark markers written
+        between blocks stay. A block holding a revision, its own session's included, a section break or a content
+        control is refused.
         """
     def remove_content_range(self, start: int, end: int) -> int:
         """Remove the direct body items ``start`` to ``end`` (excluded) and return how many items went.
@@ -2019,6 +2024,11 @@ class Document:
         heading's bookmark so): the starts just before ``start`` whose bookmark ends inside the range, or
         in the bookmark ends written just after it, go too, with those ends and the ends just after it
         that close a bookmark started inside it; all count in the result.
+
+        Under a tracked changes session the item stays, written as removed (Word's deletion): it keeps its index and
+        reads as its accepted text, ``""`` for a paragraph, until the revisions are resolved. Bookmark markers written
+        between blocks stay. A block holding a revision, its own session's included, a section break or a content
+        control is refused.
         """
     @_overload
     def find_content_index(self, content: Paragraph | Table) -> int:
@@ -2046,6 +2056,9 @@ class Document:
         heading's bookmark so): the starts just before the item whose bookmark ends inside it, or in
         the bookmark ends written just after it (a bookmark around a whole table), go too, with those
         ends, in the fragment. ``insert_content`` writes them back around the item.
+
+        Under a tracked changes session, ``index`` must be a direct body index: the block stays, written as removed,
+        as for ``remove_content``, and the fragment holds it as it was.
         """
     def insert_content(
         self, destination: _Location, fragment: ContentFragment
@@ -2460,7 +2473,8 @@ class Table:
     def set_cell_vertical_merge(
         self, row: int, col: int, merge: _Literal["restart", "continue"] | None
     ) -> None: ...
-    def add_row(self) -> Row: ...
+    def add_row(self) -> Row:
+        """Append a row. Under a tracked changes session it is written as inserted (body tables only)."""
     def insert_column(self, index: int, *, before: bool = True) -> None: ...
     def delete_column(self, index: int) -> None: ...
     @property
@@ -2491,8 +2505,12 @@ class Table:
     def banded_columns(self) -> bool: ...
     @banded_columns.setter
     def banded_columns(self, value: bool) -> None: ...
-    def clone_row(self, index: int, at: int | None = None) -> Row: ...
-    def remove_row(self, index: int) -> None: ...
+    def clone_row(self, index: int, at: int | None = None) -> Row:
+        """Copy row ``index`` to ``at`` (after it by default). Under a tracked changes session the copy is written as
+        inserted (body tables only)."""
+    def remove_row(self, index: int) -> None:
+        """Remove row ``index``. Under a tracked changes session the row stays, written as removed, and still counts
+        in ``rows`` until the revisions are resolved (body tables only; a row holding a revision is refused)."""
 
 
 @_final
