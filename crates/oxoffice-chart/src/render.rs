@@ -3796,19 +3796,21 @@ mod tests {
         // Names in the language of the tag, as Excel writes them.
         assert_eq!(shown(Some("[$-40C]mmmm yyyy"), 45306.0), "janvier 2024");
         assert_eq!(shown(Some("[$-407]ddd d"), 45306.0), "Mo 15");
+        assert_eq!(shown(Some("[$-411]mmmm yyyy"), 45306.0), "1月 2024");
+        assert_eq!(shown(Some("[$-419]dddd"), 45306.0), "понедельник");
         // A code Excel cannot read, and month names of a language without
-        // a table, show as General and are reported.
-        for code in ["0.0e+00", "[$-411]mmmm yyyy"] {
+        // a table (Hebrew), show as General and are reported.
+        for code in ["0.0e+00", "[$-40D]mmmm yyyy"] {
             assert_eq!(shown(Some(code), 45306.0), "45306", "{code}");
             assert!(!format(code).is_supported(), "{code}");
         }
         assert!(format("[$€-40C]#,##0.00").is_supported());
         assert!(format("[$-419]h:mm AM/PM").is_supported());
         let reported =
-            space(&yearly_chart("").replace("formatCode=\"yyyy\"", "formatCode=\"[$-411]mmmm\""));
+            space(&yearly_chart("").replace("formatCode=\"yyyy\"", "formatCode=\"[$-40D]mmmm\""));
         assert_eq!(
             unsupported_number_formats(&reported.chart).unwrap(),
-            vec!["[$-411]mmmm".to_owned()]
+            vec!["[$-40D]mmmm".to_owned()]
         );
     }
 }

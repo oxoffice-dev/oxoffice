@@ -267,6 +267,19 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
                 at += "a/p".len() - 1;
                 Token::AmPm { short: Some(short) }
             }
+            // `aaa` and `aaaa` are the weekday of `ddd` and `dddd`, East Asian
+            // Excel's own spelling (`[$-804]aaaa`); Excel showed them so under
+            // every tag and under none. A longer run, and `a` or `aa` (not
+            // asked), are literals.
+            'a' if run_of(&chars[at - 1..], 'a') >= 3 => {
+                let count = run_of(&chars[at - 1..], 'a');
+                at += count - 1;
+                if count <= 4 {
+                    Token::Day(count)
+                } else {
+                    Token::Literal("a".repeat(count))
+                }
+            }
             'y' | 'Y' | 'e' | 'E' | 'm' | 'M' | 'd' | 'D' | 'h' | 'H' | 's' | 'S' => {
                 let lower = c.to_ascii_lowercase();
                 let mut count = 1;
@@ -311,6 +324,11 @@ pub(crate) fn sections(code: &str) -> Result<Vec<Section>, Error> {
         section.language = language;
     }
     Ok(sections)
+}
+
+/// How many times `c` repeats from the start of `chars`.
+fn run_of(chars: &[char], c: char) -> usize {
+    chars.iter().take_while(|next| **next == c).count()
 }
 
 fn starts_with_ignore_case(chars: &[char], word: &str) -> bool {
