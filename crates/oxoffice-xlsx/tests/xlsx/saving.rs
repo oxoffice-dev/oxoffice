@@ -139,6 +139,7 @@ fn a_workbook_refuses_to_replace_its_source_unless_asked() {
     fs::write(&source, corpus_bytes("libreoffice/review.xlsx")).unwrap();
     let before = fs::read(&source).unwrap();
     let workbook = Workbook::open(&source).unwrap();
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut spellings = vec![source.clone(), dir.join(".").join("review.xlsx")];
     #[cfg(unix)]
     {

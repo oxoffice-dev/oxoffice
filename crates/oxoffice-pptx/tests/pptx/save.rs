@@ -5,7 +5,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oxoffice_pptx::{Error, Presentation, SaveOptions};
+#[cfg(unix)]
+use oxoffice_pptx::SaveOptions;
+use oxoffice_pptx::{Error, Presentation};
 
 /// A folder of its own under the system temporary folder, removed on drop.
 struct Scratch(PathBuf);
