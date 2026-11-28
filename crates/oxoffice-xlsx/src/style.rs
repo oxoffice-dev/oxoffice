@@ -176,14 +176,16 @@ pub struct ResolvedStyle {
     pub style_name: Option<String>,
 }
 
-/// The cell formats of a workbook, each resolved once.
-#[derive(Debug)]
+/// The cell formats of a workbook, each resolved once, and what resolves
+/// the ones an edit appends.
+#[derive(Clone, Debug)]
 pub(crate) struct StyleTable {
     formats: Vec<CellFormat>,
+    palette: Option<Palette>,
 }
 
 /// A cell format: its style and its number format read.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct CellFormat {
     pub style: Arc<ResolvedStyle>,
     pub format: NumberFormat,
@@ -197,9 +199,11 @@ impl StyleTable {
         let Some(styles) = styles else {
             return StyleTable {
                 formats: vec![CellFormat::new(ResolvedStyle::default_style())],
+                palette: None,
             };
         };
-        let resolver = Resolver::new(styles, theme);
+        let palette = Palette::new(styles, theme);
+        let resolver = Resolver::new(styles, &palette);
         let mut formats: Vec<CellFormat> = styles
             .cell_xfs()
             .map(|xf| CellFormat::new(resolver.style(xf)))
@@ -207,12 +211,41 @@ impl StyleTable {
         if formats.is_empty() {
             formats.push(CellFormat::new(ResolvedStyle::default_style()));
         }
-        StyleTable { formats }
+        StyleTable {
+            formats,
+            palette: Some(palette),
+        }
     }
 
     /// The cell format of record `s`: record 0 when out of range.
     pub(crate) fn get(&self, s: u32) -> &CellFormat {
         self.formats.get(s as usize).unwrap_or(&self.formats[0])
+    }
+
+    /// Reads the number format `id` an edit appended with `code`.
+    pub(crate) fn add_number_format(&mut self, id: u32, code: &str) {
+        if let Some(palette) = &mut self.palette {
+            palette
+                .number_formats
+                .entry(id)
+                .or_insert_with(|| code.to_owned());
+        }
+    }
+
+    /// Resolves cell format `index`, which an edit appended to `styles`.
+    pub(crate) fn add_format(&mut self, styles: &StylesXml, index: usize) {
+        let Some(palette) = &self.palette else {
+            return;
+        };
+        let Some(xf) = styles.list(StyleList::CellXfs).get(index).map(Xf) else {
+            return;
+        };
+        let format = CellFormat::new(Resolver::new(styles, palette).style(xf));
+        match self.formats.get_mut(index) {
+            // A part without cell formats read as record 0 the default one.
+            Some(slot) => *slot = format,
+            None => self.formats.push(format),
+        }
     }
 }
 
@@ -308,10 +341,11 @@ pub(crate) fn theme_colors(xml: &[u8]) -> Result<ThemeColors, String> {
     }))
 }
 
-/// What resolves the records of one styles part.
-struct Resolver<'a> {
-    styles: &'a StylesXml,
-    theme: &'a ThemeColors,
+/// What resolves colours, style names and number format codes in one
+/// styles part: read once, kept to resolve the records an edit appends.
+#[derive(Clone, Debug)]
+struct Palette {
+    theme: ThemeColors,
     indexed: Vec<RgbColor>,
     /// The name of the first cell style of each cell style format.
     style_names: HashMap<u32, String>,
@@ -319,8 +353,8 @@ struct Resolver<'a> {
     number_formats: HashMap<u32, String>,
 }
 
-impl<'a> Resolver<'a> {
-    fn new(styles: &'a StylesXml, theme: &'a ThemeColors) -> Self {
+impl Palette {
+    fn new(styles: &StylesXml, theme: &ThemeColors) -> Self {
         let own: Vec<RgbColor> = styles
             .colors()
             .and_then(|colors| colors.child("indexedColors"))
@@ -353,13 +387,24 @@ impl<'a> Resolver<'a> {
                     .or_insert_with(|| xstring::decode(&format.code()).into_owned());
             }
         }
-        Resolver {
-            styles,
-            theme,
+        Palette {
+            theme: *theme,
             indexed,
             style_names,
             number_formats,
         }
+    }
+}
+
+/// What resolves the records of one styles part.
+struct Resolver<'a> {
+    styles: &'a StylesXml,
+    palette: &'a Palette,
+}
+
+impl<'a> Resolver<'a> {
+    fn new(styles: &'a StylesXml, palette: &'a Palette) -> Self {
+        Resolver { styles, palette }
     }
 
     fn record(&self, list: StyleList, index: u32) -> Option<&'a Element> {
@@ -375,13 +420,13 @@ impl<'a> Resolver<'a> {
         } else if let Some(index) = tag.u32("theme") {
             (
                 ColorSource::Theme(index),
-                self.theme.get(index as usize).copied().flatten(),
+                self.palette.theme.get(index as usize).copied().flatten(),
             )
         } else if let Some(index) = tag.u32("indexed") {
             let base = match index {
                 64 => Some(RgbColor::new(0, 0, 0)),
                 65 => Some(RgbColor::new(0xFF, 0xFF, 0xFF)),
-                _ => self.indexed.get(index as usize).copied(),
+                _ => self.palette.indexed.get(index as usize).copied(),
             };
             (ColorSource::Indexed(index), base)
         } else if tag.bool("auto") == Some(true) {
@@ -410,14 +455,15 @@ impl<'a> Resolver<'a> {
             },
             style_name: xf
                 .xf_id()
-                .and_then(|xf_id| self.style_names.get(&xf_id).cloned()),
+                .and_then(|xf_id| self.palette.style_names.get(&xf_id).cloned()),
         }
     }
 
     /// The code of format `id`: the file's own `numFmt` first, which may
     /// redefine a built-in id, then the built-in code, else General.
     fn number_format(&self, id: u32) -> String {
-        self.number_formats
+        self.palette
+            .number_formats
             .get(&id)
             .cloned()
             .or_else(|| builtin_code(id, Locale::EnUs).map(str::to_owned))
@@ -651,7 +697,8 @@ mod tests {
             ),
             (&default, r#"<color auto="1"/>"#, None, ColorSource::Auto),
         ] {
-            let resolver = Resolver::new(palette, &theme);
+            let palette = Palette::new(palette, &theme);
+            let resolver = Resolver::new(&default, &palette);
             let element = Element::parse(color.as_bytes()).unwrap();
             let resolved = resolver.color(Some(&element)).unwrap();
             assert_eq!(
@@ -660,7 +707,8 @@ mod tests {
                 "{color}"
             );
         }
-        let resolver = Resolver::new(&default, &theme);
+        let palette = Palette::new(&default, &theme);
+        let resolver = Resolver::new(&default, &palette);
         assert_eq!(
             resolver.color(Some(&Element::parse(b"<color/>").unwrap())),
             None
@@ -697,7 +745,8 @@ mod tests {
             .to_vec(),
         ))
         .unwrap();
-        let resolver = Resolver::new(&styles, &[None; 12]);
+        let palette = Palette::new(&styles, &[None; 12]);
+        let resolver = Resolver::new(&styles, &palette);
         for (id, code) in [
             (14, "dd/mm/yyyy"),
             (164, "0.0\" kg\""),

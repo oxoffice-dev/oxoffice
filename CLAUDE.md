@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 oxoffice: Word, PowerPoint and Excel files in pure Rust (workbooks open, save,
-read and are made new so far), with a Rust API, one `oxoffice` CLI and one
+read, edit and are made new), with a Rust API, one `oxoffice` CLI and one
 `oxoffice` Python package as equals.
 A friendly fork of rdocx, see [NOTICE](NOTICE).
 

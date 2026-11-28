@@ -146,6 +146,21 @@ impl PyCell {
             .map(Some)
     }
 
+    /// The number as a `datetime.timedelta` when the number format shows a
+    /// duration (`[h]:mm`, `[mm]:ss`), else `None`.
+    #[getter]
+    fn duration<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let Some(duration) = self.inner.duration else {
+            return Ok(None);
+        };
+        let kwargs = pyo3::types::PyDict::new(py);
+        kwargs.set_item("milliseconds", duration.as_millis() as u64)?;
+        py.import("datetime")?
+            .getattr("timedelta")?
+            .call((), Some(&kwargs))
+            .map(Some)
+    }
+
     fn __repr__(&self) -> String {
         match &self.inner.formula {
             Some(formula) => format!(

@@ -26,7 +26,7 @@ from Rust, the command line or Python.**
 - 🦀 **One engine, three doors**: a Rust API, an `oxoffice` command for everything that makes sense in a
   shell, and an `oxoffice` Python package that covers nearly all of it (a few calls, such as
   encryption, are Rust only for now) for when the shell is not enough.
-- 📄 **Word and PowerPoint as equals**, with Excel workbooks joining them: they open, read and save today, the rest is on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap).
+- 📄 **Word and PowerPoint as equals**, with Excel workbooks joining them: they open, read, edit and save today, the rest is on the [roadmap](https://github.com/oxoffice-dev/oxoffice/issues?q=is%3Aissue%20state%3Aopen%20label%3Aroadmap).
 - ✍️ **Edits that keep the file intact**: unmodelled XML is carried over verbatim, child order follows the
   schema, and text changes keep their formatting.
 - 🔍 **Real review tools**: list, accept and reject tracked changes, compare two versions into a redline,
@@ -160,12 +160,13 @@ with a few that touch whole files: edits and form operations that cost more as a
 ### 📗 Excel
 
 Workbooks arrive step by step ([#365](https://github.com/oxoffice-dev/oxoffice/issues/365)): opening, saving,
-reading and making a workbook first, then editing cells.
+reading, editing cells and making a workbook first, then the evaluator, sheets moved and removed, rows inserted,
+comments, tables and the render.
 
 | Family | Read | Edit | Create | Notes |
 | --- | :---: | :---: | :---: | --- |
 | Workbooks | ✅ | ⚠️ | ⚠️ | `.xlsx`, `.xlsm`, `.xltx` and `.xltm` from Excel, Google Sheets and LibreOffice, Strict Open XML included: the sheets (name, state, kind, used range), the date system, each sheet's page setup; a save without an edit keeps every part byte for byte (a package signature that already fails verification gets its mark, as in docx and pptx); `.xls`, `.xlsb` and `.ods` are told by their content and refused with the way out. A new workbook (the same bytes every time), a sheet added, column widths, row heights and frozen panes |
-| Cells, formulas and styles | ✅ | ❌ | ❌ | values, formulas as Excel displays them (shared ones moved to each cell) and as stored, cached values marked stale when the file asks for a recalculation, the text Excel displays, dates, merges, the resolved style; the whole workbook as Markdown, a sheet as CSV; editing comes next |
+| Cells, formulas and styles | ✅ | ⚠️ | ✅ | values, formulas as Excel displays them (shared ones moved to each cell) and as stored, cached values marked stale when the file asks for a recalculation or after an edit, the text Excel displays, dates, merges, the resolved style; the whole workbook as Markdown, a sheet as CSV. Values, dates, formulas (checked, stored as Excel stores them, spilling ones included), clears, bulk writes, CSV imports, styles and number formats, the records reused; a write into a shared formula's range keeps the other cells' formulas; what Excel would repair is refused. A spilling formula written without its range shows one value in Google Sheets (give the range). No evaluator yet: an edited workbook asks Excel and Google Sheets to calculate it on open, and `drop_cached_values` lets LibreOffice do it too (a function it lacks, such as `LAMBDA`, then shows an error) |
 | Comments | ✅ | ❌ | ❌ | notes and threads with their replies, authors and resolution |
 | Encryption | ✅ | — | ✅ | open and save with a password, from Rust and Python |
 
@@ -174,17 +175,40 @@ oxoffice xlsx text review.xlsx --markdown                 # every sheet as a tab
 oxoffice xlsx cells review.xlsx "Orders!F2:F5" --json     # values, formulas, number formats, styles
 oxoffice xlsx csv review.xlsx --sheet Orders -o orders.csv
 oxoffice xlsx comments review.xlsx
+oxoffice xlsx set review.xlsx "Orders!D2" 12 -o edited.xlsx     # VALUE read as a CSV field: 007 stays text
+oxoffice xlsx set review.xlsx G2 "D2*E2" --formula -o edited.xlsx
+oxoffice xlsx import-csv review.xlsx orders.csv --sheet Orders --at A40 -o edited.xlsx
+oxoffice xlsx edit review.xlsx --map edits.json -o edited.xlsx --drop-cached-values
+#   [{"sheet": "Orders", "cell": "D2", "value": 12}, {"cell": "H2", "formula": "D2*E2"},
+#    {"cell": "I2", "date": "2026-01-05"}, {"range": "A1:G1", "style": {"bold": true, "fill": "FFFF00"}},
+#    {"range": "F2:F38", "number_format": "#,##0.00"}, {"range": "A39:G39", "clear": "contents"}]
 oxoffice xlsx new --sheet Data --sheet Summary -o book.xlsx
-oxoffice xlsx edit book.xlsx --map edits.json -o formatted.xlsx   # [{"columns": "A:C", "width": 20}, {"rows": "1", "height": 30}, {"freeze": "A2"}]
+oxoffice xlsx edit book.xlsx --map grid.json -o formatted.xlsx   # [{"columns": "A:C", "width": 20}, {"rows": "1", "height": 30}, {"freeze": "A2"}]
 ```
 
 ```python
 from oxoffice.xlsx import Workbook
 
-ws = Workbook("review.xlsx").sheet("Orders")
+wb = Workbook("review.xlsx")
+ws = wb.sheet("Orders")
 total = ws.cell("F38")
 print(total.formula, total.value, total.text)   # SUM(F2:F37) 206459.11 206,459.11
 rows = ws.values("A1:G37")                      # nested lists, one native call
+
+import datetime
+from oxoffice.xlsx import Formula
+
+ws.set_value("D2", 12)                          # the shared formulas of column F stay valid
+ws.set_value("I2", datetime.date(2026, 1, 5))   # yyyy-mm-dd in a cell shown as General
+ws.set_column_width("I", 12)                    # Excel shows ##### in a default-width column
+ws.set_formula("H2", "XLOOKUP(A2,A3:A37,F3:F37)")   # stored with _xlfn., as Excel stores it
+ws.write("A40", [["Total", None, None, Formula("SUM(D2:D37)")]])
+ws.set_formula("J2", "SORT(D2:D37)", spill="J2:J37")   # the range lets Google Sheets spill it too
+ws.set_style("A1:G1", bold=True, fill="FFFF00", border="thin")
+ws.set_number_format("F2:F38", "#,##0.00")
+ws.import_csv("north,12\nsouth,007\n", at="A50")  # 12 a number, 007 a str
+ws.clear("A39:G39")                             # contents; formats=True for both
+wb.save("edited.xlsx")                          # drop_cached_values=True for LibreOffice
 
 wb = Workbook()                      # one empty sheet, Calibri 11
 data = wb.add_sheet("Data")
@@ -202,6 +226,17 @@ let sheet = workbook.sheet("Orders").expect("the Orders sheet");
 for cell in sheet.cells("F2:F5")? {
     println!("{} {:?} {}", cell.address, cell.formula, cell.text);
 }
+
+use oxoffice_xlsx::{CellInput, DateValue, FormulaOptions, SaveOptions, StylePatch};
+
+let mut workbook = Workbook::open("review.xlsx")?;
+let mut orders = workbook.sheet_mut("Orders").expect("the Orders sheet");
+orders.set_value("D2", 12.0)?;
+orders.set_value("I2", DateValue::Date { year: 2026, month: 1, day: 5 })?;
+orders.set_formula("H2", "D2*E2", FormulaOptions::default())?;
+orders.write("A40", vec![vec!["Total".into(), CellInput::Formula("SUM(D2:D37)".into(), FormulaOptions::default())]])?;
+orders.set_style("A1:G1", &StylePatch { bold: Some(true), fill: Some("FFFF00".into()), ..StylePatch::default() })?;
+workbook.save_with_options("edited.xlsx", SaveOptions { drop_cached_values: true, ..SaveOptions::default() })?;
 
 let mut workbook = Workbook::new();
 let mut data = workbook.add_sheet("Data")?;

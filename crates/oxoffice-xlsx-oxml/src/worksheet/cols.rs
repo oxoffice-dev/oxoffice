@@ -1,12 +1,12 @@
-//! The `cols` element of a worksheet: the width of columns, written as
-//! `col` spans.
+//! The `cols` element of a worksheet: the width and the style of columns,
+//! written as `col` spans.
 //!
 //! A `col` names a run of columns (`min` to `max`, 1-based) and what they
-//! share: a width, a style, hidden, an outline level. Setting a width splits
-//! the spans the columns cross, writes the width on the part inside the
-//! range and keeps everything else a span says (its style, whether it is
-//! hidden), and merges neighbours that came to say the same, as Excel
-//! writes them.
+//! share: a width, a style, hidden, an outline level. Setting a width or a
+//! style splits the spans the columns cross, writes it on the part inside
+//! the range and keeps everything else a span says (its style or width,
+//! whether it is hidden), and merges neighbours that came to say the same,
+//! as Excel writes them.
 
 use crate::reference::MAX_COLUMNS;
 use crate::xml::{Element, Node, Tag, prefix_of_name, qualified};
@@ -66,13 +66,76 @@ pub fn set_width(
     last: u32,
     width: f64,
 ) -> Element {
-    let mut cols = cols.unwrap_or_else(|| Element::new(&qualified(prefix, "cols")));
-    let prefix = prefix_of_name(&cols.tag.name()).to_owned();
     let width_of = |tag: &mut Tag| {
         tag.set_f64("width", Some(width));
         tag.set_bool("customWidth", Some(true));
         tag.set("bestFit", None);
     };
+    edit_spans(
+        cols,
+        prefix,
+        first,
+        last,
+        &mut |tag| width_of(tag),
+        &mut |tag| {
+            width_of(tag);
+            true
+        },
+    )
+}
+
+/// `cols` with the style of each column of `first..=last` (0-based) the one
+/// `style` gives for the style it had (0 when none): the spans cut as
+/// [`set_width`] cuts them, keeping their width, `hidden` and outline level,
+/// and a column no span names given one `default_width` wide when its new
+/// style is not 0.
+pub fn set_style(
+    cols: Option<Element>,
+    prefix: &str,
+    first: u32,
+    last: u32,
+    style: &dyn Fn(u32) -> u32,
+    default_width: f64,
+) -> Element {
+    let restyle = |tag: &mut Tag| {
+        let old = tag.u32("style").unwrap_or(0);
+        let new = style(old);
+        if new != old {
+            tag.set("style", (new != 0).then(|| new.to_string()).as_deref());
+        }
+    };
+    edit_spans(
+        cols,
+        prefix,
+        first,
+        last,
+        &mut |tag| restyle(tag),
+        &mut |tag| {
+            let new = style(0);
+            if new == 0 {
+                return false;
+            }
+            tag.set_f64("width", Some(default_width));
+            tag.set("style", Some(&new.to_string()));
+            true
+        },
+    )
+}
+
+/// `cols` with each span's part inside `first..=last` edited by `inside`,
+/// and the columns of the range no span names given a span of their own when
+/// `gap` (given its tag with `min` and `max`) says so; neighbours that came
+/// to say the same merge.
+fn edit_spans(
+    cols: Option<Element>,
+    prefix: &str,
+    first: u32,
+    last: u32,
+    inside: &mut dyn FnMut(&mut Tag),
+    gap: &mut dyn FnMut(&mut Tag) -> bool,
+) -> Element {
+    let mut cols = cols.unwrap_or_else(|| Element::new(&qualified(prefix, "cols")));
+    let prefix = prefix_of_name(&cols.tag.name()).to_owned();
 
     let mut spans = Vec::new();
     let mut kept = Vec::new();
@@ -95,9 +158,9 @@ pub fn set_width(
         if span.first < first {
             written.push(span.cut(span.first, first - 1));
         }
-        let mut inside = span.cut(span.first.max(first), span.last.min(last));
-        width_of(&mut inside.element.tag);
-        written.push(inside);
+        let mut part = span.cut(span.first.max(first), span.last.min(last));
+        inside(&mut part.element.tag);
+        written.push(part);
         if span.last > last {
             written.push(span.cut(last + 1, span.last));
         }
@@ -124,12 +187,13 @@ pub fn set_width(
         let mut element = Element::new(&qualified(&prefix, "col"));
         element.tag.set("min", Some(&(from + 1).to_string()));
         element.tag.set("max", Some(&(to + 1).to_string()));
-        width_of(&mut element.tag);
-        written.push(Span {
-            first: from,
-            last: to,
-            element,
-        });
+        if gap(&mut element.tag) {
+            written.push(Span {
+                first: from,
+                last: to,
+                element,
+            });
+        }
     }
 
     written.sort_by_key(|span| span.first);
@@ -240,6 +304,44 @@ mod tests {
         ];
         for (case, before, (first, last), width, expected) in cases {
             assert_eq!(set(before, first, last, width), expected, "{case}");
+        }
+    }
+
+    #[test]
+    fn a_style_splits_the_spans_it_crosses_and_gives_a_span_to_the_columns_it_styles() {
+        let restyle = |xml: &str, first, last, style: &dyn Fn(u32) -> u32| {
+            String::from_utf8(set_style(cols(xml), "", first, last, style, 9.140625).to_xml())
+                .unwrap()
+        };
+        let bold = |old: u32| if old == 0 { 5 } else { old + 10 };
+        for (case, before, (first, last), style, expected) in [
+            (
+                "columns no span names, one styled span of the default width",
+                "",
+                (1, 2),
+                &bold as &dyn Fn(u32) -> u32,
+                r#"<cols><col min="2" max="3" width="9.140625" style="5"/></cols>"#,
+            ),
+            (
+                "a span crossed keeps its width and hidden, each part its own style",
+                r#"<cols><col min="1" max="3" width="12" style="2" hidden="1" customWidth="1"/></cols>"#,
+                (1, 3),
+                &bold,
+                concat!(
+                    r#"<cols><col min="1" max="1" width="12" style="2" hidden="1" customWidth="1"/>"#,
+                    r#"<col min="2" max="3" width="12" style="12" hidden="1" customWidth="1"/>"#,
+                    r#"<col min="4" max="4" width="9.140625" style="5"/></cols>"#
+                ),
+            ),
+            (
+                "styles cleared: the style goes, a column without a span gets none",
+                r#"<cols><col min="2" max="2" width="12" style="2" customWidth="1"/></cols>"#,
+                (0, 2),
+                &|_| 0,
+                r#"<cols><col min="2" max="2" width="12" customWidth="1"/></cols>"#,
+            ),
+        ] {
+            assert_eq!(restyle(before, first, last, style), expected, "{case}");
         }
     }
 

@@ -109,6 +109,7 @@ fn a_workbook_refuses_to_replace_its_source_unless_asked() {
     }
     let options = SaveOptions {
         overwrite_source: true,
+        ..SaveOptions::default()
     };
     workbook.save_with_options(&source, options).unwrap();
     assert_eq!(fs::read(&source).unwrap(), workbook.to_bytes().unwrap());

@@ -193,8 +193,9 @@ maturin develop -m crates/oxoffice-py/Cargo.toml   # the Python package, in a ve
 mutating call in a document of N paragraphs and in one of 16N (a deck of N
 slides and one of 4N, or 16N for the calls that insert or move a slide
 before the others). `test_xlsx_scaling.py` times the reads of a workbook
-(bulk reads, the first read, single cells) at N and 4N rows and cell
-styles: a read costs its cells. The bodies of the Word documents carry the
+(bulk reads, the first read, single cells) and single-cell writes and style
+edits at N and 4N rows and cell styles: a read costs its cells, an edit its
+rows. The bodies of the Word documents carry the
 identifiers Word writes on every paragraph, run and row, so that each call
 takes the route a saved body takes. They need a build without debug assertions: debug builds
 check every edit against a copy of the whole document, so every call grows
