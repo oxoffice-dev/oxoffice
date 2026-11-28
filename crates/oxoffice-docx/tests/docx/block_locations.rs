@@ -14,7 +14,7 @@ use oxoffice_docx_oxml::text::CT_P;
 use oxoffice_opc::OpcPackage;
 
 use crate::support::{
-    corpus_doc, doc_with_body, map_in_parallel, package_parts, reopen, text_box_run,
+    corpus_doc, doc_with_body, every_copy, map_in_parallel, package_parts, reopen, text_box_run,
 };
 
 const W15: &str = "http://schemas.microsoft.com/office/word/2012/wordml";
@@ -641,6 +641,98 @@ fn check(op: Op, shape: &Shape) -> Result<bool, String> {
     }
 }
 
+/// The cells a pull request runs, (operation, shape): chosen by a greedy cover of the library lines the whole grid
+/// runs (54 of 419 cells run every one of them), plus the first-best cell of each shape the cover left out, so
+/// that every shape and every operation is met. Rerun the cover (scripts/test_cover) when the grid changes.
+const SAMPLE: &[(&str, &str)] = &[
+    ("Html", "a body paragraph [i]"),
+    ("Caption", "a body paragraph [i]"),
+    ("Move", "a body paragraph [i]"),
+    ("RangeTo", "a paragraph [c, k] of a body control"),
+    ("Picture", "the end of a body control"),
+    ("Caption", "a paragraph [c, k] of a nested control"),
+    ("Picture", "a nested block control [i]"),
+    ("CloneFrom", "a nested block control [i]"),
+    ("Remove", "a nested block control [i]"),
+    ("Caption", "the end of a nested control"),
+    ("Caption", "a control three levels deep [i]"),
+    ("Caption", "a paragraph of a control three levels deep"),
+    ("Caption", "the end of a control three levels deep"),
+    ("Caption", "the end of the body"),
+    ("Insert", "[c, n] past a control's paragraphs"),
+    ("Html", "a cell paragraph [i]"),
+    ("Caption", "a paragraph of a control in a cell"),
+    ("Caption", "the end of a control in a cell"),
+    ("Move", "a control holding its cell's only paragraph"),
+    ("Remove", "a control holding its cell's only paragraph"),
+    ("Remove", "a control of a cell that holds two"),
+    ("Caption", "the end of a control after its cell's paragraph"),
+    ("Insert", "a control that is its header's only block"),
+    ("Picture", "a control that is its header's only block"),
+    ("CloneFrom", "a control that is its header's only block"),
+    ("Remove", "a control that is its header's only block"),
+    ("Caption", "a paragraph of a header control"),
+    ("Caption", "the end of a header control"),
+    ("Html", "a footnote paragraph [i]"),
+    ("Caption", "a footnote paragraph [i]"),
+    ("Remove", "a footnote paragraph [i]"),
+    ("Caption", "a text box paragraph [i]"),
+    ("Remove", "a text box paragraph [i]"),
+    ("Insert", "a comment paragraph [i]"),
+    ("Picture", "a comment paragraph [i]"),
+    ("CloneTo", "a comment paragraph [i]"),
+    ("Remove", "a comment paragraph [i]"),
+    ("RangeFrom", "a comment paragraph [i]"),
+    ("Insert", "the paragraph of a plain text control"),
+    ("Insert", "a repeating section item [i]"),
+    ("CloneFrom", "a repeating section item [i]"),
+    ("Move", "a repeating section item [i]"),
+    ("RangeFrom", "a repeating section item [i]"),
+    ("Caption", "the end of a repeating section"),
+    ("Insert", "[c, 0] of a repeating section"),
+    ("Html", "the end of a repeating section item"),
+    ("Import", "the end of an empty control"),
+    ("Insert", "[c, k] of an inline control"),
+    ("Picture", "an inline control [i]"),
+    ("Move", "a table [c, k] alone in a locked control"),
+    ("MoveTo", "a table [c, k] alone in a locked control"),
+    ("Caption", "a table [c, k] then a paragraph in one control"),
+    ("Caption", "a table [c, k] of a control nested in a control"),
+    ("Caption", "[c, n] of kind table past a control's tables"),
+];
+
+/// The cells cut to SAMPLE, which must name only cells there are and meet every shape and operation.
+fn sampled(cells: Vec<(Op, &Shape)>) -> Vec<(Op, &Shape)> {
+    let name = |op: Op, shape: &Shape| (format!("{op:?}"), shape.0);
+    let kept: Vec<_> = cells
+        .iter()
+        .copied()
+        .filter(|(op, shape)| {
+            SAMPLE
+                .iter()
+                .any(|(o, s)| name(*op, shape) == (o.to_string(), *s))
+        })
+        .collect();
+    assert_eq!(
+        kept.len(),
+        SAMPLE.len(),
+        "SAMPLE names a cell the grid does not have"
+    );
+    for (op, shape) in &cells {
+        let met = |same: &dyn Fn(&(Op, &Shape)) -> bool| kept.iter().any(same);
+        assert!(
+            met(&|(_, s)| s.0 == shape.0),
+            "no sampled cell at {}: add one to SAMPLE",
+            shape.0
+        );
+        assert!(
+            met(&|(o, _)| o == op),
+            "no sampled cell of {op:?}: add one to SAMPLE"
+        );
+    }
+    kept
+}
+
 #[test]
 fn every_block_operation_takes_every_location_shape_or_names_the_working_route() {
     let shapes = shapes();
@@ -648,6 +740,11 @@ fn every_block_operation_takes_every_location_shape_or_names_the_working_route()
         .iter()
         .flat_map(|shape| OPS.iter().map(move |op| (*op, shape)))
         .collect::<Vec<_>>();
+    // A pull request runs the cells of SAMPLE; the full checks the whole grid.
+    let cells = match every_copy() {
+        true => cells,
+        false => sampled(cells),
+    };
     let outcomes = map_in_parallel(&cells, |(op, shape)| check(*op, shape));
     let (mut done, mut skipped, mut failures) = (0, 0, Vec::new());
     for ((op, shape), outcome) in cells.iter().zip(outcomes) {

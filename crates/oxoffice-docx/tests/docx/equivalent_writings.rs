@@ -1,8 +1,8 @@
 //! Equivalent writings of a Word document give the same result: open,
 //! validate, story texts, Markdown, save, an edit per story, compare, accept
 //! and reject (`specs/2026-11-25-equivalent-xml-writings.md`). Pull requests
-//! run the built documents and two copies; `OXOFFICE_WORKFLOWS=full` all but
-//! the long and thesis copies.
+//! run the producer shapes and two copies; `OXOFFICE_WORKFLOWS=full` adds the
+//! small thesis and every copy but the long and thesis ones.
 
 use oxoffice_docx::{Document, StoryKind, StoryParagraph, validate_document_bytes};
 use oxoffice_xml_test::harness::{Input, Outcome, attempt, check_writings};
@@ -73,10 +73,12 @@ fn producer_shapes() -> Vec<u8> {
 }
 
 fn inputs() -> Vec<Input> {
-    let mut inputs = vec![
-        ("built/producer-shapes.docx".into(), producer_shapes()),
-        ("built/small-thesis.docx".into(), small_thesis()),
-    ];
+    let mut inputs = vec![("built/producer-shapes.docx".into(), producer_shapes())];
+    // The small thesis costs a third of the walk: the full checks run it, a
+    // pull request does not (its landmarks are the corpus thesis copies').
+    if every_copy() {
+        inputs.push(("built/small-thesis.docx".into(), small_thesis()));
+    }
     for file in corpus_files("docx") {
         // A long copy repeats its family at minutes a writing; the small
         // thesis keeps the landmarks of the thesis copies, a fifth of the rest.
