@@ -127,6 +127,14 @@ impl CellRange {
         (self.first.row..=self.last.row).contains(&cell.row)
             && (self.first.column..=self.last.column).contains(&cell.column)
     }
+
+    /// Whether the two rectangles share a cell.
+    pub fn intersects(&self, other: &CellRange) -> bool {
+        self.first.row <= other.last.row
+            && other.first.row <= self.last.row
+            && self.first.column <= other.last.column
+            && other.first.column <= self.last.column
+    }
 }
 
 impl fmt::Display for CellRange {
@@ -162,6 +170,8 @@ mod tests {
         let range = CellRange::parse("C4:A2").unwrap();
         assert_eq!(range.to_string(), "A2:C4");
         assert!(range.contains(CellRef::new(2, 1)) && !range.contains(CellRef::new(4, 0)));
+        assert!(range.intersects(&CellRange::parse("C4:D9").unwrap()));
+        assert!(!range.intersects(&CellRange::parse("D1:D9").unwrap()));
     }
 
     #[test]

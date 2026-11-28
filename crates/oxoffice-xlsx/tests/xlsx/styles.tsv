@@ -1,0 +1,13 @@
+# The resolved styles of budget, in one line each: copy (* for the source and every copy), sheet!cell,
+# font | fill | left/right/top/bottom borders | alignment | style name, and why a copy reads otherwise.
+*	Budget!A1	Cambria 16 bold FFFFFF | solid 0F766E | none/none/none/none | center center | Normal
+*	Budget!A2	Calibri 11 italic 6B7280 | none auto | none/none/none/none | general bottom | Normal
+*	Budget!A3	Calibri 11 bold FFFFFF | solid 1F2937 | thin/thin/thin/thin | center center wrap | Normal
+*	Budget!A4	Calibri 11 000000 | none auto | thin/thin/thin/thin | left bottom indent 1 | Normal
+*	Budget!A12	Calibri 11 bold 000000 | none auto | none/none/thin/double | left bottom indent 1 | Normal
+*	Budget!A17	Calibri 11 italic 374151 | solid F3F4F6 | medium/medium/medium/medium | general top wrap | Normal
+*	Formats!C2	Calibri 11 000000 | none auto | none/none/none/none | right bottom | Normal
+*	Ledger!A1	Calibri 14 bold 000000 | none auto | none/none/none/none | general bottom | Normal
+google	Budget!A4	Calibri 11 000000 | none auto | thin/thin/thin/thin | left bottom | Normal	Google drops the indent
+google	Budget!A12	Calibri 11 bold 000000 | none auto | none/none/thin/double | left bottom | Normal	Google drops the indent
+google	Budget!A17	Calibri 11 italic 374151 | solid F3F4F6 | medium/none/medium/none | general top wrap | Normal	Google gives each cell of a merged range its part of the border

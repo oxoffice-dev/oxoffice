@@ -1,7 +1,7 @@
 """Shared pytest wiring of the Python tests.
 
 The scaling tests (test_*_scaling.py) time every public mutating call at N and 16N (docx) or 4N (pptx, 16N for the
-calls that shift every slide). They need a build without debug assertions (`maturin build --profile scaling` or
+calls that shift every slide), and the reads of a workbook at N and 4N rows (xlsx). They need a build without debug assertions (`maturin build --profile scaling` or
 `--release`): debug builds check every edit against a copy of the whole document, so every call grows with it.
 OXOFFICE_SCALING picks what runs:
 
@@ -15,7 +15,11 @@ import threading
 import pytest
 
 SCALING = os.environ.get("OXOFFICE_SCALING", "")
-TIMED_TESTS = ("test_call_cost_does_not_grow_with_the_document", "test_call_cost_does_not_grow_with_the_deck")
+TIMED_TESTS = (
+    "test_call_cost_does_not_grow_with_the_document",
+    "test_call_cost_does_not_grow_with_the_deck",
+    "test_read_cost_follows_the_cells_read",
+)
 
 
 def debug_build():

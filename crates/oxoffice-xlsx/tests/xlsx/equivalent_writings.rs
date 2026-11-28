@@ -1,5 +1,6 @@
 //! Equivalent writings of a workbook give the same result: open, the
-//! sheets, their page setup, a save, and every typed part written again by
+//! sheets, their page setup, every cell read (value, formula, displayed text,
+//! style), merges and comments, a save, and every typed part written again by
 //! its writers (`specs/2026-11-25-equivalent-xml-writings.md`).
 
 use oxoffice_xlsx::Workbook;
@@ -74,6 +75,27 @@ fn run(bytes: &[u8]) -> Outcome {
         "page setup",
         setups
             .map(|setups| setups.join("\n"))
+            .map_err(|e| e.to_string()),
+    );
+    let cells = workbook
+        .sheets()
+        .map(|sheet| {
+            let used = sheet.used_range()?;
+            let cells = match used {
+                Some(used) => sheet.cells(&used.to_string())?,
+                None => Vec::new(),
+            };
+            Ok(format!(
+                "{used:?} {cells:?} {:?} {:?}",
+                sheet.merged_ranges()?,
+                sheet.comments()?
+            ))
+        })
+        .collect::<Result<Vec<_>, oxoffice_xlsx::Error>>();
+    outcome.step(
+        "cells",
+        cells
+            .map(|cells| cells.join("\n"))
             .map_err(|e| e.to_string()),
     );
     outcome.saving(

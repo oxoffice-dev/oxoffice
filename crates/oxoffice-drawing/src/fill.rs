@@ -10,6 +10,7 @@ use quick_xml::events::{BytesEnd, BytesStart, Event};
 use quick_xml::{Writer, XmlVersion};
 
 use crate::color::{ColorChoice, ColorError};
+use crate::lexical::parse_percentage;
 use crate::namespace::{A_NS, reject_conflicting_a_prefix};
 use crate::order::OrderedRawChildren;
 
@@ -262,7 +263,7 @@ pub struct GradientStop {
 impl GradientStop {
     fn from_element(reader: &mut Reader<&[u8]>, start: &BytesStart<'_>) -> Result<Self> {
         reject_conflicting_a_prefix(start)?;
-        let position = required_i32(start, b"pos")?;
+        let position = required_percentage(start, b"pos")?;
         validate_gradient_position(position)?;
         let mut stop = Self {
             position: Percent1000(position),
@@ -275,7 +276,7 @@ impl GradientStop {
 
     fn from_empty(start: &BytesStart<'_>) -> Result<Self> {
         reject_conflicting_a_prefix(start)?;
-        let position = required_i32(start, b"pos")?;
+        let position = required_percentage(start, b"pos")?;
         validate_gradient_position(position)?;
         Ok(Self {
             position: Percent1000(position),
@@ -825,9 +826,8 @@ fn parse_alpha_modulation_fix(
         }
     }
     let amount = amount.unwrap_or_else(|| "100000".to_owned());
-    let parsed = amount
-        .parse::<i32>()
-        .map_err(|_| invalid(element, b"amt", amount.clone()))?;
+    let parsed =
+        parse_percentage(&amount).ok_or_else(|| invalid(element, b"amt", amount.clone()))?;
     if !(0..=100_000).contains(&parsed) {
         return Err(invalid(element, b"amt", amount));
     }
@@ -1237,8 +1237,8 @@ fn parse_empty_tile(start: &BytesStart<'_>) -> Result<Tile> {
     Ok(Tile {
         translation_x: optional_parse(start, b"tx")?,
         translation_y: optional_parse(start, b"ty")?,
-        scale_x: optional_parse::<i32>(start, b"sx")?.map(Percent1000),
-        scale_y: optional_parse::<i32>(start, b"sy")?.map(Percent1000),
+        scale_x: optional_percentage(start, b"sx")?.map(Percent1000),
+        scale_y: optional_percentage(start, b"sy")?.map(Percent1000),
         flip: optional_token(start, b"flip", &["none", "x", "y", "xy"])?,
         alignment: optional_token(
             start,
@@ -1307,10 +1307,10 @@ fn write_blip_mode<W: Write>(writer: &mut Writer<W>, mode: &BlipMode) -> Result<
 fn parse_rect(start: &BytesStart<'_>) -> Result<RelativeRect> {
     reject_conflicting_a_prefix(start)?;
     Ok(RelativeRect {
-        left: optional_parse::<i32>(start, b"l")?.map(Percent1000),
-        top: optional_parse::<i32>(start, b"t")?.map(Percent1000),
-        right: optional_parse::<i32>(start, b"r")?.map(Percent1000),
-        bottom: optional_parse::<i32>(start, b"b")?.map(Percent1000),
+        left: optional_percentage(start, b"l")?.map(Percent1000),
+        top: optional_percentage(start, b"t")?.map(Percent1000),
+        right: optional_percentage(start, b"r")?.map(Percent1000),
+        bottom: optional_percentage(start, b"b")?.map(Percent1000),
         raw_children: OrderedRawChildren::default(),
     })
 }
@@ -1475,9 +1475,17 @@ fn required_attr(start: &BytesStart<'_>, name: &[u8]) -> Result<String> {
     })
 }
 
-fn required_i32(start: &BytesStart<'_>, name: &[u8]) -> Result<i32> {
+/// A required percentage, Transitional (`35000`) or Strict (`35%`).
+fn required_percentage(start: &BytesStart<'_>, name: &[u8]) -> Result<i32> {
     let value = required_attr(start, name)?;
-    value.parse().map_err(|_| invalid(start, name, value))
+    parse_percentage(&value).ok_or_else(|| invalid(start, name, value))
+}
+
+/// An optional percentage, Transitional (`35000`) or Strict (`35%`).
+fn optional_percentage(start: &BytesStart<'_>, name: &[u8]) -> Result<Option<i32>> {
+    get_attr(start, name)
+        .map(|value| parse_percentage(&value).ok_or_else(|| invalid(start, name, value)))
+        .transpose()
 }
 
 fn optional_parse<T: std::str::FromStr>(start: &BytesStart<'_>, name: &[u8]) -> Result<Option<T>> {

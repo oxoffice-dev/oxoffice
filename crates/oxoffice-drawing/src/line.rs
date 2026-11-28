@@ -653,7 +653,10 @@ fn parse_custom_dash(reader: &mut Reader<&[u8]>) -> Result<CustomDash> {
 }
 
 fn parse_empty_dash_stop(start: &BytesStart<'_>) -> Result<DashStop> {
-    DashStop::new(required_parse(start, b"d")?, required_parse(start, b"sp")?)
+    DashStop::new(
+        required_percentage(start, b"d")?,
+        required_percentage(start, b"sp")?,
+    )
 }
 
 fn write_dash<W: Write>(writer: &mut Writer<W>, dash: &LineDash) -> Result<()> {
@@ -704,7 +707,7 @@ fn parse_empty_join(start: &BytesStart<'_>) -> Result<LineJoin> {
     match local_name(start.name().as_ref()) {
         b"round" => Ok(LineJoin::round()),
         b"bevel" => Ok(LineJoin::bevel()),
-        b"miter" => LineJoin::miter(optional_parse(start, b"lim")?),
+        b"miter" => LineJoin::miter(optional_percentage(start, b"lim")?),
         _ => Err(unexpected(start)),
     }
 }
@@ -841,17 +844,21 @@ fn validate_positive_percentage(element: &str, attribute: &str, value: i32) -> R
     }
 }
 
-fn required_parse<T: std::str::FromStr>(start: &BytesStart<'_>, name: &[u8]) -> Result<T> {
+/// A required percentage, Transitional (`300000`) or Strict (`300%`).
+fn required_percentage(start: &BytesStart<'_>, name: &[u8]) -> Result<i32> {
     let value = get_attr(start, name).ok_or_else(|| LineError::MissingAttribute {
         element: String::from_utf8_lossy(local_name(start.name().as_ref())).into_owned(),
         attribute: String::from_utf8_lossy(name).into_owned(),
     })?;
-    value.parse().map_err(|_| invalid(start, name, value))
+    crate::lexical::parse_percentage(&value).ok_or_else(|| invalid(start, name, value))
 }
 
-fn optional_parse<T: std::str::FromStr>(start: &BytesStart<'_>, name: &[u8]) -> Result<Option<T>> {
+/// An optional percentage, Transitional (`800000`) or Strict (`800%`).
+fn optional_percentage(start: &BytesStart<'_>, name: &[u8]) -> Result<Option<i32>> {
     get_attr(start, name)
-        .map(|value| value.parse().map_err(|_| invalid(start, name, value)))
+        .map(|value| {
+            crate::lexical::parse_percentage(&value).ok_or_else(|| invalid(start, name, value))
+        })
         .transpose()
 }
 

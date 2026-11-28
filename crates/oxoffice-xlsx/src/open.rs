@@ -106,6 +106,7 @@ impl Workbook {
             formulas: OnceLock::new(),
             signature_invalid,
             signature_baseline,
+            read: Default::default(),
         })
     }
 }

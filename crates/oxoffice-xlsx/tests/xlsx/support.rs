@@ -70,6 +70,29 @@ pub fn corpus_workbooks() -> Vec<CorpusFile> {
     files
 }
 
+/// A corpus copy with the text of one part edited: each `(from, to)`
+/// replaced, `from` found in the part.
+pub fn edited(path: &str, part: &str, edits: &[(&str, &str)]) -> oxoffice_xlsx::Workbook {
+    let parts = package_parts(&corpus_bytes(path));
+    let mut text = String::from_utf8(parts[part].clone()).unwrap();
+    for (from, to) in edits {
+        assert!(text.contains(from), "{part} holds {from}");
+        text = text.replace(from, to);
+    }
+    with_part(path, part, text.as_bytes())
+}
+
+/// A corpus copy with one part written as `bytes`.
+pub fn with_part(path: &str, part: &str, bytes: &[u8]) -> oxoffice_xlsx::Workbook {
+    let mut parts = package_parts(&corpus_bytes(path));
+    parts.insert(part.to_owned(), bytes.to_vec());
+    let entries: Vec<(&str, &[u8])> = parts
+        .iter()
+        .map(|(name, data)| (name.as_str(), data.as_slice()))
+        .collect();
+    oxoffice_xlsx::Workbook::from_bytes(&zip_of(&entries)).unwrap()
+}
+
 /// A corpus file by its path under `tests/corpus/files`.
 pub fn corpus_bytes(path: &str) -> Vec<u8> {
     fs::read(corpus_root().join("files").join(path)).expect("the corpus file is readable")

@@ -2,12 +2,13 @@
 //! and kinds, the part each is read from, and the index one pass over a
 //! sheet builds the first time it is read.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oxoffice_opc::OpcPackage;
 use oxoffice_xlsx_oxml::namespaces::{rel_types, transitional_relationship_type};
 use oxoffice_xlsx_oxml::workbook::WorkbookXml;
-use oxoffice_xlsx_oxml::worksheet::{PageSetupElements, SheetEdits, SheetIndex};
+use oxoffice_xlsx_oxml::worksheet::{CT_Row, PageSetupElements, SheetEdits, SheetIndex};
 
 use crate::open::is_external;
 use crate::page_setup::PageSetup;
@@ -89,6 +90,12 @@ pub(crate) struct SheetEntry {
     /// What edits changed in the part, written by the next save: its rows
     /// and children as they now are, the rest of the part kept as read.
     pub(crate) edits: SheetEdits,
+    /// The array formulas and data tables, found by the cell; read from the
+    /// index the first time a cell needs them.
+    pub(crate) ranges: std::sync::OnceLock<crate::ranges::RangeLookup>,
+    /// The used range, read the first time it is asked for. An edit of
+    /// the sheet's cells resets it.
+    pub(crate) used: Lazy<Option<oxoffice_xlsx_oxml::CellRange>>,
 }
 
 impl SheetEntry {
@@ -103,6 +110,8 @@ impl SheetEntry {
             part,
             index: Lazy::new(),
             edits: SheetEdits::default(),
+            ranges: Default::default(),
+            used: Lazy::new(),
         }
     }
 }
@@ -153,6 +162,8 @@ impl SheetEntry {
                 part,
                 index: Lazy::new(),
                 edits: SheetEdits::default(),
+                ranges: Default::default(),
+                used: Lazy::new(),
             });
         }
         Ok(sheets)
@@ -254,6 +265,32 @@ impl<'a> Worksheet<'a> {
             .ok_or_else(|| Error::MissingPart {
                 part: entry.part.clone(),
             })
+    }
+
+    /// The rows `first..=last` (0-based) the sheet has, as an edit staged
+    /// them or as written, by row number; of two rows written with the same
+    /// number, the first.
+    pub(crate) fn rows_in(&self, first: u32, last: u32) -> Result<BTreeMap<u32, CT_Row>> {
+        let (xml, index) = self.index()?;
+        let staged = &self.entry().edits.rows;
+        let mut rows = BTreeMap::new();
+        for span in index.rows_in(first, last).iter() {
+            if !rows.contains_key(&span.row) && !staged.contains_key(&span.row) {
+                let row = CT_Row::parse(&xml[span.range.clone()]).map_err(|error| {
+                    Error::MalformedPart {
+                        part: self.entry().part.clone(),
+                        message: error.to_string(),
+                    }
+                })?;
+                rows.insert(span.row, row);
+            }
+        }
+        for (&number, row) in staged.range(first..=last) {
+            if let Some(row) = row {
+                rows.insert(number, row.clone());
+            }
+        }
+        Ok(rows)
     }
 
     /// The page setup: margins, paper, scale, header and footer, breaks,

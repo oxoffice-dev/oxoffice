@@ -35,12 +35,44 @@ pub enum PageOrder {
     OverThenDown,
 }
 
+impl Orientation {
+    /// The name SpreadsheetML gives it: `default`, `portrait`, `landscape`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Orientation::Default => "default",
+            Orientation::Portrait => "portrait",
+            Orientation::Landscape => "landscape",
+        }
+    }
+}
+
+impl PageOrder {
+    /// `downThenOver` or `overThenDown`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PageOrder::DownThenOver => "downThenOver",
+            PageOrder::OverThenDown => "overThenDown",
+        }
+    }
+}
+
 /// `pageSetup cellComments`: how comments print.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CellComments {
     None,
     AsDisplayed,
     AtEnd,
+}
+
+impl CellComments {
+    /// `none`, `asDisplayed` or `atEnd`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CellComments::None => "none",
+            CellComments::AsDisplayed => "asDisplayed",
+            CellComments::AtEnd => "atEnd",
+        }
+    }
 }
 
 /// `pageSetup errors`: how cell errors print.
@@ -50,6 +82,18 @@ pub enum PrintErrors {
     Blank,
     Dash,
     NotAvailable,
+}
+
+impl PrintErrors {
+    /// `displayed`, `blank`, `dash` or `NA`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PrintErrors::Displayed => "displayed",
+            PrintErrors::Blank => "blank",
+            PrintErrors::Dash => "dash",
+            PrintErrors::NotAvailable => "NA",
+        }
+    }
 }
 
 /// The headers and footers (`headerFooter`): each string with its `&`

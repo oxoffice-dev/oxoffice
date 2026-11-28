@@ -1,0 +1,70 @@
+# The cells of each family as its authored source holds them: family, sheet!cell, value, formula, text.
+# A value is n: a number, s: a text, b: a boolean, e: an error, - nothing; an empty formula is none.
+# \r, \n and \u{...} stand for their characters.
+review	Orders!A1	s:Item		Item
+review	Orders!C2	n:46266		2026-09-01
+review	Orders!F2	n:305.32	D2*E2	305.32
+review	Orders!F3	n:12816.21	D3*E3	12,816.21
+review	Orders!F37	n:4204.8	D37*E37	4,204.80
+review	Orders!D38	n:747	SUM(D2:D37)	747
+review	Orders!F38	n:206459.11	SUM(F2:F37)	206,459.11
+review	Orders!B39	-		
+review	Orders!A40	s:Supplier price list		Supplier price list
+budget	Budget!A1	s:Operating budget 2027		Operating budget 2027
+budget	Budget!F4	n:37922.35	SUM(B4:E4)	$37,922.35
+budget	Budget!G4	n:0.047925559132576366	F4/$F$12	4.8%
+budget	Budget!H7	n:-3800		-3,800
+budget	Budget!F12	n:791276.11	SUM(Totals)	$791,276.11
+budget	Budget!F13	n:949531.33	F12*(1+TaxRate)	$949,531.33
+budget	Budget!B15	n:0.2		20%
+budget	Ledger!A5	n:46297		2026-10-02
+budget	Ledger!F5	n:329.4	Expenses[[#This Row],[Quantity]]*Expenses[[#This Row],[Unit price]]	$329.40
+budget	Ledger!D17	n:562	SUBTOTAL(109,[Quantity])	562
+budget	Formats!C3	n:1234567.891		1,234,567.89
+budget	Formats!C4	n:0.256		26%
+budget	Formats!C7	n:123456.789		1.23E+05
+budget	Formats!C8	n:3.75		3 3/4
+budget	Formats!C11	n:-1234.5		-$1,234.50
+budget	Formats!C12	n:1234.5		 $1,234.50 
+budget	Formats!C13	n:1234567		1,235k
+budget	Formats!C15	n:2500000		2.5M
+budget	Formats!C17	n:482		00482
+budget	Formats!C18	s:00123		00123
+budget	Formats!C19	n:46347		11/21/26
+budget	Formats!C21	n:46347		Saturday 21 November 2026
+budget	Formats!C24	n:0.6076388888888888		2:35 PM
+budget	Formats!C25	n:1.0625		25:30
+budget	Formats!C26	n:46347.60763888889		11/21/26 14:35
+multi	Summary!B4	n:1165	SUMIF(Sales!$A$2:$A$25,A4,Sales!$C$2:$C$25)	1165
+multi	Summary!D4	n:0.05	VLOOKUP(A4,Rates!$A$2:$B$5,2,FALSE)	5.0%
+multi	Summary!F4	b:true	C4>='Q1 Forecast'!$H$2	TRUE
+multi	Summary!G4	s:North: 45,796	A4&": "&TEXT(C4,"#,##0")	North: 45,796
+multi	Sales!B2	n:46023		Jan 2026
+multi	Sales!E2	b:true		TRUE
+multi	Q1 Forecast!D2	n:10680	B2:B7*C2:C7	10,680.00
+multi	Q1 Forecast!D3	n:11960		11,960.00
+multi	Q1 Forecast!F2	n:640	SORT(B2:B7,,-1)	640
+multi	Q1 Forecast!F3	n:120		120
+multi	Values!B2	e:#DIV/0!	1/0	#DIV/0!
+multi	Values!B5	e:#REF!	#REF!	#REF!
+multi	Values!B6	e:#NAME?	MissingName	#NAME?
+multi	Values!B7	e:#NUM!	SQRT(-1)	#NUM!
+multi	Values!B8	e:#NULL!	SUM(A2:A3 B2:B3)	#NULL!
+multi	Values!B9	b:true		TRUE
+multi	Values!B11	b:true	1<2	TRUE
+multi	Values!B12	s:Plain, bold and italic, then red and large		Plain, bold and italic, then red and large
+multi	Values!B15	s:Tom & Jerry <"fun"> it's 5 > 3		Tom & Jerry <"fun"> it's 5 > 3
+multi	Values!B19	s:Launch \u{1f680} done \u{2705}		Launch \u{1f680} done \u{2705}
+dates1904	Dates!B2	n:0		1904-01-01
+dates1904	Dates!B3	n:35123		2000-02-29
+dates1904	Dates!C4	n:44915	B4+30	2026-12-21
+dates1904	Dates!B5	n:0.5732638888888889		13:45:30
+dates1904	Dates!B6	n:44885.60763888889		2026-11-21 14:35
+dates1904	Dates!B7	n:44885	B4-B2	44885
+stream	Log!A1	s:Time		Time
+stream	Log!A2	n:46346.333333333336		2026-11-20 08:00
+stream	Log!D2	s:Started the nightly import. The product team extended the escalation path after a short consultation.		Started the nightly import. The product team extended the escalation path after a short consultation.
+stream	Log!B28	n:46347	TODAY()	2026-11-21
+stream	Log!B30	n:8746.58	SUM(OFFSET(E2,0,0,5,1))	8,746.58
+stream	Log!D33	s:First line\r\nsecond line		First line\r\nsecond line
+stream	Log!D34	s:The text _x0041_ is not the letter A		The text _x0041_ is not the letter A

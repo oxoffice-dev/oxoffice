@@ -1,0 +1,53 @@
+# What a producer's copy reads otherwise, and why: copy, sheet!cell, field, what it reads, why.
+libreoffice/review.xlsx	Orders!C2	text	2026/09/01	LibreOffice respells yyyy-mm-dd as yyyy/mm/dd
+excel/budget.xlsx	Budget!F13	value	n:949531.332	recalculated: the source caches it rounded
+google/budget.xlsx	Budget!F13	value	n:949531.332	recalculated: the source caches it rounded
+google/budget.xlsx	Budget!F12	formula	SUM(Budget!Totals)	Google qualifies a sheet-scoped name
+google/budget.xlsx	Ledger!F5	formula	Ledger!$D5*Ledger!$E5	Google writes table references as A1 references
+excel/budget.xlsx	Ledger!D17	formula	SUBTOTAL(109,Expenses[Quantity])	Excel names the table
+google/budget.xlsx	Ledger!D17	formula	SUBTOTAL(109,Expenses[Quantity])	Google names the table
+libreoffice/budget.xlsx	Ledger!D17	formula	SUBTOTAL(109,[quantity])	LibreOffice lowercases the column
+libreoffice/budget.xlsx	Ledger!A5	text	2026/10/02	LibreOffice respells yyyy-mm-dd as yyyy/mm/dd
+excel/budget.xlsx	Formats!C12	text	 1,234.50  \u{20ac} 	Excel in French rewrites built-in 44 in euros
+google/budget.xlsx	Formats!C19	text	21/11/2026	Google writes D/M/YYYY for built-in 14
+libreoffice/budget.xlsx	Formats!C19	text	21/11/2026	LibreOffice writes dd/mm/yyyy for built-in 14
+libreoffice/budget.xlsx	Formats!C26	text	21/11/2026 14:35	LibreOffice writes dd/mm/yyyy h:mm for built-in 22
+excel/multi.xlsx	Summary!G4	value	s:North: 45796,150	Excel in French computes TEXT with its separators
+excel/multi.xlsx	Summary!G4	text	North: 45796,150	Excel in French computes TEXT with its separators
+google/multi.xlsx	Summary!G4	value	s:North: 45\u{202f}796	Google computes TEXT with a narrow no-break space
+google/multi.xlsx	Summary!G4	text	North: 45\u{202f}796	Google computes TEXT with a narrow no-break space
+libreoffice/multi.xlsx	Summary!D4	formula	VLOOKUP(A4,Rates!$A$2:$B$5,2,FALSE())	LibreOffice writes FALSE as a call
+libreoffice/multi.xlsx	Sales!E2	formula	TRUE()	LibreOffice writes booleans as formulas
+libreoffice/multi.xlsx	Values!B9	formula	TRUE()	LibreOffice writes booleans as formulas
+google/multi.xlsx	Q1 Forecast!F2	value	s:#NAME?	Google drops the dynamic array
+google/multi.xlsx	Q1 Forecast!F2	formula	_xlws.SORT(B2:B7,,-1)	Google drops the dynamic array
+google/multi.xlsx	Q1 Forecast!F2	text	#NAME?	Google drops the dynamic array
+google/multi.xlsx	Q1 Forecast!F3	value	-	Google drops the spilled cells
+google/multi.xlsx	Q1 Forecast!F3	text		Google drops the spilled cells
+google/multi.xlsx	Values!B2	value	s:#DIV/0!	Google writes formula errors as text
+google/multi.xlsx	Values!B5	value	s:#REF!	Google writes formula errors as text
+google/multi.xlsx	Values!B6	value	s:#NAME?	Google writes formula errors as text
+google/multi.xlsx	Values!B7	value	s:#NUM!	Google writes formula errors as text
+google/multi.xlsx	Values!B8	value	s:#ERROR!	Google writes #NULL! as the text #ERROR!
+google/multi.xlsx	Values!B8	text	#ERROR!	Google writes #NULL! as the text #ERROR!
+libreoffice/multi.xlsx	Values!B5	value	e:#NAME?	LibreOffice recalculates a lowercased #REF!
+libreoffice/multi.xlsx	Values!B5	formula	#ref!	LibreOffice lowercases what it cannot read
+libreoffice/multi.xlsx	Values!B5	text	#NAME?	LibreOffice recalculates a lowercased #REF!
+libreoffice/multi.xlsx	Values!B6	formula	missingname	LibreOffice lowercases what it cannot read
+libreoffice/multi.xlsx	Values!B7	value	e:#VALUE!	LibreOffice gives #VALUE! for SQRT(-1)
+libreoffice/multi.xlsx	Values!B7	text	#VALUE!	LibreOffice gives #VALUE! for SQRT(-1)
+google/dates1904.xlsx	Dates!B2	value	n:1462	Google drops date1904: serials of the 1900 system
+google/dates1904.xlsx	Dates!B3	value	n:36585	Google drops date1904: serials of the 1900 system
+google/dates1904.xlsx	Dates!C4	value	n:46377	Google drops date1904: serials of the 1900 system
+google/dates1904.xlsx	Dates!B6	value	n:46347.60763888889	Google drops date1904: serials of the 1900 system
+libreoffice/dates1904.xlsx	Dates!B2	text	1904/01/01	LibreOffice respells yyyy-mm-dd as yyyy/mm/dd
+libreoffice/dates1904.xlsx	Dates!B3	text	2000/02/29	LibreOffice respells yyyy-mm-dd as yyyy/mm/dd
+libreoffice/dates1904.xlsx	Dates!C4	text	2026/12/21	LibreOffice respells yyyy-mm-dd as yyyy/mm/dd
+libreoffice/dates1904.xlsx	Dates!B6	text	2026/11/21 14:35	LibreOffice respells yyyy-mm-dd as yyyy/mm/dd
+excel/stream.xlsx	Log!B28	value	n:46353	TODAY recalculated on the day of the save
+excel/stream.xlsx	Log!B28	text	2026-11-27	TODAY recalculated on the day of the save
+libreoffice/stream.xlsx	Log!B28	value	n:46353	TODAY recalculated on the day of the save
+libreoffice/stream.xlsx	Log!B28	text	2026/11/27	TODAY recalculated, yyyy/mm/dd
+libreoffice/stream.xlsx	Log!A2	text	2026/11/20 08:00	LibreOffice respells yyyy-mm-dd as yyyy/mm/dd
+libreoffice/stream.xlsx	Log!D33	value	s:First line\nsecond line	LibreOffice drops the carriage return
+libreoffice/stream.xlsx	Log!D33	text	First line\nsecond line	LibreOffice drops the carriage return

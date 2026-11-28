@@ -9,8 +9,15 @@ Transitional or Strict Open XML.
 - Opening from a path or bytes, a password-protected workbook with its
   password; a legacy `.xls`, a binary `.xlsb`, an OpenDocument spreadsheet,
   a Word or PowerPoint file refused by their content, with a plain message.
-- The sheets: name, position, state (visible, hidden, very hidden) and kind;
-  the date system; each sheet's page setup.
+- The sheets: name, position, state (visible, hidden, very hidden), kind and
+  used range; the date system; each sheet's page setup, merges and comments
+  (notes, and threads with their replies).
+- Cells as snapshots: the value (for a formula, the cached one, marked stale
+  when the file asks for a recalculation), the formula as Excel displays it
+  and as stored (a shared formula's members moved from their master), array
+  ranges, the number format and the text Excel displays, dates, and the
+  resolved style (theme and indexed colours in RGB). Bulk reads of a range,
+  a sheet as CSV, the workbook as Markdown.
 - Saving without an edit writes every part back byte for byte, except that
   a package signature that already fails verification gets its mark, as in
   docx and pptx. A save is atomic and never replaces the file the workbook
@@ -36,8 +43,11 @@ use oxoffice_xlsx::Workbook;
 
 let workbook = Workbook::open("budget.xlsx")?;
 for sheet in workbook.sheets() {
-    println!("{} {:?}", sheet.name(), sheet.state());
+    println!("{} {:?} {:?}", sheet.name(), sheet.state(), sheet.used_range()?);
 }
+let budget = workbook.sheet("Budget").expect("a Budget sheet");
+let total = budget.cell("F12")?;
+println!("{:?} {}", total.formula, total.text);
 workbook.save("copy.xlsx")?;
 
 let mut new = Workbook::new();
