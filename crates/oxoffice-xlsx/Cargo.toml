@@ -1,6 +1,6 @@
 [package]
 name = "oxoffice-xlsx"
-description = "Open and save Excel-compatible workbooks without loss"
+description = "Open, read and save Excel-compatible workbooks without loss"
 readme = "README.md"
 version.workspace = true
 edition.workspace = true
@@ -20,7 +20,10 @@ digital-signatures = ["oxoffice-opc/digital-signatures"]
 
 [dependencies]
 oxoffice-core.workspace = true
+oxoffice-drawing.workspace = true
+oxoffice-numfmt.workspace = true
 oxoffice-opc.workspace = true
+oxoffice-xlsx-formula.workspace = true
 oxoffice-xlsx-oxml.workspace = true
 thiserror.workspace = true
 zip.workspace = true

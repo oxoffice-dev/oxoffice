@@ -2,6 +2,7 @@ pub mod color;
 pub mod effect;
 pub mod fill;
 pub mod geometry;
+mod lexical;
 pub mod line;
 pub mod namespace;
 pub mod order;

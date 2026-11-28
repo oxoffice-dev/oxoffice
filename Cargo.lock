@@ -1489,8 +1489,11 @@ version = "0.8.0"
 dependencies = [
  "cfb",
  "oxoffice-core",
+ "oxoffice-drawing",
+ "oxoffice-numfmt",
  "oxoffice-opc",
  "oxoffice-xlsx",
+ "oxoffice-xlsx-formula",
  "oxoffice-xlsx-oxml",
  "oxoffice-xml-test",
  "thiserror",

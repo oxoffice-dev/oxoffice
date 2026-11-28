@@ -16,7 +16,9 @@ the text Excel displays.
   (`[$-40C]mmmm` is `janvier`): English, French, German, Spanish, Italian,
   Portuguese and Dutch, by region as Excel writes them; the tables are
   `oxoffice_numfmt::names`, which Word's date controls share.
-- Built-in format ids and `is_date_format`.
+- Built-in format ids and `is_date_format`; serial days to a date and time
+  and back (`DateSystem::to_datetime`, `to_serial`), Excel's 1900-02-29
+  included.
 - The colour of the section, the fill character and the `_x` spaces, for a
   render.
 

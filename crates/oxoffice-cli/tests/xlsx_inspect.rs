@@ -1,6 +1,7 @@
-//! `oxoffice xlsx inspect` names each sheet from 1 with its state and kind,
-//! the date system and the class, as text or a schema-1 record, and refuses
-//! a file that is not a workbook with the facade's plain message.
+//! `oxoffice xlsx inspect` names each sheet from 1 with its state, kind and
+//! used range, the date system and the class, as text or a schema-1 record
+//! that adds each sheet's page setup, and refuses a file that is not a
+//! workbook with the facade's plain message.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -34,17 +35,46 @@ fn inspect_lists_the_sheets_from_one() {
     assert_eq!(record["schema"], 1);
     assert_eq!(record["class"], "workbook");
     assert_eq!(record["date1904"], false);
+    assert_eq!(record["recalculation_needed"], false);
+    let rates = &record["sheets"][3];
     assert_eq!(
-        record["sheets"][3],
-        json!({"sheet": 4, "name": "Rates", "state": "hidden", "kind": "worksheet"})
+        (
+            &rates["sheet"],
+            &rates["name"],
+            &rates["state"],
+            &rates["kind"],
+            &rates["used_range"]
+        ),
+        (
+            &json!(4),
+            &json!("Rates"),
+            &json!("hidden"),
+            &json!("worksheet"),
+            &json!("A1:B5")
+        )
     );
+    assert_eq!(rates["page_setup"]["orientation"], "default");
     let output = oxoffice(&["xlsx", "inspect"], &file);
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(
-        text.contains("Sheets: 5\n  1. Summary (worksheet)\n"),
+        text.contains("Sheets: 5\n  1. Summary (worksheet, A1:G10)\n"),
         "{text}"
     );
-    assert!(text.contains("  4. Rates (worksheet, hidden)\n"), "{text}");
+    assert!(
+        text.contains("  4. Rates (worksheet, hidden, A1:B5)\n"),
+        "{text}"
+    );
+    let budget = oxoffice(&["xlsx", "inspect", "--json"], &corpus("excel/budget.xlsx"));
+    let record: Value = serde_json::from_slice(&budget.stdout).expect("one JSON record");
+    let setup = &record["sheets"][0]["page_setup"];
+    assert_eq!(
+        (
+            &setup["orientation"],
+            &setup["paper_size"],
+            &setup["print_area"]
+        ),
+        (&json!("landscape"), &json!(9), &json!("Budget!$A$1:$J$36"))
+    );
 
     let output = oxoffice(&["xlsx", "inspect"], &corpus("word/report.docx"));
     assert_eq!(output.status.code(), Some(1));

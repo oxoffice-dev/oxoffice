@@ -1,4 +1,4 @@
-//! Excel-compatible workbooks: open and save without loss.
+//! Excel-compatible workbooks: open, read and save without loss.
 //!
 //! A workbook opens from a path or bytes and is told by its content, never
 //! its extension: a legacy `.xls`, a binary `.xlsb`, an OpenDocument
@@ -13,17 +13,43 @@
 //! the workbook was opened from unless [`SaveOptions::overwrite_source`] is
 //! set.
 //!
-//! Positions are 0-based, like every index of the oxoffice packages; the
-//! command line counts from 1.
+//! A cell reads as a snapshot ([`Cell`]): its value (for a formula, the
+//! value its producer cached), its formula in the form Excel displays and
+//! the form the file stores, the text Excel displays for it and its
+//! resolved style. Sheets also give their used range, merges, comments and
+//! page setup, and the workbook its text as Markdown or a sheet as CSV.
+//!
+//! ```no_run
+//! use oxoffice_xlsx::Workbook;
+//!
+//! let workbook = Workbook::open("review.xlsx")?;
+//! let sheet = workbook.sheet("Orders").expect("a sheet named Orders");
+//! let total = sheet.cell("F38")?;
+//! println!("{} = {}", total.formula.unwrap_or_default(), total.text);
+//! for row in sheet.values("A1:G5")? {
+//!     println!("{row:?}");
+//! }
+//! # Ok::<(), oxoffice_xlsx::Error>(())
+//! ```
+//!
+//! Positions are 0-based, like every index of the oxoffice packages; A1
+//! references are the spreadsheet's own, from 1, and the command line counts
+//! from 1.
 
+mod cell;
+mod comments;
 mod edit;
 mod grid;
 mod new_workbook;
 mod open;
 mod page_setup;
+mod ranges;
+mod read;
 mod save;
 mod sheet;
 mod signature;
+mod style;
+mod text;
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -32,13 +58,23 @@ use oxoffice_opc::{OpcError, OpcPackage};
 use oxoffice_xlsx_oxml::workbook::WorkbookXml;
 use thiserror::Error;
 
+pub use cell::{Cell, CellError, FormulaKind, Value};
+pub use comments::{Comment, CommentKind, Reply};
 pub use edit::WorksheetMut;
+pub use oxoffice_numfmt::DateTime;
+pub use oxoffice_xlsx_oxml::{CellRange, CellRef};
 pub use page_setup::{
     CellComments, HeaderFooter, Orientation, PageBreak, PageMargins, PageOrder, PageSetup,
     PrintErrors,
 };
+pub use read::MAX_BULK_CELLS;
 pub use save::{SaveOptions, WorkbookClass};
 pub use sheet::{SheetKind, SheetState, Worksheet};
+pub use style::{
+    Alignment, Border, BorderSide, Color, ColorSource, Fill, Font, GradientStop, Protection,
+    ResolvedStyle,
+};
+pub use text::CsvOptions;
 
 /// A result of the `oxoffice-xlsx` facade.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -116,6 +152,21 @@ pub enum Error {
         path.display()
     )]
     MacroFreeExtension { path: PathBuf },
+
+    #[error("`{reference}` is not a cell or a range: write B3, A1:C10, A:C or 2:5")]
+    InvalidReference { reference: String },
+
+    #[error("`{reference}` is not a cell: write B3 or $B$3")]
+    NotACell { reference: String },
+
+    #[error("sheet {sheet} is a {}: it holds no cells to read", kind.as_str())]
+    NotAWorksheet { sheet: String, kind: SheetKind },
+
+    #[error(
+        "{range} holds more than {} cells: read a smaller range",
+        read::MAX_BULK_CELLS
+    )]
+    RangeTooLarge { range: String },
 }
 
 impl From<std::io::Error> for Error {
@@ -159,6 +210,8 @@ pub struct Workbook {
     /// The package as opened, when it carries a package signature: a save
     /// that differs from it invalidates the signature.
     signature_baseline: Option<Arc<OpcPackage>>,
+    /// The parts cells read, each read the first time a cell needs it.
+    read: read::ReadParts,
 }
 
 impl Workbook {

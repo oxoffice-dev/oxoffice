@@ -6,8 +6,9 @@ built by the `oxoffice-cli` crate.
 ## Capabilities
 
 - `oxoffice xlsx inspect FILE [--json]`: the sheets of a workbook (position,
-  name, state, kind), its date system and class. A file that is not a
-  workbook is refused with a plain message naming the way out.
+  name, state, kind, used range), its date system and class; the JSON adds
+  each sheet's page setup. A file that is not a workbook is refused with a
+  plain message naming the way out.
 - `oxoffice xlsx new -o FILE [--sheet NAME]... [--force] [--json]`: a new
   workbook, Calibri 11 under the Office 2013-2022 theme, the same bytes every
   time. A file that exists is replaced only with `--force`.
@@ -17,3 +18,17 @@ built by the `oxoffice-cli` crate.
   (characters), `{"rows": "2:5", "height": 30}` (points), `{"freeze": "B2"}`
   or `{"freeze": null}`. An entry names its sheet with `"sheet"` (a name, or
   a number from 1) and otherwise takes the sheet of the entry before it.
+- `oxoffice xlsx text FILE [--json | --markdown] [--sheet S]...`: the cells of
+  each worksheet as Excel displays them, as tab-separated rows, one Markdown
+  table per sheet headed by the column letters, or a schema-1 record with
+  values, formulas, merges and comments.
+- `oxoffice xlsx csv FILE [--sheet S] [--raw] [--delimiter C] [--bom] [-o OUT]`:
+  one sheet as CSV, displayed texts or stored values.
+- `oxoffice xlsx cells FILE RANGE [--sheet S] [--json]`: the cells of a range
+  (`B3`, `A1:C10`, `A:C`, `2:5`, `'Q1 data'!B3`) with their formulas; the JSON
+  adds the stored formula, its kind and range, the number format and the
+  resolved style.
+- `oxoffice xlsx comments FILE [--sheet S]... [--json]`: notes and comment
+  threads with their replies.
+
+Sheets are named, or numbered from 1.

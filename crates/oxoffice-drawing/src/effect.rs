@@ -148,8 +148,8 @@ impl CT_OuterShadowEffect {
             blur_radius: optional_parse(start, b"blurRad")?,
             distance: optional_parse(start, b"dist")?,
             direction: optional_parse::<i32>(start, b"dir")?.map(Angle),
-            scale_x: optional_parse::<i32>(start, b"sx")?.map(Percent1000),
-            scale_y: optional_parse::<i32>(start, b"sy")?.map(Percent1000),
+            scale_x: optional_percentage(start, b"sx")?.map(Percent1000),
+            scale_y: optional_percentage(start, b"sy")?.map(Percent1000),
             skew_x: optional_parse::<i32>(start, b"kx")?.map(Angle),
             skew_y: optional_parse::<i32>(start, b"ky")?.map(Angle),
             alignment: optional_enum(start, b"algn", RectAlignment::parse)?,
@@ -554,6 +554,16 @@ fn invalid_value(attribute: &str, value: impl ToString) -> EffectError {
         attribute: attribute.to_owned(),
         value: value.to_string(),
     }
+}
+
+/// An optional percentage, Transitional (`102000`) or Strict (`102%`).
+fn optional_percentage(start: &BytesStart<'_>, name: &[u8]) -> Result<Option<i32>> {
+    get_attr(start, name)
+        .map(|value| {
+            crate::lexical::parse_percentage(&value)
+                .ok_or_else(|| invalid(start, name, value.to_owned()))
+        })
+        .transpose()
 }
 
 fn optional_parse<T: std::str::FromStr>(start: &BytesStart<'_>, name: &[u8]) -> Result<Option<T>> {

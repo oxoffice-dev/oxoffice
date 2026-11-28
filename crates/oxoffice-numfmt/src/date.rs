@@ -56,6 +56,107 @@ impl DateSystem {
     }
 }
 
+/// A calendar date and time of day: what a serial day number stands for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct DateTime {
+    pub year: i32,
+    /// 1 to 12.
+    pub month: u32,
+    /// 1 to 31.
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+    pub millisecond: u32,
+}
+
+const MILLISECONDS_PER_DAY: i64 = 86_400_000;
+
+impl DateSystem {
+    /// The date and time `serial` stands for, rounded to the millisecond (a
+    /// cell shows no finer time). `None` for a serial no calendar date
+    /// names: one that is negative, past 9999-12-31 or not finite, and the
+    /// 1900 system's serial 60, Excel's 1900-02-29. The 1900 system's day 0,
+    /// which Excel shows as 1900-01-00, is 1899-12-31.
+    pub fn to_datetime(self, serial: f64) -> Option<DateTime> {
+        if !serial.is_finite() || serial < 0.0 {
+            return None;
+        }
+        let units = (serial * MILLISECONDS_PER_DAY as f64).round() as i64;
+        let day = units / MILLISECONDS_PER_DAY;
+        if day > self.last_day() || (self == DateSystem::Date1900 && day == 60) {
+            return None;
+        }
+        let (year, month, date) = match (self, day) {
+            (DateSystem::Date1900, 0) => (1899, 12, 31),
+            _ => {
+                let (year, month, date, _) = self.civil(day);
+                (year, month, date)
+            }
+        };
+        let within = units % MILLISECONDS_PER_DAY;
+        Some(DateTime {
+            year: year as i32,
+            month,
+            day: date,
+            hour: (within / 3_600_000) as u32,
+            minute: (within / 60_000 % 60) as u32,
+            second: (within / 1000 % 60) as u32,
+            millisecond: (within % 1000) as u32,
+        })
+    }
+
+    /// The serial of a date and time; `None` for one that is not a date
+    /// (a 31 April, a 25th hour), before the system's day 0 (1899-12-31 in
+    /// the 1900 system, 1904-01-01 in the 1904 one) or past 9999-12-31.
+    pub fn to_serial(self, datetime: DateTime) -> Option<f64> {
+        let DateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+        } = datetime;
+        let year = i64::from(year);
+        if !(1..=12).contains(&month)
+            || day == 0
+            || hour > 23
+            || minute > 59
+            || second > 59
+            || millisecond > 999
+        {
+            return None;
+        }
+        let next_month = if month == 12 {
+            days(year + 1, 1, 1)
+        } else {
+            days(year, month + 1, 1)
+        };
+        if days(year, month, day) >= next_month {
+            return None;
+        }
+        let serial_day = match self {
+            DateSystem::Date1900 => {
+                let after = days(year, month, day) - days(1899, 12, 31);
+                // Excel counts a 1900-02-29: every day from 1 March is one
+                // serial later.
+                if after < 60 { after } else { after + 1 }
+            }
+            DateSystem::Date1904 => days(year, month, day) - days(1904, 1, 1),
+        };
+        if !(0..=self.last_day()).contains(&serial_day) {
+            return None;
+        }
+        let time = i64::from(hour) * 3_600_000
+            + i64::from(minute) * 60_000
+            + i64::from(second) * 1000
+            + i64::from(millisecond);
+        Some(serial_day as f64 + time as f64 / MILLISECONDS_PER_DAY as f64)
+    }
+}
+
 /// Days from 1970-01-01 (Howard Hinnant's algorithm).
 fn days(year: i64, month: u32, day: u32) -> i64 {
     let year = if month <= 2 { year - 1 } else { year };
@@ -235,5 +336,47 @@ mod tests {
         assert_eq!(civil(DateSystem::Date1900, 2_958_465).0, 9999);
         assert_eq!(civil(DateSystem::Date1904, 0), (1904, 1, 1, 5));
         assert_eq!(civil(DateSystem::Date1904, 43844), (2024, 1, 15, 1));
+    }
+
+    #[test]
+    fn serials_and_dates_convert_both_ways() {
+        let at = |year, month, day, hour, minute, second, millisecond| DateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            millisecond,
+        };
+        let (d1900, d1904) = (DateSystem::Date1900, DateSystem::Date1904);
+        for (system, serial, datetime) in [
+            (d1900, 46347.0, at(2026, 11, 21, 0, 0, 0, 0)),
+            (d1900, 46_346.333_333_333_34, at(2026, 11, 20, 8, 0, 0, 0)),
+            (d1900, 0.5, at(1899, 12, 31, 12, 0, 0, 0)),
+            (d1900, 59.0, at(1900, 2, 28, 0, 0, 0, 0)),
+            (d1900, 61.0, at(1900, 3, 1, 0, 0, 0, 0)),
+            (d1900, 1.0625, at(1900, 1, 1, 1, 30, 0, 0)),
+            (d1900, 2_958_465.0, at(9999, 12, 31, 0, 0, 0, 0)),
+            (d1904, 0.0, at(1904, 1, 1, 0, 0, 0, 0)),
+            (d1904, 0.573263888888889, at(1904, 1, 1, 13, 45, 30, 0)),
+            (d1904, 44885.0, at(2026, 11, 21, 0, 0, 0, 0)),
+        ] {
+            assert_eq!(system.to_datetime(serial), Some(datetime), "{serial}");
+            let back = system.to_serial(datetime).expect("a date of the system");
+            assert!((back - serial).abs() < 1e-8, "{datetime:?}: {back}");
+        }
+        for (system, serial) in [(d1900, 60.0), (d1900, -1.0), (d1900, 2_958_466.0)] {
+            assert_eq!(system.to_datetime(serial), None, "{serial}");
+        }
+        for (system, datetime) in [
+            (d1900, at(1899, 12, 30, 0, 0, 0, 0)),
+            (d1904, at(1903, 12, 31, 0, 0, 0, 0)),
+            (d1900, at(2026, 4, 31, 0, 0, 0, 0)),
+            (d1900, at(2026, 2, 29, 0, 0, 0, 0)),
+            (d1900, at(2026, 1, 1, 24, 0, 0, 0)),
+        ] {
+            assert_eq!(system.to_serial(datetime), None, "{datetime:?}");
+        }
     }
 }

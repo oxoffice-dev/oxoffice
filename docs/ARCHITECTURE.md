@@ -24,7 +24,8 @@ crates/
                          fonts, line breaking and shaping
   oxoffice-pdf           PDF writer and the tiny-skia rasteriser (PNG)
   oxoffice-numfmt        number format codes to the text Excel displays,
-                         with the month and day names Word's date controls share
+                         serial dates both ways, with the month and day
+                         names Word's date controls share
   oxoffice-chart         ChartML model and renderer, for Word and PowerPoint
   oxoffice-sml           minimal SpreadsheetML writer for chart workbooks
   oxoffice-cli-support   shared CLI pieces: ranges, JSON output, paths
@@ -60,13 +61,15 @@ crates/
                          function table (prefixes, argument counts)
   oxoffice-xlsx-oxml     the parts of a workbook: workbook, shared strings,
                          styles, worksheets (the row index and the splice
-                         writer, column widths, frozen panes), page setup;
-                         Strict read as Transitional
-  oxoffice-xlsx          the facade: Workbook, Worksheet, WorksheetMut; open
-                         and save without loss, refusals told by content, a
-                         new workbook from the text files under
-                         assets/default/, sheets added, column widths, row
-                         heights and frozen panes
+                         writer, column widths, frozen panes), page setup,
+                         comments read only; Strict read as Transitional
+  oxoffice-xlsx          the facade: Workbook, Worksheet, WorksheetMut, Cell;
+                         open and save without loss, refusals told by
+                         content; cells read with their displayed text and
+                         resolved style, comments, CSV and Markdown; a new
+                         workbook from the text files under assets/default/,
+                         sheets added, column widths, row heights and frozen
+                         panes
   oxoffice-xlsx-cli      the `oxoffice xlsx` commands (library)
   oxoffice-xlsx-py       the `oxoffice.xlsx` bindings (library)
 
@@ -104,15 +107,18 @@ bytes ─→ oxoffice-opc (package, parts, relationships)
 
 workbook: the workbook part read at open; a sheet indexed at its first read
   (one pass: each row's range, shared formula masters, array ranges); a row
-  read when read or edited; an edit stages the rows and children of the
-  root it changed beside the sheet (a call that changes nothing stages
-  nothing) and the first one marks the workbook edited; a save copies every
-  part no edit changed, splices the staged rows and children into the
-  sheet's source bytes, writes the workbook part with its new records and,
-  when the workbook holds a formula, asks Excel to calculate it on open
-  (`fullCalcOnLoad`) with the calculation chain removed; a package signature
-  the save no longer matches is marked invalidated, as docx and pptx do; a
-  workbook nobody edited saves as it was read
+  read when read or edited; the shared strings, the styles (resolved once
+  per cell format, colours through the theme) and the persons of threaded
+  comments read the first time a cell needs them; an edit stages the rows
+  and children of the root it changed beside the sheet (a call that changes
+  nothing stages nothing) and the first one marks the workbook edited; a
+  save copies every part no edit changed, splices the staged rows and
+  children into the sheet's source bytes, writes the workbook part with its
+  new records and, when the workbook holds a formula, asks Excel to
+  calculate it on open (`fullCalcOnLoad`) with the calculation chain
+  removed; a package signature the save no longer matches is marked
+  invalidated, as docx and pptx do; a workbook nobody edited saves as it was
+  read
   new workbook: Workbook::new assembles a package from text files and the
   package writer's sorted entries and fixed ZIP date give the same bytes
   every time

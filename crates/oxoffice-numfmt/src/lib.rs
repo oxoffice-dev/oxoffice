@@ -37,6 +37,7 @@ mod parse;
 use parse::{Condition, Kind, Section, Token};
 
 pub use builtin::builtin_code;
+pub use date::DateTime;
 
 /// A format code Excel cannot read. Excel shows such a code as General
 /// ([`NumberFormat::general`]), and so should a caller.

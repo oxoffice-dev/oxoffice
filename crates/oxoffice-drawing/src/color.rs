@@ -651,8 +651,16 @@ fn parse_component(component: &str, full_value: &str) -> Result<u8> {
     u8::from_str_radix(component, 16).map_err(|_| ColorError::InvalidRgb(full_value.to_owned()))
 }
 
+/// A percentage transform value, in either the Transitional or the Strict
+/// form (`50000`, `50%`).
 fn parse_percent(element: &BytesStart<'_>) -> Result<Percent1000> {
-    parse_transform_i32(element).map(Percent1000)
+    let value = required_attr(element, b"val")?;
+    crate::lexical::parse_percentage(&value)
+        .map(Percent1000)
+        .ok_or_else(|| ColorError::InvalidTransformValue {
+            element: String::from_utf8_lossy(local_name(element.name().as_ref())).into_owned(),
+            value,
+        })
 }
 
 fn parse_angle(element: &BytesStart<'_>) -> Result<Angle> {
@@ -798,6 +806,28 @@ pub fn apply_lum_mod_off(
     }
     let resolved = apply_color_transforms(colour, &transforms);
     RgbColor::new(resolved.red, resolved.green, resolved.blue).to_string()
+}
+
+/// Applies a SpreadsheetML tint (`CT_Color@tint`, ECMA-376 Part 1, 18.8.19):
+/// the colour's HLS luminance moves towards black for a negative tint and
+/// towards white for a positive one, by the tint's fraction (-1.0 to 1.0) of
+/// the way; hue and saturation stay. A tint of 0 leaves the colour as it is.
+pub fn apply_hls_tint(colour: RgbColor, tint: f64) -> RgbColor {
+    if tint == 0.0 || !tint.is_finite() {
+        return colour;
+    }
+    let tint = tint.clamp(-1.0, 1.0);
+    let [red, green, blue] = colour
+        .components()
+        .map(|channel| f64::from(channel) / 255.0);
+    let (hue, sat, lum) = rgb_to_hsl(red, green, blue);
+    let lum = if tint < 0.0 {
+        lum * (1.0 + tint)
+    } else {
+        lum * (1.0 - tint) + tint
+    };
+    let (red, green, blue) = hsl_to_rgb(hue, sat, lum.clamp(0.0, 1.0));
+    RgbColor::new(channel_byte(red), channel_byte(green), channel_byte(blue))
 }
 
 /// Converts one sRGB channel to linear light.
@@ -1031,5 +1061,25 @@ fn hue_to_rgb(p: f64, q: f64, hue: f64) -> f64 {
         p + (q - p) * (2.0 / 3.0 - hue) * 6.0
     } else {
         p
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_spreadsheet_tint_moves_the_luminance() {
+        for (colour, tint, expected) in [
+            ("4472C4", 0.0, "4472C4"),
+            ("FF0000", 0.5, "FF8080"),
+            ("FF0000", -0.5, "800000"),
+            ("000000", 0.25, "404040"),
+            ("FFFFFF", -0.5, "808080"),
+            ("FFFFFF", 0.5, "FFFFFF"),
+        ] {
+            let tinted = apply_hls_tint(RgbColor::parse(colour).unwrap(), tint);
+            assert_eq!(tinted.to_string(), expected, "{colour} {tint}");
+        }
     }
 }
