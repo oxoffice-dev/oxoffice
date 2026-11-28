@@ -1045,7 +1045,7 @@ def test_every_mutating_call_is_timed():
 
 @pytest.fixture(scope="module")
 def saved_document(tmp_path_factory):
-    return edit_cost_docx(tmp_path_factory.mktemp("once") / "saved.docx", 10, picture_side=8)
+    return edit_cost_docx(tmp_path_factory.mktemp("once") / "saved.docx", 10, picture_side=8, probes=2)
 
 
 # The calls test_docx_tracked_changes does not run (the matrix there runs every other call, in its session or

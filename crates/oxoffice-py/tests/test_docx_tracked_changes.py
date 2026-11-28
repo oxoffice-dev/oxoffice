@@ -170,7 +170,7 @@ def ready(doc, name):
 
 @pytest.fixture(scope="module")
 def saved(tmp_path_factory):
-    return edit_cost_docx(tmp_path_factory.mktemp("tracked") / "saved.docx", 10, picture_side=8)
+    return edit_cost_docx(tmp_path_factory.mktemp("tracked") / "saved.docx", 10, picture_side=8, probes=2)
 
 
 def test_the_class_table_names_calls_there_are():
