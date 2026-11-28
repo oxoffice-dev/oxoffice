@@ -3379,7 +3379,10 @@ impl<'a> XmlTree<'a> {
             None => true,
         };
         if prior_element.word
-            && matches!(prior_element.local.as_str(), "pPr" | "tblPr")
+            && matches!(
+                prior_element.local.as_str(),
+                "pPr" | "tblPr" | "trPr" | "tcPr"
+            )
             && retained.is_empty()
             && bare_prior
         {

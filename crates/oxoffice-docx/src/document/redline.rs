@@ -1781,9 +1781,17 @@ fn table_properties(xml: &str, how: Resolution) -> Result<Vec<String>> {
     let (output, _) = resolve_story_xml(wrapped.as_bytes(), how, RevisionScope::All)?;
     let output = String::from_utf8(output).map_err(xml_error)?;
     let table = first_word_element(&output, "tbl")?;
+    // An owner without properties reads as none: a rejected row change whose
+    // row had none leaves an empty `w:trPr`.
     let text = |node: Option<&Node>| {
         node.map_or(String::new(), |node| {
-            without_declarations(&output[node.span()])
+            let text = without_declarations(&output[node.span()]);
+            match text.matches('<').count() == 1
+                || text.contains("></") && text.matches('<').count() == 2
+            {
+                true => String::new(),
+                false => text,
+            }
         })
     };
     let mut found = vec![
@@ -1845,10 +1853,10 @@ fn give_ids(
 /// `after`, a table an edit of its properties made from `before`, with the
 /// changes written as tracked changes, as Word writes them: a `w:tblPrChange`,
 /// a `w:tblGridChange` (an id alone) and a `w:tcPrChange` of each owner
-/// that changed. A row's changed properties take no `w:trPrChange`: the
+/// that changed. A row's changed properties take a `w:trPrChange`, which a
+/// rejection undoes as Word's does, beside what Word writes for them: its
 /// table, its grid and each cell of the row take a change holding what they
-/// hold now (Word check W8), so rejecting it keeps the row as it is, as in
-/// Word. Content, rows or cells changed are refused.
+/// hold now (Word check W8). Content, rows or cells changed are refused.
 pub(super) fn redline_table_xml(
     before: &str,
     after: &str,
@@ -1885,8 +1893,30 @@ pub(super) fn redline_table_xml(
                 &["ins", "del"],
             )
         };
-        let row_changed = trpr(before, old_row)?.base != trpr(after, new_row)?.base;
+        let (old_trpr, new_trpr) = (trpr(before, old_row)?, trpr(after, new_row)?);
+        let row_changed = old_trpr.base != new_trpr.base;
         rows_changed |= row_changed;
+        // The row's own change, which a rejection undoes (Word's Reject All
+        // brings a row's height back, W8), beside the changes Word writes.
+        if row_changed {
+            let written = changed_props(
+                &new_trpr,
+                &old_trpr,
+                &prefix,
+                "trPr",
+                "trPrChange",
+                tracking,
+            );
+            edits.push(match word_children(new_row, "trPr").next() {
+                Some(properties) => (properties.span(), written),
+                None => {
+                    let at = word_children(new_row, "tblPrEx")
+                        .next()
+                        .map_or(new_row.start.end, |exceptions| exceptions.span().end);
+                    (at..at, written)
+                }
+            });
+        }
         let (old_cells, new_cells) = (
             word_children(old_row, "tc").collect::<Vec<_>>(),
             word_children(new_row, "tc").collect::<Vec<_>>(),
@@ -2005,9 +2035,8 @@ pub(super) fn redline_table_xml(
     give_ids(&written, tracking, identifiers, |redlined| {
         let accepted = table_properties(redlined, Resolution::Accept)?
             == table_properties(after, Resolution::Accept)?;
-        let rejected = rows_changed
-            || table_properties(redlined, Resolution::Reject)?
-                == table_properties(before, Resolution::Reject)?;
+        let rejected = table_properties(redlined, Resolution::Reject)?
+            == table_properties(before, Resolution::Reject)?;
         match accepted && rejected {
             true => Ok(()),
             false => Err(Error::Other(

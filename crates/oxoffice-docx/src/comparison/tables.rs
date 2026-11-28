@@ -483,11 +483,6 @@ pub(super) fn compare_row(
                 "comparison cannot revise row boundary structures at {location}"
             )));
         }
-        if !metadata.options.ignore_formatting
-            && row_formatting(original)? != row_formatting(edited)?
-        {
-            formatting_diagnostic(diagnostics, location.to_owned());
-        }
         let mut output = original_source
             .map(str::to_owned)
             .map_or_else(|| row_xml(original), Ok)?;
@@ -558,6 +553,43 @@ pub(super) fn compare_row(
         )?;
         replace_direct_word_elements(&output, "sdt", &control_replacements)
     })()?;
+    // A row's properties changed: the edited ones and a `w:trPrChange` of the
+    // original ones, which Word reads and a rejection undoes (W8). A row that
+    // holds a revision of its own keeps it with a diagnostic.
+    let output = if !metadata.options.ignore_formatting
+        && row_formatting(original)? != row_formatting(edited)?
+    {
+        let xml = |row: &CT_Row| {
+            row.properties
+                .as_ref()
+                .map(|properties| written(|writer| properties.to_xml(writer)))
+                .transpose()
+        };
+        let (previous, current) = (xml(original)?, xml(edited)?);
+        let marked = |row: &CT_Row, xml: &Option<String>| {
+            row.properties.as_ref().is_some_and(|properties| {
+                !properties.revision_markers.is_empty() || !properties.revision_xml.is_empty()
+            }) || xml
+                .as_ref()
+                .is_some_and(|xml| xml.contains("Change") || xml.contains("move"))
+        };
+        if marked(original, &previous) || marked(edited, &current) {
+            formatting_diagnostic(diagnostics, location.to_owned());
+            output
+        } else {
+            with_property_change(
+                &output,
+                "trPr",
+                previous,
+                current,
+                Some("tblPrEx"),
+                leaf_mark,
+                metadata,
+            )?
+        }
+    } else {
+        output
+    };
     let old_open = element_opening(&output)?.0;
     let output = metadata.restore_owner_root(original as *const CT_Row as usize, output)?;
     shift_leaf_publications(
@@ -679,35 +711,16 @@ pub(super) fn compare_cell_from_xml(
     let output = if !metadata.options.ignore_formatting
         && cell_formatting(original)? != cell_formatting(edited)?
     {
-        let xml = |cell: &CT_Tc| -> Result<Option<String>> {
+        let xml = |cell: &CT_Tc| {
             cell.properties
                 .as_ref()
-                .map(|properties| {
-                    let mut bytes = Vec::new();
-                    properties.to_xml(&mut Writer::new(&mut bytes))?;
-                    String::from_utf8(bytes).map_err(utf8_error)
-                })
+                .map(|properties| written(|writer| properties.to_xml(writer)))
                 .transpose()
         };
-        let previous = xml(original)?.unwrap_or_else(|| "<w:tcPr/>".to_owned());
-        let change =
-            metadata
-                .ids
-                .revision("tcPrChange", metadata.author, metadata.timestamp, &previous)?;
-        let properties = match xml(edited)? {
-            Some(current) => append_word_child(&current, "tcPr", &change)?,
-            None => format!("<w:tcPr>{change}</w:tcPr>"),
-        };
-        let at = match direct_word_element_spans(&output, "tcPr")?.first() {
-            Some(span) => span.clone(),
-            None => {
-                let open = element_opening(&output)?.0;
-                open..open
-            }
-        };
-        let delta = properties.len() as isize - at.len() as isize;
-        shift_leaf_publications(&mut metadata.leaf_publications[leaf_mark..], delta)?;
-        format!("{}{properties}{}", &output[..at.start], &output[at.end..])
+        let (previous, current) = (xml(original)?, xml(edited)?);
+        with_property_change(
+            &output, "tcPr", previous, current, None, leaf_mark, metadata,
+        )?
     } else {
         output
     };
@@ -1016,4 +1029,66 @@ fn marked_cell_child(
             marked_control(control, kind, None, carried, None, metadata)
         }
     }
+}
+
+/// What `write` writes.
+fn written<E>(
+    write: impl FnOnce(&mut Writer<&mut Vec<u8>>) -> std::result::Result<(), E>,
+) -> Result<String>
+where
+    Error: From<E>,
+{
+    let mut bytes = Vec::new();
+    write(&mut Writer::new(&mut bytes))?;
+    String::from_utf8(bytes).map_err(utf8_error)
+}
+
+/// `owner`, a row or cell, with its `local` properties replaced by `current`
+/// holding a change of `previous` (an empty element for none), placed after
+/// its `after` child when it held none; its leaves after them move with them.
+fn with_property_change(
+    owner: &str,
+    local: &str,
+    previous: Option<String>,
+    current: Option<String>,
+    after: Option<&str>,
+    leaf_mark: usize,
+    metadata: &mut Metadata<'_>,
+) -> Result<String> {
+    let previous = previous.unwrap_or_else(|| format!("<w:{local}/>"));
+    let change = metadata.ids.revision(
+        &format!("{local}Change"),
+        metadata.author,
+        metadata.timestamp,
+        &previous,
+    )?;
+    let properties = match current {
+        Some(current) => append_word_child(&current, local, &change)?,
+        None => format!("<w:{local}>{change}</w:{local}>"),
+    };
+    let at = match direct_word_element_spans(owner, local)?.first() {
+        Some(span) => span.clone(),
+        None => {
+            let at = match after
+                .map(|after| direct_word_element_spans(owner, after))
+                .transpose()?
+            {
+                Some(spans) if !spans.is_empty() => spans[0].end,
+                _ => element_opening(owner)?.0,
+            };
+            at..at
+        }
+    };
+    splice_leaf_publications(
+        metadata,
+        leaf_mark,
+        std::slice::from_ref(&at),
+        std::slice::from_ref(&properties),
+        vec![Vec::new()],
+    )?;
+    Ok(format!(
+        "{}{properties}{}",
+        &owner[..at.start],
+        &owner[at.end..]
+    ))
 }

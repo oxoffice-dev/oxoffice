@@ -223,7 +223,7 @@ rewrites.
 | Run properties | `w:rPr/w:rPrChange/w:rPr{old}`, the last child. "old" is the direct properties before the session's first change of that run, without `w:ins`, `w:del` or `w:rPrChange`. A paragraph mark's properties: the same inside `w:pPr/w:rPr` |
 | Paragraph properties | `w:pPr/w:pPrChange/w:pPr{old}`, the last child; "old" leaves out `w:rPr`, `w:sectPr` and `w:pPrChange`. A style or numbering change is a `pPrChange` holding the old `w:pStyle` or `w:numPr` (Word writes no `w:numberingChange` for it; W5) |
 | Table properties | `w:tblPr/w:tblPrChange/w:tblPr{old}`. Changed column widths add `w:tblGrid/w:tblGridChange w:id/w:tblGrid{old}`, which has an id and no author: it resolves with its table's `tblPrChange`, or alone by id or when everything is resolved (Google's id-only ones) |
-| Row, cell | a row height change has no `w:trPrChange` in Word: it writes `w:tblPrChange` and `w:tblGridChange` (old = new) and a `w:tcPrChange` on each cell of the row (W8), and so does PR 2; `w:tcPr/w:tcPrChange/w:tcPr{old}`, the last child, for a cell's own change. `w:trPrChange` is read and resolved, never written |
+| Row, cell | a row height change has no `w:trPrChange` in Word: it writes `w:tblPrChange` and `w:tblGridChange` (old = new) and a `w:tcPrChange` on each cell of the row (W8); PR 2 writes those and a `w:trPrChange` too, which a rejection undoes (Word's Reject All brings the row back, W8); `w:tcPr/w:tcPrChange/w:tcPr{old}`, the last child, for a cell's own change |
 | Row inserted or deleted | `w:trPr/w:ins` or `w:trPr/w:del`, with every cell paragraph's content and mark marked, as `marked_row` writes them |
 | Table inserted or deleted | every row marked, as `marked_table` writes it |
 | Section | `w:sectPr/w:sectPrChange/w:sectPr{old}`, the last child |
@@ -466,14 +466,16 @@ What PR 2c settles:
 
 - **Tables.** A table, row or cell property edit takes its route in place and writes a `w:tblPrChange`, a
   `w:tblGridChange` (an id alone, as Word writes it) and a `w:tcPrChange` for each owner that changed. A row's own
-  change takes no `w:trPrChange`: its table, grid and each of its cells take a change holding what they hold now
-  (W8), so rejecting it keeps the row as it is, as in Word. Cell merges and column insertions or deletions stay
-  refused (W8). A table outside the body, or one a route in place does not take, is refused.
+  change takes a `w:trPrChange`, which Word reads and a rejection undoes, as Word's Reject All brings the row back
+  (W8), beside the markers Word writes for it: its table, grid and each of its cells take a change holding what they
+  hold now. A row or cell edit is redlined on its row alone, so its cost does not grow with the table. Cell merges
+  and column insertions or deletions stay refused (W8). A table outside the body, or one a route in place does not
+  take, is refused.
 - **Sections.** A section edit writes one `w:sectPrChange`, last, whose old value leaves out the header and footer
   references; rejecting it keeps them, which the resolver did not do before.
-- **Compare (F4).** A cell's changed properties are written as a `w:tcPrChange`, as Word writes them. A row's keep
-  the original row with a diagnostic: Word's shape for them does not undo on rejection, which compare's
-  postconditions need.
+- **Compare (F4).** A cell's changed properties are written as a `w:tcPrChange`, a row's as a `w:trPrChange`. A row
+  that holds a revision of its own (an insertion, a deletion, a move or an earlier change) keeps its properties with
+  a diagnostic.
 
 ## Open questions
 

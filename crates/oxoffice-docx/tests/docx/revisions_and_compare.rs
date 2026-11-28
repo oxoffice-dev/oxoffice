@@ -7328,38 +7328,47 @@ fn a_google_table_with_a_grid_change_compares_with_a_property_change() {
     redlined.compare(&edited, AUTHOR, DATE).expect("comparison");
 }
 
-/// A cell given shading compares as a `w:tcPrChange`, as Word writes it, and
-/// resolves to either version; a row's property change, which Word writes in
-/// a shape its rejection does not undo (W8), keeps the original row with a
-/// diagnostic.
+/// A cell given shading compares as a `w:tcPrChange`, as Word writes it, a
+/// row kept together as a `w:trPrChange` (W8), each beside a text change of
+/// its cell, and resolves to either version.
 #[test]
-fn a_cell_property_change_compares_as_a_cell_change() {
-    let table = |cell: &str, row: &str| {
-        doc_with_body(&format!(
-            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{row}<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{cell}</w:tcPr><w:p><w:r><w:t>cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
-        ))
+fn a_cell_or_row_property_change_compares_as_its_change() {
+    let table = |cell: &str, row: &str, text: &str| {
+        let mut doc = doc_with_body(&format!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr>{row}<w:tc><w:tcPr><w:tcW w:w="2000" w:type="dxa"/>{cell}</w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#
+        ));
+        reopen(&mut doc)
     };
     let shading = r#"<w:shd w:val="clear" w:color="auto" w:fill="FF0000"/>"#;
-    let mut edited = table(shading, "");
-    let edited = reopen(&mut edited);
-    let mut redlined = table("", "");
-    let diagnostics = redlined.compare(&edited, AUTHOR, DATE).unwrap();
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    let mut redlined = reopen(&mut redlined);
-    assert_eq!(
-        redlined
-            .story_revisions()
-            .unwrap()
-            .iter()
-            .map(|revision| revision.kind())
-            .collect::<Vec<_>>(),
-        [RevisionKind::CellPropertyChange]
-    );
+    let together = "<w:trPr><w:cantSplit/></w:trPr>";
     let xml = |doc: &mut Document| reopen(doc).part_xml("/word/document.xml").unwrap();
-    assert!(xml(&mut accepted(&mut redlined)).contains(r#"w:fill="FF0000""#));
-    assert!(!xml(&mut rejected(&mut redlined)).contains("FF0000"));
-    let mut edited = table("", "<w:trPr><w:cantSplit/></w:trPr>");
-    let edited = reopen(&mut edited);
-    let mut redlined = table("", "");
-    assert_eq!(redlined.compare(&edited, AUTHOR, DATE).unwrap().len(), 1);
+    for (cell, row, kind, mark) in [
+        (shading, "", RevisionKind::CellPropertyChange, "FF0000"),
+        ("", together, RevisionKind::RowPropertyChange, "cantSplit"),
+    ] {
+        for text in ["cell", "cell changed"] {
+            let edited = table(cell, row, text);
+            let mut redlined = table("", "", "cell");
+            let diagnostics = redlined.compare(&edited, AUTHOR, DATE).unwrap();
+            assert!(diagnostics.is_empty(), "{mark} {text}: {diagnostics:?}");
+            let mut redlined = reopen(&mut redlined);
+            let kinds = redlined
+                .story_revisions()
+                .unwrap()
+                .iter()
+                .map(|revision| revision.kind())
+                .collect::<Vec<_>>();
+            assert!(kinds.contains(&kind), "{mark} {text}: {kinds:?}");
+            let accepted = xml(&mut accepted(&mut redlined));
+            assert!(
+                accepted.contains(mark) && accepted.contains(text),
+                "{accepted}"
+            );
+            let rejected = xml(&mut rejected(&mut redlined));
+            assert!(
+                !rejected.contains(mark) && !rejected.contains("changed"),
+                "{rejected}"
+            );
+        }
+    }
 }

@@ -1404,9 +1404,8 @@ fn a_panic_in_a_tracked_edit_leaves_later_edits_untracked() {
 }
 
 /// Table, row, cell and section property edits under a session, as their
-/// routes make them: each writes the changes Word writes, accepting them
-/// gives the untracked edit, and rejecting gives the document back, but for
-/// a row's change, which Word keeps (W8).
+/// routes make them: each writes the changes Word writes (W8), accepting
+/// them gives the untracked edit, and rejecting gives the document back.
 #[test]
 fn every_table_and_section_property_edit_writes_a_property_change() {
     type Edit = fn(&mut Document);
@@ -1417,7 +1416,7 @@ fn every_table_and_section_property_edit_writes_a_property_change() {
         ))
     };
     use RevisionKind::*;
-    let rows: [(&str, Edit, &[RevisionKind], bool); 5] = [
+    let rows: [(&str, Edit, &[RevisionKind]); 5] = [
         (
             "a table's width",
             |doc| {
@@ -1429,7 +1428,6 @@ fn every_table_and_section_property_edit_writes_a_property_change() {
                 .unwrap()
             },
             &[TablePropertyChange],
-            true,
         ),
         (
             "a column's width",
@@ -1443,7 +1441,6 @@ fn every_table_and_section_property_edit_writes_a_property_change() {
             },
             // Its cell and the table's width follow it.
             &[TablePropertyChange, TableGridChange, CellPropertyChange],
-            true,
         ),
         (
             "a cell's shading",
@@ -1456,7 +1453,6 @@ fn every_table_and_section_property_edit_writes_a_property_change() {
                 .unwrap()
             },
             &[CellPropertyChange],
-            true,
         ),
         (
             "a row's height, as Word writes it (W8)",
@@ -1471,10 +1467,10 @@ fn every_table_and_section_property_edit_writes_a_property_change() {
             &[
                 TablePropertyChange,
                 TableGridChange,
+                RowPropertyChange,
                 CellPropertyChange,
                 CellPropertyChange,
             ],
-            false,
         ),
         (
             "a section's page size",
@@ -1492,7 +1488,6 @@ fn every_table_and_section_property_edit_writes_a_property_change() {
                 }
             },
             &[SectionPropertyChange],
-            true,
         ),
     ];
     let shown = |doc: &mut Document| {
@@ -1500,7 +1495,7 @@ fn every_table_and_section_property_edit_writes_a_property_change() {
         let start = xml.find("<w:body>").unwrap();
         xml[start..].to_owned()
     };
-    for (shape, edit, kinds, rejects) in rows {
+    for (shape, edit, kinds) in rows {
         let mut tracked = table();
         let original = shown(&mut tracked);
         let changes = changes();
@@ -1528,10 +1523,44 @@ fn every_table_and_section_property_edit_writes_a_property_change() {
             shown(&mut untracked),
             "{shape}: accept all"
         );
-        if rejects {
-            let mut rejected = reopen(&mut tracked);
-            rejected.reject_all().unwrap();
-            assert_eq!(shown(&mut rejected), original, "{shape}: reject all");
-        }
+        let mut rejected = reopen(&mut tracked);
+        rejected.reject_all().unwrap();
+        assert_eq!(shown(&mut rejected), original, "{shape}: reject all");
     }
+}
+
+/// A section's change rejected keeps its header reference, which its old
+/// value leaves out, first, as the schema orders it.
+#[test]
+fn a_rejected_section_change_keeps_its_references_first() {
+    let mut doc = doc_with_body(&paragraph(&run("Body.")));
+    doc.set_header("Head");
+    let mut doc = reopen(&mut doc);
+    let changes = changes();
+    doc.start_tracked_changes(&changes).unwrap();
+    let before = doc.section_properties_before_edit(0).unwrap();
+    doc.section_mut(0)
+        .unwrap()
+        .set_page_size(
+            oxoffice_docx::Length::twips(15000),
+            oxoffice_docx::Length::twips(15840),
+        )
+        .unwrap();
+    doc.redline_section_edit(0, before).unwrap();
+    doc.stop_tracked_changes().unwrap();
+    let mut rejected = reopen(&mut doc);
+    rejected.reject_all().unwrap();
+    let xml = reopen(&mut rejected)
+        .part_xml("/word/document.xml")
+        .unwrap();
+    let section = &xml[xml.rfind("<w:sectPr").unwrap()..];
+    let first = section[1..]
+        .find("<w:")
+        .map(|at| &section[at + 4..])
+        .unwrap();
+    assert!(first.starts_with("headerReference"), "{section}");
+    assert!(
+        !section.contains("sectPrChange") && !section.contains("15000"),
+        "{section}"
+    );
 }

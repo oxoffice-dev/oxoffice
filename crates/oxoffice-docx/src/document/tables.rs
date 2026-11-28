@@ -73,11 +73,8 @@ impl Document {
         edit: impl FnOnce(&mut crate::table::Row<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
         if self.tracking.is_some() {
-            return self.edit_table_properties_in_place(index, |table| {
-                let mut row = table
-                    .row(row)
-                    .ok_or_else(|| Error::Other("row index out of range".to_owned()))?;
-                edit(&mut row)
+            return self.edit_table_part_tracked(index, row, None, |row| {
+                edit(&mut crate::table::Row { inner: row })
             });
         }
         let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
@@ -111,11 +108,10 @@ impl Document {
         edit: impl FnOnce(&mut crate::table::Cell<'_>) -> Result<T>,
     ) -> Result<Option<T>> {
         if self.tracking.is_some() {
-            return self.edit_table_properties_in_place(index, |table| {
-                let mut cell = table
-                    .cell(row, cell)
-                    .ok_or_else(|| Error::Other("cell index out of range".to_owned()))?;
-                edit(&mut cell)
+            return self.edit_table_part_tracked(index, row, Some(cell), |row| {
+                edit(&mut crate::table::Cell {
+                    inner: &mut row.cells[cell],
+                })
             });
         }
         let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
@@ -132,6 +128,85 @@ impl Document {
             return Ok(None);
         }
         *current = edited;
+        self.invalidate_layout();
+        Ok(Some(value))
+    }
+
+    /// Under a session, `edit` on a copy of row `row` (and of its cell
+    /// `cell`, when given) of body table `index`, written as tracked changes
+    /// at the cost of that row: the table's properties and grid with the row
+    /// or cell alone, their cells' content left out, go through the table's
+    /// redline, whose changes are put back. `None` leaves the call to the
+    /// route that refuses it, as the untracked route leaves an edit that
+    /// moves content.
+    fn edit_table_part_tracked<T>(
+        &mut self,
+        index: usize,
+        row: usize,
+        cell: Option<usize>,
+        edit: impl FnOnce(&mut CT_Row) -> Result<T>,
+    ) -> Result<Option<T>> {
+        let table = nth_table_in_body_ref(&self.document.body.content, &mut index.clone())
+            .ok_or_else(|| Error::Other("table index out of range".to_owned()))?;
+        if crate::table::table_holds_controls(table) {
+            return Ok(None);
+        }
+        let current = crate::table::table_row(table, row)
+            .ok_or_else(|| Error::Other("row index out of range".to_owned()))?
+            .clone();
+        if let Some(cell) = cell
+            && cell >= current.cells.len()
+        {
+            return Err(Error::Other("cell index out of range".to_owned()));
+        }
+        let mut edited = current.clone();
+        let value = edit(&mut edited)?;
+        if !same_row_content(&current, &edited) {
+            return Ok(None);
+        }
+        // The row's cells without their content, or the one cell given.
+        let skeleton = |row: &CT_Row| {
+            let mut row = row.clone();
+            if let Some(cell) = cell {
+                row.cells = vec![row.cells[cell].clone()];
+            }
+            for cell in &mut row.cells {
+                cell.content = vec![CellContent::Paragraph(CT_P::default())];
+                cell.extra_xml.clear();
+            }
+            row
+        };
+        let frame = |row: CT_Row| CT_Tbl {
+            properties: table.properties.clone(),
+            grid: table.grid.clone(),
+            rows: vec![row],
+            extra_xml: Vec::new(),
+            content_controls: Vec::new(),
+        };
+        let (before, after) = (frame(skeleton(&current)), frame(skeleton(&edited)));
+        let mut redlined = self.redline_edited_table(&before, after)?;
+        let redlined_row = redlined.rows.remove(0);
+        let table = nth_table_in_body(&mut self.document.body.content, &mut index.clone())
+            .expect("the table read above");
+        table.properties = redlined.properties;
+        table.grid = redlined.grid;
+        let target = crate::table::table_row_mut(table, row).expect("the row read above");
+        target.table_property_exception = redlined_row.table_property_exception;
+        target.properties = redlined_row.properties;
+        match cell {
+            Some(cell) => {
+                target.cells[cell].properties = redlined_row
+                    .cells
+                    .into_iter()
+                    .next()
+                    .and_then(|cell| cell.properties);
+            }
+            None => {
+                for (target, redlined) in target.cells.iter_mut().zip(redlined_row.cells) {
+                    target.properties = redlined.properties;
+                }
+            }
+        }
         self.invalidate_layout();
         Ok(Some(value))
     }

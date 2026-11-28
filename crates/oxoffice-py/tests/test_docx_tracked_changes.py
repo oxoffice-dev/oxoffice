@@ -198,9 +198,7 @@ def test_every_call_behaves_as_its_class(saved, name):
     twin = oxdocx.Document.open(saved)
     ready(twin, name)()
     assert view(after, "accept_all", xml) == view(twin.to_bytes(), "accept_all", xml)
-    # A row's change keeps the row as it is when rejected, as in Word (W8).
-    if not name.startswith("Row."):
-        assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
+    assert view(after, "reject_all", xml) == view(before, "reject_all", xml)
 
 
 def test_a_session_runs_until_it_stops():
@@ -237,6 +235,16 @@ def test_a_refused_call_leaves_no_revision_ids():
     with doc.track_changes("Other", timestamp=STAMP) as other:
         doc.replace_all([("quick", "slow", 1)])
     assert session.revision_ids == () and len(other.revision_ids) == 2
+
+
+def test_a_refused_table_style_adds_no_style():
+    doc = oxdocx.Document()
+    doc.section(0).header.add_table(1, 1)
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP):
+        with pytest.raises(oxdocx.DocxError):
+            doc.section(0).header.tables[0].style = "Light Shading Accent 1"
+    assert doc.to_bytes() == before
 
 
 def test_a_regular_expression_replacement_in_a_text_box_is_refused(tmp_path):

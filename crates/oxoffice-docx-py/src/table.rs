@@ -854,15 +854,18 @@ impl PyTable {
         let index = self.validate(py)?;
         let related = self.current_related(py)?;
         let mut document = self.document.borrow_mut(py);
-        // Under tracked changes, the style made where styles are (untracked),
-        // then the table's property change on its tracked route.
+        // Under tracked changes, the table's property change on its tracked
+        // route, then the style made where styles are (untracked), so that a
+        // refused change leaves no style behind.
         if document.inner.tracks_changes() {
-            let style_id = checked_table_style(py, &mut document.inner, value)?;
+            let style_id = checked_table_style(py, &mut document.inner.clone_for_staging(), value)?;
             drop(document);
-            return self.edit(py, |table| {
+            self.edit(py, |table| {
                 table.set_style(&style_id);
                 Ok(())
-            });
+            })?;
+            checked_table_style(py, &mut self.document.borrow_mut(py).inner, value)?;
+            return Ok(());
         }
         let mut candidate = document.inner.clone_for_staging();
         let style_id = checked_table_style(py, &mut candidate, value)?;
