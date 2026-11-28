@@ -831,20 +831,33 @@ impl Document {
         let Some(tracking) = self.tracking.clone() else {
             return Ok(());
         };
-        if !matches!(
-            location.story.kind(),
-            StoryKind::Header
-                | StoryKind::Footer
-                | StoryKind::Footnote
-                | StoryKind::Endnote
-                | StoryKind::TableCell
-        ) {
-            return Err(super::redline::refused(
-                "an insertion in a comment or a text box",
-            ));
-        }
         // The insertion may have given the story a new identity.
         let location = &self.refreshed_location(location)?;
+        // A cell is a story of its own, also in a comment or a text box,
+        // which a session does not write yet (a text box's two copies).
+        let in_comment = self.comments_part_name.as_deref() == Some(location.story.part_name());
+        match location.story.kind() {
+            StoryKind::Body => {
+                return Err(super::redline::refused(
+                    "an insertion inside a content control",
+                ));
+            }
+            StoryKind::TableCell if in_comment || cell_in_text_box(self, &location.story)? => {
+                return Err(super::redline::refused(
+                    "an insertion in a table of a comment or a text box",
+                ));
+            }
+            StoryKind::Header
+            | StoryKind::Footer
+            | StoryKind::Footnote
+            | StoryKind::Endnote
+            | StoryKind::TableCell => {}
+            _ => {
+                return Err(super::redline::refused(
+                    "an insertion in a comment or a text box",
+                ));
+            }
+        }
         let [start] = location.index_path[..] else {
             return Err(super::redline::refused(
                 "an insertion inside a block of a story",

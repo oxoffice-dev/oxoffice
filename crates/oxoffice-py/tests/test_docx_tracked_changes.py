@@ -415,6 +415,95 @@ def test_an_insertion_in_a_comment_is_refused_without_an_id():
     assert doc.to_bytes() == before and session.revision_ids == ()
 
 
+def made_with_stories(edit, tracked):
+    """A document with a header, a note and a table, `edit` made on it under a session or not: the bytes before and
+    after, and what `edit` answered."""
+    doc = oxdocx.Document()
+    doc.add_paragraph("Body.")
+    doc.section(0).header.add_paragraph("Head.")
+    doc.add_footnote(doc.paragraphs[0], "The note.")
+    doc.add_table(1, 1).cell(0, 0).text = "Cell."
+    before = doc.to_bytes()
+    session = doc.track_changes(AUTHOR, timestamp=STAMP) if tracked else None
+    answer = edit(doc)
+    if session:
+        assert session.revision_ids
+        session.stop()
+    return before, doc.to_bytes(), answer
+
+
+def story_paragraph(doc, kind):
+    return next(item.paragraph for item in doc.story_items if item.story.kind == kind and item.kind == "paragraph")
+
+
+@pytest.mark.parametrize("where", ["header", "footnote", "cell"])
+def test_a_paragraph_inserted_before_one_of_another_story_resolves_both_ways(where):
+    def edit(doc):
+        target = doc.tables[0].cell(0, 0).paragraphs[0] if where == "cell" else story_paragraph(doc, where)
+        target.insert_paragraph_before("New.")
+    before, after, _ = made_with_stories(edit, True)
+    assert view(after, "accept_all") == view(made_with_stories(edit, False)[1], "accept_all")
+    assert view(after, "reject_all") == view(before, "reject_all")
+
+
+def test_two_paragraphs_added_to_a_header_resolve_both_ways():
+    def edit(doc):
+        header = doc.section(0).header
+        header.paragraphs[-1].alignment = scaling.WD_ALIGN_PARAGRAPH.CENTER
+        added = []
+        for text in ("One.", "Two."):
+            added.append(header.add_paragraph(text).text)
+        return added
+    before, after, added = made_with_stories(edit, True)
+    assert added == ["One.", "Two."]
+    twin = made_with_stories(edit, False)[1]
+    assert view(after, "accept_all") == view(twin, "accept_all")
+    assert view(after, "reject_all") == view(before, "reject_all")
+    def alignments(data, resolve):
+        doc = oxdocx.Document.from_bytes(data)
+        getattr(doc, resolve)()
+        with zipfile.ZipFile(io.BytesIO(doc.to_bytes())) as z:
+            header = next(name for name in z.namelist() if re.fullmatch(r"word/header\d+\.xml", name))
+            return [re.findall(r'<w:jc w:val="(\w+)"/>', paragraph)
+                    for paragraph in re.findall(r"<w:p[ >].*?</w:p>", z.read(header).decode())]
+    assert alignments(after, "accept_all") == alignments(twin, "accept_all")
+
+
+def test_an_insertion_in_a_table_of_a_comment_or_a_text_box_is_refused(tmp_path):
+    table = '<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>In.</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>'
+    d = docx.Document()
+    d.add_paragraph("See ")._p.append(parse_xml(
+        f'<w:r {BOX_NAMESPACES}><mc:AlternateContent><mc:Choice Requires="wps">'
+        '<w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="1" name="Box"/><a:graphic>'
+        '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp>'
+        f'<wps:cNvSpPr txBox="1"/><wps:spPr/><wps:txbx><w:txbxContent>{table}</w:txbxContent></wps:txbx><wps:bodyPr/>'
+        '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape>'
+        f'<v:textbox><w:txbxContent>{table}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>'
+        '</mc:AlternateContent></w:r>'))
+    d.save(tmp_path / "box.docx")
+    boxed = oxdocx.Document.open(tmp_path / "box.docx")
+    commented = oxdocx.Document()
+    commented.add_paragraph("Body.")
+    commented.add_comment_on_text("Body", author="Other", text="Note.")
+    with zipfile.ZipFile(io.BytesIO(commented.to_bytes())) as source:
+        parts = {name: source.read(name) for name in source.namelist()}
+    parts["word/comments.xml"] = re.sub(r"(<w:comment [^>]*>)", lambda found: found.group(1) + table,
+                                        parts["word/comments.xml"].decode(), count=1).encode()
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as target:
+        for name, data in parts.items():
+            target.writestr(name, data)
+    commented = oxdocx.Document.from_bytes(out.getvalue())
+    for doc in (boxed, commented):
+        before = doc.to_bytes()
+        with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+            cell = next(item.paragraph for item in doc.story_items
+                        if item.story.kind == "table_cell" and item.kind == "paragraph")
+            with pytest.raises(oxdocx.DocxError, match="not recorded as a tracked change yet"):
+                cell.insert_paragraph_before("More.")
+        assert doc.to_bytes() == before and session.revision_ids == ()
+
+
 def test_an_insertion_outside_the_body_is_refused():
     doc = oxdocx.Document()
     doc.add_paragraph("Body.")
