@@ -1826,6 +1826,218 @@ fn a_copy_ending_the_body_gives_its_revisions_ids_of_their_own() {
     assert_eq!(unique.len(), ids.len(), "{ids:?}");
 }
 
+/// A paragraph moved under a session, in Word's shape (W7): the source keeps
+/// its text in `w:moveFrom`, the copy goes in `w:moveTo`, each side covered
+/// by a range named alike; accepting gives the untracked move, rejecting the
+/// original, and one id resolves it whole.
+#[test]
+fn a_moved_paragraph_is_written_as_word_writes_a_move() {
+    let body = || {
+        doc_with_body(
+            &["Alpha.", "Beta.", "Gamma.", "Delta."]
+                .map(|text| paragraph(&run(text)))
+                .concat(),
+        )
+    };
+    let texts = |doc: &mut Document| {
+        reopen(doc)
+            .paragraphs()
+            .into_iter()
+            .map(|p| p.text())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+    };
+    let locations = |doc: &Document| {
+        (
+            doc.direct_body_item_location(1).unwrap().unwrap(),
+            doc.direct_body_item_location(3).unwrap().unwrap(),
+        )
+    };
+    let mut untracked = body();
+    let (source, destination) = locations(&untracked);
+    untracked.move_content(&source, &destination).unwrap();
+    let mut tracked = body();
+    let (source, destination) = locations(&tracked);
+    let changes = changes();
+    tracked
+        .track_changes(&changes)
+        .move_content(&source, &destination)
+        .unwrap();
+    let mut tracked = reopen(&mut tracked);
+    let xml = tracked.part_xml("/word/document.xml").unwrap();
+    for part in [
+        "moveFromRangeStart",
+        "moveFromRangeEnd",
+        "moveToRangeStart",
+        "moveToRangeEnd",
+    ] {
+        assert_eq!(xml.matches(part).count(), 1, "{part}: {xml}");
+    }
+    let names = xml.match_indices(r#"w:name="move"#).count();
+    assert_eq!(names, 2, "{xml}");
+    let mut ids = xml
+        .match_indices(r#" w:id=""#)
+        .map(|(at, _)| xml[at + 7..].split('"').next().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    // Two wrappers and two marks, two ranges whose start and end share an id.
+    assert_eq!(ids.len(), 6, "{xml}");
+    let mut accepted = reopen(&mut tracked);
+    accepted.accept_all().unwrap();
+    assert_eq!(texts(&mut accepted), texts(&mut untracked));
+    let mut rejected = reopen(&mut tracked);
+    rejected.reject_all().unwrap();
+    assert_eq!(texts(&mut rejected), texts(&mut body()));
+    let first = xml[xml.find("<w:moveFrom ").unwrap()..]
+        .split('"')
+        .nth(1)
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    let mut by_id = reopen(&mut tracked);
+    by_id.accept_revision_id(first).unwrap();
+    assert_eq!(texts(&mut by_id), texts(&mut untracked));
+    assert!(
+        !reopen(&mut by_id)
+            .part_xml("/word/document.xml")
+            .unwrap()
+            .contains("w:move")
+    );
+}
+
+/// What a session cannot move as Word does is refused, the document left as
+/// it was: a block outside the body or inside another, a move to the body's
+/// end, a section break, the last paragraph, a table, a block declaring
+/// namespaces of its own or holding a revision, and a block that the copy
+/// would put twice in the document (a bookmark, a comment, a note
+/// reference, a drawing).
+#[test]
+fn a_move_word_would_not_write_is_refused() {
+    let table = r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>Cell.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+    let body = [
+        paragraph(&run("First.")),
+        table.to_owned(),
+        r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:pPr><w:r><w:t>Section.</w:t></w:r></w:p>"#.to_owned(),
+        paragraph(&by("Other", "ins", 70, &run("Revised."))),
+        paragraph(&format!(
+            r#"<w:bookmarkStart w:id="1" w:name="mark"/>{}<w:bookmarkEnd w:id="1"/>"#,
+            run("Bookmarked.")
+        )),
+        paragraph(&run("Commented.")),
+        paragraph(&run("Noted.")),
+        paragraph(&(run("Drawn.") + &text_box_run(9, &paragraph(&run("Boxed."))))),
+        paragraph(&run("Last.")),
+    ]
+    .concat();
+    let mut doc = doc_with_body(&body);
+    doc.add_comment_on_text("Commented", "Ada", "Note", Default::default())
+        .unwrap();
+    let note = doc.add_footnote("Footnote.");
+    doc.set_header("Head.");
+    let mut doc = reopen(&mut doc);
+    let at = |doc: &Document, text: &str| {
+        doc.story_range_paragraphs()
+            .unwrap()
+            .into_iter()
+            .find(|(_, xml)| String::from_utf8_lossy(xml).contains(text))
+            .unwrap_or_else(|| panic!("{text}"))
+            .0
+    };
+    {
+        // The note reference, after the body is read again.
+        let slot = (0..doc.content_count())
+            .find(|&slot| {
+                doc.direct_body_item_location(slot)
+                    .unwrap()
+                    .is_some_and(|location| {
+                        location.index_path() == at(&doc, "Noted.").index_path()
+                    })
+            })
+            .unwrap();
+        doc.paragraph_mut(slot - 1).unwrap().add_footnote_ref(note);
+    }
+    let mut doc = reopen(&mut doc);
+    // Before "First.", which no source is next to.
+    let kept = at(&doc, "First.");
+    let end = ContentLocation::end(kept.story().clone());
+    let slot = |doc: &Document, at: usize| doc.direct_body_item_location(at).unwrap().unwrap();
+    let rows = [
+        ("Head.", "a move outside the body"),
+        ("Cell.", "a move inside a block"),
+        ("Section.", "the move of a section break"),
+        ("Last.", "the move of the body's last paragraph"),
+        ("Revised.", "holds a revision"),
+        ("Bookmarked.", "holds a bookmark, a comment"),
+        ("Commented", "holds a bookmark, a comment"),
+        ("Noted.", "holds a bookmark, a comment"),
+        ("Drawn.", "holds a bookmark, a comment"),
+    ];
+    let before = doc.to_bytes().unwrap();
+    let changes = changes();
+    let mut failed = Vec::new();
+    let mut attempt = |doc: &mut Document,
+                       row: &str,
+                       source: &ContentLocation,
+                       destination: &ContentLocation,
+                       refusal: &str| {
+        let result = doc
+            .track_changes(&changes)
+            .move_content(source, destination);
+        match result {
+            Err(error) if error.to_string().contains(refusal) => {}
+            other => failed.push(format!("{row}: {other:?}")),
+        }
+        if doc.to_bytes().unwrap() != before {
+            failed.push(format!("{row}: the document changed"));
+        }
+    };
+    for (text, refusal) in rows {
+        let source = at(&doc, text);
+        attempt(&mut doc, text, &source, &kept, refusal);
+    }
+    let source = slot(&doc, 0);
+    attempt(
+        &mut doc,
+        "to the end",
+        &source,
+        &end,
+        "a move to the end of the body",
+    );
+    let source = slot(&doc, 1);
+    attempt(&mut doc, "a table", &source, &kept, "the move of a table");
+    // A block that declares namespaces of its own, in a document of its own.
+    let declares = [
+            // As Word may write a text box: the paragraph declares what it uses.
+            concat!(
+                r#"<w:p xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
+                r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
+                r#"xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">"#,
+                r#"<w:r><w:t>Declares.</w:t></w:r><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">"#,
+                r#"<wp:extent cx="914400" cy="457200"/><wp:docPr id="1" name="Text Box"/><a:graphic><a:graphicData "#,
+                r#"uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/>"#,
+                r#"<wps:spPr/><wps:txbx><w:txbxContent><w:p><w:r><w:t>Boxed.</w:t></w:r></w:p></w:txbxContent></wps:txbx>"#,
+                r#"<wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+            )
+            .to_owned(),
+        paragraph(&run("Kept.")),
+        paragraph(&run("Last.")),
+    ]
+    .concat();
+    let mut doc = doc_with_body(&declares);
+    let mut doc = reopen(&mut doc);
+    let (source, kept) = (slot(&doc, 0), slot(&doc, 2));
+    let before = doc.to_bytes().unwrap();
+    match doc.track_changes(&changes).move_content(&source, &kept) {
+        Err(error) if error.to_string().contains("declares namespaces of its own") => {}
+        other => failed.push(format!("declares: {other:?}")),
+    }
+    if doc.to_bytes().unwrap() != before {
+        failed.push("declares: the document changed".to_owned());
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
 /// An insertion the in-place route does not mark (a paragraph inside a
 /// header's control, a header holding a text box's two copies) is refused
 /// with nothing changed and no id taken.

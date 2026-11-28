@@ -999,6 +999,8 @@ impl Document {
             crate::document::close_content_fragment_namespaces(&tracked_xml, &generated_bindings)?;
         let written = |id: i32| !input_ids.contains(&id);
         tracked_xml = deleted_text_box_contents(&tracked_xml, written, &mut metadata)?;
+        // Moves in Word's shape, which Word reads as moves (F3).
+        tracked_xml = move_pairs::name_moves(&tracked_xml, written, &mut metadata.ids)?;
         // Content from the edited document can use the `w14` its own root
         // declares, which the original root may not.
         declare_w14_on_part_root(&mut tracked_xml)?;

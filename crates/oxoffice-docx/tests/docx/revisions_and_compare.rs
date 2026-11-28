@@ -7397,3 +7397,259 @@ fn a_cell_or_row_property_change_compares_as_its_change() {
         assert_eq!(diagnostics.len(), 1, "{before} -> {after}: {diagnostics:?}");
     }
 }
+
+/// A move as Word writes it (W7): its two sides linked by the `w:name` of
+/// their range starts. Any one of its ids resolves it whole, and resolving
+/// it removes its range marks, as Accept All and Reject All do (F2).
+#[test]
+fn a_named_move_resolves_whole_and_its_range_marks_go() {
+    let by = |kind: &str, id: i32, content: &str| {
+        format!(
+            r#"<w:{kind} w:id="{id}" w:author="Ada" w:date="2026-11-27T18:50:00Z">{content}</w:{kind}>"#
+        )
+    };
+    let mark = |kind: &str, id: i32| {
+        format!(
+            r#"<w:pPr><w:rPr><w:{kind} w:id="{id}" w:author="Ada" w:date="2026-11-27T18:50:00Z"/></w:rPr></w:pPr>"#
+        )
+    };
+    let range = |kind: &str, id: i32| {
+        format!(
+            r#"<w:{kind}RangeStart w:id="{id}" w:author="Ada" w:date="2026-11-27T18:50:00Z" w:name="move1"/>"#
+        )
+    };
+    let text = |value: &str| format!("<w:r><w:t>{value}</w:t></w:r>");
+    let body = [
+        format!(
+            "<w:p>{}{}{}</w:p>",
+            mark("moveFrom", 0),
+            range("moveFrom", 1),
+            by("moveFrom", 2, &text("P1."))
+        ),
+        format!(
+            "<w:p>{}{}</w:p>",
+            mark("moveFrom", 3),
+            by("moveFrom", 4, &text("P2."))
+        ),
+        r#"<w:moveFromRangeEnd w:id="1"/>"#.to_owned(),
+        format!("<w:p>{}</w:p>", text("P3.")),
+        format!(
+            "<w:p>{}{}{}</w:p>",
+            mark("moveTo", 5),
+            range("moveTo", 6),
+            by("moveTo", 7, &text("P1."))
+        ),
+        format!(
+            "<w:p>{}{}</w:p>",
+            mark("moveTo", 8),
+            by("moveTo", 9, &text("P2."))
+        ),
+        r#"<w:moveToRangeEnd w:id="6"/>"#.to_owned(),
+        format!("<w:p>{}</w:p>", text("P4.")),
+    ]
+    .concat();
+    let moved = ["P3.", "P1.", "P2.", "P4."];
+    let kept = ["P1.", "P2.", "P3.", "P4."];
+    for (shape, resolve, expected) in [
+        (
+            "accept all",
+            (|doc: &mut Document| doc.accept_all().map(|_| ()))
+                as fn(&mut Document) -> oxoffice_docx::Result<()>,
+            moved,
+        ),
+        ("reject all", |doc| doc.reject_all().map(|_| ()), kept),
+        (
+            "accept a moveFrom id",
+            |doc| doc.accept_revision_id(2).map(|_| ()),
+            moved,
+        ),
+        (
+            "reject a moveTo mark id",
+            |doc| doc.reject_revision_id(8).map(|_| ()),
+            kept,
+        ),
+        (
+            "accept a range mark id",
+            |doc| doc.accept_revision_id(6).map(|_| ()),
+            moved,
+        ),
+    ] {
+        let mut doc = doc_with_body(&body);
+        resolve(&mut doc).unwrap();
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("/word/document.xml").unwrap();
+        assert!(
+            !xml.contains("Range") && !xml.contains("w:move"),
+            "{shape}: {xml}"
+        );
+        let texts = doc
+            .paragraphs()
+            .into_iter()
+            .map(|p| p.text())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(texts, expected, "{shape}");
+    }
+}
+
+/// Two moves side by side resolve apart: a move's parts are the wrappers
+/// inside its own named range, and a change is selected by its element, so
+/// an id or an author of one move, or an unrelated change that shares an
+/// id number with a part or a range mark, leaves the other move whole.
+#[test]
+fn a_move_resolves_apart_from_the_moves_and_changes_beside_it() {
+    let change = |kind: &str, id: i32, author: &str, content: &str| {
+        format!(
+            r#"<w:{kind} w:id="{id}" w:author="{author}" w:date="2026-11-27T18:50:00Z">{content}</w:{kind}>"#
+        )
+    };
+    // Ada moves "Xa" (ids 10 to 13) and Bob "Yb" (20 to 23), inline in one
+    // paragraph, Ada's range first.
+    let inline_move = |side: &str, range: i32, id: i32, author: &str, text: &str| {
+        format!(
+            r#"<w:{side}RangeStart w:id="{range}" w:author="{author}" w:date="2026-11-27T18:50:00Z" w:name="m{author}"/>{}<w:{side}RangeEnd w:id="{range}"/>"#,
+            change(side, id, author, &format!("<w:r><w:t>{text}</w:t></w:r>"))
+        )
+    };
+    let moves = [
+        inline_move("moveFrom", 10, 11, "Ada", "Xa"),
+        "<w:r><w:t>Keep</w:t></w:r>".to_owned(),
+        inline_move("moveFrom", 20, 21, "Bob", "Yb"),
+        inline_move("moveTo", 12, 13, "Ada", "Xa"),
+        inline_move("moveTo", 22, 23, "Bob", "Yb"),
+    ]
+    .concat();
+    let other = |id: i32| {
+        format!(
+            "<w:p>{}</w:p>",
+            change("ins", id, "Cy", "<w:r><w:t>Cy</w:t></w:r>")
+        )
+    };
+    let ada = [
+        r#"w:id="10""#,
+        r#"w:id="11""#,
+        r#"w:id="12""#,
+        r#"w:id="13""#,
+    ];
+    let bob = [
+        r#"w:id="20""#,
+        r#"w:id="21""#,
+        r#"w:id="22""#,
+        r#"w:id="23""#,
+    ];
+    let mut failed = Vec::new();
+    for (row, body, resolve, gone, kept) in [
+        (
+            "Bob's moveFrom id",
+            format!("<w:p>{moves}</w:p>"),
+            (|doc: &mut Document| doc.accept_revision_id(21).map(|_| ()))
+                as fn(&mut Document) -> oxoffice_docx::Result<()>,
+            &bob[..],
+            &ada[..],
+        ),
+        (
+            "Bob as author",
+            format!("<w:p>{moves}</w:p>"),
+            |doc| doc.reject_revisions_by_author("Bob").map(|_| ()),
+            &bob[..],
+            &ada[..],
+        ),
+        (
+            "Bob's move, beside a change sharing a part's id",
+            format!("<w:p>{moves}</w:p>{}", other(23)),
+            |doc| doc.accept_revision_id(21).map(|_| ()),
+            &[r#"w:id="20""#, r#"w:id="21""#, r#"w:id="22""#][..],
+            &[r#"w:author="Cy""#, r#"w:id="11""#][..],
+        ),
+        (
+            "a change sharing a range mark's id",
+            format!("<w:p>{moves}</w:p>{}", other(22)),
+            |doc| doc.accept_revision_id(22).map(|_| ()),
+            &[r#"w:author="Cy""#][..],
+            &[&bob[..], &ada[..]].concat()[..],
+        ),
+        (
+            "an insertion holding Ada's move",
+            format!("<w:p>{}</w:p>", change("ins", 30, "Cy", &moves)),
+            |doc| doc.accept_revision_id(30).map(|_| ()),
+            &[r#"w:author="Cy""#][..],
+            &[&bob[..], &ada[..]].concat()[..],
+        ),
+    ] {
+        let mut doc = doc_with_body(&body);
+        resolve(&mut doc).unwrap_or_else(|e| panic!("{row}: {e}"));
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("/word/document.xml").unwrap();
+        if gone.iter().any(|id| xml.contains(id)) || !kept.iter().all(|id| xml.contains(id)) {
+            failed.push(format!("{row}: {xml}"));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
+/// A paragraph compare finds moved is written as Word writes a move (W6,
+/// W7): each side covered by a range named alike, every element with an id
+/// of its own, and one id resolves it whole (F3).
+#[test]
+fn a_compared_move_is_written_as_word_writes_one() {
+    let body = |texts: &[&str]| {
+        let mut doc = doc_with_body(
+            &texts
+                .iter()
+                .map(|text| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"))
+                .collect::<String>(),
+        );
+        reopen(&mut doc)
+    };
+    let texts = |doc: &mut Document| {
+        reopen(doc)
+            .paragraphs()
+            .into_iter()
+            .map(|p| p.text())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+    };
+    let mut redlined = body(&["Alpha.", "Beta.", "Gamma.", "Delta."]);
+    let edited = body(&["Alpha.", "Gamma.", "Beta.", "Delta."]);
+    redlined.compare(&edited, AUTHOR, DATE).unwrap();
+    let mut redlined = reopen(&mut redlined);
+    let xml = redlined.part_xml("/word/document.xml").unwrap();
+    for part in [
+        "moveFromRangeStart",
+        "moveFromRangeEnd",
+        "moveToRangeStart",
+        "moveToRangeEnd",
+    ] {
+        assert_eq!(xml.matches(part).count(), 1, "{part}: {xml}");
+    }
+    let mut ids = xml
+        .match_indices(r#" w:id=""#)
+        .filter(|(at, _)| !xml[..*at].ends_with("RangeEnd"))
+        .map(|(at, _)| xml[at + 7..].split('"').next().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let count = ids.len();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), count, "{xml}");
+    let moved = ["Alpha.", "Gamma.", "Beta.", "Delta."];
+    assert_eq!(texts(&mut accepted(&mut redlined)), moved);
+    assert_eq!(
+        texts(&mut rejected(&mut redlined)),
+        ["Alpha.", "Beta.", "Gamma.", "Delta."]
+    );
+    let first = xml[xml.find("<w:moveFrom ").unwrap()..]
+        .split('"')
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut by_id = reopen(&mut redlined);
+    by_id.accept_revision_id(first).unwrap();
+    assert_eq!(texts(&mut by_id), moved);
+    assert!(
+        !reopen(&mut by_id)
+            .part_xml("/word/document.xml")
+            .unwrap()
+            .contains("w:move")
+    );
+}

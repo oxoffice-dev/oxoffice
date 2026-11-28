@@ -29,6 +29,7 @@ const SESSION_OPERATIONS: &[&str] = &[
     "Document.insert_html",
     "Document.insert_paragraph",
     "Document.insert_table",
+    "Document.move_content",
     "Document.pop_content",
     "Document.remove_content",
     "Document.remove_content_range",

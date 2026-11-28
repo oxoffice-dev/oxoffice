@@ -1097,6 +1097,126 @@ impl Document {
         Ok(CT_P::from_xml_fragment(marked.as_bytes())?)
     }
 
+    /// Under a session, direct body paragraph `source` moved before body
+    /// item `destination`, in Word's shape (Word check W7): the paragraph
+    /// stays, its content in `w:moveFrom` and its mark `w:moveFrom`; a copy
+    /// goes before the destination as `w:moveTo`; each side is covered by a
+    /// range, started after the paragraph's properties and ended at body
+    /// level after it, the two ranges named alike. A move of a block holding
+    /// a revision, a table, a content control, a section break or the body's
+    /// last paragraph, or one to the body's end, is refused.
+    #[doc(hidden)]
+    pub fn move_content_tracked(
+        &mut self,
+        source: &ContentLocation,
+        destination: &ContentLocation,
+    ) -> Result<()> {
+        let Some(tracking) = self.tracking.clone() else {
+            return Err(Error::Other("no tracked changes session is on".to_owned()));
+        };
+        let slot = |document: &Document, location: &ContentLocation| -> Result<Option<usize>> {
+            if location.story.part_name() != document.doc_part_name {
+                return Err(super::redline::refused("a move outside the body"));
+            }
+            if location.story.kind() != StoryKind::Body {
+                return Err(super::redline::refused("a move inside a block"));
+            }
+            if location.is_end {
+                return Ok(None);
+            }
+            let [index] = location.index_path[..] else {
+                return Err(super::redline::refused("a move inside a block"));
+            };
+            let items = document.story_items(&location.story)?;
+            let item = items
+                .get(index)
+                .ok_or_else(|| Error::Other("move location out of range".to_owned()))?;
+            item.direct_body_index()?
+                .map(Some)
+                .ok_or_else(|| super::redline::refused("a move of an item that is no body block"))
+        };
+        let from = slot(self, source)?
+            .ok_or_else(|| Error::Other("a move needs a block to move".to_owned()))?;
+        let Some(to) = slot(self, destination)? else {
+            return Err(super::redline::refused("a move to the end of the body"));
+        };
+        let content = &self.document.body.content;
+        let last = content
+            .iter()
+            .rposition(|block| matches!(block, BodyContent::Paragraph(_)));
+        match &content[from] {
+            BodyContent::Paragraph(paragraph)
+                if paragraph
+                    .properties
+                    .as_ref()
+                    .is_some_and(|properties| properties.sect_pr.is_some()) =>
+            {
+                return Err(super::redline::refused("the move of a section break"));
+            }
+            BodyContent::Paragraph(_) if Some(from) == last => {
+                return Err(super::redline::refused(
+                    "the move of the body's last paragraph",
+                ));
+            }
+            BodyContent::Paragraph(_) => {}
+            _ => {
+                return Err(super::redline::refused(
+                    "the move of a table or a content control",
+                ));
+            }
+        }
+        if to == from || to == from + 1 {
+            return Ok(());
+        }
+        if self.block_holds_nested_namespace_owner(&content[from])? {
+            return Err(super::redline::refused(
+                "the move of a block that declares namespaces of its own",
+            ));
+        }
+        // Each side written, then the ids, once nothing is refused.
+        let xml = block_xml(&content[from])?;
+        let sides = ["moveFrom", "moveTo"]
+            .map(|marker| super::redline::moved_block_xml(&xml, &tracking, marker));
+        let [moved_from, moved_to] = sides;
+        let (moved_from, moved_to) = (moved_from?, moved_to?);
+        let mut give = |written: &str| {
+            super::redline::give_ids(written, &tracking, &mut self.identifiers, |_| Ok(()))
+        };
+        let (moved_from, moved_to) = (give(&moved_from)?, give(&moved_to)?);
+        let ranges = self.identifiers.free_revision_ids(2)?;
+        self.identifiers.hold_revision_ids(&ranges);
+        tracking.record(&ranges);
+        let author = quick_xml::escape::escape(tracking.changes.author()).into_owned();
+        let date = tracking.changes.timestamp().map_or(String::new(), |date| {
+            format!(r#" w:date="{}""#, quick_xml::escape::escape(date))
+        });
+        let name = format!("move{}", ranges[0]);
+        let side = |written: &str, kind: &str, id: i32| -> Result<(BodyContent, BodyContent)> {
+            let start = format!(
+                r#"<w:{kind}RangeStart w:id="{id}" w:author="{author}"{date} w:name="{name}"/>"#
+            );
+            // After the paragraph's own properties, which the move's mark gave it.
+            let at = super::redline::after_paragraph_properties(written)?;
+            let paragraph = format!("{}{start}{}", &written[..at], &written[at..]);
+            Ok((
+                BodyContent::Paragraph(Box::new(CT_P::from_xml_fragment(paragraph.as_bytes())?)),
+                BodyContent::RawXml(Box::new(
+                    format!(r#"<w:{kind}RangeEnd xmlns:w="{}" w:id="{id}"/>"#, W_NS).into_bytes(),
+                )),
+            ))
+        };
+        let (from_paragraph, from_end) = side(&moved_from, "moveFrom", ranges[0])?;
+        let (to_paragraph, to_end) = side(&moved_to, "moveTo", ranges[1])?;
+        let content = &mut self.document.body.content;
+        content[from] = from_paragraph;
+        content.insert(from + 1, from_end);
+        let to = if to > from { to + 1 } else { to };
+        content.insert(to, to_paragraph);
+        content.insert(to + 1, to_end);
+        self.invalidate_layout();
+        Ok(())
+    }
+
     /// Place `block` at body index `slot`, a block
     /// [`Self::marked_inserted_block`] wrote, where a splice placed its plan.
     #[doc(hidden)]
@@ -1566,6 +1686,16 @@ impl TrackedDocument<'_> {
             document.insert_tracked_block(slot, BodyContent::Paragraph(Box::new(paragraph)))?;
             Ok(slot)
         })
+    }
+
+    /// [`Document::move_content`] written as a move, in Word's shape (Word
+    /// check W7).
+    pub fn move_content(
+        &mut self,
+        source: &ContentLocation,
+        destination: &ContentLocation,
+    ) -> Result<()> {
+        self.run(|document| document.move_content_tracked(source, destination))
     }
 
     /// [`Document::remove_content_range`] written as a deletion, as Word

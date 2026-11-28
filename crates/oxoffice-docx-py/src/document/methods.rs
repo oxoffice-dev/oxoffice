@@ -5565,9 +5565,12 @@ impl PyDocument {
         let destination = Self::location_argument(&slf, py, destination, "destination")?;
         let mut document = slf.borrow_mut(py);
         let mut candidate = document.inner.clone_for_staging();
-        candidate
-            .move_content(&source, &destination)
-            .map_err(|error| docx_to_pyerr(py, error))?;
+        // Under a session, the move is written as Word writes one.
+        match candidate.tracks_changes() {
+            true => candidate.move_content_tracked(&source, &destination),
+            false => candidate.move_content(&source, &destination),
+        }
+        .map_err(|error| docx_to_pyerr(py, error))?;
         let prepared = document.prepare_word_revision(
             py,
             &candidate,

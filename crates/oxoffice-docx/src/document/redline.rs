@@ -2197,6 +2197,13 @@ pub(super) fn deleted_block_xml(
     marked_block_xml(xml, tracking, "del", keep_last_mark, content, previous)
 }
 
+/// [`inserted_block_xml`] for one side of a move: `w:moveFrom` or
+/// `w:moveTo` (`marker`), texts kept as `w:t`, a block holding a revision
+/// refused (Word check W7).
+pub(super) fn moved_block_xml(xml: &str, tracking: &Tracking, marker: &str) -> Result<String> {
+    marked_block_xml(xml, tracking, marker, false, true, None)
+}
+
 fn marked_block_xml(
     xml: &str,
     tracking: &Tracking,
@@ -2252,8 +2259,18 @@ fn marked_block_xml(
     let open =
         format!("<{prefix}{marker} {prefix}id=\"{ID_MARK}\" {prefix}author=\"{author}\"{date}>");
     let close = format!("</{prefix}{marker}>");
-    if deleted && holds_revision(&root) {
-        return Err(refused("the removal of a block that holds a revision"));
+    if (deleted || marker.starts_with("move")) && holds_revision(&root) {
+        return Err(refused(match deleted {
+            true => "the removal of a block that holds a revision",
+            false => "the move of a block that holds a revision",
+        }));
+    }
+    // A move writes its block twice; what one document holds once would be
+    // twice in it.
+    if marker.starts_with("move") && holds_word(&root, ONCE_IN_A_DOCUMENT) {
+        return Err(refused(
+            "the move of a block that holds a bookmark, a comment, a note reference or a drawing",
+        ));
     }
     let mut paragraphs = Vec::new();
     match root.word && root.local == "p" {
@@ -2627,6 +2644,30 @@ fn opened(xml: &str, node: &Node, content: &str) -> Result<String> {
 
 /// Whether `node` holds a revision: a wrapper, a mark or a row marked, or a
 /// property change.
+/// The elements a document holds once, by their id or name.
+const ONCE_IN_A_DOCUMENT: &[&str] = &[
+    "bookmarkStart",
+    "bookmarkEnd",
+    "commentRangeStart",
+    "commentRangeEnd",
+    "commentReference",
+    "footnoteReference",
+    "endnoteReference",
+    "drawing",
+    "pict",
+    "object",
+];
+
+/// Whether `node` holds a WordprocessingML element of one of these names.
+fn holds_word(node: &Node, names: &[&str]) -> bool {
+    node.children.iter().any(|child| match child {
+        Child::Element(element) => {
+            (element.word && names.contains(&element.local.as_str())) || holds_word(element, names)
+        }
+        Child::Text(_) => false,
+    })
+}
+
 fn holds_revision(node: &Node) -> bool {
     node.children.iter().any(|child| match child {
         Child::Element(element) => {
@@ -2690,4 +2731,13 @@ fn rename_deleted_texts(
         }
     }
     Ok(())
+}
+
+/// Where the content of `xml`, a paragraph written alone, starts: after its
+/// properties, or after its start tag when it has none.
+pub(super) fn after_paragraph_properties(xml: &str) -> Result<usize> {
+    let paragraph = first_word_element(xml, "p")?;
+    Ok(word_children(&paragraph, "pPr")
+        .next()
+        .map_or(paragraph.start.end, |properties| properties.span().end))
 }

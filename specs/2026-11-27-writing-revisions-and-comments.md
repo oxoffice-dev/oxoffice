@@ -578,6 +578,22 @@ What PR 3e settles:
   content as inserted. The note's mark, its story's final one, stays unmarked (W12). Rejecting it removes the note,
   and accepting it keeps it. A note reference added any other way stays refused in an insertion.
 
+What PR 4 settles:
+
+- **The resolver links a move by name** (F2): the `w:moveFrom` and `w:moveTo` wrappers and marks between each range
+  start and its end, the first paragraph's mark included, and the range marks, form one move with the other side
+  of the same `w:name`. Any one of its ids, its author, its date or every change resolves it whole, and the
+  resolution removes its range marks. A range end written at body level after the last moved paragraph, as Word
+  writes it (W7), is crossed when a paragraph mark goes.
+- **`move_content` under a session** moves a direct body paragraph in Word's shape (W7): the paragraph stays as
+  `w:moveFrom` (texts kept as `w:t`), a copy goes before the destination as `w:moveTo`, and each side has a range,
+  started after the paragraph's properties and ended at body level after it, the two named `move<id>`. Every
+  element has its own id. Refused: a table, a content control, a section break, a block holding a revision or
+  declaring namespaces of its own, the body's last paragraph, or a destination at the body's end.
+- **Compare writes its moves the same way** (F3, W6): each element of a move gets an id of its own, and each side a
+  named range. A move at the body's end, whose mark sits on a paragraph it does not move, keeps its previous shape.
+  The moves in text boxes and other stories keep theirs too.
+
 ## Amendment: PR 3f (2026-11-28)
 
 - Under a session, `HeaderFooter.add_paragraph`/`add_table` and `FootnoteEndnote.add_paragraph`/`add_table` insert
