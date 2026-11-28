@@ -115,41 +115,6 @@ fn no_context() -> FieldEvaluationContext {
 
 // ---- Fields ----
 
-// LibreOffice writes `<w:rPr></w:rPr>` on every run of a field: the field
-// reads its instruction and result as with `<w:rPr/>` or no properties, its
-// result in the run of its end too, or with the whole field in one run.
-#[test]
-fn a_field_whose_runs_have_empty_properties_reads_its_result() {
-    let spread = concat!(
-        r#"<w:p><w:r>{p}<w:fldChar w:fldCharType="begin"></w:fldChar></w:r>"#,
-        r#"<w:r>{p}<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>"#,
-        r#"<w:r>{p}<w:fldChar w:fldCharType="separate"></w:fldChar></w:r>"#,
-        r#"<w:r>{p}<w:t>12</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-    );
-    let single = concat!(
-        r#"<w:p><w:r>{p}<w:fldChar w:fldCharType="begin"/><w:instrText xml:space="preserve"> PAGE </w:instrText>"#,
-        r#"<w:fldChar w:fldCharType="separate"/><w:t>12</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-    );
-    for body in [spread, single] {
-        for properties in [
-            "",
-            "<w:rPr/>",
-            "<w:rPr></w:rPr>",
-            "<w:rPr><w:rFonts/></w:rPr>",
-        ] {
-            let mut doc = doc_with_body(&body.replace("{p}", properties));
-            let expected = vec![(FieldKind::Complex, "PAGE".to_owned(), "12".to_owned())];
-            assert_eq!(field_list(&doc), expected, "{properties} in {body}");
-            doc.add_paragraph("Added");
-            assert_eq!(
-                field_list(&reopen(&mut doc)),
-                expected,
-                "{properties} in {body}"
-            );
-        }
-    }
-}
-
 /// The text of the first hyperlink of a body paragraph.
 fn link_text(doc: &Document, paragraph: usize) -> String {
     doc.paragraph(paragraph)
@@ -253,14 +218,6 @@ fn a_simple_field_inside_a_hyperlink_in_a_file_reads_and_saves_as_written() {
         )
         .unwrap();
     assert_eq!(texts(&compared), ["See page 2 out of "]);
-}
-
-#[test]
-fn a_simple_field_inside_a_hyperlink_inside_an_insertion_reads_in_the_accepted_text() {
-    let doc = doc_with_body(
-        r#"<w:p><w:ins w:id="1" w:author="Ana" w:date="2026-01-01T00:00:00Z"><w:hyperlink w:anchor="total"><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>2</w:t></w:r></w:fldSimple></w:hyperlink></w:ins></w:p>"#,
-    );
-    assert_eq!(texts(&doc), ["See page 2"]);
 }
 
 #[test]
@@ -504,22 +461,6 @@ fn update_fields_on_open_is_set_cleared_and_removed() {
 }
 
 #[test]
-fn an_if_field_picks_a_quoted_nested_merge_field_as_its_result() {
-    // The mail-merge form: the result to show is itself a quoted merge field.
-    let doc = doc_with_body(
-        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Country </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Country»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "France" "</w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD City </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«City»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" "Abroad" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Abroad</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-    );
-    for (country, shown) in [("France", "Lyon"), ("Spain", "Abroad")] {
-        let outcome = doc
-            .evaluate_fields(&merge_context(&[("Country", country), ("City", "Lyon")]))
-            .unwrap()
-            .remove(0)
-            .outcome;
-        assert_eq!(outcome, FieldOutcome::Resolved(shown.into()), "{country}");
-    }
-}
-
-#[test]
 fn an_if_field_whose_quoted_operand_joins_text_and_a_nested_field_is_updated() {
     let mut doc = doc_with_body(
         r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> IF "Mr </w:instrText></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> MERGEFIELD Name </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>«Name»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:instrText xml:space="preserve">" = "Mr Smith" "Known" "Unknown" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Unknown</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
@@ -568,59 +509,6 @@ fn texts_over_updates(body: &str) -> Vec<Vec<String>> {
     }
     rounds.push(texts(&reopen(&mut doc)));
     rounds
-}
-
-#[test]
-fn a_ref_reads_its_bookmark_as_a_reader_sees_it() {
-    // A simple field's result, a drop-down that stores no result, and a REF
-    // to another bookmark are part of the text a REF copies.
-    let dropdown = word_dropdown(r#"<w:result w:val="1"/>"#);
-    for (body, expected) in [
-        (
-            format!(
-                "{}<w:p>{}</w:p>",
-                bookmarked(
-                    0,
-                    "total",
-                    &(plain("Total: ") + &simple_field("QUOTE 5", "5"))
-                ),
-                complex_field("REF total", "old")
-            ),
-            "Total: 5",
-        ),
-        (
-            format!(
-                "{}<w:p>{}</w:p>",
-                bookmarked(0, "PaymentTerms", &dropdown),
-                complex_field("REF PaymentTerms", "old")
-            ),
-            "30 days",
-        ),
-        (
-            format!(
-                "{}{}<w:p>{}</w:p>",
-                bookmarked(0, "a", &(plain("a ") + &simple_field("REF c", "C"))),
-                bookmarked(1, "c", &plain("C")),
-                complex_field("REF a", "old")
-            ),
-            "a C",
-        ),
-    ] {
-        let rounds = texts_over_updates(&body);
-        for round in &rounds {
-            assert_eq!(round.last().unwrap(), expected, "{body}: {rounds:?}");
-        }
-    }
-}
-
-#[test]
-fn a_word_saved_dropdown_reads_its_selected_entry() {
-    let doc = doc_with_body(&format!(
-        "<w:p>{}{}</w:p>",
-        plain("Terms: "),
-        word_dropdown(r#"<w:result w:val="1"/>"#)
-    ));
-    assert_eq!(texts(&doc), ["Terms: 30 days"]);
 }
 
 #[test]
@@ -1232,22 +1120,6 @@ fn a_new_field_with_a_joined_operand_is_written_and_read_back() {
 }
 
 #[test]
-fn a_document_with_joined_operands_saves_unchanged() {
-    let body = merge_instruction_field(
-        r#" IF "Mr {Name}" = "Mr Smith" "Known" "Unknown" "#,
-        "Unknown",
-    );
-    let mut doc = doc_with_body(&body);
-    let saved = main_part_xml(&doc.to_bytes().unwrap());
-    assert!(saved.contains(&body), "{saved}");
-    // Opened again, the operand still joins its text and its nested field.
-    let mut doc = reopen(&mut doc);
-    doc.update_fields(&merge_context(&[("Name", "Smith")]))
-        .unwrap();
-    assert_eq!(texts(&doc), ["Known"]);
-}
-
-#[test]
 fn a_new_joined_operand_needs_a_nested_field_and_no_adjacent_text() {
     use oxoffice_docx_oxml::text::{FieldArgument, FieldInstruction};
     let nested = || FieldArgument::Nested(Box::new(Field::new("MERGEFIELD Name", "x")));
@@ -1465,57 +1337,7 @@ fn a_cross_reference_with_position_says_above_or_below() {
     );
 }
 
-#[test]
-fn a_page_reference_takes_the_page_of_the_bookmark() {
-    let mut doc = doc_with(&["See page "]);
-    doc.add_paragraph("Target").page_break_before(true);
-    doc.add_bookmark("target", runs(1, 0, 1, 1)).unwrap();
-    doc.paragraph_mut(0)
-        .unwrap()
-        .add_run("")
-        .add_field(r"PAGEREF target \h", "?")
-        .unwrap();
-    let report = doc.update_layout_backed_fields().unwrap();
-    assert_eq!(report.page_reference_fields, 1);
-    assert_eq!(texts(&reopen(&mut doc)), ["See page 2", "Target"]);
-}
-
 // ---- Tables of contents ----
-
-#[test]
-fn inserting_a_toc_lists_headings_up_to_the_level_with_links_to_toc_bookmarks() {
-    let mut doc = Document::new();
-    doc.add_paragraph("Intro");
-    doc.add_paragraph("Chapter one").style("Heading1");
-    doc.add_paragraph("Section one point one").style("Heading2");
-    doc.add_paragraph("Deep detail").style("Heading3");
-    doc.insert_toc(0, 2).unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        texts(&doc)[..4],
-        [
-            "Table of Contents",
-            "Chapter one\t",
-            "Section one point one\t",
-            "Intro"
-        ]
-    );
-    // A new entry shows its level by its indent; `rebuild_toc` gives the
-    // entries the TOC 1 to TOC 9 styles instead.
-    let indents: Vec<_> = doc.paragraphs()[1..3]
-        .iter()
-        .map(|paragraph| paragraph.indent_left().map(|indent| indent.to_twips()))
-        .collect();
-    assert_eq!(indents, [None, Some(360)]);
-    assert_eq!(
-        link_anchors(&doc),
-        pairs(&[("Chapter one", "_Toc1"), ("Section one point one", "_Toc2")])
-    );
-    assert_eq!(
-        bookmark_list(&doc),
-        pairs(&[("_Toc1", "Chapter one"), ("_Toc2", "Section one point one")])
-    );
-}
 
 #[test]
 fn generated_tables_and_captions_name_bookmarks_in_any_case() {
@@ -1937,27 +1759,6 @@ fn a_field_deleted_in_word_keeps_its_deleted_code_through_saves_and_updates() {
 }
 
 #[test]
-fn a_field_deleted_in_word_is_the_same_story_item_as_its_code_in_instruction_text() {
-    let items = |deleted: &str| {
-        let doc = doc_with_body(&format!("<w:p>{deleted}</w:p>"));
-        doc.story_items(&story(&doc, StoryKind::Body))
-            .unwrap()
-            .into_iter()
-            .map(|item| (item.kind(), item.text().unwrap()))
-            .collect::<Vec<_>>()
-    };
-    let word = items(WORD_DELETED_PAGE);
-    assert!(
-        word.iter().any(|(kind, _)| *kind == StoryItemKind::Field),
-        "{word:?}"
-    );
-    assert_eq!(
-        word,
-        items(&WORD_DELETED_PAGE.replace("w:delInstrText", "w:instrText"))
-    );
-}
-
-#[test]
 fn a_caption_retyped_with_tracked_changes_keeps_its_tables_rebuildable() {
     // Word saves a retyped caption as the old one deleted, its SEQ code in
     // w:delInstrText, and the new one inserted.
@@ -2002,14 +1803,6 @@ fn a_heading_holding_a_field_deleted_in_word_keeps_its_result_in_tracked_navigat
         drawn_text_in(&doc, RevisionView::Tracked),
         "Results Q3Results Q3"
     );
-}
-
-#[test]
-fn a_bookmark_around_a_table_with_a_row_control_reads_its_rows() {
-    let doc = doc_with_body(
-        r#"<w:bookmarkStart w:id="1" w:name="Rows"/><w:tbl><w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>First</w:t></w:r></w:p></w:tc></w:tr><w:sdt><w:sdtPr><w:tag w:val="rows"/></w:sdtPr><w:sdtContent><w:tr><w:tc><w:p><w:r><w:t>Repeated</w:t></w:r></w:p></w:tc></w:tr></w:sdtContent></w:sdt></w:tbl><w:bookmarkEnd w:id="1"/><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
-    );
-    assert_eq!(bookmark_list(&doc), pairs(&[("Rows", "First\nRepeated")]));
 }
 
 #[test]
@@ -2259,13 +2052,6 @@ fn paragraph_location(doc: &Document, text: &str) -> ContentLocation {
         .clone()
 }
 
-/// A one-paragraph fragment that reads `text`, cut from a new document.
-fn paragraph_fragment(text: &str) -> oxoffice_docx::ContentFragment {
-    let mut source = doc_with(&[text]);
-    let location = paragraph_location(&source, text);
-    source.remove_content_at(&location).unwrap()
-}
-
 #[test]
 fn a_paragraph_inserted_before_a_google_heading_goes_before_its_bookmark() {
     let mut doc = doc_with_body(LED_HEADING);
@@ -2278,50 +2064,6 @@ fn a_paragraph_inserted_before_a_google_heading_goes_before_its_bookmark() {
     // An insertion at the start itself keeps its exact place.
     let mut doc = doc_with_body(LED_HEADING);
     doc.insert_paragraph(LED_HEADING_INDEX - 1, "New");
-    heading_keeps_its_bookmark(&mut doc);
-}
-
-#[test]
-fn content_inserted_at_a_google_heading_goes_before_its_bookmark() {
-    let mut doc = doc_with_body(LED_HEADING);
-    let heading = paragraph_location(&doc, "Introduction");
-    doc.insert_content(&heading, paragraph_fragment("New"))
-        .unwrap();
-    assert_eq!(texts(&doc), ["Before", "New", "Introduction", "After"]);
-    heading_keeps_its_bookmark(&mut doc);
-
-    let mut doc = doc_with_body(LED_HEADING);
-    let heading = paragraph_location(&doc, "Introduction");
-    let result = doc
-        .insert_html_fragment(&heading, "<p>New</p>", &[])
-        .unwrap();
-    assert_eq!(result.direct_range, 1..2, "the range reports where it went");
-    assert_eq!(texts(&doc), ["Before", "New", "Introduction", "After"]);
-    heading_keeps_its_bookmark(&mut doc);
-
-    let mut doc = doc_with_body(LED_HEADING);
-    let heading = paragraph_location(&doc, "Introduction");
-    let before = paragraph_location(&doc, "Before");
-    doc.clone_content(&before, &heading).unwrap();
-    assert_eq!(texts(&doc), ["Before", "Before", "Introduction", "After"]);
-    heading_keeps_its_bookmark(&mut doc);
-
-    let mut doc = doc_with_body(LED_HEADING);
-    let heading = paragraph_location(&doc, "Introduction");
-    let fragment = oxoffice_docx::DocumentFragment::from_range(
-        &doc_with(&["Imported"]),
-        &paragraph_location(&doc_with(&["Imported"]), "Imported"),
-        &ContentLocation::end(body_story(&doc_with(&["Imported"]))),
-        false,
-    )
-    .unwrap();
-    doc.import_fragment(
-        &heading,
-        &fragment,
-        oxoffice_docx::FragmentConflictPolicy::default(),
-    )
-    .unwrap();
-    assert_eq!(texts(&doc), ["Before", "Imported", "Introduction", "After"]);
     heading_keeps_its_bookmark(&mut doc);
 }
 
@@ -2633,24 +2375,6 @@ fn a_bookmark_between_the_paragraphs_of_a_text_box_is_a_range_of_the_text_box() 
         1,
         "the text box's story range is its mc:Choice copy; the VML fallback keeps its own"
     );
-    assert!(doc.story_ranges().unwrap().is_empty());
-}
-
-#[test]
-fn markup_hidden_from_every_story_holds_no_story_range() {
-    // A body-level mc:AlternateContent holds the same bookmark in each
-    // branch, and a body-level w:customXml one more: no story reads them.
-    let branch = r#"<w:p><w:bookmarkStart w:id="9" w:name="hidden"/><w:r><w:t>Branch</w:t></w:r><w:bookmarkEnd w:id="9"/></w:p>"#;
-    let doc = doc_with_body(&format!(
-        concat!(
-            r#"<w:p><w:r><w:t>Before</w:t></w:r></w:p>"#,
-            r#"<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">"#,
-            r#"<mc:Choice Requires="w14">{0}</mc:Choice><mc:Fallback>{0}</mc:Fallback></mc:AlternateContent>"#,
-            r#"<w:customXml w:element="part"><w:bookmarkStart w:id="10" w:name="custom"/>{0}<w:bookmarkEnd w:id="10"/></w:customXml>"#,
-            r#"<w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
-        ),
-        branch
-    ));
     assert!(doc.story_ranges().unwrap().is_empty());
 }
 

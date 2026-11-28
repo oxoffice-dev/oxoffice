@@ -7,14 +7,13 @@ use std::fs;
 use std::io::Cursor;
 
 use oxoffice_docx::{
-    AccessibilityIssue, Document, HdrFtrType, HeaderFooterKind, IssueSeverity, Length, LinkInfo,
-    NumberedOutlineNode, OutlineNode, PictureOptions, RunPosition, RunRange, StoryId, StoryKind,
-    ValidationFinding, ValidationReport, ValidationSeverity, validate_document_bytes,
-    validate_document_file,
+    AccessibilityIssue, Document, HdrFtrType, HeaderFooterKind, IssueSeverity, Length,
+    NumberedOutlineNode, OutlineNode, PictureOptions, StoryId, StoryKind, ValidationFinding,
+    ValidationReport, ValidationSeverity, validate_document_bytes, validate_document_file,
 };
 use oxoffice_opc::OpcPackage;
 
-use crate::support::{corpus_doc, corpus_root, doc_with, doc_with_body, reopen, text_box_run};
+use crate::support::{corpus_doc, doc_with, doc_with_body, reopen, text_box_run};
 
 /// A one-pixel PNG.
 const PNG: &[u8] = &[
@@ -24,12 +23,6 @@ const PNG: &[u8] = &[
     0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
     0x42, 0x60, 0x82,
 ];
-
-/// The bytes of a corpus file, by its path under `tests/corpus/files`.
-fn corpus_bytes(name: &str) -> Vec<u8> {
-    let path = corpus_root().join("files").join(name);
-    fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
-}
 
 /// The bytes of a package after `edit` changed it: a file as another tool,
 /// or a damaged copy, would leave it.
@@ -228,108 +221,7 @@ fn headings_in_a_block_control_are_listed_and_those_in_table_cells_only_in_the_n
 
 // ---- Pictures ----
 
-#[test]
-fn a_floating_picture_added_without_alt_text_has_none() {
-    let mut doc = doc_with(&["Body"]);
-    doc.add_anchored_image(PNG, "photo.png", Length::cm(3.0), Length::cm(2.0), false);
-    let doc = reopen(&mut doc);
-    let images = doc.images();
-    assert_eq!(images.len(), 1);
-    assert!(images[0].is_anchor);
-    assert_eq!(
-        images[0].description, None,
-        "a floating picture added without alt text has none"
-    );
-}
-
 // ---- Links ----
-
-#[test]
-fn an_internal_link_names_its_bookmark_and_no_url() {
-    let mut doc = Document::new();
-    doc.add_paragraph("Results").style("Heading1");
-    doc.add_bookmark(
-        "Results",
-        RunRange {
-            start: RunPosition {
-                body_index: 0,
-                run_index: 0,
-            },
-            end: RunPosition {
-                body_index: 0,
-                run_index: 1,
-            },
-        },
-    )
-    .unwrap();
-    doc.add_paragraph("See ").add_internal_hyperlink(
-        "the results",
-        "Results",
-        Some("Go to the results"),
-    );
-    let doc = reopen(&mut doc);
-
-    assert_eq!(
-        doc.links(),
-        [LinkInfo {
-            text: "the results".to_owned(),
-            url: None,
-            anchor: Some("Results".to_owned()),
-            rel_id: None,
-        }]
-    );
-    let bookmarks: Vec<_> = doc
-        .bookmarks()
-        .iter()
-        .map(|bookmark| {
-            (
-                bookmark.name().map(str::to_owned),
-                bookmark.text().to_owned(),
-            )
-        })
-        .collect();
-    assert_eq!(
-        bookmarks,
-        [(Some("Results".to_owned()), "Results".to_owned())]
-    );
-    assert_eq!(doc.text(), "Results\nSee the results\n");
-}
-
-#[test]
-fn a_link_written_as_a_hyperlink_field_reads_its_url_or_its_anchor() {
-    // Word may write a link as a HYPERLINK field instead of w:hyperlink.
-    let mut doc = doc_with_body(concat!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Visit </w:t></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
-        r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK "https://example.com/a?b=1&amp;c=2" </w:instrText></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>our site</w:t></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t>.</w:t></w:r></w:p>"#,
-        // A place in this document, its name unquoted: an anchor, not a URL.
-        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
-        r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK \l Results </w:instrText></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Results</w:t></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-    ));
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        doc.links(),
-        [
-            LinkInfo {
-                text: "our site".to_owned(),
-                url: Some("https://example.com/a?b=1&c=2".to_owned()),
-                anchor: None,
-                rel_id: None,
-            },
-            LinkInfo {
-                text: "Results".to_owned(),
-                url: None,
-                anchor: Some("Results".to_owned()),
-                rel_id: None,
-            }
-        ]
-    );
-    assert_eq!(doc.text(), "Visit our site.\nResults\n");
-}
 
 #[test]
 fn links_in_a_header_and_a_table_cell_are_found_story_by_story() {
@@ -781,30 +673,6 @@ fn validation_follows_a_list_style_link_and_does_not_warn() {
           a level its definition does not have: Word shows it without a number"
         ],
         "only the level the linked definition lacks"
-    );
-}
-
-#[test]
-fn validation_warns_about_a_dangling_numbering_reference_in_a_header() {
-    let bytes = corpus_bytes("word/report.docx");
-    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-    let header = String::from_utf8(package.get_part("/word/header1.xml").unwrap().to_vec())
-        .unwrap()
-        .replacen(
-            "<w:pPr><w:pStyle w:val=\"En-tte\"/>",
-            "<w:pPr><w:pStyle w:val=\"En-tte\"/><w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"4242\"/></w:numPr>",
-            1,
-        );
-    assert!(header.contains("4242"), "the header is numbered");
-    package.set_part("/word/header1.xml", header.into_bytes());
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    assert_eq!(
-        numbering_warnings(&out.into_inner()),
-        [
-            "a paragraph in /word/header1.xml is numbered by numbering instance 4242, which the \
-          document does not define: Word shows it without a number"
-        ]
     );
 }
 

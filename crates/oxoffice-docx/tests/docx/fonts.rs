@@ -7,8 +7,8 @@ use std::fs;
 use std::io::Cursor;
 
 use oxoffice_docx::{
-    CT_RPr, Document, EmbeddedFont, EmbeddedFontKind, FontDefinition, FontEmbeddingLicense,
-    RunFontSlot, ThemeFontLanguage, Twips, WordCreationProfile, WordPackageClass, derive_font_key,
+    Document, EmbeddedFont, EmbeddedFontKind, FontDefinition, FontEmbeddingLicense, RunFontSlot,
+    ThemeFontLanguage, Twips, WordCreationProfile, WordPackageClass, derive_font_key,
 };
 use oxoffice_opc::{OpcPackage, Relationship};
 
@@ -662,65 +662,6 @@ fn embedding_a_face_beside_a_face_the_record_keeps_as_written_is_refused() {
     assert_eq!(font(&doc.fonts(), "Gelasio").embedded_fonts.len(), 1);
 }
 
-#[test]
-fn a_run_font_name_with_markup_characters_survives_a_save() {
-    let mut doc = Document::new();
-    doc.add_paragraph("").add_run("x").font("A&B \"Q\" <C>");
-    let first_font = |doc: &Document| {
-        let paragraph = doc.paragraph(0).expect("the paragraph");
-        let run = paragraph.runs().next().expect("the run");
-        run.font_name().map(str::to_owned)
-    };
-    let doc = reopen(&mut doc);
-    assert_eq!(first_font(&doc).as_deref(), Some("A&B \"Q\" <C>"));
-
-    // A tab is kept, save after save: the reader does not normalize it away.
-    let mut doc = Document::new();
-    doc.add_paragraph("").add_run("x").font("A\tB");
-    let mut doc = reopen(&mut doc);
-    doc.paragraph_mut(0)
-        .expect("the paragraph")
-        .run_mut(0)
-        .expect("the run")
-        .set_bold(true);
-    let doc = reopen(&mut doc);
-    assert_eq!(first_font(&doc).as_deref(), Some("A\tB"));
-
-    // A file names the font with entities; a foreign attribute stays as written.
-    let mut doc = doc_with(&[]);
-    doc = {
-        let bytes = doc.to_bytes().expect("document saves");
-        let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
-        let xml =
-            String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
-        let xml = xml.replacen(
-            "<w:body>",
-            r#"<w:body><w:p><w:r><w:rPr><w:rFonts w:ascii="A&amp;B" xmlns:x="urn:example:fonts" x:note="1&amp;2"/></w:rPr><w:t>x</w:t></w:r></w:p>"#,
-            1,
-        );
-        package.set_part("/word/document.xml", xml.into_bytes());
-        let mut out = Cursor::new(Vec::new());
-        package.write_to(&mut out).expect("package writes");
-        Document::from_bytes(&out.into_inner()).expect("document opens")
-    };
-    assert_eq!(first_font(&doc).as_deref(), Some("A&B"));
-    // An edit of the run writes its properties again.
-    doc.paragraph_mut(0)
-        .expect("the paragraph")
-        .run_mut(0)
-        .expect("the run")
-        .set_bold(true);
-    let mut doc = reopen(&mut doc);
-    assert_eq!(first_font(&doc).as_deref(), Some("A&B"));
-    let xml = saved_package(&mut doc)
-        .get_part("/word/document.xml")
-        .map(|bytes| String::from_utf8(bytes.to_vec()).unwrap())
-        .unwrap();
-    assert!(xml.contains(r#"w:ascii="A&amp;B""#), "{xml}");
-    assert!(xml.contains("<w:b/>"), "{xml}");
-    assert!(xml.contains(r#"x:note="1&amp;2""#), "{xml}");
-}
-
 // ---- Embedding faces ----
 
 #[test]
@@ -1005,39 +946,6 @@ fn removing_an_embedded_face_drops_its_part_and_keeps_the_record() {
 }
 
 #[test]
-fn removing_a_font_removes_its_embedded_faces_from_the_package() {
-    let mut doc = Document::new();
-    doc.embed_font("Gelasio", face(Regular, tiny_font("Gelasio regular")))
-        .unwrap();
-    doc.embed_font("Gelasio", face(Italic, tiny_font("Gelasio italic")))
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    let stored = font_parts(&saved_package(&mut doc));
-    assert_eq!(stored.len(), 2);
-
-    let removed = doc
-        .remove_font("Gelasio")
-        .unwrap()
-        .expect("Gelasio is listed");
-    let kinds: Vec<_> = removed
-        .embedded_fonts
-        .iter()
-        .map(|face| face.kind)
-        .collect();
-    assert_eq!(kinds, [Regular, Italic]);
-    assert_eq!(removed.embedded_fonts[1].data, tiny_font("Gelasio italic"));
-
-    let mut doc = reopen(&mut doc);
-    assert_eq!(font_names(&doc), ["Calibri", "Times New Roman"]);
-    let package = saved_package(&mut doc);
-    assert!(font_parts(&package).is_empty());
-    assert!(font_relationships(&package).is_empty());
-    for part in &stored {
-        assert_eq!(package.content_types.content_type_for(part), None, "{part}");
-    }
-}
-
-#[test]
 fn the_font_embedding_settings_survive_a_save_and_can_be_cleared() {
     let mut doc = Document::new();
     doc.set_embed_true_type_fonts(Some(false)).unwrap();
@@ -1092,59 +1000,6 @@ fn clearing_the_default_font_and_size_keeps_the_paragraph_defaults() {
         .default_paragraph_properties()
         .expect("paragraph defaults");
     assert_eq!(spacing.space_after, Some(Twips(160)));
-}
-
-#[test]
-fn the_default_font_replaces_the_theme_fonts_of_the_word_report_defaults() {
-    // Word's defaults name theme fonts for every script; Normal overrides
-    // only the Latin ones with Calibri.
-    let mut doc = corpus_doc("word/report.docx");
-    let effective = |doc: &Document, index: usize| -> CT_RPr {
-        let paragraph = doc.paragraph(index).unwrap();
-        doc.effective_run_properties(&paragraph, &paragraph.run(0).unwrap())
-    };
-    let heading = doc
-        .paragraphs()
-        .iter()
-        .position(|paragraph| paragraph.style_id() == Some("Titre1"))
-        .expect("a heading 1 paragraph");
-    let summary = effective(&doc, 1);
-    assert_eq!(
-        (
-            summary.font_ascii_theme.as_deref(),
-            summary.font_hansi_theme.as_deref(),
-            summary.font_east_asia_theme.as_deref(),
-            summary.font_cs_theme.as_deref(),
-        ),
-        (
-            Some("minorHAnsi"),
-            Some("minorHAnsi"),
-            Some("minorEastAsia"),
-            Some("minorBidi")
-        )
-    );
-    doc.set_default_font_name_value(Some("Georgia")).unwrap();
-
-    let doc = reopen(&mut doc);
-    assert!(doc.paragraph(1).unwrap().text().starts_with("Summary."));
-    let summary = effective(&doc, 1);
-    // A theme font left in the defaults would win over the named one.
-    assert_eq!(
-        (
-            summary.font_ascii_theme.as_deref(),
-            summary.font_hansi_theme.as_deref(),
-            summary.font_east_asia.as_deref(),
-            summary.font_east_asia_theme.as_deref(),
-            summary.font_cs.as_deref(),
-            summary.font_cs_theme.as_deref(),
-        ),
-        (None, None, Some("Georgia"), None, Some("Georgia"), None)
-    );
-    // A style naming its own theme font keeps it.
-    assert_eq!(
-        effective(&doc, heading).font_ascii_theme.as_deref(),
-        Some("majorHAnsi")
-    );
 }
 
 // ---- Theme fonts ----

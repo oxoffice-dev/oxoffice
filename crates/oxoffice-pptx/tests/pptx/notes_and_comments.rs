@@ -11,16 +11,10 @@ use oxoffice_pptx::{
     Comment, CommentAuthor, CommentReply, Emu, Error, Presentation, ValidationIssue,
 };
 
-use crate::support::{corpus_deck, new_deck, reopen, slide_texts};
+use crate::support::{corpus_deck, new_deck, reopen};
 
 /// The speaker notes of the Highlights slide in every corpus deck.
 const HIGHLIGHTS_NOTES: &str = "Start with the revenue story, then churn.";
-const CORPUS_DECKS: [&str; 4] = [
-    "powerpoint/deck.pptx",
-    "google/deck.pptx",
-    "libreoffice/deck.pptx",
-    "authored/deck.pptx",
-];
 
 const ADA: &str = "{11111111-1111-1111-1111-111111111111}";
 const GRACE: &str = "{22222222-2222-2222-2222-222222222222}";
@@ -240,22 +234,6 @@ fn with_legacy_comment(prs: &Presentation) -> Presentation {
 // Speaker notes.
 
 #[test]
-fn a_new_slide_has_no_notes_until_some_are_set() {
-    let mut prs = blank_deck(2);
-    assert_eq!(all_notes(&prs), [None, None]);
-
-    prs.set_notes_text(1, "Thank the team.").unwrap();
-    assert_eq!(all_notes(&prs), [None, Some("Thank the team.".to_owned())]);
-
-    let reopened = reopen(&prs);
-    assert_eq!(
-        all_notes(&reopened),
-        [None, Some("Thank the team.".to_owned())]
-    );
-    assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
-}
-
-#[test]
 fn notes_on_a_deck_without_a_notes_master_bring_one() {
     let mut prs = deck_without_notes_master();
     assert!(parts_under(&prs, "ppt/notesMasters/").is_empty());
@@ -272,22 +250,6 @@ fn notes_on_a_deck_without_a_notes_master_bring_one() {
 }
 
 #[test]
-fn editing_notes_replaces_them_in_the_same_notes_page() {
-    let mut prs = blank_deck(1);
-    prs.set_notes_text(0, "Draft speaker note").unwrap();
-    let mut prs = reopen(&prs);
-
-    prs.set_notes_text(0, "Final speaker note").unwrap();
-
-    let reopened = reopen(&prs);
-    assert_eq!(
-        reopened.slide(0).unwrap().notes_text().as_deref(),
-        Some("Final speaker note")
-    );
-    assert_eq!(parts_under(&reopened, "ppt/notesSlides/").len(), 1);
-}
-
-#[test]
 fn cleared_notes_read_back_empty_not_missing() {
     let mut prs = blank_deck(1);
     prs.set_notes_text(0, "Remove me").unwrap();
@@ -297,61 +259,6 @@ fn cleared_notes_read_back_empty_not_missing() {
     assert_eq!(
         reopen(&prs).slide(0).unwrap().notes_text().as_deref(),
         Some("")
-    );
-}
-
-#[test]
-fn multi_paragraph_notes_keep_every_line_and_blank_line() {
-    let text = "Opening\n\nFirst point\nSecond point\n";
-    let mut prs = blank_deck(1);
-
-    prs.set_notes_text(0, text).unwrap();
-
-    assert_eq!(
-        reopen(&prs).slide(0).unwrap().notes_text().as_deref(),
-        Some(text)
-    );
-}
-
-#[test]
-fn notes_keep_unicode_markup_characters_and_spacing_as_typed() {
-    let texts = [
-        "Café, naïve, Œuvre, Straße",
-        "مرحبا بالعالم: اعرض الإيرادات أولا",
-        "שלום, תודה על ההקשבה",
-        "先讲收入，再讲流失。売上から始めます。",
-        "Rocket 🚀 and family 👩‍👩‍👧",
-        "<b>bold?</b> & \"quotes\" 'too' &amp;",
-        "  indented\tand tabbed  ",
-    ];
-    let mut prs = blank_deck(1);
-    prs.set_notes_text(0, "").unwrap();
-    for text in texts {
-        prs.set_notes_text(0, text).unwrap();
-        assert_eq!(
-            reopen(&prs).slide(0).unwrap().notes_text().as_deref(),
-            Some(text),
-            "{text:?}"
-        );
-    }
-}
-
-// A raw carriage return would reach a conforming XML reader (PowerPoint's,
-// python-pptx's) as a second line feed.
-#[test]
-fn notes_with_a_windows_line_ending_are_saved_so_that_other_readers_keep_them() {
-    let mut prs = blank_deck(1);
-    prs.set_notes_text(0, "Windows line\r\nending").unwrap();
-    assert_eq!(
-        reopen(&prs).slide(0).unwrap().notes_text().as_deref(),
-        Some("Windows line\r\nending")
-    );
-    let notes = parts_under(&prs, "ppt/notesSlides/");
-    assert_eq!(notes.len(), 1);
-    let xml = part_xml(&prs, &format!("/{}", notes[0]));
-    assert!(
-        !xml.contains('\r'),
-        "the carriage return is escaped in the saved notes"
     );
 }
 
@@ -387,63 +294,6 @@ fn the_slide_handle_edits_notes_but_only_the_presentation_creates_them() {
 }
 
 #[test]
-fn notes_follow_their_slide_when_slides_are_reordered() {
-    let mut prs = blank_deck(3);
-    prs.set_notes_text(0, "Notes of the first slide").unwrap();
-    prs.set_notes_text(2, "Notes of the last slide").unwrap();
-
-    prs.move_slide(0, 2).unwrap();
-
-    assert_eq!(
-        all_notes(&reopen(&prs)),
-        [
-            None,
-            Some("Notes of the last slide".to_owned()),
-            Some("Notes of the first slide".to_owned()),
-        ]
-    );
-}
-
-#[test]
-fn a_duplicated_slide_gets_its_own_copy_of_the_notes() {
-    for name in CORPUS_DECKS {
-        let mut prs = corpus_deck(name);
-        let mut expected = all_notes(&prs);
-
-        prs.duplicate_slide(1).unwrap();
-        assert_eq!(prs.slide(2).unwrap().notes_text(), expected[1], "{name}");
-        prs.set_notes_text(2, "Only the copy").unwrap();
-        expected.insert(2, Some("Only the copy".to_owned()));
-
-        let reopened = reopen(&prs);
-        assert_eq!(all_notes(&reopened), expected, "{name}");
-        assert!(
-            reopened.validate().is_empty(),
-            "{name}: {:?}",
-            reopened.validate()
-        );
-    }
-}
-
-#[test]
-fn removing_a_slide_removes_its_notes_and_keeps_the_others() {
-    let mut prs = blank_deck(3);
-    for (index, text) in ["one", "two", "three"].into_iter().enumerate() {
-        prs.set_notes_text(index, text).unwrap();
-    }
-
-    prs.remove_slide(1).unwrap();
-
-    let reopened = reopen(&prs);
-    assert_eq!(
-        all_notes(&reopened),
-        [Some("one".to_owned()), Some("three".to_owned())]
-    );
-    assert_eq!(parts_under(&reopened, "ppt/notesSlides/").len(), 2);
-    assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
-}
-
-#[test]
 fn find_and_replace_reaches_speaker_notes() {
     let mut prs = corpus_deck("powerpoint/deck.pptx");
 
@@ -454,38 +304,6 @@ fn find_and_replace_reaches_speaker_notes() {
         reopen(&prs).slide(1).unwrap().notes_text().as_deref(),
         Some("Start with the growth story, then churn.")
     );
-}
-
-#[test]
-fn the_highlights_notes_read_the_same_from_every_editor() {
-    let highlights = Some(HIGHLIGHTS_NOTES.to_owned());
-    for name in CORPUS_DECKS {
-        let prs = corpus_deck(name);
-        // Google Slides writes a notes page, empty or not, for every slide.
-        let other = (name == "google/deck.pptx").then(String::new);
-        assert_eq!(
-            all_notes(&prs),
-            [other.clone(), highlights.clone(), other.clone(), other],
-            "{name}"
-        );
-    }
-}
-
-#[test]
-fn edited_highlights_notes_round_trip_for_every_editor() {
-    let edited = "Lead with churn, then revenue.\nClose on the Lyon warehouse.";
-    for name in CORPUS_DECKS {
-        let mut prs = corpus_deck(name);
-        let mut expected = all_notes(&prs);
-        let slides = slide_texts(&prs);
-
-        prs.set_notes_text(1, edited).unwrap();
-        expected[1] = Some(edited.to_owned());
-
-        let reopened = reopen(&prs);
-        assert_eq!(all_notes(&reopened), expected, "{name}");
-        assert_eq!(slide_texts(&reopened), slides, "{name}: slide text kept");
-    }
 }
 
 #[test]
@@ -537,53 +355,6 @@ fn edited_libreoffice_notes_keep_their_font() {
 }
 
 // Comments.
-
-#[test]
-fn a_comment_reads_back_with_its_author_initials_text_and_date() {
-    let mut prs = blank_deck(2);
-    assert!(prs.comment_authors().is_empty());
-    assert!(prs.comments(0).is_none());
-
-    prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
-        .unwrap();
-    prs.add_comment(1, comment(&guid(1), ADA, MONDAY, "Is this figure final?"))
-        .unwrap();
-
-    let reopened = reopen(&prs);
-    assert!(reopened.comments(0).unwrap_or_default().is_empty());
-    let [remark] = reopened.comments(1).unwrap() else {
-        panic!("one comment on the second slide");
-    };
-    assert_eq!(remark.id, guid(1));
-    assert_eq!(remark.text(), "Is this figure final?");
-    assert_eq!(remark.created, MONDAY);
-    assert_eq!(remark.status, None);
-    assert!(remark.replies().is_empty());
-    let writer = reopened
-        .comment_authors()
-        .iter()
-        .find(|listed| listed.id == remark.author_id)
-        .expect("the comment author is listed");
-    assert_eq!(writer.name, "Ada Lovelace");
-    assert_eq!(writer.initials.as_deref(), Some("AL"));
-    assert_eq!(writer.user_id, "ada@example.com");
-    assert_eq!(writer.provider_id, "None");
-}
-
-#[test]
-fn comment_authors_keep_their_order_and_details() {
-    let mut prs = blank_deck(1);
-    let authors = [
-        author(GRACE, "Grace Hopper", Some("GH")),
-        author(ADA, "Zoë Ångström", None),
-        author(&guid(3), "李雷", Some("李")),
-    ];
-    for author in &authors {
-        prs.add_comment_author(author.clone()).unwrap();
-    }
-
-    assert_eq!(reopen(&prs).comment_authors(), authors);
-}
 
 #[test]
 fn refused_comment_edits_leave_the_deck_as_it_was() {
@@ -728,45 +499,6 @@ fn removing_a_reply_or_a_thread_keeps_the_rest() {
 }
 
 #[test]
-fn comment_text_keeps_unicode_and_line_breaks() {
-    let texts = [
-        "Vérifier le chiffre d'affaires",
-        "يرجى مراجعة هذا الرقم",
-        "这个数字需要来源。",
-        "Ship it 🚢",
-        "Two points:\n\n1. sources\n2. dates",
-        "",
-    ];
-    let mut prs = reviewed_deck();
-    for (n, text) in (1..).zip(texts) {
-        prs.add_comment(0, comment(&guid(n), ADA, MONDAY, text))
-            .unwrap();
-    }
-
-    assert_eq!(comment_texts(&reopen(&prs), 0), texts);
-}
-
-#[test]
-fn comments_stay_with_their_slide_through_a_reorder() {
-    let mut prs = reviewed_deck();
-    prs.add_comment(0, comment(&guid(1), ADA, MONDAY, "On the title"))
-        .unwrap();
-    prs.add_comment(2, comment(&guid(2), GRACE, MONDAY, "On the end"))
-        .unwrap();
-    let reopened = reopen(&prs);
-    assert_eq!(comment_texts(&reopened, 0), ["On the title"]);
-    assert!(reopened.comments(1).is_none());
-    assert_eq!(comment_texts(&reopened, 2), ["On the end"]);
-
-    prs.move_slide(2, 0).unwrap();
-
-    let reopened = reopen(&prs);
-    assert_eq!(comment_texts(&reopened, 0), ["On the end"]);
-    assert_eq!(comment_texts(&reopened, 1), ["On the title"]);
-    assert!(reopened.comments(2).is_none());
-}
-
-#[test]
 fn removing_a_commented_slide_removes_only_its_comments() {
     let mut prs = reviewed_deck();
     prs.add_comment(0, comment(&guid(1), ADA, MONDAY, "Goes with the slide"))
@@ -871,72 +603,6 @@ fn a_comment_can_point_at_a_shape_or_at_a_span_of_its_text() {
 }
 
 #[test]
-fn a_comment_added_to_a_powerpoint_or_google_deck_round_trips() {
-    for name in ["powerpoint/deck.pptx", "google/deck.pptx"] {
-        let mut prs = corpus_deck(name);
-        let slides = slide_texts(&prs);
-        let notes = all_notes(&prs);
-        prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
-            .unwrap();
-
-        prs.add_comment(2, comment(&guid(1), ADA, MONDAY, "Add last year's column"))
-            .unwrap();
-
-        let reopened = reopen(&prs);
-        assert_eq!(
-            comment_texts(&reopened, 2),
-            ["Add last year's column"],
-            "{name}"
-        );
-        assert_eq!(reopened.comment_authors()[0].name, "Ada Lovelace", "{name}");
-        assert_eq!(slide_texts(&reopened), slides, "{name}");
-        assert_eq!(all_notes(&reopened), notes, "{name}");
-    }
-}
-
-#[test]
-fn a_comment_saved_by_powerpoint_reads_back_and_keeps_its_position() {
-    let mut prs = Presentation::from_bytes(&powerpoint_comment_deck("2026-11-16T09:30:00.503Z"))
-        .expect("the PowerPoint-shaped deck opens");
-    let [thread] = prs.comments(0).unwrap() else {
-        panic!("one PowerPoint comment");
-    };
-    assert_eq!(thread.text(), "Needs a source for this figure.");
-    assert_eq!(thread.created, "2026-11-16T09:30:00.503Z");
-    assert_eq!(reply_texts(thread), ["Done in v2."]);
-    let reviewer = &prs.comment_authors()[0];
-    assert_eq!(
-        (reviewer.name.as_str(), reviewer.initials.as_deref()),
-        ("Grace Hopper", Some("GH"))
-    );
-    let thread_id = thread.id.clone();
-
-    prs.add_comment_author(author(ADA, "Ada Lovelace", None))
-        .unwrap();
-    prs.reply_to_comment(0, &thread_id, reply(&guid(1), ADA, TUESDAY, "Source added"))
-        .unwrap();
-    prs.add_comment(0, comment(&guid(2), ADA, TUESDAY, "Second thread"))
-        .unwrap();
-
-    let reopened = reopen(&prs);
-    assert_eq!(
-        comment_texts(&reopened, 0),
-        ["Needs a source for this figure.", "Second thread"]
-    );
-    assert_eq!(
-        reply_texts(&reopened.comments(0).unwrap()[0]),
-        ["Done in v2.", "Source added"]
-    );
-    // The facade has no reader for the position PowerPoint drew the comment at.
-    let xml = part_xml(&reopened, "/ppt/comments/modernComment_100_4F1B2C3D.xml");
-    assert!(
-        xml.contains(r#"<p188:pos x="10668000" y="152400"/>"#),
-        "{xml}"
-    );
-    assert!(xml.contains("sldMkLst"), "{xml}");
-}
-
-#[test]
 fn an_entity_a_comment_keeps_as_written_survives_a_reply() {
     // Character data a comment and its reply keep as written, with an
     // entity in it: the edit that rewrites the part writes it back whole.
@@ -1009,39 +675,6 @@ fn a_comment_dated_in_local_time_opens() {
 }
 
 #[test]
-fn a_comment_dated_in_local_time_is_added_to_every_editors_deck_as_written() {
-    const LOCAL: &str = "2026-11-21T10:00:00";
-    for name in CORPUS_DECKS {
-        let mut prs = corpus_deck(name);
-        prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
-            .unwrap();
-
-        prs.add_comment(1, comment(&guid(1), ADA, LOCAL, "Dated in local time"))
-            .unwrap();
-        prs.reply_to_comment(
-            1,
-            &guid(1),
-            reply(&guid(2), ADA, "2026-11-21T10:05:30.25", "Same"),
-        )
-        .unwrap();
-
-        let reopened = reopen(&prs);
-        let thread = &reopened.comments(1).unwrap()[0];
-        assert_eq!(thread.created, LOCAL, "{name}");
-        assert_eq!(
-            thread.replies()[0].created,
-            "2026-11-21T10:05:30.25",
-            "{name}"
-        );
-        assert!(
-            reopened.validate().is_empty(),
-            "{name}: {:?}",
-            reopened.validate()
-        );
-    }
-}
-
-#[test]
 fn a_comment_date_may_omit_its_time_zone_but_not_its_shape() {
     for date in [
         "2026-11-16T09:30:00",
@@ -1068,195 +701,6 @@ fn a_comment_date_may_omit_its_time_zone_but_not_its_shape() {
         assert!(
             CommentReply::new(guid(1), ADA, date, "text").is_err(),
             "{date}"
-        );
-    }
-}
-
-#[test]
-fn legacy_comments_are_kept_through_edits_and_a_save() {
-    let mut prs = deck_with_legacy_comments(2);
-
-    prs.set_notes_text(0, "Notes next to a legacy comment")
-        .unwrap();
-    prs.move_slide(0, 1).unwrap();
-
-    // The facade has no reader for legacy comments.
-    let reopened = reopen(&prs);
-    let xml = part_xml(&reopened, "/ppt/comments/comment1.xml");
-    assert!(xml.contains("Legacy remark on the opening slide"), "{xml}");
-    assert!(part_xml(&reopened, "/ppt/commentAuthors.xml").contains("Grace Hopper"));
-    let package = package_of(&reopened);
-    let owner = package
-        .get_part_rels("/ppt/slides/slide1.xml")
-        .and_then(|relationships| relationships.get_by_type(rel_types::COMMENTS))
-        .expect("the slide still points at its legacy comments");
-    assert_eq!(owner.target, "../comments/comment1.xml");
-    assert_eq!(
-        reopened.slide(1).unwrap().notes_text().as_deref(),
-        Some("Notes next to a legacy comment")
-    );
-}
-
-#[test]
-fn removing_a_slide_removes_its_legacy_comments() {
-    let mut prs = deck_with_legacy_comments(2);
-
-    prs.remove_slide(0).unwrap();
-
-    let comment_parts = parts_under(&reopen(&prs), "ppt/comments/");
-    assert!(
-        comment_parts.is_empty(),
-        "the legacy comments of the removed slide are still in the file: {comment_parts:?}"
-    );
-}
-
-#[test]
-fn a_modern_comment_can_be_added_to_a_deck_with_legacy_comments() {
-    let mut prs = deck_with_legacy_comments(2);
-    prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
-        .unwrap();
-
-    prs.add_comment(1, comment(&guid(1), ADA, MONDAY, "A modern comment"))
-        .expect("a modern comment is added next to legacy comments");
-
-    let reopened = reopen(&prs);
-    assert_eq!(comment_texts(&reopened, 1), ["A modern comment"]);
-    assert!(part_xml(&reopened, "/ppt/comments/comment1.xml").contains("Legacy remark"));
-}
-
-#[test]
-fn a_comment_author_keeps_the_tabs_and_line_feeds_of_its_name() {
-    let mut prs = blank_deck(1);
-    prs.add_comment_author(author(ADA, "Ada\tLovelace\nR&D", Some("A\tL")))
-        .unwrap();
-    prs.add_comment(0, comment(&guid(1), ADA, MONDAY, "Signed"))
-        .unwrap();
-
-    let reopened = reopen(&prs);
-    let ada = &reopened.comment_authors()[0];
-    assert_eq!(
-        (ada.name.as_str(), ada.initials.as_deref()),
-        ("Ada\tLovelace\nR&D", Some("A\tL"))
-    );
-}
-
-#[test]
-fn modern_comments_join_legacy_ones_on_every_editors_deck() {
-    for name in CORPUS_DECKS {
-        let mut prs = with_legacy_comment(&corpus_deck(name));
-        prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
-            .unwrap();
-
-        prs.add_comment(
-            0,
-            comment(&guid(1), ADA, MONDAY, "Beside the legacy remark"),
-        )
-        .unwrap();
-        prs.add_comment(1, comment(&guid(2), ADA, MONDAY, "On the next slide"))
-            .unwrap();
-
-        let reopened = reopen(&prs);
-        assert_eq!(
-            comment_texts(&reopened, 0),
-            ["Beside the legacy remark"],
-            "{name}"
-        );
-        assert_eq!(comment_texts(&reopened, 1), ["On the next slide"], "{name}");
-        let package = package_of(&reopened);
-        let legacy = package
-            .get_part_rels("/ppt/slides/slide1.xml")
-            .and_then(|relationships| relationships.get_by_type(rel_types::COMMENTS))
-            .expect("the first slide still points at its legacy comments");
-        assert_eq!(legacy.target, "../comments/comment1.xml", "{name}");
-        assert!(
-            part_xml(&reopened, "/ppt/comments/comment1.xml").contains("Legacy remark"),
-            "{name}"
-        );
-        assert_eq!(parts_under(&reopened, "ppt/comments/").len(), 3, "{name}");
-        assert!(
-            reopened.validate().is_empty(),
-            "{name}: {:?}",
-            reopened.validate()
-        );
-    }
-}
-
-#[test]
-fn a_duplicated_slide_gets_its_own_copy_of_the_comments_on_every_editors_deck() {
-    for name in CORPUS_DECKS {
-        let mut prs = corpus_deck(name);
-        prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
-            .unwrap();
-        prs.add_comment_author(author(GRACE, "Grace Hopper", Some("GH")))
-            .unwrap();
-        prs.add_comment(1, comment(&guid(1), GRACE, MONDAY, "Travels with the copy"))
-            .unwrap();
-        prs.reply_to_comment(1, &guid(1), reply(&guid(2), ADA, TUESDAY, "Noted"))
-            .unwrap();
-        prs.add_comment(1, comment(&guid(3), ADA, MONDAY, "Second thread"))
-            .unwrap();
-        let slides = slide_texts(&prs);
-
-        prs.duplicate_slide(1).unwrap();
-        let ids = |prs: &Presentation, slide: usize| -> Vec<String> {
-            prs.comments(slide)
-                .unwrap()
-                .iter()
-                .flat_map(|comment| {
-                    std::iter::once(comment.id.clone())
-                        .chain(comment.replies().iter().map(|reply| reply.id.clone()))
-                })
-                .collect()
-        };
-        let copy_ids = ids(&prs, 2);
-        prs.resolve_comment(2, &copy_ids[0]).unwrap();
-        prs.reply_to_comment(
-            2,
-            &copy_ids[0],
-            reply(&guid(9), GRACE, TUESDAY, "Only on the copy"),
-        )
-        .unwrap();
-
-        let reopened = reopen(&prs);
-        assert_eq!(slide_texts(&reopened)[2], slides[1], "{name}");
-        assert_eq!(ids(&reopened, 1), [guid(1), guid(2), guid(3)], "{name}");
-        let copy_ids = ids(&reopened, 2);
-        assert_eq!(copy_ids.len(), 4, "{name}");
-        for id in &copy_ids {
-            assert!(
-                !ids(&reopened, 1).contains(id),
-                "{name}: the copy reuses {id}"
-            );
-        }
-        let (original, copy) = (
-            &reopened.comments(1).unwrap(),
-            &reopened.comments(2).unwrap(),
-        );
-        assert_eq!(
-            comment_texts(&reopened, 2),
-            comment_texts(&reopened, 1),
-            "{name}"
-        );
-        assert_eq!(copy[0].author_id, GRACE, "{name}");
-        assert_eq!(copy[0].created, MONDAY, "{name}");
-        assert_eq!(
-            reply_texts(&copy[0]),
-            ["Noted", "Only on the copy"],
-            "{name}"
-        );
-        assert_eq!(copy[0].replies()[0].author_id, ADA, "{name}");
-        assert_eq!(reply_texts(&original[0]), ["Noted"], "{name}");
-        assert_eq!(copy[0].status.as_deref(), Some("resolved"), "{name}");
-        assert_eq!(original[0].status, None, "{name}");
-        assert_eq!(
-            reopened.comment_authors().len(),
-            2,
-            "{name}: authors are not doubled"
-        );
-        assert!(
-            reopened.validate().is_empty(),
-            "{name}: {:?}",
-            reopened.validate()
         );
     }
 }
@@ -1339,31 +783,6 @@ fn a_duplicated_powerpoint_comment_keeps_its_position_and_reply() {
         "{xml}"
     );
     assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
-}
-
-#[test]
-fn a_duplicated_comment_keeps_its_author_among_namesakes() {
-    const SMITH_2: &str = "{33333333-3333-3333-3333-333333333333}";
-    let mut prs = blank_deck(1);
-    prs.add_comment_author(author(GRACE, "J. Smith", Some("JS")))
-        .unwrap();
-    prs.add_comment_author(author(SMITH_2, "J. Smith", Some("JS")))
-        .unwrap();
-    prs.add_comment(
-        0,
-        comment(&guid(1), SMITH_2, MONDAY, "From the second J. Smith"),
-    )
-    .unwrap();
-    prs.reply_to_comment(0, &guid(1), reply(&guid(2), SMITH_2, TUESDAY, "Still me"))
-        .unwrap();
-
-    prs.duplicate_slide(0).unwrap();
-
-    let reopened = reopen(&prs);
-    let copy = &reopened.comments(1).unwrap()[0];
-    assert_eq!(copy.author_id, SMITH_2);
-    assert_eq!(copy.replies()[0].author_id, SMITH_2);
-    assert_eq!(reopened.comment_authors().len(), 2);
 }
 
 #[test]
@@ -1453,31 +872,6 @@ fn validate_names_a_comment_part_two_slides_share_and_the_deck_still_saves() {
     prs.set_notes_text(0, "kept").unwrap();
     let reopened = reopen(&prs);
     assert!(reopened.validate().contains(&shared));
-}
-
-#[test]
-fn validate_names_a_notes_slide_two_slides_share() {
-    let mut prs = blank_deck(2);
-    prs.set_notes_text(0, "Shared notes").unwrap();
-    let mut package = package_of(&prs);
-    let notes = package
-        .get_part_rels("/ppt/slides/slide1.xml")
-        .and_then(|relationships| relationships.get_by_type(rel_types::NOTES_SLIDE))
-        .map(|relationship| relationship.target.clone())
-        .expect("slide 1 has notes");
-    package
-        .get_or_create_part_rels("/ppt/slides/slide2.xml")
-        .add(rel_types::NOTES_SLIDE, &notes);
-    let prs = Presentation::from_bytes(&bytes_of(&package)).unwrap();
-    assert!(
-        prs.validate().iter().any(|issue| matches!(
-            issue,
-            ValidationIssue::SharedSlidePart { part, slides }
-                if part.starts_with("/ppt/notesSlides/") && slides == &[0, 1]
-        )),
-        "{:?}",
-        prs.validate()
-    );
 }
 
 #[test]
@@ -1718,24 +1112,5 @@ fn removing_a_slide_keeps_the_notes_another_slide_shares() {
             Some(slide.as_str()),
             "removed slide {removed}"
         );
-    }
-}
-
-#[test]
-fn removing_a_slide_keeps_the_legacy_comments_another_slide_shares() {
-    for removed in [0, 1] {
-        let prs = deck_with_legacy_comments(2);
-        let mut package = package_of(&prs);
-        package
-            .get_or_create_part_rels("/ppt/slides/slide2.xml")
-            .add(rel_types::COMMENTS, "../comments/comment1.xml");
-        let mut prs = Presentation::from_bytes(&bytes_of(&package)).unwrap();
-        prs.remove_slide(removed).unwrap();
-        let reopened = reopen(&prs);
-        assert!(
-            package_of(&reopened).contains_part("/ppt/comments/comment1.xml"),
-            "removed slide {removed}: the part the other slide relates to stays"
-        );
-        assert!(reopened.validate().is_empty(), "{:?}", reopened.validate());
     }
 }

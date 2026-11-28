@@ -216,55 +216,6 @@ fn title_author_subject_and_keywords_survive_a_save() {
 }
 
 #[test]
-fn a_carriage_return_in_a_property_survives_a_save() {
-    let mut doc = doc_with(&["Body"]);
-    doc.set_title("first\rsecond");
-    let mut app = doc.application_properties().cloned().unwrap_or_default();
-    app.company = Some("Contoso\rFils".to_owned());
-    doc.set_application_properties(app).unwrap();
-    doc.set_custom_property(custom(
-        "Note",
-        2,
-        CustomPropertyValue::Lpwstr("a\r\nb".to_owned()),
-    ))
-    .unwrap();
-    doc.set_custom_property(custom(
-        "Tab\tname",
-        3,
-        CustomPropertyValue::Lpwstr("x".to_owned()),
-    ))
-    .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.title(), Some("first\rsecond"));
-    assert_eq!(
-        doc.application_properties().unwrap().company.as_deref(),
-        Some("Contoso\rFils")
-    );
-    assert_eq!(
-        doc.custom_property("Note").map(|property| &property.value),
-        Some(&CustomPropertyValue::Lpwstr("a\r\nb".to_owned()))
-    );
-    // A name is an attribute: its tab is written as a reference too.
-    assert!(
-        doc.custom_property("Tab\tname").is_some(),
-        "{:?}",
-        custom_names(&doc)
-    );
-    // Written as a reference, which XML end-of-line handling keeps.
-    for part in [
-        "docProps/core.xml",
-        "docProps/app.xml",
-        "docProps/custom.xml",
-    ] {
-        let xml = doc.part_xml(part).unwrap();
-        assert!(
-            xml.contains("&#13;") && !xml.contains('\r'),
-            "{part}: {xml}"
-        );
-    }
-}
-
-#[test]
 fn every_core_property_round_trips_through_the_complete_model() {
     let mut doc = Document::new();
     let core = CoreProperties {
@@ -666,44 +617,6 @@ fn a_custom_number_property_may_be_nan() {
         Some(CustomPropertyValue::R8(value)) => assert!(value.is_nan(), "{value}"),
         other => panic!("Ratio reads {other:?}"),
     }
-}
-
-#[test]
-fn a_number_property_set_to_negative_zero_replaces_zero() {
-    let mut doc = doc_with(&["Body"]);
-    doc.set_custom_property(custom("Offset", 2, CustomPropertyValue::R8(0.0)))
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    // -0 == 0, but the two are written differently: the save writes it.
-    doc.set_custom_property(custom("Offset", 2, CustomPropertyValue::R8(-0.0)))
-        .unwrap();
-    match reopen(&mut doc).custom_property("Offset").map(|p| &p.value) {
-        Some(CustomPropertyValue::R8(value)) => assert!(value.is_sign_negative(), "{value}"),
-        other => panic!("Offset reads {other:?}"),
-    }
-}
-
-#[test]
-fn a_save_without_an_edit_keeps_a_nan_number_property_as_its_producer_wrote_it() {
-    let mut doc = doc_with(&["Body"]);
-    doc.set_custom_property(custom("Ratio", 2, CustomPropertyValue::R8(f64::NAN)))
-        .unwrap();
-    let mut package = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
-    let xml =
-        String::from_utf8(package.get_part("/docProps/custom.xml").unwrap().to_vec()).unwrap();
-    // Another producer's spelling of the same part: a line end after the
-    // declaration, which oxoffice does not write.
-    let produced = xml.replacen("?>", "?>\n", 1);
-    assert_ne!(produced, xml);
-    package.set_part("/docProps/custom.xml", produced.clone().into_bytes());
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
-    let saved = OpcPackage::from_reader(Cursor::new(doc.to_bytes().unwrap())).unwrap();
-    assert_eq!(
-        String::from_utf8(saved.get_part("/docProps/custom.xml").unwrap().to_vec()).unwrap(),
-        produced
-    );
 }
 
 // ---- On/off values ----

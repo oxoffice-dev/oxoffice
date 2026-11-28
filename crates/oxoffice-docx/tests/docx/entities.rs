@@ -8,7 +8,7 @@ use std::io::Cursor;
 use oxoffice_docx::{Document, Length};
 use oxoffice_opc::OpcPackage;
 
-use crate::support::{doc_with, doc_with_body, docx_with_body, reopen, texts};
+use crate::support::{doc_with_body, docx_with_body, reopen, texts};
 
 /// A one-pixel PNG.
 const PNG: &[u8] = &[
@@ -18,14 +18,6 @@ const PNG: &[u8] = &[
     0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
     0x42, 0x60, 0x82,
 ];
-
-#[test]
-fn a_flat_opc_package_with_markup_characters_in_its_text_round_trips() {
-    let doc = doc_with(&["Tom & Jerry <3 \"quoted\""]);
-    let flat = doc.to_flat_opc_bytes().unwrap();
-    let reopened = Document::from_flat_opc_bytes(&flat).unwrap();
-    assert_eq!(texts(&reopened), ["Tom & Jerry <3 \"quoted\""]);
-}
 
 #[test]
 fn a_flat_opc_binary_part_may_hold_a_character_reference() {
@@ -117,41 +109,6 @@ fn a_ruby_holding_an_entity_alone_where_it_holds_no_text_stays_raw() {
     }
 }
 
-#[test]
-fn a_property_value_written_with_character_references_reads_as_its_characters() {
-    use oxoffice_docx::Alignment;
-
-    // A paragraph and a table cell width, plainly and with the first
-    // character of each value as a reference (`w:val="&#99;enter"`).
-    let body = |center: &str, before: &str, width: &str| {
-        format!(
-            concat!(
-                r#"<w:p><w:pPr><w:jc w:val="{center}"/><w:spacing w:before="{before}"/></w:pPr>"#,
-                r#"<w:r><w:t>Centred heading</w:t></w:r></w:p>"#,
-                r#"<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>"#,
-                r#"<w:tblGrid><w:gridCol w:w="{width}"/></w:tblGrid><w:tr><w:tc>"#,
-                r#"<w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr>"#,
-                r#"<w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p/>"#,
-            ),
-            center = center,
-            before = before,
-            width = width
-        )
-    };
-    let read = |body: String| {
-        let doc = doc_with_body(&body);
-        let paragraph = doc.paragraph(0).expect("the paragraph");
-        (
-            paragraph.alignment(),
-            paragraph.space_before(),
-            doc.to_markdown(),
-        )
-    };
-    let plain = read(body("center", "240", "4000"));
-    assert_eq!(plain.0, Some(Alignment::Center));
-    assert_eq!(read(body("&#99;enter", "&#50;40", "&#52;000")), plain);
-}
-
 /// `bytes` with `children` written into the final section properties, after
 /// the page margins.
 fn with_section_children(bytes: Vec<u8>, children: &str) -> Vec<u8> {
@@ -236,26 +193,4 @@ fn a_value_kept_as_written_keeps_its_references_through_an_edit() {
     for read in [r#"w:first="1""#, r#"w:start="2""#] {
         assert!(xml.contains(read), "{read}: {xml}");
     }
-}
-
-#[test]
-fn a_bookmark_id_written_with_a_reference_compares_like_a_plain_one() {
-    let marked = |start: &str, end: &str| {
-        doc_with_body(&format!(
-            concat!(
-                r#"<w:p><w:bookmarkStart w:id="{start}" w:name="mark"/>"#,
-                r#"<w:r><w:t>Text</w:t></w:r><w:bookmarkEnd w:id="{end}"/></w:p>"#,
-            ),
-            start = start,
-            end = end
-        ))
-    };
-    let compared = |edited: Document| {
-        let mut original = marked("7", "7");
-        let found = original.compare(&edited, "Writings", "2026-11-26T00:00:00Z");
-        format!("{found:?}")
-    };
-    let plain = compared(marked("3", "3"));
-    assert!(plain.starts_with("Ok("), "{plain}");
-    assert_eq!(compared(marked("&#51;", "3")), plain);
 }

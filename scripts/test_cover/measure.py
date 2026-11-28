@@ -155,6 +155,8 @@ def main():
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--jobs", type=int, default=12)
     ap.add_argument("--only", help="only the binaries whose `crate/name` matches this regex")
+    ap.add_argument("--skip", help="leave out the tests whose `crate/name::test` matches this regex (the render walks,"
+                                   " which a cut keeps whole, cost minutes each under instrumentation)")
     args = ap.parse_args()
     target = args.target_dir.resolve()
     units = build(target, "-C instrument-coverage")
@@ -171,6 +173,8 @@ def main():
         listed = subprocess.run([exe, "--list"], cwd=ROOT / "crates" / crate, capture_output=True, text=True,
                                 env=env).stdout
         todo += [(crate, name, exe, line[:-len(": test")]) for line in listed.splitlines() if line.endswith(": test")]
+    if args.skip:
+        todo = [u for u in todo if not re.search(args.skip, f"{u[0]}/{u[1]}::{u[3]}")]
     print(f"{len(todo)} tests; objects of the CLI: {extra}", flush=True)
     table, tests, failed = Table(), {}, []
     done = 0

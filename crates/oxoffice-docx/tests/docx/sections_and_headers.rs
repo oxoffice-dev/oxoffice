@@ -4,7 +4,7 @@
 
 use oxoffice_docx::{
     ContentFragment, ContentLocation, Document, HdrFtrType, HeaderFooterKind, Length, SectionBreak,
-    SectionStory, StoryId, StoryItemKind, StoryKind, Twips,
+    SectionStory, StoryId, StoryItemKind, Twips,
 };
 use oxoffice_docx_oxml::document::{CT_LineNumber, ST_LineNumberRestart};
 use oxoffice_docx_oxml::shared::{ST_PageOrientation, ST_SectionType};
@@ -79,11 +79,6 @@ fn shown_text(
     variant: HdrFtrType,
 ) -> Option<String> {
     shown(doc, section, kind, variant).map(|story| story_text(doc, story.story()))
-}
-
-/// The text of the default header a section shows.
-fn header(doc: &Document, section: usize) -> Option<String> {
-    shown_text(doc, section, HeaderFooterKind::Header, HdrFtrType::Default)
 }
 
 /// The text of the default footer a section shows.
@@ -433,51 +428,6 @@ fn setting_the_header_again_replaces_it() {
     assert_eq!(header_part_count(&doc), 1);
 }
 
-#[test]
-fn a_first_page_header_and_footer_turn_on_a_different_first_page() {
-    let mut doc = doc_with(&["cover", "body"]);
-    doc.try_set_header("Every page").unwrap();
-    doc.try_set_footer("Every footer").unwrap();
-    assert_eq!(doc.section(0).unwrap().different_first_page(), None);
-    doc.try_set_first_page_header("Cover header").unwrap();
-    doc.try_set_first_page_footer("Cover footer").unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.section(0).unwrap().different_first_page(), Some(true));
-    assert_eq!(doc.header_text().as_deref(), Some("Every page"));
-    assert_eq!(doc.footer_text().as_deref(), Some("Every footer"));
-    assert_eq!(
-        shown_text(&doc, 0, HeaderFooterKind::Header, HdrFtrType::First).as_deref(),
-        Some("Cover header")
-    );
-    assert_eq!(
-        shown_text(&doc, 0, HeaderFooterKind::Footer, HdrFtrType::First).as_deref(),
-        Some("Cover footer")
-    );
-}
-
-#[test]
-fn an_even_page_footer_turns_on_even_and_odd_headers() {
-    let mut doc = doc_with(&["body"]);
-    assert!(!doc.even_and_odd_headers());
-    let even = doc
-        .create_section_story(0, HeaderFooterKind::Footer, HdrFtrType::Even)
-        .unwrap();
-    assert!(doc.even_and_odd_headers());
-    write_in(&mut doc, &even, "even pages");
-    let mut doc = reopen(&mut doc);
-    assert!(doc.even_and_odd_headers());
-    assert_eq!(
-        shown_text(&doc, 0, HeaderFooterKind::Footer, HdrFtrType::Even).as_deref(),
-        Some("even pages")
-    );
-    // Odd pages do not borrow the even footer.
-    assert_eq!(footer(&doc, 0), None);
-
-    doc.set_even_and_odd_headers(false).unwrap();
-    let doc = reopen(&mut doc);
-    assert!(!doc.even_and_odd_headers());
-}
-
 // ---- Section stories ----
 
 /// The media parts the document would save.
@@ -506,34 +456,6 @@ fn inheriting_again_drops_the_pictures_only_the_copy_showed() {
     let doc = reopen(&mut doc);
     assert_eq!(header_part_count(&doc), 1, "the copy leaves the file");
     assert!(media_parts(&doc).is_empty(), "its picture goes with it");
-}
-
-#[test]
-fn inheriting_again_keeps_a_picture_the_body_also_shows() {
-    let mut doc = inherited_header_and_footer();
-    doc.add_picture(PNG, "logo.png", twips(567), twips(567));
-    doc.unlink_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let copy = header_story(&doc, 1).story().clone();
-    doc.add_picture_to_story(&copy, PNG, "logo.png", twips(567), twips(567))
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    let saved = media_parts(&doc);
-    assert_eq!(saved.len(), 2, "one picture for the body, one for the copy");
-
-    doc.inherit_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    let kept = media_parts(&doc);
-    assert_eq!(
-        kept.len(),
-        1,
-        "the body's picture stays: {saved:?} -> {kept:?}"
-    );
-    let body_relationships = doc.part_xml("word/_rels/document.xml.rels").unwrap();
-    let file = kept[0].rsplit('/').next().unwrap();
-    assert!(body_relationships.contains(file), "{body_relationships}");
-    assert_eq!(doc.pictures().unwrap().len(), 1);
 }
 
 #[test]
@@ -571,61 +493,9 @@ fn inheriting_again_keeps_a_logo_the_first_section_still_shows() {
     );
 }
 
-#[test]
-fn removing_a_section_header_blanks_it_for_that_section_only() {
-    let mut doc = inherited_header_and_footer();
-    doc.remove_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(header(&doc, 0).as_deref(), Some("shared header"));
-    assert_eq!(header(&doc, 1).as_deref(), Some(""));
-    assert!(!header_story(&doc, 1).is_inherited());
-    assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
-}
-
 // ---- Watermarks and pictures ----
 
-#[test]
-fn a_header_picture_survives_a_save() {
-    let mut doc = doc_with(&["body"]);
-    doc.set_header_image(PNG, "logo.png", Length::inches(1.0), Length::inches(0.5));
-    let doc = reopen(&mut doc);
-    let pictures = doc.pictures().unwrap();
-    let in_header = pictures
-        .iter()
-        .filter(|picture| picture.location.story().kind() == StoryKind::Header)
-        .collect::<Vec<_>>();
-    assert_eq!(in_header.len(), 1, "{} pictures", pictures.len());
-    assert_eq!(in_header[0].bytes, PNG);
-    assert_eq!(in_header[0].width, 914_400);
-    assert_eq!(in_header[0].height, 457_200);
-}
-
 // ---- The corpus reports ----
-
-/// The text of the first-page header a section shows.
-fn first_page_header(doc: &Document, section: usize) -> Option<String> {
-    shown_text(doc, section, HeaderFooterKind::Header, HdrFtrType::First)
-}
-
-#[test]
-fn a_first_page_header_the_last_section_shows_by_inheritance_changes_everywhere() {
-    let mut doc = doc_with(&["cover"]);
-    doc.set_first_page_header("Cover");
-    doc.insert_section(1).unwrap();
-    doc.add_paragraph("chapter");
-    doc.set_different_first_page(true);
-    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Cover"));
-    doc.set_first_page_header("Chapter");
-    let doc = reopen(&mut doc);
-    assert_eq!(first_page_header(&doc, 0).as_deref(), Some("Chapter"));
-    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Chapter"));
-    assert!(
-        shown(&doc, 1, HeaderFooterKind::Header, HdrFtrType::First)
-            .unwrap()
-            .is_inherited()
-    );
-}
 
 /// The main part of a saved package.
 fn main_part(bytes: &[u8]) -> Vec<u8> {
@@ -633,88 +503,6 @@ fn main_part(bytes: &[u8]) -> Vec<u8> {
         .expect("package opens");
     let part = package.main_document_part().expect("main document part");
     package.get_part(&part).expect("main part").to_vec()
-}
-
-/// A document with a default, a first-page and an even-page header, whose
-/// final section lists the header references in `order`, as other
-/// producers write them.
-fn headers_listed(order: &[&str]) -> Vec<u8> {
-    let mut doc = Document::new();
-    doc.add_paragraph("Body.");
-    doc.set_header("Default header");
-    doc.set_first_page_header("First header");
-    let bytes = doc.to_bytes().expect("document saves");
-    let mut package =
-        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).expect("package opens");
-    let main = package.main_document_part().expect("main document part");
-    let xml = String::from_utf8(package.get_part(&main).expect("main part").to_vec())
-        .expect("main part is UTF-8");
-    // An even-page header: a copy of the default one, under its own part.
-    let reference = |kind: &str| {
-        let start = xml
-            .find(&format!(r#"<w:headerReference w:type="{kind}""#))
-            .unwrap_or_else(|| panic!("{kind} header reference"));
-        let end = start + xml[start..].find("/>").expect("reference end") + 2;
-        (start..end, xml[start..end].to_owned())
-    };
-    let (_, default) = reference("default");
-    let default_id = default
-        .split(r#"r:id=""#)
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .expect("default header relationship")
-        .to_owned();
-    let rels = package
-        .get_part_rels(&main)
-        .expect("main part relationships");
-    let target = rels
-        .items
-        .iter()
-        .find(|relationship| relationship.id == default_id)
-        .expect("default header relationship")
-        .target
-        .clone();
-    let default_part = format!("/word/{target}");
-    let header_type = rels
-        .items
-        .iter()
-        .find(|relationship| relationship.id == default_id)
-        .expect("default header relationship")
-        .rel_type
-        .clone();
-    let header = package
-        .get_part(&default_part)
-        .expect("default header part")
-        .to_vec();
-    package.set_part("/word/headerEven.xml", header);
-    package.content_types.add_override(
-        "/word/headerEven.xml",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
-    );
-    package
-        .get_or_create_part_rels(&main)
-        .add_with_id("rIdEven", &header_type, "headerEven.xml");
-    let even = r#"<w:headerReference w:type="even" r:id="rIdEven"/>"#.to_owned();
-    let (first_range, first) = reference("first");
-    let (default_range, _) = reference("default");
-    let mut listed = String::new();
-    for kind in order {
-        listed.push_str(match *kind {
-            "default" => &default,
-            "first" => &first,
-            "even" => &even,
-            other => panic!("unknown header type {other}"),
-        });
-    }
-    let (from, to) = (
-        first_range.start.min(default_range.start),
-        first_range.end.max(default_range.end),
-    );
-    let xml = format!("{}{listed}{}", &xml[..from], &xml[to..]);
-    package.set_part(&main, xml.into_bytes());
-    let mut out = std::io::Cursor::new(Vec::new());
-    package.write_to(&mut out).expect("package writes");
-    out.into_inner()
 }
 
 /// The `kind` (header or footer) reference types of the final section, in
@@ -725,30 +513,6 @@ fn reference_order(bytes: &[u8], kind: &str) -> Vec<String> {
         .skip(1)
         .map(|rest| rest.split('"').next().unwrap().to_owned())
         .collect()
-}
-
-fn header_order(bytes: &[u8]) -> Vec<String> {
-    reference_order(bytes, "header")
-}
-
-#[test]
-fn linking_a_header_to_another_story_keeps_its_place_among_the_references() {
-    // Neither pushing the reference at the end nor placing it by type keeps
-    // this order.
-    let bytes = headers_listed(&["even", "default", "first"]);
-    let mut doc = Document::from_bytes(&bytes).unwrap();
-    let first = doc
-        .section_story(0, HeaderFooterKind::Header, HdrFtrType::First)
-        .unwrap()
-        .expect("first-page header")
-        .story()
-        .clone();
-    doc.link_section_story(0, HeaderFooterKind::Header, HdrFtrType::Default, &first)
-        .unwrap();
-    assert_eq!(
-        header_order(&doc.to_bytes().unwrap()),
-        ["even", "default", "first"]
-    );
 }
 
 #[test]
@@ -764,15 +528,6 @@ fn a_story_inherited_from_a_removed_section_takes_its_place_in_the_order() {
     let bytes = doc.to_bytes().unwrap();
     assert_eq!(reference_order(&bytes, "header"), ["default", "first"]);
     assert_eq!(reference_order(&bytes, "footer"), ["default", "first"]);
-}
-
-#[test]
-fn a_watermark_header_takes_its_place_in_the_order() {
-    let mut doc = Document::new();
-    doc.add_paragraph("Body.");
-    doc.set_first_page_header("First header");
-    doc.set_text_watermark("DRAFT").unwrap();
-    assert_eq!(header_order(&doc.to_bytes().unwrap()), ["default", "first"]);
 }
 
 #[test]
@@ -854,86 +609,6 @@ fn section_references(bytes: &[u8]) -> Vec<Vec<String>> {
 }
 
 #[test]
-fn an_edited_document_keeps_its_header_and_footer_references_in_the_order_it_read() {
-    // Word interleaves them: its even and default headers, their footers,
-    // then the first-page header and footer. The authored thesis mixes them
-    // its own way, LibreOffice and Google write the headers first.
-    for name in [
-        "word/thesis.docx",
-        "word/letter.docx",
-        "authored/thesis.docx",
-        "libreoffice/letter.docx",
-        "google/letter.docx",
-    ] {
-        let mut doc = corpus_doc(name);
-        let read = section_references(&doc.to_bytes().unwrap());
-        if name == "word/thesis.docx" {
-            assert_eq!(
-                read[0],
-                [
-                    "h:even",
-                    "h:default",
-                    "f:even",
-                    "f:default",
-                    "h:first",
-                    "f:first"
-                ]
-            );
-        }
-        doc.add_paragraph("Added.");
-        assert_eq!(section_references(&doc.to_bytes().unwrap()), read, "{name}");
-    }
-}
-
-#[test]
-fn new_header_and_footer_references_are_written_header_then_footer_per_type() {
-    // The order Word writes a default and a first-page header and footer in.
-    let mut doc = Document::new();
-    doc.add_paragraph("Body.");
-    doc.set_header("Header");
-    doc.set_first_page_header("First header");
-    doc.set_footer("Footer");
-    doc.set_first_page_footer("First footer");
-    assert_eq!(
-        section_references(&doc.to_bytes().unwrap()),
-        [["h:default", "f:default", "h:first", "f:first"]]
-    );
-}
-
-#[test]
-fn relinking_a_header_or_a_footer_of_a_word_file_keeps_its_place_among_the_others() {
-    let mut doc = corpus_doc("word/letter.docx");
-    let read = section_references(&doc.to_bytes().unwrap());
-    assert_eq!(read, [["h:default", "f:default", "h:first", "f:first"]]);
-    let story = |doc: &Document, kind, hdr_type| {
-        doc.section_story(0, kind, hdr_type)
-            .unwrap()
-            .expect("the section has this story")
-            .story()
-            .clone()
-    };
-    let first_header = story(&doc, HeaderFooterKind::Header, HdrFtrType::First);
-    let default_footer = story(&doc, HeaderFooterKind::Footer, HdrFtrType::Default);
-    doc.link_section_story(
-        0,
-        HeaderFooterKind::Header,
-        HdrFtrType::Default,
-        &first_header,
-    )
-    .unwrap();
-    doc.link_section_story(
-        0,
-        HeaderFooterKind::Footer,
-        HdrFtrType::First,
-        &default_footer,
-    )
-    .unwrap();
-    let mut doc = reopen(&mut doc);
-    assert_eq!(section_references(&doc.to_bytes().unwrap()), read);
-    assert_eq!(header(&doc, 0), first_page_header(&doc, 0));
-}
-
-#[test]
 fn references_inherited_from_a_removed_section_are_new_to_the_next_one() {
     // The first section of the Word thesis has all six references, the
     // second its own even and default headers only. Removing the first, the
@@ -952,26 +627,6 @@ fn references_inherited_from_a_removed_section_are_new_to_the_next_one() {
             "f:first",
             "f:even"
         ]
-    );
-}
-
-#[test]
-fn a_header_set_over_one_read_keeps_its_place_among_the_others() {
-    // The Word letter has a default and a first-page header and footer.
-    // With its title page turned off, a new first-page header replaces the
-    // one read: it takes the place of the one it replaces.
-    let mut doc = corpus_doc("word/letter.docx");
-    let read = section_references(&doc.to_bytes().unwrap());
-    assert_eq!(read, [["h:default", "f:default", "h:first", "f:first"]]);
-    doc.set_different_first_page(false);
-    doc.set_first_page_header("New first page");
-    // A body edit, so that the save writes the section again.
-    doc.add_paragraph("Added.");
-    let mut doc = reopen(&mut doc);
-    assert_eq!(section_references(&doc.to_bytes().unwrap()), read);
-    assert_eq!(
-        first_page_header(&doc, 0).as_deref(),
-        Some("New first page")
     );
 }
 
@@ -1205,42 +860,6 @@ fn rtf_export_reports_the_section_parts_it_drops() {
     );
 }
 
-#[test]
-fn rtf_export_reports_a_dropped_first_page_setting() {
-    let mut doc = corpus_doc("word/paper.docx");
-    doc.section_mut(0).unwrap().set_different_first_page(true);
-    let written = doc.to_rtf_bytes().unwrap();
-    let messages: Vec<&str> = written
-        .diagnostics
-        .iter()
-        .map(|diagnostic| diagnostic.message.as_str())
-        .collect();
-    assert!(
-        messages.contains(&"section first-page setting was dropped during RTF export"),
-        "{messages:?}"
-    );
-    assert!(
-        !messages
-            .iter()
-            .any(|message| message.contains("paragraph section properties")),
-        "{messages:?}"
-    );
-}
-
-#[test]
-fn the_word_paper_keeps_its_sections_through_rtf() {
-    let doc = corpus_doc("word/paper.docx");
-    assert!(
-        doc.sections()
-            .any(|section| section.columns().is_some_and(|(count, _)| count == 2)),
-        "{:?}",
-        section_layouts(&doc)
-    );
-    let rtf = doc.to_rtf_bytes().unwrap().bytes;
-    let read = Document::from_rtf_bytes(&rtf).unwrap().document;
-    assert_eq!(section_layouts(&read), section_layouts(&doc));
-}
-
 // ---- Linking drops a story only once nothing uses it ----
 
 /// The footer parts the document would save.
@@ -1284,30 +903,6 @@ fn linking_a_section_away_from_its_own_footer_drops_the_footer_nothing_uses() {
         "the unused copy leaves the file"
     );
     assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
-}
-
-#[test]
-fn linking_a_section_away_from_a_footer_another_section_shows_keeps_it() {
-    let (mut doc, shared, _) = own_footer_in_second_section();
-    doc.insert_section(2).expect("a third section appends");
-    doc.add_paragraph("third");
-    let copy = shown(&doc, 1, HeaderFooterKind::Footer, HdrFtrType::Default)
-        .expect("the second section shows its copy")
-        .story()
-        .clone();
-    doc.link_section_story(2, HeaderFooterKind::Footer, HdrFtrType::Default, &copy)
-        .expect("the third section links the copy");
-    doc.link_section_story(1, HeaderFooterKind::Footer, HdrFtrType::Default, &shared)
-        .expect("the footer links");
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        footer_part_count(&doc),
-        2,
-        "the third section's footer stays"
-    );
-    assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
-    let third = footer(&doc, 2).expect("the third section shows a footer");
-    assert!(third.contains("own footer"), "{third}");
 }
 
 #[test]

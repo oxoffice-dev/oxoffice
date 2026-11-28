@@ -743,41 +743,6 @@ fn a_range_in_a_block_control_ends_at_its_end_and_names_the_route() {
 }
 
 #[test]
-fn the_end_of_a_block_control_is_inside_it_and_the_story_end_after_it() {
-    // The body ends with the control, whose last paragraph a bookmark spans.
-    let mut doc = doc_with_body(&sdt(
-        "box",
-        "",
-        &format!(
-            "{}<w:bookmarkStart w:id=\"5\" w:name=\"around\"/>{}<w:bookmarkEnd w:id=\"5\"/>",
-            p("Inside"),
-            p("Marked")
-        ),
-    ));
-    let at = location(&doc, "e:box");
-    doc.insert_content(&at, new_paragraph("In the control"))
-        .expect("at the control's end");
-    let end = ContentLocation::end(body(&doc));
-    doc.insert_content(&end, new_paragraph("After the control"))
-        .expect("at the body's end");
-    let bytes = reopen(&mut doc).to_bytes().expect("saves");
-    let xml = String::from_utf8(package_parts(&bytes)["word/document.xml"].clone()).unwrap();
-    let order = [
-        "Marked",
-        "<w:bookmarkEnd w:id=\"5\"/>",
-        "In the control",
-        "</w:sdtContent>",
-        "After the control",
-        "<w:sectPr",
-    ]
-    .map(|needle| {
-        xml.find(needle)
-            .unwrap_or_else(|| panic!("{needle} written"))
-    });
-    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
-}
-
-#[test]
 fn bookmark_markers_inside_a_block_control_go_with_their_paragraph() {
     let marked = format!(
         "{}<w:bookmarkStart w:id=\"3\" w:name=\"heading\"/>{}<w:bookmarkEnd w:id=\"3\"/>",

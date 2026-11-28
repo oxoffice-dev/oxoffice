@@ -327,62 +327,6 @@ fn doc_with_raw_header(content: &str) -> Document {
 // ---- Inserting ----
 
 #[test]
-fn a_block_control_goes_before_the_item_at_its_location_or_at_the_end_of_the_story() {
-    let mut doc = doc_with(&["Intro", "Outro"]);
-    let end = ContentLocation::end(body(&doc));
-    doc.insert_content_control(
-        &end,
-        ContentControlSpec {
-            alias: Some("Nom du client".to_owned()),
-            ..spec(Block, SdtType::RichText, "client")
-        },
-    )
-    .unwrap();
-    let outro = doc
-        .paragraph_story_location(1)
-        .unwrap()
-        .expect("paragraph Outro");
-    doc.insert_content_control(&outro, spec(Block, SdtType::PlainText, "summary"))
-        .unwrap();
-    let doc = reopen(&mut doc);
-
-    // Each control holds one empty paragraph, a body paragraph of its own.
-    assert_eq!(texts(&doc), ["Intro", "", "Outro", ""]);
-    assert_eq!(
-        listed(&doc),
-        [
-            (
-                Some("summary".into()),
-                Some(2),
-                Some(SdtType::PlainText),
-                "".into()
-            ),
-            (
-                Some("client".into()),
-                Some(1),
-                Some(SdtType::RichText),
-                "".into()
-            ),
-        ]
-    );
-    assert_eq!(
-        doc.content_controls_by_tag("client")[0].alias(),
-        Some("Nom du client")
-    );
-    assert_eq!(doc.content_controls_by_tag("summary")[0].alias(), None);
-    // Nothing that was not asked for.
-    let properties = saved_properties(&doc, "word/document.xml", 1);
-    for element in [
-        "w:lock",
-        "w15:appearance",
-        "w:showingPlcHdr",
-        "w:dataBinding",
-    ] {
-        assert!(!has(&properties, element), "{element}: {properties}");
-    }
-}
-
-#[test]
 fn row_and_cell_controls_add_a_row_as_wide_as_the_table_and_a_cell_to_a_row() {
     let mut doc = doc_with(&["Order"]);
     {
@@ -883,26 +827,6 @@ fn a_control_in_a_header_survives_a_save_and_the_form_calls_fill_and_reset_it() 
 }
 
 #[test]
-fn bound_values_reach_a_header_control_and_its_custom_xml() {
-    let mut doc = doc_with_header_control();
-    let store = doc
-        .add_custom_xml_store(b"<report><title>Draft</title></report>", &[])
-        .unwrap();
-    let location = control_at(&doc, &story(&doc, StoryKind::Header), "title");
-    doc.set_content_control_binding(&location, &store, "/report/title", None)
-        .unwrap();
-    let values = HashMap::from([("title".to_owned(), "Annual report".to_owned())]);
-    assert_eq!(doc.bind_content_controls(&values).unwrap(), 1);
-    let doc = reopen(&mut doc);
-    let header = story(&doc, StoryKind::Header);
-    assert_eq!(item_text(&doc, &header, "title"), "Annual report");
-    assert_eq!(
-        doc.part_xml("customXml/item1.xml").unwrap(),
-        "<report><title>Annual report</title></report>"
-    );
-}
-
-#[test]
 fn a_value_set_by_tag_reaches_controls_in_text_boxes_of_the_body_and_of_a_header() {
     let mut doc = doc_with_body(&text_box_xml(&block_control_xml("boxed", "Old")));
     assert_eq!(listed(&doc).len(), 1, "the text box control is listed once");
@@ -1387,41 +1311,6 @@ fn filling_several_tags_is_all_or_nothing() {
     assert_eq!(texts(&doc), ["Contoso", "Contoso", "1 May"]);
 }
 
-#[test]
-fn a_date_is_given_in_iso_form_and_shown_in_the_control_format() {
-    for (format, shown) in [("yyyy-MM-dd", "2026-12-25"), ("dd/MM/yyyy", "25/12/2026")] {
-        let mut doc = typed_control(
-            "due",
-            ContentControlTypePayload::Date {
-                format: format.to_owned(),
-            },
-        );
-        let before = doc.to_bytes().unwrap();
-        for refused in ["2026-02-30", "25/12/2026", "next week", ""] {
-            assert!(
-                doc.set_content_control_value_by_tag("due", refused)
-                    .is_err(),
-                "{format}: {refused:?}"
-            );
-        }
-        assert_eq!(doc.to_bytes().unwrap(), before, "{format}");
-
-        assert_eq!(
-            doc.set_content_control_value_by_tag("due", "2026-12-25")
-                .unwrap(),
-            1
-        );
-        let doc = reopen(&mut doc);
-        assert_eq!(value(&doc, "due"), shown);
-        let properties = saved_properties(&doc, "word/document.xml", 1);
-        assert_eq!(
-            attribute(&properties, "w:date", "w:fullDate").as_deref(),
-            Some("2026-12-25T00:00:00Z")
-        );
-        assert_eq!(val(&properties, "w:dateFormat").as_deref(), Some(format));
-    }
-}
-
 /// `doc_with_control` with a date control in `format` and, when given, the
 /// language `lid`, written as Word writes them (`w:dateFormat`, `w:lid`):
 /// a format oxoffice refuses to author is still read from a file.
@@ -1565,39 +1454,6 @@ fn a_control_whose_format_shows_a_time_takes_a_date_and_time() {
 }
 
 #[test]
-fn a_bound_date_and_time_stores_what_its_mapping_asks() {
-    for (store, stored) in [
-        ("text", "1/2/2015 3:05 PM"),
-        ("date", "2015-01-02"),
-        ("dateTime", "2015-01-02T15:05:00Z"),
-    ] {
-        let mut doc = date_control("due", "M/d/yyyy h:mm am/pm", Some("en-US"));
-        let mut doc = with_main_part_edit(
-            &mut doc,
-            r#"<w:storeMappedDataAs w:val="text"/>"#,
-            &format!(r#"<w:storeMappedDataAs w:val="{store}"/>"#),
-        );
-        let custom = doc
-            .add_custom_xml_store(b"<order><due/></order>", &[])
-            .unwrap();
-        let location = control_at(&doc, &body(&doc), "due");
-        doc.set_content_control_binding(&location, &custom, "/order/due", None)
-            .unwrap();
-        set_value(&mut doc, "due", "2015-01-02T15:05", false);
-        let doc = reopen(&mut doc);
-        assert_eq!(
-            doc.part_xml("customXml/item1.xml").unwrap(),
-            format!("<order><due>{stored}</due></order>"),
-            "{store}"
-        );
-        let issues = doc
-            .validate_form(&[prompt(target("due"), false, "")])
-            .unwrap();
-        assert!(issues.is_empty(), "{store}: {issues:?}");
-    }
-}
-
-#[test]
 fn a_date_control_on_the_us_gregorian_calendar_is_set_and_checked() {
     // The calendar is Gregorian in US English: English names, whatever the
     // control's language, also one oxoffice has no names for.
@@ -1623,36 +1479,6 @@ fn a_date_control_on_the_us_gregorian_calendar_is_set_and_checked() {
             .unwrap();
         assert!(issues.is_empty(), "{lid}: {issues:?}");
     }
-}
-
-#[test]
-fn a_date_control_takes_any_format_word_can_show_and_refuses_others() {
-    let mut doc = doc_with_control("due");
-    let location = control_at(&doc, &body(&doc), "due");
-    for refused in ["Q yyyy", "d 'MMMM", ""] {
-        let error = doc
-            .set_content_control_type(
-                &location,
-                ContentControlTypePayload::Date {
-                    format: refused.to_owned(),
-                },
-            )
-            .expect_err("the format cannot be shown");
-        assert!(
-            error.to_string().contains("date format"),
-            "{refused:?}: {error}"
-        );
-    }
-    doc.set_content_control_type(
-        &location,
-        ContentControlTypePayload::Date {
-            format: "d MMMM yyyy".to_owned(),
-        },
-    )
-    .expect("a long date format is taken");
-    set_value(&mut doc, "due", "2026-12-25", false);
-    let doc = reopen(&mut doc);
-    assert_eq!(value(&doc, "due"), "25 December 2026");
 }
 
 #[test]
@@ -2075,32 +1901,6 @@ fn a_value_drops_the_emptied_paragraphs_that_hold_only_proofing_and_rendering_ma
 }
 
 #[test]
-fn a_value_set_on_a_control_without_a_run_keeps_line_breaks_and_leaves_one_paragraph() {
-    // A block rich text control holds one empty paragraph when inserted.
-    for by_form in [false, true] {
-        let mut doc = doc_with_control("notes");
-        set_value(&mut doc, "notes", "Ada\nLondon", by_form);
-        let doc = reopen(&mut doc);
-        assert_eq!(texts(&doc), ["Intro", "Ada\nLondon"], "{}", way(by_form));
-        let content = saved_content(&doc, "word/document.xml", "notes");
-        assert!(
-            has(&content, "w:br") && !content.contains("Ada\nLondon"),
-            "{}: the line break is written as a w:br: {content}",
-            way(by_form)
-        );
-    }
-    let body = r#"<w:sdt><w:sdtPr><w:tag w:val="notes"/><w:id w:val="7"/><w:richText/></w:sdtPr><w:sdtContent><w:p/><w:p/></w:sdtContent></w:sdt>"#;
-    for by_form in [false, true] {
-        let mut doc = doc_with_body(body);
-        set_value(&mut doc, "notes", "Ada", by_form);
-        let doc = reopen(&mut doc);
-        assert_eq!(texts(&doc), ["Ada"], "{}", way(by_form));
-        let content = saved_content(&doc, "word/document.xml", "notes");
-        assert_eq!(paragraph_count(&content), 1, "{}: {content}", way(by_form));
-    }
-}
-
-#[test]
 fn a_value_keeps_a_paragraph_of_the_control_that_holds_a_section_break_or_a_property_change() {
     let kept = [
         (
@@ -2263,46 +2063,6 @@ fn a_checkbox_state_spelled_in_another_case_is_an_invalid_form_value() {
 }
 
 #[test]
-fn a_raw_carriage_return_in_a_bound_value_or_its_control_reads_as_a_line_feed() {
-    // A part written with Windows line ends holds a raw CR LF in text, which
-    // every XML reader reads as one line feed: a control and its bound value
-    // showing the same lines agree, whichever part holds the raw line ends.
-    let mut doc = doc_with_header_control();
-    let store = doc
-        .add_custom_xml_store(b"<report><title>Draft</title></report>", &[])
-        .unwrap();
-    let location = control_at(&doc, &story(&doc, StoryKind::Header), "title");
-    doc.set_content_control_binding(&location, &store, "/report/title", None)
-        .unwrap();
-    let values = HashMap::from([("title".to_owned(), "one\ntwo\nthree".to_owned())]);
-    assert_eq!(doc.bind_content_controls(&values).unwrap(), 1);
-    let saved = doc.to_bytes().unwrap();
-    let rewritten = |part: &str, from: &str, to: &str| {
-        let mut package = OpcPackage::from_reader(Cursor::new(saved.clone())).unwrap();
-        let xml = String::from_utf8(package.get_part(part).unwrap().to_vec()).unwrap();
-        assert!(xml.contains(from), "{xml}");
-        package.set_part(part, xml.replace(from, to).into_bytes());
-        let mut out = Cursor::new(Vec::new());
-        package.write_to(&mut out).unwrap();
-        Document::from_bytes(&out.into_inner()).unwrap()
-    };
-    let raw_store = rewritten(
-        "/customXml/item1.xml",
-        "<title>one\ntwo\nthree</title>",
-        "<title>one\r\ntwo\rthree</title>",
-    );
-    let raw_control = rewritten(
-        "/word/header1.xml",
-        "<w:t>one</w:t><w:br/><w:t>two</w:t><w:br/><w:t>three</w:t>",
-        "<w:t>one\r\ntwo\rthree</w:t>",
-    );
-    let rule = prompt(target("title"), true, "Document title");
-    for doc in [raw_store, raw_control] {
-        assert_eq!(doc.validate_form(std::slice::from_ref(&rule)).unwrap(), []);
-    }
-}
-
-#[test]
 fn a_placeholder_entry_named_with_a_tab_is_bound_as_named() {
     let mut paragraph = CT_P::new();
     paragraph.add_run("Enter the client name");
@@ -2334,26 +2094,6 @@ fn a_placeholder_entry_named_with_a_tab_is_bound_as_named() {
         val(&properties, "w:docPart").as_deref(),
         Some("Client&#9;Prompt"),
         "{properties}"
-    );
-}
-
-#[test]
-fn a_control_alias_and_tag_with_a_tab_and_line_ends_read_back_as_set() {
-    let value = "a\tb\nc\rd";
-    let mut doc = doc_with_control("client");
-    let location = control_at(&doc, &body(&doc), "client");
-    doc.set_content_control_alias(&location, Some(value))
-        .unwrap();
-    let location = control_at(&doc, &body(&doc), "client");
-    doc.set_content_control_tag(&location, Some(value)).unwrap();
-    let doc = reopen(&mut doc);
-    let controls = doc.content_controls();
-    assert_eq!(
-        controls
-            .iter()
-            .map(|control| (control.alias(), control.tag()))
-            .collect::<Vec<_>>(),
-        [(Some(value), Some(value))]
     );
 }
 

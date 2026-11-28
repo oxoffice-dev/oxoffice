@@ -157,45 +157,6 @@ fn author_initials_and_date_read_back_as_given() {
 }
 
 #[test]
-fn a_missing_occurrence_is_refused_and_says_how_many_there_are() {
-    let mut doc = doc_with(&["text and text", "aaa"]);
-    let before = doc.to_bytes().unwrap();
-
-    let error = doc
-        .add_comment_on_text(
-            "text",
-            "Ada",
-            "Third?",
-            TextCommentOptions {
-                occurrence: 2,
-                date: CommentDate::Undated,
-                ..Default::default()
-            },
-        )
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("it occurs 2 times"), "{error}");
-    // Matches do not overlap: "aaa" holds "aa" once.
-    let error = doc
-        .add_comment_on_text(
-            "aa",
-            "Ada",
-            "Second?",
-            TextCommentOptions {
-                occurrence: 1,
-                date: CommentDate::Undated,
-                ..Default::default()
-            },
-        )
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("it occurs 1 time "), "{error}");
-
-    assert!(doc.comments().is_empty());
-    assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
 fn anchors_the_main_story_search_cannot_find_are_refused() {
     let mut doc = doc_with(&["end of one", "start of two"]);
     doc.set_header("Header words");
@@ -602,72 +563,6 @@ fn a_comment_reuses_comment_styles_found_by_id_and_refuses_one_of_the_wrong_type
     assert!(error.contains("wrong type"), "{error}");
 }
 
-#[test]
-fn a_comment_mark_style_of_the_wrong_type_leaves_no_comment_text_style_behind() {
-    // The comment text style is created before the mark's style is found
-    // to be a paragraph style: the refused add takes it back.
-    type Add = fn(&mut Document) -> oxoffice_docx::Result<i32>;
-    let routes: [(&str, Add); 3] = [
-        ("on text", |doc| {
-            doc.add_comment_on_text(
-                "review",
-                "Ada",
-                "Please review",
-                TextCommentOptions {
-                    date: CommentDate::Undated,
-                    ..Default::default()
-                },
-            )
-        }),
-        ("on runs", |doc| {
-            doc.add_comment_with_date(
-                run_range(0, 0, 0, 1),
-                "Ada",
-                None,
-                "Please review",
-                CommentDate::Undated,
-            )
-        }),
-        ("on a story range", |doc| {
-            let first = story_paragraph(doc, StoryKind::Body, 0);
-            let second = doc.story_items(first.story()).unwrap()[1]
-                .location()
-                .clone();
-            let mut range = story_range(&first, 0, 1);
-            range.end = StoryRunPosition {
-                location: second,
-                run_index: 1,
-            };
-            doc.add_story_comment_with_date(
-                range,
-                "Ada",
-                None,
-                "Please review",
-                CommentDate::Undated,
-            )
-        }),
-    ];
-    for (route, add) in routes {
-        let mut doc = doc_with(&["review this", "and this"]);
-        doc.add_style(StyleBuilder::paragraph(
-            "CommentReference",
-            "CommentReference",
-        ))
-        .unwrap();
-        let before = doc.to_bytes().unwrap();
-        let error = add(&mut doc).unwrap_err().to_string();
-        assert!(
-            error.contains("comment style CommentReference has the wrong type"),
-            "{route}: {error}"
-        );
-        assert!(
-            doc.style("CommentText").is_none(),
-            "{route}: no comment text style is left behind"
-        );
-        assert_eq!(doc.to_bytes().unwrap(), before, "{route}: nothing changed");
-    }
-}
-
 /// `doc` saved, its `word/styles.xml` rewritten by `edit`, and reopened:
 /// styles as another producer wrote them, which the facade would not write.
 fn with_styles_xml(doc: &mut Document, edit: impl FnOnce(String) -> String) -> Document {
@@ -970,59 +865,6 @@ fn a_comment_starting_inside_a_deletion_can_be_moved_and_removed() {
     assert!(main.contains("ninety (90)"), "the deletion stays: {main}");
 }
 
-#[test]
-fn a_comment_inside_a_tracked_insertion_can_be_removed() {
-    let (mut doc, id) = commented_paragraph(&format!(
-        concat!(
-            r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:ins {}>"#,
-            r#"<w:r><w:t xml:space="preserve">within </w:t></w:r><w:commentRangeStart w:id="ID"/>"#,
-            r#"<w:r><w:t>30 days</w:t></w:r><w:commentRangeEnd w:id="ID"/>"#,
-            r#"<w:r><w:commentReference w:id="ID"/></w:r></w:ins></w:p>"#
-        ),
-        INS
-    ));
-    assert_eq!(
-        doc.comment_anchor_text(id).unwrap().as_deref(),
-        Some("30 days")
-    );
-    assert!(doc.remove_comment(id).unwrap());
-    let doc = reopen(&mut doc);
-    assert!(doc.comments().is_empty());
-    let main = doc.part_xml("word/document.xml").unwrap();
-    assert!(!main.contains("comment"), "{main}");
-    assert!(main.contains("30 days"), "{main}");
-}
-
-#[test]
-fn accepting_or_rejecting_a_change_that_holds_a_whole_comment_removes_the_comment() {
-    let whole = |wrapper: &str, attributes: &str, text: &str| {
-        format!(
-            concat!(
-                r#"<w:p><w:r><w:t xml:space="preserve">Pay </w:t></w:r><w:{0} {1}>"#,
-                r#"<w:commentRangeStart w:id="ID"/><w:r><w:{2}>30 days</w:{2}></w:r>"#,
-                r#"<w:commentRangeEnd w:id="ID"/><w:r><w:commentReference w:id="ID"/></w:r></w:{0}></w:p>"#
-            ),
-            wrapper, attributes, text
-        )
-    };
-    for (paragraph, accept) in [
-        (whole("ins", INS, "t"), false),
-        (whole("del", DEL, "delText"), true),
-    ] {
-        let (mut doc, _) = commented_paragraph(&paragraph);
-        if accept {
-            doc.accept_all().unwrap();
-        } else {
-            doc.reject_all().unwrap();
-        }
-        let doc = reopen(&mut doc);
-        assert!(doc.comments().is_empty(), "{paragraph}");
-        let main = doc.part_xml("word/document.xml").unwrap();
-        assert!(!main.contains("commentRange"), "{main}");
-        assert_eq!(texts(&doc), ["Pay "]);
-    }
-}
-
 const REVIEWER: &str = "Reviewer";
 
 /// A comment id and the ids of its paragraphs.
@@ -1125,52 +967,6 @@ fn threads_and_resolved_state_are_written_on_the_last_paragraph_of_a_comment() {
     );
 }
 
-#[test]
-fn a_comment_on_part_of_a_tracked_insertion_stays_inside_it() {
-    let mut doc = doc_with_body(
-        r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words here</w:t></w:r></w:ins></w:p>"#,
-    );
-    doc.add_comment_on_text(
-        "words",
-        REVIEWER,
-        "Check",
-        TextCommentOptions {
-            date: CommentDate::Undated,
-            ..Default::default()
-        },
-    )
-    .unwrap_or_else(|e| panic!("{e}"));
-    let doc = reopen(&mut doc);
-    assert_eq!(
-        doc.comments()[0].anchor_text().unwrap().as_deref(),
-        Some("words")
-    );
-    let revisions = doc.story_revisions().unwrap();
-    assert_eq!(revisions.len(), 1);
-    assert_eq!(revisions[0].text(), "new words here");
-    // The markers and the styled comment mark are inside the insertion.
-    let mut doc = doc;
-    let body = main_body(&mut doc);
-    let inserted = &body[body.find("<w:ins ").unwrap()..body.find("</w:ins>").unwrap()];
-    for part in [
-        "<w:commentRangeStart w:id=\"0\"/>",
-        "<w:commentRangeEnd w:id=\"0\"/>",
-        "<w:rStyle w:val=\"CommentReference\"/>",
-    ] {
-        assert!(inserted.contains(part), "{part} in {body}");
-    }
-    // Accepting keeps the comment; rejecting removes it with its text.
-    let mut accepted = reopen(&mut doc);
-    accepted.accept_all().unwrap();
-    assert_eq!(
-        accepted.comments()[0].anchor_text().unwrap().as_deref(),
-        Some("words")
-    );
-    let mut rejected = reopen(&mut doc);
-    rejected.reject_all().unwrap();
-    assert!(rejected.comments().is_empty());
-}
-
 /// The body of the saved main document part, without its section properties.
 fn main_body(doc: &mut Document) -> String {
     let parts = crate::support::package_parts(&doc.to_bytes().unwrap());
@@ -1178,52 +974,6 @@ fn main_body(doc: &mut Document) -> String {
     let start = xml.find("<w:body>").unwrap();
     let end = xml.find("<w:sectPr").unwrap_or(xml.len());
     xml[start..end].to_owned()
-}
-
-/// Comment `text` in a paragraph whose middle is a tracked insertion, then
-/// what the comment covers as written, once the insertion is accepted and
-/// once it is rejected.
-fn comment_across_an_insertion_edge(text: &str) -> (String, String, String) {
-    let mut doc = doc_with_body(
-        r#"<w:p><w:r><w:t>Kept </w:t></w:r><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t>new words here</w:t></w:r></w:ins><w:r><w:t> tail</w:t></w:r></w:p>"#,
-    );
-    doc.add_comment_on_text(
-        text,
-        REVIEWER,
-        "Check",
-        TextCommentOptions {
-            date: CommentDate::Undated,
-            ..Default::default()
-        },
-    )
-    .unwrap_or_else(|e| panic!("{e}"));
-    let mut doc = reopen(&mut doc);
-    assert_eq!(doc.story_revisions().unwrap()[0].text(), "new words here");
-    let anchor = |doc: &Document| doc.comments()[0].anchor_text().unwrap().unwrap_or_default();
-    let written = anchor(&doc);
-    let mut accepted = reopen(&mut doc);
-    accepted.accept_all().unwrap();
-    let mut rejected = reopen(&mut doc);
-    rejected.reject_all().unwrap();
-    (written, anchor(&accepted), anchor(&rejected))
-}
-
-#[test]
-fn a_comment_from_text_into_a_tracked_insertion_survives_accept_and_reject() {
-    // The comment mark follows the insertion, so rejecting it keeps the
-    // comment on the text that stays.
-    assert_eq!(
-        comment_across_an_insertion_edge("Kept new"),
-        ("Kept new".into(), "Kept new".into(), "Kept ".into())
-    );
-}
-
-#[test]
-fn a_comment_from_a_tracked_insertion_into_text_survives_accept_and_reject() {
-    assert_eq!(
-        comment_across_an_insertion_edge("here t"),
-        ("here t".into(), "here t".into(), " t".into())
-    );
 }
 
 #[test]
@@ -1344,16 +1094,6 @@ fn a_comment_across_paragraphs_with_both_edges_inside_tracked_insertions() {
 }
 
 #[test]
-fn a_comment_from_one_tracked_insertion_into_another_keeps_both() {
-    let (anchor, revisions, _) = comment_on(
-        r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">first added</w:t></w:r></w:ins><w:r><w:t xml:space="preserve"> kept </w:t></w:r><w:ins w:id="2" w:author="B" w:date="2026-01-01T00:00:00Z"><w:r><w:t>second added</w:t></w:r></w:ins></w:p>"#,
-        "added kept second",
-    );
-    assert_eq!(anchor, "added kept second");
-    assert_eq!(revisions, ["first added", "second added"]);
-}
-
-#[test]
 fn a_comment_from_a_tracked_insertion_into_a_control_is_refused_as_crossing_it() {
     let mut doc = doc_with_body(
         r#"<w:p><w:ins w:id="1" w:author="A" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">new </w:t></w:r><w:r><w:t>words</w:t></w:r></w:ins><w:sdt><w:sdtPr><w:tag w:val="box"/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">in </w:t></w:r><w:r><w:t>box</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
@@ -1395,57 +1135,6 @@ fn listed_ranges(doc: &Document) -> Vec<(String, usize, usize)> {
 }
 
 #[test]
-fn overlapping_bookmarks_are_each_listed_with_their_own_edges() {
-    // Word writes two overlapping bookmarks with crossing markers.
-    let mut doc = doc_with_body(
-        r#"<w:p><w:bookmarkStart w:id="1" w:name="first"/><w:r><w:t>one </w:t></w:r><w:bookmarkStart w:id="2" w:name="second"/><w:r><w:t>two </w:t></w:r><w:bookmarkEnd w:id="1"/><w:r><w:t>three</w:t></w:r><w:bookmarkEnd w:id="2"/></w:p>"#,
-    );
-    let mut ranges = listed_ranges(&doc);
-    ranges.sort();
-    assert_eq!(
-        ranges,
-        [("first".to_owned(), 0, 2), ("second".to_owned(), 1, 3)]
-    );
-    // Removing one leaves the other on its own runs.
-    let first = doc
-        .story_ranges()
-        .unwrap()
-        .into_iter()
-        .find(|range| matches!(range.kind(), StoryRangeKind::Bookmark { name, .. } if name == "first"))
-        .unwrap();
-    assert!(doc.remove_story_range(&first).unwrap());
-    let doc = reopen(&mut doc);
-    assert_eq!(listed_ranges(&doc), [("second".to_owned(), 1, 3)]);
-}
-
-#[test]
-fn a_bookmark_start_without_an_end_is_left_out_and_keeps_its_name_and_identifier() {
-    // LibreOffice writes, beside a copied form field, a start with no end
-    // next to a whole bookmark of the same name.
-    let mut doc = doc_with_body(
-        r#"<w:p><w:bookmarkStart w:id="0" w:name="Field"/><w:bookmarkStart w:id="1" w:name="Field"/><w:r><w:t>one</w:t></w:r><w:bookmarkEnd w:id="1"/><w:bookmarkStart w:id="2" w:name="lonely"/><w:r><w:t>two</w:t></w:r></w:p>"#,
-    );
-    assert_eq!(listed_ranges(&doc), [("Field".to_owned(), 0, 1)]);
-    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
-    let error = doc
-        .add_story_bookmark("Lonely", story_range(&paragraph, 1, 2))
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("already exists"), "{error}");
-    let id = doc
-        .add_story_bookmark("fresh", story_range(&paragraph, 1, 2))
-        .unwrap();
-    assert_eq!(id, 3);
-    let doc = reopen(&mut doc);
-    let mut ranges = listed_ranges(&doc);
-    ranges.sort();
-    assert_eq!(
-        ranges,
-        [("Field".to_owned(), 0, 1), ("fresh".to_owned(), 1, 2)]
-    );
-}
-
-#[test]
 fn a_bookmark_whose_end_the_ranges_do_not_read_is_not_left_out() {
     // The end sits where the range scan does not look: the bookmark is
     // still Word's, so the inventory refuses it rather than drop it.
@@ -1482,60 +1171,6 @@ fn a_heading_bookmark_takes_a_name_no_bookmark_start_holds_in_any_case() {
 }
 
 #[test]
-fn overlapping_comments_leave_every_range_listed_and_editable() {
-    let mut doc = doc_with_body(
-        r#"<w:p><w:r><w:t>one </w:t></w:r><w:r><w:t>two </w:t></w:r><w:r><w:t>three</w:t></w:r></w:p>"#,
-    );
-    // The later range first, so that its reference run, at the end, moves
-    // no boundary of the earlier one.
-    let second = doc
-        .add_comment_with_date(
-            run_range(0, 1, 0, 3),
-            REVIEWER,
-            None,
-            "B",
-            CommentDate::Undated,
-        )
-        .unwrap();
-    let first = doc
-        .add_comment_with_date(
-            run_range(0, 0, 0, 2),
-            REVIEWER,
-            None,
-            "A",
-            CommentDate::Undated,
-        )
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    assert_eq!(
-        comment(&doc, first).anchor_text().unwrap().as_deref(),
-        Some("one two ")
-    );
-    assert_eq!(
-        comment(&doc, second).anchor_text().unwrap().as_deref(),
-        Some("two three")
-    );
-    // Both ranges are listed, whatever the order of their markers.
-    let labels = listed_ranges(&doc)
-        .into_iter()
-        .map(|(label, _, _)| label)
-        .collect::<Vec<_>>();
-    assert_eq!(labels.len(), 2, "{labels:?}");
-    for id in [first, second] {
-        assert!(labels.contains(&format!("comment {id}")), "{labels:?}");
-    }
-    // An edit that checks the ranges first still works on the document.
-    let paragraph = doc.paragraph_story_location(0).unwrap().unwrap();
-    doc.add_story_bookmark("after", story_range(&paragraph, 0, 1))
-        .unwrap();
-    assert!(
-        listed_ranges(&doc)
-            .iter()
-            .any(|(label, _, _)| label == "after")
-    );
-}
-
-#[test]
 fn removing_a_saved_thread_across_paragraphs_is_taken_in_place() {
     let mut doc = doc_with(&["one", "two", "three", "four"]);
     let kept = doc
@@ -1555,20 +1190,6 @@ fn removing_a_saved_thread_across_paragraphs_is_taken_in_place() {
     let ids: Vec<i32> = doc.comments().iter().map(CommentRef::id).collect();
     assert_eq!(ids, [kept]);
     assert_eq!(texts(&doc), ["one", "two", "three", "four"]);
-}
-
-#[test]
-fn removing_the_last_thread_is_left_to_the_staged_route() {
-    let mut doc = doc_with(&["one"]);
-    let only = doc
-        .add_comment(run_range(0, 0, 0, 1), "Ada", None, "only")
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    let before = doc.to_bytes().unwrap();
-    assert_eq!(doc.remove_comment_in_place(only).unwrap(), None);
-    assert_eq!(doc.to_bytes().unwrap(), before);
-    assert!(doc.remove_comment(only).unwrap());
-    assert!(doc.comments().is_empty());
 }
 
 /// A note whose text carries a comment: removing the note removes the

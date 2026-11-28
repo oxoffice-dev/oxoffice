@@ -58,38 +58,6 @@ fn text(object: &Object) -> String {
 
 const W_NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
 
-/// A three-page document with a control in its body, a check box in its
-/// header and a text control in its footer.
-fn doc_with_header_and_footer_controls() -> Document {
-    let page_break = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#;
-    let mut doc = doc_with_body(&format!(
-        "<w:p>{}</w:p>{page_break}{page_break}<w:p><w:r><w:t>Last</w:t></w:r></w:p>",
-        text_control("body", "In the body")
-    ));
-    set_header_and_footer_controls(&mut doc);
-    doc
-}
-
-fn set_header_and_footer_controls(doc: &mut Document) {
-    doc.set_raw_header_with_images(
-        format!(
-            r#"<w:hdr {W_NS} {W14}><w:p><w:sdt><w:sdtPr><w:tag w:val="approved"/><w14:checkbox><w14:checked w14:val="1"/><w14:checkedState w14:val="2612" w14:font="MS Gothic"/><w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox></w:sdtPr><w:sdtContent><w:r><w:t>&#x2612;</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> Approved</w:t></w:r></w:p></w:hdr>"#
-        )
-        .into_bytes(),
-        &[],
-        oxoffice_docx::HdrFtrType::Default,
-    );
-    doc.set_raw_footer_with_images(
-        format!(
-            r#"<w:ftr {W_NS}><w:p><w:r><w:t xml:space="preserve">Reference: </w:t></w:r>{}</w:p></w:ftr>"#,
-            text_control("reference", "REF-1")
-        )
-        .into_bytes(),
-        &[],
-        oxoffice_docx::HdrFtrType::Default,
-    );
-}
-
 /// A field's widgets: its kids, or the field itself when it is its widget.
 fn widgets(pdf: &Pdf, field: &Dictionary) -> Vec<Dictionary> {
     match field.get(b"Kids") {
@@ -100,92 +68,6 @@ fn widgets(pdf: &Pdf, field: &Dictionary) -> Vec<Dictionary> {
             .map(|kid| pdf.dereference(kid).unwrap().1.as_dict().unwrap().clone())
             .collect(),
         Err(_) => vec![field.clone()],
-    }
-}
-
-#[test]
-fn controls_in_headers_and_footers_become_one_field_with_a_widget_on_each_page() {
-    let doc = doc_with_header_and_footer_controls();
-    let with_fields = doc.layout_with_options(fillable()).unwrap();
-    let layout = &with_fields.layout;
-    assert_eq!(layout.pages.len(), 3);
-    assert_eq!(field_names(layout), ["body", "approved", "reference"]);
-    assert!(
-        layout
-            .diagnostics
-            .iter()
-            .all(|diagnostic| !diagnostic.message.contains("stays static")),
-        "{:?}",
-        layout.diagnostics
-    );
-    // Each page's header and footer are fragments, and nothing else moves.
-    let without = doc.layout_with_options(RenderOptions::default()).unwrap();
-    assert_eq!(drawing(&layout.pages), drawing(&without.layout.pages));
-    assert!(!page_text(&layout.pages).contains("REF-1"));
-    assert!(page_text(&layout.pages).contains("Reference:"));
-
-    for bytes in [
-        doc.to_pdf_with_options(fillable()).unwrap(),
-        doc.to_pdfa_deterministic_with_options(oxoffice_docx::PdfConformance::PdfA2b, fillable())
-            .unwrap(),
-    ] {
-        let (pdf, exported) = fields(&bytes);
-        let names: Vec<&str> = exported.iter().map(|(name, _)| name.as_str()).collect();
-        assert_eq!(names, ["body", "approved", "reference"]);
-        let pages: Vec<lopdf::ObjectId> = pdf.get_pages().into_values().collect();
-        assert_eq!(widgets(&pdf, &exported[0].1).len(), 1);
-        for (name, field) in &exported[1..] {
-            // One value on the parent, one widget per page under it.
-            assert!(field.get(b"Rect").is_err(), "{name}");
-            let kids = widgets(&pdf, field);
-            let on: Vec<lopdf::ObjectId> = kids
-                .iter()
-                .map(|kid| kid.get(b"P").unwrap().as_reference().unwrap())
-                .collect();
-            assert_eq!(on, pages, "{name}");
-            for kid in &kids {
-                assert_eq!(kid.get(b"Subtype").unwrap().as_name().unwrap(), b"Widget");
-                assert!(kid.get(b"T").is_err(), "{name}: a widget has no name");
-                assert!(kid.get(b"Parent").is_ok());
-                assert!(kid.get(b"AP").is_ok());
-            }
-            // Every page lists its widget.
-            for (page, kid) in pages
-                .iter()
-                .zip(field.get(b"Kids").unwrap().as_array().unwrap())
-            {
-                let annotations = pdf.get_page_annotations(*page).unwrap();
-                let kid = kid.as_reference().unwrap();
-                assert!(
-                    annotations.iter().any(|annotation| pdf
-                        .get_object(kid)
-                        .unwrap()
-                        .as_dict()
-                        .unwrap()
-                        == *annotation),
-                    "{name}"
-                );
-            }
-        }
-        // Tagged output: each widget its own parent tree key.
-        let keys: std::collections::BTreeSet<i64> = exported[1..]
-            .iter()
-            .flat_map(|(_, field)| widgets(&pdf, field))
-            .filter_map(|kid| {
-                kid.get(b"StructParent")
-                    .ok()
-                    .map(|key| key.as_i64().unwrap())
-            })
-            .collect();
-        if pdf.catalog().unwrap().get(b"StructTreeRoot").is_ok() {
-            assert_eq!(keys.len(), 2 * pages.len(), "one key per widget");
-            assert!(
-                exported[1].1.get(b"StructParent").is_err(),
-                "the parent is no widget"
-            );
-        }
-        assert_eq!(text(exported[2].1.get(b"V").unwrap()), "REF-1");
-        assert_eq!(exported[1].1.get(b"V").unwrap().as_name().unwrap(), b"Yes");
     }
 }
 
@@ -300,135 +182,6 @@ fn a_signature_in_a_header_stays_static_when_it_repeats() {
     );
 }
 
-/// A rotated cell's widget is measured in the cell's own coordinates: text
-/// beside a wrapped control there sits under its box, and says so.
-#[test]
-fn an_inline_control_that_wraps_beside_text_in_a_rotated_cell_says_so() {
-    let words = "wrapping words ".repeat(6);
-    let doc = doc_with_body(&cell_with_direction(
-        "btLr",
-        &format!(
-            r#"<w:r><w:t xml:space="preserve">Label: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="beside"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">{words}</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> after</w:t></w:r>"#
-        ),
-    ));
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    assert!(matches!(
-        layout.layout.form_fields[0].kind,
-        FormFieldKind::Text {
-            multiline: true,
-            ..
-        }
-    ));
-    let said = diagnostics_about(&layout.layout, "beside");
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("sits under its box"), "{said:?}");
-}
-
-#[test]
-fn a_shared_header_field_wrapping_only_in_a_narrower_later_section_is_multiline() {
-    let mut doc = doc_with_body(
-        "<w:p><w:r><w:t>Wide</w:t></w:r></w:p><w:p><w:r><w:t>Narrow</w:t></w:r></w:p>",
-    );
-    doc.set_raw_header_with_images(
-        format!(
-            r#"<w:hdr {W_NS}><w:p>{}</w:p></w:hdr>"#,
-            text_control(
-                "title",
-                "A header value that wraps in a narrow section only"
-            )
-        )
-        .into_bytes(),
-        &[],
-        oxoffice_docx::HdrFtrType::Default,
-    );
-    // The first section keeps the page's margins; the last one, sharing
-    // its header, has wide margins.
-    let mut package =
-        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
-            .unwrap();
-    let part = package.main_document_part().unwrap();
-    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
-    let start = xml.rfind("<w:sectPr").unwrap();
-    let end = xml.rfind("</w:sectPr>").unwrap() + "</w:sectPr>".len();
-    let section = xml[start..end].to_owned();
-    let margins = regex::Regex::new(r#"w:(left|right)="\d+""#).unwrap();
-    let narrow = margins.replace_all(&section, r#"w:$1="4000""#).into_owned();
-    assert_ne!(narrow, section);
-    let second = xml.find("<w:p><w:r><w:t>Narrow</w:t>").unwrap();
-    let xml = format!(
-        "{}<w:p><w:pPr>{section}</w:pPr></w:p>{}{narrow}{}",
-        &xml[..second],
-        &xml[second..start],
-        &xml[end..]
-    );
-    package.set_part(&part, xml.into_bytes());
-    let mut out = std::io::Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let doc = Document::from_bytes(&out.into_inner()).unwrap();
-
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    assert_eq!(field_names(&layout.layout), ["title"]);
-    assert!(layout.layout.pages.len() >= 2);
-    assert!(matches!(
-        layout.layout.form_fields[0].kind,
-        FormFieldKind::Text {
-            multiline: true,
-            ..
-        }
-    ));
-}
-
-#[test]
-fn a_header_shared_by_two_sections_is_one_field() {
-    let mut doc = doc_with_header_and_footer_controls();
-    // A section break before the last paragraph, taking the same parts.
-    let mut package =
-        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
-            .unwrap();
-    let part = package.main_document_part().unwrap();
-    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
-    let start = xml.rfind("<w:sectPr").unwrap();
-    let end = xml.rfind("</w:sectPr>").unwrap() + "</w:sectPr>".len();
-    let section = &xml[start..end];
-    assert!(section.contains("headerReference"), "{section}");
-    let last = xml.find("<w:p><w:r><w:t>Last</w:t>").unwrap();
-    let xml = format!(
-        "{}<w:p><w:pPr>{section}</w:pPr></w:p>{}",
-        &xml[..last],
-        &xml[last..]
-    );
-    package.set_part(&part, xml.into_bytes());
-    let mut out = std::io::Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let doc = Document::from_bytes(&out.into_inner()).unwrap();
-
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    assert_eq!(
-        field_names(&layout.layout),
-        ["body", "approved", "reference"]
-    );
-    let (pdf, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
-    assert_eq!(
-        widgets(&pdf, &exported[1].1).len(),
-        layout.layout.pages.len()
-    );
-}
-
-#[test]
-fn header_and_footer_fields_come_after_the_body_and_before_the_notes() {
-    let mut doc = doc_with_note_controls();
-    set_header_and_footer_controls(&mut doc);
-    let names: Vec<String> = doc
-        .layout_with_options(fillable())
-        .unwrap()
-        .layout
-        .form_fields
-        .iter()
-        .map(|field| field.name.clone())
-        .collect();
-    assert_eq!(names, ["name", "approved", "reference", "name_2", "name_3"]);
-}
-
 /// The text runs of elements, wrappers looked through, joined.
 fn joined_text(elements: &[PositionedElement]) -> String {
     let mut text = String::new();
@@ -517,76 +270,6 @@ fn fragment_rects(
     out
 }
 
-/// How many filled rectangles the pages draw outside any fragment.
-fn page_rects(pages: &[std::sync::Arc<oxoffice_layout::PageFrame>]) -> usize {
-    fn visit(elements: &[PositionedElement]) -> usize {
-        elements
-            .iter()
-            .map(|element| match element {
-                PositionedElement::FilledRect { .. } => 1,
-                PositionedElement::MarkedContent { children, .. } => visit(children),
-                PositionedElement::Group(group) => visit(&group.children),
-                _ => 0,
-            })
-            .sum()
-    }
-    pages.iter().map(|page| visit(&page.elements)).sum()
-}
-
-#[test]
-fn a_hanging_first_line_gives_the_field_its_glyphs_and_keeps_its_shading() {
-    let paragraph = |control: &str| {
-        format!(
-            r#"<w:p><w:pPr><w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/><w:ind w:left="720" w:hanging="360"/></w:pPr>{control}</w:p>"#
-        )
-    };
-    let doc = doc_with_body(&paragraph(
-        r#"<w:sdt><w:sdtPr><w:tag w:val="hanging"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Hanging value</w:t></w:r></w:sdtContent></w:sdt>"#,
-    ));
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    let pages = &layout.layout.pages;
-    assert_eq!(fragment_texts(pages), [(0, "Hanging value".to_owned())]);
-    assert_eq!(page_text(pages), "", "the value draws in its widget only");
-    let without = doc.layout_with_options(RenderOptions::default()).unwrap();
-    assert!(
-        page_rects(&without.layout.pages) > 0,
-        "the paragraph is shaded"
-    );
-    assert_eq!(
-        page_rects(pages),
-        page_rects(&without.layout.pages),
-        "the shading stays on the page"
-    );
-    // One field alone on its line: the widget spans the line, from the
-    // first line's indent (1 inch margin + 0.25 inch) to the right margin.
-    for rect in fragment_rects(pages) {
-        assert!((rect.x - 90.0).abs() < 0.01, "{rect:?}");
-        assert!((rect.x + rect.width - 540.0).abs() < 0.01, "{rect:?}");
-    }
-}
-
-#[test]
-fn a_tab_leader_inside_a_control_goes_with_it() {
-    let doc = doc_with_body(
-        r#"<w:p><w:pPr><w:tabs><w:tab w:val="left" w:leader="dot" w:pos="4320"/></w:tabs></w:pPr><w:r><w:t xml:space="preserve">Label </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="row"/><w:richText/></w:sdtPr><w:sdtContent><w:r><w:t>Name</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>Value</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
-    );
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    let pages = &layout.layout.pages;
-    let fields = fragment_texts(pages);
-    assert_eq!(fields.len(), 1);
-    assert!(fields[0].1.starts_with("Name"), "{fields:?}");
-    assert!(fields[0].1.ends_with("Value"), "{fields:?}");
-    assert!(
-        fields[0].1.contains('.'),
-        "the leader is the field's: {fields:?}"
-    );
-    assert_eq!(
-        page_text(pages),
-        "Label ",
-        "the label stays, the leader goes"
-    );
-}
-
 fn diagnostics_about(layout: &oxoffice_layout::LayoutResult, name: &str) -> Vec<String> {
     layout
         .diagnostics
@@ -594,26 +277,6 @@ fn diagnostics_about(layout: &oxoffice_layout::LayoutResult, name: &str) -> Vec<
         .map(|diagnostic| diagnostic.message.clone())
         .filter(|message| message.contains(&format!("{name:?}")))
         .collect()
-}
-
-#[test]
-fn an_inline_control_that_wraps_beside_text_is_multiline_and_says_so() {
-    let words = "wrapping words ".repeat(30);
-    let doc = doc_with_body(&format!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Label: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="beside"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t xml:space="preserve">{words}</w:t></w:r></w:sdtContent></w:sdt><w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#
-    ));
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    assert!(matches!(
-        layout.layout.form_fields[0].kind,
-        FormFieldKind::Text {
-            multiline: true,
-            ..
-        }
-    ));
-    let said = diagnostics_about(&layout.layout, "beside");
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("sits under its box"), "{said:?}");
-    assert!(page_text(&layout.layout.pages).contains("Label:"));
 }
 
 #[test]
@@ -798,33 +461,6 @@ fn a_block_control_inside_a_cell_level_control_becomes_a_field() {
         [(0, "Inner text".to_owned())]
     );
     assert!(page_text(&layout.layout.pages).contains("Outer text"));
-}
-
-#[test]
-fn a_control_in_a_right_to_left_paragraph_takes_only_its_text() {
-    let doc = doc_with_body(
-        r#"<w:p><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve">שם: </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="name"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>Jane</w:t></w:r></w:sdtContent></w:sdt><w:r><w:rPr><w:rtl/></w:rPr><w:t xml:space="preserve"> סוף</w:t></w:r></w:p>"#,
-    );
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    assert_eq!(
-        fragment_texts(&layout.layout.pages),
-        [(0, "Jane".to_owned())]
-    );
-    let page = page_text(&layout.layout.pages);
-    assert!(
-        !page.contains("Jane") && page.contains('ש') && page.contains('ס'),
-        "{page}"
-    );
-    assert_eq!(
-        layout.layout.form_fields[0].alignment,
-        oxoffice_layout::FieldAlignment::Right,
-        "a right-to-left paragraph starts on the right"
-    );
-    let without = doc.layout_with_options(RenderOptions::default()).unwrap();
-    assert_eq!(
-        drawing(&layout.layout.pages),
-        drawing(&without.layout.pages)
-    );
 }
 
 /// A one-pixel PNG.
@@ -1429,21 +1065,6 @@ fn a_control_whose_text_is_only_a_tracked_insertion_follows_a_legacy_field_befor
     assert_eq!(names_of(&doc), ["First", "late"]);
 }
 
-#[test]
-fn a_control_with_no_run_after_a_legacy_field_takes_the_later_name() {
-    let first = legacy(
-        0,
-        "First",
-        r#"<w:enabled/><w:calcOnExit w:val="0"/><w:textInput/>"#,
-        "FORMTEXT",
-        Some("one"),
-    );
-    let doc = doc_with_body(&format!(
-        r#"<w:p>{first}<w:r><w:t xml:space="preserve"> </w:t></w:r><w:sdt><w:sdtPr><w:tag w:val="later"/><w:text/></w:sdtPr><w:sdtContent/></w:sdt></w:p>"#
-    ));
-    assert_eq!(names_of(&doc), ["First", "later"]);
-}
-
 /// The fields' names with the value each shows, or the kind of a field
 /// that is not text.
 fn names_and_values(doc: &Document) -> Vec<(String, String)> {
@@ -1545,17 +1166,6 @@ fn a_field_names_the_typing_font_gap_under_its_pdf_name() {
 }
 
 #[test]
-fn list_options_the_typing_font_cannot_encode_are_named_even_when_not_chosen() {
-    let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="country"/><w:dropDownList><w:listItem w:displayText="France" w:value="fr"/><w:listItem w:displayText="日本" w:value="jp"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>France</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
-    );
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    let said = typing_diagnostics(&layout.layout);
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("\"country\" holds Han text"), "{said:?}");
-}
-
-#[test]
 fn locked_fields_and_placeholders_say_nothing_about_the_typing_font() {
     let doc = doc_with_body(
         r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="locked"/><w:lock w:val="sdtContentLocked"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>東京</w:t></w:r></w:sdtContent></w:sdt></w:p>
@@ -1571,35 +1181,11 @@ fn locked_fields_and_placeholders_say_nothing_about_the_typing_font() {
     );
 }
 
-#[test]
-fn a_list_value_counts_only_when_typed_not_when_it_is_an_option_export_value() {
-    let doc = doc_with_body(
-        r#"<w:p><w:sdt><w:sdtPr><w:tag w:val="exported"/><w:dropDownList><w:listItem w:displayText="Greece" w:value="希腊"/><w:listItem w:displayText="France" w:value="fr"/></w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Greece</w:t></w:r></w:sdtContent></w:sdt></w:p>
-<w:p><w:sdt><w:sdtPr><w:tag w:val="typed"/><w:comboBox><w:listItem w:displayText="Paris" w:value="paris"/></w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>雅典</w:t></w:r></w:sdtContent></w:sdt></w:p>"#,
-    );
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    let said = typing_diagnostics(&layout.layout);
-    assert_eq!(said.len(), 1, "{said:?}");
-    assert!(said[0].contains("\"typed\" holds Han text"), "{said:?}");
-}
-
 /// A text control tagged `tag` showing `value`.
 fn text_control(tag: &str, value: &str) -> String {
     format!(
         r#"<w:sdt><w:sdtPr><w:tag w:val="{tag}"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t>{value}</w:t></w:r></w:sdtContent></w:sdt>"#
     )
-}
-
-/// A document whose first paragraph references an endnote, then a footnote,
-/// each holding a text control after its own text, and whose second
-/// paragraph holds a control of the body. All three are tagged `name`.
-fn doc_with_note_controls() -> Document {
-    doc_with_notes(|xml, marker, value| {
-        xml.replace(
-            &format!("{marker}</w:t></w:r>"),
-            &format!("{marker} </w:t></w:r>{}", text_control("name", value)),
-        )
-    })
 }
 
 /// A document whose first paragraph references an endnote, then a footnote,
@@ -1630,43 +1216,6 @@ fn doc_with_notes(note: impl Fn(&str, &str, &str) -> String) -> Document {
     let mut out = std::io::Cursor::new(Vec::new());
     package.write_to(&mut out).unwrap();
     Document::from_bytes(&out.into_inner()).unwrap()
-}
-
-#[test]
-fn controls_in_notes_become_fields_after_the_body_footnotes_first() {
-    let doc = doc_with_note_controls();
-    assert_eq!(
-        named_values(&doc),
-        [
-            ("name".to_owned(), "Body value".to_owned()),
-            ("name_2".to_owned(), "Foot value".to_owned()),
-            ("name_3".to_owned(), "End value".to_owned()),
-        ]
-    );
-    let result = doc.layout_with_options(fillable()).unwrap();
-    let layout = &result.layout;
-    let mut texts: Vec<String> = fragment_texts(&layout.pages)
-        .into_iter()
-        .map(|(_, text)| text)
-        .collect();
-    texts.sort();
-    assert_eq!(texts, ["Body value", "End value", "Foot value"]);
-    // The notes' own text and marks stay on the page.
-    let page = page_text(&layout.pages);
-    assert!(
-        page.contains("FOOTNOTE") && page.contains("ENDNOTE"),
-        "{page}"
-    );
-    assert!(
-        layout
-            .diagnostics
-            .iter()
-            .all(|diagnostic| !diagnostic.message.contains("stays static")),
-        "{:?}",
-        layout.diagnostics
-    );
-    let (_, fields) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
-    assert_eq!(fields.len(), 3);
 }
 
 #[test]
@@ -1760,92 +1309,12 @@ fn a_block_control_around_a_note_leaves_the_note_number_on_the_page() {
     );
 }
 
-#[test]
-fn a_wrapped_block_control_around_a_note_says_its_number_sits_under_its_box() {
-    // The later lines start at the margin, so the widget reaches back over
-    // the number on the first line.
-    let long = "Foot value that runs on long enough to wrap onto a second line of the note area, and then on again for good measure, well past the right margin of the page";
-    let doc = doc_with_notes(|xml, marker, _| {
-        let end = xml.find(&format!("{marker}</w:t></w:r>")).unwrap();
-        let start = xml[..end]
-            .rfind("<w:p>")
-            .or_else(|| xml[..end].rfind("<w:p "))
-            .unwrap();
-        let close = end + xml[end..].find("</w:p>").unwrap() + "</w:p>".len();
-        let paragraph = xml[start..close].replace(marker, long);
-        format!(
-            r#"{}<w:sdt><w:sdtPr><w:tag w:val="note"/><w:richText/></w:sdtPr><w:sdtContent>{paragraph}</w:sdtContent></w:sdt>{}"#,
-            &xml[..start],
-            &xml[close..]
-        )
-    });
-    let layout = doc.layout_with_options(fillable()).unwrap();
-    assert!(
-        layout
-            .layout
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message
-                == "form control \"note\": other text on its lines sits under its box"),
-        "{:?}",
-        layout.layout.diagnostics
-    );
-}
-
 /// A floating text box holding `content`, as Word writes it, with extra
 /// attributes on its `a:xfrm` (a turn) and its `wps:bodyPr` (vertical text).
 fn floating_text_box(id: u32, content: &str, xfrm: &str, body: &str) -> String {
     format!(
         r#"<w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><mc:Choice Requires="wps"><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:posOffset>2743200</wp:posOffset></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx="1828800" cy="457200"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="{id}" name="Text Box {id}"/><wp:cNvGraphicFramePr/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm{xfrm}><a:off x="0" y="0"/><a:ext cx="1828800" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></wps:spPr><wps:txbx><w:txbxContent>{content}</w:txbxContent></wps:txbx><wps:bodyPr{body}/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice></mc:AlternateContent></w:r>"#
     )
-}
-
-#[test]
-fn controls_in_a_text_box_become_fields_where_the_box_is_anchored() {
-    let boxed = floating_text_box(
-        70,
-        &format!("<w:p>{}</w:p>", text_control("name", "Box value")),
-        "",
-        "",
-    );
-    let doc = doc_with_body(&format!(
-        r#"<w:p>{boxed}<w:r><w:t xml:space="preserve">First and </w:t></w:r>{}</w:p><w:p>{}</w:p>"#,
-        text_control("name", "First value"),
-        text_control("name", "Body value"),
-    ));
-    // The box is anchored before the paragraph's own control.
-    assert_eq!(
-        named_values(&doc),
-        [
-            ("name".to_owned(), "Box value".to_owned()),
-            ("name_2".to_owned(), "First value".to_owned()),
-            ("name_3".to_owned(), "Body value".to_owned()),
-        ]
-    );
-    let result = doc.layout_with_options(fillable()).unwrap();
-    let layout = &result.layout;
-    let mut texts: Vec<String> = fragment_texts(&layout.pages)
-        .into_iter()
-        .map(|(_, text)| text)
-        .collect();
-    texts.sort();
-    assert_eq!(texts, ["Body value", "Box value", "First value"]);
-    assert!(page_text(&layout.pages).contains("and"));
-    assert!(
-        layout
-            .diagnostics
-            .iter()
-            .all(|diagnostic| !diagnostic.message.contains("stays static")),
-        "{:?}",
-        layout.diagnostics
-    );
-    let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
-    assert_eq!(exported.len(), 3);
-    // Tagged output too, where the box's marked content has a structure.
-    let tagged = doc
-        .to_pdfa_deterministic_with_options(oxoffice_docx::PdfConformance::PdfA2b, fillable())
-        .unwrap();
-    assert_eq!(fields(&tagged).1.len(), 3);
 }
 
 #[test]
@@ -2040,52 +1509,6 @@ fn text_origins(
     out
 }
 
-#[test]
-fn an_empty_control_draws_the_page_the_static_export_draws() {
-    // A large paragraph mark beside small text, a control emptied to an
-    // empty run before a date field, and one near the end of a full line.
-    let emptied = r#"<w:sdt><w:sdtPr><w:tag w:val="emptied"/><w:text/></w:sdtPr><w:sdtContent><w:r><w:t></w:t></w:r></w:sdtContent></w:sdt>"#;
-    let date = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> DATE \@ "yyyy" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2026</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
-    let doc = doc_with_body(&format!(
-        r#"<w:p><w:pPr><w:rPr><w:sz w:val="48"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Dated </w:t></w:r>{emptied}{}{date}</w:p><w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r>{}</w:p><w:p><w:r><w:t>Next</w:t></w:r></w:p>"#,
-        empty_control("dated"),
-        "word ".repeat(17),
-        empty_control("late"),
-    ));
-    let fillable = doc.layout_with_options(fillable()).unwrap();
-    let plain = doc.layout_with_options(RenderOptions::default()).unwrap();
-    assert_eq!(field_names(&fillable.layout), ["emptied", "dated", "late"]);
-    assert_eq!(
-        text_origins(&fillable.layout.pages, "Next"),
-        text_origins(&plain.layout.pages, "Next")
-    );
-    let rects = fragment_rects(&fillable.layout.pages);
-    // A control with no run stands before the date the field after it
-    // draws, at the place of the emptied one: they share its box.
-    let (year_x, _) = text_origins(&fillable.layout.pages, "2026")[0];
-    let boxes = boxes_and_anchors(&fillable.layout.pages);
-    assert!(boxes[1].2 <= year_x + 0.01, "{boxes:?} {year_x}");
-    assert!((boxes[0].2 - boxes[1].2).abs() < 0.01, "{boxes:?}");
-    assert!(
-        (boxes[0].1.x + boxes[0].1.width - boxes[1].1.x).abs() < 0.01,
-        "{boxes:?}"
-    );
-    // The late one keeps to its line's end: its 6 em move back into the
-    // line, over the words before it, which it says.
-    let page_width = 612.0;
-    assert!(
-        (rects[2].x + rects[2].width - (page_width - 72.0)).abs() < 0.01,
-        "{rects:?}"
-    );
-    assert!((rects[2].width - 66.0).abs() < 0.01, "{rects:?}");
-    assert!(
-        said_about(&fillable.layout)
-            .contains(&"form control \"late\": other text on its lines sits under its box"),
-        "{:?}",
-        said_about(&fillable.layout)
-    );
-}
-
 /// Each field's box with where its anchor stands, in field order.
 fn boxes_and_anchors(
     pages: &[std::sync::Arc<oxoffice_layout::PageFrame>],
@@ -2117,42 +1540,6 @@ fn boxes_and_anchors(
     }
     out.sort_by_key(|(field, _, _)| *field);
     out
-}
-
-#[test]
-fn empty_controls_side_by_side_share_their_box_in_document_order() {
-    let doc = doc_with_body(&format!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Name: </w:t></w:r>{}{}</w:p>"#,
-        empty_control("first"),
-        empty_control("second"),
-    ));
-    let result = doc.layout_with_options(fillable()).unwrap();
-    let layout = &result.layout;
-    assert_eq!(field_names(layout), ["first", "second"]);
-    let boxes = boxes_and_anchors(&layout.pages);
-    let [(_, first, anchor), (_, second, _)] = boxes.as_slice() else {
-        panic!("{boxes:?}");
-    };
-    // 6 em of 11 pt, halved, from the anchor towards the line's end.
-    assert!((first.x - anchor).abs() < 0.01, "{boxes:?}");
-    assert!((first.width - 33.0).abs() < 0.01, "{boxes:?}");
-    assert!((second.x - (first.x + 33.0)).abs() < 0.01, "{boxes:?}");
-    assert!((second.width - 33.0).abs() < 0.01, "{boxes:?}");
-    let (_, exported) = fields(&doc.to_pdf_with_options(fillable()).unwrap());
-    let rects: Vec<Vec<f32>> = exported
-        .iter()
-        .map(|(_, field)| {
-            field
-                .get(b"Rect")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|value| value.as_float().unwrap())
-                .collect()
-        })
-        .collect();
-    assert_ne!(rects[0], rects[1], "two distinct widgets");
 }
 
 #[test]

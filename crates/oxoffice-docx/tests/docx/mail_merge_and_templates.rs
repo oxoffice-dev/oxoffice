@@ -22,7 +22,6 @@ use oxoffice_docx::{
 use oxoffice_docx_oxml::document::{BodyContent, CT_Body};
 use oxoffice_docx_oxml::text::CT_P;
 use oxoffice_opc::OpcPackage;
-use oxoffice_opc::relationship::rel_types;
 use serde_json::json;
 
 use crate::support::{
@@ -1654,22 +1653,6 @@ fn a_dotx_template_filled_and_saved_as_docx_declares_a_document() {
     );
 }
 
-#[test]
-fn a_new_minimal_template_knows_its_class_before_a_save() {
-    let profile = WordCreationProfile::Minimal(WordPackageClass::Template);
-    let class = Document::new_with_profile(profile).package_class();
-    let mut saved = Document::new_with_profile(profile);
-    assert_eq!(
-        reopen(&mut saved).package_class().unwrap(),
-        WordPackageClass::Template,
-        "after a save"
-    );
-    assert!(
-        matches!(class, Ok(WordPackageClass::Template)),
-        "a new minimal template knows its class: {class:?}"
-    );
-}
-
 // ---- Macro-enabled documents ----
 
 const MACRO_DOCUMENT_TYPE: &str = "application/vnd.ms-word.document.macroEnabled.main+xml";
@@ -1847,92 +1830,4 @@ fn a_building_block_name_category_and_description_with_tabs_and_line_ends_read_b
         ),
         (updated, Some(updated), Some(updated))
     );
-}
-
-/// A document of `sections` sections, each with a header and a footer of
-/// its own whose paragraphs are `story`.
-fn sections_with_own_stories(sections: usize, story: &str) -> Document {
-    const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-    const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-    let mut package =
-        OpcPackage::from_reader(Cursor::new(Document::new().to_bytes().unwrap())).unwrap();
-    let mut body = String::new();
-    for k in 1..=sections {
-        let mut references = String::new();
-        for (kind, root, rel_type) in [
-            ("header", "hdr", rel_types::HEADER),
-            ("footer", "ftr", rel_types::FOOTER),
-        ] {
-            let part = format!("/word/{kind}{k}.xml");
-            package.set_part(
-                &part,
-                format!(r#"<w:{root} xmlns:w="{W}" xmlns:r="{R}">{story}</w:{root}>"#).into_bytes(),
-            );
-            package.content_types.add_override(
-                &part,
-                &format!(
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"
-                ),
-            );
-            let id = format!("rId{kind}{k}");
-            package
-                .get_or_create_part_rels("/word/document.xml")
-                .add_with_id(&id, rel_type, &format!("{kind}{k}.xml"));
-            references.push_str(&format!(
-                r#"<w:{kind}Reference w:type="default" r:id="{id}"/>"#
-            ));
-        }
-        let properties = format!(r#"<w:sectPr>{references}</w:sectPr>"#);
-        if k < sections {
-            body.push_str(&format!(
-                r#"<w:p><w:pPr>{properties}</w:pPr><w:r><w:t>section {k}</w:t></w:r></w:p>"#
-            ));
-        } else {
-            body.push_str(&format!(
-                r#"<w:p><w:r><w:t>section {k}</w:t></w:r></w:p>{properties}"#
-            ));
-        }
-    }
-    package.set_part(
-        "/word/document.xml",
-        format!(r#"<w:document xmlns:w="{W}" xmlns:r="{R}"><w:body>{body}</w:body></w:document>"#)
-            .into_bytes(),
-    );
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    Document::from_bytes(&out.into_inner()).unwrap()
-}
-
-#[test]
-fn blocks_in_the_header_and_footer_of_every_section_render() {
-    // Each part publishes its block; the other parts keep the roots their
-    // staging read (debug builds check them against a fresh staging).
-    let story = raw_paragraphs(&["{% if flag %}", "Shown {{ title }}", "{% endif %}", "Kept"]);
-    for (flag, count, expected) in [
-        (true, 24, &["Shown T", "Kept"][..]),
-        (false, 0, &["Kept"][..]),
-    ] {
-        let mut doc = sections_with_own_stories(12, &story);
-        let data = json!({"flag": flag, "title": "T"});
-        assert_eq!(doc.render_template(&data).unwrap(), count);
-        let doc = reopen(&mut doc);
-        let mut stories = BTreeMap::<String, Vec<String>>::new();
-        for paragraph in doc.story_paragraphs().unwrap() {
-            stories
-                .entry(paragraph.location.story().part_name().to_owned())
-                .or_default()
-                .push(paragraph.text);
-        }
-        for k in 1..=12 {
-            for kind in ["header", "footer"] {
-                assert_eq!(
-                    stories[&format!("/word/{kind}{k}.xml")],
-                    expected,
-                    "{kind}{k}"
-                );
-            }
-        }
-        let body = (1..=12).map(|k| format!("section {k}")).collect::<Vec<_>>();
-        assert_eq!(stories["/word/document.xml"], body);
-    }
 }

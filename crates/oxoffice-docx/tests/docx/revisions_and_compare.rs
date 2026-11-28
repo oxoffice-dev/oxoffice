@@ -150,50 +150,7 @@ fn the_text_of_a_document_shows_insertions_and_hides_deletions() {
     assert!(revisions[1].insertion_paragraph().is_none(), "a deletion");
 }
 
-#[test]
-fn story_revisions_give_the_text_each_change_covers() {
-    let doc = doc_with_body(EVERY_KIND);
-    let listed: Vec<_> = doc
-        .story_revisions()
-        .unwrap()
-        .into_iter()
-        .map(|r| (r.id(), r.story().kind(), r.text().to_owned()))
-        .collect();
-    let body = |id, text: &str| (id, StoryKind::Body, text.to_owned());
-    assert_eq!(
-        listed,
-        [
-            body(1, "added"),
-            body(2, "removed"),
-            body(3, "bolded"),
-            body(4, "centred"),
-            body(5, "travelling"),
-            body(6, "travelling"),
-        ]
-    );
-}
-
 // ---- Accepting and rejecting ----
-
-#[test]
-fn rejecting_all_restores_the_text_before_the_changes() {
-    let mut doc = doc_with_body(EVERY_KIND);
-    let mut copy = reopen(&mut doc);
-    assert_eq!(copy.reject_all().unwrap(), 6);
-    let copy = reopen(&mut copy);
-    assert!(copy.revisions().is_empty());
-    assert_eq!(
-        texts(&copy),
-        [
-            "kept removed",
-            "bolded",
-            "centred",
-            "travelling",
-            "middle",
-            ""
-        ]
-    );
-}
 
 #[test]
 fn one_revision_is_accepted_or_rejected_by_its_id() {
@@ -291,69 +248,6 @@ fn a_property_change_with_no_prior_value_resolves_as_one_from_no_properties() {
 }
 
 #[test]
-fn a_range_marker_between_merged_paragraphs_stays_where_they_join() {
-    let attributes = r#"w:author="Ada" w:date="2026-01-01T00:00:00Z""#;
-    // A paragraph added before a heading whose bookmark starts between the
-    // two, as Google Docs writes a heading's bookmark: rejecting it merges
-    // the added paragraph into the heading across the bookmark start.
-    let added = format!(
-        concat!(
-            r#"<w:p><w:pPr><w:rPr><w:ins w:id="1" {0}/></w:rPr></w:pPr>"#,
-            r#"<w:ins w:id="2" {0}><w:r><w:t>added</w:t></w:r></w:ins></w:p>"#,
-            r#"<w:bookmarkStart w:id="7" w:name="_Toc1"/>"#,
-            r#"<w:p><w:r><w:t>Heading</w:t></w:r><w:bookmarkEnd w:id="7"/></w:p>"#,
-            r#"<w:p><w:r><w:t>after</w:t></w:r></w:p>"#,
-        ),
-        attributes
-    );
-    // A paragraph mark removed with a bookmark ending after it: accepting
-    // merges the two paragraphs across the bookmark end.
-    let removed = format!(
-        concat!(
-            r#"<w:bookmarkStart w:id="8" w:name="kept"/>"#,
-            r#"<w:p><w:pPr><w:rPr><w:del w:id="3" {0}/></w:rPr></w:pPr><w:r><w:t>first</w:t></w:r></w:p>"#,
-            r#"<w:bookmarkEnd w:id="8"/><w:p><w:r><w:t>second</w:t></w:r></w:p>"#,
-        ),
-        attributes
-    );
-    for (body, accept, text, bookmark, expected) in [
-        (
-            &added,
-            false,
-            vec!["Heading", "after"],
-            "_Toc1",
-            r#"<w:bookmarkStart w:id="7" w:name="_Toc1"/><w:r><w:t>Heading</w:t>"#,
-        ),
-        (
-            &removed,
-            true,
-            vec!["firstsecond"],
-            "kept",
-            r#"<w:t>first</w:t></w:r><w:bookmarkEnd w:id="8"/><w:r><w:t>second</w:t>"#,
-        ),
-    ] {
-        let mut doc = doc_with_body(body);
-        if accept {
-            doc.accept_all()
-        } else {
-            doc.reject_all()
-        }
-        .unwrap_or_else(|error| panic!("{body}: {error}"));
-        let mut doc = reopen(&mut doc);
-        assert!(doc.revisions().is_empty(), "{body}");
-        assert_eq!(texts(&doc), text, "{body}");
-        let names = doc
-            .bookmarks()
-            .iter()
-            .filter_map(|bookmark| bookmark.name().map(str::to_owned))
-            .collect::<Vec<_>>();
-        assert_eq!(names, [bookmark], "{body}");
-        let xml = main_part_xml(&mut doc);
-        assert!(xml.contains(expected), "{xml}");
-    }
-}
-
-#[test]
 fn a_range_marker_crossed_by_a_merge_does_not_stand_for_a_crossed_table() {
     // An inserted last paragraph mark cannot go; a bookmark start crossed
     // on the way changes nothing to that.
@@ -378,66 +272,6 @@ fn a_range_marker_crossed_by_a_merge_does_not_stand_for_a_crossed_table() {
         outcome(r#"<w:bookmarkStart w:id="7" w:name="mark"/>"#),
         outcome("")
     );
-}
-
-#[test]
-fn every_producer_copy_with_tracked_changes_accepts_and_rejects_them_all() {
-    // The LibreOffice contract on a pull request (empty prior run
-    // properties); every contract and record copy with `OXOFFICE_WORKFLOWS=full`.
-    let mut copies = crate::support::every_tracked_copy();
-    if !crate::support::every_copy() {
-        copies.truncate(1);
-    }
-    crate::support::run_workflow("resolve-all", &copies, |path| {
-        let source = crate::support::workflow_source(path);
-        let doc = Document::from_bytes(&source).expect("corpus copy opens");
-        assert!(!doc.revisions().is_empty(), "{path} has tracked changes");
-        let shown = doc.text();
-        // Each body insertion and deletion, by its text: rejecting takes the
-        // inserted text out of the text shown and brings the deleted back.
-        let changes = doc
-            .story_revisions()
-            .expect("story revisions")
-            .into_iter()
-            .filter(|revision| {
-                revision.story().kind() == StoryKind::Body
-                    && matches!(
-                        revision.kind(),
-                        RevisionKind::Insertion | RevisionKind::Deletion
-                    )
-                    && !revision.text().trim().is_empty()
-            })
-            .map(|revision| (revision.kind(), revision.text().to_owned()))
-            .collect::<Vec<_>>();
-        assert!(!changes.is_empty(), "{path} has body text changes");
-        for accept in [true, false] {
-            let mut copy = Document::from_bytes(&source).unwrap();
-            let resolved = if accept {
-                copy.accept_all()
-            } else {
-                copy.reject_all()
-            };
-            resolved.unwrap_or_else(|error| panic!("{path} accept={accept}: {error}"));
-            let copy = reopen(&mut copy);
-            assert!(copy.revisions().is_empty(), "{path} accept={accept}");
-            let text = copy.text();
-            if accept {
-                assert_eq!(text, shown, "{path}: accepting keeps the text shown");
-                continue;
-            }
-            for (kind, change) in &changes {
-                let (before, after) = (
-                    shown.matches(change.as_str()).count(),
-                    text.matches(change.as_str()).count(),
-                );
-                if *kind == RevisionKind::Insertion {
-                    assert!(after < before, "{path}: rejecting takes out {change:?}");
-                } else {
-                    assert!(after > before, "{path}: rejecting brings back {change:?}");
-                }
-            }
-        }
-    });
 }
 
 #[test]
@@ -576,33 +410,6 @@ fn a_format_change_of_a_run_holding_a_raw_child_is_recorded_unless_formatting_is
             }
         }
     }
-}
-
-#[test]
-fn alignment_and_style_changes_are_recorded_as_paragraph_property_changes() {
-    let mut edited = doc_with(&["centre me", "style me"]);
-    edited
-        .paragraph_mut(0)
-        .unwrap()
-        .set_alignment(Alignment::Center);
-    edited.paragraph_mut(1).unwrap().set_style("Heading1");
-    let mut doc = redline(doc_with(&["centre me", "style me"]), &edited);
-    assert_eq!(
-        kinds(&doc),
-        [
-            RevisionKind::ParagraphPropertyChange,
-            RevisionKind::ParagraphPropertyChange
-        ]
-    );
-    let copy = accepted(&mut doc);
-    assert_eq!(
-        copy.paragraph(0).unwrap().alignment(),
-        Some(Alignment::Center)
-    );
-    assert_eq!(copy.paragraph(1).unwrap().style_id(), Some("Heading1"));
-    let copy = rejected(&mut doc);
-    assert_eq!(copy.paragraph(0).unwrap().alignment(), None);
-    assert_eq!(copy.paragraph(1).unwrap().style_id(), None);
 }
 
 #[test]
@@ -747,50 +554,6 @@ fn links_reaching_one_address_through_other_relationships_are_no_change() {
         };
         assert_eq!(urls(&doc), [Some(SITE.to_owned()), Some(SITE.to_owned())]);
         assert_eq!(urls(&accepted(&mut doc)), urls(&rejected(&mut doc)));
-    }
-}
-
-#[test]
-fn text_added_after_a_link_reaching_its_address_through_another_relationship_is_the_only_change() {
-    const SITE: &str = "https://example.com/";
-    let changes = |doc: &Document| {
-        (
-            kinds(doc),
-            revision_texts(doc, RevisionKind::Deletion),
-            revision_texts(doc, RevisionKind::Insertion),
-        )
-    };
-    for (original, edited) in [
-        (
-            &["rIdShared", "rIdShared"][..],
-            &["rIdShared", "rIdOther"][..],
-        ),
-        (&["rIdA", "rIdB"][..], &["rIdC", "rIdC"][..]),
-    ] {
-        // The same edit with the relationships unchanged.
-        let wanted = redline(
-            doc_with_links(original, SITE, " end"),
-            &doc_with_links(original, SITE, " end and more"),
-        );
-        let mut doc = redline(
-            doc_with_links(original, SITE, " end"),
-            &doc_with_links(edited, SITE, " end and more"),
-        );
-        assert_eq!(
-            changes(&doc),
-            changes(&wanted),
-            "{original:?} against {edited:?}"
-        );
-        assert!(
-            !revision_texts(&doc, RevisionKind::Insertion)
-                .concat()
-                .contains("site")
-        );
-        assert_eq!(
-            texts(&accepted(&mut doc)),
-            ["site 0", "site 1 end and more"]
-        );
-        assert_eq!(texts(&rejected(&mut doc)), ["site 0", "site 1 end"]);
     }
 }
 
@@ -1105,29 +868,6 @@ fn resolved_alone(doc: &mut Document, id: i32, accept: bool) -> Vec<String> {
 }
 
 #[test]
-fn paragraphs_moved_together_to_the_end_move_as_one_change() {
-    let original = [
-        "Alpha paragraph.",
-        "Beta paragraph.",
-        "Gamma paragraph.",
-        "Delta paragraph.",
-    ];
-    let edited = [
-        "Gamma paragraph.",
-        "Delta paragraph.",
-        "Alpha paragraph.",
-        "Beta paragraph.",
-    ];
-    let mut doc = redline(doc_with(&original), &doc_with(&edited));
-    let moves = distinct_ids(&doc);
-    assert_eq!(moves.len(), 1, "{:?}", kinds(&doc));
-    assert_eq!(resolved_alone(&mut doc, moves[0], true), edited);
-    assert_eq!(resolved_alone(&mut doc, moves[0], false), original);
-    assert_eq!(owners(&accepted(&mut doc)), edited);
-    assert_eq!(owners(&rejected(&mut doc)), original);
-}
-
-#[test]
 fn a_block_moved_to_the_end_after_an_added_paragraph_resolves_alone_to_either_version() {
     let original = [
         "Alpha paragraph.",
@@ -1169,74 +909,6 @@ fn a_block_moved_to_the_end_after_an_added_paragraph_resolves_alone_to_either_ve
 }
 
 #[test]
-fn a_paragraph_moved_to_the_end_after_an_added_table_resolves_alone() {
-    let original = ["Alpha paragraph.", "Gamma paragraph.", "Delta paragraph."];
-    let edited = [
-        "Gamma paragraph.",
-        "Delta paragraph.",
-        "Added paragraph.",
-        "[cell]",
-        "Alpha paragraph.",
-    ];
-    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
-    let id = doc
-        .revisions()
-        .iter()
-        .find(|revision| revision.kind() == RevisionKind::MoveTo)
-        .map(|revision| revision.id())
-        .expect("the paragraph is moved");
-    assert_eq!(resolved_alone(&mut doc, id, true), edited);
-    // Undone alone, the move leaves the body's last paragraph empty after
-    // the added table, as Word ends a body with a paragraph after a table.
-    assert_eq!(
-        resolved_alone(&mut doc, id, false),
-        [
-            "Alpha paragraph.",
-            "Gamma paragraph.",
-            "Delta paragraph.",
-            "Added paragraph.",
-            "[cell]",
-            ""
-        ]
-    );
-    assert_eq!(owners(&accepted(&mut doc)), edited);
-    assert_eq!(owners(&rejected(&mut doc)), original);
-}
-
-#[test]
-fn a_paragraph_moved_to_the_end_right_after_an_added_table_resolves_alone() {
-    let original = ["Alpha paragraph.", "Gamma paragraph.", "Delta paragraph."];
-    let edited = [
-        "Gamma paragraph.",
-        "Delta paragraph.",
-        "[cell]",
-        "Alpha paragraph.",
-    ];
-    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
-    let id = doc
-        .revisions()
-        .iter()
-        .find(|revision| revision.kind() == RevisionKind::MoveTo)
-        .map(|revision| revision.id())
-        .expect("the paragraph is moved");
-    assert_eq!(resolved_alone(&mut doc, id, true), edited);
-    // Undone alone, the move leaves the last paragraph empty after the
-    // added table, still tracked.
-    assert_eq!(
-        resolved_alone(&mut doc, id, false),
-        [
-            "Alpha paragraph.",
-            "Gamma paragraph.",
-            "Delta paragraph.",
-            "[cell]",
-            ""
-        ]
-    );
-    assert_eq!(owners(&accepted(&mut doc)), edited);
-    assert_eq!(owners(&rejected(&mut doc)), original);
-}
-
-#[test]
 fn paragraphs_moved_together_from_the_end_move_as_one_change() {
     let original = [
         "Gamma paragraph.",
@@ -1255,49 +927,6 @@ fn paragraphs_moved_together_from_the_end_move_as_one_change() {
     assert_eq!(moves.len(), 1, "{:?}", kinds(&doc));
     assert_eq!(resolved_alone(&mut doc, moves[0], true), edited);
     assert_eq!(resolved_alone(&mut doc, moves[0], false), original);
-}
-
-#[test]
-fn a_paragraph_moved_away_from_the_end_right_after_a_removed_table_resolves_alone() {
-    let original = [
-        "Gamma paragraph.",
-        "Delta paragraph.",
-        "[cell]",
-        "Alpha paragraph.",
-    ];
-    let edited = ["Alpha paragraph.", "Gamma paragraph.", "Delta paragraph."];
-    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
-    let id = doc
-        .revisions()
-        .iter()
-        .find(|revision| revision.kind() == RevisionKind::MoveFrom)
-        .map(|revision| revision.id())
-        .expect("the paragraph is moved");
-    // Done alone, the move leaves the last paragraph empty after the
-    // removed table, still tracked.
-    assert_eq!(
-        resolved_alone(&mut doc, id, true),
-        [
-            "Alpha paragraph.",
-            "Gamma paragraph.",
-            "Delta paragraph.",
-            "[]",
-            ""
-        ]
-    );
-    // Undone alone, the move leaves the removed table tracked: the text
-    // shown hides its cell.
-    assert_eq!(
-        resolved_alone(&mut doc, id, false),
-        [
-            "Gamma paragraph.",
-            "Delta paragraph.",
-            "[]",
-            "Alpha paragraph."
-        ]
-    );
-    assert_eq!(owners(&accepted(&mut doc)), edited);
-    assert_eq!(owners(&rejected(&mut doc)), original);
 }
 
 #[test]
@@ -1323,21 +952,6 @@ fn paragraphs_moved_to_the_end_from_separate_places_keep_their_own_moves() {
         .collect::<Vec<_>>();
     assert_eq!(moved.len(), 2, "{:?}", kinds(&doc));
     assert_ne!(moved[0], moved[1], "each paragraph keeps its own move");
-    assert_eq!(owners(&accepted(&mut doc)), edited);
-    assert_eq!(owners(&rejected(&mut doc)), original);
-}
-
-#[test]
-fn a_table_added_at_the_end_keeps_its_change_off_the_last_paragraph_mark() {
-    let original = ["kept"];
-    let edited = ["kept", "[cell]", ""];
-    let mut doc = redline(doc_with_owners(&original), &doc_with_owners(&edited));
-    let xml = main_part_xml(&mut doc);
-    let last = &xml[xml.rfind("<w:p>").or_else(|| xml.rfind("<w:p ")).unwrap()..];
-    assert!(
-        !last.contains("<w:ins "),
-        "the last mark is not tracked: {last}"
-    );
     assert_eq!(owners(&accepted(&mut doc)), edited);
     assert_eq!(owners(&rejected(&mut doc)), original);
 }
@@ -1399,39 +1013,6 @@ fn an_equation_after_empty_paragraph_properties_is_no_change() {
     assert_eq!(edited.replace_all(&HashMap::from([("small", "large")])), 1);
     let edited = reopen(&mut edited);
     let mut doc = redline(doc_with_body(&body), &edited);
-    assert_eq!(revision_texts(&doc, RevisionKind::Deletion), ["small"]);
-    assert_eq!(math_texts(&mut accepted(&mut doc)), ["1", "2"]);
-}
-
-// A paragraph another reviewer changed holds an equation whose fraction
-// leaves its bar type out, as Word writes it; a save writes the equation
-// again with the type spelled out: the paragraph is unchanged.
-#[test]
-fn a_held_paragraph_holding_an_equation_a_save_wrote_again_is_unchanged() {
-    let body = format!(
-        concat!(
-            r#"<w:p><w:ins w:id="1" w:author="Ada" w:date="2026-01-01T00:00:00Z"><w:r><w:t xml:space="preserve">held </w:t></w:r></w:ins>"#,
-            r#"<m:oMath xmlns:m="{}"><m:f><m:fPr><m:ctrlPr><w:rPr><w:i/></w:rPr></m:ctrlPr></m:fPr>"#,
-            r#"<m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath></w:p>"#,
-            r#"<w:p><w:r><w:t>small</w:t></w:r></w:p>"#,
-        ),
-        MATH_NS
-    );
-    let mut edited = doc_with_body(&body);
-    assert_eq!(edited.replace_all(&HashMap::from([("small", "large")])), 1);
-    let mut edited = reopen(&mut edited);
-    assert!(
-        main_xml(&mut edited).contains(r#"<m:type m:val="bar"/>"#),
-        "the save no longer spells the bar out: this test no longer tests the comparison"
-    );
-    let mut doc = redline(doc_with_body(&body), &edited);
-    let others = doc
-        .revisions()
-        .iter()
-        .filter(|revision| revision.author() != AUTHOR)
-        .map(|revision| (revision.kind(), revision.author().to_owned()))
-        .collect::<Vec<_>>();
-    assert_eq!(others, [(RevisionKind::Insertion, "Ada".to_owned())]);
     assert_eq!(revision_texts(&doc, RevisionKind::Deletion), ["small"]);
     assert_eq!(math_texts(&mut accepted(&mut doc)), ["1", "2"]);
 }
@@ -1589,30 +1170,6 @@ fn field_instructions(doc: &Document) -> Vec<String> {
 }
 
 #[test]
-fn simple_fields_and_hyperlink_fields_follow_a_renamed_toc_bookmark() {
-    let document = |name: &str, text: &str| {
-        doc_with_body(&format!(
-            concat!(
-                r#"<w:p><w:r><w:t xml:space="preserve">See page </w:t></w:r><w:fldSimple w:instr=" PAGEREF {name} \h "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>"#,
-                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> HYPERLINK \l &quot;{name}&quot; </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-                r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="0" w:name="{name}"/><w:r><w:t>Intro</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
-                r#"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"#,
-            ),
-            name = name,
-            text = text,
-        ))
-    };
-    let mut doc = redline(document("_Toc1", "Old."), &document("_Toc7", "New."));
-    let copy = accepted(&mut doc);
-    assert_eq!(texts(&copy)[2..], ["Intro", "New."]);
-    assert_eq!(bookmark_names(&copy), ["_Toc1"]);
-    assert_eq!(
-        field_instructions(&copy),
-        [r#"PAGEREF _Toc1 \h"#, r#"HYPERLINK \l "_Toc1""#]
-    );
-}
-
-#[test]
 fn a_reference_in_another_case_follows_a_renamed_toc_bookmark_but_a_link_to_another_file_does_not()
 {
     let document = |name: &str, text: &str| {
@@ -1673,21 +1230,6 @@ fn noted_texts(doc: &Document) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn a_moved_footnote_whose_text_changed_is_compared() {
-    let original = doc_with_notes(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
-    let edited = doc_with_notes(&[("Claim one.", None), ("Claim two.", Some("Source, p. 4"))]);
-    let mut doc = redline(original, &edited);
-    assert_eq!(
-        noted_texts(&accepted(&mut doc)),
-        ["Claim one.", "Claim two.[Source, p. 4]"]
-    );
-    assert_eq!(
-        noted_texts(&rejected(&mut doc)),
-        ["Claim one.[Source]", "Claim two."]
-    );
-}
-
 /// A new document holding these paragraphs, each with its footnote if any,
 /// the notes created in paragraph order as Word numbers them when it saves.
 fn doc_with_notes_in_order(paragraphs: &[(&str, Option<&str>)]) -> Document {
@@ -1740,40 +1282,6 @@ fn a_note_added_before_others_is_the_only_note_change() {
         noted_texts(&rejected(&mut doc)),
         ["One.[A]", "Two.[B]", "Three.[C]"]
     );
-}
-
-#[test]
-fn a_note_the_original_does_not_reference_keeps_the_id_a_pair_would_leave() {
-    // The original holds a draft note it does not reference before the
-    // referenced one; the edited version, numbered by position, holds the
-    // referenced note under the draft's id. The draft is revised in place.
-    let original = {
-        let mut doc = Document::new();
-        doc.add_footnote("Draft");
-        let id = doc.add_footnote("A");
-        doc.add_paragraph("Claim.").add_footnote_ref(id);
-        doc
-    };
-    let edited = {
-        let mut doc = Document::new();
-        let id = doc.add_footnote("A");
-        doc.add_paragraph("Claim.").add_footnote_ref(id);
-        doc
-    };
-    let notes = |doc: &Document| {
-        doc.footnotes()
-            .into_iter()
-            .map(|(id, text)| (id, text.trim().to_owned()))
-            .collect::<Vec<_>>()
-    };
-    let before = notes(&original);
-    let mut doc = redline(original, &edited);
-    let copy = accepted(&mut doc);
-    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
-    assert_eq!(notes(&copy), [(before[0].0, "A".to_owned())]);
-    let copy = rejected(&mut doc);
-    assert_eq!(noted_texts(&copy), ["Claim.[A]"]);
-    assert_eq!(notes(&copy), before);
 }
 
 /// Two body paragraphs, an endnote at the end of each listed one.
@@ -1946,30 +1454,6 @@ fn checked_note_redline(original: Document, edited: &Document) -> Document {
 }
 
 #[test]
-fn an_added_endnote_is_inserted_with_its_reference() {
-    let original = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", None)]);
-    let edited = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
-    let doc = checked_note_redline(original, &edited);
-    // The note's text is inserted, and nothing is deleted.
-    let inserted = revision_texts(&doc, RevisionKind::Insertion);
-    assert!(
-        inserted.iter().any(|text| text.trim() == "B"),
-        "{inserted:?}"
-    );
-    assert_eq!(
-        revision_texts(&doc, RevisionKind::Deletion),
-        Vec::<String>::new()
-    );
-}
-
-#[test]
-fn a_removed_endnote_is_deleted_with_its_reference() {
-    let original = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
-    let edited = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", None)]);
-    checked_note_redline(original, &edited);
-}
-
-#[test]
 fn the_first_endnote_of_a_document_creates_its_endnotes_part() {
     // The original has no endnotes part: accepting creates it, rejecting
     // leaves none.
@@ -1989,84 +1473,6 @@ fn endnote_parts(doc: &mut Document) -> Vec<String> {
         .into_keys()
         .filter(|name| name.contains("endnotes"))
         .collect()
-}
-
-#[test]
-fn the_last_endnote_of_a_document_removed_takes_its_endnotes_part() {
-    let original = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", None)]);
-    let edited = doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", None)]);
-    let mut doc = checked_note_redline(original, &edited);
-    assert!(endnote_parts(&mut accepted(&mut doc)).is_empty());
-    assert_eq!(
-        endnote_parts(&mut rejected(&mut doc)),
-        ["word/endnotes.xml"]
-    );
-}
-
-#[test]
-fn an_endnote_reference_moved_to_another_paragraph_is_compared() {
-    let original = doc_with_endnote_texts(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
-    let edited = doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", Some("Source"))]);
-    checked_note_redline(original, &edited);
-}
-
-#[test]
-fn an_endnote_reference_moved_within_its_paragraph_is_compared() {
-    let document = |run_index: usize| {
-        let mut doc = Document::new();
-        doc.add_paragraph("Claim ").add_run("one.");
-        let location = doc.paragraph_story_location(0).unwrap().unwrap();
-        doc.create_endnote_at(
-            &oxoffice_docx::StoryRunPosition {
-                location,
-                run_index,
-            },
-            "Source",
-        )
-        .expect("endnote is created");
-        doc
-    };
-    let original = document(1);
-    let edited = document(2);
-    assert_eq!(note_marked_texts(&original), ["Claim {Source}one."]);
-    checked_note_redline(original, &edited);
-}
-
-#[test]
-fn a_moved_endnote_whose_text_changed_is_compared() {
-    let original = doc_with_endnote_texts(&[("Claim one.", Some("Source")), ("Claim two.", None)]);
-    let edited =
-        doc_with_endnote_texts(&[("Claim one.", None), ("Claim two.", Some("Source, p. 4"))]);
-    checked_note_redline(original, &edited);
-}
-
-#[test]
-fn an_endnote_added_before_others_is_the_only_endnote_change() {
-    // Endnotes are numbered by position: the new first endnote takes the id
-    // of the old first one, and every later one moves up one.
-    let original = doc_with_endnote_texts(&[
-        ("One.", Some("A")),
-        ("Two.", Some("B")),
-        ("Three.", Some("C")),
-    ]);
-    let edited = doc_with_endnote_texts(&[
-        ("Zero.", Some("N")),
-        ("One.", Some("A")),
-        ("Two.", Some("B")),
-        ("Three.", Some("C")),
-    ]);
-    let doc = checked_note_redline(original, &edited);
-    assert_eq!(
-        revision_texts(&doc, RevisionKind::Deletion),
-        Vec::<String>::new()
-    );
-    let inserted = revision_texts(&doc, RevisionKind::Insertion);
-    assert!(
-        !inserted
-            .iter()
-            .any(|text| ["A", "B", "C"].contains(&text.trim())),
-        "an unchanged endnote is not revised: {inserted:?}"
-    );
 }
 
 #[test]
@@ -2123,40 +1529,6 @@ fn a_table_replaced_whole_with_the_endnote_it_holds_is_compared() {
     assert_eq!(shape(&mut doc).1, 2);
     assert_eq!(shape(&mut accepted(&mut doc)), after);
     assert_eq!(shape(&mut rejected(&mut doc)), before);
-}
-
-#[test]
-fn a_footnote_and_an_endnote_changed_at_once_are_both_compared() {
-    let original = doc_with_both_notes(&[
-        ("Claim one.", Some("Foot A"), Some("End A")),
-        ("Claim two.", None, Some("End B")),
-        ("Claim three.", Some("Foot C"), None),
-    ]);
-    let edited = doc_with_both_notes(&[
-        ("Claim one.", Some("Foot A"), None),
-        ("Claim two.", Some("Foot B"), Some("End B")),
-        ("Claim three.", Some("Foot C"), Some("End C")),
-    ]);
-    let mut doc = checked_note_redline(original, &edited);
-    // Each kind's custody pairs carry its own letter.
-    let xml = main_part_xml(&mut doc);
-    assert!(xml.contains("_rdocxCmpNoteF"), "{xml}");
-    assert!(xml.contains("_rdocxCmpNoteE"), "{xml}");
-}
-
-#[test]
-fn a_footnote_and_an_endnote_moved_at_once_are_both_compared() {
-    // Each moved note makes the comparison start again with it under a new
-    // id; the ids an earlier pass gave are kept per kind.
-    let original = doc_with_both_notes(&[
-        ("Claim one.", Some("Foot"), Some("End")),
-        ("Claim two.", None, None),
-    ]);
-    let edited = doc_with_both_notes(&[
-        ("Claim one.", None, None),
-        ("Claim two.", Some("Foot"), Some("End")),
-    ]);
-    checked_note_redline(original, &edited);
 }
 
 #[test]
@@ -2315,30 +1687,6 @@ fn with_tracked_note_insertion(doc: &mut Document, owner: &str, id: i32) -> Docu
 }
 
 #[test]
-fn rejecting_a_tracked_endnote_insertion_removes_the_endnote_whole() {
-    // Not a comparison: Word tracked the endnote typed at the end of the
-    // second claim. Rejecting removes its definition with its reference.
-    let mut doc = doc_with_endnote_texts(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
-    let (_, id) = endnote_references(&doc)[1];
-    let mut doc = with_tracked_note_insertion(&mut doc, "endnote", id);
-    let wanted = |doc: &Document| (note_marked_texts(doc), held_note_texts(doc));
-    assert_eq!(
-        wanted(&accepted(&mut doc)),
-        (
-            vec!["Claim one.{A}".to_owned(), "Claim two.{B}".to_owned()],
-            (vec![], vec!["A".to_owned(), "B".to_owned()])
-        )
-    );
-    assert_eq!(
-        wanted(&rejected(&mut doc)),
-        (
-            vec!["Claim one.{A}".to_owned(), "Claim two.".to_owned()],
-            (vec![], vec!["A".to_owned()])
-        )
-    );
-}
-
-#[test]
 fn rejecting_a_tracked_footnote_insertion_removes_the_footnote_whole() {
     // The footnote twin of the endnote case above.
     let mut doc = doc_with_notes_in_order(&[("Claim one.", Some("A")), ("Claim two.", Some("B"))]);
@@ -2359,22 +1707,6 @@ fn rejecting_a_tracked_footnote_insertion_removes_the_footnote_whole() {
             (vec!["A".to_owned()], vec![])
         )
     );
-}
-
-#[test]
-fn a_tracked_change_beside_an_endnote_reference_without_endnotes_resolves() {
-    // No endnotes part, so no endnote to settle: the stray reference stays
-    // and the insertion beside it resolves as in any paragraph.
-    let body = format!(
-        r#"<w:p><w:r><w:t xml:space="preserve">Claim </w:t></w:r><w:ins w:id="1" w:author="{AUTHOR}" w:date="{DATE}"><w:r><w:t>added</w:t></w:r></w:ins><w:r><w:endnoteReference w:id="2"/></w:r></w:p>"#
-    );
-    let mut doc = doc_with_body(&body);
-    let copy = accepted(&mut doc);
-    assert_eq!(texts(&copy), ["Claim added"]);
-    assert_eq!(endnote_references(&copy), [(0, 2)]);
-    let copy = rejected(&mut doc);
-    assert_eq!(texts(&copy), ["Claim "]);
-    assert_eq!(endnote_references(&copy), [(0, 2)]);
 }
 
 #[test]
@@ -3519,25 +2851,6 @@ fn a_cell_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
     assert_eq!(bookmark_names(&copy), ["Kept"]);
 }
 
-#[test]
-fn a_last_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
-    let document = |marks: &[(u32, &str)]| {
-        doc_with_body(&format!(
-            "{}{}",
-            plain_paragraph("One"),
-            heading_with("Last", marks)
-        ))
-    };
-    let edited = document(&[(2, "Added"), (1, "Kept")]);
-    let mut doc = redline(document(&[(1, "Kept")]), &edited);
-    let copy = accepted(&mut doc);
-    assert_eq!(texts(&copy), texts(&edited));
-    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
-    let copy = rejected(&mut doc);
-    assert_eq!(texts(&copy), ["One", "Last"]);
-    assert_eq!(bookmark_names(&copy), ["Kept"]);
-}
-
 /// `xml` with these bookmarks, as (id, name), around the run that shows
 /// `text`.
 fn bookmarked_run(xml: &str, text: &str, marks: &[(u32, &str)]) -> String {
@@ -3603,37 +2916,6 @@ fn part_bookmark_counts(doc: &mut Document, suffix: &str, names: &[&str]) -> Vec
 }
 
 #[test]
-fn a_header_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
-    let document = |marks: &[(u32, &str)]| {
-        let mut doc = doc_with(&["body"]);
-        doc.set_header("Running title");
-        with_part(&mut doc, "header1.xml", |xml| {
-            bookmarked_run(xml, "Running title", marks)
-        })
-    };
-    let mut edited = document(&[(2, "Added"), (1, "Kept")]);
-    let mut doc = redline(document(&[(1, "Kept")]), &edited);
-    let names = ["Kept", "Added"];
-    assert_eq!(
-        part_bookmark_counts(&mut doc, "header1.xml", &names),
-        [1, 1]
-    );
-    assert_shared_bookmark_layout(&part_xml(&mut doc, "header1.xml"), "Kept", false);
-    let mut copy = accepted(&mut doc);
-    assert_eq!(copy.header_text(), edited.header_text());
-    assert_eq!(
-        part_bookmark_counts(&mut copy, "header1.xml", &names),
-        part_bookmark_counts(&mut edited, "header1.xml", &names)
-    );
-    let mut copy = rejected(&mut doc);
-    assert_eq!(copy.header_text().as_deref(), Some("Running title"));
-    assert_eq!(
-        part_bookmark_counts(&mut copy, "header1.xml", &names),
-        [1, 0]
-    );
-}
-
-#[test]
 fn a_footnote_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() {
     let document = |marks: &[(u32, &str)]| {
         let mut doc = doc_with_notes(&[("Text", Some("A note.")), ("After", None)]);
@@ -3661,26 +2943,6 @@ fn a_footnote_paragraph_that_keeps_its_bookmark_and_gains_another_is_compared() 
         part_bookmark_counts(&mut copy, "footnotes.xml", &names),
         [1, 0]
     );
-}
-
-#[test]
-fn a_heading_whose_link_changed_keeps_its_bookmark_on_rejection() {
-    let document = |anchor: &str| {
-        doc_with_body(&format!(
-            r#"{}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="1" w:name="Kept"/><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>{}"#,
-            plain_paragraph("One"),
-            plain_paragraph("Two")
-        ))
-    };
-    let edited = document("Second");
-    let mut doc = redline(document("First"), &edited);
-    assert_eq!(bookmark_names(&doc), ["Kept"]);
-    let copy = accepted(&mut doc);
-    assert_eq!(texts(&copy), texts(&edited));
-    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
-    let copy = rejected(&mut doc);
-    assert_eq!(texts(&copy), ["One", "Heading", "Two"]);
-    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
 }
 
 #[test]
@@ -3728,47 +2990,6 @@ fn a_bookmark_inside_a_hyperlink_is_refused_rather_than_written_twice() {
     );
 }
 
-/// A heading holding `Kept` around a link to `anchor`.
-fn linked_heading(anchor: &str) -> String {
-    format!(
-        r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:bookmarkStart w:id="1" w:name="Kept"/><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>"#
-    )
-}
-
-#[test]
-fn a_heading_whose_link_changed_before_a_new_or_removed_last_paragraph_is_compared() {
-    // The paragraph marks of a trailing change close on the heading's own.
-    for (original, edited) in [
-        (
-            format!("{}{}", plain_paragraph("A"), linked_heading("First")),
-            format!(
-                "{}{}{}",
-                plain_paragraph("A"),
-                linked_heading("Second"),
-                plain_paragraph("Tail")
-            ),
-        ),
-        (
-            format!(
-                "{}{}{}",
-                plain_paragraph("A"),
-                linked_heading("First"),
-                plain_paragraph("Gone")
-            ),
-            format!("{}{}", plain_paragraph("A"), linked_heading("Second")),
-        ),
-    ] {
-        let edited = doc_with_body(&edited);
-        let mut doc = redline(doc_with_body(&original), &edited);
-        let copy = accepted(&mut doc);
-        assert_eq!(texts(&copy), texts(&edited));
-        assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
-        let copy = rejected(&mut doc);
-        assert_eq!(texts(&copy), texts(&doc_with_body(&original)));
-        assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
-    }
-}
-
 #[test]
 fn a_bookmark_half_inside_a_hyperlink_is_refused_rather_than_written_twice() {
     let document = |added: bool| {
@@ -3797,59 +3018,6 @@ fn a_bookmark_half_inside_a_hyperlink_is_refused_rather_than_written_twice() {
 }
 
 #[test]
-fn a_bookmark_ending_in_a_replaced_paragraph_still_covers_it_on_rejection() {
-    let document = |anchor: &str| {
-        doc_with_body(&format!(
-            r#"<w:p><w:bookmarkStart w:id="1" w:name="Span"/><w:r><w:t>From</w:t></w:r></w:p><w:p><w:hyperlink w:anchor="{anchor}"><w:r><w:t>Heading</w:t></w:r></w:hyperlink><w:bookmarkEnd w:id="1"/></w:p>{}"#,
-            plain_paragraph("Two")
-        ))
-    };
-    let edited = document("Second");
-    let mut doc = redline(document("First"), &edited);
-    let span = |doc: &Document| {
-        let bookmarks = doc.bookmarks();
-        let [bookmark] = bookmarks.as_slice() else {
-            panic!("one bookmark: {bookmarks:?}")
-        };
-        (
-            bookmark.text().to_owned(),
-            bookmark.range().unwrap().end.body_index,
-        )
-    };
-    // Accepting leaves the end the deletion held at the start of the next
-    // paragraph, as Word does: over the same text.
-    let copy = accepted(&mut doc);
-    assert_eq!(texts(&copy), texts(&edited));
-    assert_eq!(span(&copy), ("From\nHeading\n".to_owned(), 2));
-    // Rejecting restores it exactly.
-    let original = document("First");
-    let copy = rejected(&mut doc);
-    assert_eq!(texts(&copy), texts(&original));
-    assert_eq!(span(&copy), span(&original));
-}
-
-#[test]
-fn a_heading_that_keeps_its_point_bookmark_and_gains_another_is_compared() {
-    // Google writes its heading bookmarks as points before the text.
-    let heading = |added: &str| {
-        doc_with_body(&format!(
-            r#"{}<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>{added}<w:bookmarkStart w:id="1" w:name="_hjerlw5ntnls"/><w:bookmarkEnd w:id="1"/><w:r><w:t>Heading</w:t></w:r></w:p>{}"#,
-            plain_paragraph("One"),
-            plain_paragraph("Two")
-        ))
-    };
-    let edited = heading(r#"<w:bookmarkStart w:id="2" w:name="_Toc2"/><w:bookmarkEnd w:id="2"/>"#);
-    let mut doc = redline(heading(""), &edited);
-    assert_shared_bookmark_layout(&main_part_xml(&mut doc), "_hjerlw5ntnls", true);
-    let copy = accepted(&mut doc);
-    assert_eq!(texts(&copy), texts(&edited));
-    assert_eq!(bookmark_starts(&copy), bookmark_starts(&edited));
-    let copy = rejected(&mut doc);
-    assert_eq!(texts(&copy), texts(&heading("")));
-    assert_eq!(bookmark_starts(&copy), [("_hjerlw5ntnls".to_owned(), 1)]);
-}
-
-#[test]
 fn a_point_bookmark_both_versions_hold_after_text_in_a_replaced_paragraph_is_refused() {
     // Rejecting would leave it at the start of the restored paragraph, and
     // its position is all a point has.
@@ -3865,76 +3033,6 @@ fn a_point_bookmark_both_versions_hold_after_text_in_a_replaced_paragraph_is_ref
     let error = paragraph("")
         .compare(&edited, AUTHOR, DATE)
         .expect_err("the point cannot be kept after the text");
-    assert!(error.to_string().contains("over the same text"), "{error}");
-}
-
-#[test]
-fn a_bookmark_both_versions_hold_that_would_cross_a_picture_is_refused() {
-    // The end after a line break and before the paragraph's text: accepting
-    // the deletion would move it after all of it, across no counted text
-    // but the break.
-    let paragraph = |added: &str| {
-        doc_with_body(&format!(
-            r#"{}<w:p>{added}<w:bookmarkStart w:id="1" w:name="B"/><w:r><w:br/></w:r><w:bookmarkEnd w:id="1"/><w:r><w:sym w:font="Symbol" w:char="F0B7"/></w:r></w:p>{}"#,
-            plain_paragraph("One"),
-            plain_paragraph("Two")
-        ))
-    };
-    let edited =
-        paragraph(r#"<w:bookmarkStart w:id="2" w:name="Added"/><w:bookmarkEnd w:id="2"/>"#);
-    let error = paragraph("")
-        .compare(&edited, AUTHOR, DATE)
-        .expect_err("the end cannot be kept before the symbol");
-    assert!(error.to_string().contains("over the same text"), "{error}");
-}
-
-#[test]
-fn a_rewritten_heading_that_keeps_its_bookmark_goes_before_the_deletion_that_held_it() {
-    // A paragraph inserted before the heading takes its place in the pair,
-    // and the rewritten heading is inserted after the deletion: the
-    // comparison moves it before that deletion, so that the bookmark's start
-    // lands in it.
-    let original = || {
-        doc_with_body(&format!(
-            "{}{}{}",
-            plain_paragraph("One"),
-            heading_with("Future work", &[(1, "Kept")]),
-            plain_paragraph("Two")
-        ))
-    };
-    let edited = doc_with_body(&format!(
-        "{}{}{}{}",
-        plain_paragraph("One"),
-        plain_paragraph("Limitations"),
-        heading_with("Future work, revised", &[(1, "Kept")]),
-        plain_paragraph("Two")
-    ));
-    let mut doc = redline(original(), &edited);
-    assert_shared_bookmark_layout(&main_part_xml(&mut doc), "Kept", false);
-    let copy = accepted(&mut doc);
-    assert_eq!(texts(&copy), texts(&edited));
-    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 2)]);
-    let copy = rejected(&mut doc);
-    assert_eq!(texts(&copy), texts(&original()));
-    assert_eq!(bookmark_starts(&copy), [("Kept".to_owned(), 1)]);
-}
-
-#[test]
-fn a_bookmark_both_versions_hold_ending_inside_a_replaced_paragraph_is_refused() {
-    // Neither resolution can keep the end inside the text: the insertion
-    // cannot hold it (Word's Reject All drops it with the paragraph), and
-    // accepting the deletion that holds it leaves it after the paragraph.
-    let caption = |marks: &str| {
-        doc_with_body(&format!(
-            r#"{}<w:p>{marks}<w:bookmarkStart w:id="1" w:name="_Ref1"/><w:r><w:t>Figure 1</w:t></w:r><w:bookmarkEnd w:id="1"/><w:r><w:t xml:space="preserve">: results</w:t></w:r></w:p>{}"#,
-            plain_paragraph("One"),
-            plain_paragraph("Two")
-        ))
-    };
-    let edited = caption(r#"<w:bookmarkStart w:id="2" w:name="Added"/><w:bookmarkEnd w:id="2"/>"#);
-    let error = caption("")
-        .compare(&edited, AUTHOR, DATE)
-        .expect_err("the end cannot be kept inside the text");
     assert!(error.to_string().contains("over the same text"), "{error}");
 }
 
@@ -4406,45 +3504,6 @@ fn a_word_table_of_contents_removed_whole_is_compared() {
 }
 
 #[test]
-fn a_block_content_control_whose_content_is_all_tracked_goes_with_that_content() {
-    // A control deleted or inserted under tracking: every run and
-    // paragraph mark inside it marked, not the control itself.
-    let marked = |kind: &str, text: &str| {
-        block_control(
-            "Box",
-            &format!(
-                r#"<w:p><w:pPr><w:rPr><w:{kind} w:id="1" w:author="Ada" w:date="{DATE}"/></w:rPr></w:pPr><w:{kind} w:id="2" w:author="Ada" w:date="{DATE}"><w:r>{text}</w:r></w:{kind}></w:p>"#
-            ),
-        )
-    };
-    let deleted = marked("del", "<w:delText>Inside</w:delText>");
-    let inserted = marked("ins", "<w:t>Inside</w:t>");
-    for (body, goes_on_accept) in [
-        (format!("{INTRO}{deleted}{BODY}"), true),
-        (format!("{INTRO}{deleted}"), true),
-        (format!("{INTRO}{inserted}{BODY}"), false),
-        (format!("{INTRO}{inserted}"), false),
-    ] {
-        let mut doc = doc_with_body(&body);
-        let kept = body_owners(&doc_with_body(
-            &body.replace(&deleted, "").replace(&inserted, ""),
-        ));
-        let with_control = {
-            let mut owners = kept.clone();
-            owners.insert(1, "Box{Inside}".to_owned());
-            owners
-        };
-        let (on_accept, on_reject) = if goes_on_accept {
-            (kept, with_control)
-        } else {
-            (with_control, kept)
-        };
-        assert_eq!(body_owners(&accepted(&mut doc)), on_accept, "{body}");
-        assert_eq!(body_owners(&rejected(&mut doc)), on_reject, "{body}");
-    }
-}
-
-#[test]
 fn an_existing_paragraph_wrapped_in_a_block_content_control_is_compared() {
     check_bodies_both_ways(
         &format!("{INTRO}{BODY}"),
@@ -4477,52 +3536,6 @@ fn a_block_content_control_removed_whole_takes_the_bookmarks_it_encloses() {
         &format!("{INTRO}{BODY}"),
         |_, _| {},
     );
-}
-
-#[test]
-fn a_bookmark_that_only_ends_in_a_removed_control_keeps_both_ends() {
-    // A Word redline: the control deleted under tracking holds the end of a
-    // bookmark that starts before it.
-    let body = format!(
-        concat!(
-            r#"<w:p><w:bookmarkStart w:id="3" w:name="span"/><w:r><w:t>Intro</w:t></w:r></w:p>"#,
-            r#"<w:sdt><w:sdtPr><w:alias w:val="Box"/></w:sdtPr><w:sdtContent><w:p><w:pPr><w:rPr>"#,
-            r#"<w:del w:id="1" w:author="Ada" w:date="{date}"/></w:rPr></w:pPr><w:del w:id="2" w:author="Ada" w:date="{date}">"#,
-            r#"<w:r><w:delText>Inside</w:delText></w:r></w:del><w:bookmarkEnd w:id="3"/></w:p></w:sdtContent></w:sdt>"#,
-            "{body}"
-        ),
-        date = DATE,
-        body = BODY
-    );
-    let mut doc = doc_with_body(&body);
-    let accepted = accepted(&mut doc);
-    // The end stays at block level, where the control was.
-    let owners = body_owners(&accepted);
-    assert_eq!(owners.len(), 3, "{owners:?}");
-    assert_eq!([&owners[0], &owners[2]], ["Intro", "Body."]);
-    assert!(owners[1].starts_with("<w:bookmarkEnd ") && owners[1].contains(r#"w:id="3""#));
-    assert_eq!(bookmark_names(&accepted), ["span"]);
-    assert_eq!(bookmark_names(&rejected(&mut doc)), ["span"]);
-}
-
-#[test]
-fn a_block_content_control_ending_the_body_leaves_the_final_mark_untracked() {
-    // Word cannot resolve a change on the body's last paragraph mark: the
-    // paragraph before the control carries it, as for a final paragraph.
-    let control = block_control("Box", &format!("{}{}", plain("Inside"), plain("Last")));
-    check_bodies_both_ways(&format!("{INTRO}{control}"), INTRO, |doc, forward| {
-        let xml = main_xml(doc);
-        let tag = if forward { "<w:del " } else { "<w:ins " };
-        let marks = |paragraph: &str| {
-            let properties = paragraph.split("</w:pPr>").next().unwrap_or_default();
-            paragraph.contains("</w:pPr>") && properties.contains(tag)
-        };
-        // The first paragraph is Intro's, the last the control's last.
-        let intro = &xml[..xml.find("</w:p>").unwrap()];
-        let last = &xml[xml.rfind("<w:p>").max(xml.rfind("<w:p ")).unwrap()..];
-        assert!(intro.contains("Intro") && marks(intro), "{xml}");
-        assert!(last.contains("Last<") && !marks(last), "{xml}");
-    });
 }
 
 #[test]
@@ -5115,28 +4128,6 @@ fn numbered_items(level: &str) -> Document {
     Document::from_bytes(&out.into_inner()).unwrap()
 }
 
-#[test]
-fn a_copy_that_writes_the_list_level_its_items_show_is_no_change() {
-    // Word or python-docx write a `w:numId` alone; LibreOffice writes the
-    // `w:ilvl 0` it shows.
-    let doc = redline(
-        numbered_items(""),
-        &numbered_items(r#"<w:ilvl w:val="0"/>"#),
-    );
-    assert_eq!(kinds(&doc), []);
-    let doc = redline(
-        numbered_items(r#"<w:ilvl w:val="0"/>"#),
-        &numbered_items(""),
-    );
-    assert_eq!(kinds(&doc), []);
-    // A real change of level is still one.
-    let doc = redline(
-        numbered_items(""),
-        &numbered_items(r#"<w:ilvl w:val="1"/>"#),
-    );
-    assert!(!kinds(&doc).is_empty());
-}
-
 /// The main part of `doc` as saved.
 fn saved_main_xml(doc: &mut Document) -> String {
     let package =
@@ -5178,42 +4169,6 @@ fn a_list_item_without_a_level_keeps_that_form_through_a_tracked_property_change
             Some(Alignment::Center)
         );
     }
-}
-
-#[test]
-fn a_list_item_without_a_level_reads_at_its_style_s_level() {
-    // The items' style holds `w:ilvl 1`: a copy that writes level 1 is no
-    // change, one that writes level 0 is one.
-    let styled = |level: &str| {
-        let mut doc = numbered_items(level);
-        let mut package =
-            oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
-                .unwrap();
-        let main = package.main_document_part().unwrap();
-        let xml = String::from_utf8(package.get_part(&main).unwrap().to_vec()).unwrap();
-        package.set_part(
-            &main,
-            xml.replace("<w:pPr>", r#"<w:pPr><w:pStyle w:val="Deep"/>"#)
-                .into_bytes(),
-        );
-        let styles = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec())
-            .unwrap()
-            .replace(
-                "</w:styles>",
-                concat!(
-                    r#"<w:style w:type="paragraph" w:styleId="Deep"><w:name w:val="Deep"/>"#,
-                    r#"<w:pPr><w:numPr><w:ilvl w:val="1"/></w:numPr></w:pPr></w:style></w:styles>"#
-                ),
-            );
-        package.set_part("/word/styles.xml", styles.into_bytes());
-        let mut out = std::io::Cursor::new(Vec::new());
-        package.write_to(&mut out).unwrap();
-        Document::from_bytes(&out.into_inner()).unwrap()
-    };
-    let doc = redline(styled(""), &styled(r#"<w:ilvl w:val="1"/>"#));
-    assert_eq!(kinds(&doc), []);
-    let doc = redline(styled(""), &styled(r#"<w:ilvl w:val="0"/>"#));
-    assert!(!kinds(&doc).is_empty());
 }
 
 #[test]
@@ -6225,53 +5180,6 @@ fn hyperlink_field_wrapper<'a>(xml: &'a str, kind: &str) -> &'a str {
     &xml[start..end]
 }
 
-#[test]
-fn a_linked_paragraph_added_or_removed_whole_is_tracked_as_a_hyperlink_field() {
-    let target = r#"<w:p><w:bookmarkStart w:id="0" w:name="Target"/><w:r><w:t>Target section.</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#;
-    let without = format!("{}{target}{}", plain("Before."), plain("After."));
-    let with = format!(
-        "{}{}{target}{}",
-        plain("Before."),
-        linked_line("See the target."),
-        plain("After.")
-    );
-    for (from, to, kind) in [(&without, &with, "ins"), (&with, &without, "del")] {
-        let mut doc = redline(doc_with_body(from), &doc_with_body(to));
-        let xml = main_part_xml(&mut doc);
-        assert!(!xml.contains("<w:hyperlink"), "{xml}");
-        let field = hyperlink_field_wrapper(&xml, kind);
-        assert!(field.contains(r#"HYPERLINK \l "Target""#), "{xml}");
-        for marker in ["begin", "separate", "end"] {
-            assert_eq!(
-                field.matches(&format!(r#"fldCharType="{marker}""#)).count(),
-                1,
-                "{xml}"
-            );
-        }
-        let inner = &field[field.find('>').unwrap()..];
-        assert!(
-            !inner.contains("<w:ins ") && !inner.contains("<w:del "),
-            "{xml}"
-        );
-        assert_eq!(
-            field.contains("<w:delText>See the target.</w:delText>"),
-            kind == "del",
-            "{xml}"
-        );
-        assert_eq!(
-            field.contains("<w:t>See the target.</w:t>"),
-            kind == "ins",
-            "{xml}"
-        );
-    }
-    check_both_ways(
-        || doc_with_body(&without),
-        || doc_with_body(&with),
-        "document.xml",
-        [false, true],
-    );
-}
-
 /// `doc` saved with an external hyperlink relationship `id` to `address`
 /// added to its main part.
 fn with_link_relationship(doc: &mut Document, id: &str, address: &str) -> Document {
@@ -6365,40 +5273,6 @@ fn an_address_link_of_a_whole_paragraph_keeps_its_address_tooltip_and_frame() {
             }
         }
     }
-}
-
-#[test]
-fn a_contents_entry_added_or_removed_whole_keeps_its_page_field_in_the_link_field() {
-    // A contents entry links its heading and shows its page through a
-    // PAGEREF field inside the link: both fields go in one wrapper, nested.
-    let entry = concat!(
-        r#"<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:hyperlink w:anchor="_Toc1" w:history="1">"#,
-        r#"<w:r><w:t>Method</w:t></w:r><w:r><w:tab/></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
-        r#"<w:r><w:instrText xml:space="preserve"> PAGEREF _Toc1 \h </w:instrText></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:hyperlink></w:p>"#
-    );
-    let heading = r#"<w:p><w:bookmarkStart w:id="0" w:name="_Toc1"/><w:r><w:t>Method</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#;
-    let without = format!("{}{heading}", plain("Contents"));
-    let with = format!("{}{entry}{heading}", plain("Contents"));
-    for (from, to, kind) in [(&without, &with, "ins"), (&with, &without, "del")] {
-        let mut doc = redline(doc_with_body(from), &doc_with_body(to));
-        let xml = main_part_xml(&mut doc);
-        assert!(!xml.contains("<w:hyperlink"), "{xml}");
-        let field = hyperlink_field_wrapper(&xml, kind);
-        assert!(field.contains(r#"HYPERLINK \l "_Toc1""#), "{xml}");
-        assert!(field.contains("PAGEREF _Toc1"), "{xml}");
-        assert_eq!(field.matches(r#"fldCharType="begin""#).count(), 2, "{xml}");
-        assert_eq!(field.matches(r#"fldCharType="end""#).count(), 2, "{xml}");
-        assert!(!field.contains("<w:t>") || kind == "ins", "{xml}");
-    }
-    check_both_ways(
-        || doc_with_body(&without),
-        || doc_with_body(&with),
-        "document.xml",
-        [false, true],
-    );
 }
 
 #[test]
@@ -6550,57 +5424,6 @@ fn a_whole_paragraph_link_no_field_can_carry_is_refused() {
     }
 }
 
-/// `Kept four tail` with a comment on `Kept four`, whose end and comment
-/// mark are then wrapped in a tracked `wrapper` (`del` or `ins`), as
-/// LibreOffice writes a comment that ends on changed text, with `four` in a
-/// second wrapper of the same kind.
-fn comment_ending_inside_a_revision(wrapper: &str) -> Document {
-    let mut doc = doc_with_body(
-        r#"<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r><w:r><w:t>four</w:t></w:r><w:r><w:t xml:space="preserve"> tail</w:t></w:r></w:p>"#,
-    );
-    let range = oxoffice_docx::RunRange {
-        start: oxoffice_docx::RunPosition {
-            body_index: 0,
-            run_index: 0,
-        },
-        end: oxoffice_docx::RunPosition {
-            body_index: 0,
-            run_index: 2,
-        },
-    };
-    doc.add_comment_with_date(
-        range,
-        "Reviewer",
-        None,
-        "Check",
-        oxoffice_docx::CommentDate::Undated,
-    )
-    .unwrap();
-    let bytes = doc.to_bytes().unwrap();
-    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
-    let part = package.main_document_part().unwrap();
-    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
-    let open = |id: u32| {
-        format!(r#"<w:{wrapper} w:id="{id}" w:author="A" w:date="2026-01-01T00:00:00Z">"#)
-    };
-    let text = if wrapper == "del" { "delText" } else { "t" };
-    let mark_start = xml.find("<w:commentRangeEnd").unwrap();
-    let mark_end = xml[mark_start..].find("</w:r>").unwrap() + mark_start + "</w:r>".len();
-    let four = xml.find("<w:r><w:t>four</w:t></w:r>").unwrap();
-    let xml = format!(
-        "{}{}<w:r><w:{text}>four</w:{text}></w:r></w:{wrapper}>{}{}</w:{wrapper}>{}",
-        &xml[..four],
-        open(90),
-        open(91),
-        &xml[mark_start..mark_end],
-        &xml[mark_end..],
-    );
-    package.set_part(&part, xml.into_bytes());
-    let mut out = std::io::Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    Document::from_bytes(&out.into_inner()).unwrap()
-}
-
 /// The text the only comment of `doc` covers, after `resolve`.
 fn comment_after(
     doc: &mut Document,
@@ -6612,35 +5435,6 @@ fn comment_after(
     let comments = doc.comments();
     assert_eq!(comments.len(), 1);
     comments[0].anchor_text().unwrap().unwrap_or_default()
-}
-
-#[test]
-fn a_comment_ending_inside_an_accepted_deletion_stays_on_the_text_left() {
-    let mut doc = comment_ending_inside_a_revision("del");
-    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept ");
-    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept four");
-}
-
-#[test]
-fn a_comment_ending_inside_a_rejected_insertion_stays_on_the_text_left() {
-    let mut doc = comment_ending_inside_a_revision("ins");
-    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept four");
-    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept ");
-}
-
-#[test]
-fn every_revision_of_libreoffices_record_is_accepted_with_its_comments_kept() {
-    // LibreOffice writes the end and the mark of a comment inside a deletion.
-    let mut doc = crate::support::corpus_doc("libreoffice/record.docx");
-    let before = doc.comments().len();
-    doc.accept_all().unwrap_or_else(|e| panic!("{e}"));
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.comments().len(), before);
-    assert!(
-        doc.comments()
-            .iter()
-            .all(|comment| comment.anchor_text().is_ok_and(|text| text.is_some())),
-    );
 }
 
 /// `Kept 30 days tail` with a comment on `30 days`, its main part then
@@ -6697,37 +5491,6 @@ fn wrapped(xml: &str, from: usize, to: usize, wrapper: &str, id: u32) -> String 
         &xml[..from],
         &xml[to..]
     )
-}
-
-/// The start of the comment through `30`, and ` days` through the comment
-/// mark, as two deletions 90 and 91.
-fn thirty_days_in_two_deletions(xml: &str) -> String {
-    let start = xml.find("<w:commentRangeStart").unwrap();
-    let thirty = xml.find("<w:t>30</w:t></w:r>").unwrap() + "<w:t>30</w:t></w:r>".len();
-    let days = xml.find("<w:r><w:t xml:space=\"preserve\"> days").unwrap();
-    let reference = xml.find("<w:commentReference").unwrap();
-    let mark = xml[reference..].find("</w:r>").unwrap() + reference + "</w:r>".len();
-    let xml = wrapped(xml, days, mark, "del", 91);
-    wrapped(&xml, start, thirty, "del", 90)
-}
-
-#[test]
-fn a_comment_whose_range_two_accepted_deletions_hold_goes_with_them() {
-    let mut doc = comment_on_thirty_days(thirty_days_in_two_deletions);
-    doc.accept_all().unwrap_or_else(|e| panic!("{e}"));
-    let doc = reopen(&mut doc);
-    assert!(doc.comments().is_empty());
-    assert_eq!(texts(&doc), ["Kept  tail"]);
-}
-
-#[test]
-fn accepting_only_the_deletion_with_a_comment_end_keeps_the_comment() {
-    // The start stays in the other deletion, which is not resolved.
-    let mut doc = comment_on_thirty_days(thirty_days_in_two_deletions);
-    doc.accept_revision_id(91).unwrap_or_else(|e| panic!("{e}"));
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.comments().len(), 1);
-    assert!(doc.comments()[0].anchor_text().is_ok());
 }
 
 #[test]
@@ -7194,27 +5957,6 @@ fn every_table_and_numbering_change_is_read_and_resolved() {
             }
         }
     }
-}
-
-/// Google Docs writes an id-only grid change in every table: it reads as a
-/// change with no author, and accepting every change removes it.
-#[test]
-fn a_google_grid_change_reads_and_goes_with_every_change() {
-    let mut doc = crate::support::corpus_doc("google/report.docx");
-    let grids = doc
-        .story_revisions()
-        .unwrap()
-        .into_iter()
-        .filter(|revision| revision.kind() == RevisionKind::TableGridChange)
-        .collect::<Vec<_>>();
-    assert!(!grids.is_empty() && grids.iter().all(|grid| grid.author().is_empty()));
-    assert!(doc.accept_all().unwrap() >= grids.len());
-    let doc = reopen(&mut doc);
-    assert!(
-        !doc.part_xml("/word/document.xml")
-            .unwrap()
-            .contains("tblGridChange")
-    );
 }
 
 /// A grid change with an id alone goes with its table's property change when

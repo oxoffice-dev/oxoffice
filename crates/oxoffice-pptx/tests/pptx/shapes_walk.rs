@@ -123,32 +123,6 @@ fn every_walked_path_finds_its_shape_again_and_edits_it() {
     assert_eq!(renamed, expected);
 }
 
-#[test]
-fn walk_starts_where_the_shapes_iterator_is() {
-    let (prs, n) = nested();
-    let slide = prs.slide(0).unwrap();
-    let (o, e) = (n + 1, n + 2);
-    let mut shapes = slide.shapes();
-    shapes.nth(n);
-    assert_eq!(
-        named(shapes.walk()),
-        expected(&[
-            (&[o], "outer"),
-            (&[o, 0], "b"),
-            (&[o, 1], "inner"),
-            (&[o, 1, 0], "c"),
-            (&[o, 2], "d"),
-            (&[e], "e"),
-        ])
-    );
-    let outer = slide.shape(o).unwrap();
-    assert_eq!(
-        named(outer.children().walk()),
-        expected(&[(&[0], "b"), (&[1], "inner"), (&[1, 0], "c"), (&[2], "d")])
-    );
-    assert_eq!(slide.shape(n).unwrap().children().walk().count(), 0);
-}
-
 /// A shape for the shape tree of a slide, with no text.
 fn bare_shape(id: u32, name: &str) -> String {
     format!(

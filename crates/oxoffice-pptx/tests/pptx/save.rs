@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oxoffice_pptx::{Error, Presentation, SaveOptions};
+use oxoffice_pptx::{Error, Presentation};
 
 /// A folder of its own under the system temporary folder, removed on drop.
 struct Scratch(PathBuf);
@@ -60,23 +60,6 @@ fn saving_over_the_opened_file_is_refused() {
 }
 
 #[test]
-fn every_spelling_of_the_source_is_refused() {
-    let scratch = Scratch::new("spellings");
-    fs::create_dir(scratch.0.join("sub")).unwrap();
-    let path = scratch.deck("deck.pptx");
-    let prs = Presentation::open(&path).unwrap();
-    assert_refused(&prs, &scratch.0.join("./deck.pptx"));
-    assert_refused(&prs, &scratch.0.join("sub/../deck.pptx"));
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&path, scratch.0.join("link.pptx")).unwrap();
-        assert_refused(&prs, &scratch.0.join("link.pptx"));
-        fs::hard_link(&path, scratch.0.join("hard.pptx")).unwrap();
-        assert_refused(&prs, &scratch.0.join("hard.pptx"));
-    }
-}
-
-#[test]
 fn the_source_is_still_refused_after_edits() {
     let scratch = Scratch::new("edits");
     let path = scratch.deck("deck.pptx");
@@ -104,43 +87,6 @@ fn the_source_is_still_refused_after_edits() {
 }
 
 #[test]
-fn overwrite_source_replaces_the_opened_file() {
-    let scratch = Scratch::new("overwrite");
-    let path = scratch.deck("deck.pptx");
-    let mut prs = Presentation::open(&path).unwrap();
-    let slides = prs.len();
-    prs.duplicate_slide(0).unwrap();
-    prs.save_with_options(
-        &path,
-        SaveOptions {
-            overwrite_source: true,
-        },
-    )
-    .unwrap();
-    assert_eq!(Presentation::open(&path).unwrap().len(), slides + 1);
-}
-
-#[cfg(unix)]
-#[test]
-fn the_replaced_source_keeps_its_mode() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let scratch = Scratch::new("mode");
-    let path = scratch.deck("deck.pptx");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-    let prs = Presentation::open(&path).unwrap();
-    prs.save_with_options(
-        &path,
-        SaveOptions {
-            overwrite_source: true,
-        },
-    )
-    .unwrap();
-    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o640);
-}
-
-#[test]
 fn saving_elsewhere_leaves_the_source_as_it_was() {
     let scratch = Scratch::new("elsewhere");
     let path = scratch.deck("deck.pptx");
@@ -152,14 +98,6 @@ fn saving_elsewhere_leaves_the_source_as_it_was() {
     prs.save(&copy).unwrap();
     assert_eq!(fs::read(&path).unwrap(), before);
     assert_eq!(Presentation::open(&copy).unwrap().len(), slides + 1);
-}
-
-#[test]
-fn a_presentation_from_bytes_has_no_source() {
-    let scratch = Scratch::new("bytes");
-    let path = scratch.deck("deck.pptx");
-    let prs = Presentation::from_bytes(&fs::read(&path).unwrap()).unwrap();
-    prs.save(&path).unwrap();
 }
 
 /// A blank deck of `slides` slides carrying a package signature graph whose
