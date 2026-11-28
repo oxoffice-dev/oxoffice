@@ -324,7 +324,8 @@ without `-o`. CSV is written and read by hand in the facade (shared by CLI and P
   not looked at. A result known to pass the edge of the sheet is refused. When neither tells the size (a size read from
   a cell, `SEQUENCE(B1)`; `GROUPBY`, `PIVOTBY`, `TEXTSPLIT`; a function the table does not list, such as `XLOOKUP`,
   `INDEX`, `OFFSET`, `MAP`; a table reference; a LAMBDA), the formula is written on its cell alone, as XlsxWriter
-  writes it: the known limitation `xlsx-spill-range-google` until the evaluator. `spill` also takes the range (Rust
+  writes it: the known limitation `xlsx-spill-range-google` until the evaluator of the second set
+  ([#724](https://github.com/oxoffice-dev/oxoffice/issues/724)) writes every extent. `spill` also takes the range (Rust
   `Spill::Range`, Python `spill="J2:J5"`, CLI `--spill-range J2:J5`, edit map `"spill": "J2:J5"`), kept as given. A range,
   given or found, starts at the cell and its other cells hold nothing, meet no other array formula and no merge (else
   refused, as Excel would show `#SPILL!`, the way out naming the range to give for an extent the data decide), nor
