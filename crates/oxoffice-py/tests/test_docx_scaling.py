@@ -746,6 +746,7 @@ TIMED.update({
         "Document.add_paragraph", "Document.add_heading", "Document.add_bullet_list_item", "Document.add_table",
         "Document.insert_paragraph", "Document.insert_table", "Document.remove_content",
         "Document.remove_content_range", "Document.pop_content")},
+    "Run.add_field (tracked)": tracked(method(lambda doc, k: tracked_para(doc, k).runs[0], "add_field", "PAGE", "1")),
     "Paragraph.replace_xml (tracked)": tracked(on_made(
         with_xml(tracked_para, lambda xml, k: xml.replace(f"tracked {k} ", "changed ")),
         lambda doc, made: made[0].replace_xml(made[1]))),

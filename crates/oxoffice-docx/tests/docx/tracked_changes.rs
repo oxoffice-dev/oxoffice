@@ -586,6 +586,24 @@ fn every_tracked_text_edit_resolves_to_its_untracked_twin_and_to_the_original() 
             unlike_compare: true,
         },
         Row {
+            shape: "a field added, as its fldChar runs",
+            document: || doc_with_body(&paragraph(&run("Page "))),
+            tracked: |doc| {
+                doc.edit_body_paragraph(0, |p| p.add_run("").add_complex_field("PAGE", "1"))
+                    .unwrap()
+            },
+            untracked: |doc| {
+                doc.paragraph_mut(0)
+                    .unwrap()
+                    .add_run("")
+                    .add_complex_field("PAGE", "1")
+                    .unwrap()
+            },
+            revisions: &[(RevisionKind::Insertion, "1")],
+            reject_own: true,
+            unlike_compare: true,
+        },
+        Row {
             shape: "a paragraph inserted between two",
             document: || doc_with_body(&(paragraph(&run("First.")) + &paragraph(&run("Last.")))),
             tracked: |doc| {

@@ -642,7 +642,19 @@ impl PyParagraph {
         let result = {
             let mut document = self.document.borrow_mut(py);
             let mut candidate = document.inner.clone_for_staging();
-            let relationship_id = match url {
+            // Under a session, a link is a HYPERLINK field, whose runs a
+            // tracked insertion holds: it needs no relationship.
+            let tracked = candidate.tracks_changes();
+            let field = url.filter(|_| tracked).map(|url| {
+                let quoted = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
+                match tooltip {
+                    Some(tooltip) => {
+                        format!("HYPERLINK \"{}\" \\o \"{}\"", quoted(url), quoted(tooltip))
+                    }
+                    None => format!("HYPERLINK \"{}\"", quoted(url)),
+                }
+            });
+            let relationship_id = match url.filter(|_| !tracked) {
                 Some(url) => {
                     // Check the paragraph first, so a failure leaves no
                     // orphaned relationship behind.
@@ -664,11 +676,14 @@ impl PyParagraph {
             };
             let append = |paragraph: &mut oxoffice_docx::Paragraph<'_>| {
                 let run_index = paragraph.run_count();
-                match &relationship_id {
-                    Some(relationship_id) => {
+                match (&relationship_id, &field) {
+                    (Some(relationship_id), _) => {
                         paragraph.add_hyperlink_with_tooltip(text, relationship_id, tooltip)?;
                     }
-                    None => {
+                    (None, Some(field)) => {
+                        paragraph.add_run("").add_complex_field(field, text)?;
+                    }
+                    (None, None) => {
                         paragraph.add_run(text);
                     }
                 }

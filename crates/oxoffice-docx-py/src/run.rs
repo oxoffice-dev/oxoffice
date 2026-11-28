@@ -361,7 +361,11 @@ impl PyRun {
         // A run of a direct body paragraph: its block is edited in place and
         // published by the block replacement, which keeps the paragraph and
         // every other handle, and retires the paragraph's runs.
-        if let Some(owner) = self.owner.as_ref()
+        // Under a session, the staged route writes the picture's run as
+        // inserted.
+        let tracked = document.inner.tracks_changes();
+        if !tracked
+            && let Some(owner) = self.owner.as_ref()
             && let Some(slot) = document.typed_run_edit_slot(&location, owner)
         {
             let (route, _) = document.run_route(owner)?;
@@ -413,6 +417,11 @@ impl PyRun {
         let picture = candidate
             .insert_picture_with_options_at(&position, &data, &filename, width, height, options)
             .map_err(|error| crate::docx_to_pyerr(py, error))?;
+        if tracked {
+            candidate
+                .redline_body_since(&document.inner)
+                .map_err(|error| crate::docx_to_pyerr(py, error))?;
+        }
         let prepared = document.prepare_word_revision(
             py,
             &candidate,
@@ -480,13 +489,18 @@ impl PyRun {
     fn add_field(&self, py: Python<'_>, instruction: &str, cached_result: &str) -> PyResult<()> {
         let (location, _) = self.validate(py)?;
         let mut document = self.document.borrow_mut(py);
+        // Under a session, the field is written as `w:fldChar` runs, which a
+        // tracked insertion holds.
+        let tracked = document.inner.tracks_changes();
+        let add = |run: &mut oxoffice_docx::Run<'_>| match tracked {
+            true => run.add_complex_field(instruction, cached_result),
+            false => run.add_field(instruction, cached_result),
+        };
         if let ParagraphLocation::Body(index) = location
             && document
                 .edit_body_paragraph_in_place(py, index, "Run.add_field", |paragraph| {
                     let mut added = Ok(());
-                    paragraph.edit_run(&self.run_path, |run| {
-                        added = run.add_field(instruction, cached_result)
-                    })?;
+                    paragraph.edit_run(&self.run_path, |run| added = add(run))?;
                     added
                 })?
                 .is_some()
@@ -497,9 +511,7 @@ impl PyRun {
         location
             .edit(&mut candidate, |paragraph| {
                 let mut added = Ok(());
-                paragraph.edit_run(&self.run_path, |run| {
-                    added = run.add_field(instruction, cached_result)
-                })?;
+                paragraph.edit_run(&self.run_path, |run| added = add(run))?;
                 added
             })
             .map_err(|error| crate::docx_to_pyerr(py, error))?;

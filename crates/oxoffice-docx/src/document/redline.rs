@@ -1124,12 +1124,9 @@ pub(super) fn redline_xml(
             let mut runs: HashMap<usize, usize> = HashMap::new();
             let mut leaves = Vec::new();
             for &j in &inserted {
+                // A drawing, a field's characters or a note reference goes
+                // into the insertion with its run, as Word writes them.
                 let leaf = &new.leaves[new_tokens[j]];
-                if matches!(leaf.item, Item::Opaque(_)) {
-                    return Err(refused(
-                        "the insertion of a drawing, a field or a reference",
-                    ));
-                }
                 let Some(&run) = leaf
                     .path
                     .last()
