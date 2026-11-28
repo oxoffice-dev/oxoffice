@@ -628,6 +628,21 @@ paragraph with `paraIdParent` = the root's, `done="0"` on both, a true UTC `date
 author, and its range from right after the root's start to after the root's reference run, as `reply_to` writes it.
 The resolve was not captured; W10's round trip stands. Not observed: Word's state for a reply to a resolved thread.
 
+What PR 5b settles (Q6 option C, W9):
+
+- **A comment goes with its reference** (W9): a resolution that removes every reference run of a comment removes
+  the comment and its range marks, wherever those stand. Behaviour change: LibreOffice writes the end and the mark of
+  a comment inside a deletion, and accepting that deletion now removes the comment, as Word does.
+- **Compare writes a comment added or removed whole as Word tracks it**: a comment marked with both range marks and
+  a reference in one version's body text, and neither marked nor defined in the other, has its range marks taken
+  out of the body comparison and put back where that version has them (counted in that version's text). Its
+  reference run is compared as a run: written in `w:ins` or `w:del`, with no paragraph replaced whole. Under the
+  default whole-run granularity, a run the reference splits is still replaced whole. A redline that does not resolve
+  back to both versions this way is compared as before.
+- **The private record only for what the revisions cannot undo**: compare drops it when accepting and rejecting the
+  written revisions give back the edited and the original comments, comment parts left with no comment standing for
+  none. Answers, text and resolution changes keep it.
+
 ## Open questions
 
 ### Product (maintainer)

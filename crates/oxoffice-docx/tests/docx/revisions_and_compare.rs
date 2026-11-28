@@ -7668,3 +7668,124 @@ fn a_compared_move_is_written_as_word_writes_one() {
             .contains("w:move")
     );
 }
+
+/// A comment one version adds or removes whole is compared as Word tracks
+/// it (Q6, W9): its reference run inserted or deleted, its range marks
+/// where the version that holds it has them, outside the revision, and no
+/// private record, since accepting and rejecting give back both versions'
+/// comments. Beside a comment whose text changed, the record stays.
+#[test]
+fn a_comment_added_or_removed_whole_is_compared_as_word_tracks_it() {
+    const TEXT: &str = "The quick brown fox jumps over the lazy dog near the old river bank";
+    const RECORD: &str = "/customXml/rdocxComparisonComments.xml";
+    let word = ComparisonOptions {
+        granularity: ComparisonGranularity::Word,
+        ..Default::default()
+    };
+    let plain = |text: &str| doc_with(&[text, "Second line"]);
+    let commented = |text: &str, note: &str| {
+        let mut doc = plain(text);
+        doc.add_comment_on_text("fox", "Ada", note, Default::default())
+            .unwrap();
+        reopen(&mut doc)
+    };
+    // The comments of a document and the text each covers.
+    let comments = |doc: &mut Document| {
+        reopen(doc)
+            .comments()
+            .iter()
+            .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+            .collect::<Vec<_>>()
+    };
+    let fox = vec!["fox".to_owned()];
+    let mut failed = Vec::new();
+    for (row, original, edited, options, kind, record, (accept, reject)) in [
+        (
+            "added",
+            plain(TEXT),
+            commented(TEXT, "Note"),
+            &word,
+            Some(RevisionKind::Insertion),
+            false,
+            (fox.clone(), vec![]),
+        ),
+        (
+            "removed",
+            commented(TEXT, "Note"),
+            plain(TEXT),
+            &word,
+            Some(RevisionKind::Deletion),
+            false,
+            (vec![], fox.clone()),
+        ),
+        (
+            "added, a word of its paragraph changed",
+            plain(TEXT),
+            commented(&TEXT.replace("lazy", "sleepy"), "Note"),
+            &word,
+            None,
+            false,
+            (fox.clone(), vec![]),
+        ),
+        (
+            "added, whole runs compared",
+            plain(TEXT),
+            commented(TEXT, "Note"),
+            &ComparisonOptions::default(),
+            None,
+            false,
+            (fox.clone(), vec![]),
+        ),
+        (
+            "added beside a comment whose text changed",
+            commented(TEXT, "Note"),
+            {
+                let mut doc = commented(TEXT, "Other note");
+                doc.add_comment_on_text("dog", "Ada", "New", Default::default())
+                    .unwrap();
+                reopen(&mut doc)
+            },
+            &word,
+            None,
+            true,
+            (vec!["fox".to_owned(), "dog".to_owned()], fox.clone()),
+        ),
+    ] {
+        let mut redlined = original;
+        match redlined.compare_with_options(&edited, AUTHOR, DATE, options) {
+            Ok(diagnostics) if diagnostics.is_empty() => {}
+            other => {
+                failed.push(format!("{row}: {other:?}"));
+                continue;
+            }
+        }
+        let mut redlined = reopen(&mut redlined);
+        let xml = redlined.part_xml("/word/document.xml").unwrap();
+        let mut problems = Vec::new();
+        if redlined.part_xml(RECORD).is_ok() != record {
+            problems.push("record");
+        }
+        if let Some(kind) = kind
+            && (kinds(&redlined) != [kind] || !xml.contains(r#"<w:commentRangeEnd w:id="0"/><w:"#))
+        {
+            problems.push("shape");
+        }
+        // No paragraph replaced whole: its mark stays as it was.
+        if xml.contains("<w:rPr><w:ins ") || xml.contains("<w:rPr><w:del ") {
+            problems.push("paragraph mark");
+        }
+        if !redlined.validate().unwrap().is_valid() {
+            problems.push("validation");
+        }
+        if comments(&mut accepted(&mut redlined)) != accept {
+            problems.push("accept");
+        }
+        if comments(&mut rejected(&mut redlined)) != reject {
+            problems.push("reject");
+        }
+        if !problems.is_empty() {
+            failed.push(format!("{row}: {problems:?}: {xml}"));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
+}

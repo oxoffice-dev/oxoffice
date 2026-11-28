@@ -2973,7 +2973,10 @@ impl<'a> XmlTree<'a> {
         // and those of a comment whose references it removes (W9).
         if state.move_marks.contains(&index)
             || element.word
-                && matches!(element.local.as_str(), "commentRangeStart" | "commentRangeEnd")
+                && matches!(
+                    element.local.as_str(),
+                    "commentRangeStart" | "commentRangeEnd"
+                )
                 && self
                     .element_id(index)
                     .is_some_and(|id| state.going_comments.contains(&id))

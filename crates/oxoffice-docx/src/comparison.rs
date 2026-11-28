@@ -1067,7 +1067,8 @@ impl Document {
             [crate::RevisionKind::Deletion, crate::RevisionKind::MoveFrom],
             [crate::RevisionKind::Insertion, crate::RevisionKind::MoveTo],
         ]) {
-            tracked_xml = comment_marks::place_comment_marks(&tracked_xml, marks, &hidden, written)?;
+            tracked_xml =
+                comment_marks::place_comment_marks(&tracked_xml, marks, &hidden, written)?;
         }
         // Content from the edited document can use the `w14` its own root
         // declares, which the original root may not.

@@ -170,7 +170,8 @@ fn text_of(xml: &[u8], element: &crate::revision::XmlElement) -> Result<String> 
     if element.empty {
         return Ok(String::new());
     }
-    let raw = std::str::from_utf8(&xml[element.open_end..element.close_start]).map_err(utf8_error)?;
+    let raw =
+        std::str::from_utf8(&xml[element.open_end..element.close_start]).map_err(utf8_error)?;
     Ok(quick_xml::escape::unescape(raw)
         .map_err(|error| Error::Other(error.to_string()))?
         .into_owned())
@@ -305,7 +306,11 @@ pub(super) fn take_comment_marks(
 /// the run there unless the token starts it, or at a paragraph's end.
 enum Spot {
     Before(usize),
-    Split { run: usize, element: usize, at: usize },
+    Split {
+        run: usize,
+        element: usize,
+        at: usize,
+    },
 }
 
 /// `xml`, a redline, with `marks` back where the version they were taken
@@ -332,7 +337,10 @@ pub(super) fn place_comment_marks(
             let starts = wrapper.children.first() == Some(&at);
             if !(starts
                 && wrapper.word
-                && matches!(wrapper.local.as_str(), "ins" | "del" | "moveFrom" | "moveTo")
+                && matches!(
+                    wrapper.local.as_str(),
+                    "ins" | "del" | "moveFrom" | "moveTo"
+                )
                 && wrapper
                     .revision
                     .as_ref()
@@ -407,7 +415,10 @@ pub(super) fn place_comment_marks(
     let mut splits: BTreeMap<usize, Vec<(usize, usize, String)>> = BTreeMap::new();
     for (mark, spot) in marks.iter().zip(spots) {
         match spot.ok_or_else(|| Error::Other("a comment mark found no place".into()))? {
-            Spot::Before(at) => inserted.entry(at).or_default().push_str(&written_mark(mark)),
+            Spot::Before(at) => inserted
+                .entry(at)
+                .or_default()
+                .push_str(&written_mark(mark)),
             Spot::Split { run, element, at } => {
                 splits
                     .entry(run)
