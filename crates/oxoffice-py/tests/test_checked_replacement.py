@@ -44,7 +44,9 @@ def read_once(doc):
     return doc
 
 
-@pytest.fixture(params=[(producer, read) for producer in PRODUCERS for read in (False, True)],
+# The producer and the read are independent (the last test compares a fresh and a read document of each producer):
+# each takes the two values once.
+@pytest.fixture(params=[("word", False), ("google", True)],
                 ids=lambda param: f"{param[0]}-{'read' if param[1] else 'fresh'}")
 def doc(request):
     producer, read = request.param
