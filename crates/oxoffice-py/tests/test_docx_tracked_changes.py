@@ -362,6 +362,45 @@ def test_a_removal_of_a_block_declaring_namespaces_of_its_own_is_refused():
         assert doc.to_bytes() == before
 
 
+def main_xml(data):
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        return z.read("word/document.xml").decode()
+
+
+def test_a_tracked_picture_or_link_goes_into_an_insertion_and_reject_removes_it():
+    from builders import noise_png
+    for name, call, mark in (
+        ("picture", lambda p: p.runs[0].add_picture(noise_png(8, 1), "probe.png"), "<w:drawing"),
+        ("link", lambda p: p.add_hyperlink("docs", "https://example.com/"), "HYPERLINK"),
+    ):
+        doc = oxdocx.Document()
+        doc.add_paragraph("See ")
+        with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+            call(doc.paragraphs[0])
+        assert session.revision_ids, name
+        after = doc.to_bytes()
+        assert re.search(r"<w:ins [^>]*>(?:(?!</w:ins>).)*" + mark, main_xml(after)), name
+        rejected = oxdocx.Document.from_bytes(after)
+        rejected.reject_all()
+        assert mark not in main_xml(rejected.to_bytes()), name
+    # The link reads as an untracked one once accepted: its text takes the Hyperlink style.
+    accepted = oxdocx.Document.from_bytes(after)
+    accepted.accept_all()
+    assert '<w:rStyle w:val="Hyperlink"/>' in main_xml(accepted.to_bytes())
+
+
+def test_a_field_added_in_a_header_is_tracked_there():
+    doc = oxdocx.Document()
+    doc.add_paragraph("Body.")
+    header = doc.section(0).header
+    header.add_paragraph("Page ")
+    before = doc.to_bytes()
+    with doc.track_changes(AUTHOR, timestamp=STAMP) as session:
+        header.paragraphs[-1].runs[0].add_field("PAGE", "1")
+    assert session.revision_ids
+    assert view(doc.to_bytes(), "reject_all") == view(before, "reject_all")
+
+
 def test_an_insertion_outside_the_body_is_refused():
     doc = oxdocx.Document()
     doc.add_paragraph("Body.")

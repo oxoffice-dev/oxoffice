@@ -1124,9 +1124,20 @@ pub(super) fn redline_xml(
             let mut runs: HashMap<usize, usize> = HashMap::new();
             let mut leaves = Vec::new();
             for &j in &inserted {
-                // A drawing, a field's characters or a note reference goes
-                // into the insertion with its run, as Word writes them.
+                // A drawing or a field's characters goes into the insertion
+                // with its run, as Word writes them. A note reference waits
+                // for its note to be written as inserted with it.
                 let leaf = &new.leaves[new_tokens[j]];
+                if let Item::Opaque(xml) = &leaf.item
+                    && oxoffice_core::xml_element::start_tag(xml).is_ok_and(|tag| {
+                        matches!(
+                            tag.name.rsplit(':').next(),
+                            Some("footnoteReference" | "endnoteReference")
+                        )
+                    })
+                {
+                    return Err(refused("the insertion of a note reference"));
+                }
                 let Some(&run) = leaf
                     .path
                     .last()

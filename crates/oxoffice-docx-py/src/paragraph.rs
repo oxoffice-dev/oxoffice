@@ -681,7 +681,12 @@ impl PyParagraph {
                         paragraph.add_hyperlink_with_tooltip(text, relationship_id, tooltip)?;
                     }
                     (None, Some(field)) => {
-                        paragraph.add_run("").add_complex_field(field, text)?;
+                        // The link's text takes the style an untracked link has.
+                        paragraph.add_run("").add_styled_complex_field(
+                            field,
+                            text,
+                            Some("Hyperlink"),
+                        )?;
                     }
                     (None, None) => {
                         paragraph.add_run(text);
