@@ -25,7 +25,7 @@ Write values, dates and formulas, styles and number formats, a CSV::
     ws.write("A40", [["Total", Formula("SUM(F2:F37)")]])
     ws.set_style("A1:G1", bold=True, fill="FFFF00")
     ws.set_number_format("F2:F38", "#,##0.00")
-    ws.import_csv("north,12\nsouth,7\n", at="A50")
+    ws.import_csv("north,12\\nsouth,7\\n", at="A50")
     wb.save("edited.xlsx")
 
 Make a workbook, add a sheet, set the widths of columns, the heights of rows
