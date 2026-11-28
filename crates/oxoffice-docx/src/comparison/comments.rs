@@ -9,6 +9,23 @@ pub(crate) const COMMENT_COMPARISON_OPEN: &str =
     "<rdocx:comparisonComments xmlns:rdocx=\"urn:rdocx:comparison:comments:1\">";
 pub(crate) const COMMENT_COMPARISON_CLOSE: &str = "</rdocx:comparisonComments>";
 
+/// `document` without the comparison's private record of its comments.
+pub(super) fn remove_comment_record(document: &mut Document) {
+    document.package.remove_part(COMMENT_COMPARISON_PART);
+    document
+        .package
+        .content_types
+        .remove_override(COMMENT_COMPARISON_PART);
+    let owner = document.doc_part_name.clone();
+    if let Some(relationships) = document.package.get_part_rels_mut(&owner) {
+        relationships.items.retain(|relationship| {
+            relationship.rel_type != COMMENT_COMPARISON_REL
+                || OpcPackage::resolve_rel_target(&owner, &relationship.target)
+                    != COMMENT_COMPARISON_PART
+        });
+    }
+}
+
 /// A part a comment owns, which a comparison carries with the comments: the
 /// durable ids and UTC dates go with the comments they name.
 fn comment_relationship(relationship: &Relationship) -> bool {
@@ -178,6 +195,62 @@ pub(super) fn comment_snapshots_match(
         Ok(signatures)
     };
     Ok(signature(left)? == signature(right)?)
+}
+
+/// Whether two comment snapshots hold the same comments: they match, or one
+/// has no comment parts and every part of the other holds nothing.
+pub(super) fn comment_snapshots_agree(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+) -> Result<bool> {
+    fn holds_nothing(part: &serde_json::Value) -> Result<bool> {
+        let xml = base64::engine::general_purpose::STANDARD
+            .decode(
+                part.get("xml")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+            )
+            .map_err(|error| Error::Other(error.to_string()))?;
+        let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml.as_slice());
+        let (mut depth, mut buffer) = (0usize, Vec::new());
+        loop {
+            match reader
+                .read_event_into(&mut buffer)
+                .map_err(|error| Error::Other(error.to_string()))?
+            {
+                Event::Start(_) if depth > 0 => return Ok(false),
+                Event::Empty(_) if depth > 0 => return Ok(false),
+                Event::Start(_) => depth += 1,
+                Event::End(_) => depth = depth.saturating_sub(1),
+                Event::Eof => break,
+                _ => {}
+            }
+            buffer.clear();
+        }
+        for child in part
+            .get("related")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if !holds_nothing(child)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+    let none = |value: &serde_json::Value| value.as_array().is_some_and(Vec::is_empty);
+    let empty = |value: &serde_json::Value| -> Result<bool> {
+        for part in value.as_array().into_iter().flatten() {
+            if !holds_nothing(part)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    };
+    Ok(comment_snapshots_match(left, right)?
+        || none(left) && empty(right)?
+        || none(right) && empty(left)?)
 }
 
 fn apply_related_part(document: &mut Document, part: &serde_json::Value) -> Result<()> {

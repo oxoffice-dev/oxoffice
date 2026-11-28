@@ -5529,14 +5529,9 @@ impl Document {
                     "cannot remove part of comment {id}; its source graph survives or is ambiguous"
                 )));
             }
+            // Its replies go with it, their anchors too, as Word removes a
+            // thread whose root goes (W9).
             removed.extend(original.descendants(id));
-        }
-        for id in &removed {
-            if after_counts.get(id).is_some_and(|counts| *counts != [0; 3]) {
-                return Err(Error::Other(format!(
-                    "cannot remove comment {id}; a descendant source anchor survives"
-                )));
-            }
         }
         if !removed.is_empty() {
             self.remove_comment_ids_staged_at(owner, &removed)?;

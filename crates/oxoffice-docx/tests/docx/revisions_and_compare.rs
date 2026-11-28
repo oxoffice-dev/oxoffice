@@ -6601,41 +6601,53 @@ fn comment_ending_inside_a_revision(wrapper: &str) -> Document {
     Document::from_bytes(&out.into_inner()).unwrap()
 }
 
-/// The text the only comment of `doc` covers, after `resolve`.
+/// The text the only comment of `doc` covers after `resolve`, `None` when
+/// the comment went.
 fn comment_after(
     doc: &mut Document,
     resolve: fn(&mut Document) -> oxoffice_docx::Result<usize>,
-) -> String {
+) -> Option<String> {
     let mut doc = reopen(doc);
     resolve(&mut doc).unwrap_or_else(|e| panic!("{e}"));
     let doc = reopen(&mut doc);
     let comments = doc.comments();
-    assert_eq!(comments.len(), 1);
-    comments[0].anchor_text().unwrap().unwrap_or_default()
+    assert!(comments.len() <= 1);
+    comments
+        .first()
+        .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
 }
 
 #[test]
-fn a_comment_ending_inside_an_accepted_deletion_stays_on_the_text_left() {
+fn a_comment_whose_mark_an_accepted_deletion_holds_goes_with_it() {
+    // W9: the reference run alone is enough, the range start left aside.
     let mut doc = comment_ending_inside_a_revision("del");
-    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept ");
-    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept four");
+    assert_eq!(comment_after(&mut doc, Document::accept_all), None);
+    assert_eq!(
+        comment_after(&mut doc, Document::reject_all).as_deref(),
+        Some("Kept four")
+    );
 }
 
 #[test]
-fn a_comment_ending_inside_a_rejected_insertion_stays_on_the_text_left() {
+fn a_comment_whose_mark_a_rejected_insertion_holds_goes_with_it() {
+    // W9: the reference run alone is enough, the range start left aside.
     let mut doc = comment_ending_inside_a_revision("ins");
-    assert_eq!(comment_after(&mut doc, Document::accept_all), "Kept four");
-    assert_eq!(comment_after(&mut doc, Document::reject_all), "Kept ");
+    assert_eq!(
+        comment_after(&mut doc, Document::accept_all).as_deref(),
+        Some("Kept four")
+    );
+    assert_eq!(comment_after(&mut doc, Document::reject_all), None);
 }
 
 #[test]
-fn every_revision_of_libreoffices_record_is_accepted_with_its_comments_kept() {
-    // LibreOffice writes the end and the mark of a comment inside a deletion.
+fn every_revision_of_libreoffices_record_is_accepted_and_a_deleted_mark_takes_its_comment() {
+    // LibreOffice writes the end and the mark of one of its four comments
+    // inside a deletion: accepting it removes that comment, as Word does (W9).
     let mut doc = crate::support::corpus_doc("libreoffice/record.docx");
-    let before = doc.comments().len();
+    assert_eq!(doc.comments().len(), 4);
     doc.accept_all().unwrap_or_else(|e| panic!("{e}"));
     let doc = reopen(&mut doc);
-    assert_eq!(doc.comments().len(), before);
+    assert_eq!(doc.comments().len(), 3);
     assert!(
         doc.comments()
             .iter()
@@ -6721,17 +6733,61 @@ fn a_comment_whose_range_two_accepted_deletions_hold_goes_with_them() {
 }
 
 #[test]
-fn accepting_only_the_deletion_with_a_comment_end_keeps_the_comment() {
-    // The start stays in the other deletion, which is not resolved.
+fn accepting_only_the_deletion_with_a_comment_mark_removes_the_comment() {
+    // W9: the mark goes, so does the comment, its start in the other
+    // deletion, which is not resolved, with it.
     let mut doc = comment_on_thirty_days(thirty_days_in_two_deletions);
     doc.accept_revision_id(91).unwrap_or_else(|e| panic!("{e}"));
     let doc = reopen(&mut doc);
-    assert_eq!(doc.comments().len(), 1);
-    assert!(doc.comments()[0].anchor_text().is_ok());
+    assert!(doc.comments().is_empty());
+    let xml = doc.part_xml("/word/document.xml").unwrap();
+    assert!(!xml.contains("commentRange"), "{xml}");
+}
+
+/// A thread goes with its root's reference, its replies with it, as Word
+/// removes a thread (W9): resolving by id the revision that holds only the
+/// root's reference run, in either direction.
+#[test]
+fn a_thread_goes_with_its_roots_reference_its_replies_with_it() {
+    for (wrapper, accept, goes) in [
+        ("ins", false, true),
+        ("del", true, true),
+        ("ins", true, false),
+        ("del", false, false),
+    ] {
+        let mut doc = doc_with(&["Hello brave world"]);
+        let root = doc
+            .add_comment_on_text("brave", "Ada", "Note", Default::default())
+            .unwrap();
+        doc.reply_to(root, "Bob", "Reply").unwrap();
+        let mut doc = with_part_edited(&mut doc, "word/document.xml", |xml| {
+            let reference = xml
+                .find(&format!(r#"<w:commentReference w:id="{root}"/>"#))
+                .unwrap();
+            let start = xml[..reference].rfind("<w:r>").unwrap();
+            let end = reference + xml[reference..].find("</w:r>").unwrap() + "</w:r>".len();
+            format!(
+                r#"{}<w:{wrapper} w:id="77" w:author="A" w:date="{DATE}">{}</w:{wrapper}>{}"#,
+                &xml[..start],
+                &xml[start..end],
+                &xml[end..]
+            )
+        });
+        let row = format!("{wrapper}, accept {accept}");
+        match accept {
+            true => doc.accept_revision_id(77),
+            false => doc.reject_revision_id(77),
+        }
+        .unwrap_or_else(|e| panic!("{row}: {e}"));
+        let doc = reopen(&mut doc);
+        let xml = doc.part_xml("/word/document.xml").unwrap();
+        assert_eq!(doc.comments().len(), if goes { 0 } else { 2 }, "{row}");
+        assert_eq!(xml.contains("w:comment"), !goes, "{row}: {xml}");
+    }
 }
 
 #[test]
-fn a_comment_end_in_a_deletion_inside_a_rejected_insertion_stays() {
+fn a_comment_mark_in_a_deletion_inside_a_rejected_insertion_goes_with_it() {
     // ` days`, the end and the mark were inserted, then the end and the mark
     // deleted by someone else.
     let mut doc = comment_on_thirty_days(|xml| {
@@ -6743,7 +6799,8 @@ fn a_comment_end_in_a_deletion_inside_a_rejected_insertion_stays() {
         let close = xml.find("</w:del>").unwrap() + "</w:del>".len();
         wrapped(&xml, days, close, "ins", 92)
     });
-    assert_eq!(comment_after(&mut doc, Document::reject_all), "30");
+    // W9: rejecting the insertion removes the mark, and the comment with it.
+    assert_eq!(comment_after(&mut doc, Document::reject_all), None);
 }
 
 // ---- Compare after an edit, on every producer's copy ----
@@ -7652,4 +7709,201 @@ fn a_compared_move_is_written_as_word_writes_one() {
             .unwrap()
             .contains("w:move")
     );
+}
+
+/// A comment one version adds or removes whole is compared as Word tracks
+/// it (Q6, W9): its reference run alone inserted or deleted, its range marks
+/// where the version that holds it has them, outside the revision, and no
+/// private record, since accepting and rejecting give back both versions'
+/// comments. Beside a comment whose text changed, the record stays.
+#[test]
+fn a_comment_added_or_removed_whole_is_compared_as_word_tracks_it() {
+    const TEXT: &str = "The quick brown fox jumps over the lazy dog near the old river bank";
+    const RECORD: &str = "/customXml/rdocxComparisonComments.xml";
+    let word = ComparisonOptions {
+        granularity: ComparisonGranularity::Word,
+        ..Default::default()
+    };
+    let plain = |text: &str| doc_with(&[text, "Second line"]);
+    let with = |mut doc: Document, anchors: &[(&str, &str)], removed: &[i32]| {
+        for (anchor, note) in anchors {
+            doc.add_comment_on_text(anchor, "Ada", note, Default::default())
+                .unwrap();
+        }
+        for &id in removed {
+            doc.remove_comment(id).unwrap();
+        }
+        reopen(&mut doc)
+    };
+    let commented = |text: &str, note: &str| with(plain(text), &[("fox", note)], &[]);
+    // The comments of a document and the text each covers.
+    let comments = |doc: &mut Document| {
+        reopen(doc)
+            .comments()
+            .iter()
+            .map(|comment| comment.anchor_text().unwrap().unwrap_or_default())
+            .collect::<Vec<_>>()
+    };
+    // The reference run of comment `id` alone in a revision, right after
+    // its range end.
+    let alone = |xml: &str, id: i32| {
+        let end = format!(r#"<w:commentRangeEnd w:id="{id}"/>"#);
+        xml.find(&end).is_some_and(|at| {
+            let rest = &xml[at + end.len()..];
+            let kind = ["ins", "del"]
+                .into_iter()
+                .find(|kind| rest.starts_with(&format!("<w:{kind} ")));
+            kind.is_some_and(|kind| {
+                let close = format!("</w:{kind}>");
+                rest.find(&close).is_some_and(|close| {
+                    let inside = &rest[..close];
+                    inside.contains(&format!(r#"<w:commentReference w:id="{id}"/>"#))
+                        && inside.matches("<w:r>").count() == 1
+                        && !inside.contains("<w:t")
+                        && !inside.contains("<w:delText")
+                })
+            })
+        })
+    };
+    let two_paragraphs = || {
+        let mut doc = plain(TEXT);
+        let range = oxoffice_docx::RunRange {
+            start: oxoffice_docx::RunPosition {
+                body_index: 0,
+                run_index: 0,
+            },
+            end: oxoffice_docx::RunPosition {
+                body_index: 1,
+                run_index: 0,
+            },
+        };
+        doc.add_comment_with_date(
+            range,
+            "Ada",
+            None,
+            "Both",
+            oxoffice_docx::CommentDate::Undated,
+        )
+        .unwrap();
+        reopen(&mut doc)
+    };
+    let table = |commented: bool| {
+        let mut doc = doc_with_body(concat!(
+            r#"<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid><w:tr><w:tc>"#,
+            r#"<w:p><w:r><w:t>A cell with a few words in it</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#,
+            r#"<w:p><w:r><w:t>After.</w:t></w:r></w:p>"#,
+        ));
+        if commented {
+            doc.add_comment_on_text("few", "Ada", "Cell", Default::default())
+                .unwrap();
+        }
+        reopen(&mut doc)
+    };
+    let mut failed = Vec::new();
+    for (row, original, edited, options, alone_ids, record) in [
+        (
+            "added",
+            plain(TEXT),
+            commented(TEXT, "Note"),
+            &word,
+            &[0][..],
+            false,
+        ),
+        (
+            "removed",
+            commented(TEXT, "Note"),
+            plain(TEXT),
+            &word,
+            &[0],
+            false,
+        ),
+        // Both written as revisions; the record stays, since the comment
+        // parts the resolutions leave are not those of either version byte
+        // for byte.
+        (
+            "one added, another removed",
+            commented(TEXT, "Note"),
+            with(plain(TEXT), &[("fox", "Note"), ("dog", "New")], &[0]),
+            &word,
+            &[0, 1],
+            true,
+        ),
+        (
+            "added, a word of its paragraph changed",
+            plain(TEXT),
+            commented(&TEXT.replace("lazy", "sleepy"), "Note"),
+            &word,
+            &[0],
+            false,
+        ),
+        (
+            "added over two paragraphs",
+            plain(TEXT),
+            two_paragraphs(),
+            &word,
+            &[],
+            false,
+        ),
+        (
+            "added in a table",
+            table(false),
+            table(true),
+            &word,
+            &[0],
+            false,
+        ),
+        (
+            "added, whole runs compared",
+            plain(TEXT),
+            commented(TEXT, "Note"),
+            &ComparisonOptions::default(),
+            &[],
+            false,
+        ),
+        (
+            "added beside a comment whose text changed",
+            commented(TEXT, "Note"),
+            with(commented(TEXT, "Other note"), &[("dog", "New")], &[]),
+            &word,
+            &[1],
+            true,
+        ),
+    ] {
+        let (mut original, mut edited) = (original, edited);
+        let (accept, reject) = (comments(&mut edited), comments(&mut original));
+        let mut redlined = original;
+        match redlined.compare_with_options(&edited, AUTHOR, DATE, options) {
+            Ok(diagnostics) if diagnostics.is_empty() => {}
+            other => {
+                failed.push(format!("{row}: {other:?}"));
+                continue;
+            }
+        }
+        let mut redlined = reopen(&mut redlined);
+        let xml = redlined.part_xml("/word/document.xml").unwrap();
+        let mut problems = Vec::new();
+        if redlined.part_xml(RECORD).is_ok() != record {
+            problems.push("record");
+        }
+        if !alone_ids.iter().all(|&id| alone(&xml, id)) {
+            problems.push("shape");
+        }
+        // No paragraph replaced whole: its mark stays as it was.
+        if xml.contains("<w:rPr><w:ins ") || xml.contains("<w:rPr><w:del ") {
+            problems.push("paragraph mark");
+        }
+        if !redlined.validate().unwrap().is_valid() {
+            problems.push("validation");
+        }
+        if comments(&mut accepted(&mut redlined)) != accept {
+            problems.push("accept");
+        }
+        if comments(&mut rejected(&mut redlined)) != reject {
+            problems.push("reject");
+        }
+        if !problems.is_empty() {
+            failed.push(format!("{row}: {problems:?}: {xml}"));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
 }
