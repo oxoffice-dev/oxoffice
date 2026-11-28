@@ -963,6 +963,93 @@ fn removing_a_slide_counts_what_is_left_and_adds_no_metadata() {
 }
 
 #[test]
+fn added_duplicated_and_imported_slides_are_counted_in_the_package_metadata() {
+    // Google's Highlights slide, hidden, with its notes.
+    let mut source = corpus_deck("google/deck.pptx");
+    source.slide_mut(1).unwrap().set_hidden(true);
+    type Edit = fn(&mut Presentation, &Presentation);
+    let edits: [(&str, Edit); 4] = [
+        ("add", |prs, _| {
+            let layout = layout_named(prs, "Title Only");
+            prs.add_slide(layout).unwrap();
+        }),
+        ("add at", |prs, _| {
+            let layout = layout_named(prs, "Title Only");
+            prs.add_slide_at(layout, 0).unwrap();
+        }),
+        ("duplicate", |prs, _| {
+            prs.duplicate_slide(1).unwrap();
+        }),
+        ("import", |prs, source| {
+            let layout = layout_named(prs, "Title Only");
+            prs.import_slide(source, 1, Some(layout), None).unwrap();
+        }),
+    ];
+    for (name, edit) in edits {
+        let mut prs = corpus_deck("powerpoint/deck.pptx");
+        edit(&mut prs, &source);
+
+        let prs = reopen(&prs);
+        let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+        assert!(app.contains("<Slides>5</Slides>"), "{name}: {app}");
+        // The duplicate of Highlights and the imported one bring their
+        // notes along; the imported one is hidden.
+        let notes = if matches!(name, "duplicate" | "import") {
+            2
+        } else {
+            1
+        };
+        assert!(
+            app.contains(&format!("<Notes>{notes}</Notes>")),
+            "{name}: {app}"
+        );
+        let hidden = usize::from(name == "import");
+        assert!(
+            app.contains(&format!("<HiddenSlides>{hidden}</HiddenSlides>")),
+            "{name}: {app}"
+        );
+        assert!(
+            !app.contains("TitlesOfParts") && !app.contains("HeadingPairs"),
+            "{name}: {app}"
+        );
+        assert!(
+            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some(),
+            "{name}: a new slide leaves the thumbnail"
+        );
+        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
+    }
+}
+
+#[test]
+fn the_notes_count_follows_notes_set_cleared_and_created_and_the_text_counts_stay() {
+    // The PowerPoint deck has notes text on one slide of four.
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let has = |prs: &Presentation, index: usize| prs.slide(index).unwrap().notes_text();
+    let with = (0..prs.len())
+        .find(|i| has(&prs, *i).is_some_and(|text| !text.trim().is_empty()))
+        .unwrap();
+    let without = (0..prs.len()).find(|i| has(&prs, *i).is_none()).unwrap();
+    for (what, edit, notes) in [
+        ("cleared", (with, ""), 0),
+        ("set again", (with, "Say hello"), 1),
+        ("created", (without, "New notes"), 2),
+    ] {
+        prs.set_notes_text(edit.0, edit.1).unwrap();
+        prs = reopen(&prs);
+        let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+        assert!(
+            app.contains(&format!("<Notes>{notes}</Notes>")),
+            "{what}: {app}"
+        );
+        // Notes text changes no slide text: the title lists and text counts stay.
+        assert!(
+            app.contains("<TitlesOfParts>") && app.contains("<Words>61</Words>"),
+            "{what}: {app}"
+        );
+    }
+}
+
+#[test]
 fn hiding_a_slide_recounts_hidden_slides_only_and_a_no_op_changes_nothing() {
     // The authored deck says it has no slide and no notes; it is also told
     // two slides are hidden, though none is.
@@ -1522,4 +1609,160 @@ fn slide_text_with_markup_characters_reads_back_from_odp() {
     let read = Presentation::from_odp_bytes(&odp).unwrap().presentation;
     let slide = read.slide(0).unwrap().text();
     assert!(slide.contains(text), "{slide}");
+}
+
+#[test]
+fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(
+        before.contains("<vt:lpstr>Highlights</vt:lpstr>"),
+        "{before}"
+    );
+    // Hiding Highlights counts it as hidden; removing it must count it out.
+    prs.slide_mut(1).unwrap().set_hidden(true);
+    assert!(
+        saved_part_text(&prs, "/docProps/app.xml")
+            .unwrap()
+            .contains("<HiddenSlides>1</HiddenSlides>")
+    );
+
+    prs.remove_slide(1).unwrap();
+
+    let prs = reopen(&prs);
+    let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(!app.contains("Highlights"), "{app}");
+    // Three slides left, the notes and the hidden slide went with Highlights;
+    // the title lists go and every other byte stays.
+    let cut = |xml: &str, from: &str, to: &str| {
+        let start = xml.find(from).expect("the element is there");
+        let end = xml[start..].find(to).expect("the element closes") + start + to.len();
+        format!("{}{}", &xml[..start], &xml[end..])
+    };
+    // The text counts go too: oxoffice does not recount them.
+    let expected = cut(
+        &cut(
+            &cut(
+                &cut(&before, "<HeadingPairs>", "</HeadingPairs>"),
+                "<TitlesOfParts>",
+                "</TitlesOfParts>",
+            ),
+            "<Words>",
+            "</Words>",
+        ),
+        "<Paragraphs>",
+        "</Paragraphs>",
+    )
+    .replace("<Slides>4</Slides>", "<Slides>3</Slides>")
+    .replace("<Notes>1</Notes>", "<Notes>0</Notes>");
+    assert!(
+        expected.contains("<HiddenSlides>0</HiddenSlides>"),
+        "{expected}"
+    );
+    assert_eq!(app, expected);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn a_slide_text_edit_drops_the_stale_title_lists_and_text_counts_and_keeps_the_title() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let core = saved_part_text(&prs, "/docProps/core.xml").unwrap();
+    assert!(
+        core.contains("<dc:title>Quarterly Operations Review</dc:title>"),
+        "{core}"
+    );
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .set_text("A new title")
+        .unwrap();
+    let saved = reopen(&prs);
+    let app = saved_part_text(&saved, "/docProps/app.xml").unwrap();
+    for gone in [
+        "<HeadingPairs>",
+        "<TitlesOfParts>",
+        "<Words>",
+        "<Paragraphs>",
+    ] {
+        assert!(!app.contains(gone), "{gone}: {app}");
+    }
+    assert!(app.contains("<Slides>4</Slides>"), "{app}");
+    // The core title is the user's: a slide edit leaves it alone.
+    assert_eq!(saved_part_text(&saved, "/docProps/core.xml").unwrap(), core);
+}
+
+#[test]
+fn a_slide_size_type_stays_with_its_size_and_goes_with_a_new_one() {
+    let mut prs = new_deck();
+    let (width, height) = prs.slide_size().unwrap();
+    prs.set_slide_size(width, height).unwrap();
+    assert!(
+        saved_slide_size_element(&reopen(&prs)).contains("type=\"screen16x9\""),
+        "the same size keeps its type"
+    );
+
+    // The authored corpus deck already says screen4x3 on a wide size.
+    let mut prs = corpus_deck("authored/deck.pptx");
+    assert!(saved_slide_size_element(&prs).contains("type=\"screen4x3\""));
+    assert_ne!(prs.slide_size(), Some((Emu(9_906_000), Emu(6_858_000))));
+    prs.set_slide_size(Emu(9_906_000), Emu(6_858_000)).unwrap();
+    let prs = reopen(&prs);
+    assert_eq!(
+        saved_slide_size_element(&prs),
+        r#"<p:sldSz cx="9906000" cy="6858000"/>"#
+    );
+    assert_eq!(prs.slide_size(), Some((Emu(9_906_000), Emu(6_858_000))));
+}
+
+#[test]
+fn removing_a_slide_drops_a_tags_part_only_it_used() {
+    let prs = deck_with_titles(&["Kept", "Tagged"]);
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    package.set_part(
+        "/ppt/tags/tag1.xml",
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:tagLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:tag name="CLIENT" val="Contoso, internal only"/></p:tagLst>"#
+            .to_vec(),
+    );
+    package.content_types.add_override(
+        "/ppt/tags/tag1.xml",
+        "application/vnd.openxmlformats-officedocument.presentationml.tags+xml",
+    );
+    package
+        .get_or_create_part_rels("/ppt/slides/slide2.xml")
+        .add(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tags",
+            "../tags/tag1.xml",
+        );
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert_eq!(count_parts(&prs, "ppt/tags/"), 1);
+
+    prs.remove_slide(1).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(count_parts(&prs, "ppt/tags/"), 0);
+    assert_eq!(titles(&prs), ["Kept"]);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+fn count_parts(prs: &Presentation, folder: &str) -> usize {
+    saved_parts(prs)
+        .iter()
+        .filter(|name| name.starts_with(folder) && !name.contains("_rels"))
+        .count()
+}
+
+/// The part names of the saved package.
+fn saved_parts(prs: &Presentation) -> Vec<String> {
+    let bytes = prs.to_bytes().expect("deck saves");
+    OpcPackage::from_reader(Cursor::new(bytes))
+        .expect("package opens")
+        .zip_entries()
+        .expect("package serialises")
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
 }

@@ -1024,3 +1024,66 @@ fn a_held_footer_creation_and_write_cut_by_a_panic_is_undone_whole() {
         "the later edit committed"
     );
 }
+
+#[test]
+fn a_first_page_header_and_footer_turn_on_a_different_first_page() {
+    let mut doc = doc_with(&["cover", "body"]);
+    doc.try_set_header("Every page").unwrap();
+    doc.try_set_footer("Every footer").unwrap();
+    assert_eq!(doc.section(0).unwrap().different_first_page(), None);
+    doc.try_set_first_page_header("Cover header").unwrap();
+    doc.try_set_first_page_footer("Cover footer").unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(doc.section(0).unwrap().different_first_page(), Some(true));
+    assert_eq!(doc.header_text().as_deref(), Some("Every page"));
+    assert_eq!(doc.footer_text().as_deref(), Some("Every footer"));
+    assert_eq!(
+        shown_text(&doc, 0, HeaderFooterKind::Header, HdrFtrType::First).as_deref(),
+        Some("Cover header")
+    );
+    assert_eq!(
+        shown_text(&doc, 0, HeaderFooterKind::Footer, HdrFtrType::First).as_deref(),
+        Some("Cover footer")
+    );
+}
+
+#[test]
+fn a_first_page_header_the_last_section_shows_by_inheritance_changes_everywhere() {
+    let mut doc = doc_with(&["cover"]);
+    doc.set_first_page_header("Cover");
+    doc.insert_section(1).unwrap();
+    doc.add_paragraph("chapter");
+    doc.set_different_first_page(true);
+    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Cover"));
+    doc.set_first_page_header("Chapter");
+    let doc = reopen(&mut doc);
+    assert_eq!(first_page_header(&doc, 0).as_deref(), Some("Chapter"));
+    assert_eq!(first_page_header(&doc, 1).as_deref(), Some("Chapter"));
+    assert!(
+        shown(&doc, 1, HeaderFooterKind::Header, HdrFtrType::First)
+            .unwrap()
+            .is_inherited()
+    );
+}
+
+#[test]
+fn removing_a_section_header_blanks_it_for_that_section_only() {
+    let mut doc = inherited_header_and_footer();
+    doc.remove_section_story(1, HeaderFooterKind::Header, HdrFtrType::Default)
+        .unwrap();
+    let doc = reopen(&mut doc);
+    assert_eq!(header(&doc, 0).as_deref(), Some("shared header"));
+    assert_eq!(header(&doc, 1).as_deref(), Some(""));
+    assert!(!header_story(&doc, 1).is_inherited());
+    assert_eq!(footer(&doc, 1).as_deref(), Some("shared footer"));
+}
+
+/// The text of the first-page header a section shows.
+fn first_page_header(doc: &Document, section: usize) -> Option<String> {
+    shown_text(doc, section, HeaderFooterKind::Header, HdrFtrType::First)
+}
+
+/// The text of the default header a section shows.
+fn header(doc: &Document, section: usize) -> Option<String> {
+    shown_text(doc, section, HeaderFooterKind::Header, HdrFtrType::Default)
+}

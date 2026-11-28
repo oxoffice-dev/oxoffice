@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oxoffice_pptx::{Error, Presentation};
+use oxoffice_pptx::{Error, Presentation, SaveOptions};
 
 /// A folder of its own under the system temporary folder, removed on drop.
 struct Scratch(PathBuf);
@@ -57,6 +57,26 @@ fn saving_over_the_opened_file_is_refused() {
     assert_refused(&prs, &path);
     let message = prs.save(&path).unwrap_err().to_string();
     assert!(message.contains("overwrite_source"), "{message}");
+}
+
+#[test]
+fn every_spelling_of_the_source_is_refused() {
+    // The same file by another name: a dot, a parent step, a hard link (every
+    // platform: the Windows comparison canonicalises, the Unix one reads the
+    // inode) and a symbolic link (Unix: Windows needs a privilege for one).
+    let scratch = Scratch::new("spellings");
+    fs::create_dir(scratch.0.join("sub")).unwrap();
+    let path = scratch.deck("deck.pptx");
+    fs::hard_link(&path, scratch.0.join("hard.pptx")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&path, scratch.0.join("link.pptx")).unwrap();
+    let prs = Presentation::open(&path).unwrap();
+    let spellings = ["./deck.pptx", "sub/../deck.pptx", "hard.pptx", "link.pptx"];
+    for spelling in spellings {
+        if cfg!(unix) || spelling != "link.pptx" {
+            assert_refused(&prs, &scratch.0.join(spelling));
+        }
+    }
 }
 
 #[test]
@@ -304,4 +324,24 @@ fn a_deck_signed_in_session_and_edited_in_place_and_back_marks_its_signature_inv
                 .ends_with("/invalidated-package-signature")),
         "the signature is marked invalidated"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_replaced_source_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = Scratch::new("mode");
+    let path = scratch.deck("deck.pptx");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    let prs = Presentation::open(&path).unwrap();
+    prs.save_with_options(
+        &path,
+        SaveOptions {
+            overwrite_source: true,
+        },
+    )
+    .unwrap();
+    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o640);
 }

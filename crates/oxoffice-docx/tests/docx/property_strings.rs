@@ -98,3 +98,19 @@ fn a_raw_custom_value_with_a_character_reference_xml_cannot_carry_is_refused() {
     .expect("a tab reference, an escaped ampersand and literal text are fine");
     assert_ne!(doc.to_bytes().unwrap(), before);
 }
+
+#[test]
+fn every_refusal_of_a_character_xml_cannot_carry_holds_the_shared_words() {
+    // The Python bindings tell such a refusal apart by these words, wherever
+    // it was wrapped; the package crate spells them out on its own.
+    let words = oxoffice_core::xml::NON_XML_CHARACTER_REFUSAL;
+    let package = oxoffice_opc::OpcError::InvalidXmlCharacter {
+        part: "/word/document.xml".to_owned(),
+        code_point: 7,
+        line: 1,
+        column: 1,
+    };
+    assert!(package.to_string().contains(words), "{package}");
+    let value = oxoffice_core::xml::reject_non_xml_characters("value", "\u{7}").unwrap_err();
+    assert!(value.to_string().contains(words), "{value}");
+}

@@ -6,6 +6,8 @@
 Builds the test binaries with the `scaling` profile, runs each with libtest's JSON report (`--report-time`, which
 needs RUSTC_BOOTSTRAP on a stable toolchain), and writes {"binaries": {name: seconds}, "tests": {"bin::test":
 seconds}}.
+
+Requirements: a toolchain on which RUSTC_BOOTSTRAP=1 enables libtest's `--report-time` (any stable one).
 """
 
 import argparse

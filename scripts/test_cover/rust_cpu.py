@@ -5,6 +5,8 @@ the corpus for instance, are paid by each test: read a module that shares one as
 
 CPU (user + system) is what a CI runner with few cores waits for: a test that fans out over every core, as the
 equivalent-writings walks do, costs its CPU time there, not its wall time here.
+
+Requirements: Linux (GNU `/usr/bin/time -f`).
 """
 
 import argparse

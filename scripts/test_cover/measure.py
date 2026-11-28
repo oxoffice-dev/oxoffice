@@ -1,5 +1,10 @@
 """The library lines each Rust test runs alone, and what it costs: the input of every cut of the suite.
 
+Requirements: Linux (or macOS for the scripts that do not call GNU `time`), the `llvm-tools` component of the pinned
+toolchain (`rustup component add llvm-tools`), Python 3.10 or later. The instrumented builds use the `scaling` profile
+(the folder `<target>/scaling` is read for the `oxoffice` commands the CLI tests spawn: rename it here with the
+profile) and a target folder of their own.
+
     python scripts/test_cover/measure.py --target-dir ../target-test-slim-cov --out measure.pkl [--times times.json]
 
 Builds every test binary CI runs (`cargo test --workspace --lib --test '*'`, profile `scaling`) with

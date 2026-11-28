@@ -595,15 +595,20 @@ fn expected(op: Op, shape: &Shape, before: &[String]) -> Vec<String> {
     after
 }
 
+/// The part of the message `op` is refused with at `shape`, when it is.
+fn refusal_of(op: Op, shape: &Shape) -> Option<&'static str> {
+    shape
+        .7
+        .iter()
+        .find(|(refused, _)| *refused == op || *refused == Op::All)
+        .map(|(_, message)| *message)
+}
+
 fn check(op: Op, shape: &Shape) -> Result<bool, String> {
     let mut doc = fixture();
     let story = story_of(&doc, shape.2);
     let before = texts_of(&doc, &story);
-    let refusal = shape
-        .7
-        .iter()
-        .find(|(refused, _)| *refused == op || *refused == Op::All)
-        .map(|(_, message)| *message);
+    let refusal = refusal_of(op, shape);
     let Some(result) = run(op, shape, &mut doc, refusal.is_some()) else {
         return Ok(false);
     };
@@ -641,67 +646,121 @@ fn check(op: Op, shape: &Shape) -> Result<bool, String> {
     }
 }
 
-/// The cells a pull request runs, (operation, shape): chosen by a greedy cover of the library lines the whole grid
-/// runs (54 of 419 cells run every one of them), plus the first-best cell of each shape the cover left out, so
-/// that every shape and every operation is met. Rerun the cover (scripts/test_cover) when the grid changes.
+/// The cells a pull request runs, (operation, shape), written by `scripts/test_cover/grid_sample.py --write`: a cover
+/// of every shape, operation and (operation, refusal message) pair of the grid and of the library lines the grid
+/// runs. Rerun it when a shape or a refusal is added; `sampled` fails until then.
 const SAMPLE: &[(&str, &str)] = &[
+    ("Import", "a body paragraph [i]"),
     ("Html", "a body paragraph [i]"),
-    ("Caption", "a body paragraph [i]"),
     ("Move", "a body paragraph [i]"),
-    ("RangeTo", "a paragraph [c, k] of a body control"),
+    ("RangeTo", "a body paragraph [i]"),
+    ("Picture", "a paragraph [c, k] of a body control"),
     ("Picture", "the end of a body control"),
-    ("Caption", "a paragraph [c, k] of a nested control"),
-    ("Picture", "a nested block control [i]"),
+    ("Html", "a paragraph [c, k] of a nested control"),
     ("CloneFrom", "a nested block control [i]"),
-    ("Remove", "a nested block control [i]"),
-    ("Caption", "the end of a nested control"),
-    ("Caption", "a control three levels deep [i]"),
-    ("Caption", "a paragraph of a control three levels deep"),
-    ("Caption", "the end of a control three levels deep"),
+    ("Move", "the end of a nested control"),
+    ("Remove", "a control three levels deep [i]"),
+    ("Remove", "a paragraph of a control three levels deep"),
+    ("Remove", "the end of a control three levels deep"),
     ("Caption", "the end of the body"),
     ("Insert", "[c, n] past a control's paragraphs"),
+    ("Import", "[c, n] past a control's paragraphs"),
+    ("Html", "[c, n] past a control's paragraphs"),
+    ("Caption", "[c, n] past a control's paragraphs"),
+    ("Picture", "[c, n] past a control's paragraphs"),
+    ("CloneFrom", "[c, n] past a control's paragraphs"),
+    ("Move", "[c, n] past a control's paragraphs"),
+    ("MoveTo", "[c, n] past a control's paragraphs"),
+    ("Remove", "[c, n] past a control's paragraphs"),
+    ("RangeFrom", "[c, n] past a control's paragraphs"),
+    ("RangeTo", "[c, n] past a control's paragraphs"),
     ("Html", "a cell paragraph [i]"),
-    ("Caption", "a paragraph of a control in a cell"),
-    ("Caption", "the end of a control in a cell"),
+    ("MoveTo", "a paragraph of a control in a cell"),
+    ("CloneTo", "the end of a control in a cell"),
     ("Move", "a control holding its cell's only paragraph"),
     ("Remove", "a control holding its cell's only paragraph"),
+    ("MoveTo", "a control of a cell that holds two"),
     ("Remove", "a control of a cell that holds two"),
     ("Caption", "the end of a control after its cell's paragraph"),
-    ("Insert", "a control that is its header's only block"),
-    ("Picture", "a control that is its header's only block"),
     ("CloneFrom", "a control that is its header's only block"),
     ("Remove", "a control that is its header's only block"),
+    ("Insert", "a paragraph of a header control"),
     ("Caption", "a paragraph of a header control"),
-    ("Caption", "the end of a header control"),
+    ("RangeTo", "the end of a header control"),
+    ("Insert", "a footnote paragraph [i]"),
     ("Html", "a footnote paragraph [i]"),
-    ("Caption", "a footnote paragraph [i]"),
     ("Remove", "a footnote paragraph [i]"),
     ("Caption", "a text box paragraph [i]"),
     ("Remove", "a text box paragraph [i]"),
     ("Insert", "a comment paragraph [i]"),
     ("Picture", "a comment paragraph [i]"),
-    ("CloneTo", "a comment paragraph [i]"),
     ("Remove", "a comment paragraph [i]"),
     ("RangeFrom", "a comment paragraph [i]"),
     ("Insert", "the paragraph of a plain text control"),
+    ("Import", "the paragraph of a plain text control"),
+    ("Html", "the paragraph of a plain text control"),
+    ("Caption", "the paragraph of a plain text control"),
+    ("Picture", "the paragraph of a plain text control"),
+    ("CloneTo", "the paragraph of a plain text control"),
+    ("MoveTo", "the paragraph of a plain text control"),
     ("Insert", "a repeating section item [i]"),
+    ("Import", "a repeating section item [i]"),
+    ("Html", "a repeating section item [i]"),
+    ("Caption", "a repeating section item [i]"),
+    ("Picture", "a repeating section item [i]"),
     ("CloneFrom", "a repeating section item [i]"),
+    ("CloneTo", "a repeating section item [i]"),
     ("Move", "a repeating section item [i]"),
+    ("MoveTo", "a repeating section item [i]"),
     ("RangeFrom", "a repeating section item [i]"),
-    ("Caption", "the end of a repeating section"),
+    ("RangeTo", "the end of a repeating section"),
     ("Insert", "[c, 0] of a repeating section"),
-    ("Html", "the end of a repeating section item"),
-    ("Import", "the end of an empty control"),
+    ("Import", "[c, 0] of a repeating section"),
+    ("Html", "[c, 0] of a repeating section"),
+    ("Caption", "[c, 0] of a repeating section"),
+    ("Picture", "[c, 0] of a repeating section"),
+    ("CloneFrom", "[c, 0] of a repeating section"),
+    ("CloneTo", "[c, 0] of a repeating section"),
+    ("Move", "[c, 0] of a repeating section"),
+    ("MoveTo", "[c, 0] of a repeating section"),
+    ("Remove", "[c, 0] of a repeating section"),
+    ("RangeFrom", "[c, 0] of a repeating section"),
+    ("RangeTo", "[c, 0] of a repeating section"),
+    ("RangeFrom", "the end of a repeating section item"),
+    ("Insert", "the end of an empty control"),
+    ("CloneFrom", "the end of an empty control"),
     ("Insert", "[c, k] of an inline control"),
+    ("Import", "[c, k] of an inline control"),
+    ("Html", "[c, k] of an inline control"),
+    ("Caption", "[c, k] of an inline control"),
+    ("Picture", "[c, k] of an inline control"),
+    ("CloneFrom", "[c, k] of an inline control"),
+    ("CloneTo", "[c, k] of an inline control"),
+    ("Move", "[c, k] of an inline control"),
+    ("MoveTo", "[c, k] of an inline control"),
+    ("Remove", "[c, k] of an inline control"),
+    ("RangeFrom", "[c, k] of an inline control"),
+    ("RangeTo", "[c, k] of an inline control"),
+    ("Insert", "an inline control [i]"),
+    ("Import", "an inline control [i]"),
+    ("Html", "an inline control [i]"),
+    ("Caption", "an inline control [i]"),
     ("Picture", "an inline control [i]"),
+    ("CloneFrom", "an inline control [i]"),
+    ("CloneTo", "an inline control [i]"),
+    ("Move", "an inline control [i]"),
+    ("MoveTo", "an inline control [i]"),
+    ("Remove", "an inline control [i]"),
+    ("RangeFrom", "an inline control [i]"),
+    ("RangeTo", "an inline control [i]"),
     ("Move", "a table [c, k] alone in a locked control"),
-    ("MoveTo", "a table [c, k] alone in a locked control"),
-    ("Caption", "a table [c, k] then a paragraph in one control"),
-    ("Caption", "a table [c, k] of a control nested in a control"),
-    ("Caption", "[c, n] of kind table past a control's tables"),
+    ("Insert", "a table [c, k] then a paragraph in one control"),
+    ("Insert", "a table [c, k] of a control nested in a control"),
+    ("CloneTo", "[c, n] of kind table past a control's tables"),
 ];
 
-/// The cells cut to SAMPLE, which must name only cells there are and meet every shape and operation.
+/// The cells cut to SAMPLE, which must name only cells there are and meet every shape, every operation and every
+/// (operation, refusal message) pair of the grid: a new refusal asks for a cell.
 fn sampled(cells: Vec<(Op, &Shape)>) -> Vec<(Op, &Shape)> {
     let name = |op: Op, shape: &Shape| (format!("{op:?}"), shape.0);
     let kept: Vec<_> = cells
@@ -722,15 +781,35 @@ fn sampled(cells: Vec<(Op, &Shape)>) -> Vec<(Op, &Shape)> {
         let met = |same: &dyn Fn(&(Op, &Shape)) -> bool| kept.iter().any(same);
         assert!(
             met(&|(_, s)| s.0 == shape.0),
-            "no sampled cell at {}: add one to SAMPLE",
+            "no sampled cell at {}: regenerate SAMPLE",
             shape.0
         );
         assert!(
             met(&|(o, _)| o == op),
-            "no sampled cell of {op:?}: add one to SAMPLE"
+            "no sampled cell of {op:?}: regenerate SAMPLE"
         );
+        if let Some(message) = refusal_of(*op, shape) {
+            assert!(
+                met(&|(o, s)| o == op && refusal_of(*o, s) == Some(message)),
+                "no sampled cell of {op:?} refused with {message:?}: regenerate SAMPLE"
+            );
+        }
     }
     kept
+}
+
+/// `OXOFFICE_GRID_CELL=list` prints the cells (index, operation, shape, refusal) and `=<index>` runs that one cell
+/// alone: what scripts/test_cover/grid_sample.py reads to regenerate SAMPLE.
+fn grid_cell_filter(cells: Vec<(Op, &Shape)>) -> Option<Vec<(Op, &Shape)>> {
+    let which = std::env::var("OXOFFICE_GRID_CELL").ok()?;
+    if which == "list" {
+        for (i, (op, shape)) in cells.iter().enumerate() {
+            let refusal = refusal_of(*op, shape).unwrap_or("");
+            println!("CELL\t{i}\t{op:?}\t{}\t{refusal}", shape.0);
+        }
+        return Some(Vec::new());
+    }
+    Some(vec![cells[which.parse::<usize>().expect("a cell index")]])
 }
 
 #[test]
@@ -741,9 +820,10 @@ fn every_block_operation_takes_every_location_shape_or_names_the_working_route()
         .flat_map(|shape| OPS.iter().map(move |op| (*op, shape)))
         .collect::<Vec<_>>();
     // A pull request runs the cells of SAMPLE; the full checks the whole grid.
-    let cells = match every_copy() {
-        true => cells,
-        false => sampled(cells),
+    let cells = match grid_cell_filter(cells.clone()) {
+        Some(only) => only,
+        None if every_copy() => cells,
+        None => sampled(cells),
     };
     let outcomes = map_in_parallel(&cells, |(op, shape)| check(*op, shape));
     let (mut done, mut skipped, mut failures) = (0, 0, Vec::new());

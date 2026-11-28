@@ -2007,6 +2007,36 @@ fn a_text_box_of_fixed_size_hides_the_lines_that_do_not_fit_whole() {
     assert_eq!(box_lines(&text_box_of_lines(594360, 6, 0, vertical)), all);
 }
 
+// A text box's text sits inside its insets: Word's 0.1 inch left and right
+// and 0.05 inch top and bottom by default, or what `wps:bodyPr` says.
+#[test]
+fn a_text_box_text_keeps_its_insets_from_the_box_edges() {
+    let first_line = |body_pr: &str| {
+        let pdf = pdf_of(&doc_with_body(&text_box_of_lines(914400, 1, 0, body_pr)));
+        let line = line_of(&pdf, 0, "Line 1");
+        (line.left, line.y)
+    };
+    let (default_left, default_y) = first_line("<wps:bodyPr/>");
+    assert!((default_left - (72.0 + 7.2)).abs() < 0.5, "{default_left}");
+    let (left, y) = first_line(r#"<wps:bodyPr lIns="0" tIns="91440"/>"#);
+    assert!((left - 72.0).abs() < 0.5, "{left}");
+    // 0.1 inch of top inset rather than 0.05: the line is 3.6 pt lower.
+    assert!((default_y - y - 3.6).abs() < 0.5, "{default_y} {y}");
+
+    // The text wraps at the width inside the left and right insets.
+    let words = "<w:p><w:r><w:t>one two three four five six seven eight nine ten</w:t></w:r></w:p>";
+    let pdf = pdf_of(&doc_with_body(&text_box_of(
+        914400,
+        words,
+        r#"<wps:bodyPr><a:spAutoFit/></wps:bodyPr>"#,
+    )));
+    let drawn = lines(&pdf.drawn(0));
+    assert!(drawn.len() > 2, "{drawn:?}");
+    for line in &drawn {
+        assert!(line.right <= 72.0 + 72.0 - 7.2 + 0.5, "{line:?}");
+    }
+}
+
 /// A run holding a drawing placed in line with text, one inch square, written
 /// plainly (no `mc:AlternateContent`), whose graphic is `graphic`.
 fn inline_drawing_run(id: u32, graphic: &str) -> String {
@@ -3121,4 +3151,122 @@ fn a_caption_number_drawn_from_its_stored_result_is_read_after_its_label() {
         .unwrap();
     let read = tagged_text(&pdf, &elements, paragraph);
     assert_eq!(read, "Table 7: Notation", "the caption reads {read:?}");
+}
+
+#[test]
+fn a_hyperlink_wrapped_over_two_lines_is_one_tagged_link_holding_its_text() {
+    let text = "the quarterly budget review with every regional figure, the forecast \
+                for next year and the notes of the finance committee";
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship("https://example.com/budget");
+    let mut paragraph = doc.add_paragraph("Read ");
+    paragraph.add_hyperlink(text, &relationship);
+    paragraph.add_run(" before the meeting.");
+    let pdf = pdf_of(&reopen(&mut doc));
+    let links: Vec<Element> = pdf
+        .structure()
+        .into_iter()
+        .filter(|(role, ..)| role == "Link")
+        .collect();
+    assert_eq!(links.len(), 1, "one link element for the whole hyperlink");
+    let annotations: Vec<String> = pdf
+        .page_ids()
+        .into_iter()
+        .take(1)
+        .flat_map(|page| {
+            let page = pdf.doc.get_dictionary(page).expect("page");
+            let annots = pdf.resolve(page.get(b"Annots").expect("annotations"));
+            annots.as_array().expect("an array").clone()
+        })
+        .map(|annotation| {
+            let annotation = pdf.resolve(&annotation).as_dict().expect("annotation");
+            let contents = annotation.get(b"Contents").expect("contents");
+            lopdf::decode_text_string(contents).expect("text")
+        })
+        .collect();
+    assert!(annotations.len() >= 2, "{annotations:?}");
+    assert!(
+        links[0].3.len() >= 2,
+        "the text of both lines is in the link"
+    );
+    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for contents in annotations {
+        assert_eq!(words(&contents), words(text));
+    }
+}
+
+#[test]
+fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_render() {
+    // A shading or a text colour read from the file unchecked, with a
+    // character of more than one byte where a digit belongs.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:rPr><w:shd w:val="clear" w:fill="Aé0000"/></w:rPr><w:t>Fill</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:color w:val="Aé0000"/></w:rPr><w:t>Colour</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="00FF00;x" w:fill="FF0000"/></w:rPr><w:t>Pattern</w:t></w:r></w:p>"#,
+    ));
+    // The page stays white behind the fill that is not a colour.
+    assert_eq!(pixels_in_text_box(&doc, "Fill", [0xA0, 0x00, 0x00]), 0);
+    assert!(pixels_in_text_box(&doc, "Fill", [0xFF, 0xFF, 0xFF]) > 20);
+    // A foreground that is not a colour is automatic: black under a
+    // pattern, so 25 % of it over red is BF0000 (not BF4000, a quarter of
+    // the green the value starts with).
+    assert!(pixels_in_text_box(&doc, "Pattern", [0xBF, 0x00, 0x00]) > 20);
+    let html = doc.to_html_fragment();
+    assert!(!html.contains("background-color:#A0"), "{html}");
+}
+
+#[test]
+fn a_field_result_after_a_page_referenced_bookmark_is_read_in_place() {
+    // A bookmark a PAGEREF points at records where it starts; the field
+    // result right after that start is read after the text before it.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:bookmarkStart w:id="1" w:name="source"/><w:r><w:t>Alpha</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="1"/></w:p>"#,
+        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r>"#,
+        r#"<w:bookmarkStart w:id="2" w:name="_Ref2"/>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> REF source </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>old</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r><w:bookmarkEnd w:id="2"/>"#,
+        r#"<w:r><w:t xml:space="preserve"> here</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGEREF _Ref2 </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let elements = pdf.structure();
+    let paragraph = elements
+        .iter()
+        .enumerate()
+        .filter(|(_, element)| element.0 == "P")
+        .nth(1)
+        .unwrap()
+        .0;
+    let read = tagged_text(&pdf, &elements, paragraph);
+    assert_eq!(read, "See Alpha here", "the paragraph reads {read:?}");
+}
+
+#[test]
+fn a_link_lands_on_the_page_where_its_bookmark_starts_inside_a_paragraph() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:hyperlink w:anchor="results"><w:r><w:t>Go to the results</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:r><w:t>The method comes first.</w:t></w:r><w:r><w:br w:type="page"/></w:r>"#,
+        r#"<w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Results come next.</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let results = page_with(&pdf, "Results come next.");
+    assert_eq!(results, 1);
+    let links = pdf.internal_links(0);
+    assert!(!links.is_empty());
+    let line = line_of(&pdf, results, "Results come next.");
+    for (page, top, _) in &links {
+        assert_eq!(*page, results, "not the page where the paragraph starts");
+        assert!(
+            *top > line.y && *top < line.y + 30.0,
+            "the destination {top} is the top of the bookmark's line at {}",
+            line.y
+        );
+    }
 }

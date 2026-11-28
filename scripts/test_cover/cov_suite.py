@@ -7,6 +7,11 @@ one merged profile per binary, the union of their lines. Compare two runs (befor
 
 The test code (`#[cfg(test)]` items and the files they declare), the Python binding crates and the two test support
 crates are left out, as in measure.py. `--lost` lists the library lines the second run no longer runs, by file.
+
+Requirements: Linux (or macOS for the scripts that do not call GNU `time`), the `llvm-tools` component of the pinned
+toolchain (`rustup component add llvm-tools`), Python 3.10 or later. The instrumented builds use the `scaling` profile
+(the folder `<target>/scaling` is read for the `oxoffice` commands the CLI tests spawn: rename it here with the
+profile) and a target folder of their own.
 """
 
 import argparse

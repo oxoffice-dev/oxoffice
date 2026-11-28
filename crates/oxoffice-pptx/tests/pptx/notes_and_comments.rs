@@ -1114,3 +1114,55 @@ fn removing_a_slide_keeps_the_notes_another_slide_shares() {
         );
     }
 }
+
+#[test]
+fn a_comment_reads_back_with_its_author_initials_text_and_date() {
+    let mut prs = blank_deck(2);
+    assert!(prs.comment_authors().is_empty());
+    assert!(prs.comments(0).is_none());
+
+    prs.add_comment_author(author(ADA, "Ada Lovelace", Some("AL")))
+        .unwrap();
+    prs.add_comment(1, comment(&guid(1), ADA, MONDAY, "Is this figure final?"))
+        .unwrap();
+
+    let reopened = reopen(&prs);
+    assert!(reopened.comments(0).unwrap_or_default().is_empty());
+    let [remark] = reopened.comments(1).unwrap() else {
+        panic!("one comment on the second slide");
+    };
+    assert_eq!(remark.id, guid(1));
+    assert_eq!(remark.text(), "Is this figure final?");
+    assert_eq!(remark.created, MONDAY);
+    assert_eq!(remark.status, None);
+    assert!(remark.replies().is_empty());
+    let writer = reopened
+        .comment_authors()
+        .iter()
+        .find(|listed| listed.id == remark.author_id)
+        .expect("the comment author is listed");
+    assert_eq!(writer.name, "Ada Lovelace");
+    assert_eq!(writer.initials.as_deref(), Some("AL"));
+    assert_eq!(writer.user_id, "ada@example.com");
+    assert_eq!(writer.provider_id, "None");
+}
+
+#[test]
+fn comments_stay_with_their_slide_through_a_reorder() {
+    let mut prs = reviewed_deck();
+    prs.add_comment(0, comment(&guid(1), ADA, MONDAY, "On the title"))
+        .unwrap();
+    prs.add_comment(2, comment(&guid(2), GRACE, MONDAY, "On the end"))
+        .unwrap();
+    let reopened = reopen(&prs);
+    assert_eq!(comment_texts(&reopened, 0), ["On the title"]);
+    assert!(reopened.comments(1).is_none());
+    assert_eq!(comment_texts(&reopened, 2), ["On the end"]);
+
+    prs.move_slide(2, 0).unwrap();
+
+    let reopened = reopen(&prs);
+    assert_eq!(comment_texts(&reopened, 0), ["On the end"]);
+    assert_eq!(comment_texts(&reopened, 1), ["On the title"]);
+    assert!(reopened.comments(2).is_none());
+}

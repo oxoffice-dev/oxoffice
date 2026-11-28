@@ -563,6 +563,97 @@ fn a_comment_reuses_comment_styles_found_by_id_and_refuses_one_of_the_wrong_type
     assert!(error.contains("wrong type"), "{error}");
 }
 
+#[test]
+fn a_comment_mark_style_of_the_wrong_type_leaves_no_comment_text_style_behind() {
+    // The comment text style is created before the mark's style is found
+    // to be a paragraph style: the refused add takes it back.
+    type Add = fn(&mut Document) -> oxoffice_docx::Result<i32>;
+    let routes: [(&str, Add); 3] = [
+        ("on text", |doc| {
+            doc.add_comment_on_text(
+                "review",
+                "Ada",
+                "Please review",
+                TextCommentOptions {
+                    date: CommentDate::Undated,
+                    ..Default::default()
+                },
+            )
+        }),
+        ("on runs", |doc| {
+            doc.add_comment_with_date(
+                run_range(0, 0, 0, 1),
+                "Ada",
+                None,
+                "Please review",
+                CommentDate::Undated,
+            )
+        }),
+        ("on a story range", |doc| {
+            let first = story_paragraph(doc, StoryKind::Body, 0);
+            let second = doc.story_items(first.story()).unwrap()[1]
+                .location()
+                .clone();
+            let mut range = story_range(&first, 0, 1);
+            range.end = StoryRunPosition {
+                location: second,
+                run_index: 1,
+            };
+            doc.add_story_comment_with_date(
+                range,
+                "Ada",
+                None,
+                "Please review",
+                CommentDate::Undated,
+            )
+        }),
+    ];
+    for (route, add) in routes {
+        let mut doc = doc_with(&["review this", "and this"]);
+        doc.add_style(StyleBuilder::paragraph(
+            "CommentReference",
+            "CommentReference",
+        ))
+        .unwrap();
+        let before = doc.to_bytes().unwrap();
+        let error = add(&mut doc).unwrap_err().to_string();
+        assert!(
+            error.contains("comment style CommentReference has the wrong type"),
+            "{route}: {error}"
+        );
+        assert!(
+            doc.style("CommentText").is_none(),
+            "{route}: no comment text style is left behind"
+        );
+        assert_eq!(doc.to_bytes().unwrap(), before, "{route}: nothing changed");
+    }
+}
+
+#[test]
+fn a_missing_occurrence_is_refused_with_its_count_and_changes_nothing() {
+    let mut doc = doc_with(&["text and text", "aaa"]);
+    let before = doc.to_bytes().unwrap();
+    // Matches do not overlap: "aaa" holds "aa" once.
+    for (text, occurrence, said) in [
+        ("text", 2, "has no occurrence 2: it occurs 2 times"),
+        ("aa", 1, "it occurs 1 time "),
+        ("absent", 0, "it occurs 0 times"),
+    ] {
+        let options = TextCommentOptions {
+            occurrence,
+            date: CommentDate::Undated,
+            ..Default::default()
+        };
+        let error = doc
+            .add_comment_on_text(text, "Ada", "Again?", options)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(said), "{text}: {error}");
+    }
+    assert!(doc.comments().is_empty());
+    assert_eq!(doc.to_bytes().unwrap(), before);
+}
+
 /// `doc` saved, its `word/styles.xml` rewritten by `edit`, and reopened:
 /// styles as another producer wrote them, which the facade would not write.
 fn with_styles_xml(doc: &mut Document, edit: impl FnOnce(String) -> String) -> Document {

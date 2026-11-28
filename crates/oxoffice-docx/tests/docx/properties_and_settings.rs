@@ -1650,3 +1650,18 @@ fn a_settings_part_made_for_one_setting_goes_with_it() {
 }
 
 // ---- Word- and Google-saved files ----
+
+#[test]
+fn a_number_property_set_to_negative_zero_replaces_zero() {
+    let mut doc = doc_with(&["Body"]);
+    doc.set_custom_property(custom("Offset", 2, CustomPropertyValue::R8(0.0)))
+        .unwrap();
+    let mut doc = reopen(&mut doc);
+    // -0 == 0, but the two are written differently: the save writes it.
+    doc.set_custom_property(custom("Offset", 2, CustomPropertyValue::R8(-0.0)))
+        .unwrap();
+    match reopen(&mut doc).custom_property("Offset").map(|p| &p.value) {
+        Some(CustomPropertyValue::R8(value)) => assert!(value.is_sign_negative(), "{value}"),
+        other => panic!("Offset reads {other:?}"),
+    }
+}

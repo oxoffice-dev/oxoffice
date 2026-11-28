@@ -2,6 +2,9 @@
 and the greedy cover that keeps a share of the library lines for the least CPU.
 
     python scripts/test_cover/report.py measure.pkl --cpu cpu.json [--target 0.995] [--keep REGEX ...] [--list-cut]
+
+measure.pkl comes from measure.py and cpu.json from rust_cpu.py (their requirements: llvm-tools, Linux, GNU time). With
+--target 1.0 the cover keeps every line the measured tests run. prune.py then deletes the tests that are not kept.
 """
 
 import argparse

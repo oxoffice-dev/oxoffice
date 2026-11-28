@@ -1311,6 +1311,22 @@ fn filling_several_tags_is_all_or_nothing() {
     assert_eq!(texts(&doc), ["Contoso", "Contoso", "1 May"]);
 }
 
+#[test]
+fn a_date_control_refuses_a_format_word_cannot_show() {
+    let mut doc = doc_with_control("due");
+    let location = control_at(&doc, &body(&doc), "due");
+    for refused in ["Q yyyy", "d 'MMMM", ""] {
+        let format = refused.to_owned();
+        let error = doc
+            .set_content_control_type(&location, ContentControlTypePayload::Date { format })
+            .expect_err("the format cannot be shown");
+        assert!(
+            error.to_string().contains("date format"),
+            "{refused:?}: {error}"
+        );
+    }
+}
+
 /// `doc_with_control` with a date control in `format` and, when given, the
 /// language `lid`, written as Word writes them (`w:dateFormat`, `w:lid`):
 /// a format oxoffice refuses to author is still read from a file.

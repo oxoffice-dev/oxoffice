@@ -969,3 +969,61 @@ fn a_chart_added_to_the_powerpoint_deck_reads_back_and_leaves_the_rest_as_it_was
     assert!(parts_before.is_subset(&parts_after), "a part was lost");
     assert!(saved.validate().is_empty(), "{:?}", saved.validate());
 }
+
+#[test]
+fn values_keep_their_full_precision_and_sign() {
+    let values = [
+        0.1 + 0.2,
+        -1e-7,
+        1_234_567.891,
+        0.0,
+        -42.5,
+        1e15,
+        f64::MIN_POSITIVE,
+    ];
+    let categories = ["a", "b", "c", "d", "e", "f", "g"];
+    let source = data(&categories, &[("Measures", &values)]);
+    let mut prs = blank_deck(1);
+    let id = chart_on(&mut prs, 0, ChartKind::Line, &source);
+
+    let (_, read) = chart(&reopen(&prs), 0, id);
+    for (read, written) in read.series[0].1.iter().zip(values) {
+        assert_eq!(read.to_bits(), written.to_bits(), "{written:e}");
+    }
+}
+
+#[test]
+fn removing_a_chart_drops_its_chart_part_and_workbook() {
+    let mut prs = blank_deck(1);
+    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
+    let kept = chart_on(&mut prs, 0, ChartKind::Pie, &shares());
+    let before = chart_parts(&prs);
+
+    prs.remove_shape(0, 0).unwrap();
+    let saved = reopen(&prs);
+    assert_eq!(shape_ids(&saved, 0), [kept]);
+    assert_eq!(chart(&saved, 0, kept), (ChartKind::Pie, shares()));
+    let after = chart_parts(&saved);
+    assert_eq!(after.len(), 2, "one chart and its workbook left: {after:?}");
+    assert!(after.is_subset(&before));
+    assert!(saved.validate().is_empty(), "{:?}", saved.validate());
+}
+
+#[test]
+fn a_chart_shared_with_a_duplicate_stays_until_its_last_slide_goes() {
+    let mut prs = blank_deck(2);
+    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
+    prs.duplicate_slide(0).unwrap();
+    let copy = last_shape_id(&prs, 1);
+    let parts = chart_parts(&prs);
+
+    prs.remove_slide(0).unwrap();
+    let saved = reopen(&prs);
+    assert_eq!(chart(&saved, 0, copy), (ChartKind::Bar, regions()));
+    assert!(chart_parts(&saved).is_subset(&parts));
+    assert!(!chart_parts(&saved).is_empty());
+    assert!(saved.validate().is_empty(), "{:?}", saved.validate());
+
+    prs.remove_slide(0).unwrap();
+    assert!(chart_parts(&reopen(&prs)).is_empty());
+}

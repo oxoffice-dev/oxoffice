@@ -2,7 +2,7 @@
 run alone under coverage instrumentation, then a greedy cover picks the tests that add the most lines per second.
 
     python scripts/test_cover/cover.py --crate oxoffice-docx --test docx --target 0.99 --keep-module render \
-        --keep-module corpus --keep-should-panic --target-dir ../target-cover --out scripts/test_cover/docx-keep.txt
+        --keep-module corpus --keep-should-panic --target-dir ../target-cover --out docx-keep.txt
 
 Needs the `llvm-tools` component of the pinned toolchain (`rustup component add llvm-tools`). Writes the keep list (one `module::test` per line, for prune.py) and, beside it, `<out>.lost.txt`: the library lines
 (crates/*/src, the Python binding crates apart) the kept tests no longer run, counted by file. Each test runs in its

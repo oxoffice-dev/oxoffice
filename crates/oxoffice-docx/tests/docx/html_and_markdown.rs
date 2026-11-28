@@ -2927,3 +2927,79 @@ fn a_formula_whose_mathml_cannot_be_read_is_reported_once() {
     );
     assert_eq!(read.document.paragraph(0).unwrap().equations().count(), 0);
 }
+
+#[test]
+fn an_equation_after_a_link_is_not_part_of_the_link() {
+    let mut doc = Document::new();
+    let link = doc.add_hyperlink_relationship("https://example.com/");
+    let mut paragraph = doc.add_paragraph("");
+    paragraph.add_hyperlink("see", &link);
+    let expressions = oxoffice_docx::equation_from_latex("y").unwrap().value;
+    paragraph
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
+            expressions.expressions.clone(),
+        ))
+        .unwrap();
+    paragraph.add_run(" here");
+    let html = doc.to_html_fragment();
+    assert!(html.contains("see</a><math"), "{html}");
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.contains("[see](https://example.com/)$y$ here"),
+        "{markdown}"
+    );
+}
+
+#[test]
+fn spaces_at_the_edges_of_a_math_run_survive_an_rtf_round_trip() {
+    let math = format!(
+        concat!(
+            r#"<m:oMath xmlns:m="{m}" xmlns:w="{w}"><m:r><m:t>x</m:t></m:r>"#,
+            r#"<m:r><m:rPr><m:nor/></m:rPr><m:t xml:space="preserve"> if </m:t></m:r>"#,
+            r#"<m:r><m:t>y</m:t></m:r><m:r><m:rPr><m:nor/></m:rPr><m:t xml:space="preserve"> </m:t></m:r>"#,
+            r#"<m:r><m:t>z</m:t></m:r></m:oMath>"#
+        ),
+        m = M_NS,
+        w = W_NS,
+    );
+    let (_, _, xml) = equation_through_rtf(&math);
+    assert!(
+        xml.contains(r#"<m:t xml:space="preserve"> if </m:t>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<m:t xml:space="preserve"> </m:t>"#),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_delimiter_shape_survives_an_rtf_round_trip() {
+    let math = format!(
+        concat!(
+            r#"<m:oMath xmlns:m="{m}"><m:d><m:dPr><m:begChr m:val="["/><m:shp m:val="match"/></m:dPr>"#,
+            r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath>"#
+        ),
+        m = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+    );
+    let mut doc = Document::new();
+    doc.add_paragraph("Let ")
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::Inline(
+            oxoffice_docx_oxml::math::CT_OMath::from_xml(math.as_bytes()).unwrap(),
+        ))
+        .unwrap();
+    let written = doc.to_rtf_bytes().unwrap();
+    let rtf = String::from_utf8(written.bytes).unwrap();
+    assert!(rtf.contains(r"{\mshp match}"), "{rtf}");
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
+    let equation = read
+        .paragraph(0)
+        .unwrap()
+        .equations()
+        .next()
+        .cloned()
+        .unwrap();
+    let xml = String::from_utf8(equation.to_xml().unwrap()).unwrap();
+    assert!(xml.contains(r#"<m:shp m:val="match"/>"#), "{xml}");
+    assert!(!xml.contains("<m:shp><m:r>"), "{xml}");
+}
