@@ -7330,7 +7330,8 @@ fn a_google_table_with_a_grid_change_compares_with_a_property_change() {
 
 /// A cell given shading compares as a `w:tcPrChange`, as Word writes it, a
 /// row kept together as a `w:trPrChange` (W8), each beside a text change of
-/// its cell, and resolves to either version.
+/// its cell, and resolves to either version; a row holding a revision of its
+/// own keeps a diagnostic.
 #[test]
 fn a_cell_or_row_property_change_compares_as_its_change() {
     let table = |cell: &str, row: &str, text: &str| {
@@ -7370,5 +7371,14 @@ fn a_cell_or_row_property_change_compares_as_its_change() {
                 "{rejected}"
             );
         }
+    }
+    // A row that holds a revision of its own, an insertion here, keeps its
+    // properties with a diagnostic, whether they are added or removed.
+    let inserted = r#"<w:ins w:id="9" w:author="Earlier" w:date="2026-11-01T00:00:00Z"/>"#;
+    for (before, after) in [("", "<w:cantSplit/>"), ("<w:cantSplit/>", "")] {
+        let edited = table("", &format!("<w:trPr>{after}{inserted}</w:trPr>"), "cell");
+        let mut redlined = table("", &format!("<w:trPr>{before}{inserted}</w:trPr>"), "cell");
+        let diagnostics = redlined.compare(&edited, AUTHOR, DATE).unwrap();
+        assert_eq!(diagnostics.len(), 1, "{before} -> {after}: {diagnostics:?}");
     }
 }
