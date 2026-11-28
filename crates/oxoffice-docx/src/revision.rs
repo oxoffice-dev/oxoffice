@@ -741,6 +741,60 @@ impl Document {
         }
         candidate.reconcile_comment_removal(self)?;
         candidate = crate::comparison::reopen_staged(candidate)?;
+        // A note whose only reference this resolution removed, and whose
+        // text it removed too, goes with it (the rejection of a note inserted
+        // with its reference, the acceptance of one deleted with it), as Word
+        // removes a comment whose anchor goes (W9).
+        if publication.is_none() {
+            let after = candidate
+                .package
+                .get_part(&candidate.doc_part_name)
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default();
+            for (kind, note) in [
+                (
+                    crate::StoryKind::Footnote,
+                    crate::comparison::NoteKind::Footnote,
+                ),
+                (
+                    crate::StoryKind::Endnote,
+                    crate::comparison::NoteKind::Endnote,
+                ),
+            ] {
+                // A compared redline's note custody settles its notes.
+                if custody
+                    .iter()
+                    .any(|(kind, units)| *kind == note && !units.is_empty())
+                {
+                    continue;
+                }
+                let kept = note_reference_ids(&after, kind)?;
+                for id in note_reference_ids(&source, kind)?.difference(&kept) {
+                    let story = match kind {
+                        crate::StoryKind::Footnote => candidate.footnote_story(*id)?,
+                        _ => candidate.endnote_story(*id)?,
+                    };
+                    // A note the resolution emptied too: written as inserted
+                    // or deleted with its reference. A note that keeps its
+                    // text stays, as a compared version may hold it alone.
+                    let emptied = match &story {
+                        Some(story) => candidate.story_items(story)?.iter().all(|item| {
+                            item.text()
+                                .ok()
+                                .flatten()
+                                .is_none_or(|text| text.trim().is_empty())
+                        }),
+                        None => false,
+                    };
+                    if emptied {
+                        match kind {
+                            crate::StoryKind::Footnote => candidate.remove_footnote(*id)?,
+                            _ => candidate.remove_endnote(*id)?,
+                        }
+                    }
+                }
+            }
+        }
         if let Some(trace) = publication {
             if let Some(bytes) = candidate.package.get_part(&trace.part_name) {
                 trace.validate_source(bytes)?;
@@ -753,6 +807,40 @@ impl Document {
         }
         self.commit_staged_mutation(candidate);
         Ok(resolved)
+    }
+}
+
+/// The ids of the notes of `kind` the references of `xml`, a story part,
+/// show.
+fn note_reference_ids(xml: &[u8], kind: crate::StoryKind) -> Result<HashSet<i32>> {
+    let local: &[u8] = match kind {
+        crate::StoryKind::Footnote => b"footnoteReference",
+        _ => b"endnoteReference",
+    };
+    let mut reader = oxoffice_core::xml_reader::Reader::from_reader(xml);
+    let mut ids = HashSet::new();
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| Error::Other(format!("note references: {error}")))?
+        {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == local =>
+            {
+                for attribute in element.attributes().flatten() {
+                    if attribute.key.local_name().as_ref() == b"id"
+                        && let Ok(id) = oxoffice_core::xml::attribute_text(&attribute)
+                            .map_err(|error| Error::Other(error.to_string()))?
+                            .trim()
+                            .parse()
+                    {
+                        ids.insert(id);
+                    }
+                }
+            }
+            Event::Eof => return Ok(ids),
+            _ => {}
+        }
     }
 }
 
