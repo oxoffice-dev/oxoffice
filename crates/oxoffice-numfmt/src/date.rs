@@ -1,6 +1,7 @@
 //! Dates and times from serial day numbers.
 
 use crate::decimal::Decimal;
+use crate::era;
 use crate::names::{self, Language, Names};
 use crate::parse::{self, Section, SystemFormat, Token, Unit};
 use crate::{DateSystem, FormatOptions, Formatted, Locale, Out};
@@ -252,6 +253,8 @@ pub(crate) fn format(
         _ => options.locale.names(),
     };
 
+    // Under a Japanese tag the era of the date; under any other, none.
+    let era = names.is_japanese().then(|| era::of(year, month, date));
     let mut out = Out::default();
     if negative && sign {
         out.push('-');
@@ -269,6 +272,15 @@ pub(crate) fn format(
         match *token {
             Token::Year(count) if count <= 2 => padded(&mut out, year % 100, 2),
             Token::Year(_) => padded(&mut out, year, 4),
+            Token::EraYear(count) => match era {
+                Some((_, _, era_year)) => padded(&mut out, era_year, count.min(2)),
+                None => padded(&mut out, year, 4),
+            },
+            Token::Era(count) => {
+                if let Some((initial, name, _)) = era {
+                    out.push_str(era::text(count, initial, name));
+                }
+            }
             Token::Month(1) => padded(&mut out, i64::from(month), 1),
             Token::Month(2) => padded(&mut out, i64::from(month), 2),
             Token::Month(3) => out.push_str(names.short_month(month)),

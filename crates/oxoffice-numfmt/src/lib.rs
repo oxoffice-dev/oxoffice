@@ -30,6 +30,7 @@
 mod builtin;
 mod date;
 mod decimal;
+mod era;
 pub mod names;
 mod number;
 mod parse;
@@ -294,8 +295,16 @@ impl NumberFormat {
             return Some(DateKind::Duration);
         }
         let date = section.system == Some(parse::SystemFormat::LongDate)
-            || section
-                .has(|token| matches!(token, Token::Year(_) | Token::Month(_) | Token::Day(_)));
+            || section.has(|token| {
+                matches!(
+                    token,
+                    Token::Year(_)
+                        | Token::EraYear(_)
+                        | Token::Era(_)
+                        | Token::Month(_)
+                        | Token::Day(_)
+                )
+            });
         let time = section.system == Some(parse::SystemFormat::Time)
             || section.has(|token| {
                 matches!(

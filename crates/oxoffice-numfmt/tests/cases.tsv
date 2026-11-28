@@ -2707,18 +2707,18 @@ r7w-412-04	[$-412]aaa"|"aaaa	45308	1900	number	수|수요일
 r7w-412-05	[$-412]aaa"|"aaaa	45309	1900	number	목|목요일		
 r7w-412-06	[$-412]aaa"|"aaaa	45310	1900	number	금|금요일		
 r7w-412-07	[$-412]aaa"|"aaaa	45311	1900	number	토|토요일		
-r7e-01	[$-411]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日	ggg2024年9月4日	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-02	[$-411]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日	ggg2019年5月1日	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-03	[$-411]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日	ggg1989年1月7日	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-04	[$-411]g"|"gg"|"ggg	45539.6046875	1900	number	R|令|令和	g|gg|ggg	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-05	[$-411]g"|"gg"|"ggg	43586	1900	number	R|令|令和	g|gg|ggg	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-06	[$-411]g"|"gg"|"ggg	32515	1900	number	S|昭|昭和	g|gg|ggg	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-07	[$-411]e	45539.6046875	1900	number	6	2024	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-08	[$-411]e	43586	1900	number	1	2019	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-09	[$-411]e	32515	1900	number	64	1989	era tokens: the Japanese calendar writes the era (`令和`) and its year; we show the letters `g` and the Gregorian year (a calendar feature, its own change)
-r7e-10	[$-404]ggge"年"m"月"d"日"	45539.6046875	1900	number	2024年9月4日	ggg2024年9月4日	era tokens under a tag that writes no era: Excel shows nothing for `g`, `gg`, `ggg`; we show the letters (a calendar feature, its own change)
-r7e-11	[$-404]ggge"年"m"月"d"日"	43586	1900	number	2019年5月1日	ggg2019年5月1日	era tokens under a tag that writes no era: Excel shows nothing for `g`, `gg`, `ggg`; we show the letters (a calendar feature, its own change)
-r7e-12	[$-404]ggge"年"m"月"d"日"	32515	1900	number	1989年1月7日	ggg1989年1月7日	era tokens under a tag that writes no era: Excel shows nothing for `g`, `gg`, `ggg`; we show the letters (a calendar feature, its own change)
+r7e-01	[$-411]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日		
+r7e-02	[$-411]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日		
+r7e-03	[$-411]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r7e-04	[$-411]g"|"gg"|"ggg	45539.6046875	1900	number	R|令|令和		
+r7e-05	[$-411]g"|"gg"|"ggg	43586	1900	number	R|令|令和		
+r7e-06	[$-411]g"|"gg"|"ggg	32515	1900	number	S|昭|昭和		
+r7e-07	[$-411]e	45539.6046875	1900	number	6		
+r7e-08	[$-411]e	43586	1900	number	1		
+r7e-09	[$-411]e	32515	1900	number	64		
+r7e-10	[$-404]ggge"年"m"月"d"日"	45539.6046875	1900	number	2024年9月4日		
+r7e-11	[$-404]ggge"年"m"月"d"日"	43586	1900	number	2019年5月1日		
+r7e-12	[$-404]ggge"年"m"月"d"日"	32515	1900	number	1989年1月7日		
 r7e-13	[$-404]e	45539.6046875	1900	number	2024		
 r7e-14	[$-404]e	43586	1900	number	2019		
 r7e-15	[$-404]e	32515	1900	number	1989		
@@ -2794,6 +2794,144 @@ r8d-7C04-06	[$-7C04]ddd"|"dddd	45310	1900	number	週五|星期五
 r8d-7C04-07	[$-7C04]ddd"|"dddd	45311	1900	number	週六|星期六		
 r8p-7C04-01	[$-7C04]h AM/PM	45306.2145833333	1900	number	5 上午		
 r8p-7C04-02	[$-7C04]h AM/PM	45306.7119097222	1900	number	5 下午		
+r9a-taisho-01	[$-411]ggge"年"m"月"d"日"	4595	1900	number	大正1年7月30日		
+r9a-taisho-02	[$-411]ggge"年"m"月"d"日"	4594	1900	number	明治45年7月29日		
+r9g-taisho-01	[$-411]g"|"gg"|"ggg	4595	1900	number	T|大|大正		
+r9g-taisho-02	[$-411]g"|"gg"|"ggg	4594	1900	number	M|明|明治		
+r9e-taisho-01	[$-411]e"|"ee	4595	1900	number	1|01		
+r9e-taisho-02	[$-411]e"|"ee	4594	1900	number	45|45		
+r9a-showa-01	[$-411]ggge"年"m"月"d"日"	9856	1900	number	昭和1年12月25日		
+r9a-showa-02	[$-411]ggge"年"m"月"d"日"	9855	1900	number	大正15年12月24日		
+r9g-showa-01	[$-411]g"|"gg"|"ggg	9856	1900	number	S|昭|昭和		
+r9g-showa-02	[$-411]g"|"gg"|"ggg	9855	1900	number	T|大|大正		
+r9e-showa-01	[$-411]e"|"ee	9856	1900	number	1|01		
+r9e-showa-02	[$-411]e"|"ee	9855	1900	number	15|15		
+r9a-heisei-01	[$-411]ggge"年"m"月"d"日"	32516	1900	number	平成1年1月8日		
+r9a-heisei-02	[$-411]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r9g-heisei-01	[$-411]g"|"gg"|"ggg	32516	1900	number	H|平|平成		
+r9g-heisei-02	[$-411]g"|"gg"|"ggg	32515	1900	number	S|昭|昭和		
+r9e-heisei-01	[$-411]e"|"ee	32516	1900	number	1|01		
+r9e-heisei-02	[$-411]e"|"ee	32515	1900	number	64|64		
+r9a-reiwa-01	[$-411]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日		
+r9a-reiwa-02	[$-411]ggge"年"m"月"d"日"	43585	1900	number	平成31年4月30日		
+r9g-reiwa-01	[$-411]g"|"gg"|"ggg	43586	1900	number	R|令|令和		
+r9g-reiwa-02	[$-411]g"|"gg"|"ggg	43585	1900	number	H|平|平成		
+r9e-reiwa-01	[$-411]e"|"ee	43586	1900	number	1|01		
+r9e-reiwa-02	[$-411]e"|"ee	43585	1900	number	31|31		
+r9y-01	[$-411]ggge"年"m"月"d"日"	61	1900	number	明治33年3月1日		
+r9y-02	[$-411]ggge"年"m"月"d"日"	4594	1900	number	明治45年7月29日		
+r9y-03	[$-411]ggge"年"m"月"d"日"	12950	1900	number	昭和10年6月15日		
+r9y-04	[$-411]ggge"年"m"月"d"日"	23660	1900	number	昭和39年10月10日		
+r9y-05	[$-411]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r9y-06	[$-411]ggge"年"m"月"d"日"	35827	1900	number	平成10年2月1日		
+r9y-07	[$-411]ggge"年"m"月"d"日"	43585	1900	number	平成31年4月30日		
+r9y-08	[$-411]ggge"年"m"月"d"日"	43830	1900	number	令和1年12月31日		
+r9y-09	[$-411]ggge"年"m"月"d"日"	43831	1900	number	令和2年1月1日		
+r9y-10	[$-411]ggge"年"m"月"d"日"	46022	1900	number	令和7年12月31日		
+r9y-11	[$-411]e"|"ee	61	1900	number	33|33		
+r9y-12	[$-411]e"|"ee	4594	1900	number	45|45		
+r9y-13	[$-411]e"|"ee	12950	1900	number	10|10		
+r9y-14	[$-411]e"|"ee	23660	1900	number	39|39		
+r9y-15	[$-411]e"|"ee	32515	1900	number	64|64		
+r9y-16	[$-411]e"|"ee	35827	1900	number	10|10		
+r9y-17	[$-411]e"|"ee	43585	1900	number	31|31		
+r9y-18	[$-411]e"|"ee	43830	1900	number	1|01		
+r9y-19	[$-411]e"|"ee	43831	1900	number	2|02		
+r9y-20	[$-411]e"|"ee	46022	1900	number	7|07		
+r9y-21	[$-411]ggge/m/d	61	1900	number	明治33/3/1		
+r9y-22	[$-411]ggge/m/d	4594	1900	number	明治45/7/29		
+r9y-23	[$-411]ggge/m/d	12950	1900	number	昭和10/6/15		
+r9y-24	[$-411]ggge/m/d	23660	1900	number	昭和39/10/10		
+r9y-25	[$-411]ggge/m/d	32515	1900	number	昭和64/1/7		
+r9y-26	[$-411]gge.mm.dd	61	1900	number	明33.03.01		
+r9y-27	[$-411]gge.mm.dd	4594	1900	number	明45.07.29		
+r9y-28	[$-411]gge.mm.dd	12950	1900	number	昭10.06.15		
+r9y-29	[$-411]gge.mm.dd	23660	1900	number	昭39.10.10		
+r9y-30	[$-411]gge.mm.dd	32515	1900	number	昭64.01.07		
+r9y-31	[$-411]yyyy"|"yy"|"e"|"ggg	12950	1900	number	1935|35|10|昭和		
+r9y-32	[$-411]yyyy"|"yy"|"e"|"ggg	23660	1900	number	1964|64|39|昭和		
+r9y-33	[$-411]yyyy"|"yy"|"e"|"ggg	32515	1900	number	1989|89|64|昭和		
+r9s-01	[$-411]ggge"年"m"月"d"日"	1	1900	number	明治33年1月1日		
+r9s-02	[$-411]ggge"年"m"月"d"日"	59	1900	number	明治33年2月28日		
+r9s-03	[$-411]ggge"年"m"月"d"日"	60	1900	number	明治33年2月29日		
+r9s-04	[$-411]ggge"年"m"月"d"日"	61	1900	number	明治33年3月1日		
+r9s-05	[$-411]ggge"年"m"月"d"日"	0.5	1900	number	明治33年1月0日		
+r9s-06	[$-411]g"|"gg"|"ggg"|"e"|"ee	1	1900	number	M|明|明治|33|33		
+r9s-07	[$-411]g"|"gg"|"ggg"|"e"|"ee	60	1900	number	M|明|明治|33|33		
+r9t-01	[$-411]ggge"年"m"月"d"日" h:mm:ss	4594.75	1900	number	明治45年7月29日 18:00:00		
+r9t-02	[$-411]ggge"年"m"月"d"日" h:mm:ss	9855.75	1900	number	大正15年12月24日 18:00:00		
+r9t-03	[$-411]ggge"年"m"月"d"日" h:mm:ss	32515.75	1900	number	昭和64年1月7日 18:00:00		
+r9t-04	[$-411]ggge"年"m"月"d"日" h:mm:ss	43585.75	1900	number	平成31年4月30日 18:00:00		
+r9t-05	[$-411]ggge"年"m"月"d"日" h:mm:ss	43586.0000115741	1900	number	令和1年5月1日 0:00:01		
+r9t-06	[$-411]ggge"年"m"月"d"日" h:mm AM/PM	43586.3784722222	1900	number	令和1年5月1日 9:05 午前		
+r9t-07	[$-411]ggge"年"m"月"d"日" h:mm AM/PM	43585.8784722222	1900	number	平成31年4月30日 9:05 午後		
+r9t-08	[$-411]ggge"年"m"月"d"日" h:mm:ss	43585.9999999	1900	number	令和1年5月1日 0:00:00		
+r9t-09	[$-411]ggge"年"m"月"d"日" h:mm:ss	43585.99999	1900	number	平成31年4月30日 23:59:59		
+r9t-10	[$-411]ggge"年"m"月"d"日"	43585.9999999	1900	number	令和1年5月1日		
+r9t-11	[$-411]ggge"年"m"月"d"日"	43585.99999	1900	number	平成31年4月30日		
+r9t-12	[$-411]ggge"年"m"月"d"日" hh:mm	45539.6041666667	1900	number	令和6年9月4日 14:30		
+r9t-13	[$-411]h:mm:ss	0.5	1900	number	12:00:00		
+r9f-11-01	[$-11]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日		
+r9f-11-02	[$-11]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日		
+r9f-11-03	[$-11]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r9f-11-04	[$-11]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	R|令|令和|1|01		
+r9f-11-05	[$-11]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	S|昭|昭和|64|64		
+r9f-0411-01	[$-0411]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日		
+r9f-0411-02	[$-0411]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日		
+r9f-0411-03	[$-0411]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r9f-0411-04	[$-0411]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	R|令|令和|1|01		
+r9f-0411-05	[$-0411]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	S|昭|昭和|64|64		
+r9f-ja-01	[$-ja]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日		
+r9f-ja-02	[$-ja]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日		
+r9f-ja-03	[$-ja]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r9f-ja-04	[$-ja]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	R|令|令和|1|01		
+r9f-ja-05	[$-ja]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	S|昭|昭和|64|64		
+r9f-ja-JP-01	[$-ja-JP]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日		
+r9f-ja-JP-02	[$-ja-JP]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日		
+r9f-ja-JP-03	[$-ja-JP]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r9f-ja-JP-04	[$-ja-JP]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	R|令|令和|1|01		
+r9f-ja-JP-05	[$-ja-JP]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	S|昭|昭和|64|64		
+r9f-ja-jp-01	[$-ja-jp]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日		
+r9f-ja-jp-02	[$-ja-jp]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日		
+r9f-ja-jp-03	[$-ja-jp]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r9f-ja-jp-04	[$-ja-jp]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	R|令|令和|1|01		
+r9f-ja-jp-05	[$-ja-jp]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	S|昭|昭和|64|64		
+r9f-JA-JP-01	[$-JA-JP]ggge"年"m"月"d"日"	45539.6046875	1900	number	令和6年9月4日		
+r9f-JA-JP-02	[$-JA-JP]ggge"年"m"月"d"日"	43586	1900	number	令和1年5月1日		
+r9f-JA-JP-03	[$-JA-JP]ggge"年"m"月"d"日"	32515	1900	number	昭和64年1月7日		
+r9f-JA-JP-04	[$-JA-JP]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	R|令|令和|1|01		
+r9f-JA-JP-05	[$-JA-JP]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	S|昭|昭和|64|64		
+r9n-409-01	[$-409]g"|"gg"|"ggg"|"e"|"ee	45539.6046875	1900	number	|||2024|2024		
+r9n-409-02	[$-409]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	|||2019|2019		
+r9n-409-03	[$-409]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	|||1989|1989		
+r9n-404-01	[$-404]g"|"gg"|"ggg"|"e"|"ee	45539.6046875	1900	number	|||2024|2024		
+r9n-404-02	[$-404]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	|||2019|2019		
+r9n-404-03	[$-404]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	|||1989|1989		
+r9n-412-01	[$-412]g"|"gg"|"ggg"|"e"|"ee	45539.6046875	1900	number	|||2024|2024		
+r9n-412-02	[$-412]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	|||2019|2019		
+r9n-412-03	[$-412]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	|||1989|1989		
+r9n-804-01	[$-804]g"|"gg"|"ggg"|"e"|"ee	45539.6046875	1900	number	|||2024|2024		
+r9n-804-02	[$-804]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	|||2019|2019		
+r9n-804-03	[$-804]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	|||1989|1989		
+r9n-40C-01	[$-40C]g"|"gg"|"ggg"|"e"|"ee	45539.6046875	1900	number	|||2024|2024		
+r9n-40C-02	[$-40C]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	|||2019|2019		
+r9n-40C-03	[$-40C]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	|||1989|1989		
+r9n-41F-01	[$-41F]g"|"gg"|"ggg"|"e"|"ee	45539.6046875	1900	number	|||2024|2024		
+r9n-41F-02	[$-41F]g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	|||2019|2019		
+r9n-41F-03	[$-41F]g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	|||1989|1989		
+r9n-none-01	g"|"gg"|"ggg"|"e"|"ee	45539.6046875	1900	number	|||2024|2024		
+r9n-none-02	g"|"gg"|"ggg"|"e"|"ee	43586	1900	number	|||2019|2019		
+r9n-none-03	g"|"gg"|"ggg"|"e"|"ee	32515	1900	number	|||1989|1989		
+r9n-none-04	ggge"年"m"月"d"日"	45539.6046875	1900	number	2024年9月4日		
+r9n-none-05	ggge"年"m"月"d"日"	32515	1900	number	1989年1月7日		
+r9n-409-04	[$-409]ggge"年"m"月"d"日"	45539.6046875	1900	number	2024年9月4日		
+r9n-409-05	[$-409]ggge"年"m"月"d"日"	32515	1900	number	1989年1月7日		
+r9n-none-06	ggg"|"gg"|"g	45539.6046875	1900	number	||		
+r9z-01	[$-411]ggge"年"m"月"d"日"	42124	1904	number	令和1年5月1日		
+r9z-02	[$-411]ggge"年"m"月"d"日"	42123	1904	number	平成31年4月30日		
+r9z-03	[$-411]ggge"年"m"月"d"日"	31054	1904	number	平成1年1月8日		
+r9z-04	[$-411]e"|"ee	42124	1904	number	1|01		
+r9z-05	[$-411]e"|"ee	31053	1904	number	64|64		
 r10t-01	[$-zh-Hans-CN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|9月|九月|九|2 下午		
 r10t-02	[$-zh-Hans-SG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|九月|九月|九|2 下午		
 r10t-03	[$-zh-Hans-HK]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	周三|星期三|9月|九月|九|2 下午		
@@ -2803,3 +2941,94 @@ r10t-06	[$-zh-Hant-TW]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	19
 r10t-07	[$-zh-Hant-MO]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
 r10t-08	[$-zh-Hant-CN]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
 r10t-09	[$-zh-Hant-SG]ddd"|"dddd"|"mmm"|"mmmm"|"mmmmm"|"h AM/PM	45539.6046875	1900	number	週三|星期三|9月|9月|9|2 下午		
+r11-g1-01	0 g	5	1900	number	5		
+r11-g1-02	0 g	-5	1900	number	-5		
+r11-g1-03	0 g	0	1900	number	0		
+r11-g1-04	0 g	0.5	1900	number	0.5		
+r11-g1-05	0 g	abc	1900	text	abc		
+r11-g2-01	0.0 g	5	1900	number	5		
+r11-g2-02	0.0 g	-5	1900	number	-5		
+r11-g2-03	0.0 g	0	1900	number	0		
+r11-g2-04	0.0 g	0.5	1900	number	0.5		
+r11-g2-05	0.0 g	abc	1900	text	abc		
+r11-g3-01	0.0 kg	5	1900	number	5		
+r11-g3-02	0.0 kg	-5	1900	number	-5		
+r11-g3-03	0.0 kg	0	1900	number	0		
+r11-g3-04	0.0 kg	0.5	1900	number	0.5		
+r11-g3-05	0.0 kg	abc	1900	text	abc		
+r11-g4-01	0;0;0;g	5	1900	number	5		
+r11-g4-02	0;0;0;g	-5	1900	number	-5		
+r11-g4-03	0;0;0;g	0	1900	number	0		
+r11-g4-04	0;0;0;g	0.5	1900	number	0.5		
+r11-g4-05	0;0;0;g	abc	1900	text	abc		
+r11-g5-01	@ g	5	1900	number	5		
+r11-g5-02	@ g	-5	1900	number	-5		
+r11-g5-03	@ g	0	1900	number	0		
+r11-g5-04	@ g	0.5	1900	number	0.5		
+r11-g5-05	@ g	abc	1900	text	abc		
+r11-e1-01	0 e	5	1900	number	5		
+r11-e1-02	0 e	-5	1900	number	-5		
+r11-e1-03	0 e	0	1900	number	0		
+r11-e1-04	0 e	0.5	1900	number	0.5		
+r11-e1-05	0 e	abc	1900	text	abc		
+r11-e2-01	0.0 e	5	1900	number	5		
+r11-e2-02	0.0 e	-5	1900	number	-5		
+r11-e2-03	0.0 e	0	1900	number	0		
+r11-e2-04	0.0 e	0.5	1900	number	0.5		
+r11-e2-05	0.0 e	abc	1900	text	abc		
+r11-e3-01	0;0;0;e	5	1900	number	5		
+r11-e3-02	0;0;0;e	-5	1900	number	-5		
+r11-e3-03	0;0;0;e	0	1900	number	0		
+r11-e3-04	0;0;0;e	0.5	1900	number	0.5		
+r11-e3-05	0;0;0;e	abc	1900	text	abc		
+r11-ja-upper-01	[$-411]GGGE"年"m"月"d"日"	45539.6046875	1900	number	45539.60469		
+r11-ja-upper-02	[$-411]GGGE"年"m"月"d"日"	43586	1900	number	43586		
+r11-ja-upper-03	[$-411]GGGE"年"m"月"d"日"	32515	1900	number	32515		
+r11-ja-upper-04	[$-411]GGGe"年"	45539.6046875	1900	number	令和6年		
+r11-ja-upper-05	[$-411]GGGe"年"	43586	1900	number	令和1年		
+r11-ja-upper-06	[$-411]GGGe"年"	32515	1900	number	昭和64年		
+r11-ja-upper-07	[$-411]gggE"年"	45539.6046875	1900	number	45539.60469		
+r11-ja-upper-08	[$-411]gggE"年"	43586	1900	number	43586		
+r11-ja-upper-09	[$-411]gggE"年"	32515	1900	number	32515		
+r11-ja-upper-10	[$-411]G"|"GG"|"GGG	45539.6046875	1900	number	R|令|令和		
+r11-ja-upper-11	[$-411]G"|"GG"|"GGG	43586	1900	number	R|令|令和		
+r11-ja-upper-12	[$-411]G"|"GG"|"GGG	32515	1900	number	S|昭|昭和		
+r11-ja-upper-13	[$-411]E"|"EE"|"e"|"ee	45539.6046875	1900	number	45539.60469		
+r11-ja-upper-14	[$-411]E"|"EE"|"e"|"ee	43586	1900	number	43586		
+r11-ja-upper-15	[$-411]E"|"EE"|"e"|"ee	32515	1900	number	32515		
+r11-none-upper-01	GGGE"年"m"月"d"日"	45539.6046875	1900	number	45539.60469		
+r11-none-upper-02	GGGE"年"m"月"d"日"	43586	1900	number	43586		
+r11-none-upper-03	GGGE"年"m"月"d"日"	32515	1900	number	32515		
+r11-none-upper-04	GGGe"年"	45539.6046875	1900	number	2024年		
+r11-none-upper-05	GGGe"年"	43586	1900	number	2019年		
+r11-none-upper-06	GGGe"年"	32515	1900	number	1989年		
+r11-none-upper-07	gggE"年"	45539.6046875	1900	number	45539.60469		
+r11-none-upper-08	gggE"年"	43586	1900	number	43586		
+r11-none-upper-09	gggE"年"	32515	1900	number	32515		
+r11-none-upper-10	G"|"GG"|"GGG	45539.6046875	1900	number	||		
+r11-none-upper-11	G"|"GG"|"GGG	43586	1900	number	||		
+r11-none-upper-12	G"|"GG"|"GGG	32515	1900	number	||		
+r11-none-upper-13	E"|"EE"|"e"|"ee	45539.6046875	1900	number	45539.60469		
+r11-none-upper-14	E"|"EE"|"e"|"ee	43586	1900	number	43586		
+r11-none-upper-15	E"|"EE"|"e"|"ee	32515	1900	number	32515		
+r11-ja-run-01	[$-411]eee	45539.6046875	1900	number	06		
+r11-ja-run-02	[$-411]eee	43586	1900	number	01		
+r11-ja-run-03	[$-411]eee	32515	1900	number	64		
+r11-ja-run-04	[$-411]eeee	45539.6046875	1900	number	06		
+r11-ja-run-05	[$-411]eeee	43586	1900	number	01		
+r11-ja-run-06	[$-411]eeee	32515	1900	number	64		
+r11-ja-run-07	[$-411]eeeee	45539.6046875	1900	number	06		
+r11-ja-run-08	[$-411]eeeee	43586	1900	number	01		
+r11-ja-run-09	[$-411]eeeee	32515	1900	number	64		
+r11-ja-run-10	[$-411]gggg	45539.6046875	1900	number	令和		
+r11-ja-run-11	[$-411]gggg	43586	1900	number	令和		
+r11-ja-run-12	[$-411]gggg	32515	1900	number	昭和		
+r11-ja-run-13	[$-411]ggggg	45539.6046875	1900	number	令和		
+r11-ja-run-14	[$-411]ggggg	43586	1900	number	令和		
+r11-ja-run-15	[$-411]ggggg	32515	1900	number	昭和		
+r11-ja-run-16	[$-411]gggge	45539.6046875	1900	number	令和6		
+r11-ja-run-17	[$-411]gggge	43586	1900	number	令和1		
+r11-ja-run-18	[$-411]gggge	32515	1900	number	昭和64		
+r11-ja-run-19	[$-411]ggggg"|"e	45539.6046875	1900	number	令和|6		
+r11-ja-run-20	[$-411]ggggg"|"e	43586	1900	number	令和|1		
+r11-ja-run-21	[$-411]ggggg"|"e	32515	1900	number	昭和|64		
