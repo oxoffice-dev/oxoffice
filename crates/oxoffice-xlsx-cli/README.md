@@ -34,7 +34,8 @@ built by the `oxoffice-cli` crate.
   with `-` goes after `--`.
 - `oxoffice xlsx import-csv FILE CSV [--sheet S] [--at A1] [--text] -o OUT`:
   a UTF-8 CSV written from a cell, fields typed strictly or kept as text.
-  `--drop-cached-values` and `--force` go with every command that writes.
+  `--force` goes with every command that writes, `--drop-cached-values` with
+  `edit`, `set` and `import-csv` (`new` writes no formula).
 - `oxoffice xlsx text FILE [--json | --markdown] [--sheet S]...`: the cells of
   each worksheet as Excel displays them, as tab-separated rows, one Markdown
   table per sheet headed by the column letters, or a schema-1 record with
