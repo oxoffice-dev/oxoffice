@@ -63,19 +63,20 @@ READS = [
 ]
 
 
-def placed(rows):
-    """Every text on one field of one package (one parser reads them all), and a few on each of the others."""
-    few = [row for row in rows if row[0] in ("2026-11-21T10:00:00Z", "2026-11-21T10:00:00-05:30", "not a date")]
-    every = [(oxdocx, "created", *row) for row in rows]
-    return every + [(package, field, *row) for package in (oxdocx, oxpptx) for field in FIELDS
-                    if (package, field) != (oxdocx, "created") for row in few]
+def placed(rows, also):
+    """Every text on one field of one package (one parser reads them all), the `also` fields with all of them too, and
+    three of them on each of the others."""
+    few = [row for row in READS if row[0] in ("2026-11-21T10:00:00Z", "2026-11-21T10:00:00-05:30", "not a date")]
+    every = [(oxdocx, "created"), *also]
+    return [(package, field, *row) for package in (oxdocx, oxpptx) for field in FIELDS
+            for row in (rows if (package, field) in every else few if rows is READS else [])]
 
 
 def ids(cases):
     return [f"{package.__name__.split('.')[-1]}-{field}-{text}" for package, field, text, _ in cases]
 
 
-READ_CASES = placed(READS)
+READ_CASES = placed(READS, [])
 
 
 @pytest.mark.parametrize(("package", "field", "text", "expected"), READ_CASES, ids=ids(READ_CASES))
@@ -96,7 +97,8 @@ TAILS = [
 ]
 
 
-TAIL_CASES = placed(TAILS)
+# The tails run on a second field of Word and on a field of PowerPoint, which read the date with a reader of their own.
+TAIL_CASES = placed(TAILS, [(oxdocx, "modified"), (oxpptx, "last_printed")])
 
 
 @pytest.mark.parametrize(("package", "field", "text", "expected"), TAIL_CASES, ids=ids(TAIL_CASES))

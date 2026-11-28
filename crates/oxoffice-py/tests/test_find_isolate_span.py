@@ -61,8 +61,8 @@ def owner_paragraph(doc, owner):
     return doc.tables[0].cell(1, 0).paragraphs[0] if owner == "cell" else doc.section(0).header.paragraphs[0]
 
 
-# The owner of the paragraph and the producer of the file are independent: each takes one of the two.
-@pytest.mark.parametrize(("producer", "owner", "word"), [("word", "cell", "revenue"), ("google", "header", "Analytics")])
+@pytest.mark.parametrize("producer", PRODUCERS)
+@pytest.mark.parametrize(("owner", "word"), [("cell", "revenue"), ("header", "Analytics")])
 def test_a_span_in_a_table_cell_or_a_header_is_isolated_and_saved(producer, owner, word):
     doc = report(producer)
     paragraph = owner_paragraph(doc, owner)

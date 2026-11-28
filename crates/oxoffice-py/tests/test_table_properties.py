@@ -122,8 +122,8 @@ def test_a_refused_property_edit_leaves_the_document_as_it_was(producer):
     assert oxdocx.Document.from_bytes(doc.to_bytes()).tables[0].cell(1, 0).paragraphs[0].runs[0].bold is True
 
 
-# The owner of the table and the producer of the file are independent: each takes one of the two.
-@pytest.mark.parametrize(("producer", "owner"), [("word", "cell"), ("google", "header")])
+@pytest.mark.parametrize("producer", PRODUCERS)
+@pytest.mark.parametrize("owner", ["cell", "header"])
 def test_a_table_in_a_cell_or_a_header_takes_property_edits(producer, owner):
     doc = report(producer)
     if owner == "cell":

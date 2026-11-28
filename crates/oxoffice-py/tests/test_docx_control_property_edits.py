@@ -93,8 +93,10 @@ SETTERS = {
 
 TAGS = ["probe0", "inline", "cell", "boxed"]
 # Every setter edits through one route (the body block that holds the control), which depends on where the control sits
-# and not on the property: each setter on the block control, and the tag on each of the other places.
-PLACED = [(setter, "probe0") for setter in sorted(SETTERS)] + [("tag", tag) for tag in TAGS[1:]]
+# and not on the property, but for the type and the binding, which the route checks and writes of their own: each
+# setter on the block control, the tag on each of the other places, the type and the binding on the cell and the box.
+PLACED = ([(setter, "probe0") for setter in sorted(SETTERS)] + [("tag", tag) for tag in TAGS[1:]]
+          + [(setter, tag) for setter in ("type", "binding") for tag in ("cell", "boxed")])
 
 
 class Bound:
@@ -170,7 +172,11 @@ REFUSED = {
 }
 
 
-@pytest.mark.parametrize(("refused", "tag"), [(r, "probe0") for r in sorted(REFUSED)] + [("tag", t) for t in TAGS[1:]])
+REFUSED_PLACED = ([(r, "probe0") for r in sorted(REFUSED)] + [("tag", t) for t in TAGS[1:]]
+                  + [(r, t) for r in ("type", "binding to a missing node") for t in ("cell", "boxed")])
+
+
+@pytest.mark.parametrize(("refused", "tag"), REFUSED_PLACED)
 def test_a_refused_property_leaves_the_document_as_it_was(saved, refused, tag):
     holder = opened(saved, "binding")
     doc = holder.doc

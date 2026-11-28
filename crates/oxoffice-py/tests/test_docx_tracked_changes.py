@@ -160,6 +160,26 @@ def view(data, resolve=None, xml=False):
     return [(p.kind, p.text, p.style) for p in doc.story_paragraphs] + marks
 
 
+NAMES = re.compile(rb"(probe_|Probe style |Probestyle|Probe |Replaced|Added)\d+")
+VOLATILE = [
+    (NAMES, rb"\1"),
+    (re.compile(rb"\{[0-9A-F-]{36}\}"), b"{}"),
+    (re.compile(rb'(date|dateUtc)="[^"]*"'), rb'\1=""'),
+]
+
+
+def parts(data):
+    """The parts of a package, without the counter the recipes give the names they make (probe_5, Probestyle6) and the
+    identifiers and the time of day a call takes."""
+    found = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for name in z.namelist():
+            found[name] = z.read(name)
+            for pattern, replacement in VOLATILE:
+                found[name] = pattern.sub(replacement, found[name])
+    return found
+
+
 def ready(doc, name):
     """The call `name` on doc, its targets made: it runs when called."""
     if name in WHOLE:
@@ -183,9 +203,13 @@ def test_the_class_table_names_calls_there_are():
 # The class matrix below checks, for every call, that the session does what its class says and that the call without
 # a session runs, saves and reopens. Resolving the changes both ways (the twin and the original document compared
 # after accept_all and reject_all, four reads of the document) is the Rust redliner's, tested there: here it runs for
-# every call that writes an edit of its own kind (tracked) and for the first call of each formatting class, whose
-# other calls differ by the property they set, not by how it is recorded.
-RESOLVED = {name for name in CALLS if kind(name) == "tracked"}
+# every call that writes an edit of its own kind (tracked), for the first call of each formatting class, whose
+# other calls differ by the property they set, not by how it is recorded, and for the calls that write another part of
+# the properties than their class (a grid, a style, a numbering, a page border, the note policy and the first page).
+RESOLVED = {name for name in CALLS if kind(name) == "tracked"} | {
+    "Table.grid_widths", "Run.style_id", "Paragraph.numbering", "SectionHandle.set_page_border",
+    "SectionHandle.different_first_page_header_footer", "SectionHandle.set_note_policy",
+}
 for _name in sorted(CALLS):
     if kind(_name) == "formatting":
         RESOLVED.add(next(n for n in sorted(CALLS) if kind(n) == "formatting" and n.split(".")[0] == _name.split(".")[0]))
@@ -205,22 +229,22 @@ def test_every_call_behaves_as_its_class(saved, name):
         else:
             call()
     after = doc.to_bytes()
-    if kind(name) not in ("tracked", "formatting"):
-        assert session.revision_ids == ()
-        if kind(name) == "refused":
-            assert after == before
-            if name in WHOLE:
-                return  # a whole-document recipe only has well formed arguments, a refused one never reads them
-            call()  # the document it left is the one it was opened as: the call runs as without a session
-            after = doc.to_bytes()
-        # An untracked call ran as without a session, and the document it leaves saves and opens again.
-        oxdocx.Document.from_bytes(after)
+    if kind(name) == "refused":
+        assert session.revision_ids == () and after == before
+        if name in WHOLE:
+            return  # a whole-document recipe only has well formed arguments, a refused one never reads them
+        call()  # the document it left is the one it was opened as: the call runs as without a session
+        oxdocx.Document.from_bytes(doc.to_bytes())
         return
     # Without a session the call runs, and the document it leaves saves and opens again.
     twin = oxdocx.Document.open(saved)
     ready(twin, name)()
     twin_bytes = twin.to_bytes()
     oxdocx.Document.from_bytes(twin_bytes)
+    if kind(name) == "untracked":
+        # Word records no revision for it: the session runs it as a plain call does.
+        assert session.revision_ids == () and parts(after) == parts(twin_bytes)
+        return
     xml = kind(name) == "formatting"
     # A call that sets what the document already holds writes nothing.
     assert session.revision_ids or view(after, None, xml) == view(before, None, xml)
