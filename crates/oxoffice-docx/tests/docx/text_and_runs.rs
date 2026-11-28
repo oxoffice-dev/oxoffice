@@ -398,38 +398,6 @@ fn first_page_lines(doc: &Document) -> Vec<String> {
 }
 
 #[test]
-fn a_word_split_across_runs_is_not_broken_where_its_runs_meet() {
-    // Word splits a word's runs at each editing session. Whichever line the
-    // word lands on, it stays whole, hyphenated or not.
-    for (start, rest, hyphenate) in [
-        ("keepi", "ng the existing budget", false),
-        ("inter", "nationalization of the budget", true),
-    ] {
-        for width in 0..12 {
-            let filler = format!("{}{}", "word ".repeat(16), "i".repeat(width));
-            let run = |text: &str| {
-                format!(
-                    r#"<w:r><w:rPr><w:lang w:val="en-US"/></w:rPr><w:t xml:space="preserve">{text}</w:t></w:r>"#
-                )
-            };
-            let mut doc = doc_with_body(&format!(
-                "<w:p>{}{}</w:p>",
-                run(&format!("{filler} {start}")),
-                run(&format!("{rest} and more words to wrap.")),
-            ));
-            if hyphenate {
-                doc.set_auto_hyphenation(true).unwrap();
-            }
-            let lines = first_page_lines(&doc);
-            assert!(
-                lines.iter().all(|line| !line.trim_end().ends_with(start)),
-                "{start}|{rest} breaks where its runs meet: {lines:?}"
-            );
-        }
-    }
-}
-
-#[test]
 fn a_word_wider_than_the_line_is_broken_where_it_overflows() {
     // Word breaks a word with no break opportunity at the character that
     // overflows the line, whether it is one run or split across several, and
@@ -652,24 +620,6 @@ fn counted_replacement_changes_nothing_when_a_count_is_wrong() {
 }
 
 #[test]
-fn replace_text_reaches_headers_footers_and_table_cells() {
-    let mut doc = doc_with(&["Body {{x}}"]);
-    doc.set_header("Header {{x}}");
-    doc.set_footer("Footer {{x}}");
-    doc.add_table(1, 2)
-        .cell(0, 1)
-        .unwrap()
-        .set_text("Cell {{x}}");
-
-    assert_eq!(doc.replace_text("{{x}}", "done"), 4);
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.paragraph(0).unwrap().text(), "Body done");
-    assert_eq!(doc.header_text().as_deref(), Some("Header done"));
-    assert_eq!(doc.footer_text().as_deref(), Some("Footer done"));
-    assert!(doc.text().contains("Cell done"), "{:?}", doc.text());
-}
-
-#[test]
 fn regex_replacement_supports_capture_groups_and_refuses_a_bad_pattern() {
     let mut doc = doc_with(&["Due 2026-11-21 and 2027-01-05."]);
     assert_eq!(
@@ -683,20 +633,6 @@ fn regex_replacement_supports_capture_groups_and_refuses_a_bad_pattern() {
     let error = doc.replace_regex("(", "x").unwrap_err();
     assert!(error.to_string().contains("invalid regex"), "{error}");
     assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
-fn text_xml_cannot_carry_is_refused_with_its_code_point() {
-    let mut doc = doc_with(&["value"]);
-    let error = doc.try_replace_text("value", "bad\u{1}").unwrap_err();
-    assert!(error.to_string().contains("U+0001"), "{error}");
-    assert_eq!(texts(&doc), ["value"]);
-    assert_eq!(doc.try_replace_text("value", "good").unwrap(), 1);
-    assert_eq!(texts(&doc), ["good"]);
-
-    // A run cannot refuse: it drops the character, and the document saves.
-    doc.paragraph_mut(0).unwrap().add_run("vertical\u{b}tab");
-    assert_eq!(texts(&reopen(&mut doc)), ["goodverticaltab"]);
 }
 
 #[test]
@@ -801,47 +737,6 @@ fn a_break_keeps_where_its_text_restarts_through_an_edit_and_a_reopen() {
         let source = format!("<w:t>complex</w:t><w:br {attributes}/>");
         assert!(xml.contains(&source), "{attributes}: {source}: {xml}");
     }
-}
-
-#[test]
-fn a_break_that_clears_nothing_is_written_without_a_clear() {
-    // `none` is the default and an unknown value reads as it: both are
-    // written as absent, as Word writes a plain break.
-    for (attributes, written) in [
-        (r#"w:type="textWrapping" w:clear="none""#, "<w:br/>"),
-        (r#"w:clear="sideways""#, "<w:br/>"),
-        (
-            r#"w:type="page" w:clear="none""#,
-            r#"<w:br w:type="page"/>"#,
-        ),
-    ] {
-        let mut doc = doc_with_breaks(attributes);
-        assert_eq!(doc.replace_text("before", "Before"), 1);
-        let doc = reopen(&mut doc);
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        assert!(
-            xml.contains(&format!("<w:t>Before</w:t>{written}")),
-            "{attributes}: {written}: {xml}"
-        );
-    }
-}
-
-#[test]
-fn a_match_over_a_symbol_in_a_run_keeps_the_symbol() {
-    // A symbol has no text, so a search reads over it; the replacement takes
-    // the matched text and leaves the symbol after it.
-    let mut doc = doc_with_body(
-        r#"<w:p><w:r><w:t xml:space="preserve">before </w:t><w:sym w:font="Wingdings" w:char="F04A"/><w:t>x</w:t></w:r></w:p>"#,
-    );
-    assert_eq!(texts(&doc), ["before x"]);
-    assert_eq!(doc.replace_text("before x", "after"), 1);
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["after"]);
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    assert!(
-        xml.contains(r#">after</w:t><w:sym w:font="Wingdings" w:char="F04A"/>"#),
-        "the symbol stays after the replacement: {xml}"
-    );
 }
 
 // ---- Producer files ----
@@ -1101,20 +996,6 @@ fn run_measures_written_with_a_unit_open() {
     assert_eq!(doc.paragraph(0).unwrap().text(), "Wide");
 }
 
-#[test]
-fn ruby_sizes_written_with_a_unit_read_as_half_points() {
-    let doc = crate::support::doc_with_body(concat!(
-        r#"<w:p><w:ruby><w:rubyPr><w:hps w:val="5pt"/><w:hpsRaise w:val="9pt"/><w:hpsBaseText w:val="10.5pt"/>"#,
-        r#"<w:lid w:val="ja-JP"/></w:rubyPr><w:rt><w:r><w:t>とうきょう</w:t></w:r></w:rt>"#,
-        r#"<w:rubyBase><w:r><w:t>東京</w:t></w:r></w:rubyBase></w:ruby></w:p>"#,
-    ));
-    let paragraph = doc.paragraph(0).unwrap();
-    let properties = paragraph.ruby(0).unwrap().properties.as_ref().unwrap();
-    assert_eq!(properties.hps.map(|hps| hps.0), Some(10));
-    assert_eq!(properties.hps_raise.map(|hps| hps.0), Some(18));
-    assert_eq!(properties.hps_base_text.map(|hps| hps.0), Some(21));
-}
-
 /// A phonetic guide as Word writes it, inside a run that carries an rsid and
 /// its own properties, between two runs of text.
 const RUBY_IN_A_RUN: &str = concat!(
@@ -1124,44 +1005,6 @@ const RUBY_IN_A_RUN: &str = concat!(
     r#"<w:rubyBase><w:r><w:t>Ground</w:t></w:r></w:rubyBase></w:ruby></w:r>"#,
     r#"<w:r><w:t xml:space="preserve"> after</w:t></w:r></w:p>"#,
 );
-
-#[test]
-fn a_ruby_inside_a_run_reads_its_base_text_and_is_written_back_in_its_run() {
-    let mut doc = crate::support::doc_with_body(RUBY_IN_A_RUN);
-    let paragraph = doc.paragraph(0).unwrap();
-    assert_eq!(paragraph.text(), "Before Ground after");
-    let ruby = paragraph.ruby(0).expect("the guide is read");
-    assert_eq!(
-        ruby.properties.as_ref().unwrap().hps.map(|hps| hps.0),
-        Some(10)
-    );
-    let run = ruby.run.as_ref().expect("the guide remembers its run");
-    assert_eq!(
-        run.attributes,
-        [("rsidR".to_owned(), "00AB12CD".to_owned())]
-    );
-    assert_eq!(run.properties.as_ref().and_then(|rpr| rpr.bold), Some(true));
-
-    // Written back in its run, base and phonetic line in place.
-    let mut doc = reopen(&mut doc);
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    assert!(
-        xml.contains(r#"<w:r w:rsidR="00AB12CD"><w:rPr><w:b/></w:rPr><w:ruby>"#)
-            && xml.contains("<w:rubyBase><w:r><w:t>Ground</w:t></w:r></w:rubyBase></w:ruby></w:r>"),
-        "{xml}"
-    );
-    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Ground after");
-
-    // An edit of the base text is kept in the guide.
-    assert_eq!(doc.replace_text("Ground", "Earth"), 1);
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Earth after");
-    assert!(
-        doc.part_xml("word/document.xml")
-            .unwrap()
-            .contains("<w:rubyBase><w:r><w:t>Earth</w:t></w:r></w:rubyBase></w:ruby></w:r>")
-    );
-}
 
 #[test]
 fn a_ruby_in_a_run_with_the_empty_properties_libreoffice_writes_reads_as_a_guide() {
@@ -1200,26 +1043,6 @@ fn a_ruby_run_whose_attribute_holds_a_greater_than_sign_keeps_its_properties() {
 }
 
 #[test]
-fn a_ruby_read_in_its_paragraph_is_written_back_there() {
-    let body = RUBY_IN_A_RUN
-        .replace(
-            r#"<w:r w:rsidR="00AB12CD"><w:rPr><w:b/></w:rPr><w:ruby>"#,
-            "<w:ruby>",
-        )
-        .replace("</w:ruby></w:r>", "</w:ruby>");
-    let mut doc = crate::support::doc_with_body(&body);
-    assert!(doc.paragraph(0).unwrap().ruby(0).unwrap().run.is_none());
-    doc.replace_text("Ground", "Earth");
-    let doc = reopen(&mut doc);
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    assert!(
-        xml.contains(" </w:t></w:r><w:ruby>") && xml.contains("</w:rubyBase></w:ruby><w:r>"),
-        "{xml}"
-    );
-    assert_eq!(doc.paragraph(0).unwrap().text(), "Before Earth after");
-}
-
-#[test]
 fn an_inserted_ruby_in_a_run_is_the_content_of_its_insertion() {
     let body = RUBY_IN_A_RUN
         .replace(
@@ -1251,22 +1074,6 @@ fn a_run_holding_a_ruby_and_text_stays_a_run() {
 }
 
 #[test]
-fn an_added_ruby_is_written_inside_a_run_as_word_writes_it() {
-    let mut doc = doc_with(&[]);
-    let mut paragraph = doc.add_paragraph("Before ");
-    paragraph.add_ruby("東京", "とうきょう");
-    let doc = reopen(&mut doc);
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    assert!(
-        xml.contains("<w:r><w:ruby><w:rt><w:r><w:t>とうきょう</w:t></w:r></w:rt><w:rubyBase><w:r><w:t>東京</w:t></w:r></w:rubyBase></w:ruby></w:r>"),
-        "{xml}"
-    );
-    let paragraph = doc.paragraph(0).unwrap();
-    assert_eq!(paragraph.text(), "Before 東京");
-    assert!(paragraph.ruby(0).unwrap().run.is_some());
-}
-
-#[test]
 fn run_measures_with_a_unit_pass_the_checked_paragraph_route() {
     let mut doc = doc_with(&["Old"]);
     let location = doc.paragraph_story_location(0).unwrap().unwrap();
@@ -1282,18 +1089,6 @@ fn run_measures_with_a_unit_pass_the_checked_paragraph_route() {
     doc.replace_paragraph_xml(&location, &paragraph("12pt"))
         .unwrap();
     assert_eq!(doc.paragraph(0).unwrap().run(0).unwrap().size(), Some(12.0));
-}
-
-#[test]
-fn a_carriage_return_in_run_text_reads_back_as_set_after_a_save() {
-    let mut doc = doc_with(&["first"]);
-    doc.add_paragraph("line\rend");
-    doc.paragraph_mut(0).unwrap().add_run("a\rb");
-    let saved = doc.to_bytes().unwrap();
-    let doc = reopen(&mut Document::from_bytes(&saved).unwrap());
-    assert_eq!(texts(&doc), ["firsta\rb", "line\rend"]);
-    let xml = doc.part_xml("word/document.xml").unwrap();
-    assert!(xml.contains("line&#13;end") && !xml.contains('\r'), "{xml}");
 }
 
 #[test]

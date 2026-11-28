@@ -212,27 +212,6 @@ fn raw_story(root: &str, children: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// A paragraph holding one inline picture of `cx` by `cy` EMU whose blip
-/// names `relationship`, as a template's header holds it.
-fn raw_picture_paragraph(relationship: &str, id: u32, cx: i64, cy: i64) -> String {
-    format!(
-        concat!(
-            r#"<w:p><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">"#,
-            r#"<wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{id}" name="Picture {id}"/>"#,
-            r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
-            r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="{id}" name="Picture {id}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
-            r#"<pic:blipFill><a:blip r:embed="{relationship}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>"#,
-            r#"<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>"#,
-            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"#,
-            r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
-        ),
-        relationship = relationship,
-        id = id,
-        cx = cx,
-        cy = cy
-    )
-}
-
 /// Where the linked picture of `doc_with_linked_picture` points, as Word
 /// writes a picture inserted with "Link to File".
 const LINKED_ADDRESS: &str = "file:///C:/Images/logo.png";
@@ -1011,83 +990,6 @@ fn a_first_page_header_image_shows_on_the_first_page_only() {
     assert!(saved.relationships("word/document.xml", IMAGE).is_empty());
 }
 
-#[test]
-fn a_header_image_with_a_background_shades_its_paragraph() {
-    let banner = png(8, 1, 55);
-    let mut doc = doc_with(&["Body"]);
-    doc.set_header_image_with_background(
-        &banner,
-        "banner.png",
-        Length::inches(6.0),
-        Length::inches(0.75),
-        "1F3864",
-    );
-    let mut doc = reopen(&mut doc);
-
-    let pictures = header_pictures(&doc);
-    assert_eq!(pictures.len(), 1);
-    assert_eq!(pictures[0].bytes, banner);
-    assert_eq!(
-        (pictures[0].width, pictures[0].height),
-        (5_486_400, 685_800)
-    );
-    let part = header_story(&doc).part_name().to_owned();
-    let saved = Saved::of(&mut doc);
-    assert_eq!(saved.shown_images(&part), [banner]);
-    // No reader gives a header paragraph's shading back.
-    let xml = saved.xml(&part);
-    let shading = element(&xml, "w:pPr");
-    assert!(shading.contains(r#"w:fill="1F3864""#), "{shading}");
-    assert_eq!(values(&xml, "w:fill"), ["1F3864"]);
-}
-
-#[test]
-fn a_raw_footer_shows_each_given_image_through_its_own_relationships() {
-    let (signature, stamp) = (png(5, 1, 99), png(2, 2, 111));
-    let footer = raw_story(
-        "ftr",
-        &format!(
-            "<w:p><w:r><w:t>Signed</w:t></w:r></w:p>{}{}",
-            raw_picture_paragraph("rIdSignature", 1, 2_286_000, 457_200),
-            raw_picture_paragraph("rId7", 2, 457_200, 457_200)
-        ),
-    );
-    let mut doc = doc_with(&["Body"]);
-    doc.set_raw_footer_with_images(
-        footer,
-        &[
-            ("rId7", &stamp, "stamp.png"),
-            ("rIdSignature", &signature, "signature.png"),
-        ],
-        HdrFtrType::Default,
-    );
-    let mut doc = reopen(&mut doc);
-
-    let footer = doc
-        .section_story(0, HeaderFooterKind::Footer, HdrFtrType::Default)
-        .unwrap()
-        .expect("a default footer")
-        .story()
-        .clone();
-    assert_eq!(story_lines(&doc, &footer), ["Signed", "", ""]);
-    let pictures = doc.pictures().unwrap();
-    let in_footer: Vec<_> = pictures
-        .iter()
-        .filter(|picture| picture.location.story().kind() == StoryKind::Footer)
-        .map(|picture| (picture.bytes.clone(), picture.width))
-        .collect();
-    assert_eq!(
-        in_footer,
-        [(signature.clone(), 2_286_000), (stamp.clone(), 457_200)]
-    );
-    assert_eq!(pictures.len(), 2, "no picture elsewhere");
-    assert_eq!(pictures[0].location.story(), &footer);
-    let part = footer.part_name().to_owned();
-    let saved = Saved::of(&mut doc);
-    assert_eq!(saved.shown_images(&part), [signature, stamp]);
-    assert!(saved.relationships("word/document.xml", IMAGE).is_empty());
-}
-
 // ---- Replacing and resizing ----
 
 #[test]
@@ -1518,105 +1420,6 @@ fn an_image_watermark_shows_its_picture_from_the_header() {
         .unwrap_or_else(|| panic!("{} is not an image relationship of {header}", ids[0]));
     assert_eq!(saved.part(target), Some(image.as_slice()));
     assert!(shape.contains("width:216pt;height:144pt"), "{shape}");
-}
-
-#[test]
-fn a_drawingml_image_watermark_is_replaced_then_removed_with_its_media() {
-    let (first, second) = (png(4, 4, 10), png(5, 5, 20));
-    let options = ImageWatermarkOptions {
-        width: Length::inches(4.0),
-        height: Length::inches(2.0),
-        rotation_degrees: 0.0,
-        opacity: 0.3,
-    };
-    let mut doc = doc_with(&["Body"]);
-    doc.set_header("Header text");
-    doc.set_drawingml_image_watermark_for(
-        0,
-        HdrFtrType::Default,
-        &first,
-        "first.png",
-        options.clone(),
-    )
-    .unwrap();
-    let mut doc = reopen(&mut doc);
-    let marks = header_pictures(&doc);
-    assert_eq!(marks.len(), 1);
-    assert_eq!(marks[0].bytes, first);
-    assert!(marks[0].anchored);
-    assert_eq!(
-        (marks[0].width, marks[0].height),
-        (4 * EMU_PER_INCH, 2 * EMU_PER_INCH)
-    );
-    // An opacity of 0.3 is a 30 % alpha on the picture.
-    let saved = Saved::of(&mut doc);
-    let headers: String = saved
-        .entries
-        .iter()
-        .filter(|(name, _)| name.starts_with("word/header"))
-        .map(|(name, _)| saved.xml(name))
-        .collect();
-    assert!(
-        headers.contains(r#"<a:alphaModFix amt="30000"/>"#),
-        "{headers}"
-    );
-
-    doc.set_drawingml_image_watermark_for(0, HdrFtrType::Default, &second, "second.png", options)
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    let marks: Vec<_> = header_pictures(&doc).into_iter().map(|m| m.bytes).collect();
-    assert_eq!(marks, std::slice::from_ref(&second));
-    let saved = Saved::of(&mut doc);
-    let media: Vec<_> = saved.media().into_values().collect();
-    assert_eq!(
-        media,
-        [second.as_slice()],
-        "the first watermark's media is gone"
-    );
-
-    doc.remove_drawingml_watermark_for(0, HdrFtrType::Default)
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    assert!(doc.pictures().unwrap().is_empty());
-    assert!(Saved::of(&mut doc).media().is_empty());
-    let header = header_story(&doc);
-    let first_line = doc.story_items(&header).unwrap()[0].text().unwrap();
-    assert_eq!(first_line.as_deref(), Some("Header text"));
-}
-
-#[test]
-fn a_drawingml_text_watermark_carries_its_text_then_goes() {
-    let mut doc = doc_with(&["Body"]);
-    doc.set_drawingml_text_watermark_for(
-        0,
-        HdrFtrType::Default,
-        "DRAFT ONLY",
-        TextWatermarkOptions::default(),
-        Length::pt(48.0),
-    )
-    .unwrap();
-    let mut doc = reopen(&mut doc);
-
-    let header = header_story(&doc).part_name().to_owned();
-    let xml = Saved::of(&mut doc).xml(&header);
-    let shape = element(&xml, "wps:wsp");
-    for expected in [
-        ">DRAFT ONLY</w:t>",
-        // 48 points in half-points, the default colour and the default
-        // rotation of 315 degrees in 60,000ths of a degree.
-        r#"<w:sz w:val="96"/>"#,
-        r#"<w:color w:val="D9D9D9"/>"#,
-        r#"<a:xfrm rot="18900000">"#,
-    ] {
-        assert!(shape.contains(expected), "{expected} is not in {shape}");
-    }
-
-    doc.remove_drawingml_watermark_for(0, HdrFtrType::Default)
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    let xml = Saved::of(&mut doc).xml(&header);
-    assert!(!xml.contains("DRAFT ONLY"), "{xml}");
-    assert_eq!(texts(&doc), ["Body"]);
 }
 
 #[test]
@@ -2151,61 +1954,6 @@ fn pictures_reaching_the_same_image_through_other_relationships_are_no_change() 
 }
 
 #[test]
-fn only_the_relinked_one_of_two_pictures_sharing_an_image_is_changed() {
-    use PictureTarget::{Address, Media};
-    for placement in [Placement::Body, Placement::Header] {
-        for (first, second, relinked) in [
-            (Media("a.png", 40), Media("a2.png", 40), Media("b.png", 90)),
-            (
-                Address("https://images.example/a.png"),
-                Address("https://images.example/a.png"),
-                Address("https://images.example/b.png"),
-            ),
-        ] {
-            let attribute = if matches!(first, Address(_)) {
-                "r:link"
-            } else {
-                "r:embed"
-            };
-            let mut original = pictures_document(
-                placement,
-                &[(attribute, "rId5"), (attribute, "rId6")],
-                &[("rId5", first), ("rId6", second)],
-            );
-            let mut edited = pictures_document(
-                placement,
-                &[(attribute, "rId5"), (attribute, "rId6")],
-                &[("rId5", relinked), ("rId6", second)],
-            );
-            let mut wanted_original = reopen(&mut original);
-            let mut wanted_edited = reopen(&mut edited);
-            let mut doc = compared(original, &edited);
-            let story = if placement == Placement::Header {
-                StoryKind::Header
-            } else {
-                StoryKind::Body
-            };
-            assert_eq!(
-                story_revision_kinds(&doc),
-                [
-                    (story, RevisionKind::Deletion),
-                    (story, RevisionKind::Insertion)
-                ],
-                "{attribute}, {placement:?}: the first picture deleted and inserted"
-            );
-            assert_eq!(
-                resolved_pictures(&mut doc, true),
-                picture_payloads(&mut wanted_edited)
-            );
-            assert_eq!(
-                resolved_pictures(&mut doc, false),
-                picture_payloads(&mut wanted_original)
-            );
-        }
-    }
-}
-
-#[test]
 fn a_copied_chart_keeps_its_own_chart_part_once_accepted() {
     let data = ChartData {
         categories: vec!["Q1".into(), "Q2".into()],
@@ -2389,43 +2137,6 @@ fn a_raw_header_replaced_on_a_reopened_file_leaves_no_old_picture() {
         .filter(|name| name.starts_with("word/media/"))
         .collect();
     assert_eq!(media.len(), 1, "{media:?}");
-}
-
-#[test]
-fn a_picture_or_link_removed_by_another_edit_leaves_the_saved_file() {
-    // A picture whose run goes.
-    let mut doc = doc_with(&["kept"]);
-    doc.add_picture(
-        &png(2, 2, 30),
-        "gone.png",
-        Length::inches(1.0),
-        Length::inches(1.0),
-    );
-    let mut doc = reopen(&mut doc);
-    {
-        let mut paragraph = doc.paragraph_mut(1).expect("the picture paragraph");
-        let runs = paragraph.runs().count();
-        for run in (0..runs).rev() {
-            paragraph.remove_run(run).unwrap();
-        }
-    }
-    let media: Vec<_> = saved_entries(&mut doc)
-        .into_keys()
-        .filter(|name| name.starts_with("word/media/"))
-        .collect();
-    assert!(media.is_empty(), "{media:?}");
-    // A link unwrapped by `remove_hyperlink`.
-    let mut doc = doc_with(&["kept", ""]);
-    doc.append_hyperlink("site", "https://gone.example/");
-    let mut doc = reopen(&mut doc);
-    let body = doc
-        .stories()
-        .unwrap()
-        .into_iter()
-        .find(|s| s.kind() == StoryKind::Body)
-        .unwrap();
-    doc.remove_hyperlink(&body, 0).unwrap();
-    assert!(!saved_entries(&mut doc)["word/_rels/document.xml.rels"].contains("gone.example"));
 }
 
 #[test]

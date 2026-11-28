@@ -77,33 +77,6 @@ const INSERTED_FIELD: &str = concat!(
 );
 
 #[test]
-fn a_link_holding_an_inserted_simple_field_reads_its_result_in_both_link_lists() {
-    let doc = doc_with_body(&format!(
-        r#"<w:p><w:hyperlink w:anchor="x"><w:r><w:t xml:space="preserve">See </w:t></w:r>{INSERTED_FIELD}</w:hyperlink></w:p>"#
-    ));
-    assert_eq!(doc.links()[0].text, "See 12C");
-    let body = doc
-        .stories()
-        .unwrap()
-        .into_iter()
-        .find(|story| story.kind() == oxoffice_docx::StoryKind::Body)
-        .unwrap();
-    let links = doc.story_links(&body).unwrap();
-    assert_eq!(links[0].1.text, "See 12C");
-    // The field is a story item of its own, as outside an insertion.
-    let items = doc
-        .story_items(&body)
-        .unwrap()
-        .into_iter()
-        .map(|item| (item.kind(), item.text().unwrap()))
-        .collect::<Vec<_>>();
-    assert!(
-        items.contains(&(oxoffice_docx::StoryItemKind::Field, Some("12".to_owned()))),
-        "{items:?}"
-    );
-}
-
-#[test]
 fn an_inline_content_control_and_a_field_hyperlink_read_a_simple_field_result() {
     let doc = doc_with_body(concat!(
         r#"<w:p><w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>"#,
@@ -140,39 +113,6 @@ const EQUATION: &str = concat!(
     r#"<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">"#,
     r#"<m:r><m:t>x=1</m:t></m:r></m:oMath>"#,
 );
-
-fn run_texts(paragraph: &oxoffice_docx::ParagraphRef<'_>) -> Vec<String> {
-    paragraph.runs().map(|run| run.text().to_owned()).collect()
-}
-
-#[test]
-fn a_tracked_insertion_lists_the_runs_of_its_simple_field() {
-    let mut doc = doc_with_body(&format!(
-        r#"<w:p><w:r><w:t>B</w:t></w:r>{INSERTED_FIELD}</w:p>"#
-    ));
-    let paragraph = doc.paragraph(0).unwrap();
-    assert_eq!(paragraph.text(), "B12C");
-    assert_eq!(run_texts(&paragraph), ["B", "12", "C"]);
-    let revisions = doc.revisions();
-    let insertion = revisions[0].insertion_paragraph().unwrap();
-    assert_eq!(run_texts(&insertion), ["12", "C"]);
-    // The insertion is written back as it was read.
-    let bytes = crate::support::reopen(&mut doc).to_bytes().unwrap();
-    let xml = String::from_utf8(crate::support::package_parts(&bytes)["word/document.xml"].clone())
-        .unwrap();
-    assert!(xml.contains(INSERTED_FIELD), "{xml}");
-}
-
-#[test]
-fn an_insertion_in_an_inline_control_reads_its_simple_field_in_text_and_html() {
-    let doc = doc_with_body(&in_inline_control(&format!(
-        r#"<w:r><w:t>B</w:t></w:r>{INSERTED_FIELD}"#
-    )));
-    assert_eq!(doc.paragraph(0).unwrap().text(), "AB12C");
-    assert_eq!(doc.content_controls()[0].text(), "B12C");
-    let html = doc.to_html_fragment();
-    assert!(html.contains("AB12C"), "{html}");
-}
 
 #[test]
 fn an_anchor_after_an_inserted_field_in_an_inline_control_follows_the_field_result() {

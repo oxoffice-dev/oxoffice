@@ -8,7 +8,7 @@ use std::io::Cursor;
 use oxoffice_opc::OpcPackage;
 use oxoffice_pptx::{
     Comment, CommentAuthor, Emu, Error, Fill, HeaderFooter, HeaderFooterDate, ImportSlideOptions,
-    Presentation, Section, ShapeKind, ShapeOwner, SlideRef, TransitionDirection, TransitionKind,
+    Presentation, Section, ShapeOwner, SlideRef, TransitionDirection, TransitionKind,
     ValidationIssue,
 };
 
@@ -118,25 +118,6 @@ fn placeholder(kind: Option<&str>, idx: u32) -> (Option<String>, u32) {
     (kind.map(str::to_owned), idx)
 }
 
-/// The part names of the saved package.
-fn saved_parts(prs: &Presentation) -> Vec<String> {
-    let bytes = prs.to_bytes().expect("deck saves");
-    OpcPackage::from_reader(Cursor::new(bytes))
-        .expect("package opens")
-        .zip_entries()
-        .expect("package serialises")
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect()
-}
-
-fn count_parts(prs: &Presentation, folder: &str) -> usize {
-    saved_parts(prs)
-        .iter()
-        .filter(|name| name.starts_with(folder) && !name.contains("_rels"))
-        .count()
-}
-
 /// The saved `p:sldSz` element.
 fn saved_slide_size_element(prs: &Presentation) -> String {
     let bytes = prs.to_bytes().expect("deck saves");
@@ -174,16 +155,6 @@ fn deck_in_two_sections() -> Presentation {
     prs
 }
 
-/// The non-visual id of the first picture on one slide.
-fn picture_id(prs: &Presentation, slide: usize) -> u32 {
-    prs.slide(slide)
-        .unwrap()
-        .shapes()
-        .find(|shape| shape.kind() == ShapeKind::Picture)
-        .and_then(|shape| shape.non_visual_id())
-        .expect("slide has a picture")
-}
-
 #[test]
 fn a_new_deck_has_no_slide_and_offers_the_eleven_office_layouts() {
     let prs = new_deck();
@@ -201,61 +172,6 @@ fn a_new_deck_has_no_slide_and_offers_the_eleven_office_layouts() {
         (0..11).collect::<Vec<_>>()
     );
     assert_eq!(prs.slide_size(), Some((Emu(12_192_000), Emu(6_858_000))));
-}
-
-#[test]
-fn a_slide_added_from_a_layout_gets_the_placeholders_the_layout_offers() {
-    let mut prs = new_deck();
-    let date_footer_number = [
-        placeholder(Some("dt"), 10),
-        placeholder(Some("ftr"), 11),
-        placeholder(Some("sldNum"), 12),
-    ];
-    // The date, footer and slide-number placeholders stay on the layout
-    // until headers and footers are turned on, as in PowerPoint.
-    let cases = [
-        (
-            "Title Slide",
-            vec![
-                placeholder(Some("ctrTitle"), 0),
-                placeholder(Some("subTitle"), 1),
-            ],
-        ),
-        (
-            "Two Content",
-            vec![
-                placeholder(Some("title"), 0),
-                placeholder(None, 1),
-                placeholder(None, 2),
-            ],
-        ),
-        (
-            "Picture with Caption",
-            vec![
-                placeholder(Some("title"), 0),
-                placeholder(Some("pic"), 1),
-                placeholder(Some("body"), 2),
-            ],
-        ),
-        ("Blank", vec![]),
-    ];
-    for (name, expected) in &cases {
-        let layout = layout_named(&prs, name);
-        let mut offered = expected.clone();
-        offered.extend(date_footer_number.iter().cloned());
-        assert_eq!(layout_placeholders(&prs, layout), offered, "{name}");
-        prs.add_slide(layout).unwrap();
-    }
-    let prs = reopen(&prs);
-    for (index, (name, expected)) in cases.iter().enumerate() {
-        assert_eq!(slide_layout_names(&prs)[index], *name);
-        assert_eq!(
-            slide_placeholders(prs.slide(index).unwrap()),
-            *expected,
-            "{name}"
-        );
-    }
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
 
 #[test]
@@ -343,49 +259,6 @@ fn a_slide_is_added_by_layout_name_on_powerpoint_and_google_decks() {
 }
 
 #[test]
-fn every_layout_of_every_corpus_deck_gives_a_slide_that_reopens_clean() {
-    for deck in [
-        "powerpoint/deck.pptx",
-        "google/deck.pptx",
-        "libreoffice/deck.pptx",
-        "authored/deck.pptx",
-    ] {
-        let mut prs = corpus_deck(deck);
-        let names: Vec<_> = (0..prs.layout_count())
-            .map(|index| prs.layout_name(index).unwrap().to_owned())
-            .collect();
-        for layout in 0..prs.layout_count() {
-            prs.add_slide(layout).unwrap();
-        }
-        let prs = reopen(&prs);
-        assert_eq!(slide_layout_names(&prs)[4..], names[..], "{deck}");
-        assert!(prs.validate().is_empty(), "{deck}: {:?}", prs.validate());
-    }
-}
-
-#[test]
-fn a_slide_is_inserted_at_the_position_asked() {
-    let mut prs = deck_with_titles(&["A", "B", "C"]);
-    let layout = layout_named(&prs, "Title Only");
-    for (position, title) in [(0, "first"), (2, "middle"), (5, "last")] {
-        assert_eq!(prs.add_slide_at(layout, position).unwrap(), position);
-        prs.slide_mut(position)
-            .unwrap()
-            .shape_mut(0)
-            .unwrap()
-            .set_text(title)
-            .unwrap();
-    }
-    let prs = reopen(&prs);
-    assert_eq!(titles(&prs), ["first", "A", "middle", "B", "C", "last"]);
-    let mut ids = slide_ids(&prs);
-    assert!(ids.iter().all(|id| *id >= 256), "{ids:?}");
-    ids.sort_unstable();
-    ids.dedup();
-    assert_eq!(ids.len(), 6, "slide ids are unique");
-}
-
-#[test]
 fn out_of_range_slide_and_layout_indexes_are_refused_and_change_nothing() {
     let mut prs = deck_with_titles(&["A", "B"]);
     let before = prs.to_bytes().unwrap();
@@ -421,124 +294,6 @@ fn out_of_range_slide_and_layout_indexes_are_refused_and_change_nothing() {
 }
 
 #[test]
-fn every_corpus_deck_reads_four_titled_slides_on_their_layouts_before_and_after_a_save() {
-    let office = [
-        "Title Slide",
-        "Title and Content",
-        "Title Only",
-        "Title Only",
-    ];
-    let google = ["TITLE", "OBJECT", "TITLE_ONLY", "TITLE_ONLY"];
-    for (deck, layouts) in [
-        ("powerpoint/deck.pptx", office),
-        ("google/deck.pptx", google),
-        ("libreoffice/deck.pptx", office),
-        ("authored/deck.pptx", office),
-    ] {
-        let opened = corpus_deck(deck);
-        for prs in [&opened, &reopen(&opened)] {
-            assert_eq!(titles(prs), CORPUS_TITLES, "{deck}");
-            assert_eq!(slide_ids(prs), [256, 257, 258, 259], "{deck}");
-            assert_eq!(slide_layout_names(prs), layouts, "{deck}");
-            let title_only = prs.slide_layout_index(2).unwrap();
-            assert_eq!(
-                prs.layout_used_by_slides(title_only).unwrap(),
-                [2, 3],
-                "{deck}"
-            );
-            assert!(prs.slides().all(|slide| !slide.hidden()), "{deck}");
-            assert_eq!(
-                prs.slide(1).unwrap().notes_text().as_deref(),
-                Some(HIGHLIGHTS_NOTES),
-                "{deck}"
-            );
-            assert_eq!(prs.slide_size().unwrap().1, Emu(6_858_000), "{deck}");
-        }
-    }
-}
-
-#[test]
-fn the_master_lists_its_layouts_in_gallery_order_and_indexes_stay_put_after_a_save() {
-    // Layout indexes follow the package; the master's list gives the order
-    // the producer shows in its layout gallery.
-    let google = [
-        "TITLE",
-        "OBJECT",
-        "TITLE_ONLY",
-        "SECTION_HEADER",
-        "TWO_OBJECTS",
-        "TWO_OBJECTS_WITH_TEXT",
-        "BLANK",
-        "OBJECT_WITH_CAPTION_TEXT",
-        "PICTURE_WITH_CAPTION_TEXT",
-        "VERTICAL_TEXT",
-        "VERTICAL_TITLE_AND_VERTICAL_TEXT",
-    ];
-    for (deck, gallery) in [
-        ("powerpoint/deck.pptx", &OFFICE_LAYOUTS),
-        ("google/deck.pptx", &google),
-    ] {
-        let mut prs = corpus_deck(deck);
-        let listed: Vec<_> = prs
-            .master_layout_indices(0)
-            .unwrap()
-            .into_iter()
-            .map(|index| prs.layout_name(index).unwrap())
-            .collect();
-        assert_eq!(listed, gallery, "{deck}");
-        assert!(
-            (0..prs.layout_count()).all(|index| prs.layout_master_index(index).unwrap() == 0),
-            "{deck}"
-        );
-        let names = |prs: &Presentation| -> Vec<String> {
-            (0..prs.layout_count())
-                .map(|index| prs.layout_name(index).unwrap().to_owned())
-                .collect()
-        };
-        let before = names(&prs);
-        prs.add_slide(0).unwrap();
-        assert_eq!(names(&reopen(&prs)), before, "{deck}");
-    }
-}
-
-#[test]
-fn moving_a_slide_reorders_the_deck_and_the_slide_keeps_its_id_layout_and_notes() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let before = prs.to_bytes().unwrap();
-    prs.move_slide(1, 3).unwrap();
-    let moved = reopen(&prs);
-    assert_eq!(
-        titles(&moved),
-        [
-            CORPUS_TITLES[0],
-            CORPUS_TITLES[2],
-            CORPUS_TITLES[3],
-            CORPUS_TITLES[1]
-        ]
-    );
-    assert_eq!(slide_ids(&moved), [256, 258, 259, 257]);
-    assert_eq!(
-        slide_layout_names(&moved),
-        [
-            "Title Slide",
-            "Title Only",
-            "Title Only",
-            "Title and Content"
-        ]
-    );
-    assert_eq!(
-        moved.slide(3).unwrap().notes_text().as_deref(),
-        Some(HIGHLIGHTS_NOTES)
-    );
-    assert!(moved.picture_image(2, picture_id(&moved, 2)).is_ok());
-    assert!(moved.validate().is_empty(), "{:?}", moved.validate());
-
-    // A move only reorders the slide list: moving back gives the same file.
-    prs.move_slide(3, 1).unwrap();
-    assert_eq!(prs.to_bytes().unwrap(), before);
-}
-
-#[test]
 fn a_link_to_a_slide_follows_it_when_slides_move_and_stops_when_it_is_removed() {
     let mut prs = deck_with_titles(&["A", "B", "C", "D"]);
     let shape = prs
@@ -558,53 +313,6 @@ fn a_link_to_a_slide_follows_it_when_slides_move_and_stops_when_it_is_removed() 
     prs.remove_slide(3).unwrap();
     let prs = reopen(&prs);
     assert_eq!(prs.shape_target_slide(1, shape).unwrap(), None);
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
-#[test]
-fn a_duplicate_follows_its_source_with_the_same_content_layout_and_notes() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let copy_id = prs.duplicate_slide(1).unwrap().id();
-    assert!(!slide_ids(&corpus_deck("powerpoint/deck.pptx")).contains(&copy_id));
-    prs.slide_mut(2)
-        .unwrap()
-        .shape_mut(0)
-        .unwrap()
-        .set_text("Highlights, continued")
-        .unwrap();
-
-    let prs = reopen(&prs);
-    assert_eq!(slide_ids(&prs), [256, 257, copy_id, 258, 259]);
-    assert_eq!(titles(&prs)[1..3], ["Highlights", "Highlights, continued"]);
-    let (source, copy) = (prs.slide(1).unwrap(), prs.slide(2).unwrap());
-    assert_eq!(
-        source.placeholder(1).unwrap().text(),
-        copy.placeholder(1).unwrap().text()
-    );
-    assert_eq!(copy.notes_text().as_deref(), Some(HIGHLIGHTS_NOTES));
-    assert_eq!(slide_layout_names(&prs)[2], "Title and Content");
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
-#[test]
-fn a_picture_slide_shares_its_image_with_its_duplicate_and_the_last_removal_drops_it() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let picture = picture_id(&prs, 3);
-    let image = prs.picture_image(3, picture).unwrap().bytes.to_vec();
-    prs.duplicate_slide(3).unwrap();
-    let mut prs = reopen(&prs);
-    // The copy's shapes get fresh ids.
-    let copied = picture_id(&prs, 4);
-    assert_eq!(prs.picture_image(4, copied).unwrap().bytes, image);
-    assert_eq!(count_parts(&prs, "ppt/media/"), 1, "one image part, shared");
-
-    prs.remove_slide(3).unwrap();
-    assert_eq!(prs.picture_image(3, copied).unwrap().bytes, image);
-    assert_eq!(count_parts(&prs, "ppt/media/"), 1);
-    prs.remove_slide(3).unwrap();
-    assert_eq!(count_parts(&prs, "ppt/media/"), 0);
-    let prs = reopen(&prs);
-    assert_eq!(titles(&prs), CORPUS_TITLES[..3]);
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
 
@@ -644,78 +352,6 @@ fn a_slide_with_comments_can_be_duplicated() {
     assert_eq!(copied[0].text(), "Check the figures");
     assert_ne!(copied[0].id, comment, "the copy's comment has a fresh id");
     assert_eq!(prs.comments(0).unwrap()[0].id, comment);
-}
-
-#[test]
-fn removing_a_slide_drops_it_and_its_notes_and_keeps_the_others() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    assert_eq!(count_parts(&prs, "ppt/notesSlides/"), 1);
-    prs.remove_slide(1).unwrap();
-    assert_eq!(count_parts(&prs, "ppt/notesSlides/"), 0);
-    assert_eq!(count_parts(&prs, "ppt/slides/"), 3);
-    let prs = reopen(&prs);
-    assert_eq!(
-        titles(&prs),
-        [CORPUS_TITLES[0], CORPUS_TITLES[2], CORPUS_TITLES[3]]
-    );
-    assert_eq!(slide_ids(&prs), [256, 258, 259]);
-    assert_eq!(
-        slide_layout_names(&prs),
-        ["Title Slide", "Title Only", "Title Only"]
-    );
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
-#[test]
-fn removing_every_slide_leaves_an_empty_deck_that_takes_new_slides() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    while !prs.is_empty() {
-        prs.remove_slide(0).unwrap();
-    }
-    let mut prs = reopen(&prs);
-    assert!(prs.is_empty());
-    assert_eq!(prs.layout_count(), 11);
-    prs.add_slide(layout_named(&prs, "Title Slide")).unwrap();
-    let prs = reopen(&prs);
-    assert_eq!(prs.len(), 1);
-    assert_eq!(slide_layout_names(&prs), ["Title Slide"]);
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
-#[test]
-fn imported_slides_take_the_layouts_named_like_theirs_and_keep_text_notes_and_pictures() {
-    let source = corpus_deck("powerpoint/deck.pptx");
-    let image = source
-        .picture_image(3, picture_id(&source, 3))
-        .unwrap()
-        .bytes
-        .to_vec();
-    let mut prs = new_deck();
-    let (inserted, diagnostics) = prs
-        .import_slides(&source, &[1, 3], &ImportSlideOptions::default(), &[])
-        .unwrap();
-    assert_eq!(inserted, [0, 1]);
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-
-    let prs = reopen(&prs);
-    assert_eq!(prs.master_count(), 1, "the slides take this deck's theme");
-    assert_eq!(
-        slide_layout_names(&prs),
-        ["Title and Content", "Title Only"]
-    );
-    assert_eq!(
-        prs.slide(0).unwrap().text(),
-        source.slide(1).unwrap().text()
-    );
-    assert_eq!(
-        prs.slide(0).unwrap().notes_text().as_deref(),
-        Some(HIGHLIGHTS_NOTES)
-    );
-    assert_eq!(
-        prs.picture_image(1, picture_id(&prs, 1)).unwrap().bytes,
-        image
-    );
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
 
 #[test]
@@ -816,67 +452,6 @@ fn keeping_source_formatting_brings_the_source_layout_and_master_once() {
     assert_eq!(prs.layout_master_index(layout).unwrap(), 1);
     assert_eq!(prs.master_layout_indices(1).unwrap(), [layout]);
     assert_eq!(titles(&prs), CORPUS_TITLES[2..]);
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
-#[test]
-fn keeping_source_formatting_imports_a_slide_with_speaker_notes() {
-    let options = ImportSlideOptions {
-        keep_source_formatting: true,
-        ..ImportSlideOptions::default()
-    };
-    let mut failures = Vec::new();
-    for deck in ["powerpoint/deck.pptx", "google/deck.pptx"] {
-        let source = corpus_deck(deck);
-        let mut prs = new_deck();
-        match prs.import_slides(&source, &[1], &options, &[]) {
-            Ok(_) => assert_eq!(
-                reopen(&prs).slide(0).unwrap().notes_text().as_deref(),
-                Some(HIGHLIGHTS_NOTES),
-                "{deck}"
-            ),
-            Err(error) => failures.push(format!("{deck}: {error}")),
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
-
-#[test]
-fn imported_notes_keep_their_source_fonts_and_leave_automatic_script_fonts_to_the_deck() {
-    let options = ImportSlideOptions {
-        keep_source_formatting: true,
-        ..ImportSlideOptions::default()
-    };
-    let source = corpus_deck("powerpoint/deck.pptx");
-    let mut prs = new_deck();
-    prs.import_slides(&source, &[1], &options, &[]).unwrap();
-
-    let prs = reopen(&prs);
-    assert_eq!(
-        prs.slide(0).unwrap().notes_text().as_deref(),
-        Some(HIGHLIGHTS_NOTES)
-    );
-    let notes: Vec<_> = saved_parts(&prs)
-        .into_iter()
-        .filter(|name| name.starts_with("ppt/notesSlides/") && name.ends_with(".xml"))
-        .collect();
-    assert_eq!(notes.len(), 1);
-    let bytes = prs.to_bytes().unwrap();
-    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-    let xml = String::from_utf8(
-        package
-            .get_part(&format!("/{}", notes[0]))
-            .unwrap()
-            .to_vec(),
-    )
-    .unwrap();
-    // The source theme's Latin face is set on the notes page; its East Asian
-    // and complex-script faces are automatic, so their tokens stay and
-    // resolve against this deck's theme.
-    assert!(xml.contains(r#"typeface="Aptos""#), "{xml}");
-    assert!(!xml.contains(r#"typeface="+mn-lt""#), "{xml}");
-    assert!(xml.contains(r#"typeface="+mn-ea""#), "{xml}");
-    assert!(xml.contains(r#"typeface="+mn-cs""#), "{xml}");
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
 
@@ -1068,29 +643,6 @@ fn a_deck_resized_to_four_by_three_is_not_saved_as_widescreen() {
         !size.contains("type=") || size.contains("type=\"screen4x3\""),
         "a 4:3 deck is saved as {size}"
     );
-}
-
-#[test]
-fn a_slide_size_type_stays_with_its_size_and_goes_with_a_new_one() {
-    let mut prs = new_deck();
-    let (width, height) = prs.slide_size().unwrap();
-    prs.set_slide_size(width, height).unwrap();
-    assert!(
-        saved_slide_size_element(&reopen(&prs)).contains("type=\"screen16x9\""),
-        "the same size keeps its type"
-    );
-
-    // The authored corpus deck already says screen4x3 on a wide size.
-    let mut prs = corpus_deck("authored/deck.pptx");
-    assert!(saved_slide_size_element(&prs).contains("type=\"screen4x3\""));
-    assert_ne!(prs.slide_size(), Some((Emu(9_906_000), Emu(6_858_000))));
-    prs.set_slide_size(Emu(9_906_000), Emu(6_858_000)).unwrap();
-    let prs = reopen(&prs);
-    assert_eq!(
-        saved_slide_size_element(&prs),
-        r#"<p:sldSz cx="9906000" cy="6858000"/>"#
-    );
-    assert_eq!(prs.slide_size(), Some((Emu(9_906_000), Emu(6_858_000))));
 }
 
 #[test]
@@ -1304,43 +856,6 @@ fn an_entity_a_master_header_footer_keeps_as_written_survives_new_flags() {
 }
 
 #[test]
-fn a_slide_added_or_duplicated_inside_a_section_joins_it() {
-    let source = deck_with_titles(&["Imported"]);
-    let layout = layout_named(&new_deck(), "Title Only");
-    let mut failures = Vec::new();
-    let mut check = |operation: &str, prs: &Presentation, position: usize, section: &str| {
-        let id = prs.slide(position).unwrap().id();
-        let owner = prs
-            .sections()
-            .iter()
-            .find(|candidate| candidate.slide_ids.contains(&id))
-            .and_then(|owner| owner.name.clone());
-        if owner.as_deref() != Some(section) {
-            failures.push(format!("{operation}: expected {section}, got {owner:?}"));
-        }
-    };
-
-    let mut prs = deck_in_two_sections();
-    prs.duplicate_slide(0).unwrap();
-    check("duplicate_slide(0)", &reopen(&prs), 1, "A");
-    let mut prs = deck_in_two_sections();
-    prs.add_slide_at(layout, 3).unwrap();
-    check("add_slide_at(_, 3)", &reopen(&prs), 3, "B");
-    let mut prs = deck_in_two_sections();
-    prs.add_slide(layout).unwrap();
-    check("add_slide", &reopen(&prs), 4, "B");
-    let mut prs = deck_in_two_sections();
-    prs.import_slide(&source, 0, Some(layout), Some(1)).unwrap();
-    check("import_slide(_, _, _, Some(1))", &reopen(&prs), 1, "A");
-
-    assert!(
-        failures.is_empty(),
-        "a new slide joins no section:\n{}",
-        failures.join("\n")
-    );
-}
-
-#[test]
 fn a_slide_moved_into_another_section_joins_it() {
     let mut prs = deck_in_two_sections();
     let ids = slide_ids(&prs);
@@ -1392,39 +907,6 @@ fn layout_section_and_theme_names_keep_their_tabs_and_line_feeds() {
     }
 }
 
-#[test]
-fn removing_a_slide_drops_a_tags_part_only_it_used() {
-    let prs = deck_with_titles(&["Kept", "Tagged"]);
-    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
-    package.set_part(
-        "/ppt/tags/tag1.xml",
-        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:tagLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:tag name="CLIENT" val="Contoso, internal only"/></p:tagLst>"#
-            .to_vec(),
-    );
-    package.content_types.add_override(
-        "/ppt/tags/tag1.xml",
-        "application/vnd.openxmlformats-officedocument.presentationml.tags+xml",
-    );
-    package
-        .get_or_create_part_rels("/ppt/slides/slide2.xml")
-        .add(
-            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tags",
-            "../tags/tag1.xml",
-        );
-    let mut bytes = Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
-    assert_eq!(count_parts(&prs, "ppt/tags/"), 1);
-
-    prs.remove_slide(1).unwrap();
-
-    let prs = reopen(&prs);
-    assert_eq!(count_parts(&prs, "ppt/tags/"), 0);
-    assert_eq!(titles(&prs), ["Kept"]);
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
 /// The text of one saved part, if the saved package has it.
 fn saved_part_text(prs: &Presentation, part_name: &str) -> Option<String> {
     let bytes = prs.to_bytes().expect("deck saves");
@@ -1432,95 +914,6 @@ fn saved_part_text(prs: &Presentation, part_name: &str) -> Option<String> {
     package
         .get_part(part_name)
         .map(|part| String::from_utf8_lossy(part).into_owned())
-}
-
-#[test]
-fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
-    assert!(
-        before.contains("<vt:lpstr>Highlights</vt:lpstr>"),
-        "{before}"
-    );
-    // Hiding Highlights counts it as hidden; removing it must count it out.
-    prs.slide_mut(1).unwrap().set_hidden(true);
-    assert!(
-        saved_part_text(&prs, "/docProps/app.xml")
-            .unwrap()
-            .contains("<HiddenSlides>1</HiddenSlides>")
-    );
-
-    prs.remove_slide(1).unwrap();
-
-    let prs = reopen(&prs);
-    let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
-    assert!(!app.contains("Highlights"), "{app}");
-    // Three slides left, the notes and the hidden slide went with Highlights;
-    // the title lists go and every other byte stays.
-    let cut = |xml: &str, from: &str, to: &str| {
-        let start = xml.find(from).expect("the element is there");
-        let end = xml[start..].find(to).expect("the element closes") + start + to.len();
-        format!("{}{}", &xml[..start], &xml[end..])
-    };
-    // The text counts go too: oxoffice does not recount them.
-    let expected = cut(
-        &cut(
-            &cut(
-                &cut(&before, "<HeadingPairs>", "</HeadingPairs>"),
-                "<TitlesOfParts>",
-                "</TitlesOfParts>",
-            ),
-            "<Words>",
-            "</Words>",
-        ),
-        "<Paragraphs>",
-        "</Paragraphs>",
-    )
-    .replace("<Slides>4</Slides>", "<Slides>3</Slides>")
-    .replace("<Notes>1</Notes>", "<Notes>0</Notes>");
-    assert!(
-        expected.contains("<HiddenSlides>0</HiddenSlides>"),
-        "{expected}"
-    );
-    assert_eq!(app, expected);
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
-#[test]
-fn removing_any_slide_drops_the_thumbnail_that_may_picture_it() {
-    let thumbnail_gone = |prs: &Presentation, name: &str| {
-        assert!(
-            saved_part_text(prs, "/docProps/thumbnail.jpeg").is_none(),
-            "{name}"
-        );
-        let package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
-        assert!(
-            package
-                .package_rels
-                .items
-                .iter()
-                .all(|relationship| !relationship.rel_type.ends_with("/metadata/thumbnail")),
-            "{name}: the package still points at a thumbnail"
-        );
-        assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
-    };
-    for name in ["powerpoint/deck.pptx", "authored/deck.pptx"] {
-        let mut prs = corpus_deck(name);
-        assert!(
-            saved_part_text(&prs, "/docProps/thumbnail.jpeg").is_some(),
-            "{name}"
-        );
-        prs.remove_slide(0).unwrap();
-        thumbnail_gone(&reopen(&prs), name);
-    }
-
-    // The pictured first slide, moved last, then removed.
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    prs.move_slide(0, 3).unwrap();
-    prs.remove_slide(3).unwrap();
-    let prs = reopen(&prs);
-    assert!(!titles(&prs).contains(&CORPUS_TITLES[0].to_owned()));
-    thumbnail_gone(&prs, "moved first slide");
 }
 
 #[test]
@@ -1567,17 +960,6 @@ fn removing_a_slide_counts_what_is_left_and_adds_no_metadata() {
         assert_eq!(saved_part_text(&prs, "/docProps/app.xml"), before, "{name}");
         assert!(prs.validate().is_empty(), "{name}: {:?}", prs.validate());
     }
-}
-
-#[test]
-fn the_notes_count_after_a_removal_counts_slides_with_notes_text() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    prs.set_notes_text(1, "").unwrap();
-
-    prs.remove_slide(3).unwrap();
-
-    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
-    assert!(app.contains("<Notes>0</Notes>"), "{app}");
 }
 
 #[test]
@@ -1639,50 +1021,32 @@ fn added_duplicated_and_imported_slides_are_counted_in_the_package_metadata() {
 }
 
 #[test]
-fn hiding_a_slide_updates_only_the_hidden_slide_count() {
+fn the_notes_count_follows_notes_set_cleared_and_created_and_the_text_counts_stay() {
+    // The PowerPoint deck has notes text on one slide of four.
     let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
-
-    prs.slide_mut(2).unwrap().set_hidden(true);
-
-    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
-    assert_eq!(
-        app,
-        before.replace(
-            "<HiddenSlides>0</HiddenSlides>",
-            "<HiddenSlides>1</HiddenSlides>"
-        )
-    );
-}
-
-#[test]
-fn slide_edits_add_no_counts_to_decks_without_them_and_leave_an_unedited_deck_unchanged() {
-    // The authored deck says it has no slide: an added one makes it five.
-    let mut prs = corpus_deck("authored/deck.pptx");
-    let layout = prs.slide_layout_index(0).unwrap();
-    prs.add_slide(layout).unwrap();
-    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
-    assert!(app.contains("<Slides>5</Slides>"), "{app}");
-
-    for name in ["google/deck.pptx", "libreoffice/deck.pptx"] {
-        let mut prs = corpus_deck(name);
-        let before = saved_part_text(&prs, "/docProps/app.xml").map(|app| {
-            app.replace("<Words>0</Words>", "")
-                .replace("<Paragraphs>0</Paragraphs>", "")
-        });
-        prs.duplicate_slide(1).unwrap();
-        prs.slide_mut(0).unwrap().set_hidden(true);
-        assert_eq!(
-            saved_part_text(&reopen(&prs), "/docProps/app.xml"),
-            before,
-            "{name}"
+    let has = |prs: &Presentation, index: usize| prs.slide(index).unwrap().notes_text();
+    let with = (0..prs.len())
+        .find(|i| has(&prs, *i).is_some_and(|text| !text.trim().is_empty()))
+        .unwrap();
+    let without = (0..prs.len()).find(|i| has(&prs, *i).is_none()).unwrap();
+    for (what, edit, notes) in [
+        ("cleared", (with, ""), 0),
+        ("set again", (with, "Say hello"), 1),
+        ("created", (without, "New notes"), 2),
+    ] {
+        prs.set_notes_text(edit.0, edit.1).unwrap();
+        prs = reopen(&prs);
+        let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+        assert!(
+            app.contains(&format!("<Notes>{notes}</Notes>")),
+            "{what}: {app}"
+        );
+        // Notes text changes no slide text: the title lists and text counts stay.
+        assert!(
+            app.contains("<TitlesOfParts>") && app.contains("<Words>61</Words>"),
+            "{what}: {app}"
         );
     }
-
-    // Opening and saving without an edit changes nothing, stale counts included.
-    let prs = corpus_deck("authored/deck.pptx");
-    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
-    assert!(app.contains("<Slides>0</Slides>"), "{app}");
 }
 
 #[test]
@@ -1720,64 +1084,6 @@ fn hiding_a_slide_recounts_hidden_slides_only_and_a_no_op_changes_nothing() {
         app.contains("<Slides>0</Slides>") && app.contains("<Notes>0</Notes>"),
         "{app}"
     );
-}
-
-#[test]
-fn a_slide_put_first_joins_the_first_section_and_an_emptied_section_stays() {
-    let mut prs = deck_in_two_sections();
-    let ids = slide_ids(&prs);
-
-    prs.move_slide(2, 0).unwrap();
-    assert_eq!(
-        sections(&prs),
-        [
-            ("A".to_owned(), vec![ids[2], ids[0], ids[1]]),
-            ("B".to_owned(), vec![ids[3]]),
-        ]
-    );
-    prs.move_slide(3, 0).unwrap();
-
-    let prs = reopen(&prs);
-    assert_eq!(titles(&prs), ["B2", "B1", "A1", "A2"]);
-    assert_eq!(
-        sections(&prs),
-        [
-            ("A".to_owned(), vec![ids[3], ids[2], ids[0], ids[1]]),
-            ("B".to_owned(), vec![]),
-        ]
-    );
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
-#[test]
-fn slide_edits_on_a_powerpoint_deck_with_sections_keep_every_slide_in_its_section() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let ids = slide_ids(&prs);
-    prs.set_sections(vec![
-        Section::new(SECTION_A, "Intro", vec![ids[0]]).unwrap(),
-        Section::new(SECTION_B, "Body", ids[1..].to_vec()).unwrap(),
-    ])
-    .unwrap();
-    // The section list is read back from the saved file, as a deck saved
-    // with sections by PowerPoint would be.
-    let mut prs = reopen(&prs);
-    let title_only = layout_named(&prs, "Title Only");
-
-    let copy = prs.duplicate_slide(0).unwrap().id();
-    let added = prs.add_slide(title_only).unwrap().id();
-    prs.move_slide(1, 5).unwrap();
-
-    let prs = reopen(&prs);
-    let order = slide_ids(&prs);
-    assert_eq!(order, [ids[0], ids[1], ids[2], ids[3], added, copy]);
-    assert_eq!(
-        sections(&prs),
-        [
-            ("Intro".to_owned(), vec![ids[0]]),
-            ("Body".to_owned(), order[1..].to_vec()),
-        ]
-    );
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
 }
 
 #[test]
@@ -1837,25 +1143,6 @@ fn slides_added_to_a_deck_whose_sections_are_empty_join_the_first_one() {
 }
 
 #[test]
-fn a_slide_moved_within_its_section_can_lead_it_or_end_it() {
-    let mut prs = deck_in_two_sections();
-    let ids = slide_ids(&prs);
-
-    prs.move_slide(3, 2).unwrap();
-    prs.move_slide(1, 0).unwrap();
-
-    let prs = reopen(&prs);
-    assert_eq!(titles(&prs), ["A2", "A1", "B2", "B1"]);
-    assert_eq!(
-        sections(&prs),
-        [
-            ("A".to_owned(), vec![ids[1], ids[0]]),
-            ("B".to_owned(), vec![ids[3], ids[2]]),
-        ]
-    );
-}
-
-#[test]
 fn slides_imported_with_their_sections_keep_every_slide_in_one_section() {
     let source = deck_in_two_sections();
     let mut prs = reopen(&deck_in_two_sections());
@@ -1876,57 +1163,6 @@ fn slides_imported_with_their_sections_keep_every_slide_in_one_section() {
     assert_eq!(titles(&prs), ["A1", "A2", "B1", "A2", "B1", "B2"]);
     assert_sections_follow_slides(&prs);
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-}
-
-#[test]
-fn a_slide_moved_to_another_section_keeps_its_section_entry_data() {
-    let prs = deck_in_two_sections();
-    let ids = slide_ids(&prs);
-    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
-    let xml = String::from_utf8(package.get_part("/ppt/presentation.xml").unwrap().to_vec())
-        .unwrap()
-        .replacen(
-            &format!(r#"<p14:sldId id="{}"/>"#, ids[0]),
-            &format!(
-                r#"<p14:sldId id="{}" xmlns:x="urn:example:extra" x:keep="1"/>"#,
-                ids[0]
-            ),
-            1,
-        );
-    assert!(xml.contains("x:keep"), "the section entry was edited");
-    package.set_part("/ppt/presentation.xml", xml.into_bytes());
-    let mut bytes = Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
-
-    prs.move_slide(0, 3).unwrap();
-
-    let prs = reopen(&prs);
-    assert_eq!(sections(&prs)[1].1.last(), Some(&ids[0]));
-    let bytes = prs.to_bytes().unwrap();
-    let package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-    let xml = String::from_utf8_lossy(package.get_part("/ppt/presentation.xml").unwrap());
-    assert!(xml.contains(r#"x:keep="1""#), "{xml}");
-}
-
-#[test]
-fn a_slide_added_at_a_section_boundary_joins_the_section_before_it() {
-    let mut prs = deck_in_two_sections();
-    let layout = layout_named(&prs, "Title Only");
-
-    let position = prs.add_slide_at(layout, 2).unwrap();
-
-    let prs = reopen(&prs);
-    let new = prs.slide(position).unwrap().id();
-    let ids = slide_ids(&prs);
-    assert_eq!(
-        sections(&prs),
-        [
-            ("A".to_owned(), vec![ids[0], ids[1], new]),
-            ("B".to_owned(), vec![ids[3], ids[4]]),
-        ]
-    );
-    assert_sections_follow_slides(&prs);
 }
 
 #[test]
@@ -2063,26 +1299,6 @@ fn saved_with_reference() -> Vec<u8> {
 }
 
 #[test]
-fn a_carriage_return_in_a_core_property_survives_a_save() {
-    // A new deck's core part is patched at the save, field by field.
-    let mut prs = new_deck();
-    prs.core_properties_mut().title = Some("first\rsecond".to_owned());
-    prs.core_properties_mut().description = Some("one\r\ntwo".to_owned());
-    let prs = reopen(&prs);
-    let core = prs.core_properties().expect("core properties");
-    assert_eq!(core.title.as_deref(), Some("first\rsecond"));
-    assert_eq!(core.description.as_deref(), Some("one\r\ntwo"));
-    // Written as a reference, which every reader keeps; a raw CR reads as a
-    // line feed elsewhere.
-    let package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
-    let xml = String::from_utf8_lossy(package.get_part("/docProps/core.xml").unwrap());
-    assert!(
-        xml.contains("first&#13;second") && !xml.contains('\r'),
-        "{xml}"
-    );
-}
-
-#[test]
 fn a_number_property_set_to_negative_zero_replaces_zero() {
     let number = |value: f64| oxoffice_pptx::CustomProperty {
         fmtid: "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}".to_owned(),
@@ -2209,67 +1425,6 @@ fn a_removed_property_removes_its_element() {
 }
 
 #[test]
-fn the_notes_count_follows_notes_text_set_or_cleared() {
-    // The PowerPoint deck has notes text on one slide of four.
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let with_notes = (0..prs.len())
-        .find(|index| {
-            prs.slide(*index)
-                .unwrap()
-                .notes_text()
-                .is_some_and(|text| !text.trim().is_empty())
-        })
-        .unwrap();
-    prs.slide_mut(with_notes)
-        .unwrap()
-        .set_notes_text("")
-        .unwrap();
-    let mut prs = reopen(&prs);
-    let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
-    assert!(app.contains("<Notes>0</Notes>"), "{app}");
-    // Notes text changes no slide text: the title lists and text counts stay.
-    assert!(
-        app.contains("<TitlesOfParts>") && app.contains("<Words>61</Words>"),
-        "{app}"
-    );
-    prs.slide_mut(with_notes)
-        .unwrap()
-        .set_notes_text("Say hello")
-        .unwrap();
-    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
-    assert!(app.contains("<Notes>1</Notes>"), "{app}");
-}
-
-#[test]
-fn a_slide_text_edit_drops_the_stale_title_lists_and_text_counts_and_keeps_the_title() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let core = saved_part_text(&prs, "/docProps/core.xml").unwrap();
-    assert!(
-        core.contains("<dc:title>Quarterly Operations Review</dc:title>"),
-        "{core}"
-    );
-    prs.slide_mut(0)
-        .unwrap()
-        .shape_mut(0)
-        .unwrap()
-        .set_text("A new title")
-        .unwrap();
-    let saved = reopen(&prs);
-    let app = saved_part_text(&saved, "/docProps/app.xml").unwrap();
-    for gone in [
-        "<HeadingPairs>",
-        "<TitlesOfParts>",
-        "<Words>",
-        "<Paragraphs>",
-    ] {
-        assert!(!app.contains(gone), "{gone}: {app}");
-    }
-    assert!(app.contains("<Slides>4</Slides>"), "{app}");
-    // The core title is the user's: a slide edit leaves it alone.
-    assert_eq!(saved_part_text(&saved, "/docProps/core.xml").unwrap(), core);
-}
-
-#[test]
 fn a_text_count_set_after_a_pending_slide_edit_is_kept() {
     let mut prs = corpus_deck("powerpoint/deck.pptx");
     prs.slide_mut(0)
@@ -2289,66 +1444,6 @@ fn a_text_count_set_after_a_pending_slide_edit_is_kept() {
     assert!(
         !app.contains("<TitlesOfParts>") && !app.contains("Paragraphs>"),
         "{app}"
-    );
-}
-
-#[test]
-fn a_property_set_after_pending_notes_edits_keeps_the_refreshed_notes_count() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let with_notes = (0..prs.len())
-        .find(|index| {
-            prs.slide(*index)
-                .unwrap()
-                .notes_text()
-                .is_some_and(|text| !text.trim().is_empty())
-        })
-        .unwrap();
-    prs.slide_mut(with_notes)
-        .unwrap()
-        .set_notes_text("")
-        .unwrap();
-    let mut app = prs.application_properties().unwrap().clone();
-    app.company = Some("Acme".to_owned());
-    prs.set_application_properties(app).unwrap();
-    let saved = reopen(&prs);
-    let app = saved.application_properties().unwrap();
-    assert_eq!(
-        (app.company.as_deref(), app.notes, app.words),
-        (Some("Acme"), Some(0), Some(61))
-    );
-}
-
-#[test]
-fn notes_created_on_a_slide_without_them_are_counted() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let without = (0..prs.len())
-        .find(|index| prs.slide(*index).unwrap().notes_text().is_none())
-        .unwrap();
-    prs.set_notes_text(without, "New notes").unwrap();
-    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
-    assert!(app.contains("<Notes>2</Notes>"), "{app}");
-}
-
-#[test]
-fn a_move_alone_drops_the_title_lists_and_a_slide_size_change_keeps_them() {
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    prs.move_slide(0, 2).unwrap();
-    let app = saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap();
-    for gone in [
-        "<HeadingPairs>",
-        "<TitlesOfParts>",
-        "<Words>",
-        "<Paragraphs>",
-    ] {
-        assert!(!app.contains(gone), "{gone}: {app}");
-    }
-
-    let mut prs = corpus_deck("powerpoint/deck.pptx");
-    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
-    prs.set_slide_size(Emu(9_144_000), Emu(6_858_000)).unwrap();
-    assert_eq!(
-        saved_part_text(&reopen(&prs), "/docProps/app.xml").unwrap(),
-        before
     );
 }
 
@@ -2426,28 +1521,6 @@ fn the_transitions_of_the_pitch_deck_are_read_from_every_producer() {
     }
 }
 
-// LibreOffice writes a transition element on every slide of a deck that has
-// none, with only a duration: it reads as a transition without an effect,
-// as the file says, and the other producers' copies have none.
-#[test]
-fn a_deck_without_transitions_reads_none_except_libreoffice_s_empty_ones() {
-    for family in ["training", "deck"] {
-        for producer in ["authored", "powerpoint", "google"] {
-            let read = transition_kinds(&corpus_deck(&format!("{producer}/{family}.pptx")));
-            assert!(
-                read.iter().all(Option::is_none),
-                "{producer}/{family}: {read:?}"
-            );
-        }
-        let prs = corpus_deck(&format!("libreoffice/{family}.pptx"));
-        for slide in prs.slides() {
-            let transition = slide.transition().expect("LibreOffice writes one");
-            assert_eq!(transition.kind, None, "libreoffice/{family}");
-            assert_eq!(transition.duration_ms, Some(2000), "libreoffice/{family}");
-        }
-    }
-}
-
 #[test]
 fn validation_reports_two_shapes_of_a_slide_sharing_an_id() {
     let mut prs = new_deck();
@@ -2497,46 +1570,6 @@ fn validation_reports_two_shapes_of_a_slide_sharing_an_id() {
 }
 
 #[test]
-fn placeholder_text_survives_an_odp_round_trip() {
-    // A placeholder that takes its place from its layout carries no
-    // transform of its own; ODP needs one for every frame.
-    let mut prs = new_deck();
-    let layout = layout_named(&prs, "Title and Content");
-    prs.add_slide(layout).unwrap();
-    let placeholders = prs.slide(0).unwrap().shapes().count();
-    assert!(placeholders >= 2, "a title and a body");
-    prs.slide_mut(0)
-        .unwrap()
-        .shape_mut(0)
-        .unwrap()
-        .set_text("Quarterly plan")
-        .unwrap();
-    prs.slide_mut(0)
-        .unwrap()
-        .shape_mut(1)
-        .unwrap()
-        .set_text("Ship the beta")
-        .unwrap();
-    let written = prs.to_odp_bytes().unwrap();
-    assert!(
-        !written
-            .diagnostics
-            .iter()
-            .any(|diagnostic| format!("{diagnostic:?}").contains("without bounds")),
-        "{:?}",
-        written.diagnostics
-    );
-    let read = Presentation::from_odp_bytes(&written.bytes)
-        .unwrap()
-        .presentation;
-    let text = read.slide(0).unwrap().text();
-    assert!(
-        text.contains("Quarterly plan") && text.contains("Ship the beta"),
-        "{text}"
-    );
-}
-
-#[test]
 fn a_slide_name_holding_a_tab_and_line_ends_survives_an_odp_round_trip() {
     let name = "Plan\tQ1\nend\rnote";
     let deck = deck_with_titles(&["Plan"]);
@@ -2576,4 +1609,160 @@ fn slide_text_with_markup_characters_reads_back_from_odp() {
     let read = Presentation::from_odp_bytes(&odp).unwrap().presentation;
     let slide = read.slide(0).unwrap().text();
     assert!(slide.contains(text), "{slide}");
+}
+
+#[test]
+fn removing_a_slide_takes_its_title_out_of_the_package_metadata() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let before = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(
+        before.contains("<vt:lpstr>Highlights</vt:lpstr>"),
+        "{before}"
+    );
+    // Hiding Highlights counts it as hidden; removing it must count it out.
+    prs.slide_mut(1).unwrap().set_hidden(true);
+    assert!(
+        saved_part_text(&prs, "/docProps/app.xml")
+            .unwrap()
+            .contains("<HiddenSlides>1</HiddenSlides>")
+    );
+
+    prs.remove_slide(1).unwrap();
+
+    let prs = reopen(&prs);
+    let app = saved_part_text(&prs, "/docProps/app.xml").unwrap();
+    assert!(!app.contains("Highlights"), "{app}");
+    // Three slides left, the notes and the hidden slide went with Highlights;
+    // the title lists go and every other byte stays.
+    let cut = |xml: &str, from: &str, to: &str| {
+        let start = xml.find(from).expect("the element is there");
+        let end = xml[start..].find(to).expect("the element closes") + start + to.len();
+        format!("{}{}", &xml[..start], &xml[end..])
+    };
+    // The text counts go too: oxoffice does not recount them.
+    let expected = cut(
+        &cut(
+            &cut(
+                &cut(&before, "<HeadingPairs>", "</HeadingPairs>"),
+                "<TitlesOfParts>",
+                "</TitlesOfParts>",
+            ),
+            "<Words>",
+            "</Words>",
+        ),
+        "<Paragraphs>",
+        "</Paragraphs>",
+    )
+    .replace("<Slides>4</Slides>", "<Slides>3</Slides>")
+    .replace("<Notes>1</Notes>", "<Notes>0</Notes>");
+    assert!(
+        expected.contains("<HiddenSlides>0</HiddenSlides>"),
+        "{expected}"
+    );
+    assert_eq!(app, expected);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+#[test]
+fn a_slide_text_edit_drops_the_stale_title_lists_and_text_counts_and_keeps_the_title() {
+    let mut prs = corpus_deck("powerpoint/deck.pptx");
+    let core = saved_part_text(&prs, "/docProps/core.xml").unwrap();
+    assert!(
+        core.contains("<dc:title>Quarterly Operations Review</dc:title>"),
+        "{core}"
+    );
+    prs.slide_mut(0)
+        .unwrap()
+        .shape_mut(0)
+        .unwrap()
+        .set_text("A new title")
+        .unwrap();
+    let saved = reopen(&prs);
+    let app = saved_part_text(&saved, "/docProps/app.xml").unwrap();
+    for gone in [
+        "<HeadingPairs>",
+        "<TitlesOfParts>",
+        "<Words>",
+        "<Paragraphs>",
+    ] {
+        assert!(!app.contains(gone), "{gone}: {app}");
+    }
+    assert!(app.contains("<Slides>4</Slides>"), "{app}");
+    // The core title is the user's: a slide edit leaves it alone.
+    assert_eq!(saved_part_text(&saved, "/docProps/core.xml").unwrap(), core);
+}
+
+#[test]
+fn a_slide_size_type_stays_with_its_size_and_goes_with_a_new_one() {
+    let mut prs = new_deck();
+    let (width, height) = prs.slide_size().unwrap();
+    prs.set_slide_size(width, height).unwrap();
+    assert!(
+        saved_slide_size_element(&reopen(&prs)).contains("type=\"screen16x9\""),
+        "the same size keeps its type"
+    );
+
+    // The authored corpus deck already says screen4x3 on a wide size.
+    let mut prs = corpus_deck("authored/deck.pptx");
+    assert!(saved_slide_size_element(&prs).contains("type=\"screen4x3\""));
+    assert_ne!(prs.slide_size(), Some((Emu(9_906_000), Emu(6_858_000))));
+    prs.set_slide_size(Emu(9_906_000), Emu(6_858_000)).unwrap();
+    let prs = reopen(&prs);
+    assert_eq!(
+        saved_slide_size_element(&prs),
+        r#"<p:sldSz cx="9906000" cy="6858000"/>"#
+    );
+    assert_eq!(prs.slide_size(), Some((Emu(9_906_000), Emu(6_858_000))));
+}
+
+#[test]
+fn removing_a_slide_drops_a_tags_part_only_it_used() {
+    let prs = deck_with_titles(&["Kept", "Tagged"]);
+    let mut package = OpcPackage::from_reader(Cursor::new(prs.to_bytes().unwrap())).unwrap();
+    package.set_part(
+        "/ppt/tags/tag1.xml",
+        br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:tagLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:tag name="CLIENT" val="Contoso, internal only"/></p:tagLst>"#
+            .to_vec(),
+    );
+    package.content_types.add_override(
+        "/ppt/tags/tag1.xml",
+        "application/vnd.openxmlformats-officedocument.presentationml.tags+xml",
+    );
+    package
+        .get_or_create_part_rels("/ppt/slides/slide2.xml")
+        .add(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/tags",
+            "../tags/tag1.xml",
+        );
+    let mut bytes = Cursor::new(Vec::new());
+    package.write_to(&mut bytes).unwrap();
+    let mut prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
+    assert_eq!(count_parts(&prs, "ppt/tags/"), 1);
+
+    prs.remove_slide(1).unwrap();
+
+    let prs = reopen(&prs);
+    assert_eq!(count_parts(&prs, "ppt/tags/"), 0);
+    assert_eq!(titles(&prs), ["Kept"]);
+    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
+}
+
+fn count_parts(prs: &Presentation, folder: &str) -> usize {
+    saved_parts(prs)
+        .iter()
+        .filter(|name| name.starts_with(folder) && !name.contains("_rels"))
+        .count()
+}
+
+/// The part names of the saved package.
+fn saved_parts(prs: &Presentation) -> Vec<String> {
+    let bytes = prs.to_bytes().expect("deck saves");
+    OpcPackage::from_reader(Cursor::new(bytes))
+        .expect("package opens")
+        .zip_entries()
+        .expect("package serialises")
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
 }

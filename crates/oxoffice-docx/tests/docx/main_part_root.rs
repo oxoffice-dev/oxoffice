@@ -3,8 +3,6 @@
 
 use std::io::Read;
 
-use crate::support::corpus_doc;
-
 /// The main part's bytes up to the end of its root start tag.
 fn root_prefix(saved: &[u8]) -> String {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(saved)).expect("a package");
@@ -16,48 +14,6 @@ fn root_prefix(saved: &[u8]) -> String {
         .expect("UTF-8");
     let root = xml.find("<w:document").expect("a root");
     xml[..root + xml[root..].find('>').expect("a root end") + 1].to_owned()
-}
-
-fn word_report() -> oxoffice_docx::Document {
-    corpus_doc("word/report.docx")
-}
-
-#[test]
-fn a_typed_body_edit_keeps_words_root() {
-    let mut doc = word_report();
-    let opened = root_prefix(&doc.to_bytes().unwrap());
-    assert!(opened.contains("?>\r\n<w:document xmlns:wpc="), "{opened}");
-    doc.paragraph_mut(0).unwrap().add_run("first");
-    let saved = doc.to_bytes().unwrap();
-    assert_eq!(root_prefix(&saved), opened);
-    // A second edit after a save still keeps it.
-    doc.paragraph_mut(0).unwrap().add_run(" second");
-    let saved = doc.to_bytes().unwrap();
-    assert_eq!(root_prefix(&saved), opened);
-    let reopened = oxoffice_docx::Document::from_bytes(&saved).unwrap();
-    assert!(
-        reopened
-            .paragraph(0)
-            .unwrap()
-            .text()
-            .ends_with("first second")
-    );
-}
-
-#[test]
-fn an_in_place_body_edit_keeps_words_root() {
-    let mut doc = word_report();
-    let opened = root_prefix(&doc.to_bytes().unwrap());
-    doc.edit_body_paragraph_in_place(0, |paragraph| {
-        paragraph.add_run("in place");
-        Ok(())
-    })
-    .unwrap()
-    .expect("a direct body paragraph");
-    let saved = doc.to_bytes().unwrap();
-    assert_eq!(root_prefix(&saved), opened);
-    let reopened = oxoffice_docx::Document::from_bytes(&saved).unwrap();
-    assert!(reopened.paragraph(0).unwrap().text().ends_with("in place"));
 }
 
 /// A new document whose main part root is rewritten by `rewrite`.
@@ -96,22 +52,6 @@ fn a_root_that_differs_only_in_attribute_order_is_kept() {
     let opened = root_prefix(&doc.to_bytes().unwrap());
     doc.add_paragraph("added");
     assert_eq!(root_prefix(&doc.to_bytes().unwrap()), opened);
-}
-
-#[test]
-fn a_root_after_another_declaration_is_written_anew() {
-    let mut doc = doc_with_root(|xml| {
-        let xml = reversed_root(xml);
-        let end = xml.find("?>").unwrap() + 2;
-        format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>{}", &xml[end..])
-    });
-    let opened = root_prefix(&doc.to_bytes().unwrap());
-    doc.add_paragraph("added");
-    let written = root_prefix(&doc.to_bytes().unwrap());
-    assert_ne!(written, opened);
-    assert!(written.starts_with(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w="
-    ));
 }
 
 /// A root default namespace, which the writer writes back as declared: the

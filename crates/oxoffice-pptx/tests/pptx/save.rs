@@ -5,7 +5,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oxoffice_pptx::{Error, Presentation, SaveOptions};
+#[cfg(unix)]
+use oxoffice_pptx::SaveOptions;
+use oxoffice_pptx::{Error, Presentation};
 
 /// A folder of its own under the system temporary folder, removed on drop.
 struct Scratch(PathBuf);
@@ -61,18 +63,23 @@ fn saving_over_the_opened_file_is_refused() {
 
 #[test]
 fn every_spelling_of_the_source_is_refused() {
+    // The same file by another name: a dot and a parent step everywhere; a
+    // hard link and a symbolic link on Unix, where the comparison reads the
+    // inode (Windows compares canonical paths, which a hard link does not
+    // share, as `oxoffice_opc::is_same_file` says).
     let scratch = Scratch::new("spellings");
     fs::create_dir(scratch.0.join("sub")).unwrap();
     let path = scratch.deck("deck.pptx");
-    let prs = Presentation::open(&path).unwrap();
-    assert_refused(&prs, &scratch.0.join("./deck.pptx"));
-    assert_refused(&prs, &scratch.0.join("sub/../deck.pptx"));
     #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&path, scratch.0.join("link.pptx")).unwrap();
-        assert_refused(&prs, &scratch.0.join("link.pptx"));
-        fs::hard_link(&path, scratch.0.join("hard.pptx")).unwrap();
-        assert_refused(&prs, &scratch.0.join("hard.pptx"));
+    fs::hard_link(&path, scratch.0.join("hard.pptx")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&path, scratch.0.join("link.pptx")).unwrap();
+    let prs = Presentation::open(&path).unwrap();
+    let spellings = ["./deck.pptx", "sub/../deck.pptx", "hard.pptx", "link.pptx"];
+    for spelling in spellings {
+        if cfg!(unix) || !matches!(spelling, "link.pptx" | "hard.pptx") {
+            assert_refused(&prs, &scratch.0.join(spelling));
+        }
     }
 }
 
@@ -104,43 +111,6 @@ fn the_source_is_still_refused_after_edits() {
 }
 
 #[test]
-fn overwrite_source_replaces_the_opened_file() {
-    let scratch = Scratch::new("overwrite");
-    let path = scratch.deck("deck.pptx");
-    let mut prs = Presentation::open(&path).unwrap();
-    let slides = prs.len();
-    prs.duplicate_slide(0).unwrap();
-    prs.save_with_options(
-        &path,
-        SaveOptions {
-            overwrite_source: true,
-        },
-    )
-    .unwrap();
-    assert_eq!(Presentation::open(&path).unwrap().len(), slides + 1);
-}
-
-#[cfg(unix)]
-#[test]
-fn the_replaced_source_keeps_its_mode() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let scratch = Scratch::new("mode");
-    let path = scratch.deck("deck.pptx");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-    let prs = Presentation::open(&path).unwrap();
-    prs.save_with_options(
-        &path,
-        SaveOptions {
-            overwrite_source: true,
-        },
-    )
-    .unwrap();
-    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o640);
-}
-
-#[test]
 fn saving_elsewhere_leaves_the_source_as_it_was() {
     let scratch = Scratch::new("elsewhere");
     let path = scratch.deck("deck.pptx");
@@ -152,14 +122,6 @@ fn saving_elsewhere_leaves_the_source_as_it_was() {
     prs.save(&copy).unwrap();
     assert_eq!(fs::read(&path).unwrap(), before);
     assert_eq!(Presentation::open(&copy).unwrap().len(), slides + 1);
-}
-
-#[test]
-fn a_presentation_from_bytes_has_no_source() {
-    let scratch = Scratch::new("bytes");
-    let path = scratch.deck("deck.pptx");
-    let prs = Presentation::from_bytes(&fs::read(&path).unwrap()).unwrap();
-    prs.save(&path).unwrap();
 }
 
 /// A blank deck of `slides` slides carrying a package signature graph whose
@@ -366,4 +328,24 @@ fn a_deck_signed_in_session_and_edited_in_place_and_back_marks_its_signature_inv
                 .ends_with("/invalidated-package-signature")),
         "the signature is marked invalidated"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_replaced_source_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = Scratch::new("mode");
+    let path = scratch.deck("deck.pptx");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    let prs = Presentation::open(&path).unwrap();
+    prs.save_with_options(
+        &path,
+        SaveOptions {
+            overwrite_source: true,
+        },
+    )
+    .unwrap();
+    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o640);
 }

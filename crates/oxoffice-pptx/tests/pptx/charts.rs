@@ -8,7 +8,6 @@ use std::io::Cursor;
 
 use oxoffice_chart::CT_DLbls;
 use oxoffice_opc::OpcPackage;
-use oxoffice_opc::relationship::rel_types;
 use oxoffice_pptx::{
     ChartData, ChartKind, Emu, LegendPosition, LegendSettings, Presentation, RgbColor, ShapeType,
 };
@@ -275,24 +274,6 @@ fn data_label_flags(xml: &str) -> BTreeMap<String, String> {
 // --- Adding and reading back -------------------------------------------------
 
 #[test]
-fn a_bar_chart_reads_back_its_categories_series_and_values_after_a_save() {
-    let mut prs = blank_deck(1);
-    let id = chart_on(&mut prs, 0, ChartKind::Bar, &regions());
-
-    let (kind, read) = chart(&reopen(&prs), 0, id);
-    assert_eq!(kind, ChartKind::Bar);
-    assert_eq!(read.categories, ["North", "South", "West"]);
-    assert_eq!(
-        read.series,
-        [
-            ("Revenue".to_owned(), vec![12.5, 19.0, 14.25]),
-            ("Cost".to_owned(), vec![8.0, 11.5, 9.75]),
-        ]
-    );
-    assert_eq!(read.number_format, None, "General reads back as no format");
-}
-
-#[test]
 fn every_chart_kind_reads_back_with_its_kind_data_and_chart_type() {
     // Chart types are python-pptx XL_CHART_TYPE numbers: Bar is drawn as
     // clustered columns, Line and Scatter carry markers.
@@ -358,51 +339,6 @@ fn a_chart_frame_sits_where_it_was_placed_and_can_be_moved_and_resized() {
 }
 
 #[test]
-fn values_keep_their_full_precision_and_sign() {
-    let values = [
-        0.1 + 0.2,
-        -1e-7,
-        1_234_567.891,
-        0.0,
-        -42.5,
-        1e15,
-        f64::MIN_POSITIVE,
-    ];
-    let categories = ["a", "b", "c", "d", "e", "f", "g"];
-    let source = data(&categories, &[("Measures", &values)]);
-    let mut prs = blank_deck(1);
-    let id = chart_on(&mut prs, 0, ChartKind::Line, &source);
-
-    let (_, read) = chart(&reopen(&prs), 0, id);
-    for (read, written) in read.series[0].1.iter().zip(values) {
-        assert_eq!(read.to_bits(), written.to_bits(), "{written:e}");
-    }
-}
-
-#[test]
-fn unicode_right_to_left_and_cjk_labels_survive_a_save() {
-    let categories = ["東京", "القاهرة", "Zürich", "Ⅲ 😀", "<b> & \"q\""];
-    let source = data(
-        &categories,
-        &[
-            ("売上高", &[1.0, 2.0, 3.0, 4.0, 5.0]),
-            ("المبيعات €", &[5.0, 4.0, 3.0, 2.0, 1.0]),
-        ],
-    );
-    let mut prs = blank_deck(1);
-    let id = chart_on(&mut prs, 0, ChartKind::Bar, &source);
-
-    assert_eq!(chart(&reopen(&prs), 0, id).1, source);
-    // The embedded workbook, what "Edit Data" opens, carries them too.
-    let book = only_workbook(&prs);
-    for (row, category) in categories.iter().enumerate() {
-        assert_eq!(book[&format!("A{}", row + 2)], *category);
-    }
-    assert_eq!(book["B1"], "売上高");
-    assert_eq!(book["C1"], "المبيعات €");
-}
-
-#[test]
 fn a_number_format_reads_back_from_the_chart() {
     for format in ["0.0%", "#,##0.00\" €\"", "0.00E+00"] {
         let mut source = shares();
@@ -432,31 +368,6 @@ fn scatter_x_values_read_back_as_categories_and_can_be_replaced() {
 }
 
 #[test]
-fn the_embedded_workbook_holds_the_chart_data() {
-    let mut prs = blank_deck(1);
-    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
-
-    let mut book = only_workbook(&prs);
-    book.remove("A1"); // the header above the categories
-    assert_eq!(
-        book,
-        cells(&[
-            ("A2", "North"),
-            ("A3", "South"),
-            ("A4", "West"),
-            ("B1", "Revenue"),
-            ("B2", "12.5"),
-            ("B3", "19"),
-            ("B4", "14.25"),
-            ("C1", "Cost"),
-            ("C2", "8"),
-            ("C3", "11.5"),
-            ("C4", "9.75"),
-        ])
-    );
-}
-
-#[test]
 fn axis_titles_given_at_creation_are_written_on_the_axes() {
     // The facade has no reader for axis titles: read the chart part.
     let mut source = regions();
@@ -470,31 +381,6 @@ fn axis_titles_given_at_creation_are_written_on_the_axes() {
     let value_axis = &element_texts(xml.as_bytes(), b"valAx")[0];
     assert!(category_axis.contains("Region"), "{xml}");
     assert!(value_axis.contains("Euros (k)"), "{xml}");
-}
-
-#[test]
-fn pie_and_doughnut_slices_are_labelled_with_their_percentage_only() {
-    // The facade has no reader for data labels: read the chart part. Readers
-    // disagree on an absent flag, so each field must be stated.
-    for kind in [ChartKind::Pie, ChartKind::Doughnut] {
-        let mut prs = blank_deck(1);
-        chart_on(&mut prs, 0, kind, &shares());
-        let flags = data_label_flags(&only_chart_xml(&prs));
-        assert_eq!(flags.get("showPercent").map(String::as_str), Some("1"));
-        for field in [
-            "showLegendKey",
-            "showVal",
-            "showCatName",
-            "showSerName",
-            "showBubbleSize",
-        ] {
-            assert_eq!(
-                flags.get(field).map(String::as_str),
-                Some("0"),
-                "{kind:?}: data labels leave a field to the reader: {field}"
-            );
-        }
-    }
 }
 
 #[test]
@@ -668,36 +554,6 @@ fn chart_calls_on_a_shape_that_is_not_a_chart_are_refused() {
 }
 
 // --- Legend ------------------------------------------------------------------
-
-#[test]
-fn a_chart_shows_its_legend_on_the_right_when_it_has_several_series_or_slices() {
-    let shown = LegendSettings {
-        visible: true,
-        position: LegendPosition::Right,
-        overlay: false,
-    };
-    for (kind, source, visible) in [
-        (ChartKind::Bar, regions(), true),
-        (ChartKind::Line, regions(), true),
-        (ChartKind::Pie, shares(), true),
-        (ChartKind::Doughnut, shares(), true),
-        (ChartKind::Bar, shares(), false),
-        (ChartKind::Line, shares(), false),
-    ] {
-        let mut prs = blank_deck(1);
-        let id = chart_on(&mut prs, 0, kind, &source);
-        let read = legend(&reopen(&prs), 0, id);
-        assert_eq!(
-            read.visible,
-            visible,
-            "{kind:?} with {} series",
-            source.series.len()
-        );
-        if visible {
-            assert_eq!(read, shown, "{kind:?}");
-        }
-    }
-}
 
 #[test]
 fn the_legend_position_and_overlay_survive_a_save() {
@@ -897,81 +753,7 @@ fn replacing_chart_data_with_the_same_data_changes_nothing() {
 
 // --- Several charts ----------------------------------------------------------
 
-#[test]
-fn several_charts_on_one_slide_keep_their_own_data_and_parts() {
-    let trend = data(&["Jan", "Feb"], &[("Visits", &[120.0, 180.0])]);
-    let mut prs = blank_deck(1);
-    let bar = chart_on(&mut prs, 0, ChartKind::Bar, &regions());
-    let pie = chart_on(&mut prs, 0, ChartKind::Pie, &shares());
-    let line = chart_on(&mut prs, 0, ChartKind::Line, &trend);
-
-    let saved = reopen(&prs);
-    assert_eq!(shape_ids(&saved, 0), [bar, pie, line]);
-    assert_eq!(chart(&saved, 0, bar), (ChartKind::Bar, regions()));
-    assert_eq!(chart(&saved, 0, pie), (ChartKind::Pie, shares()));
-    assert_eq!(chart(&saved, 0, line), (ChartKind::Line, trend));
-    let parts = chart_parts(&saved);
-    let charts = parts
-        .iter()
-        .filter(|p| p.starts_with("/ppt/charts/"))
-        .count();
-    let books = parts
-        .iter()
-        .filter(|p| p.starts_with("/ppt/embeddings/"))
-        .count();
-    assert_eq!((charts, books), (3, 3), "{parts:?}");
-}
-
-#[test]
-fn editing_one_chart_leaves_the_other_charts_alone() {
-    let mut prs = blank_deck(2);
-    let first = chart_on(&mut prs, 0, ChartKind::Bar, &regions());
-    let second = chart_on(&mut prs, 0, ChartKind::Bar, &regions());
-    let elsewhere = chart_on(&mut prs, 1, ChartKind::Bar, &regions());
-
-    prs.replace_chart_data(0, second, &shares()).unwrap();
-    prs.set_chart_legend(0, second, Some(false), None, None)
-        .unwrap();
-    let saved = reopen(&prs);
-    assert_eq!(chart(&saved, 0, second).1, shares());
-    assert!(!legend(&saved, 0, second).visible);
-    for (slide, id) in [(0, first), (1, elsewhere)] {
-        assert_eq!(chart(&saved, slide, id).1, regions(), "chart {id}");
-        assert!(legend(&saved, slide, id).visible, "chart {id}");
-    }
-}
-
 // --- Removing ----------------------------------------------------------------
-
-#[test]
-fn removing_a_chart_drops_its_chart_part_and_workbook() {
-    let mut prs = blank_deck(1);
-    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
-    let kept = chart_on(&mut prs, 0, ChartKind::Pie, &shares());
-    let before = chart_parts(&prs);
-
-    prs.remove_shape(0, 0).unwrap();
-    let saved = reopen(&prs);
-    assert_eq!(shape_ids(&saved, 0), [kept]);
-    assert_eq!(chart(&saved, 0, kept), (ChartKind::Pie, shares()));
-    let after = chart_parts(&saved);
-    assert_eq!(after.len(), 2, "one chart and its workbook left: {after:?}");
-    assert!(after.is_subset(&before));
-    assert!(saved.validate().is_empty(), "{:?}", saved.validate());
-}
-
-#[test]
-fn removing_the_slide_that_holds_a_chart_drops_its_chart_part_and_workbook() {
-    let mut prs = blank_deck(2);
-    chart_on(&mut prs, 1, ChartKind::Bar, &regions());
-
-    prs.remove_slide(1).unwrap();
-    let parts = chart_parts(&reopen(&prs));
-    assert!(
-        parts.is_empty(),
-        "the removed slide's chart parts are still in the file: {parts:?}"
-    );
-}
 
 #[test]
 fn a_carriage_return_in_chart_text_is_saved_so_that_other_readers_keep_it() {
@@ -987,31 +769,6 @@ fn a_carriage_return_in_chart_text_is_saved_so_that_other_readers_keep_it() {
     let xml = only_chart_xml(&saved);
     assert!(xml.contains("North&#13;coast"), "{xml}");
     assert!(!xml.contains('\r'), "{xml}");
-}
-
-#[test]
-fn a_raw_carriage_return_in_saved_chart_text_reads_as_a_line_feed() {
-    let mut prs = blank_deck(1);
-    let id = chart_on(&mut prs, 0, ChartKind::Bar, &regions());
-    let mut package = saved_package(&prs);
-    let part = package
-        .parts
-        .keys()
-        .find(|name| name.starts_with("/ppt/charts/") && name.ends_with(".xml"))
-        .cloned()
-        .unwrap();
-    let xml = String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap();
-    let patched = xml.replace("<c:v>North</c:v>", "<c:v>North\r\ncoast</c:v>");
-    assert_ne!(patched, xml, "the cache names the category");
-    package.set_part(&part, patched.into_bytes());
-    let mut bytes = Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
-
-    let (_, data) = chart(&prs, 0, id);
-    assert_eq!(data.categories[0], "North\ncoast");
-    let saved = reopen(&prs);
-    assert_eq!(chart(&saved, 0, id).1.categories[0], "North\ncoast");
 }
 
 #[test]
@@ -1048,100 +805,6 @@ fn a_chart_title_and_cdata_chart_text_with_raw_line_ends_read_as_line_feeds() {
     package.write_to(&mut bytes).unwrap();
     let prs = Presentation::from_bytes(&bytes.into_inner()).unwrap();
     assert_eq!(chart(&prs, 0, id).1.categories[0], "North\ncoast");
-}
-
-#[test]
-fn removing_a_chart_slide_from_every_editors_deck_drops_its_chart_and_keeps_the_rest() {
-    for name in [
-        "powerpoint/deck.pptx",
-        "google/deck.pptx",
-        "libreoffice/deck.pptx",
-        "authored/deck.pptx",
-    ] {
-        let mut prs = corpus_deck(name);
-        let charts_before = chart_parts(&prs);
-        let mut texts = slide_texts(&prs);
-        chart_on(&mut prs, 1, ChartKind::Bar, &regions());
-        let package = saved_package(&prs);
-        let before: BTreeSet<String> = package.parts.keys().cloned().collect();
-        // The slide that holds the chart, and every part it reaches without
-        // going through its layout, the notes master or another slide.
-        let slide = package
-            .part_rels
-            .iter()
-            .find(|(_, relationships)| {
-                relationships
-                    .items
-                    .iter()
-                    .any(|relationship| relationship.rel_type == rel_types::CHART)
-            })
-            .map(|(part, _)| part.clone())
-            .expect("a part relates to the chart");
-        let mut graph = BTreeSet::new();
-        let mut pending = vec![slide.clone()];
-        while let Some(part) = pending.pop() {
-            if !graph.insert(part.clone()) {
-                continue;
-            }
-            for relationship in package
-                .get_part_rels(&part)
-                .map(|relationships| relationships.items.clone())
-                .unwrap_or_default()
-            {
-                let shared = [
-                    rel_types::SLIDE_LAYOUT,
-                    rel_types::NOTES_MASTER,
-                    rel_types::SLIDE,
-                ]
-                .contains(&relationship.rel_type.as_str());
-                if relationship.target_mode.as_deref() != Some("External") && !shared {
-                    pending.push(OpcPackage::resolve_rel_target(&part, &relationship.target));
-                }
-            }
-        }
-
-        prs.remove_slide(1).unwrap();
-
-        let saved = reopen(&prs);
-        let after: BTreeSet<String> = saved_package(&saved).parts.into_keys().collect();
-        // The package thumbnail goes with any removal, as it may picture the
-        // removed slide. Beside it, no corpus deck shares a part of that
-        // graph with another slide, so exactly the graph goes: nothing
-        // outside it, nothing of it stays.
-        let removed: BTreeSet<String> = before
-            .difference(&after)
-            .filter(|part| *part != "/docProps/thumbnail.jpeg")
-            .cloned()
-            .collect();
-        assert_eq!(removed, graph, "{name}");
-        assert_eq!(chart_parts(&saved), charts_before, "{name}");
-        texts.remove(1);
-        assert_eq!(slide_texts(&saved), texts, "{name}");
-        assert!(
-            saved.validate().is_empty(),
-            "{name}: {:?}",
-            saved.validate()
-        );
-    }
-}
-
-#[test]
-fn a_chart_shared_with_a_duplicate_stays_until_its_last_slide_goes() {
-    let mut prs = blank_deck(2);
-    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
-    prs.duplicate_slide(0).unwrap();
-    let copy = last_shape_id(&prs, 1);
-    let parts = chart_parts(&prs);
-
-    prs.remove_slide(0).unwrap();
-    let saved = reopen(&prs);
-    assert_eq!(chart(&saved, 0, copy), (ChartKind::Bar, regions()));
-    assert!(chart_parts(&saved).is_subset(&parts));
-    assert!(!chart_parts(&saved).is_empty());
-    assert!(saved.validate().is_empty(), "{:?}", saved.validate());
-
-    prs.remove_slide(0).unwrap();
-    assert!(chart_parts(&reopen(&prs)).is_empty());
 }
 
 // --- Copies, groups ----------------------------------------------------------
@@ -1229,19 +892,6 @@ fn a_chart_in_a_group_keeps_its_data_and_stays_editable() {
 // --- Round trips, export, render ---------------------------------------------
 
 #[test]
-fn an_unedited_chart_is_saved_byte_for_byte() {
-    let mut prs = blank_deck(1);
-    chart_on(&mut prs, 0, ChartKind::Radar, &regions());
-    let first = saved_package(&prs);
-    let again = saved_package(&reopen(&reopen(&prs)));
-    let names = chart_parts(&prs);
-    assert_eq!(names.len(), 2);
-    for name in names {
-        assert_eq!(first.get_part(&name), again.get_part(&name), "{name}");
-    }
-}
-
-#[test]
 fn a_chart_exports_to_markdown_as_a_data_table() {
     let mut prs = blank_deck(1);
     chart_on(&mut prs, 0, ChartKind::Bar, &regions());
@@ -1321,17 +971,59 @@ fn a_chart_added_to_the_powerpoint_deck_reads_back_and_leaves_the_rest_as_it_was
 }
 
 #[test]
-fn a_chart_added_to_the_google_slides_deck_gets_a_shape_id_of_its_own() {
-    let mut prs = corpus_deck("google/deck.pptx");
-    let slide = 3;
-    let existing = shape_ids(&prs, slide);
-    let id = chart_on(&mut prs, slide, ChartKind::Pie, &shares());
-    assert!(!existing.contains(&id), "{id} in {existing:?}");
+fn values_keep_their_full_precision_and_sign() {
+    let values = [
+        0.1 + 0.2,
+        -1e-7,
+        1_234_567.891,
+        0.0,
+        -42.5,
+        1e15,
+        f64::MIN_POSITIVE,
+    ];
+    let categories = ["a", "b", "c", "d", "e", "f", "g"];
+    let source = data(&categories, &[("Measures", &values)]);
+    let mut prs = blank_deck(1);
+    let id = chart_on(&mut prs, 0, ChartKind::Line, &source);
 
+    let (_, read) = chart(&reopen(&prs), 0, id);
+    for (read, written) in read.series[0].1.iter().zip(values) {
+        assert_eq!(read.to_bits(), written.to_bits(), "{written:e}");
+    }
+}
+
+#[test]
+fn removing_a_chart_drops_its_chart_part_and_workbook() {
+    let mut prs = blank_deck(1);
+    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
+    let kept = chart_on(&mut prs, 0, ChartKind::Pie, &shares());
+    let before = chart_parts(&prs);
+
+    prs.remove_shape(0, 0).unwrap();
     let saved = reopen(&prs);
-    let ids = shape_ids(&saved, slide);
-    let unique: BTreeSet<_> = ids.iter().collect();
-    assert_eq!(unique.len(), ids.len(), "{ids:?}");
-    assert_eq!(chart(&saved, slide, id), (ChartKind::Pie, shares()));
+    assert_eq!(shape_ids(&saved, 0), [kept]);
+    assert_eq!(chart(&saved, 0, kept), (ChartKind::Pie, shares()));
+    let after = chart_parts(&saved);
+    assert_eq!(after.len(), 2, "one chart and its workbook left: {after:?}");
+    assert!(after.is_subset(&before));
     assert!(saved.validate().is_empty(), "{:?}", saved.validate());
+}
+
+#[test]
+fn a_chart_shared_with_a_duplicate_stays_until_its_last_slide_goes() {
+    let mut prs = blank_deck(2);
+    chart_on(&mut prs, 0, ChartKind::Bar, &regions());
+    prs.duplicate_slide(0).unwrap();
+    let copy = last_shape_id(&prs, 1);
+    let parts = chart_parts(&prs);
+
+    prs.remove_slide(0).unwrap();
+    let saved = reopen(&prs);
+    assert_eq!(chart(&saved, 0, copy), (ChartKind::Bar, regions()));
+    assert!(chart_parts(&saved).is_subset(&parts));
+    assert!(!chart_parts(&saved).is_empty());
+    assert!(saved.validate().is_empty(), "{:?}", saved.validate());
+
+    prs.remove_slide(0).unwrap();
+    assert!(chart_parts(&reopen(&prs)).is_empty());
 }

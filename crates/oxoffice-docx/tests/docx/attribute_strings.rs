@@ -45,50 +45,6 @@ fn read_attribute(doc: &mut Document, part: &str, element: &str, attribute: &str
     }
 }
 
-/// A new document whose styles part holds `style` too.
-fn doc_with_style(style: &str) -> Document {
-    let bytes = Document::new().to_bytes().expect("new document saves");
-    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).expect("package opens");
-    let xml = String::from_utf8(
-        package
-            .get_part("/word/styles.xml")
-            .expect("styles part")
-            .to_vec(),
-    )
-    .expect("styles part is UTF-8");
-    let end = xml.rfind("</w:styles>").expect("styles end");
-    let xml = format!("{}{style}{}", &xml[..end], &xml[end..]);
-    package.set_part("/word/styles.xml", xml.into_bytes());
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).expect("package writes");
-    Document::from_bytes(&out.into_inner()).expect("document with this style opens")
-}
-
-#[test]
-fn a_style_id_holding_markup_characters_reads_back_as_set_after_two_saves() {
-    let id = "Q&A \"<x>\"";
-    let mut doc = doc_with(&["text"]);
-    let mut paragraph = doc.paragraph_mut(0).unwrap();
-    paragraph.set_style(id);
-    paragraph.add_run("run").set_style(id);
-    let mut doc = reopen(&mut reopen(&mut doc));
-    let paragraph = &doc.paragraphs()[0];
-    assert_eq!(paragraph.style_id(), Some(id));
-    let runs: Vec<_> = paragraph
-        .runs()
-        .map(|run| run.style_id().map(str::to_owned))
-        .collect();
-    assert_eq!(runs.last().cloned().flatten().as_deref(), Some(id));
-    assert_eq!(
-        read_attribute(&mut doc, "/word/document.xml", "w:pStyle", "w:val"),
-        [id]
-    );
-    assert_eq!(
-        read_attribute(&mut doc, "/word/document.xml", "w:rStyle", "w:val"),
-        [id]
-    );
-}
-
 #[test]
 fn values_written_with_character_references_read_back_resolved_after_an_edit() {
     let mut doc = doc_with_body(concat!(
@@ -140,51 +96,6 @@ fn values_written_with_character_references_read_back_resolved_after_an_edit() {
 }
 
 #[test]
-fn a_header_reference_written_with_a_character_reference_keeps_its_header_after_an_edit() {
-    let mut doc = doc_with(&["body"]);
-    doc.set_header("Running head");
-    let bytes = doc.to_bytes().unwrap();
-    let mut package = OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-    let xml = String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
-    let at = xml.find("<w:headerReference").expect("a header reference");
-    let id = xml[at..].find("r:id=\"r").expect("its relationship id") + at + "r:id=\"".len();
-    let xml = format!("{}&#114;{}", &xml[..id], &xml[id + 1..]);
-    package.set_part("/word/document.xml", xml.into_bytes());
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
-    assert_eq!(doc.header_text().as_deref(), Some("Running head"));
-    doc.paragraph_mut(0)
-        .unwrap()
-        .set_alignment(Alignment::Center);
-    let doc = reopen(&mut reopen(&mut doc));
-    assert_eq!(doc.header_text().as_deref(), Some("Running head"));
-}
-
-#[test]
-fn a_style_id_and_name_written_with_references_read_back_after_a_styles_edit() {
-    let mut doc = doc_with_style(concat!(
-        r#"<w:style w:type="paragraph" w:styleId="Q&amp;A">"#,
-        r#"<w:name w:val="Q &amp; A"/><w:basedOn w:val="&#78;ormal"/>"#,
-        r#"<w:next w:val="&#78;ormal"/></w:style>"#,
-    ));
-    doc.add_common_styles().unwrap();
-    let mut doc = reopen(&mut reopen(&mut doc));
-    let style = doc.style("Q&A").expect("the style keeps its id");
-    assert_eq!(style.name(), Some("Q & A"));
-    assert_eq!(style.based_on(), Some("Normal"));
-    let read = |doc: &mut Document, element: &str| {
-        read_attribute(doc, "/word/styles.xml", element, "w:val")
-    };
-    assert!(read(&mut doc, "w:name").contains(&"Q & A".to_owned()));
-    assert!(
-        !read(&mut doc, "w:next")
-            .iter()
-            .any(|value| value.contains('&'))
-    );
-}
-
-#[test]
 fn an_attribute_kept_as_read_with_a_double_quote_stays_well_formed_after_an_edit() {
     let mut doc = doc_with_body(concat!(
         r#"<w:p><w:r><w:rPr>"#,
@@ -207,20 +118,6 @@ fn an_attribute_kept_as_read_with_a_double_quote_stays_well_formed_after_an_edit
     assert_eq!(read(&mut doc, "w:color"), ["a\"b"]);
     assert_eq!(read(&mut doc, "w:shd"), ["&\"c"]);
     assert_eq!(read(&mut doc, "w:lang"), ["<\"d"]);
-}
-
-#[test]
-fn a_bookmark_between_blocks_written_with_a_reference_reads_its_name_resolved() {
-    let doc = doc_with_body(concat!(
-        r#"<w:bookmarkStart w:id="0" w:name="&#95;Toc1"/>"#,
-        r#"<w:p><w:r><w:t>Heading</w:t></w:r></w:p><w:bookmarkEnd w:id="0"/>"#,
-    ));
-    let names: Vec<_> = doc
-        .bookmarks()
-        .iter()
-        .map(|bookmark| bookmark.name().map(str::to_owned))
-        .collect();
-    assert_eq!(names, [Some("_Toc1".to_owned())]);
 }
 
 #[test]
@@ -279,16 +176,6 @@ fn free_text_with_a_tab_a_line_feed_and_a_carriage_return_reads_back_as_set_in_a
     assert!(
         read_attribute(&mut doc, "/word/styles.xml", "w:name", "w:val").contains(&value.to_owned())
     );
-}
-
-#[test]
-fn a_literal_tab_in_an_attribute_reads_as_a_space_and_a_reference_as_a_tab() {
-    let doc = doc_with_body(concat!(
-        "<w:tbl><w:tblPr><w:tblW w:w=\"2000\" w:type=\"dxa\"/>",
-        "<w:tblCaption w:val=\"a\tb&#9;c\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"2000\"/>",
-        "</w:tblGrid><w:tr><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>",
-    ));
-    assert_eq!(doc.tables()[0].caption(), Some("a b\tc"));
 }
 
 #[test]

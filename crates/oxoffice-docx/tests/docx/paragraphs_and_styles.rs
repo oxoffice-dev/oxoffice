@@ -166,29 +166,6 @@ fn paragraph_layout_settings_survive_a_save() {
 }
 
 #[test]
-fn an_empty_paragraph_border_container_read_from_a_file_survives_an_edit() {
-    // The paragraph keeps the container as read, beside a property set by
-    // the API, as the table and cell border containers do.
-    for written in ["<w:pBdr></w:pBdr>", "<w:pBdr/>"] {
-        let mut doc = doc_with_body(&format!(
-            r#"<w:p><w:pPr>{written}</w:pPr><w:r><w:t>Text</w:t></w:r></w:p>"#
-        ));
-        doc.paragraph_mut(0)
-            .unwrap()
-            .set_alignment(Alignment::Center);
-        doc.replace_text("Text", "Edited");
-        let doc = reopen(&mut doc);
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        let properties = &xml[xml.find("<w:pPr>").unwrap()..xml.find("</w:pPr>").unwrap()];
-        assert!(properties.contains("<w:pBdr"), "{written}: {xml}");
-        assert!(
-            properties.contains(r#"<w:jc w:val="center"/>"#),
-            "{written}: {xml}"
-        );
-    }
-}
-
-#[test]
 fn exact_and_multiple_line_spacing_replace_each_other() {
     let mut doc = Document::new();
     doc.add_paragraph("lines")
@@ -1047,39 +1024,6 @@ fn document_defaults_set_the_font_size_and_spacing_of_plain_text() {
     assert_eq!(cleared.default_font_name(), Some("Georgia"));
 }
 
-#[test]
-fn empty_paragraph_and_mark_properties_reach_their_written_form_in_one_save() {
-    // Google Docs writes a paragraph mark with empty run properties. Each
-    // form is written once as it stays: an edit pass run again on the saved
-    // file changes no byte of the paragraphs it did not edit.
-    let forms = [
-        r#"<w:p><w:pPr><w:rPr/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
-        r#"<w:p><w:pPr><w:rPr></w:rPr></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"#,
-        r#"<w:p><w:pPr><w:rPr/></w:pPr></w:p>"#,
-        r#"<w:p><w:pPr/></w:p>"#,
-        r#"<w:p><w:pPr/><w:r><w:t>x</w:t></w:r></w:p>"#,
-        r#"<w:p><w:pPr><w:jc w:val="center"/><w:rPr/></w:pPr><w:r><w:rPr/><w:t>x</w:t></w:r></w:p>"#,
-    ];
-    let main_xml = |bytes: &[u8]| {
-        let package = OpcPackage::from_reader(Cursor::new(bytes.to_vec())).unwrap();
-        let part = package.main_document_part().unwrap();
-        String::from_utf8(package.get_part(&part).unwrap().to_vec()).unwrap()
-    };
-    for form in forms {
-        let bytes = doc_with_body(&format!("{form}<w:p><w:r><w:t>H</w:t></w:r></w:p>"))
-            .to_bytes()
-            .unwrap();
-        let pass = |bytes: &[u8], text: &str| {
-            let mut doc = Document::from_bytes(bytes).unwrap();
-            doc.paragraph_mut(1).unwrap().set_text(text).unwrap();
-            doc.to_bytes().unwrap()
-        };
-        let once = pass(&bytes, "one");
-        let again = pass(&pass(&once, "two"), "one");
-        assert_eq!(main_xml(&again), main_xml(&once), "{form}");
-    }
-}
-
 /// `doc` saved with the character styles a French Word file gives the
 /// built-in Hyperlink and note mark styles, under their localized ids.
 fn with_french_character_styles(doc: &mut Document) -> Document {
@@ -1275,98 +1219,6 @@ fn doc_with_rtf_styles() -> Document {
 }
 
 #[test]
-fn rtf_export_lists_paragraph_styles_and_restates_their_formatting() {
-    let doc = doc_with_rtf_styles();
-    let written = doc.to_rtf_bytes().unwrap();
-    assert!(
-        !written
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("style")
-                || diagnostic.message.contains("keep")
-                || diagnostic.message.contains("theme")),
-        "{:?}",
-        written.diagnostics
-    );
-    let rtf = String::from_utf8(written.bytes).unwrap();
-    let sheet_start = rtf.find(r"{\stylesheet").unwrap_or_else(|| panic!("{rtf}"));
-    let sheet = &rtf[sheet_start..rtf[sheet_start..].find(";}}").unwrap() + sheet_start + 3];
-    // Normal first as \s0, each style after the one it is based on, with
-    // its formatting resolved and the heading's keep-with-next.
-    assert!(sheet.starts_with(r"{\stylesheet{\s0"), "{sheet}");
-    assert!(sheet.contains(r" Normal;}"), "{sheet}");
-    let heading = sheet
-        .split(r"{\s")
-        .find(|entry| entry.ends_with("heading 1;}") || entry.ends_with("heading 1;}}"))
-        .unwrap_or_else(|| panic!("{sheet}"));
-    assert!(
-        heading.contains(r"\keepn") && heading.contains(r"\keep\"),
-        "{heading}"
-    );
-    assert!(
-        heading.contains(r"\outlinelevel0") && heading.contains(r"\b"),
-        "{heading}"
-    );
-    assert!(heading.contains(r"\sbasedon0"), "{heading}");
-    let quote = sheet
-        .split(r"{\s")
-        .find(|entry| entry.contains("Quote Block;"))
-        .unwrap_or_else(|| panic!("{sheet}"));
-    assert!(
-        quote.contains(r"\li720") && quote.contains(r"\i"),
-        "{quote}"
-    );
-    assert!(quote.contains(r"\sbasedon0\snext0"), "{quote}");
-    // The theme's heading font is in the font table and on the style.
-    let cambria = rtf
-        .split(r"{\f")
-        .find(|entry| entry.contains("Cambria;"))
-        .and_then(|entry| entry.split(r"\fcharset").next())
-        .unwrap_or_else(|| panic!("{rtf}"));
-    assert!(quote.contains(&format!(r"\f{cambria}")), "{quote}");
-    // Each paragraph names its style and repeats its formatting on its runs,
-    // since `\plain` starts a run from nothing.
-    let quote_number = quote.split(['\\', ' ']).next().unwrap();
-    let paragraph = rtf
-        .split(r"\pard")
-        .find(|paragraph| paragraph.contains("Quoted"))
-        .unwrap();
-    assert!(
-        paragraph.starts_with(&format!(r"\s{quote_number}\li720")),
-        "{paragraph}"
-    );
-    assert!(
-        paragraph.contains(&format!(r"{{\plain\f{cambria}")) && paragraph.contains(r"\i Quoted}"),
-        "{paragraph}"
-    );
-}
-
-#[test]
-fn rtf_export_asks_for_the_paragraph_spacing_of_a_docx_file() {
-    // Without \htmautsp Word reads an RTF file with the HTML auto spacing of
-    // older versions, which adds space around every heading.
-    let doc = doc_with_rtf_styles();
-    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
-    let header_end = rtf.find(r"\sectd").unwrap_or_else(|| panic!("{rtf}"));
-    let stylesheet_end = rtf
-        .find(r"{\stylesheet")
-        .map_or(0, |start| start + rtf[start..].find(";}}").unwrap() + 3);
-    assert!(
-        rtf[stylesheet_end..header_end].contains(r"\htmautsp"),
-        "{rtf}"
-    );
-    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
-    assert!(
-        !read
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("htmautsp")),
-        "{:?}",
-        read.diagnostics
-    );
-}
-
-#[test]
 fn rtf_export_keeps_the_old_paragraph_spacing_a_docx_file_asks_for() {
     let mut doc = doc_with_rtf_styles();
     doc.set_compatibility_option(
@@ -1556,37 +1408,6 @@ fn rtf_round_trip_keeps_what_turns_a_style_setting_off() {
 }
 
 #[test]
-fn rtf_export_writes_the_font_a_style_or_run_names_over_the_theme_font() {
-    // The paper's defaults name the theme's body font, its Normal style
-    // Times New Roman.
-    let mut doc = corpus_doc("word/paper.docx");
-    doc.add_paragraph("")
-        .add_run("code")
-        .set_font("Courier New");
-    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
-    let font = |name: &str| {
-        rtf.split(r"{\f")
-            .find(|entry| entry.contains(&format!("{name};")))
-            .and_then(|entry| entry.split(r"\fcharset").next())
-            .map(|id| format!(r"\f{id}"))
-            .unwrap_or_else(|| panic!("{name} in {rtf}"))
-    };
-    let times = font("Times New Roman");
-    assert!(
-        rtf.contains(&format!(r"{{\plain{times}\fs20 Intermittent demand")),
-        "{rtf}"
-    );
-    let courier = font("Courier New");
-    assert!(rtf.contains(&format!(r"{{\plain{courier}")), "{rtf}");
-    assert!(rtf.contains(" code}"), "{rtf}");
-    let code = rtf
-        .split(r"{\plain")
-        .find(|run| run.contains(" code}"))
-        .unwrap();
-    assert!(code.starts_with(&courier), "{code}");
-}
-
-#[test]
 fn rtf_import_reads_styles_that_name_a_later_style() {
     // `\s0` named otherwise than Normal is still the default style; a style
     // may be based on, or followed by, one listed after it; an entry without
@@ -1666,37 +1487,4 @@ fn rtf_import_keeps_a_style_whose_based_on_chain_loops() {
     assert_eq!(second.run_properties().unwrap().bold, Some(true));
     let xml = reopen(&mut doc).part_xml("word/document.xml").unwrap();
     assert!(!xml.contains("<w:b/>") && !xml.contains("<w:sz "), "{xml}");
-}
-
-#[test]
-fn rtf_export_gives_each_paragraph_its_mark_formatting_and_widow_control() {
-    // Word gives `\par` and the math runs, which restate only the math font,
-    // the character formatting in force at the paragraph; and controls widows
-    // in RTF only where `\widctlpar` says so.
-    let doc = corpus_doc("word/paper.docx");
-    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
-    let times = rtf
-        .split(r"{\f")
-        .find(|entry| entry.contains("Times New Roman;"))
-        .and_then(|entry| entry.split(r"\fcharset").next())
-        .map(|id| format!(r"\f{id}"))
-        .unwrap();
-    let paragraph = rtf
-        .split(r"\pard")
-        .find(|paragraph| paragraph.contains("Intermittent demand"))
-        .unwrap();
-    assert!(
-        paragraph.contains(&format!(r"\widctlpar\plain{times}\fs20{{\plain")),
-        "{paragraph}"
-    );
-    let equation = rtf
-        .split(r"\pard")
-        .find(|paragraph| paragraph.contains(r"{\mmath"))
-        .unwrap();
-    let (format, math) = equation.split_once(r"{\mmath").unwrap();
-    assert!(
-        format.ends_with(&format!(r"\plain{times}\fs20")),
-        "{format}"
-    );
-    assert!(!math.contains(r"\plain"), "{math}");
 }

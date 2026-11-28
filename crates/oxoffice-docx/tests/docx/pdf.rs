@@ -11,7 +11,6 @@ use oxoffice_docx::{
     CT_RPr, Document, Length, ListLevel, PdfConformance, PictureOptions, RenderOptions, StoryKind,
 };
 use oxoffice_docx_oxml::shared::ST_SectionType;
-use oxoffice_docx_oxml::table::ST_VerticalJc;
 use oxoffice_render_test::fingerprint::Pixels;
 use oxoffice_render_test::pdf::{Drawn, Element, Pdf};
 
@@ -1048,22 +1047,6 @@ fn steps_around_y(pdf: &Pdf, before: &str, y: f64, after: &str) -> (f64, f64) {
     (line_of(pdf, 0, before).y - y, y - line_of(pdf, 0, after).y)
 }
 
-// Word sets a fraction in a line of text in the smaller text style: its parts
-// at script size, closer to the rule. A display fraction keeps its size.
-#[test]
-fn a_fraction_in_a_line_of_text_is_set_in_the_smaller_text_style() {
-    MathProbe {
-        word: [17.52, 18.00, 14.51, 16.02],
-        anchor: "y=",
-        omml: format!(
-            "{}{}",
-            math_run("y="),
-            math_fraction(&math_run("a"), &math_run("b"))
-        ),
-    }
-    .assert_within_a_point_of_word();
-}
-
 // A sum with limits under and over: a display equation draws a large sign
 // with its limits stacked; a line of text keeps the text-size sign and sets
 // the limits beside it, so the line grows by about a point.
@@ -1610,34 +1593,6 @@ fn math_formatting_that_tracks_a_change_is_reported() {
     }
 }
 
-// Word draws a math run in the colour and size of its own w:rPr, and a
-// script of that run smaller in proportion.
-#[test]
-fn a_math_run_draws_in_the_colour_and_size_of_its_run_properties() {
-    let red = r#"<w:rPr><w:color w:val="FF0000"/><w:sz w:val="32"/></w:rPr>"#;
-    let body = format!(
-        r#"<w:p><m:oMath xmlns:m="{MATH}"><m:r>{red}<m:t>a</m:t></m:r><m:r><m:t>b</m:t></m:r><m:sSup><m:e><m:r><m:t>c</m:t></m:r></m:e><m:sup><m:r>{red}<m:t>d</m:t></m:r></m:sup></m:sSup><m:sSup><m:e><m:r><m:t>f</m:t></m:r></m:e><m:sup><m:r><m:t>g</m:t></m:r></m:sup></m:sSup></m:oMath></w:p>"#
-    );
-    let (runs, _) = laid_out_runs(&doc_with_body(&body));
-    let run = |text: &str| {
-        runs.iter()
-            .find(|run| run.0.contains(text))
-            .unwrap_or_else(|| panic!("{text} drawn: {runs:?}"))
-            .clone()
-    };
-    let (a, b, c, d, g) = (run("a"), run("b"), run("c"), run("d"), run("g"));
-    let red = |color: oxoffice_layout::Color| color.r > 0.99 && color.g < 0.01 && color.b < 0.01;
-    assert!(red(a.2) && !red(b.2) && !red(c.2) && red(d.2), "{runs:?}");
-    assert!((a.1 - 16.0).abs() < 0.01, "{runs:?}");
-    assert!(
-        (b.1 - 11.0).abs() < 0.01 && (c.1 - 11.0).abs() < 0.01,
-        "{runs:?}"
-    );
-    // A 16 pt superscript is to a plain one what 16 pt is to 11.
-    assert!(g.1 < c.1, "{runs:?}");
-    assert!((d.1 - g.1 * 16.0 / 11.0).abs() < 0.01, "{runs:?}");
-}
-
 // Word writes the size and colour of a whole equation in every run: the
 // fraction rule takes them too, and a text fill declared above the equation
 // colours its run.
@@ -1897,18 +1852,6 @@ fn matrix_columns_align_their_cells_as_their_properties_say() {
     );
 }
 
-// Google Docs writes an n-ary with no m:e, its summand after it.
-#[test]
-fn an_nary_with_no_base_draws_its_sign_and_limits() {
-    let (glyphs, _, diagnostics) = equation_ink(
-        r#"<m:nary><m:naryPr><m:chr m:val="∑"/></m:naryPr><m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>N</m:t></m:r></m:sup></m:nary><m:r><m:t>h</m:t></m:r>"#,
-    );
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    for text in ["∑", "i", "N", "h"] {
-        glyph(&glyphs, text);
-    }
-}
-
 // A phonetic guide as Word writes it, inside a run, draws its base text in
 // the line and its phonetic line above, as the same guide read in its
 // paragraph does.
@@ -1985,38 +1928,6 @@ fn endnotes_are_drawn_below_a_table_that_ends_the_document() {
 }
 
 // ---- Tables ----
-
-// A table is ink like a line: a vertically centred page whose body ends with
-// a table centres it, rather than measuring an empty page and pushing the
-// table down by half of it.
-#[test]
-fn a_vertically_centred_page_centres_a_table_that_ends_the_body() {
-    let mut doc = Document::new();
-    {
-        let mut table = doc.add_table(6, 1);
-        for row in 0..6 {
-            table
-                .cell(row, 0)
-                .unwrap()
-                .set_text(&format!("Row {}", row + 1));
-        }
-    }
-    doc.section_mut(0)
-        .unwrap()
-        .set_vertical_alignment(ST_VerticalJc::Center);
-    let pdf = pdf_of(&reopen(&mut doc));
-    let first = line_of(&pdf, 0, "Row 1");
-    let last = line_of(&pdf, 0, "Row 6");
-    // The middle of the page's text area, in PDF space.
-    let page_middle = 792.0 - 72.0 - 648.0 / 2.0;
-    let middle = (first.y + last.y) / 2.0;
-    assert!(
-        (middle - page_middle).abs() < 8.0,
-        "the rows' middle is at {middle:.1}, the page's at {page_middle} (first row {:.1}, last {:.1})",
-        first.y,
-        last.y
-    );
-}
 
 // ---- Pictures ----
 
@@ -2472,30 +2383,6 @@ fn cross_references_with_h_and_hyperlink_fields_with_l_are_links_to_their_bookma
 }
 
 #[test]
-fn a_link_lands_on_the_page_where_its_bookmark_starts_inside_a_paragraph() {
-    let doc = doc_with_body(concat!(
-        r#"<w:p><w:hyperlink w:anchor="results"><w:r><w:t>Go to the results</w:t></w:r></w:hyperlink></w:p>"#,
-        r#"<w:p><w:r><w:t>The method comes first.</w:t></w:r><w:r><w:br w:type="page"/></w:r>"#,
-        r#"<w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Results come next.</w:t></w:r>"#,
-        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
-    ));
-    let pdf = pdf_of(&doc);
-    let results = page_with(&pdf, "Results come next.");
-    assert_eq!(results, 1);
-    let links = pdf.internal_links(0);
-    assert!(!links.is_empty());
-    let line = line_of(&pdf, results, "Results come next.");
-    for (page, top, _) in &links {
-        assert_eq!(*page, results, "not the page where the paragraph starts");
-        assert!(
-            *top > line.y && *top < line.y + 30.0,
-            "the destination {top} is the top of the bookmark's line at {}",
-            line.y
-        );
-    }
-}
-
-#[test]
 fn a_link_lands_after_the_second_page_break_of_a_paragraph() {
     let doc = doc_with_body(concat!(
         r#"<w:p><w:hyperlink w:anchor="annex"><w:r><w:t>Go to the annex</w:t></w:r></w:hyperlink></w:p>"#,
@@ -2510,61 +2397,6 @@ fn a_link_lands_after_the_second_page_break_of_a_paragraph() {
     let links = pdf.internal_links(0);
     assert!(!links.is_empty(), "the link keeps its destination");
     assert!(links.iter().all(|(page, ..)| *page == annex), "{links:?}");
-}
-
-#[test]
-fn a_cross_reference_finds_its_bookmark_whatever_the_case() {
-    let doc = doc_with_body(concat!(
-        r#"<w:p><w:fldSimple w:instr=" REF RESULTS \h "><w:r><w:t>Results</w:t></w:r></w:fldSimple>"#,
-        r#"<w:r><w:t xml:space="preserve"> and </w:t></w:r>"#,
-        r#"<w:hyperlink w:anchor="Results"><w:r><w:t>again</w:t></w:r></w:hyperlink></w:p>"#,
-        r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#,
-        r#"<w:p><w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Findings</w:t></w:r>"#,
-        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
-    ));
-    let pdf = pdf_of(&doc);
-    let links = pdf.internal_links(0);
-    assert_eq!(links.len(), 2, "{links:?}");
-    assert!(links.iter().all(|(page, ..)| *page == 1), "{links:?}");
-}
-
-#[test]
-fn a_link_skips_a_bookmark_start_with_no_end_for_the_whole_bookmark() {
-    // LibreOffice writes a start with no end beside a whole bookmark of the
-    // same name (libreoffice/form.docx): it is no bookmark to Word.
-    let stray = r#"<w:bookmarkStart w:id="9" w:name="RESULTS"/>"#;
-    let whole = r#"<w:bookmarkStart w:id="0" w:name="Results"/><w:r><w:t>Findings</w:t></w:r><w:bookmarkEnd w:id="0"/>"#;
-    for (what, before, inside) in [
-        (
-            "inside a paragraph, in another case",
-            format!("<w:p>{stray}<w:r><w:t>Stray</w:t></w:r></w:p>"),
-            "",
-        ),
-        (
-            "between blocks",
-            format!(
-                "{}<w:p><w:r><w:t>Stray</w:t></w:r></w:p>",
-                stray.replace("RESULTS", "Results")
-            ),
-            "",
-        ),
-        ("in the bookmark's paragraph", String::new(), stray),
-    ] {
-        let doc = doc_with_body(&format!(
-            concat!(
-                r#"<w:p><w:hyperlink w:anchor="Results"><w:r><w:t>Go</w:t></w:r></w:hyperlink></w:p>"#,
-                r#"{}<w:p><w:r><w:br w:type="page"/></w:r></w:p><w:p>{}{}</w:p>"#,
-            ),
-            before, inside, whole
-        ));
-        let pdf = pdf_of(&doc);
-        let links = pdf.internal_links(0);
-        assert_eq!(links.len(), 1, "{what}: {links:?}");
-        assert!(
-            links.iter().all(|(page, ..)| *page == 1),
-            "{what}: {links:?}"
-        );
-    }
 }
 
 #[test]
@@ -2587,23 +2419,6 @@ fn a_page_reference_nested_in_a_table_of_contents_links_its_page_number() {
     let links = pdf.internal_links(0);
     assert!(!links.is_empty(), "the page number links to its bookmark");
     assert!(links.iter().all(|(page, ..)| *page == 1), "{links:?}");
-}
-
-#[test]
-fn an_empty_paragraph_holding_a_linked_bookmark_keeps_its_height() {
-    let below = |bookmark: &str| {
-        let doc = doc_with_body(&format!(
-            concat!(
-                r#"<w:p><w:hyperlink w:anchor="spot"><w:r><w:t>Link</w:t></w:r></w:hyperlink></w:p>"#,
-                r#"<w:p>{}</w:p><w:p><w:r><w:t>After</w:t></w:r></w:p>"#,
-            ),
-            bookmark
-        ));
-        line_of(&pdf_of(&doc), 0, "After").y
-    };
-    let plain = below("");
-    let marked = below(r#"<w:bookmarkStart w:id="0" w:name="spot"/><w:bookmarkEnd w:id="0"/>"#);
-    assert!((plain - marked).abs() < 0.01, "{plain} vs {marked}");
 }
 
 #[test]
@@ -2758,36 +2573,6 @@ fn a_caller_font_draws_the_runs_of_its_family() {
     assert_eq!(fonts, ["Carlito", "LiberationMono"]);
 }
 
-/// Whether `text` holds Chinese, Japanese or Korean characters.
-fn has_cjk(text: &str) -> bool {
-    text.chars().any(|ch| {
-        matches!(ch, '\u{3040}'..='\u{30ff}' | '\u{3400}'..='\u{9fff}' | '\u{ac00}'..='\u{d7af}')
-    })
-}
-
-// A run the bundled fonts partly draw keeps its bundled face for that part:
-// only the characters they lack may take a system font, so the Latin words
-// are drawn alike in both modes, on any machine (the line's height may grow
-// with a taller system face, so only the horizontal placement is compared).
-#[test]
-fn latin_words_beside_text_the_bundled_fonts_lack_are_drawn_alike_in_both_modes() {
-    let doc = doc_with(&["Version 2 of the plan 计划书已经批准"]);
-    let latin = |options: RenderOptions| {
-        let pdf = Pdf::read(&doc.to_pdf_with_options(options).unwrap());
-        pdf.drawn(0)
-            .into_iter()
-            .filter(|piece| !has_cjk(&piece.text) && !piece.text.trim().is_empty())
-            .map(|piece| (piece.text, piece.glyphs, piece.x, piece.end, piece.size))
-            .collect::<Vec<_>>()
-    };
-    let default = latin(RenderOptions::default());
-    assert!(!default.is_empty());
-    assert_eq!(
-        default,
-        latin(RenderOptions::default().with_bundled_fonts_only(true))
-    );
-}
-
 #[test]
 fn system_fonts_first_and_bundled_fonts_only_are_refused_together() {
     let options = RenderOptions::default()
@@ -2910,48 +2695,6 @@ fn ordinary_output_is_tagged_with_headings_paragraphs_tables_lists_and_figures()
 }
 
 #[test]
-fn a_hyperlink_wrapped_over_two_lines_is_one_tagged_link_holding_its_text() {
-    let text = "the quarterly budget review with every regional figure, the forecast \
-                for next year and the notes of the finance committee";
-    let mut doc = Document::new();
-    let relationship = doc.add_hyperlink_relationship("https://example.com/budget");
-    let mut paragraph = doc.add_paragraph("Read ");
-    paragraph.add_hyperlink(text, &relationship);
-    paragraph.add_run(" before the meeting.");
-    let pdf = pdf_of(&reopen(&mut doc));
-    let links: Vec<Element> = pdf
-        .structure()
-        .into_iter()
-        .filter(|(role, ..)| role == "Link")
-        .collect();
-    assert_eq!(links.len(), 1, "one link element for the whole hyperlink");
-    let annotations: Vec<String> = pdf
-        .page_ids()
-        .into_iter()
-        .take(1)
-        .flat_map(|page| {
-            let page = pdf.doc.get_dictionary(page).expect("page");
-            let annots = pdf.resolve(page.get(b"Annots").expect("annotations"));
-            annots.as_array().expect("an array").clone()
-        })
-        .map(|annotation| {
-            let annotation = pdf.resolve(&annotation).as_dict().expect("annotation");
-            let contents = annotation.get(b"Contents").expect("contents");
-            lopdf::decode_text_string(contents).expect("text")
-        })
-        .collect();
-    assert!(annotations.len() >= 2, "{annotations:?}");
-    assert!(
-        links[0].3.len() >= 2,
-        "the text of both lines is in the link"
-    );
-    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-    for contents in annotations {
-        assert_eq!(words(&contents), words(text));
-    }
-}
-
-#[test]
 fn pdfa_output_refuses_a_link_it_cannot_archive() {
     let target = "file:///srv/share/budget.xlsx";
     let mut doc = Document::new();
@@ -3070,41 +2813,6 @@ fn pixels_in_text_box(doc: &Document, text: &str, rgb: [u8; 3]) -> usize {
         }
     }
     count
-}
-
-#[test]
-fn a_run_shading_is_drawn_behind_its_text() {
-    let run = |fill: &str, text: &str| {
-        format!(
-            r#"<w:r><w:rPr><w:shd w:val="clear" w:color="auto" w:fill="{fill}"/></w:rPr><w:t xml:space="preserve">{text} </w:t></w:r>"#
-        )
-    };
-    // Word's pale green, red and grey cell styles applied to text, then a
-    // highlight over a shading, and a dark fill under automatic text.
-    let doc = doc_with_body(&format!(
-        r#"<w:p>{}{}{}<w:r><w:rPr><w:highlight w:val="yellow"/><w:shd w:val="clear" w:fill="C6EFCE"/></w:rPr><w:t xml:space="preserve">Both </w:t></w:r>{}</w:p>"#,
-        run("C6EFCE", "Done"),
-        run("FFC7CE", "Late"),
-        run("E7E6E6", "Open"),
-        run("1F3864", "Dark"),
-    ));
-    for (text, rgb) in [
-        ("Done", [0xC6, 0xEF, 0xCE]),
-        ("Late", [0xFF, 0xC7, 0xCE]),
-        ("Open", [0xE7, 0xE6, 0xE6]),
-        ("Dark", [0x1F, 0x38, 0x64]),
-    ] {
-        assert!(
-            pixels_in_text_box(&doc, text, rgb) > 20,
-            "{text} has its fill behind it"
-        );
-    }
-    // Word draws the highlight over the shading.
-    assert!(pixels_in_text_box(&doc, "Both", [0xFF, 0xFF, 0x00]) > 20);
-    assert_eq!(pixels_in_text_box(&doc, "Both", [0xC6, 0xEF, 0xCE]), 0);
-    // Automatic text turns white on a dark fill, as on a dark paragraph.
-    assert!(pixels_in_text_box(&doc, "Dark", [0xFF, 0xFF, 0xFF]) > 0);
-    assert_eq!(pixels_in_text_box(&doc, "Dark", [0, 0, 0]), 0);
 }
 
 /// Pixels of `rgb` on page 0 between the end of the drawn piece holding
@@ -3242,26 +2950,6 @@ fn a_dark_highlight_paints_words_palette() {
     assert!(pixels_in_text_box(&doc, "darkBlue", [0x00, 0x00, 0x80]) > 20);
     assert!(pixels_in_text_box(&doc, "darkGray", [0x80, 0x80, 0x80]) > 20);
     assert!(pixels_in_text_box(&doc, "lightGray", [0xC0, 0xC0, 0xC0]) > 20);
-}
-
-#[test]
-fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_render() {
-    // A shading or a text colour read from the file unchecked, with a
-    // character of more than one byte where a digit belongs.
-    let doc = doc_with_body(concat!(
-        r#"<w:p><w:r><w:rPr><w:shd w:val="clear" w:fill="Aé0000"/></w:rPr><w:t>Fill</w:t></w:r></w:p>"#,
-        r#"<w:p><w:r><w:rPr><w:color w:val="Aé0000"/></w:rPr><w:t>Colour</w:t></w:r></w:p>"#,
-        r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="00FF00;x" w:fill="FF0000"/></w:rPr><w:t>Pattern</w:t></w:r></w:p>"#,
-    ));
-    // The page stays white behind the fill that is not a colour.
-    assert_eq!(pixels_in_text_box(&doc, "Fill", [0xA0, 0x00, 0x00]), 0);
-    assert!(pixels_in_text_box(&doc, "Fill", [0xFF, 0xFF, 0xFF]) > 20);
-    // A foreground that is not a colour is automatic: black under a
-    // pattern, so 25 % of it over red is BF0000 (not BF4000, a quarter of
-    // the green the value starts with).
-    assert!(pixels_in_text_box(&doc, "Pattern", [0xBF, 0x00, 0x00]) > 20);
-    let html = doc.to_html_fragment();
-    assert!(!html.contains("background-color:#A0"), "{html}");
 }
 
 #[test]
@@ -3466,6 +3154,68 @@ fn a_caption_number_drawn_from_its_stored_result_is_read_after_its_label() {
 }
 
 #[test]
+fn a_hyperlink_wrapped_over_two_lines_is_one_tagged_link_holding_its_text() {
+    let text = "the quarterly budget review with every regional figure, the forecast \
+                for next year and the notes of the finance committee";
+    let mut doc = Document::new();
+    let relationship = doc.add_hyperlink_relationship("https://example.com/budget");
+    let mut paragraph = doc.add_paragraph("Read ");
+    paragraph.add_hyperlink(text, &relationship);
+    paragraph.add_run(" before the meeting.");
+    let pdf = pdf_of(&reopen(&mut doc));
+    let links: Vec<Element> = pdf
+        .structure()
+        .into_iter()
+        .filter(|(role, ..)| role == "Link")
+        .collect();
+    assert_eq!(links.len(), 1, "one link element for the whole hyperlink");
+    let annotations: Vec<String> = pdf
+        .page_ids()
+        .into_iter()
+        .take(1)
+        .flat_map(|page| {
+            let page = pdf.doc.get_dictionary(page).expect("page");
+            let annots = pdf.resolve(page.get(b"Annots").expect("annotations"));
+            annots.as_array().expect("an array").clone()
+        })
+        .map(|annotation| {
+            let annotation = pdf.resolve(&annotation).as_dict().expect("annotation");
+            let contents = annotation.get(b"Contents").expect("contents");
+            lopdf::decode_text_string(contents).expect("text")
+        })
+        .collect();
+    assert!(annotations.len() >= 2, "{annotations:?}");
+    assert!(
+        links[0].3.len() >= 2,
+        "the text of both lines is in the link"
+    );
+    let words = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for contents in annotations {
+        assert_eq!(words(&contents), words(text));
+    }
+}
+
+#[test]
+fn a_colour_value_that_is_not_hex_digits_paints_nothing_and_never_stops_the_render() {
+    // A shading or a text colour read from the file unchecked, with a
+    // character of more than one byte where a digit belongs.
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:r><w:rPr><w:shd w:val="clear" w:fill="Aé0000"/></w:rPr><w:t>Fill</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:color w:val="Aé0000"/></w:rPr><w:t>Colour</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:rPr><w:shd w:val="pct25" w:color="00FF00;x" w:fill="FF0000"/></w:rPr><w:t>Pattern</w:t></w:r></w:p>"#,
+    ));
+    // The page stays white behind the fill that is not a colour.
+    assert_eq!(pixels_in_text_box(&doc, "Fill", [0xA0, 0x00, 0x00]), 0);
+    assert!(pixels_in_text_box(&doc, "Fill", [0xFF, 0xFF, 0xFF]) > 20);
+    // A foreground that is not a colour is automatic: black under a
+    // pattern, so 25 % of it over red is BF0000 (not BF4000, a quarter of
+    // the green the value starts with).
+    assert!(pixels_in_text_box(&doc, "Pattern", [0xBF, 0x00, 0x00]) > 20);
+    let html = doc.to_html_fragment();
+    assert!(!html.contains("background-color:#A0"), "{html}");
+}
+
+#[test]
 fn a_field_result_after_a_page_referenced_bookmark_is_read_in_place() {
     // A bookmark a PAGEREF points at records where it starts; the field
     // result right after that start is read after the text before it.
@@ -3495,4 +3245,28 @@ fn a_field_result_after_a_page_referenced_bookmark_is_read_in_place() {
         .0;
     let read = tagged_text(&pdf, &elements, paragraph);
     assert_eq!(read, "See Alpha here", "the paragraph reads {read:?}");
+}
+
+#[test]
+fn a_link_lands_on_the_page_where_its_bookmark_starts_inside_a_paragraph() {
+    let doc = doc_with_body(concat!(
+        r#"<w:p><w:hyperlink w:anchor="results"><w:r><w:t>Go to the results</w:t></w:r></w:hyperlink></w:p>"#,
+        r#"<w:p><w:r><w:t>The method comes first.</w:t></w:r><w:r><w:br w:type="page"/></w:r>"#,
+        r#"<w:bookmarkStart w:id="0" w:name="results"/><w:r><w:t>Results come next.</w:t></w:r>"#,
+        r#"<w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let pdf = pdf_of(&doc);
+    let results = page_with(&pdf, "Results come next.");
+    assert_eq!(results, 1);
+    let links = pdf.internal_links(0);
+    assert!(!links.is_empty());
+    let line = line_of(&pdf, results, "Results come next.");
+    for (page, top, _) in &links {
+        assert_eq!(*page, results, "not the page where the paragraph starts");
+        assert!(
+            *top > line.y && *top < line.y + 30.0,
+            "the destination {top} is the top of the bookmark's line at {}",
+            line.y
+        );
+    }
 }

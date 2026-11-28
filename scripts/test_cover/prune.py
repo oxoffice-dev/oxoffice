@@ -1,6 +1,6 @@
 """Delete the #[test] functions of a test binary that are not in its keep list, then the code that only they used.
 
-    python scripts/test_cover/prune.py crates/oxoffice-docx/tests/docx scripts/test_cover/docx-keep.txt \
+    python scripts/test_cover/prune.py crates/oxoffice-docx/tests/docx docx-keep.txt \
         --check "cargo check --profile scaling --locked -p oxoffice-docx --test docx --message-format=json"
 
 The keep list has one `module::test` per line (cover.py writes it). After the cut, the fix command (unused imports)

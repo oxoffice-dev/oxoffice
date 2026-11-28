@@ -13,7 +13,7 @@ use oxoffice_pptx::{
     ShapeOwner, ShapeType,
 };
 
-use crate::support::{corpus_deck, new_deck, reopen, slide_texts};
+use crate::support::{corpus_deck, new_deck, reopen};
 
 /// One inch, in EMU.
 const INCH: i64 = 914_400;
@@ -53,18 +53,6 @@ fn gif(width: u16, height: u16) -> Vec<u8> {
         encoder.write_frame(&frame).expect("GIF encodes");
     }
     bytes
-}
-
-/// The 900 x 450 PNG every corpus deck shows on its "Revenue by quarter"
-/// slide.
-fn corpus_png() -> Vec<u8> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/corpus/files/powerpoint/deck.pptx");
-    let package = OpcPackage::open(path).expect("corpus deck opens as a package");
-    package
-        .get_part("/ppt/media/image1.png")
-        .expect("corpus picture part")
-        .to_vec()
 }
 
 /// A new deck with `count` slides on the Blank layout.
@@ -192,64 +180,6 @@ fn set_crop(
 // Adding
 
 #[test]
-fn a_picture_keeps_its_position_size_and_image_after_a_save() {
-    let image = png(40, 20, [200, 30, 30]);
-    let mut prs = blank_deck(1);
-    let id = prs
-        .add_picture(
-            0,
-            &image,
-            "chart.png",
-            Emu(457_200),
-            Emu(914_400),
-            Some(Emu(3 * INCH)),
-            Some(Emu(INCH)),
-        )
-        .unwrap()
-        .non_visual_id()
-        .unwrap();
-
-    let prs = reopen(&prs);
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-    let picture = prs
-        .slide(0)
-        .unwrap()
-        .shape(shape_index(&prs, 0, id))
-        .unwrap();
-    assert_eq!(picture.kind(), ShapeKind::Picture);
-    assert_eq!(picture.shape_type(), Some(ShapeType::Picture));
-    assert_eq!(picture.non_visual_name(), Some(format!("Picture {id}")));
-    assert_eq!(picture.position(), Some((Emu(457_200), Emu(914_400))));
-    assert_eq!(picture.size(), Some((Emu(3 * INCH), Emu(INCH))));
-    let read = prs.picture_image(0, id).unwrap();
-    assert_eq!(read.bytes, image.as_slice());
-    assert_eq!(read.content_type, "image/png");
-    assert!(
-        read.part_name.starts_with("/ppt/media/"),
-        "{}",
-        read.part_name
-    );
-}
-
-#[test]
-fn a_picture_without_a_size_takes_the_size_its_image_declares() {
-    let mut prs = blank_deck(1);
-    // No declared DPI counts as 72 dpi: a pixel is 12,700 EMU.
-    let plain = add_picture(&mut prs, 0, &png(32, 16, [0, 0, 0]), (None, None));
-    let at_144_dpi = add_picture(&mut prs, 0, &jpeg(288, 144, Some(144)), (None, None));
-    let prs = reopen(&prs);
-    let size = |id| {
-        prs.slide(0)
-            .unwrap()
-            .shape(shape_index(&prs, 0, id))
-            .unwrap()
-            .size()
-    };
-    assert_eq!(size(plain), Some((Emu(32 * 12_700), Emu(16 * 12_700))));
-    assert_eq!(size(at_144_dpi), Some((Emu(2 * INCH), Emu(INCH))));
-}
-
-#[test]
 fn a_picture_given_one_side_keeps_the_image_aspect_ratio() {
     let image = png(300, 200, [10, 120, 10]);
     let mut prs = blank_deck(1);
@@ -287,54 +217,6 @@ fn png_jpeg_and_gif_pictures_keep_their_bytes_and_content_type() {
         assert_eq!(read.content_type, *content_type);
     }
     assert_eq!(media_parts(&prs).len(), 3);
-}
-
-#[test]
-fn the_image_format_comes_from_the_bytes_not_the_file_name() {
-    let mut prs = blank_deck(1);
-    prs.add_picture(
-        0,
-        &png(4, 3, [9, 9, 9]),
-        "photo.jpg",
-        Emu(0),
-        Emu(0),
-        None,
-        None,
-    )
-    .unwrap();
-    let prs = reopen(&prs);
-    let read = prs.picture_image(0, only_picture(&prs, 0)).unwrap();
-    assert_eq!(read.content_type, "image/png");
-    assert!(read.part_name.ends_with(".png"), "{}", read.part_name);
-}
-
-#[test]
-fn bytes_that_are_not_an_image_are_refused_and_change_nothing() {
-    let mut prs = blank_deck(1);
-    let before = prs.to_bytes().unwrap();
-    let error = prs
-        .add_picture(0, b"not an image", "a.png", Emu(0), Emu(0), None, None)
-        .err()
-        .expect("refused");
-    assert!(matches!(error, Error::UnsupportedPicture { .. }), "{error}");
-    assert_eq!(prs.to_bytes().unwrap(), before);
-}
-
-#[test]
-fn bytes_that_are_not_an_image_are_refused_even_with_both_sides_given() {
-    let mut prs = blank_deck(1);
-    let size = Some(Emu(INCH));
-    match prs.add_picture(0, b"not an image", "a.png", Emu(0), Emu(0), size, size) {
-        Ok(picture) => {
-            let id = picture.non_visual_id().unwrap();
-            let read = prs.picture_image(0, id).unwrap();
-            panic!(
-                "bytes that are not an image were added as a picture, stored as {} ({})",
-                read.part_name, read.content_type
-            );
-        }
-        Err(error) => assert!(matches!(error, Error::UnsupportedPicture { .. }), "{error}"),
-    }
 }
 
 #[test]
@@ -573,38 +455,6 @@ fn an_svg_picture_refuses_a_new_image_and_takes_both_its_images_when_removed() {
 // Alt text, title, decorative
 
 #[test]
-fn alt_text_on_a_picture_survives_a_save_in_any_script() {
-    let texts = [
-        "Revenue by quarter, 2025",
-        "Chiffre d'affaires <T1> & \"T2\"",
-        "Two lines\nand a\ttab",
-        "مخطط الإيرادات حسب الربع",
-        "季度收入图表",
-    ];
-    let mut prs = blank_deck(1);
-    let image = png(2, 2, [0, 0, 0]);
-    for text in texts {
-        let id = add_picture(&mut prs, 0, &image, (None, None));
-        let index = shape_index(&prs, 0, id);
-        let mut slide = prs.slide_mut(0).unwrap();
-        slide
-            .shape_mut(index)
-            .unwrap()
-            .set_alt_text(Some(text))
-            .unwrap();
-    }
-
-    let prs = reopen(&prs);
-    let read: Vec<Option<String>> = prs
-        .slide(0)
-        .unwrap()
-        .shapes()
-        .map(|shape| shape.alt_text())
-        .collect();
-    assert_eq!(read, texts.map(|text| Some(text.to_owned())));
-}
-
-#[test]
 fn alt_text_can_be_cleared_and_refuses_characters_xml_cannot_carry() {
     let mut prs = blank_deck(1);
     add_picture(&mut prs, 0, &png(2, 2, [0, 0, 0]), (None, None));
@@ -687,43 +537,6 @@ fn replacing_the_image_keeps_the_picture_geometry_name_and_alt_text() {
 }
 
 #[test]
-fn replacing_one_of_two_pictures_sharing_an_image_leaves_the_other_alone() {
-    let shared = png(4, 4, [0, 100, 0]);
-    let mut prs = blank_deck(2);
-    let first = add_picture(&mut prs, 0, &shared, (None, None));
-    let second = add_picture(&mut prs, 0, &shared, (None, None));
-    let elsewhere = add_picture(&mut prs, 1, &shared, (None, None));
-    let replacement = png(4, 4, [0, 0, 100]);
-    prs.replace_picture_image(0, first, &replacement).unwrap();
-
-    let prs = reopen(&prs);
-    assert_eq!(
-        prs.picture_image(0, first).unwrap().bytes,
-        replacement.as_slice()
-    );
-    assert_eq!(
-        prs.picture_image(0, second).unwrap().bytes,
-        shared.as_slice()
-    );
-    assert_eq!(
-        prs.picture_image(1, elsewhere).unwrap().bytes,
-        shared.as_slice()
-    );
-    assert_eq!(stored_media(&prs), sorted(vec![shared, replacement]));
-}
-
-#[test]
-fn replacing_the_image_drops_the_part_nobody_uses_any_more() {
-    let mut prs = blank_deck(1);
-    let id = add_picture(&mut prs, 0, &png(4, 4, [1, 1, 1]), (None, None));
-    let new = gif(4, 4);
-    prs.replace_picture_image(0, id, &new).unwrap();
-    let prs = reopen(&prs);
-    assert_eq!(stored_media(&prs), vec![new]);
-    assert_eq!(prs.picture_image(0, id).unwrap().content_type, "image/gif");
-}
-
-#[test]
 fn replacing_is_refused_for_bytes_that_are_not_an_image_or_a_shape_that_is_not_a_picture() {
     let mut prs = blank_deck(1);
     let picture = add_picture(&mut prs, 0, &png(4, 4, [1, 1, 1]), (None, None));
@@ -766,28 +579,6 @@ fn a_duplicated_slide_shares_the_image_until_one_copy_is_replaced() {
     );
 }
 
-#[test]
-fn a_cloned_deck_keeps_its_pictures_when_the_clone_is_edited() {
-    let image = png(4, 4, [9, 9, 9]);
-    let mut original = blank_deck(1);
-    let id = add_picture(&mut original, 0, &image, (None, None));
-    let original = reopen(&original);
-
-    let mut clone = original.clone();
-    clone
-        .replace_picture_image(0, id, &png(4, 4, [8, 8, 8]))
-        .unwrap();
-    add_picture(&mut clone, 0, &gif(3, 3), (None, None));
-
-    let original = reopen(&original);
-    assert_eq!(
-        original.picture_image(0, id).unwrap().bytes,
-        image.as_slice()
-    );
-    assert_eq!(stored_media(&original), vec![image]);
-    assert_eq!(media_parts(&clone).len(), 2);
-}
-
 // Cropping
 
 #[test]
@@ -825,47 +616,6 @@ fn only_a_picture_can_be_cropped() {
 }
 
 // Removing, and the media parts pictures share
-
-#[test]
-fn a_media_part_shared_by_two_pictures_stays_while_one_still_uses_it() {
-    let image = png(4, 4, [4, 4, 4]);
-    let mut prs = blank_deck(1);
-    let first = add_picture(&mut prs, 0, &image, (None, None));
-    let second = add_picture(&mut prs, 0, &image, (None, None));
-
-    prs.remove_shape(0, shape_index(&prs, 0, first)).unwrap();
-    let mut prs = reopen(&prs);
-    assert_eq!(stored_media(&prs), vec![image.clone()]);
-    assert_eq!(
-        prs.picture_image(0, second).unwrap().bytes,
-        image.as_slice()
-    );
-
-    prs.remove_shape(0, shape_index(&prs, 0, second)).unwrap();
-    let prs = reopen(&prs);
-    assert!(prs.validate().is_empty(), "{:?}", prs.validate());
-    assert!(media_parts(&prs).is_empty());
-    assert_eq!(prs.slide(0).unwrap().shapes().len(), 0);
-}
-
-#[test]
-fn an_image_shared_across_slides_stays_until_its_last_slide_goes() {
-    let image = png(4, 4, [5, 5, 5]);
-    let mut prs = blank_deck(2);
-    add_picture(&mut prs, 0, &image, (None, None));
-    let survivor = add_picture(&mut prs, 1, &image, (None, None));
-
-    prs.remove_slide(0).unwrap();
-    let mut prs = reopen(&prs);
-    assert_eq!(stored_media(&prs), vec![image.clone()]);
-    assert_eq!(
-        prs.picture_image(0, survivor).unwrap().bytes,
-        image.as_slice()
-    );
-
-    prs.remove_slide(0).unwrap();
-    assert!(media_parts(&reopen(&prs)).is_empty());
-}
 
 #[test]
 fn an_image_the_background_and_the_layout_also_show_stays_when_the_picture_changes_or_goes() {
@@ -928,24 +678,6 @@ fn a_picture_inside_a_group_reads_back_and_goes_with_its_group() {
     let prs = reopen(&prs);
     assert!(prs.validate().is_empty(), "{:?}", prs.validate());
     assert!(media_parts(&prs).is_empty());
-}
-
-#[test]
-fn the_same_image_added_twice_is_stored_once() {
-    let image = png(4, 4, [6, 6, 6]);
-    let other = png(4, 4, [7, 7, 7]);
-    let mut prs = blank_deck(2);
-    let a = add_picture(&mut prs, 0, &image, (None, None));
-    let b = add_picture(&mut prs, 0, &image, (Some(INCH), None));
-    let c = add_picture(&mut prs, 1, &image, (None, None));
-    let d = add_picture(&mut prs, 1, &other, (None, None));
-
-    let prs = reopen(&prs);
-    let part = |slide, id| prs.picture_image(slide, id).unwrap().part_name;
-    assert_eq!(part(0, a), part(0, b));
-    assert_eq!(part(0, a), part(1, c));
-    assert_ne!(part(0, a), part(1, d));
-    assert_eq!(media_parts(&prs).len(), 2);
 }
 
 // Picture placeholders
@@ -1042,36 +774,6 @@ fn a_picture_in_its_placeholder_survives_an_odp_round_trip() {
 }
 
 #[test]
-fn a_placeholder_crops_the_picture_to_its_box_around_the_centre() {
-    for (width, height) in [(400, 50), (50, 400)] {
-        let (mut prs, _, index) =
-            with_picture_placeholder_slide(new_deck(), "Picture with Caption");
-        let id = prs
-            .slide(0)
-            .unwrap()
-            .shape(index)
-            .unwrap()
-            .non_visual_id()
-            .unwrap();
-        prs.fill_picture_placeholder(0, &[index], &png(width, height, [9, 9, 9]), "p.png")
-            .unwrap();
-        let prs = reopen(&prs);
-        let [left, top, right, bottom] = crop(&prs, 0, id).unwrap();
-        if width > height {
-            assert!(
-                left > 0 && left == right && top == 0 && bottom == 0,
-                "{width}x{height}"
-            );
-        } else {
-            assert!(
-                top > 0 && top == bottom && left == 0 && right == 0,
-                "{width}x{height}"
-            );
-        }
-    }
-}
-
-#[test]
 fn only_an_empty_picture_placeholder_takes_a_picture() {
     let (mut prs, _, index) = with_picture_placeholder_slide(new_deck(), "Picture with Caption");
     let title = prs
@@ -1103,157 +805,6 @@ fn only_an_empty_picture_placeholder_takes_a_picture() {
 }
 
 // Corpus decks
-
-const PRODUCERS: [&str; 4] = ["powerpoint", "google", "libreoffice", "authored"];
-
-/// The "Revenue by quarter" slide of a corpus deck.
-const PICTURE_SLIDE: usize = 3;
-
-#[test]
-fn the_picture_of_every_corpus_deck_reads_back_with_its_image_and_alt_text() {
-    let expected = corpus_png();
-    for producer in PRODUCERS {
-        let prs = corpus_deck(&format!("{producer}/deck.pptx"));
-        let id = only_picture(&prs, PICTURE_SLIDE);
-        let read = prs.picture_image(PICTURE_SLIDE, id).unwrap();
-        assert_eq!(read.bytes, expected.as_slice(), "{producer}");
-        assert_eq!(read.content_type, "image/png", "{producer}");
-        let index = shape_index(&prs, PICTURE_SLIDE, id);
-        let picture = prs.slide(PICTURE_SLIDE).unwrap().shape(index).unwrap();
-        assert_eq!(
-            picture.alt_text().as_deref(),
-            Some("image.png"),
-            "{producer}"
-        );
-        // Google writes four explicit zero edges, the others none.
-        assert_eq!(crop(&prs, PICTURE_SLIDE, id), Some([0; 4]), "{producer}");
-        let (width, height) = picture.size().unwrap();
-        // LibreOffice rounds the 10 x 5 inch box to its 1/100 mm grid.
-        assert!((width.0 - 10 * INCH).abs() < 1_000, "{producer}: {width:?}");
-        assert!(
-            (height.0 - 5 * INCH).abs() < 1_000,
-            "{producer}: {height:?}"
-        );
-    }
-}
-
-#[test]
-fn replacing_the_picture_of_a_corpus_deck_keeps_the_rest_of_the_deck() {
-    let replacement = png(90, 45, [20, 160, 60]);
-    for producer in PRODUCERS {
-        let mut prs = corpus_deck(&format!("{producer}/deck.pptx"));
-        let texts = slide_texts(&prs);
-        let id = only_picture(&prs, PICTURE_SLIDE);
-        let index = shape_index(&prs, PICTURE_SLIDE, id);
-        let geometry = |prs: &Presentation| {
-            let picture = prs.slide(PICTURE_SLIDE).unwrap().shape(index).unwrap();
-            (picture.position(), picture.size(), picture.alt_text())
-        };
-        let before = geometry(&prs);
-        prs.replace_picture_image(PICTURE_SLIDE, id, &replacement)
-            .unwrap_or_else(|e| panic!("{producer}: {e}"));
-
-        let prs = reopen(&prs);
-        assert_eq!(slide_texts(&prs), texts, "{producer}");
-        assert_eq!(geometry(&prs), before, "{producer}");
-        let read = prs.picture_image(PICTURE_SLIDE, id).unwrap();
-        assert_eq!(read.bytes, replacement.as_slice(), "{producer}");
-        assert_eq!(
-            stored_media(&prs),
-            vec![replacement.clone()],
-            "{producer}: the old image had no other user"
-        );
-    }
-}
-
-#[test]
-fn cropping_the_picture_of_a_corpus_deck_survives_a_save() {
-    for producer in ["powerpoint", "google"] {
-        let mut prs = corpus_deck(&format!("{producer}/deck.pptx"));
-        let id = only_picture(&prs, PICTURE_SLIDE);
-        let index = shape_index(&prs, PICTURE_SLIDE, id);
-        set_crop(&mut prs, PICTURE_SLIDE, index, [0, 10_000, 0, 20_000]).unwrap();
-        let prs = reopen(&prs);
-        assert_eq!(
-            crop(&prs, PICTURE_SLIDE, id),
-            Some([0, 10_000, 0, 20_000]),
-            "{producer}"
-        );
-        assert_eq!(
-            prs.picture_image(PICTURE_SLIDE, id).unwrap().bytes,
-            corpus_png().as_slice(),
-            "{producer}"
-        );
-    }
-}
-
-#[test]
-fn removing_the_picture_of_a_corpus_deck_drops_its_image() {
-    for producer in PRODUCERS {
-        let mut prs = corpus_deck(&format!("{producer}/deck.pptx"));
-        let texts = slide_texts(&prs);
-        let id = only_picture(&prs, PICTURE_SLIDE);
-        prs.remove_shape(PICTURE_SLIDE, shape_index(&prs, PICTURE_SLIDE, id))
-            .unwrap_or_else(|e| panic!("{producer}: {e}"));
-        let prs = reopen(&prs);
-        assert!(media_parts(&prs).is_empty(), "{producer}");
-        assert_eq!(slide_texts(&prs), texts, "{producer}");
-    }
-}
-
-#[test]
-fn adding_the_image_a_corpus_deck_already_holds_reuses_its_part() {
-    let image = corpus_png();
-    for producer in ["powerpoint", "google"] {
-        let mut prs = corpus_deck(&format!("{producer}/deck.pptx"));
-        let existing = prs
-            .picture_image(PICTURE_SLIDE, only_picture(&prs, PICTURE_SLIDE))
-            .unwrap()
-            .part_name;
-        let id = add_picture(&mut prs, 0, &image, (Some(INCH), None));
-        let prs = reopen(&prs);
-        assert_eq!(
-            prs.picture_image(0, id).unwrap().part_name,
-            existing,
-            "{producer}"
-        );
-        assert_eq!(media_parts(&prs).len(), 1, "{producer}");
-    }
-}
-
-#[test]
-fn the_picture_placeholder_of_every_corpus_deck_takes_a_picture() {
-    let image = png(120, 60, [200, 200, 0]);
-    // Google Slides names its layouts by their kind.
-    for (producer, layout) in [
-        ("powerpoint", "Picture with Caption"),
-        ("google", "PICTURE_WITH_CAPTION_TEXT"),
-        ("libreoffice", "Picture with Caption"),
-        ("authored", "Picture with Caption"),
-    ] {
-        let deck = corpus_deck(&format!("{producer}/deck.pptx"));
-        let (mut prs, slide, index) = with_picture_placeholder_slide(deck, layout);
-        let placeholder_box = prs.effective_geometry(slide, &[index]).unwrap();
-        prs.fill_picture_placeholder(slide, &[index], &image, "photo.png")
-            .unwrap_or_else(|e| panic!("{producer}: {e}"));
-
-        let prs = reopen(&prs);
-        let picture = prs.slide(slide).unwrap().shape(index).unwrap();
-        assert_eq!(picture.kind(), ShapeKind::Picture, "{producer}");
-        assert_eq!(picture.placeholder_type(), Some("pic"), "{producer}");
-        assert_eq!(
-            prs.effective_geometry(slide, &[index]).unwrap(),
-            placeholder_box,
-            "{producer}: the picture takes the placeholder's box"
-        );
-        let id = picture.non_visual_id().unwrap();
-        assert_eq!(
-            prs.picture_image(slide, id).unwrap().bytes,
-            image.as_slice(),
-            "{producer}"
-        );
-    }
-}
 
 // Media
 

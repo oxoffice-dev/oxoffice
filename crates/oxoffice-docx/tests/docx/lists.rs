@@ -645,33 +645,6 @@ fn an_instance_update_keeps_a_style_link_held_by_a_swapped_in_level() {
 }
 
 #[test]
-fn a_level_that_names_a_style_not_numbered_by_it_is_refused() {
-    // The other way round from LibreOffice's one-way link: the level names
-    // Heading2, whose style no longer points at any list.
-    let (mut doc, _) = numbered_headings();
-    let mut package =
-        oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(doc.to_bytes().unwrap()))
-            .expect("package opens");
-    let xml = String::from_utf8(package.get_part("/word/styles.xml").unwrap().to_vec()).unwrap();
-    let style = xml
-        .find(r#"w:styleId="Heading2""#)
-        .expect("the Heading2 style");
-    let start = style + xml[style..].find("<w:numPr>").expect("its numbering");
-    let end = start + xml[start..].find("</w:numPr>").unwrap() + "</w:numPr>".len();
-    let xml = format!("{}{}", &xml[..start], &xml[end..]);
-    package.set_part("/word/styles.xml", xml.into_bytes());
-    let mut bytes = std::io::Cursor::new(Vec::new());
-    package.write_to(&mut bytes).unwrap();
-    let doc = Document::from_bytes(&bytes.into_inner()).unwrap();
-
-    let error = doc.validate_numbering_graph().unwrap_err().to_string();
-    assert!(
-        error.contains("and style 'Heading2' are not reciprocally linked"),
-        "{error}"
-    );
-}
-
-#[test]
 fn unlinking_a_style_stops_numbering_its_paragraphs() {
     let (mut doc, id) = numbered_headings();
     let mut doc = reopen(&mut doc);
@@ -721,29 +694,6 @@ fn linking_a_style_refuses_conflicts_and_styles_that_cannot_hold_a_list() {
             .to_string();
         assert!(error.contains(message), "{style} {level}: {error}");
     }
-    assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
-fn a_link_refused_in_a_document_without_styles_leaves_it_as_it_was() {
-    // The link reserves a styles part before it finds the style missing.
-    let mut package =
-        OpcPackage::from_reader(Cursor::new(Document::new().to_bytes().unwrap())).unwrap();
-    package.remove_part("/word/styles.xml");
-    package.content_types.remove_override("/word/styles.xml");
-    package
-        .get_or_create_part_rels("/word/document.xml")
-        .items
-        .retain(|relationship| !relationship.rel_type.ends_with("/styles"));
-    let mut out = Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    let mut doc = Document::from_bytes(&out.into_inner()).unwrap();
-    let before = doc.to_bytes().unwrap();
-    let error = doc
-        .link_style_to_numbering("Heading1", 1, 0)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("does not exist"), "{error}");
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
 

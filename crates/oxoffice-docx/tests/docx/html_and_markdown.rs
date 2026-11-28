@@ -502,37 +502,6 @@ fn two_line_breaks_in_a_row_stay_one_paragraph_in_markdown() {
 }
 
 #[test]
-fn a_break_that_clears_floats_is_a_plain_break_in_epub() {
-    let doc = doc_with_body(concat!(
-        r#"<w:p><w:r><w:t>a</w:t><w:br w:type="textWrapping" w:clear="left"/>"#,
-        r#"<w:t>b</w:t><w:br w:clear="all"/><w:t>c</w:t></w:r></w:p>"#,
-    ));
-    let epub = doc.to_epub_bytes().unwrap();
-    let mut archive = zip::ZipArchive::new(Cursor::new(epub.bytes)).unwrap();
-    let mut breaks = 0;
-    for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).unwrap();
-        let name = entry.name().unwrap().into_owned();
-        if !name.ends_with(".xhtml") {
-            continue;
-        }
-        let mut xhtml = String::new();
-        std::io::Read::read_to_string(&mut entry, &mut xhtml).unwrap();
-        // Every chapter stays well-formed XML, as EPUB readers parse it.
-        let mut reader = quick_xml::Reader::from_str(&xhtml);
-        loop {
-            match reader.read_event() {
-                Ok(quick_xml::events::Event::Eof) => break,
-                Ok(_) => {}
-                Err(error) => panic!("{name} is not well-formed: {error}: {xhtml}"),
-            }
-        }
-        breaks += xhtml.matches("a<br/>b<br/>c").count();
-    }
-    assert_eq!(breaks, 1);
-}
-
-#[test]
 fn a_described_picture_has_one_alt_attribute_in_epub() {
     let mut doc = Document::new();
     let body = body_story(&doc);
@@ -1030,25 +999,6 @@ fn charts_export_as_data_tables_and_an_unreadable_chart_is_diagnosed() {
 // ---- Stories other than the body ----
 
 #[test]
-fn an_internal_link_in_another_case_reaches_its_bookmark_in_both_exports() {
-    // Word compares bookmark names without regard to case; an anchor and
-    // its links are written in the bookmark's own spelling.
-    let doc = reopen(&mut doc_with_body(concat!(
-        r#"<w:p><w:bookmarkStart w:id="1" w:name="Goal"/><w:r><w:t>Goal</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p>"#,
-        r#"<w:p><w:r><w:t xml:space="preserve">See </w:t></w:r><w:hyperlink w:anchor="GOAL">"#,
-        r#"<w:r><w:t>the goal</w:t></w:r></w:hyperlink></w:p>"#,
-    )));
-    let html = doc.to_html_fragment();
-    assert!(html.contains(r##"<a id="Goal"></a>Goal"##), "{html}");
-    assert!(
-        html.contains(r##"See <a href="#Goal">the goal</a>"##),
-        "{html}"
-    );
-    let markdown = doc.to_markdown();
-    assert!(markdown.contains("See [the goal](#Goal)"), "{markdown}");
-}
-
-#[test]
 fn rtf_odt_and_epub_report_bookmarks_between_paragraphs_as_dropped_bookmarks() {
     // Google Docs writes a heading bookmark's start between paragraphs; a
     // table cell can hold one too.
@@ -1102,53 +1052,6 @@ fn rtf_odt_and_epub_report_bookmarks_between_paragraphs_as_dropped_bookmarks() {
             .collect(),
         "EPUB",
     );
-}
-
-#[test]
-fn an_odt_list_runs_on_through_a_bookmark_between_its_items() {
-    let odt_lists = |marker: bool| {
-        let mut doc = Document::new();
-        let definition = doc
-            .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
-            .unwrap();
-        let list = doc.add_numbering_instance(definition, &[]).unwrap();
-        for item in ["alpha", "beta"] {
-            doc.add_paragraph(item).numbering(list, 0);
-        }
-        let bytes = doc.to_bytes().unwrap();
-        let mut package = oxoffice_opc::OpcPackage::from_reader(Cursor::new(bytes)).unwrap();
-        let xml =
-            String::from_utf8(package.get_part("/word/document.xml").unwrap().to_vec()).unwrap();
-        // As Google Docs writes a heading bookmark: its start before the
-        // item, its end inside it.
-        let at = xml.rfind("<w:p>").or_else(|| xml.rfind("<w:p ")).unwrap();
-        let close = xml.rfind("</w:p>").unwrap();
-        let edited = if marker {
-            format!(
-                r#"{}<w:bookmarkStart w:id="50" w:name="Second"/>{}<w:bookmarkEnd w:id="50"/>{}"#,
-                &xml[..at],
-                &xml[at..close],
-                &xml[close..]
-            )
-        } else {
-            xml
-        };
-        package.set_part("/word/document.xml", edited.into_bytes());
-        let mut out = Cursor::new(Vec::new());
-        package.write_to(&mut out).unwrap();
-        let odt = Document::from_bytes(&out.into_inner())
-            .unwrap()
-            .to_odt_bytes()
-            .unwrap()
-            .bytes;
-        let mut archive = zip::ZipArchive::new(Cursor::new(odt)).unwrap();
-        let mut content = String::new();
-        std::io::Read::read_to_string(&mut archive.by_name("content.xml").unwrap(), &mut content)
-            .unwrap();
-        content.matches("<text:list ").count() + content.matches("<text:list>").count()
-    };
-    assert_eq!(odt_lists(true), odt_lists(false));
-    assert_eq!(odt_lists(false), 1);
 }
 
 /// The XHTML of every chapter of an EPUB, joined.
@@ -1289,29 +1192,6 @@ fn shading_and_highlight_export_as_the_pdf_paints_them() {
         );
     }
     assert!(!content.contains("#FFC7CE"), "{content}");
-}
-
-#[test]
-fn a_list_item_keeps_its_shading_and_a_fill_written_with_a_hash_is_painted() {
-    let mut doc = Document::new();
-    let definition = doc
-        .add_numbering_definition(&[oxoffice_docx::ListLevel::decimal()])
-        .unwrap();
-    let list = doc.add_numbering_instance(definition, &[]).unwrap();
-    let mut item = doc.add_paragraph("").numbering(list, 0).shading("1F3864");
-    item.add_run("Item");
-    // The run builder keeps the `#` it is given.
-    doc.add_paragraph("").add_run("Hash").highlight("#C6EFCE");
-    let html = doc.to_html_fragment();
-    let items = html_elements(&html, "li");
-    assert_eq!(items[0].1["style"], "background-color:#1F3864", "{html}");
-    // Automatic text is white on the item's dark shading.
-    let runs = html_elements(&html, "span")
-        .into_iter()
-        .map(|(text, attributes)| (text, attributes["style"].clone()))
-        .collect::<HashMap<_, _>>();
-    assert_eq!(runs["Item"], "color:#FFFFFF", "{html}");
-    assert_eq!(runs["Hash"], "background-color:#C6EFCE", "{html}");
 }
 
 #[test]
@@ -2008,66 +1888,6 @@ fn equations_as_mathml(doc: &Document) -> Vec<String> {
 }
 
 #[test]
-fn every_equation_of_the_word_paper_survives_an_rtf_round_trip() {
-    let doc = corpus_doc("word/paper.docx");
-    let expected = equations_as_mathml(&doc);
-    assert!(expected.len() >= 11, "{}", expected.len());
-    let written = doc.to_rtf_bytes().unwrap();
-    assert!(
-        !written
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("equation")),
-        "{:?}",
-        written.diagnostics
-    );
-    let rtf = String::from_utf8(written.bytes).unwrap();
-    // As Word writes it: a display group inside `\mmath`, its equations
-    // starred.
-    assert!(rtf.contains(r"{\mmath{\*\moMathPara "), "{rtf}");
-    assert_eq!(rtf.matches(r"{\*\moMath ").count(), expected.len());
-    // Every math run says its script and style, as Word writes them: Word
-    // reads a run without a style as plain, not in the default italic.
-    let runs = rtf.matches(r"{\mr\").count() + rtf.matches(r"{\mr ").count();
-    assert_eq!(
-        rtf.matches(r"{\mr\mscr0\msty2 ").count() + rtf.matches(r"{\mr\mscr0\msty0 ").count(),
-        runs,
-        "{rtf}"
-    );
-    assert!(rtf.matches(r"{\mr\mscr0\msty2 ").count() > 60, "{rtf}");
-    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap();
-    assert!(
-        !read
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("equation")),
-        "{:?}",
-        read.diagnostics
-    );
-    assert_eq!(equations_as_mathml(&read.document), expected);
-}
-
-#[test]
-fn a_math_run_without_a_style_reads_as_word_reads_it() {
-    let style = |run: &str| {
-        let rtf = format!(r"{{\rtf1\ansi {{\mmath{{\*\moMath {run}}}}}\par}}");
-        let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
-        let equation = read
-            .paragraph(0)
-            .unwrap()
-            .equations()
-            .next()
-            .cloned()
-            .unwrap();
-        String::from_utf8(equation.to_xml().unwrap()).unwrap()
-    };
-    // No style is plain, `\msty2` Word's default (no `m:sty`), `\msty0` plain.
-    assert!(style(r"{\mr x}").contains(r#"<m:sty m:val="p"/>"#));
-    assert!(!style(r"{\mr\mscr0\msty2 x}").contains("m:sty"));
-    assert!(style(r"{\mr\mscr0\msty0 x}").contains(r#"<m:sty m:val="p"/>"#));
-}
-
-#[test]
 fn text_around_an_equation_keeps_its_place_in_rtf() {
     let mut doc = Document::new();
     let mut paragraph = doc.add_paragraph("Let ");
@@ -2154,32 +1974,6 @@ fn every_equation_of_the_word_paper_survives_an_odt_round_trip() {
             .count()
     };
     assert_eq!(displays(&read.document), displays(&doc));
-}
-
-#[test]
-fn text_around_an_equation_keeps_its_place_in_odt() {
-    let mut doc = Document::new();
-    let mut paragraph = doc.add_paragraph("Let ");
-    paragraph
-        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
-            oxoffice_docx::equation_from_latex(r"x=\frac{1}{2}")
-                .unwrap()
-                .value
-                .expressions,
-        ))
-        .unwrap();
-    paragraph.add_run(" hold.");
-    let odt = doc.to_odt_bytes().unwrap().bytes;
-    let read = Document::from_odt_bytes(&odt).unwrap().document;
-    let paragraph = read.paragraph(0).unwrap();
-    assert!(matches!(
-        paragraph.equations().collect::<Vec<_>>()[..],
-        [oxoffice_docx_oxml::math::OfficeMath::Inline(_)]
-    ));
-    assert_eq!(equations_as_mathml(&read), equations_as_mathml(&doc));
-    let markdown = read.to_markdown();
-    assert!(markdown.starts_with("Let $"), "{markdown}");
-    assert!(markdown.trim_end().ends_with("$ hold."), "{markdown}");
 }
 
 #[test]
@@ -2308,37 +2102,6 @@ fn an_object_that_is_not_a_formula_reads_as_its_replacement_image() {
     }
 }
 
-#[test]
-fn a_delimiter_shape_survives_an_rtf_round_trip() {
-    let math = format!(
-        concat!(
-            r#"<m:oMath xmlns:m="{m}"><m:d><m:dPr><m:begChr m:val="["/><m:shp m:val="match"/></m:dPr>"#,
-            r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath>"#
-        ),
-        m = "http://schemas.openxmlformats.org/officeDocument/2006/math"
-    );
-    let mut doc = Document::new();
-    doc.add_paragraph("Let ")
-        .add_equation(oxoffice_docx_oxml::math::OfficeMath::Inline(
-            oxoffice_docx_oxml::math::CT_OMath::from_xml(math.as_bytes()).unwrap(),
-        ))
-        .unwrap();
-    let written = doc.to_rtf_bytes().unwrap();
-    let rtf = String::from_utf8(written.bytes).unwrap();
-    assert!(rtf.contains(r"{\mshp match}"), "{rtf}");
-    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
-    let equation = read
-        .paragraph(0)
-        .unwrap()
-        .equations()
-        .next()
-        .cloned()
-        .unwrap();
-    let xml = String::from_utf8(equation.to_xml().unwrap()).unwrap();
-    assert!(xml.contains(r#"<m:shp m:val="match"/>"#), "{xml}");
-    assert!(!xml.contains("<m:shp><m:r>"), "{xml}");
-}
-
 /// The equation `body` (OfficeMath XML) through MathML and back: the one
 /// expression read, after checking that nothing was reported and that it
 /// writes the same MathML again.
@@ -2367,41 +2130,6 @@ fn through_mathml(body: &str) -> oxoffice_docx::MathExpression {
 }
 
 const MATH_X: &str = "<m:e><m:r><m:t>x</m:t></m:r></m:e>";
-
-#[test]
-fn a_function_read_from_mathml_is_a_function_of_its_argument() {
-    let expression = through_mathml(&format!(
-        r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>log</m:t></m:r></m:fName>{MATH_X}</m:func>"#
-    ));
-    let oxoffice_docx::MathExpression::Function(function) = expression else {
-        panic!("{expression:?}");
-    };
-    assert!(
-        matches!(function.name.expressions.as_slice(), [oxoffice_docx::MathExpression::Run(run)] if run.text == "log"),
-        "{function:?}"
-    );
-}
-
-#[test]
-fn a_bar_read_from_mathml_is_a_bar_over_or_under_its_base() {
-    use oxoffice_docx_oxml::math::MathVerticalPosition;
-    for (body, position) in [
-        (
-            format!(r#"<m:bar><m:barPr><m:pos m:val="top"/></m:barPr>{MATH_X}</m:bar>"#),
-            MathVerticalPosition::Top,
-        ),
-        (
-            format!("<m:bar>{MATH_X}</m:bar>"),
-            MathVerticalPosition::Bottom,
-        ),
-    ] {
-        let expression = through_mathml(&body);
-        assert!(
-            matches!(&expression, oxoffice_docx::MathExpression::Bar(bar) if bar.position.unwrap_or(MathVerticalPosition::Bottom) == position),
-            "{body}: {expression:?}"
-        );
-    }
-}
 
 #[test]
 fn a_border_box_read_from_mathml_keeps_its_sides_and_strikes() {
@@ -2480,35 +2208,6 @@ fn accents_and_enclosures_from_other_producers_keep_their_meaning() {
     assert!(
         matches!(wrapped, oxoffice_docx::MathExpression::Phantom(_)),
         "{wrapped:?}"
-    );
-}
-
-#[test]
-fn a_phantom_read_from_mathml_stays_hidden() {
-    let expression = through_mathml(&format!(
-        r#"<m:phant><m:phantPr><m:show m:val="0"/></m:phantPr>{MATH_X}</m:phant>"#
-    ));
-    assert!(
-        matches!(&expression, oxoffice_docx::MathExpression::Phantom(phantom) if phantom.show == Some(false)),
-        "{expression:?}"
-    );
-}
-
-#[test]
-fn aligned_equations_read_from_mathml_are_an_equation_array() {
-    let expression = through_mathml(
-        "<m:eqArr><m:e><m:r><m:t>x&amp;=1</m:t></m:r></m:e><m:e><m:r><m:t>y&amp;=2</m:t></m:r></m:e></m:eqArr>",
-    );
-    let oxoffice_docx::MathExpression::EquationArray(array) = expression else {
-        panic!("{expression:?}");
-    };
-    assert_eq!(array.rows.len(), 2, "{array:?}");
-    assert!(
-        array
-            .rows
-            .iter()
-            .all(|row| row.split_at_alignment().is_some()),
-        "{array:?}"
     );
 }
 
@@ -2755,28 +2454,6 @@ fn equations_word_writes_in_wrappers_fields_and_display_groups_reach_both_export
     assert!(html.contains(">A34<math"), "{html}");
     assert!(html.contains(">12<math"), "{html}");
     assert!(html.contains("<mi>z</mi></math>C</p>"), "{html}");
-}
-
-#[test]
-fn an_equation_after_a_link_is_not_part_of_the_link() {
-    let mut doc = Document::new();
-    let link = doc.add_hyperlink_relationship("https://example.com/");
-    let mut paragraph = doc.add_paragraph("");
-    paragraph.add_hyperlink("see", &link);
-    let expressions = oxoffice_docx::equation_from_latex("y").unwrap().value;
-    paragraph
-        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
-            expressions.expressions.clone(),
-        ))
-        .unwrap();
-    paragraph.add_run(" here");
-    let html = doc.to_html_fragment();
-    assert!(html.contains("see</a><math"), "{html}");
-    let markdown = doc.to_markdown();
-    assert!(
-        markdown.contains("[see](https://example.com/)$y$ here"),
-        "{markdown}"
-    );
 }
 
 // ---- Corpus ----
@@ -3135,67 +2812,6 @@ fn a_break_of_a_math_run_survives_rtf_and_its_alignment_point_is_reported() {
 }
 
 #[test]
-fn a_break_word_writes_in_a_math_run_reads_back_as_word_saves_it() {
-    // Word 16.115's RTF of `f(x)=a+b+c+d+e` broken before the second `+`
-    // with `m:alnAt="1"`, its character formatting shortened.
-    let word = concat!(
-        r"{\rtf1\ansi {\fonttbl{\f34\fcharset0 Cambria Math;}}",
-        r"{\mmath{\*\moMathPara {\*\moMath ",
-        r"{\i\f34 {\mr\mscr0\msty2 f}}{\i\f34 {\mr\mscr0\msty2 (}}{\i\f34 {\mr\mscr0\msty2 x}}",
-        r"{\i\f34 {\mr\mscr0\msty2 )=}}{\i\f34 {\mr\mscr0\msty2 a}}{\i\f34 {\mr\mscr0\msty2 +}}",
-        r"{\i\f34 {\mr\mscr0\msty2 b}}{\i\f34 {\mr\mscr0\msty2 +}}{\i\f34 {\mr\mscr0\msty2 c}}",
-        "{\\i\\f34 {\\mr\\mscr0\\msty2 \\mbrk0 +}}{\\i\\f34 {\\mr\\mscr0\\msty2 d}}",
-        r"{\i\f34 {\mr\mscr0\msty2 +}}{\i\f34 {\mr\mscr0\msty2 e}}}}}\par}",
-    );
-    let read = Document::from_rtf_bytes(word.as_bytes()).unwrap();
-    assert!(read.diagnostics.is_empty(), "{:?}", read.diagnostics);
-    let equation = read
-        .document
-        .paragraph(0)
-        .unwrap()
-        .equations()
-        .next()
-        .cloned()
-        .unwrap();
-    let xml = String::from_utf8(equation.to_xml().unwrap()).unwrap();
-    // The OMML of Word's .docx of the same equation, its `w:rPr` aside.
-    let run = |text: &str| format!("<m:r><m:t>{text}</m:t></m:r>");
-    let runs = ["f", "(", "x", ")=", "a", "+", "b", "+", "c"]
-        .map(run)
-        .concat();
-    let saved = format!(
-        concat!(
-            r#"<m:oMathPara xmlns:m="{m}" xmlns:w="{w}"><m:oMath>{runs}"#,
-            r#"<m:r><m:rPr><m:brk m:alnAt="1"/></m:rPr><m:t>+</m:t></m:r>{rest}</m:oMath></m:oMathPara>"#
-        ),
-        m = M_NS,
-        w = W_NS,
-        runs = runs,
-        rest = ["d", "+", "e"].map(run).concat(),
-    );
-    assert_eq!(without_space_preserve(&xml), omml(&saved));
-}
-
-#[test]
-fn bold_of_a_math_run_is_reported_in_rtf() {
-    let math = format!(
-        concat!(
-            r#"<m:oMath xmlns:m="{m}" xmlns:w="{w}"><m:r><w:rPr><w:rFonts w:ascii="Cambria Math"/>"#,
-            r#"<w:b/></w:rPr><m:t>x</m:t></m:r></m:oMath>"#
-        ),
-        m = M_NS,
-        w = W_NS,
-    );
-    let (_, reported, _) = equation_through_rtf(&math);
-    assert!(
-        reported
-            .iter()
-            .any(|message| message.contains("character formatting of its math runs")),
-        "{reported:?}"
-    );
-}
-
-#[test]
 fn an_equation_the_rtf_reader_cannot_rebuild_keeps_its_text() {
     // A run with no equation around it, and a run straight in a display
     // group: neither is OMML.
@@ -3213,95 +2829,6 @@ fn an_equation_the_rtf_reader_cannot_rebuild_keeps_its_text() {
             read.diagnostics
         );
     }
-}
-
-#[test]
-fn spaces_at_the_edges_of_a_math_run_survive_an_rtf_round_trip() {
-    let math = format!(
-        concat!(
-            r#"<m:oMath xmlns:m="{m}" xmlns:w="{w}"><m:r><m:t>x</m:t></m:r>"#,
-            r#"<m:r><m:rPr><m:nor/></m:rPr><m:t xml:space="preserve"> if </m:t></m:r>"#,
-            r#"<m:r><m:t>y</m:t></m:r><m:r><m:rPr><m:nor/></m:rPr><m:t xml:space="preserve"> </m:t></m:r>"#,
-            r#"<m:r><m:t>z</m:t></m:r></m:oMath>"#
-        ),
-        m = M_NS,
-        w = W_NS,
-    );
-    let (_, _, xml) = equation_through_rtf(&math);
-    assert!(
-        xml.contains(r#"<m:t xml:space="preserve"> if </m:t>"#),
-        "{xml}"
-    );
-    assert!(
-        xml.contains(r#"<m:t xml:space="preserve"> </m:t>"#),
-        "{xml}"
-    );
-}
-
-#[test]
-fn built_equations_keep_their_omml_through_rtf() {
-    let equations = [
-        // A delimiter that matches its content's height.
-        r#"<m:d><m:dPr><m:begChr m:val="["/><m:shp m:val="match"/></m:dPr><m:e><m:r><m:t>x</m:t></m:r></m:e></m:d>"#,
-        // A function, its name upright.
-        concat!(
-            r#"<m:func><m:fName><m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>sin</m:t></m:r></m:fName>"#,
-            r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:func>"#
-        ),
-        // A fraction, an n-ary sum with its limits, a radical with its
-        // degree hidden.
-        concat!(
-            r#"<m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f>"#,
-            r#"<m:nary><m:naryPr><m:chr m:val="&#8721;"/><m:limLoc m:val="undOvr"/></m:naryPr>"#,
-            r#"<m:sub><m:r><m:t>i</m:t></m:r></m:sub><m:sup><m:r><m:t>n</m:t></m:r></m:sup>"#,
-            r#"<m:e><m:r><m:t>i</m:t></m:r></m:e></m:nary>"#,
-            r#"<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:r><m:t>y</m:t></m:r></m:e></m:rad>"#
-        ),
-        // A box that is an alignment point and a break of its own.
-        concat!(
-            r#"<m:box><m:boxPr><m:brk/><m:aln/></m:boxPr><m:e><m:r><m:t>=</m:t></m:r></m:e></m:box>"#,
-            r#"<m:r><m:t>1</m:t></m:r>"#
-        ),
-    ];
-    for body in equations {
-        let math = format!(r#"<m:oMath xmlns:m="{M_NS}" xmlns:w="{W_NS}">{body}</m:oMath>"#);
-        let (_, reported, xml) = equation_through_rtf(&math);
-        assert!(reported.is_empty(), "{reported:?}");
-        assert_eq!(without_space_preserve(&xml), omml(&math), "{body}");
-    }
-}
-
-#[test]
-fn math_runs_are_written_in_the_math_font_and_italic_as_word_writes_them() {
-    let doc = corpus_doc("word/paper.docx");
-    let rtf = String::from_utf8(doc.to_rtf_bytes().unwrap().bytes).unwrap();
-    let font = rtf
-        .split(r"{\f")
-        .find_map(|entry| {
-            let (number, rest) = entry.split_once(r"\fcharset0 ")?;
-            rest.starts_with("Cambria Math;").then(|| number.to_owned())
-        })
-        .unwrap_or_else(|| panic!("no Cambria Math in the font table: {rtf}"));
-    // Every run of Word's default style is italic, Greek letters, digits and
-    // operators too; a plain run is not.
-    let italic = format!(r"{{\i\f{font} {{\mr\mscr0\msty2 ");
-    let plain = format!(r"{{\f{font} {{\mr\mscr0\msty0 ");
-    assert_eq!(
-        rtf.matches(&italic).count(),
-        rtf.matches(r"{\mr\mscr0\msty2 ").count(),
-        "{rtf}"
-    );
-    assert_eq!(
-        rtf.matches(&plain).count(),
-        rtf.matches(r"{\mr\mscr0\msty0 ").count(),
-        "{rtf}"
-    );
-    assert!(rtf.contains(&format!(r"{italic}\u955?}}}}")), "{rtf}");
-    assert!(rtf.contains(&format!(r"{italic}2}}}}")), "{rtf}");
-    // The reader takes the formatting as the math font's own: the
-    // equations read back as written.
-    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
-    assert_eq!(equations_as_mathml(&read), equations_as_mathml(&doc));
 }
 
 /// A fraction as Word writes it: each run with its `w:rPr`, the construct
@@ -3399,4 +2926,80 @@ fn a_formula_whose_mathml_cannot_be_read_is_reported_once() {
         "{frame:?}"
     );
     assert_eq!(read.document.paragraph(0).unwrap().equations().count(), 0);
+}
+
+#[test]
+fn an_equation_after_a_link_is_not_part_of_the_link() {
+    let mut doc = Document::new();
+    let link = doc.add_hyperlink_relationship("https://example.com/");
+    let mut paragraph = doc.add_paragraph("");
+    paragraph.add_hyperlink("see", &link);
+    let expressions = oxoffice_docx::equation_from_latex("y").unwrap().value;
+    paragraph
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::inline(
+            expressions.expressions.clone(),
+        ))
+        .unwrap();
+    paragraph.add_run(" here");
+    let html = doc.to_html_fragment();
+    assert!(html.contains("see</a><math"), "{html}");
+    let markdown = doc.to_markdown();
+    assert!(
+        markdown.contains("[see](https://example.com/)$y$ here"),
+        "{markdown}"
+    );
+}
+
+#[test]
+fn spaces_at_the_edges_of_a_math_run_survive_an_rtf_round_trip() {
+    let math = format!(
+        concat!(
+            r#"<m:oMath xmlns:m="{m}" xmlns:w="{w}"><m:r><m:t>x</m:t></m:r>"#,
+            r#"<m:r><m:rPr><m:nor/></m:rPr><m:t xml:space="preserve"> if </m:t></m:r>"#,
+            r#"<m:r><m:t>y</m:t></m:r><m:r><m:rPr><m:nor/></m:rPr><m:t xml:space="preserve"> </m:t></m:r>"#,
+            r#"<m:r><m:t>z</m:t></m:r></m:oMath>"#
+        ),
+        m = M_NS,
+        w = W_NS,
+    );
+    let (_, _, xml) = equation_through_rtf(&math);
+    assert!(
+        xml.contains(r#"<m:t xml:space="preserve"> if </m:t>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<m:t xml:space="preserve"> </m:t>"#),
+        "{xml}"
+    );
+}
+
+#[test]
+fn a_delimiter_shape_survives_an_rtf_round_trip() {
+    let math = format!(
+        concat!(
+            r#"<m:oMath xmlns:m="{m}"><m:d><m:dPr><m:begChr m:val="["/><m:shp m:val="match"/></m:dPr>"#,
+            r#"<m:e><m:r><m:t>x</m:t></m:r></m:e></m:d></m:oMath>"#
+        ),
+        m = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+    );
+    let mut doc = Document::new();
+    doc.add_paragraph("Let ")
+        .add_equation(oxoffice_docx_oxml::math::OfficeMath::Inline(
+            oxoffice_docx_oxml::math::CT_OMath::from_xml(math.as_bytes()).unwrap(),
+        ))
+        .unwrap();
+    let written = doc.to_rtf_bytes().unwrap();
+    let rtf = String::from_utf8(written.bytes).unwrap();
+    assert!(rtf.contains(r"{\mshp match}"), "{rtf}");
+    let read = Document::from_rtf_bytes(rtf.as_bytes()).unwrap().document;
+    let equation = read
+        .paragraph(0)
+        .unwrap()
+        .equations()
+        .next()
+        .cloned()
+        .unwrap();
+    let xml = String::from_utf8(equation.to_xml().unwrap()).unwrap();
+    assert!(xml.contains(r#"<m:shp m:val="match"/>"#), "{xml}");
+    assert!(!xml.contains("<m:shp><m:r>"), "{xml}");
 }

@@ -1,7 +1,7 @@
 //! Core, application and custom properties refuse a character XML cannot
 //! carry instead of making every later save fail.
 
-use oxoffice_docx::{AppProperties, CoreProperties, CustomProperty, CustomPropertyValue, Document};
+use oxoffice_docx::{AppProperties, CustomProperty, CustomPropertyValue, Document};
 
 fn custom(name: &str, value: CustomPropertyValue) -> CustomProperty {
     CustomProperty {
@@ -10,72 +10,6 @@ fn custom(name: &str, value: CustomPropertyValue) -> CustomProperty {
         name: Some(name.into()),
         value,
     }
-}
-
-#[test]
-fn a_property_xml_cannot_carry_is_refused_and_the_document_still_saves() {
-    let mut doc = Document::new();
-    doc.set_custom_property(custom("Kept", CustomPropertyValue::Lpwstr("fine".into())))
-        .unwrap();
-    let before = doc.to_bytes().unwrap();
-    let refusals = [
-        (
-            "title",
-            doc.set_core_properties(CoreProperties {
-                title: Some("Q3\u{7}".into()),
-                ..Default::default()
-            }),
-        ),
-        (
-            "keywords",
-            doc.set_core_properties(CoreProperties {
-                keywords: Some("a\u{FFFF}".into()),
-                ..Default::default()
-            }),
-        ),
-        (
-            "company",
-            doc.set_application_properties({
-                let mut app = AppProperties::default();
-                app.company = Some("\u{FFFE}Corp".into());
-                app
-            }),
-        ),
-        (
-            "\"Bell\"",
-            doc.set_custom_property(custom(
-                "Bell",
-                CustomPropertyValue::Lpwstr("ring\u{7}".into()),
-            )),
-        ),
-        (
-            "name",
-            doc.set_custom_property(custom("Bad\u{1}", CustomPropertyValue::Lpstr("x".into()))),
-        ),
-    ];
-    for (field, refusal) in refusals {
-        let message = refusal.expect_err(field).to_string();
-        assert!(
-            message.contains(field) && message.contains("a character XML 1.0 cannot carry"),
-            "{field}: {message}"
-        );
-    }
-    assert_eq!(
-        doc.to_bytes().unwrap(),
-        before,
-        "nothing changed, and it still saves"
-    );
-}
-
-#[test]
-fn a_one_field_setter_drops_a_character_xml_cannot_carry_and_the_document_saves() {
-    // The one-field setters cannot refuse: they drop the character, and
-    // set_core_properties refuses the value at once.
-    let mut doc = Document::new();
-    doc.set_title("Q3\u{7}");
-    assert_eq!(doc.title(), Some("Q3"));
-    let doc = Document::from_bytes(&doc.to_bytes().expect("the document saves")).unwrap();
-    assert_eq!(doc.title(), Some("Q3"));
 }
 
 #[test]
@@ -163,71 +97,6 @@ fn a_raw_custom_value_with_a_character_reference_xml_cannot_carry_is_refused() {
     ))
     .expect("a tab reference, an escaped ampersand and literal text are fine");
     assert_ne!(doc.to_bytes().unwrap(), before);
-}
-
-/// `doc` saved and reopened after `plain` in `part` became `written`: what
-/// another producer wrote, such as a character reference XML 1.0 forbids.
-fn written_by_another_producer(
-    doc: &mut Document,
-    part: &str,
-    plain: &str,
-    written: &str,
-) -> Document {
-    let bytes = doc.to_bytes().unwrap();
-    let mut package = oxoffice_opc::OpcPackage::from_reader(std::io::Cursor::new(bytes)).unwrap();
-    let xml = String::from_utf8(package.get_part(part).expect("the part exists").to_vec()).unwrap();
-    assert!(xml.contains(plain), "{xml}");
-    package.set_part(part, xml.replace(plain, written).into_bytes());
-    let mut out = std::io::Cursor::new(Vec::new());
-    package.write_to(&mut out).unwrap();
-    Document::from_bytes(&out.into_inner()).unwrap()
-}
-
-/// A document whose core part holds the title "Report" and a
-/// `lastModifiedBy` with a character reference XML 1.0 forbids.
-fn with_bad_last_modified_by() -> Document {
-    let mut doc = Document::new();
-    doc.set_core_properties(CoreProperties {
-        title: Some("Report".into()),
-        last_modified_by: Some("J_Doe".into()),
-        ..Default::default()
-    })
-    .unwrap();
-    written_by_another_producer(&mut doc, "/docProps/core.xml", "J_Doe", "J&#11;Doe")
-}
-
-#[test]
-fn setting_core_properties_drops_a_bad_character_the_file_already_held() {
-    // The part is written again from the properties, so the character the
-    // file held cannot stay; the caller, CLI or Python, is not stuck on it.
-    let mut doc = with_bad_last_modified_by();
-    assert_eq!(
-        doc.core_properties().unwrap().last_modified_by.as_deref(),
-        Some("J\u{b}Doe")
-    );
-    let mut core = doc.core_properties().cloned().unwrap();
-    core.title = Some("Q3\u{7}".into());
-    let message = doc
-        .set_core_properties(core.clone())
-        .expect_err("a new bad value is still refused")
-        .to_string();
-    assert!(message.contains("core property title"), "{message}");
-    core.title = Some("Q3".into());
-    doc.set_core_properties(core)
-        .expect("the held value is cleaned");
-    let doc = Document::from_bytes(&doc.to_bytes().expect("it saves")).unwrap();
-    let core = doc.core_properties().unwrap();
-    assert_eq!(core.title.as_deref(), Some("Q3"));
-    assert_eq!(core.last_modified_by.as_deref(), Some("JDoe"));
-
-    let mut doc = with_bad_last_modified_by();
-    doc.set_title("Q4");
-    let doc = Document::from_bytes(&doc.to_bytes().expect("a one-field setter saves")).unwrap();
-    assert_eq!(doc.title(), Some("Q4"));
-    assert_eq!(
-        doc.core_properties().unwrap().last_modified_by.as_deref(),
-        Some("JDoe")
-    );
 }
 
 #[test]

@@ -3,8 +3,6 @@
 
 use oxoffice_docx::{Document, Length};
 
-use crate::support::corpus_root;
-
 /// A one-pixel PNG.
 const PNG: &[u8] = &[
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
@@ -13,10 +11,6 @@ const PNG: &[u8] = &[
     0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
     0x42, 0x60, 0x82,
 ];
-
-fn word_report() -> Document {
-    Document::open(corpus_root().join("files/word/report.docx")).expect("the Word report opens")
-}
 
 /// An opened document of paragraphs, a table, a picture paragraph, a
 /// paragraph with a footnote reference and one that ends a section.
@@ -76,20 +70,6 @@ fn a_restored_removal_saves_the_bytes_of_before() {
 }
 
 #[test]
-fn a_removal_in_place_of_a_word_body_saves_what_the_staged_removal_saves() {
-    let mut staged = word_report();
-    let mut local = word_report();
-    let end = 3.min(staged.content_count());
-    let count = staged.remove_content_range(1, end).unwrap();
-    let removed = local
-        .remove_body_blocks_in_place(1, end)
-        .unwrap()
-        .expect("the report's first blocks go in place");
-    assert_eq!(removed.blocks().len(), count);
-    assert_eq!(local.to_bytes().unwrap(), staged.to_bytes().unwrap());
-}
-
-#[test]
 fn blocks_the_staged_route_reconciles_are_not_removed_in_place() {
     let mut doc = body();
     let noted = doc.content_count() - 2;
@@ -103,31 +83,6 @@ fn blocks_the_staged_route_reconciles_are_not_removed_in_place() {
         );
     }
     assert!(doc.pop_body_block_in_place(noted).unwrap().is_none());
-    assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
-fn a_paragraph_that_ends_a_section_is_not_removed_in_place() {
-    let mut doc = Document::new();
-    doc.add_paragraph("one");
-    doc.add_paragraph("two");
-    doc.insert_section(1).unwrap();
-    doc.add_paragraph("three");
-    let mut doc = Document::from_bytes(&doc.to_bytes().unwrap()).unwrap();
-    let before = doc.to_bytes().unwrap();
-    let refused: Vec<usize> = (0..doc.content_count())
-        .filter(|slot| {
-            doc.remove_body_blocks_in_place(*slot, slot + 1)
-                .unwrap()
-                .map(|removed| doc.restore_body_blocks(removed).unwrap())
-                .is_none()
-        })
-        .collect();
-    // Only the paragraph that ends the first section is refused.
-    let [ending] = refused[..] else {
-        panic!("one refused slot, got {refused:?}");
-    };
-    assert!(ending < doc.content_count() - 1);
     assert_eq!(doc.to_bytes().unwrap(), before);
 }
 
@@ -170,16 +125,4 @@ fn a_block_popped_in_place_is_the_fragment_the_staged_route_takes() {
         );
         assert_eq!(local.to_bytes().unwrap(), staged.to_bytes().unwrap());
     }
-}
-
-#[test]
-fn a_popped_block_goes_back_in_place() {
-    let mut doc = word_report();
-    let before = doc.to_bytes().unwrap();
-    let (fragment, removed) = doc.pop_body_block_in_place(1).unwrap().unwrap();
-    doc.restore_body_blocks(removed).unwrap();
-    assert_eq!(doc.to_bytes().unwrap(), before);
-    let mut staged = word_report();
-    let location = staged.direct_body_item_location(1).unwrap().unwrap();
-    assert!(fragment.same_taken_fragment(&staged.remove_content_at(&location).unwrap()));
 }

@@ -129,7 +129,8 @@ The same result is, step by step:
 - Inputs: documents built by the tests (the shapes behind #656 and #413 in
   a few paragraphs, written as Word would write them; the small thesis; a
   deck from the default template) and the corpus copies.
-- Pull requests run the built inputs and two Word copies
+- Pull requests run the producer shapes (the small thesis is for the full checks, see
+  [a slimmer suite](2026-11-28-a-slimmer-test-suite.md)) and two Word copies
   (`google/form.docx`, `libreoffice/contract.docx`: the writings furthest
   from Word's, with comments, notes, tracked changes, fields and controls),
   the built deck and the deck of each producer, every writing. Measured on

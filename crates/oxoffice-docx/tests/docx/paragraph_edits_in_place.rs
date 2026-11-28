@@ -1,6 +1,6 @@
 //! A direct body paragraph edited on a copy of itself, swapped in on success.
 
-use oxoffice_docx::{Document, Error};
+use oxoffice_docx::Document;
 
 use crate::support::corpus_root;
 
@@ -48,19 +48,6 @@ fn an_edit_in_place_replaces_the_paragraph_and_returns_the_old_one() {
 }
 
 #[test]
-fn a_refused_edit_in_place_leaves_the_saved_bytes_unchanged() {
-    let mut document = word_report();
-    let index = direct_paragraph(&document);
-    let before = document.to_bytes().expect("saves");
-    let refused = document.edit_body_paragraph_in_place(index, |paragraph| {
-        paragraph.add_run("half done");
-        Err::<(), _>(Error::Other("refused".to_owned()))
-    });
-    assert!(refused.is_err());
-    assert_eq!(document.to_bytes().expect("saves"), before);
-}
-
-#[test]
 fn a_panicking_edit_in_place_leaves_the_saved_bytes_unchanged() {
     let mut document = word_report();
     let index = direct_paragraph(&document);
@@ -73,48 +60,6 @@ fn a_panicking_edit_in_place_leaves_the_saved_bytes_unchanged() {
     }));
     assert!(panicked.is_err());
     assert_eq!(document.to_bytes().expect("saves"), before);
-}
-
-#[test]
-fn a_restored_paragraph_saves_the_bytes_of_before_the_edit() {
-    let mut document = word_report();
-    let index = direct_paragraph(&document);
-    let before = document.to_bytes().expect("saves");
-    let (_, old) = document
-        .edit_body_paragraph_in_place(index, |paragraph| paragraph.set_text("undone"))
-        .expect("edits")
-        .expect("a direct body paragraph");
-    assert_ne!(document.to_bytes().expect("saves"), before);
-    document
-        .restore_body_paragraph(index, old)
-        .expect("restores");
-    assert_eq!(document.to_bytes().expect("saves"), before);
-}
-
-#[test]
-fn a_save_after_an_edit_in_place_writes_the_new_paragraph() {
-    let mut document = word_report();
-    let index = direct_paragraph(&document);
-    // Reads that fill the save and layout caches before the edit.
-    let _ = document.to_bytes().expect("saves");
-    let _ = document.text();
-    document
-        .edit_body_paragraph_in_place(index, |paragraph| paragraph.set_text("rewritten"))
-        .expect("edits")
-        .expect("a direct body paragraph");
-    assert!(document.text().contains("rewritten"));
-    let reopened = Document::from_bytes(&document.to_bytes().expect("saves")).expect("reopens");
-    assert_eq!(
-        reopened.paragraph(index).expect("paragraph").text(),
-        "rewritten"
-    );
-    assert_eq!(reopened.paragraph_count(), document.paragraph_count());
-    for other in (0..document.paragraph_count()).filter(|other| *other != index) {
-        assert_eq!(
-            reopened.paragraph(other).expect("paragraph").text(),
-            document.paragraph(other).expect("paragraph").text()
-        );
-    }
 }
 
 #[test]
@@ -144,50 +89,6 @@ fn an_index_out_of_range_is_an_error() {
     assert!(
         document
             .edit_body_paragraph_in_place(count, |paragraph| paragraph.set_text("x"))
-            .is_err()
-    );
-}
-
-#[test]
-fn an_edit_in_place_drops_the_layout_of_before_the_edit() {
-    let mut document = Document::new();
-    document.add_paragraph("first");
-    document.add_paragraph("second");
-    let mut document = Document::from_bytes(&document.to_bytes().expect("saves")).expect("reopens");
-    let before = document.layout_deterministic().expect("lays out");
-    document
-        .edit_body_paragraph_in_place(1, |paragraph| paragraph.set_text("a longer second"))
-        .expect("edits")
-        .expect("a direct body paragraph");
-    let after = document.layout_deterministic().expect("lays out");
-    assert!(!std::sync::Arc::ptr_eq(&before, &after));
-}
-
-#[test]
-fn a_swapped_block_saves_the_bytes_of_before_the_edit() {
-    let mut document = word_report();
-    let index = direct_paragraph(&document);
-    let slot = document
-        .content_index_of_paragraph(index)
-        .expect("a direct body paragraph");
-    let before = document.to_bytes().expect("saves");
-    let (_, old) = document
-        .edit_body_paragraph_in_place(index, |paragraph| paragraph.set_text("undone"))
-        .expect("edits")
-        .expect("a direct body paragraph");
-    document
-        .swap_body_block(
-            slot,
-            oxoffice_docx_oxml::BodyContent::Paragraph(Box::new(old)),
-        )
-        .expect("swaps");
-    assert_eq!(document.to_bytes().expect("saves"), before);
-    assert!(
-        document
-            .swap_body_block(
-                document.content_count(),
-                oxoffice_docx_oxml::BodyContent::RawXml(Box::default())
-            )
             .is_err()
     );
 }

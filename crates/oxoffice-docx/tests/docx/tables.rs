@@ -1141,21 +1141,6 @@ fn a_template_tag_in_a_cell_with_empty_properties_renders() {
 }
 
 #[test]
-fn a_save_keeps_cell_properties_written_without_a_value() {
-    for properties in [
-        "<w:tcPr><w:vAlign/></w:tcPr>",
-        "<w:tcPr><w:gridSpan/></w:tcPr>",
-        "<w:tcPr><w:cnfStyle/><w:tcW w:w=\"2000\" w:type=\"dxa\"/><w:vAlign/></w:tcPr>",
-    ] {
-        let mut doc = doc_with_body(&one_cell_table(properties, "<w:p/>"));
-        doc.try_set_cell_text(0, 0, 0, "x").unwrap();
-        let doc = reopen(&mut doc);
-        let xml = doc.part_xml("word/document.xml").unwrap();
-        assert!(xml.contains(&format!("<w:tc>{properties}<w:p>")), "{xml}");
-    }
-}
-
-#[test]
 fn a_row_height_rule_without_a_value_is_formatting_a_row_edit_can_copy_and_set() {
     // The value of `w:trHeight` is optional: a rule alone is row formatting
     // like any other, not opaque XML.

@@ -310,47 +310,6 @@ fn an_authored_separator_is_not_counted_as_a_note() {
     assert!(xml.contains("~~~~") && xml.contains("Continued on the next page"));
 }
 
-#[test]
-fn a_note_with_nothing_inside_is_read_in_both_writings() {
-    let mut doc = doc_with(&["Body"]);
-    let footnote = create_note(&mut doc, Footnote, 0, "Footnote");
-    let endnote = create_note(&mut doc, Endnote, 0, "Endnote");
-    let parts = oxoffice_xml_test::package_parts(&doc.to_bytes().unwrap()).unwrap();
-    for end_tag in [false, true] {
-        let emptied = parts.iter().map(|(name, data)| {
-            let mut xml = String::from_utf8(data.clone()).unwrap();
-            for (part, kind, id) in [
-                ("footnotes", "footnote", footnote),
-                ("endnotes", "endnote", endnote),
-            ] {
-                if name == &format!("word/{part}.xml") {
-                    let id = format!(r#"w:id="{id}""#);
-                    let start = xml
-                        .match_indices(&format!("<w:{kind} "))
-                        .map(|(at, _)| at)
-                        .find(|&at| xml[at..at + xml[at..].find('>').unwrap()].contains(&id))
-                        .expect("the note");
-                    let close = format!("</w:{kind}>");
-                    let end = start + xml[start..].find(&close).unwrap() + close.len();
-                    let empty = match end_tag {
-                        true => format!("<w:{kind} {id}>{close}"),
-                        false => format!("<w:{kind} {id}/>"),
-                    };
-                    xml.replace_range(start..end, &empty);
-                }
-            }
-            (name.clone(), xml.into_bytes())
-        });
-        let bytes = oxoffice_xml_test::write_package(&emptied.collect::<Vec<_>>());
-        let doc = Document::from_bytes(&bytes).unwrap();
-        assert_eq!(doc.footnotes(), [(footnote, String::new())], "{end_tag}");
-        for story in [doc.footnote_story(footnote), doc.endnote_story(endnote)] {
-            let story = story.unwrap().expect("the empty note is a story");
-            assert!(doc.story_items(&story).unwrap().is_empty(), "{end_tag}");
-        }
-    }
-}
-
 // ---- Editing ----
 
 #[test]
@@ -392,21 +351,6 @@ fn replacing_text_reaches_footnotes_and_endnotes() {
         note_text(&doc, Endnote, endnote).as_deref(),
         Some(" Final endnote")
     );
-}
-
-#[test]
-fn replacing_text_around_a_reference_keeps_the_reference() {
-    let mut doc = Document::new();
-    doc.add_paragraph("alpha").add_run("beta");
-    let id = doc
-        .create_footnote_at(&boundary(&doc, 0, 1), "between")
-        .unwrap();
-    assert_eq!(texts(&doc), ["alphabeta"]);
-    assert_eq!(doc.replace_text("alphabeta", "gamma"), 1);
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["gamma"]);
-    assert_eq!(references(&doc, 0), [(Footnote, id)]);
-    assert_eq!(doc.footnotes(), [(id, " between".to_owned())]);
 }
 
 // ---- Moving ----
@@ -665,25 +609,6 @@ fn an_endnote_symbol_mark_stays_and_an_empty_text_mark_leaves_the_symbol_body_te
         "{main}"
     );
     assert_eq!(main.matches("<w:sym ").count(), 1, "{main}");
-}
-
-#[test]
-fn a_started_footnote_reference_is_a_reference_and_goes_with_its_mark() {
-    let mut doc = doc_with(&["Body"]);
-    let id = doc
-        .create_footnote_with_mark(&paragraph_at(&doc, 0), "Note", "*")
-        .unwrap();
-    let mut doc = with_reference_run(
-        &mut doc,
-        id,
-        r#"<w:r><w:footnoteReference w:customMarkFollows="1" w:id="{id}"></w:footnoteReference><w:t>*</w:t></w:r>"#,
-    );
-    assert_eq!(references(&doc, 0), [(Footnote, id)]);
-    assert_eq!(texts(&doc), ["Body*"]);
-    doc.remove_footnote(id).unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(references(&doc, 0), []);
-    assert_eq!(texts(&doc), ["Body"]);
 }
 
 /// `doc` saved, its part `name` rewritten by `edit`, and opened again.
@@ -1038,16 +963,6 @@ fn setting_the_text_of_a_paragraph_holding_a_deleted_note_mark_is_refused() {
 }
 
 #[test]
-fn setting_a_story_paragraph_text_keeps_its_note_mark() {
-    let mut doc = doc_with(&["Old"]);
-    let id = create_note(&mut doc, Footnote, 0, "Kept");
-    doc.set_story_text(&paragraph_at(&doc, 0), "New").unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(doc.footnotes(), [(id, " Kept".to_owned())]);
-    assert_eq!(references(&doc, 0), [(Footnote, id)]);
-}
-
-#[test]
 fn setting_the_text_of_a_note_paragraph_keeps_the_note_number() {
     let mut doc = doc_with(&["Body"]);
     let id = create_note(&mut doc, Footnote, 0, "Old note");
@@ -1167,29 +1082,6 @@ fn setting_the_text_of_a_note_paragraph_with_a_deleted_number_is_refused() {
 }
 
 #[test]
-fn a_raw_carriage_return_in_note_text_reads_as_a_line_feed() {
-    // A notes part written with Windows line ends holds a raw CR LF inside
-    // w:t, which every XML reader reads as one line feed; a CR written as a
-    // reference stays one.
-    let mut doc = doc_with(&["Marked"]);
-    let id = create_note(&mut doc, Footnote, 0, "MARK");
-    let doc = with_part(&mut doc, "/word/footnotes.xml", |xml| {
-        xml.replace("MARK", "one\r\ntwo\rthree&#13;four")
-    });
-    // The note text starts with the space written after the note mark.
-    let expected = " one\ntwo\nthree\rfour";
-    assert_eq!(note_text(&doc, Footnote, id).as_deref(), Some(expected));
-    let story: Vec<_> = doc
-        .story_paragraphs()
-        .unwrap()
-        .into_iter()
-        .filter(|paragraph| paragraph.kind == StoryKind::Footnote)
-        .map(|paragraph| paragraph.text)
-        .collect();
-    assert_eq!(story, [expected]);
-}
-
-#[test]
 fn a_raw_carriage_return_in_deleted_note_text_reads_as_a_line_feed_in_the_revision() {
     // Text written as CDATA follows the same end-of-line handling as text.
     let mut doc = doc_with(&["Marked"]);
@@ -1245,46 +1137,6 @@ fn a_table_added_to_a_footnote_reports_the_footnotes_changed() {
 }
 
 #[test]
-fn a_note_made_in_place_at_a_body_slot_is_the_note_the_staged_route_makes() {
-    for (family, kind) in [
-        (Footnote, StoryKind::Footnote),
-        (Endnote, StoryKind::Endnote),
-    ] {
-        let mut in_place = doc_with(&["Alpha", "Beta"]);
-        let mut staged = doc_with(&["Alpha", "Beta"]);
-        // The first note adds the part and the reference style, the second
-        // finds them; the second goes before the paragraph's only run.
-        for (slot, run) in [(1, 1), (0, 0)] {
-            let id = in_place
-                .create_note_in_body_slot(kind, slot, run, &format!("note {slot}"))
-                .unwrap()
-                .expect("a direct paragraph takes the note in place");
-            let position = boundary(&staged, slot, run);
-            let staged_id = match family {
-                Footnote => staged.create_footnote_at(&position, &format!("note {slot}")),
-                Endnote => staged.create_endnote_at(&position, &format!("note {slot}")),
-            }
-            .unwrap();
-            assert_eq!(id, staged_id);
-        }
-        // The staged route also repeats the root's namespace declarations
-        // on the paragraph it splices: the reads are the same.
-        let (reopened, staged) = (reopen(&mut in_place), reopen(&mut staged));
-        for doc in [&reopened, &staged] {
-            assert_eq!(references(doc, 0), vec![(family, 3)]);
-            assert_eq!(references(doc, 1), vec![(family, 2)]);
-        }
-        for id in [2, 3] {
-            assert_eq!(
-                note_text(&reopened, family, id),
-                note_text(&staged, family, id)
-            );
-        }
-        assert_eq!(texts(&reopened), texts(&staged));
-    }
-}
-
-#[test]
 fn a_note_refused_in_place_changes_nothing() {
     let mut doc = doc_with(&["Alpha"]);
     doc.add_table(1, 1);
@@ -1314,36 +1166,4 @@ fn a_note_refused_in_place_changes_nothing() {
     );
     assert_eq!(doc.to_bytes().unwrap(), before);
     assert!(doc.footnotes().is_empty());
-}
-
-/// Two paragraphs, each referencing its own footnote, through a save.
-fn two_footnoted_paragraphs() -> (Document, i32, i32) {
-    let mut doc = doc_with(&["first", "second"]);
-    let first = doc.add_footnote("note one");
-    doc.paragraph_mut(0).unwrap().add_footnote_ref(first);
-    let second = doc.add_footnote("note two");
-    doc.paragraph_mut(1).unwrap().add_footnote_ref(second);
-    (reopen(&mut doc), first, second)
-}
-
-#[test]
-fn removing_a_saved_footnote_is_taken_in_place() {
-    let (mut doc, first, second) = two_footnoted_paragraphs();
-    let story = doc
-        .remove_note_in_place(StoryKind::Footnote, first)
-        .unwrap()
-        .expect("a saved note is removed in place");
-    assert_eq!(story.kind(), StoryKind::Footnote);
-    let doc = reopen(&mut doc);
-    let ids: Vec<i32> = doc.footnotes().into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, [second]);
-    assert_eq!(texts(&doc), ["first", "second"]);
-}
-
-#[test]
-fn removing_an_unknown_note_in_place_fails_and_changes_nothing() {
-    let (mut doc, _, _) = two_footnoted_paragraphs();
-    let before = doc.to_bytes().unwrap();
-    assert!(doc.remove_note_in_place(StoryKind::Footnote, 99).is_err());
-    assert_eq!(doc.to_bytes().unwrap(), before);
 }

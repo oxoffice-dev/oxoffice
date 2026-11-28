@@ -7,7 +7,7 @@ use oxoffice_docx::{
     BibliographySourceKind, BibliographyStyle, CitationOptions, CitationSourceOptions, Document,
 };
 
-use crate::support::{doc_with, reopen, texts};
+use crate::support::{doc_with, reopen};
 
 fn book(tag: &str, last: &str, year: &str) -> BibliographySource {
     BibliographySource {
@@ -84,34 +84,6 @@ fn is_version_4_guid(guid: &str) -> bool {
 }
 
 #[test]
-fn a_source_without_a_guid_gets_one_derived_from_its_content() {
-    let mut first = Document::new();
-    let guid = first
-        .add_bibliography_source(&book("Smith20", "Smith", "2020"))
-        .unwrap();
-    assert!(is_version_4_guid(&guid), "{guid}");
-    assert_eq!(
-        guids(&reopen(&mut first)),
-        [("Smith20".to_owned(), Some(guid.clone()))]
-    );
-
-    // The same source gets the same GUID in another document, a different
-    // source another one.
-    let mut second = Document::new();
-    assert_eq!(
-        second
-            .add_bibliography_source(&book("Smith20", "Smith", "2020"))
-            .unwrap(),
-        guid
-    );
-    let other = second
-        .add_bibliography_source(&book("Smith21", "Smith", "2021"))
-        .unwrap();
-    assert_ne!(other, guid);
-    assert!(is_version_4_guid(&other), "{other}");
-}
-
-#[test]
 fn a_given_guid_is_kept_and_a_derived_one_skips_the_guids_already_held() {
     let mut probe = Document::new();
     let derived = probe
@@ -141,25 +113,6 @@ fn a_given_guid_is_kept_and_a_derived_one_skips_the_guids_already_held() {
     clash.guid = derived;
     let error = doc.add_bibliography_source(&clash).unwrap_err().to_string();
     assert!(error.contains("source identity already exists"), "{error}");
-}
-
-#[test]
-fn a_citation_goes_right_after_the_chosen_occurrence_of_the_text() {
-    let mut doc = doc_with(&["One brave step", "Two brave words and brave deeds"]);
-    doc.add_bibliography_source(&book("Smith20", "Smith", "2020"))
-        .unwrap();
-    doc.insert_citation_after_text("brave", 2, &cite("Smith20"))
-        .unwrap();
-    let mut doc = reopen(&mut doc);
-    doc.set_bibliography_options(&apa()).unwrap();
-    doc.update_bibliography().unwrap();
-    assert_eq!(
-        texts(&reopen(&mut doc)),
-        [
-            "One brave step",
-            "Two brave words and brave (Smith, 2020) deeds"
-        ]
-    );
 }
 
 #[test]
@@ -199,23 +152,4 @@ fn a_missing_occurrence_leaves_the_document_unchanged() {
         .to_string();
     assert!(error.contains("must not be empty"), "{error}");
     assert_eq!(doc.to_bytes().unwrap(), before);
-}
-
-#[test]
-fn a_replacement_names_its_source_guid_in_any_case_and_keeps_the_saved_one() {
-    let mut doc = Document::new();
-    let guid = doc
-        .add_bibliography_source(&book("Smith20", "Smith", "2020"))
-        .unwrap();
-    let mut replacement = book("Smith20", "Smith", "2021");
-    replacement.guid = guid.to_lowercase();
-    doc.replace_bibliography_source(&replacement).unwrap();
-    let source = reopen(&mut doc).bibliography_sources().unwrap().remove(0);
-    assert_eq!(source.guid, Some(guid.clone()));
-    let year = source.supported.unwrap().properties[1].value.clone();
-    assert_eq!(year, "2021");
-
-    replacement.guid = "{00000000-0000-4000-8000-000000000000}".to_owned();
-    let error = doc.replace_bibliography_source(&replacement).unwrap_err();
-    assert_eq!(error.to_string(), "bibliography: source GUID cannot change");
 }

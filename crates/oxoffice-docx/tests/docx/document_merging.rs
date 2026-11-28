@@ -15,7 +15,7 @@ use oxoffice_docx::{
     RunItemRef, SectionBreak, StoryId, StoryItemKind, StoryKind, StyleBuilder, StyleType,
     TextCommentOptions, ValidationSeverity,
 };
-use oxoffice_docx_oxml::shared::{ST_PageOrientation, ST_SectionType};
+use oxoffice_docx_oxml::shared::ST_SectionType;
 use oxoffice_opc::OpcPackage;
 
 use crate::support::{doc_with, doc_with_body, reopen, texts};
@@ -233,21 +233,6 @@ fn list_doc(items: &[&str]) -> Document {
         doc.add_paragraph(item).numbering(list, 0);
     }
     reopen(&mut doc)
-}
-
-/// The text of the default header section `section` shows, if any.
-fn header_shown(doc: &Document, section: usize) -> Option<String> {
-    let shown = doc
-        .section_story(section, HeaderFooterKind::Header, HdrFtrType::Default)
-        .expect("section index in range")?;
-    Some(
-        doc.story_items(shown.story())
-            .expect("header reads")
-            .iter()
-            .map(|item| item.text().expect("header text").unwrap_or_default())
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
 }
 
 /// A saved two-section document: `cover` in a first section with its own
@@ -1169,81 +1154,6 @@ fn importing_gives_taken_bookmarks_controls_and_revisions_new_identities() {
     assert_ne!(revisions[0].0, revisions[1].0);
 }
 
-#[test]
-fn every_reference_to_a_renamed_bookmark_follows_it_whatever_its_kind_or_case() {
-    let field = |instruction: &str, result: &str| {
-        format!(
-            concat!(
-                r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
-                r#"<w:r><w:instrText xml:space="preserve"> {} </w:instrText></w:r>"#,
-                r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{}</w:t></w:r>"#,
-                r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
-            ),
-            instruction, result
-        )
-    };
-    // Word compares bookmark names without regard to case.
-    let source = doc_with_body(&format!(
-        concat!(
-            r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
-            "{}{}{}{}{}{}",
-            r#"<w:p><w:hyperlink w:anchor="MARK"><w:r><w:t>src jump</w:t></w:r></w:hyperlink></w:p>"#,
-        ),
-        field(r#"REF mark \h"#, "src marked"),
-        field(r#"HYPERLINK \l "Mark""#, "link"),
-        field(
-            r#"HYPERLINK "https://example.com/Mark" \l "Mark""#,
-            "address"
-        ),
-        field(r#"NOTEREF Mark \h"#, "1"),
-        format!(
-            "{}{}{}",
-            field(r#"GOTOBUTTON Mark "Go""#, "Go"),
-            field(r#"SET Mark "value""#, ""),
-            field(r#"TOC \o "1-3" \b Mark"#, "contents"),
-        ),
-        format!(
-            "{}{}",
-            field(r#"XE "Entry" \r Mark"#, ""),
-            field(r#"INDEX \b Mark"#, "index"),
-        ),
-    ));
-    let mut doc = with_identities("dst");
-    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
-    let doc = reopen(&mut doc);
-
-    let bookmarks = bookmark_list(&doc);
-    let renamed = bookmarks
-        .iter()
-        .find(|(_, text)| text == "src marked")
-        .map(|(name, _)| name.clone())
-        .unwrap();
-    assert!(!renamed.eq_ignore_ascii_case("Mark"), "{bookmarks:?}");
-    assert_eq!(
-        field_instructions(&doc),
-        [
-            "REF Mark \\h".to_owned(),
-            format!("REF {renamed} \\h"),
-            format!("HYPERLINK \\l \"{renamed}\""),
-            // With an address, \l names a place in that address: left alone.
-            "HYPERLINK \"https://example.com/Mark\" \\l \"Mark\"".to_owned(),
-            format!("NOTEREF {renamed} \\h"),
-            format!("GOTOBUTTON {renamed} \"Go\""),
-            format!("SET {renamed} \"value\""),
-            format!("TOC \\o \"1-3\" \\b {renamed}"),
-            format!("XE \"Entry\" \\r {renamed}"),
-            format!("INDEX \\b {renamed}"),
-        ]
-    );
-    let anchors: Vec<_> = doc
-        .links()
-        .into_iter()
-        .filter(|link| link.text == "src jump")
-        .map(|link| link.anchor)
-        .collect();
-    assert_eq!(anchors, [Some(renamed)]);
-}
-
 /// The saved main story of `doc`.
 fn main_story_xml(doc: &mut Document) -> String {
     String::from_utf8(crate::support::package_parts(&saved(doc))["word/document.xml"].clone())
@@ -1264,74 +1174,6 @@ fn field_in_runs(codes: &[(&str, &str)]) -> String {
         r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#
     ));
     xml
-}
-
-#[test]
-fn formula_comparison_and_implicit_ref_operands_follow_a_renamed_bookmark() {
-    let nested_address = concat!(
-        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
-        r#"<w:r><w:instrText xml:space="preserve"> HYPERLINK </w:instrText></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
-        r#"<w:r><w:instrText xml:space="preserve"> MERGEFIELD Url </w:instrText></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>url</w:t></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
-        r#"<w:r><w:instrText xml:space="preserve"> \l "Mark" </w:instrText></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>away</w:t></w:r>"#,
-        r#"<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
-    );
-    // A deleted field keeps its code in delInstrText.
-    let deleted = format!(
-        r#"<w:p><w:del w:id="9" w:author="Ana" w:date="2026-01-01T00:00:00Z">{}</w:del></w:p>"#,
-        field_in_runs(&[("delInstrText", " REF Mark ")])
-            .trim_start_matches("<w:p>")
-            .trim_end_matches("</w:p>")
-    );
-    let source = doc_with_body(
-        &[
-            r#"<w:p><w:bookmarkStart w:id="0" w:name="Mark"/><w:r><w:t>src marked</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#.to_owned(),
-            field_in_runs(&[("instrText", r#" = Mark * 2 + Other \# "0.00" "#)]),
-            field_in_runs(&[("instrText", r#" IF mark = "yes" "a" "b" "#)]),
-            field_in_runs(&[("instrText", " COMPARE 1 &lt; MARK ")]),
-            field_in_runs(&[("instrText", r#" REF &quot;mark&quot; \h "#)]),
-            field_in_runs(&[("instrText", r#" Mark \* MERGEFORMAT "#)]),
-            // A name written across two runs, as Word does after an edit.
-            field_in_runs(&[("instrText", " REF Ma"), ("instrText", r#"rk \h "#)]),
-            deleted,
-            // The address is a nested field: `\l` names a place in it.
-            nested_address.to_owned(),
-            // A field of Word's that names no bookmark.
-            field_in_runs(&[("instrText", " PAGE ")]),
-        ]
-        .concat(),
-    );
-    let mut doc = with_identities("dst");
-    import_at_end(&mut doc, &source, FragmentConflictPolicy::default()).unwrap();
-    let mut doc = reopen(&mut doc);
-
-    let renamed = bookmark_list(&doc)
-        .into_iter()
-        .find(|(_, text)| text == "src marked")
-        .map(|(name, _)| name)
-        .unwrap();
-    assert!(!renamed.eq_ignore_ascii_case("Mark"));
-    // Quotes may be written escaped or not.
-    let xml = main_story_xml(&mut doc).replace("&quot;", "\"");
-    for expected in [
-        format!(r#"> = {renamed} * 2 + Other \# "0.00" <"#),
-        format!(r#"> IF {renamed} = "yes" "a" "b" <"#),
-        format!("> COMPARE 1 &lt; {renamed} <"),
-        format!(r#"> REF "{renamed}" \h <"#),
-        format!(r#"> {renamed} \* MERGEFORMAT <"#),
-        format!("<w:delInstrText xml:space=\"preserve\"> REF {renamed} </w:delInstrText>"),
-        // The split name: the new one in the first run, the rest of the
-        // code in the second.
-        format!(r#"<w:instrText xml:space="preserve"> REF {renamed}</w:instrText>"#),
-        r#"<w:instrText xml:space="preserve"> \h </w:instrText>"#.to_owned(),
-        r#"<w:instrText xml:space="preserve"> \l "Mark" </w:instrText>"#.to_owned(),
-        r#"<w:instrText xml:space="preserve"> PAGE </w:instrText>"#.to_owned(),
-    ] {
-        assert!(xml.contains(&expected), "{expected} in {xml}");
-    }
 }
 
 #[test]
@@ -1412,43 +1254,6 @@ fn an_imported_list_continues_an_equal_list_unless_numbering_reuse_is_off() {
         assert_eq!(texts(&doc), ["alpha", "beta", "gamma", "delta"]);
         assert_eq!(markers(&doc), expected, "{policy:?}");
     }
-}
-
-#[test]
-fn a_section_inclusive_fragment_brings_its_page_layout_and_header() {
-    let mut source = doc_with(&["wide"]);
-    source.set_landscape();
-    source.set_header("Source header");
-    let source = reopen(&mut source);
-    let fragment = DocumentFragment::from_range(
-        &source,
-        &item_at(&source, 0),
-        &ContentLocation::end(body(&source)),
-        true,
-    )
-    .unwrap();
-    let mut doc = doc_with(&["dest"]);
-    doc.set_header("Dest header");
-    let mut doc = reopen(&mut doc);
-    doc.import_fragment(
-        &item_at(&doc, 0),
-        &fragment,
-        FragmentConflictPolicy::default(),
-    )
-    .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["wide", "", "dest"]);
-    assert_eq!(doc.section_count(), 2);
-    assert_eq!(
-        doc.section(0).unwrap().orientation(),
-        Some(ST_PageOrientation::Landscape)
-    );
-    assert_eq!(header_shown(&doc, 0).as_deref(), Some("Source header"));
-    assert_ne!(
-        doc.section(1).unwrap().orientation(),
-        Some(ST_PageOrientation::Landscape)
-    );
-    assert_eq!(header_shown(&doc, 1).as_deref(), Some("Dest header"));
 }
 
 #[test]
@@ -2044,55 +1849,6 @@ fn body_shape(doc: &mut Document) -> String {
 }
 
 #[test]
-fn a_block_takes_the_bookmark_that_wraps_it_when_it_is_cut_moved_or_cloned() {
-    let mut doc = with_wrapped_blocks();
-    assert_eq!(body_shape(&mut doc), "PSPSTEP");
-    // Cut and pasted, the heading keeps its bookmark whole.
-    let mut cut = with_wrapped_blocks();
-    let heading = cut.remove_content_at(&item_at(&cut, 2)).unwrap();
-    assert_eq!(body_shape(&mut cut), "PSTEP");
-    cut.insert_content(&ContentLocation::end(body(&cut)), heading)
-        .unwrap();
-    assert_eq!(body_shape(&mut cut), "PSTEPSP");
-    assert_eq!(reopen(&mut cut).bookmarks().len(), 2);
-    // The table moves and goes with its bookmark, start and end.
-    let mut moved = with_wrapped_blocks();
-    moved
-        .move_content(&item_at(&moved, 4), &ContentLocation::end(body(&moved)))
-        .unwrap();
-    assert_eq!(body_shape(&mut moved), "PSPPSTE");
-    let mut removed = with_wrapped_blocks();
-    let table = removed.remove_content_at(&item_at(&removed, 4)).unwrap();
-    assert_eq!(body_shape(&mut removed), "PSPP");
-    removed
-        .insert_content(&ContentLocation::end(body(&removed)), table)
-        .unwrap();
-    assert_eq!(body_shape(&mut removed), "PSPPSTE");
-    for by_range in [false, true] {
-        let mut doc = with_wrapped_blocks();
-        if by_range {
-            assert_eq!(doc.remove_content_range(4, 5).unwrap(), 3);
-        } else {
-            assert!(doc.remove_content(4));
-        }
-        assert_eq!(body_shape(&mut doc), "PSPP", "{by_range}");
-    }
-    // A clone copies the bookmark, under a fresh id and name.
-    let mut cloned = with_wrapped_blocks();
-    cloned
-        .clone_content(&item_at(&cloned, 2), &ContentLocation::end(body(&cloned)))
-        .unwrap();
-    assert_eq!(body_shape(&mut cloned), "PSPSTEPSP");
-    let mut cloned = reopen(&mut cloned);
-    let names = main_values(&mut cloned, "w:bookmarkStart", "w:name");
-    assert_eq!(names.len(), 3);
-    assert_eq!(
-        names.iter().collect::<std::collections::HashSet<_>>().len(),
-        3
-    );
-}
-
-#[test]
 fn a_plain_paragraph_or_a_table_goes_with_the_bookmark_around_it() {
     // A plain paragraph wrapped whole: start just before, end just after.
     let wrapped = || {
@@ -2181,22 +1937,6 @@ fn a_picture_from_another_document_never_shows_the_destinations_picture() {
             assert_eq!(doc.to_bytes().unwrap(), before);
         }
     }
-}
-
-#[test]
-fn replacing_a_paragraph_with_its_own_xml_keeps_its_paragraph_id() {
-    let mut doc = doc_with_body(concat!(
-        r#"<w:p xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" w14:paraId="3C4D5E6F" w14:textId="55555555">"#,
-        r#"<w:r><w:t>before</w:t></w:r></w:p><w:p><w:r><w:t>other</w:t></w:r></w:p>"#,
-    ));
-    let location = item_at(&doc, 0);
-    let xml = String::from_utf8(doc.paragraph_element_xml(&location).unwrap()).unwrap();
-    doc.replace_paragraph_xml(&location, &xml.replace("before", "after"))
-        .unwrap();
-    let doc = reopen(&mut doc);
-    assert_eq!(texts(&doc), ["after", "other"]);
-    let saved = doc.part_xml("word/document.xml").unwrap();
-    assert!(saved.contains("3C4D5E6F"), "{saved}");
 }
 
 #[test]

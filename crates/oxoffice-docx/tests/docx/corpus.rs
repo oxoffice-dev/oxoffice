@@ -1,5 +1,7 @@
-//! Every Word document of the corpus (`tests/corpus/files`) opens, saves
-//! without an edit and reopens, with every package part it had, each byte for
+//! Every Word document of the corpus (`tests/corpus/files`) opens, lists its
+//! story ranges (Word, Google Docs and LibreOffice all write overlapping
+//! comments or bookmarks with crossing markers in some of these files, and
+//! LibreOffice bookmark starts with no end), saves without an edit and reopens, with every package part it had, each byte for
 //! byte: what the facade does not model is kept verbatim. A file the manifest
 //! marks as a known failure may rewrite exactly the parts it lists, and must,
 //! until its issue is fixed.
@@ -24,12 +26,15 @@ enum Failure {
     Rewritten(Vec<String>),
 }
 
-/// Opens, saves without an edit and reopens: every part is still there,
-/// with the same bytes.
+/// Opens, lists its story ranges, saves without an edit and reopens: every
+/// part is still there, with the same bytes.
 fn round_trip(original: &[u8]) -> Result<(), Failure> {
     let saved = Document::from_bytes(original)
-        .and_then(|mut doc| doc.to_bytes())
-        .map_err(|error| Failure::Broken(format!("open or save failed: {error}")))?;
+        .and_then(|mut doc| {
+            doc.story_ranges()?;
+            doc.to_bytes()
+        })
+        .map_err(|error| Failure::Broken(format!("open, story ranges or save failed: {error}")))?;
     Document::from_bytes(&saved)
         .map_err(|error| Failure::Broken(format!("the saved file does not reopen: {error}")))?;
     let saved = entries(&saved);

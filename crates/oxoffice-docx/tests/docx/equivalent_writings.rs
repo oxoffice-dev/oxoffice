@@ -1,8 +1,8 @@
 //! Equivalent writings of a Word document give the same result: open,
 //! validate, story texts, Markdown, save, an edit per story, compare, accept
 //! and reject (`specs/2026-11-25-equivalent-xml-writings.md`). Pull requests
-//! run the built documents and two copies; `OXOFFICE_WORKFLOWS=full` all but
-//! the long and thesis copies.
+//! run the producer shapes and two copies; `OXOFFICE_WORKFLOWS=full` adds the
+//! small thesis and every copy but the long and thesis ones.
 
 use oxoffice_docx::{Document, StoryKind, StoryParagraph, validate_document_bytes};
 use oxoffice_xml_test::harness::{Input, Outcome, attempt, check_writings};
@@ -47,6 +47,20 @@ fn producer_shapes() -> Vec<u8> {
         r#"<w:ptab w:relativeTo="margin" w:alignment="right" w:leader="none"/><w:t>end</w:t></w:r>"#,
         r#"<w:r><w:t/></w:r></w:p>"#,
         r#"<w:p><w:pPr><w:cnfStyle w:val="100000000000" w:firstRow="1"/></w:pPr><w:r><w:t>First row style</w:t></w:r></w:p>"#,
+        // A table of contents as Word writes it: a field whose result holds a
+        // hyperlink with a bookmark mark of its own and a page reference field.
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" \h </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:hyperlink w:anchor="_Toc1" w:history="1">"#,
+        r#"<w:r><w:t>Chapter title</w:t></w:r><w:bookmarkStart w:id="9" w:name="_Mark"/><w:r><w:tab/></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGEREF _Toc1 \h </w:instrText></w:r>"#,
+        r#"<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#,
+        r#"<w:bookmarkEnd w:id="9"/></w:hyperlink></w:p><w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
+        // A paragraph with a hyperlink holding a bookmark mark and a field of its own.
+        r#"<w:p><w:hyperlink w:anchor="_Toc2" w:history="1"><w:bookmarkStart w:id="10" w:name="_Mark2"/>"#,
+        r#"<w:r><w:t>See the schedule</w:t></w:r><w:bookmarkEnd w:id="10"/></w:hyperlink>"#,
+        r#"<w:r><w:t xml:space="preserve"> on page </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r>"#,
+        r#"<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>"#,
+        r#"<w:r><w:t>2</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>"#,
     ));
     let id = doc.add_footnote("Footnote sentence about suppliers.");
     doc.add_paragraph("Closing paragraph with a reference.")
@@ -73,10 +87,12 @@ fn producer_shapes() -> Vec<u8> {
 }
 
 fn inputs() -> Vec<Input> {
-    let mut inputs = vec![
-        ("built/producer-shapes.docx".into(), producer_shapes()),
-        ("built/small-thesis.docx".into(), small_thesis()),
-    ];
+    let mut inputs = vec![("built/producer-shapes.docx".into(), producer_shapes())];
+    // The small thesis costs a fifth of the walk: the full checks run it, a
+    // pull request does not (the producer shapes hold its table of contents).
+    if every_copy() {
+        inputs.push(("built/small-thesis.docx".into(), small_thesis()));
+    }
     for file in corpus_files("docx") {
         // A long copy repeats its family at minutes a writing; the small
         // thesis keeps the landmarks of the thesis copies, a fifth of the rest.

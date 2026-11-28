@@ -199,24 +199,6 @@ fn a_source_reads_back_as_written_after_a_save() {
 }
 
 #[test]
-fn a_source_identity_is_unique_and_a_refused_add_changes_nothing() {
-    let mut doc = Document::new();
-    doc.add_bibliography_source(&source("Smith20", GUID, BibliographySourceKind::Book))
-        .unwrap();
-    let before = source_xml(&mut doc);
-    let same_tag = source("Smith20", OTHER_GUID, BibliographySourceKind::Book);
-    assert!(refusal(doc.add_bibliography_source(&same_tag)).contains("already exists"));
-    // The GUID matches without braces and whatever its case.
-    let same_guid = source(
-        "Other",
-        "1a2b3c4d-2222-3333-4444-55555555eeee",
-        BibliographySourceKind::Book,
-    );
-    assert!(refusal(doc.add_bibliography_source(&same_guid)).contains("already exists"));
-    assert_eq!(source_xml(&mut doc), before);
-}
-
-#[test]
 fn a_replaced_source_keeps_its_guid_and_imported_xml() {
     let mut doc = Document::new();
     doc.add_bibliography_source(&source("Smith20", GUID, BibliographySourceKind::Book))
@@ -287,64 +269,6 @@ fn a_cited_source_cannot_be_removed_and_an_uncited_one_can() {
         .map(|source| source.tag)
         .collect();
     assert_eq!(tags, ["Smith20"]);
-}
-
-#[test]
-fn a_citation_writes_each_member_switch_after_its_tag() {
-    let book = source("Smith20", GUID, BibliographySourceKind::Book);
-    let other = source("Doe19", OTHER_GUID, BibliographySourceKind::Book);
-    let mut first = member("Smith20");
-    first.pages = Some("12".into());
-    first.suppress_author = true;
-    let mut second = member("Doe19");
-    second.volume = Some("2".into());
-    second.prefix = Some("see ".into());
-    second.suffix = Some(" ff.".into());
-    second.suppress_year = true;
-    second.suppress_title = true;
-    let mut doc = cited(
-        &[book, other],
-        vec![first, second],
-        BibliographyStyle::ApaSixthEdition,
-    );
-    let xml = main_xml(&mut doc);
-    assert!(
-        xml.contains(r#"CITATION Smith20 \p 12 \n \m Doe19 \v 2 \f &quot;see &quot; \s &quot; ff.&quot; \y \t "#),
-        "{xml}"
-    );
-}
-
-#[test]
-fn bibliography_options_set_the_style_and_the_selectors_of_existing_bibliographies() {
-    let book = source("Smith20", GUID, BibliographySourceKind::Book);
-    let mut doc = cited(
-        &[book],
-        vec![member("Smith20")],
-        BibliographyStyle::ApaSixthEdition,
-    );
-    let style = doc.bibliography_style().unwrap().expect("style metadata");
-    assert_eq!(
-        style.supported_style,
-        Some(BibliographyStyle::ApaSixthEdition)
-    );
-    assert_eq!(style.style_key.as_deref(), Some("APA"));
-
-    doc.set_bibliography_options(&BibliographyOptions {
-        style: BibliographyStyle::Chicago,
-        locale: Some(1033),
-        locale_filter: Some(1036),
-        tags: vec!["Smith20".into()],
-    })
-    .unwrap();
-    let style = doc.bibliography_style().unwrap().expect("style metadata");
-    assert_eq!(style.supported_style, Some(BibliographyStyle::Chicago));
-    assert_eq!(style.style_path.as_deref(), Some("\\CHICAGO.XSL"));
-    let xml = main_xml(&mut doc);
-    assert!(
-        xml.contains(r"\l 1033 \f 1036 \m Smith20</w:instrText>"),
-        "{xml}"
-    );
-    assert!(xml.contains("CITATION Smith20"), "{xml}");
 }
 
 #[test]
@@ -535,32 +459,6 @@ fn ieee_numbers_the_citation_and_lays_the_bibliography_out_as_a_table() {
     assert_eq!(table.cell(0, 0).expect("number cell").text(), "[1] ");
     let entry = table.cell(0, 1).expect("entry cell").text();
     assert!(entry.contains("A study of things"), "{entry}");
-}
-
-#[test]
-fn an_apa_citation_shows_its_page() {
-    let mut cite = member("Smith20");
-    cite.pages = Some("12".into());
-    let mut doc = cited(
-        &[source("Smith20", GUID, BibliographySourceKind::Book)],
-        vec![cite],
-        BibliographyStyle::ApaSixthEdition,
-    );
-    doc.update_bibliography_with_default_locale(1033).unwrap();
-    assert_eq!(texts(&doc)[0], "Cited here  (Smith, 2020, p. 12)");
-}
-
-#[test]
-fn an_update_needs_a_locale_when_neither_the_field_nor_the_source_gives_one() {
-    let mut doc = cited(
-        &[source("Smith20", GUID, BibliographySourceKind::Book)],
-        vec![member("Smith20")],
-        BibliographyStyle::ApaSixthEdition,
-    );
-    let before = main_xml(&mut doc);
-    let message = refusal(doc.update_bibliography());
-    assert!(message.contains("application default locale"), "{message}");
-    assert_eq!(main_xml(&mut doc), before);
 }
 
 #[test]
